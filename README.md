@@ -6,4 +6,4 @@ Permaily sits between your mailbox and the apps, agents and vendors that want to
 
 | Folder | What it holds |
 | --- | --- |
-| [`app/`](app/) | The web app, where people approve access and manage what each connection can see |
+| [`web/`](web/) | The web app, where people approve access and manage what each connection can see |

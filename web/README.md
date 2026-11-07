@@ -1,4 +1,4 @@
-# Permaily app
+# Permaily web app
 
 The web app people use to decide what each app, agent or vendor can read from their mailbox.
 
@@ -20,7 +20,18 @@ The proof that the running service matches the public code is a separate public 
 
 ## Stack
 
-React, TypeScript, Vite and Tailwind v4. The app builds to static files, so it can ship inside the measured service image with the rest of Permaily.
+React, TypeScript, Vite, Tailwind v4 and React Router. The app builds to static files, so it can ship inside the measured service image with the rest of Permaily. Fonts are bundled with the app, so it makes no requests to font services.
+
+## Develop
+
+```sh
+npm install
+npm run dev        # http://localhost:5173
+npm run build      # type check, then build to dist/
+npm run lint
+```
+
+Design tokens live in `src/styles/index.css` as Tailwind theme values, such as `bg-paper`, `text-ink-2` and `bg-highlight`. Tailwind's default colors, type sizes and shadows are switched off, so only the design system's values are available. Colors follow the system's light or dark setting, and `data-theme="light"` or `"dark"` on `<html>` overrides it.
 
 ## Design language
 
