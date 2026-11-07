@@ -1,22 +1,48 @@
 import { Navigate, Route, Routes } from 'react-router'
 import { AppShell } from './components/AppShell.tsx'
-import { ConsentPage } from './pages/ConsentPage.tsx'
-import { SectionPage } from './pages/SectionPage.tsx'
-import { sections } from './sections.ts'
+import { AccountsPage } from './pages/accounts/AccountsPage.tsx'
+import { ConnectMailboxPage } from './pages/accounts/ConnectMailboxPage.tsx'
+import { ForwardingSetupPage } from './pages/accounts/ForwardingSetupPage.tsx'
+import { ActivityPage } from './pages/activity/ActivityPage.tsx'
+import { ConnectAgentPage } from './pages/connections/ConnectAgentPage.tsx'
+import { ConnectionDetailPage } from './pages/connections/ConnectionDetailPage.tsx'
+import { ConnectionsPage } from './pages/connections/ConnectionsPage.tsx'
+import { ConsentAgentPage } from './pages/consent/ConsentAgentPage.tsx'
+import { ConsentAppPage } from './pages/consent/ConsentAppPage.tsx'
+import { WideningPage } from './pages/consent/WideningPage.tsx'
+import { NeverSharePage } from './pages/never-share/NeverSharePage.tsx'
+import { OverviewPage } from './pages/overview/OverviewPage.tsx'
+import { PacksPage } from './pages/rules/PacksPage.tsx'
+import { RuleEditorPage } from './pages/rules/RuleEditorPage.tsx'
+import { RulesPage } from './pages/rules/RulesPage.tsx'
+import { SettingsPage } from './pages/settings/SettingsPage.tsx'
 
 export function App() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        {sections.map((section) =>
-          section.path === '/' ? (
-            <Route key={section.path} index element={<SectionPage section={section} />} />
-          ) : (
-            <Route key={section.path} path={section.path} element={<SectionPage section={section} />} />
-          ),
-        )}
+        <Route index element={<OverviewPage />} />
+        <Route path="connections" element={<ConnectionsPage />} />
+        <Route path="connections/:id" element={<ConnectionDetailPage />} />
+        <Route path="rules" element={<RulesPage />} />
+        <Route path="rules/packs" element={<PacksPage />} />
+        <Route path="rules/:id" element={<RuleEditorPage />} />
+        <Route path="never-share" element={<NeverSharePage />} />
+        <Route path="activity" element={<ActivityPage />} />
+        <Route path="accounts" element={<AccountsPage />} />
+        <Route path="settings" element={<SettingsPage />} />
       </Route>
-      <Route path="/consent" element={<ConsentPage />} />
+
+      {/* Full-page flows without the sidebar */}
+      <Route path="connections/new" element={<ConnectAgentPage />} />
+      <Route path="accounts/new" element={<ConnectMailboxPage />} />
+      <Route path="accounts/new/forwarding" element={<ForwardingSetupPage />} />
+
+      {/* Consent screens that apps and agents send people to */}
+      <Route path="consent/trip-app" element={<ConsentAppPage />} />
+      <Route path="consent/claude" element={<ConsentAgentPage />} />
+      <Route path="consent/ledgerly" element={<WideningPage />} />
+
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )

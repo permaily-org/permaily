@@ -5,7 +5,7 @@ export function AppShell() {
   return (
     <div className="flex min-h-svh">
       <Sidebar />
-      <main className="min-w-0 flex-1 px-14 py-10">
+      <main className="min-w-0 flex-1">
         <Outlet />
       </main>
     </div>

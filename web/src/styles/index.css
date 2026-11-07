@@ -47,6 +47,9 @@
   --text-display-l--letter-spacing: -1.4px;
 
   --radius-sm: 2px;
+
+  --color-transparent: transparent;
+  --color-current: currentColor;
 }
 
 @theme inline {
@@ -83,7 +86,7 @@
   --ink-3: light-dark(#6c6c65, #85857d);
   --rule: light-dark(#deded8, #2a2b27);
   --rule-strong: light-dark(#131312, #f1f1ec);
-  --bar: light-dark(#131312, #3c3d37);
+  --bar: light-dark(#131312, #65665d);
   --on-bar: light-dark(#f6f6f3, #f1f1ec);
   --highlight: #ddf45b;
   --on-highlight: #131312;
