@@ -1,7 +1,7 @@
 import { ChevronRight } from 'lucide-react'
 import { Link } from 'react-router'
 import { Legend, Tile, type Cell } from '../../components/ui/index.ts'
-import { connections, formatCount, inbox, ruleColumns, type Connection } from '../../data/sample.ts'
+import { connections, formatCount, inbox, ruleColumns, withheldRules, type Connection } from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 
 const legend: Array<{ cell: Cell; label: string }> = [
@@ -10,7 +10,7 @@ const legend: Array<{ cell: Cell; label: string }> = [
   { cell: 'withheld', label: 'Withheld' },
 ]
 
-/** Who can read what: one row per connection, one column per rule, and Never share as one block over every row. */
+/** Who can read what: one row per connection, one column per rule, and the rules withheld from all as one block over every row. */
 export function AccessGrid() {
   return (
     <div>
@@ -30,7 +30,7 @@ export function AccessGrid() {
             {ruleColumns.map((column) => (
               <ColumnHeading key={column.id} name={column.name} count={column.count} />
             ))}
-            <ColumnHeading name="Never share" count={inbox.neverShare} />
+            <ColumnHeading name="Withheld from all" count={inbox.withheld} />
           </tr>
         </thead>
         <tbody>
@@ -42,7 +42,7 @@ export function AccessGrid() {
               {connection.cells.map((cell, i) => (
                 <AccessCell key={ruleColumns[i].id} cell={cell} count={ruleColumns[i].count} />
               ))}
-              {row === 0 && <NeverShareBlock rows={connections.length} />}
+              {row === 0 && <WithheldBlock rows={connections.length} />}
             </tr>
           ))}
         </tbody>
@@ -109,11 +109,11 @@ function AccessCell({ cell, count }: { cell: Cell; count: number }) {
   )
 }
 
-function NeverShareBlock({ rows }: { rows: number }) {
+function WithheldBlock({ rows }: { rows: number }) {
   return (
     <td rowSpan={rows} className="bg-bar px-3 align-middle text-on-bar">
       <span className="block font-mono text-mono">never</span>
-      <span className="mt-2 block text-mono">For every connection, always</span>
+      <span className="mt-2 block text-mono">{withheldRules.map((rule) => rule.name).join(', ')}</span>
     </td>
   )
 }

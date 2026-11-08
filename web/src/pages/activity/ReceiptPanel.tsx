@@ -68,8 +68,8 @@ export function ReceiptPanel({ receipt }: { receipt: Receipt }) {
       <section aria-labelledby="not-wanted" className="mt-5">
         <SectionHeading id="not-wanted" title="Not what you wanted?" />
         <div className="mt-2.5 flex flex-wrap gap-2">
-          <ButtonLink to="/never-share" variant="secondary" size="sm">
-            Never share {domain}
+          <ButtonLink to={`/rules/private?add=${encodeURIComponent(domain)}`} variant="secondary" size="sm">
+            Withhold {domain}
           </ButtonLink>
           <ButtonLink to={`/rules/${receipt.ruleId}`} variant="secondary" size="sm">
             Change this rule

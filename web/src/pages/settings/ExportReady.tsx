@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Button } from '../../components/ui/index.ts'
-import { connections, neverShare, receipts, rules } from '../../data/sample.ts'
+import { connections, receipts, rules } from '../../data/sample.ts'
 import { downloadText } from '../activity/data.ts'
 
 const filename = 'permaily-export.json'
@@ -17,7 +17,6 @@ export function ExportReady() {
         {
           rules,
           access: connections.map(({ id, name, kind, ruleNames, parts, actions, time, ends }) => ({ id, name, kind, ruleNames, parts, actions, time, ends })),
-          neverShare: { defaults: neverShare.defaults, mine: neverShare.mine },
           receipts,
         },
         null,

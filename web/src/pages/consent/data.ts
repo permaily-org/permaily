@@ -2,7 +2,7 @@
   Preview mail for the consent screens. Each screen has its own timeline: a written head that
   matches the design, and a generated tail so every count can be checked row by row.
 */
-import { rules } from '../../data/sample.ts'
+import { rules, withheldRules } from '../../data/sample.ts'
 
 export type RuleId = 'flights-and-hotels' | 'invoices' | 'receipts' | 'bank-statements' | 'newsletters'
 
@@ -13,7 +13,7 @@ export type InboxEmail = {
   subject: string
   /** The rule this email matches. Mail without one is never shared. */
   rule?: RuleId
-  /** Never share reason, when the email matches a rule but is held back. */
+  /** Why it's held back when it matches a rule, because a rule withheld from all also matches it. */
   blocked?: string
   widths: [number, number, number]
 }
@@ -29,7 +29,8 @@ export type PreviewRow =
 
 export type Lens = (email: InboxEmail) => RowKind
 
-export const neverText = 'Password resets, login codes and security alerts'
+/** What every connection is refused: mail matching the rules withheld from all. */
+export const neverText = `Mail matching ${withheldRules.map((rule) => rule.name).join(' or ')}`
 export const mailSince = 'Mail since 1 Jan 2026'
 export const endOptions = ['15 June', '15 May', '15 April'] as const
 export type EndDate = (typeof endOptions)[number]
@@ -165,7 +166,7 @@ export function viewRows(timeline: Timeline, lens: Lens): PreviewRow[] {
 function toRow(email: InboxEmail, kind: RowKind): PreviewRow {
   const { id, date, sender, subject } = email
   if (kind === 'withheld') return { id, kind, widths: email.widths }
-  if (kind === 'blocked') return { id, kind, date, sender, reason: `blocked: ${email.blocked ?? 'never share'}`, barWidth: 210 }
+  if (kind === 'blocked') return { id, kind, date, sender, reason: `blocked: ${email.blocked ?? 'withheld from all'}`, barWidth: 210 }
   if (kind === 'excluded') return { id, kind, date, sender, reason: 'excluded by you', barWidth: Math.min(360, subject.length * 7) }
   return { id, kind, date, sender, subject }
 }

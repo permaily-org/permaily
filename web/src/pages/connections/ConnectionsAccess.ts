@@ -1,9 +1,9 @@
 import type { Cell } from '../../components/ui/index.ts'
-import { attention, ruleColumns, type AttentionItem, type Connection } from '../../data/sample.ts'
+import { attention, ruleColumns, withheldNames, type AttentionItem, type Connection } from '../../data/sample.ts'
 
-const columnNames = [...ruleColumns.map((column) => column.name), 'Never share']
+const columnNames = [...ruleColumns.map((column) => column.name), withheldNames]
 
-/** The six strip cells: one per Overview column, with Never share always withheld. */
+/** The six strip cells: one per Overview column, with the rules withheld from all always withheld. */
 export function stripCells(connection: Connection): Cell[] {
   return [...connection.cells, 'withheld']
 }

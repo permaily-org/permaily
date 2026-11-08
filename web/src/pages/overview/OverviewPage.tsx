@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { ButtonLink, Count, FilterButton, Headline } from '../../components/ui/index.ts'
 import { attention, connections, formatCount, inbox } from '../../data/sample.ts'
+import { SuggestedRule } from '../rules/SuggestedRule.tsx'
 import { AccessGrid } from './AccessGrid.tsx'
 import { AttentionList } from './AttentionList.tsx'
 import { packUpdate } from './data.ts'
@@ -42,7 +43,7 @@ function Overview() {
         <p className="text-lead text-ink-2">
           {headerReaders.length > 0 &&
             `${headerReaders.join(' and ')} also ${headerReaders.length === 1 ? 'sees' : 'see'} the headers of ${formatCount(inbox.headersOnly)} emails. `}
-          {formatCount(inbox.neverShare)} can never be shared.
+          Your rules withhold {formatCount(inbox.withheld)} from every connection.
         </p>
         <FilterButton>All mailboxes</FilterButton>
       </div>
@@ -64,6 +65,7 @@ function Overview() {
 }
 
 function FirstUse() {
+  const [suggest, setSuggest] = useState(true)
   return (
     <div className="px-14 pt-9 pb-14">
       <Headline>Nothing can read your mail.</Headline>
@@ -75,6 +77,11 @@ function FirstUse() {
           <span key={i} className="h-7 bg-bar" />
         ))}
       </div>
+      {suggest && (
+        <div className="mt-8 max-w-[560px]">
+          <SuggestedRule onDismiss={() => setSuggest(false)} />
+        </div>
+      )}
       <div className="mt-6">
         <ButtonLink to="/connections/new">Connect an agent</ButtonLink>
       </div>

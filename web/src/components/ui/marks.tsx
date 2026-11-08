@@ -82,7 +82,7 @@ export function Count({ children, tone = 'shared' }: { children: ReactNode; tone
 
 const cellFill: Record<Cell, string> = { shared: 'bg-highlight', headers: 'bg-highlight-soft', withheld: 'bg-bar' }
 
-/** Six small cells, one per Overview column, with the last always Never share. */
+/** Six small cells, one per Overview column, with the last always the rules withheld from all. */
 export function VisibilityStrip({ cells, label }: { cells: Cell[]; label: string }) {
   return (
     <span role="img" aria-label={label} className="inline-flex gap-0.5">

@@ -6,9 +6,9 @@ import type { Cell } from '../components/ui/marks.tsx'
 
 export const user = { name: 'Marta Ruiz', email: 'marta.ruiz@example.com' }
 
-export const inbox = { total: 12304, readable: 647, headersOnly: 11980, neverShare: 324 }
+export const inbox = { total: 12304, readable: 647, headersOnly: 11980, withheld: 324 }
 
-/** Overview columns, in order. Never share is always the last column and is never readable. */
+/** Overview columns, in order. Rules withheld from all come after these as one last column that nobody can read. */
 export const ruleColumns = [
   { id: 'flights-and-hotels', name: 'Flights and hotels', count: 47 },
   { id: 'invoices', name: 'Invoices', count: 212 },
@@ -24,7 +24,7 @@ export type Connection = {
   domain: string
   kind: 'App' | 'Agent'
   delivery: 'API' | 'MCP'
-  /** One cell per Overview column, Never share excluded. */
+  /** One cell per Overview column, not counting the withheld rules. */
   cells: Cell[]
   readCount: number
   readLabel: string
@@ -118,7 +118,7 @@ export const connections: Connection[] = [
     readCount: 11980,
     readLabel: '11,980 headers',
     hasRead: 0,
-    ruleNames: 'Everything except Never share',
+    ruleNames: 'All mail',
     parts: 'Headers only',
     actions: 'Label, archive',
     time: 'All mail, until 30 Apr',
@@ -196,6 +196,8 @@ export type Rule = {
   matchNote?: string
   usedBy: string[]
   usedByNote?: string
+  /** Withheld from every connection. Wins over any rule a connection uses. */
+  withheld?: boolean
   changed: string
 }
 
@@ -243,7 +245,7 @@ export const rules: Rule[] = [
   {
     id: 'bank-statements',
     name: 'Bank statements',
-    description: 'Statements from your banks, minus Never share',
+    description: 'Statements from your banks',
     pack: 'finance.statements@1',
     matches: 96,
     usedBy: [],
@@ -252,15 +254,56 @@ export const rules: Rule[] = [
   },
   {
     id: 'everything',
-    name: 'Everything except Never share',
-    description: "All your mail, minus what's on Never share",
+    name: 'All mail',
+    description: "Everything in your mailboxes, minus what's withheld",
     basedOnText: 'Built in',
     matches: 11980,
     usedBy: ['IT'],
     usedByNote: 'headers only',
     changed: 'Built in',
   },
+  {
+    id: 'sign-in-and-security',
+    name: 'Sign-in and security',
+    description: 'Password resets, login links, one-time codes and security alerts',
+    basedOnText: 'Suggested by Permaily',
+    matches: 300,
+    usedBy: [],
+    withheld: true,
+    changed: '9 Jan',
+  },
+  {
+    id: 'private',
+    name: 'Private',
+    description: 'My doctor, my bank and the Family label',
+    basedOnText: 'Your own rule',
+    matches: 24,
+    usedBy: [],
+    withheld: true,
+    changed: '2 Feb',
+  },
 ]
+
+/** Rules withheld from every connection. Their matches add up to inbox.withheld. */
+export const withheldRules = rules.filter((rule) => rule.withheld)
+
+/** "Sign-in and security and Private" */
+export const withheldNames = withheldRules.map((rule) => rule.name).join(' and ')
+
+/**
+ * The rule Permaily suggests on every new account. It's an ordinary rule, withheld from every
+ * connection, so people can change it or turn it off later.
+ */
+export const suggestedRule = {
+  id: 'sign-in-and-security',
+  name: 'Sign-in and security',
+  why: 'Anyone who reads these can take over the account they belong to.',
+  covers: [
+    { title: 'Password resets and login links', count: 88 },
+    { title: 'One-time codes', count: 171 },
+    { title: 'Security alerts', count: 41 },
+  ],
+}
 
 export type Pack = { id: string; description: string; yours: number; state: 'update' | 'in-use' | 'available' }
 
@@ -276,27 +319,6 @@ export const packs: Pack[] = [
 ]
 
 export const packCategories = ['All', 'Travel', 'Finance', 'Shopping', 'Bills', 'Events'] as const
-
-export const neverShare = {
-  total: 324,
-  defaults: [
-    { id: 'resets', title: 'Password resets and login links', detail: 'Anyone reading these could take over the account', count: 88 },
-    { id: 'codes', title: 'One-time codes', detail: 'Two-step codes from any sender', count: 171 },
-    { id: 'alerts', title: 'Security alerts', detail: 'New sign-ins and account changes', count: 41 },
-  ],
-  mine: [
-    { id: 'person-vidal', kind: 'person', title: 'Dr. Elena Vidal', detail: 'e.vidal@clinic.example', count: 14 },
-    { id: 'domain-bbva', kind: 'domain', title: 'bbva.es', detail: 'All mail from this bank', count: 7 },
-    { id: 'label-family', kind: 'label', title: 'Family', detail: 'Gmail label', count: 3 },
-  ],
-  blockedThisWeek: [
-    { sender: 'Booking.com', reason: 'password reset', when: 'Today, Trip App asked', width: 150 },
-    { sender: 'Google', reason: 'one-time code', when: 'Today, Claude asked', width: 120 },
-    { sender: 'Iberia', reason: 'login link', when: 'Mon, Trip App asked', width: 170 },
-    { sender: 'bbva.es', reason: 'added by you', when: 'Sun, Ledgerly asked', width: 190 },
-    { sender: 'Revolut', reason: 'security alert', when: 'Sat, Ledgerly asked', width: 110 },
-  ],
-}
 
 export type Receipt = {
   id: string

@@ -1,9 +1,10 @@
 import { ChevronRight } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
-import { ButtonLink, Headline, Tag } from '../../components/ui/index.ts'
+import { Bar, ButtonLink, Headline, Tag } from '../../components/ui/index.ts'
 import { formatCount, rules, type Rule } from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import { RulesTabs } from './RulesTabs.tsx'
+import { SuggestedRule } from './SuggestedRule.tsx'
 import { UsedBy } from './UsedBy.tsx'
 
 const columns = 'grid grid-cols-[minmax(0,1fr)_226px_126px_166px_110px_16px] items-center'
@@ -32,7 +33,10 @@ function RuleList() {
           <Headline>
             {rules.length} rules. {look}
           </Headline>
-          <p className="mt-1 text-lead text-ink-2">A rule only defines what matches. Nothing is shared until you let a connection use it.</p>
+          <p className="mt-1 text-lead text-ink-2">
+            A rule only defines what matches. Nothing is shared until you let a connection use it, and a rule withheld from all wins over
+            the rest.
+          </p>
         </div>
         <ButtonLink to="/rules/new">New rule</ButtonLink>
       </div>
@@ -79,7 +83,14 @@ function RuleRow({ rule }: { rule: Rule }) {
 
       <span>
         <span className="sr-only">Used by</span>
-        <UsedBy initials={rule.usedBy} note={rule.usedByNote} />
+        {rule.withheld ? (
+          <span className="flex items-center gap-2">
+            <Bar width={14} height={14} />
+            <span className="text-small text-ink-2">Withheld from all</span>
+          </span>
+        ) : (
+          <UsedBy initials={rule.usedBy} note={rule.usedByNote} />
+        )}
       </span>
 
       <span className="font-mono text-mono text-ink-2">
@@ -96,16 +107,22 @@ function NoRules() {
   return (
     <div className="mt-6 max-w-[560px]">
       <Headline>No rules yet.</Headline>
-      <p className="mt-2 text-lead text-ink-2">Start from a community pack, or describe what you want in your own words.</p>
-      <div className="mt-4 flex flex-wrap gap-2">
+      <p className="mt-2 text-lead text-ink-2">Start with the rule we suggest for every account, or from a community pack.</p>
+      <div className="mt-5">
+        <SuggestedRule />
+      </div>
+      <p className="mt-6 text-small text-ink-2">Community packs</p>
+      <div className="mt-2 flex flex-wrap gap-2">
         {['travel.bookings', 'finance.invoices'].map((id) => (
           <Link key={id} to={`/rules/packs?pack=${id}`} className={cx('group rounded-sm', focusRing)}>
             <Tag className="group-hover:border-ink">{id}</Tag>
           </Link>
         ))}
       </div>
-      <div className="mt-4">
-        <ButtonLink to="/rules/new">New rule</ButtonLink>
+      <div className="mt-5">
+        <ButtonLink to="/rules/new" variant="secondary">
+          New rule
+        </ButtonLink>
       </div>
     </div>
   )

@@ -14,7 +14,7 @@ export type RowStatus = 'new' | 'soft' | 'excluded' | 'dropped' | 'withheld'
 export type RowView =
   | { kind: 'other'; widths: [number, number, number] }
   | { kind: 'blocked'; id: string; date: string; sender: string; reason: string }
-  | { kind: 'mail'; row: MailRow; status: RowStatus; excludedBy?: string }
+  | { kind: 'mail'; row: MailRow; status: RowStatus; excludedBy?: string; matchedBy?: string }
 
 export function domainOf(address: string): string {
   return address.split('@')[1]?.toLowerCase() ?? address.toLowerCase()
@@ -33,9 +33,12 @@ function exclusionFor(row: MailRow, butNot: string[]): string | undefined {
   })
 }
 
+function matchingKey(row: MailRow, chips: Set<string>): string | undefined {
+  return [row.address, domainOf(row.address), ...(row.keys ?? [])].find((k) => chips.has(k.toLowerCase()))
+}
+
 function hitsChips(row: MailRow, chips: Set<string>): boolean {
-  const keys = [row.address, domainOf(row.address), ...(row.keys ?? [])].map((k) => k.toLowerCase())
-  return keys.some((k) => chips.has(k))
+  return matchingKey(row, chips) !== undefined
 }
 
 function matcher(draft: Draft, matchAll: boolean) {
@@ -81,7 +84,7 @@ export function preview(seed: RuleSeed, isNew: boolean, draft: Draft): Preview {
     if (isMatch) {
       matched += 1
       if (!wasMatch) fresh += 1
-      return { kind: 'mail', row, status: wasMatch ? 'soft' : 'new' }
+      return { kind: 'mail', row, status: wasMatch ? 'soft' : 'new', matchedBy: matchAll ? undefined : matchingKey(row, chips) }
     }
     if (wasMatch) dropped += 1
     const excludedBy = exclusionFor(row, draft.butNot)

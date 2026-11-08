@@ -63,7 +63,7 @@ export function WideningPage() {
             </TextAction>
           }
         >
-          Parts, actions, time and Never share stay the same.
+          Parts, actions, time and what's withheld stay the same.
         </TermRow>
         <div id="unchanged-terms" hidden={!showRest} className="text-ink-2">
           <TermRow label="Emails">{connection?.ruleNames}</TermRow>

@@ -2,7 +2,7 @@
   Page-only content for Rules, Community packs and the rule editor.
   Shared numbers come from src/data/sample.ts. Company senders are illustrative.
 */
-import { connections, packs, rules, type Pack, type Rule } from '../../data/sample.ts'
+import { connections, packs, rules, suggestedRule, withheldRules, type Pack, type Rule } from '../../data/sample.ts'
 
 export function connectionNames(initials: string[]): string[] {
   return initials.map((i) => connections.find((c) => c.initials === i)?.name ?? i)
@@ -97,7 +97,7 @@ export const packSources: Record<string, PackSource> = {
     subject: ['statement', 'extracto'],
     reviewedBy: 3,
     contributors: 22,
-    checks: 'No free-mail domains. Never share still applies on top',
+    checks: freeMailCheck,
   },
   'shopping.orders': {
     version: 2,
@@ -150,7 +150,7 @@ export function listWithMore(items: string[], shown = 3): string {
 
 /* Rule editor */
 
-export type GroupKind = 'data' | 'sender' | 'subject' | 'header' | 'mailbox'
+export type GroupKind = 'data' | 'type' | 'sender' | 'subject' | 'header' | 'label' | 'mailbox'
 
 export type ConditionGroup = { id: string; kind: GroupKind; label: string; chips: string[] }
 
@@ -180,6 +180,8 @@ export type RuleSeed = {
   /** Positive chips the saved rule didn't have, so they count as part of this edit. */
   unsaved: string[]
   readOnly?: boolean
+  /** Withheld from every connection, as saved. */
+  withheld?: boolean
   rows: PreviewRow[]
 }
 
@@ -258,7 +260,7 @@ const statementRows: PreviewRow[] = [
   other(44, 96, 280),
   mail('06 Mar', 'Santander', 'avisos@santander.es', 'Extracto de febrero', ['extracto']),
   other(38, 108, 240),
-  blocked('04 Mar', 'BBVA', 'never share: bbva.es'),
+  blocked('04 Mar', 'BBVA', 'blocked by Private'),
   mail('02 Mar', 'Revolut', 'no-reply@revolut.com', 'Your February statement', ['statement']),
   other(44, 84, 300),
   other(38, 100, 260),
@@ -269,14 +271,61 @@ const statementRows: PreviewRow[] = [
 const everythingRows: PreviewRow[] = [
   mail('14 Mar', 'Holded', 'facturas@holded.com', 'Invoice F-2291, February'),
   mail('14 Mar', 'Iberia', 'confirmaciones@iberia.com', 'Your flight to Lisbon is confirmed'),
-  blocked('14 Mar', 'Google', 'never share: one-time code'),
+  blocked('14 Mar', 'Google', 'blocked by Sign-in and security'),
   mail('13 Mar', 'Amazon', 'auto-confirm@amazon.es', 'Your receipt, order 402-881'),
   mail('12 Mar', 'Vodafone', 'facturas@vodafone.es', 'Your March bill is ready'),
-  blocked('12 Mar', 'Booking.com', 'never share: password reset'),
+  blocked('12 Mar', 'Booking.com', 'blocked by Sign-in and security'),
   mail('11 Mar', 'Spotify', 'news@spotify.com', 'New releases for you'),
   mail('09 Mar', 'Booking.com', 'noreply@booking.com', 'Hotel reservation, 14 to 17 March'),
-  blocked('08 Mar', 'Dr. Elena Vidal', 'never share: added by you'),
+  blocked('08 Mar', 'Dr. Elena Vidal', 'blocked by Private'),
   mail('06 Mar', 'Santander', 'avisos@santander.es', 'Extracto de febrero'),
+]
+
+/** Senders a withheld rule might add, such as from a receipt. Hidden in its preview until they match. */
+const candidateRows: PreviewRow[] = [
+  mail('14 Mar', 'Holded', 'facturas@holded.com', 'Invoice F-2291, February'),
+  mail('14 Mar', 'Iberia', 'confirmaciones@iberia.com', 'Your flight to Lisbon is confirmed'),
+  mail('13 Mar', 'Amazon', 'auto-confirm@amazon.es', 'Your receipt, order 402-881'),
+  mail('12 Mar', 'Vodafone', 'facturas@vodafone.es', 'Your March bill is ready'),
+  mail('10 Mar', 'Iberdrola', 'facturas@iberdrola.es', 'Factura de luz, febrero'),
+  mail('09 Mar', 'Booking.com', 'noreply@booking.com', 'Hotel reservation, 14 to 17 March'),
+  mail('27 Feb', 'Renfe', 'billetes@renfe.es', 'Madrid to Valencia, 6 April'),
+  mail('28 Feb', 'Endesa', 'facturas@endesa.es', 'Factura de gas, enero'),
+  mail('19 Feb', 'Airbnb', 'automated@airbnb.com', 'Reservation confirmed in Porto'),
+]
+
+const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const dayOf = (row: PreviewRow) => (row.kind === 'other' ? 0 : months.indexOf(row.date.slice(3)) * 100 + Number(row.date.slice(0, 2)))
+
+/** Newest first, so senders added in an edit land among the rest. */
+function newestFirst(rows: PreviewRow[]): PreviewRow[] {
+  return [...rows].sort((a, b) => dayOf(b) - dayOf(a))
+}
+
+const signInRows: PreviewRow[] = newestFirst([
+  mail('14 Mar', 'Google', 'no-reply@accounts.google.com', 'Your verification code', ['one-time code']),
+  mail('13 Mar', 'Revolut', 'no-reply@revolut.com', 'New sign-in from Madrid', ['security alert']),
+  mail('12 Mar', 'Booking.com', 'noreply@booking.com', 'Reset your password', ['password reset']),
+  mail('11 Mar', 'Iberia', 'no-reply@iberia.com', 'Your login link', ['login link']),
+  mail('09 Mar', 'Santander', 'avisos@santander.es', 'New sign-in to your account', ['security alert']),
+  mail('07 Mar', 'Amazon', 'account-update@amazon.es', 'Your one-time password', ['one-time code']),
+  mail('05 Mar', 'Holded', 'no-reply@holded.com', 'Change your password', ['password reset']),
+  mail('02 Mar', 'Apple', 'no_reply@email.apple.com', 'Your Apple ID was used to sign in', ['security alert']),
+  ...candidateRows,
+])
+
+const privateRows: PreviewRow[] = newestFirst([
+  mail('12 Mar', 'Dr. Elena Vidal', 'e.vidal@clinic.example', 'Your test results'),
+  mail('08 Mar', 'Dr. Elena Vidal', 'e.vidal@clinic.example', 'Appointment on 20 March'),
+  mail('04 Mar', 'BBVA', 'avisos@bbva.es', 'Tu extracto de febrero'),
+  mail('02 Mar', 'Lucía Ruiz', 'lucia@example.com', 'Sunday lunch', ['Family']),
+  mail('27 Feb', 'BBVA', 'avisos@bbva.es', 'Cambios en tu tarjeta'),
+  mail('21 Feb', 'Pablo Ruiz', 'pablo@example.com', 'Photos from the weekend', ['Family']),
+  ...candidateRows,
+])
+
+const signInBlocks = (): ConditionBlock[] => [
+  [{ id: 'type', kind: 'type', label: 'is a', chips: ['password reset', 'login link', 'one-time code', 'security alert'] }],
 ]
 
 /** A slice of the inbox for new rules. Nothing matches until a condition is added. */
@@ -367,12 +416,76 @@ const ruleSeeds: Record<string, () => RuleSeed> = {
   }),
   everything: () => ({
     ...ruleFields('everything'),
-    description: "All my mail, minus what's on Never share",
+    description: "All my mail, minus what's withheld",
     blocks: [[{ id: 'mailbox', kind: 'mailbox', label: 'is in', chips: ['marta.ruiz@example.com', 'marta@estudioruiz.example'] }]],
     butNot: [],
     readOnly: true,
     rows: everythingRows,
   }),
+  'sign-in-and-security': () => ({
+    ...ruleFields('sign-in-and-security'),
+    description: 'Mail that could let someone into my accounts',
+    blocks: signInBlocks(),
+    butNot: [],
+    withheld: true,
+    rows: signInRows,
+  }),
+  private: () => ({
+    ...ruleFields('private'),
+    description: 'My doctor, my bank and family',
+    blocks: [
+      [{ id: 'from', kind: 'sender', label: 'is from', chips: ['e.vidal@clinic.example', 'bbva.es'] }],
+      [{ id: 'label', kind: 'label', label: 'has label', chips: ['Family'] }],
+    ],
+    butNot: [],
+    withheld: true,
+    rows: privateRows,
+  }),
+}
+
+/** Where a new account reviews the suggested rule before adding it. */
+export const suggestedRulePath = `/rules/new?suggested=${suggestedRule.id}`
+
+/** The suggested rule as a new, unsaved rule, withheld from every connection. */
+function suggestedSeed(): RuleSeed {
+  const count = suggestedRule.covers.reduce((sum, item) => sum + item.count, 0)
+  return {
+    name: suggestedRule.name,
+    description: 'Mail that could let someone into my accounts',
+    basedOnText: 'Suggested by Permaily',
+    count,
+    newCount: count,
+    usedBy: [],
+    usedByNote: 'Not used',
+    blocks: signInBlocks(),
+    butNot: [],
+    unsaved: [],
+    withheld: true,
+    rows: signInRows,
+  }
+}
+
+/** The names of the rules withheld from all, for the read-only "but not" of a built-in rule. */
+export const withheldRuleNames = withheldRules.map((rule) => rule.name)
+
+function sameSender(address: string, entry: string): boolean {
+  const a = address.toLowerCase()
+  const e = entry.toLowerCase()
+  return a === e || a.split('@')[1] === e
+}
+
+/** Adds a sender to the rule's first sender group as an unsaved change, such as from a receipt. */
+function withSender(seed: RuleSeed, sender: string): RuleSeed {
+  const value = sender.trim().toLowerCase()
+  const bi = seed.blocks.findIndex((block) => block.some((g) => g.kind === 'sender'))
+  if (!value || bi < 0 || seed.readOnly) return seed
+  const group = seed.blocks[bi]!.find((g) => g.kind === 'sender')!
+  if (group.chips.some((c) => c.toLowerCase() === value)) return seed
+  const hits = seed.rows.filter((r) => r.kind === 'mail' && sameSender(r.address, value)).length
+  const blocks = seed.blocks.map((block, b) =>
+    b !== bi ? block : block.map((g) => (g.id === group.id ? { ...g, chips: [value, ...g.chips] } : g)),
+  )
+  return { ...seed, blocks, unsaved: [...seed.unsaved, value], count: seed.count + hits, newCount: seed.newCount + hits }
 }
 
 /** A new rule, empty or with a community pack loaded for preview. */
@@ -414,7 +527,8 @@ function newRuleSeed(packId: string | null): RuleSeed {
   }
 }
 
-export function ruleSeed(id: string, packId: string | null): RuleSeed | undefined {
-  if (id === 'new') return newRuleSeed(packId)
-  return ruleSeeds[id]?.()
+export function ruleSeed(id: string, params: { pack: string | null; suggested: string | null; add: string | null }): RuleSeed | undefined {
+  if (id === 'new') return params.suggested === suggestedRule.id ? suggestedSeed() : newRuleSeed(params.pack)
+  const seed = ruleSeeds[id]?.()
+  return seed && params.add ? withSender(seed, params.add) : seed
 }

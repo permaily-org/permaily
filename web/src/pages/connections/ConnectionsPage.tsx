@@ -36,7 +36,7 @@ export function ConnectionsPage() {
 
       <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2">
         <Legend items={legend} />
-        <p className="text-mono text-ink-2">Cells run in Overview's order, from {ruleColumns[0].name} to Never share</p>
+        <p className="text-mono text-ink-2">Cells run in Overview's order, from {ruleColumns[0].name} to what's withheld from all</p>
       </div>
 
       {formerConnections.length > 0 && (

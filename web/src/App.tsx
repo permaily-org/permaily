@@ -10,7 +10,6 @@ import { ConnectionsPage } from './pages/connections/ConnectionsPage.tsx'
 import { ConsentAgentPage } from './pages/consent/ConsentAgentPage.tsx'
 import { ConsentAppPage } from './pages/consent/ConsentAppPage.tsx'
 import { WideningPage } from './pages/consent/WideningPage.tsx'
-import { NeverSharePage } from './pages/never-share/NeverSharePage.tsx'
 import { OverviewPage } from './pages/overview/OverviewPage.tsx'
 import { PacksPage } from './pages/rules/PacksPage.tsx'
 import { RuleEditorPage } from './pages/rules/RuleEditorPage.tsx'
@@ -27,7 +26,6 @@ export function App() {
         <Route path="rules" element={<RulesPage />} />
         <Route path="rules/packs" element={<PacksPage />} />
         <Route path="rules/:id" element={<RuleEditorPage />} />
-        <Route path="never-share" element={<NeverSharePage />} />
         <Route path="activity" element={<ActivityPage />} />
         <Route path="accounts" element={<AccountsPage />} />
         <Route path="settings" element={<SettingsPage />} />

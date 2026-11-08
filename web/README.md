@@ -8,8 +8,7 @@ The web app people use to decide what each app, agent or vendor can read from th
 | --- | --- |
 | Overview | Who can read what, and anything waiting for a decision |
 | Connections | Each app, agent and vendor, what it can read, what it has read, and revoking access |
-| Rules | Rules that define which emails match, including community packs |
-| Never share | Mail no connection can ever receive, such as password resets and login codes |
+| Rules | Rules that define which emails match, including community packs. A rule can be withheld from every connection, and new accounts get one suggested for sign-in and security mail |
 | Activity | A receipt for every email that leaves, showing who got it, which parts and why |
 | Accounts | Connected mailboxes and how Permaily reaches them |
 | Settings | Profile, sign-in, notifications and your data |
@@ -43,10 +42,9 @@ Every screen runs on sample data in `src/data/sample.ts`, and nothing talks to a
 | `/connections` | Every app, agent and vendor | `?state=empty` |
 | `/connections/:id` | One connection, for example `claude` | Revoke shows what it may still hold |
 | `/connections/new` | Connect an agent | |
-| `/rules` | Your rules | `?state=empty` |
+| `/rules` | Your rules | `?state=empty` shows the suggested rule |
 | `/rules/packs` | Community packs | `?state=error`, `?pack=<id>` |
-| `/rules/:id` | Rule editor with a live preview, for example `flights-and-hotels` or `new` | |
-| `/never-share` | Mail no connection can receive | |
+| `/rules/:id` | Rule editor with a live preview, for example `flights-and-hotels`, `sign-in-and-security` or `new` | `/rules/new?suggested=sign-in-and-security`, `?add=<sender>` |
 | `/activity` | Receipts for every email that left | `?state=empty` |
 | `/accounts` | Connected mailboxes | `?state=filter-behind`, `?state=mailbox-error` |
 | `/accounts/new` | Connect a mailbox | |

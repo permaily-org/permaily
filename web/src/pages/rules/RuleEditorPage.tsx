@@ -1,22 +1,24 @@
 import { ChevronLeft, Pencil } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
-import { Button, ButtonLink, Notice, Tag, TextLink } from '../../components/ui/index.ts'
+import { Bar, Button, ButtonLink, Notice, Switch, Tag, TextLink } from '../../components/ui/index.ts'
 import { attention } from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import { Conditions } from './Conditions.tsx'
 import { connectionNames, joinNames, ruleSeed, type ConditionBlock, type RuleSeed } from './data.ts'
-import { initialDraft, preview, savedDraft, type Draft, type Preview } from './draft.ts'
+import { emails, initialDraft, preview, savedDraft, type Draft, type Preview } from './draft.ts'
 import { PreviewPane } from './PreviewPane.tsx'
 import { UsedBy } from './UsedBy.tsx'
 
 export function RuleEditorPage() {
   const { id = 'new' } = useParams()
   const [params] = useSearchParams()
-  const packId = params.get('pack')
-  const seed = useMemo(() => ruleSeed(id, packId), [id, packId])
+  const pack = params.get('pack')
+  const suggested = params.get('suggested')
+  const add = params.get('add')
+  const seed = useMemo(() => ruleSeed(id, { pack, suggested, add }), [id, pack, suggested, add])
   if (!seed) return <UnknownRule />
-  return <RuleEditor key={`${id}:${packId ?? ''}`} ruleId={id} seed={seed} />
+  return <RuleEditor key={`${id}:${pack ?? ''}:${suggested ?? ''}:${add ?? ''}`} ruleId={id} seed={seed} />
 }
 
 function packChipSet(seed: RuleSeed): Set<string> | null {
@@ -37,13 +39,19 @@ function RuleEditor({ ruleId, seed }: { ruleId: string; seed: RuleSeed }) {
   const [name, setName] = useState(seed.name)
   const [description, setDescription] = useState(seed.description)
   const [hint, setHint] = useState<string | null>(null)
+  const [withhold, setWithhold] = useState(Boolean(seed.withheld))
   const descriptionId = useId()
 
   const result = useMemo(() => preview(seed, isNew, draft), [seed, isNew, draft])
   const packChips = useMemo(() => packChipSet(seed), [seed])
   const own = ownChips(draft.blocks, packChips)
   const saved = useMemo(() => savedDraft(seed, isNew), [seed, isNew])
-  const changed = isNew || name !== seed.name || description !== seed.description || JSON.stringify(draft) !== JSON.stringify(saved)
+  const changed =
+    isNew ||
+    name !== seed.name ||
+    description !== seed.description ||
+    withhold !== Boolean(seed.withheld) ||
+    JSON.stringify(draft) !== JSON.stringify(saved)
   const hasConditions = draft.blocks.some((block) => block.some((g) => g.chips.length > 0))
   const flag = attention.find((item) => item.to === `/rules/${ruleId}`)
   const readOnly = Boolean(seed.readOnly)
@@ -65,7 +73,12 @@ function RuleEditor({ ruleId, seed }: { ruleId: string; seed: RuleSeed }) {
           <div className="mt-3 flex items-center justify-between gap-4">
             <RuleTitle name={name} readOnly={readOnly} onRename={setName} />
             <div className="flex shrink-0 items-center gap-2">
-              {seed.usedBy.length > 0 ? (
+              {withhold ? (
+                <>
+                  <Bar width={14} height={14} />
+                  <span className="text-small text-ink-2">Withheld from all</span>
+                </>
+              ) : seed.usedBy.length > 0 ? (
                 <>
                   <span className="text-small text-ink-2">Used by</span>
                   <UsedBy initials={seed.usedBy} note={seed.usedByNote} />
@@ -112,6 +125,16 @@ function RuleEditor({ ruleId, seed }: { ruleId: string; seed: RuleSeed }) {
             {hint ?? 'Only this sentence goes to the model. Your mail does not.'}
           </p>
 
+          {!readOnly && (
+            <div className="mt-3 flex items-center justify-between gap-4 border-y border-rule py-2.5">
+              <div className="flex min-w-0 flex-col">
+                <span className="text-body">Withhold from every connection</span>
+                <span className="text-small text-ink-2">Wins over every other rule, including access you approve later.</span>
+              </div>
+              <Switch checked={withhold} onChange={setWithhold} label="Withhold from every connection" />
+            </div>
+          )}
+
           <div className="mt-3">
             <Conditions
               blocks={draft.blocks}
@@ -138,6 +161,8 @@ function RuleEditor({ ruleId, seed }: { ruleId: string; seed: RuleSeed }) {
 
         <SaveBar
           seed={seed}
+          isNew={isNew}
+          withhold={withhold}
           result={result}
           changed={changed}
           canSave={changed && hasConditions}
@@ -148,6 +173,7 @@ function RuleEditor({ ruleId, seed }: { ruleId: string; seed: RuleSeed }) {
       <PreviewPane
         preview={result}
         readOnly={readOnly}
+        withheld={withhold}
         onExclude={exclude}
         onInclude={(entry) => setDraft((d) => ({ ...d, butNot: d.butNot.filter((e) => e !== entry) }))}
       />
@@ -228,12 +254,16 @@ function RuleTitle({ name, readOnly, onRename }: { name: string; readOnly: boole
 
 function SaveBar({
   seed,
+  isNew,
+  withhold,
   result,
   changed,
   canSave,
   onLeave,
 }: {
   seed: RuleSeed
+  isNew: boolean
+  withhold: boolean
   result: Preview
   changed: boolean
   canSave: boolean
@@ -244,7 +274,7 @@ function SaveBar({
   if (seed.readOnly) {
     return (
       <div className={bar}>
-        <p className="text-small text-ink-2">Built-in rules can't be edited. Never share always applies on top of them.</p>
+        <p className="text-small text-ink-2">Built-in rules can't be edited. Rules withheld from all still apply on top of them.</p>
         <div className="mt-2.5">
           <ButtonLink to="/rules" variant="secondary">
             Back to rules
@@ -260,7 +290,43 @@ function SaveBar({
   let notice: ReactNode = null
   let saveLabel = 'Save rule'
 
-  if (users > 0 && n > 0) {
+  const count = result.count
+  const wasWithheld = Boolean(seed.withheld)
+
+  if (withhold && isNew) {
+    notice = (
+      <Notice tone="neutral" title={`Saving withholds ${emails(count)} from every connection.`}>
+        That includes connections you approve later. You can change or turn off this rule at any time.
+      </Notice>
+    )
+  } else if (withhold && !wasWithheld && users > 0) {
+    saveLabel = 'Save and withhold'
+    notice = (
+      <Notice title={`${names} ${users === 1 ? 'stops' : 'stop'} getting the ${emails(count)} this rule matches.`}>
+        A withheld rule wins over every connection, including the ones that use it.
+      </Notice>
+    )
+  } else if (withhold && n > 0) {
+    notice = (
+      <Notice tone="neutral" title={`This edit withholds ${emails(n)} more.`}>
+        No connection gets them, whatever its own rules match.
+      </Notice>
+    )
+  } else if (withhold && result.dropped > 0) {
+    notice = (
+      <Notice title={`${emails(result.dropped)} stop being withheld.`}>Connections whose rules match them can read them again.</Notice>
+    )
+  } else if (withhold && changed) {
+    notice = <Notice tone="neutral" title={wasWithheld ? 'This edit withholds nothing new.' : `Saving withholds ${emails(count)} from every connection.`} />
+  } else if (withhold) {
+    notice = <p className="text-small text-ink-2">Withheld from every connection, including ones you approve later.</p>
+  } else if (wasWithheld) {
+    notice = (
+      <Notice title={`${emails(count)} stop being withheld.`}>
+        Connections whose rules match them can read them again. Nothing is shared until a connection uses this rule.
+      </Notice>
+    )
+  } else if (users > 0 && n > 0) {
     saveLabel = 'Save and review access'
     notice = (
       <Notice title={`This edit shares ${n.toLocaleString('en-US')} more ${n === 1 ? 'email' : 'emails'}.`}>

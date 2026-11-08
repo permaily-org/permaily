@@ -2,13 +2,15 @@ import { Plus, X } from 'lucide-react'
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { TextAction } from '../../components/ui/index.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
-import type { ConditionBlock, GroupKind } from './data.ts'
+import { withheldRuleNames, type ConditionBlock, type GroupKind } from './data.ts'
 
 const placeholders: Record<GroupKind, string> = {
   data: 'type of data',
+  type: 'kind of mail',
   sender: 'domain or address',
   subject: 'word',
   header: 'header name',
+  label: 'Gmail label',
   mailbox: 'address',
 }
 
@@ -68,7 +70,7 @@ export function Conditions({
         </p>
         <Box>
           {readOnly ? (
-            <GroupRow label="is on" kind="sender" chips={['Never share']} readOnly onChange={() => {}} />
+            <GroupRow label="is withheld by" kind="sender" chips={withheldRuleNames} readOnly onChange={() => {}} />
           ) : (
             <GroupRow label="from" kind="sender" chips={butNot} onChange={onButNotChange} />
           )}

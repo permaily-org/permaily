@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Button, Count, Headline, StepMarker, TextAction, TextLink, type StepState } from '../../components/ui/index.ts'
 import { cx } from '../../lib/styles.ts'
+import { suggestedRulePath } from '../rules/data.ts'
 import { expectations, filterSearch, forwardingAddress, forwardingMailbox } from './data.ts'
 import { FlowHeader } from './FlowHeader.tsx'
 
@@ -67,7 +68,7 @@ export function ForwardingSetupPage() {
                 <FilterInstructions />
               ) : (
                 <p className="text-body text-ink-2">
-                  You paste a search into a new Gmail filter. We confirm when the first email arrives, and then you review what's on Never share.
+                  You paste a search into a new Gmail filter. We confirm when the first email arrives, and then suggest a rule that withholds sign-in and security mail.
                 </p>
               )}
             </OpenStep>
@@ -155,10 +156,11 @@ function FilterInstructions() {
       <div className="mt-3 border-t border-rule pt-3">
         <p className="font-medium">When the first email arrives</p>
         <p className="mt-0.5 text-small text-ink-2">
-          We confirm it here and email you. Then you review what's on Never share, so nothing you'd rather keep can leave.
+          We confirm it here and email you. Then we suggest Sign-in and security, a rule that withholds password resets and login codes from
+          every connection.
         </p>
-        <TextLink to="/never-share" size="sm" className="mt-2.5">
-          Review Never share
+        <TextLink to={suggestedRulePath} size="sm" className="mt-2.5">
+          Review the suggested rule
         </TextLink>
       </div>
     </>
