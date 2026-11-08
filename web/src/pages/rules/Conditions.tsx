@@ -1,6 +1,6 @@
 import { Plus, X } from 'lucide-react'
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { TextAction } from '../../components/ui/index.ts'
+import { InfoTip, TextAction } from '../../components/ui/index.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import type { ConditionBlock, GroupKind } from './data.ts'
 
@@ -35,9 +35,16 @@ export function Conditions({
   return (
     <>
       <div role="group" aria-labelledby={matchId}>
-        <p id={matchId} className="mb-1.5 text-small text-ink-2">
-          Match mail that
-        </p>
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <p id={matchId} className="text-small text-ink-2">
+            Match mail that
+          </p>
+          {usesModel && (
+            <InfoTip label="How words and topics are checked" align="start">
+              Words and topics are checked by a model inside Permaily's verified service. Your mail doesn't leave it.
+            </InfoTip>
+          )}
+        </div>
         {blocks.map((block, bi) => (
           <Fragment key={bi}>
             {bi > 0 && <p className="px-3 py-1.5 font-mono text-mono">or</p>}
@@ -66,11 +73,6 @@ export function Conditions({
         </Box>
       </div>
 
-      {usesModel && (
-        <p className="mt-2 font-mono text-micro text-ink-2">
-          Words and topics are checked by a model inside Permaily's verified service. Your mail doesn't leave it.
-        </p>
-      )}
     </>
   )
 }
@@ -118,9 +120,10 @@ function GroupRow({
     onChange(chips.filter((_, i) => i !== index))
   }
 
+  // On a phone the label goes above its chips, so they get the whole width.
   return (
-    <div role="group" aria-label={label} className="flex items-start gap-3">
-      <span className="w-[98px] shrink-0 py-0.5 text-small whitespace-nowrap">{label}</span>
+    <div role="group" aria-label={label} className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:gap-3">
+      <span className="text-small whitespace-nowrap sm:w-[98px] sm:shrink-0 sm:py-0.5">{label}</span>
       <div ref={listRef} className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-2">
         {visible.map((chip, i) => (
           <Chip key={chip} value={chip} onRemove={() => remove(i)} />
@@ -136,23 +139,24 @@ function GroupRow({
   )
 }
 
+/** A long value is cut short rather than pushing past its row. The remove button reaches 24px around its icon. */
 function Chip({ value, onRemove }: { value: string; onRemove?: () => void }) {
   return (
     <span
       className={cx(
-        'inline-flex h-[22px] items-center gap-0.5 rounded-sm bg-sunken pl-2 font-mono text-mono text-ink',
+        'inline-flex h-[22px] max-w-full items-center gap-0.5 rounded-sm bg-sunken pl-2 font-mono text-mono text-ink',
         onRemove ? 'pr-1' : 'pr-2',
         'has-[button:focus-visible]:outline-2 has-[button:focus-visible]:outline-offset-2 has-[button:focus-visible]:outline-ink',
       )}
     >
-      {value}
+      <span className="min-w-0 truncate">{value}</span>
       {onRemove && (
         <button
           type="button"
           data-remove
           onClick={onRemove}
           aria-label={`Remove ${value}`}
-          className="inline-flex size-3.5 items-center justify-center rounded-[1px] text-ink-2 outline-none hover:bg-rule hover:text-ink"
+          className="relative inline-flex size-3.5 shrink-0 items-center justify-center rounded-[1px] text-ink-2 outline-none before:absolute before:-inset-[5px] hover:bg-rule hover:text-ink"
         >
           <X aria-hidden size={12} strokeWidth={2} />
         </button>
@@ -209,7 +213,7 @@ function AddChip({ label, placeholder, onAdd }: { label: string; placeholder: st
           commit()
           setOpen(false)
         }}
-        className={cx('h-[22px] w-40 rounded-sm border border-ink bg-transparent px-1.5 font-mono text-mono placeholder:text-ink-3', focusRing)}
+        className={cx('h-[22px] w-40 max-w-full rounded-sm border border-ink bg-transparent px-1.5 font-mono text-mono placeholder:text-ink-3', focusRing)}
       />
     )
   }
@@ -221,7 +225,10 @@ function AddChip({ label, placeholder, onAdd }: { label: string; placeholder: st
       data-add
       aria-label={label}
       onClick={() => setOpen(true)}
-      className={cx('inline-flex size-[22px] items-center justify-center rounded-sm border border-rule text-ink-2 hover:border-ink hover:text-ink', focusRing)}
+      className={cx(
+        'relative inline-flex size-[22px] items-center justify-center rounded-sm border border-rule text-ink-2 before:absolute before:-inset-0.5 hover:border-ink hover:text-ink',
+        focusRing,
+      )}
     >
       <Plus aria-hidden size={14} />
     </button>

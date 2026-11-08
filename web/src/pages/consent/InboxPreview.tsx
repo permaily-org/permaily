@@ -60,7 +60,11 @@ export function InboxPreview({
             <p aria-live="polite" className="font-mono text-mono text-ink-2">
               Showing {formatCount(shown)} of {formatCount(total)} {focus}
             </p>
-            {canExpand && <TextAction onClick={() => setExpanded((v) => !v)}>{expanded ? 'Show fewer' : 'Show all'}</TextAction>}
+            {canExpand && (
+              <TextAction onClick={() => setExpanded((v) => !v)}>
+                {expanded ? 'Show fewer' : 'Show all'}
+              </TextAction>
+            )}
           </div>
         </div>
       )}
@@ -87,11 +91,17 @@ function visibleRows(rows: PreviewRow[], view: View, expanded: boolean, focus: '
   return rows.slice(0, Math.max(size, last + 1))
 }
 
+/** The row action shows on hover or focus. Touch screens can't hover, so there it always shows. */
 function Row({ row, action }: { row: PreviewRow; action?: (row: SharedRow) => ReactNode }) {
   if (action && (row.kind === 'shared' || row.kind === 'soft' || row.kind === 'new')) {
     return (
       <div className="group hover:bg-sunken focus-within:bg-sunken">
-        <MailRow {...row} trailing={<span className="pr-2 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">{action(row)}</span>} />
+        <MailRow
+          {...row}
+          trailing={
+            <span className="pr-2 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">{action(row)}</span>
+          }
+        />
       </div>
     )
   }

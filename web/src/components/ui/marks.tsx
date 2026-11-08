@@ -13,13 +13,14 @@ export function Tag({ children, className }: { children: ReactNode; className?: 
 }
 
 /** Highlighted text. Only for content that is shared: bright means shared or new, soft means partly shared or already shared. */
-export function Mark({ children, tone = 'shared', size = 'md' }: { children: ReactNode; tone?: Share; size?: 'md' | 'sm' }) {
+export function Mark({ children, tone = 'shared', size = 'md', className }: { children: ReactNode; tone?: Share; size?: 'md' | 'sm'; className?: string }) {
   return (
     <span
       className={cx(
         'inline-flex px-1.5 py-0.5',
         tone === 'soft' ? 'bg-highlight-soft text-on-highlight-soft' : 'bg-highlight text-on-highlight',
         size === 'sm' ? 'text-small' : 'text-body',
+        className,
       )}
     >
       {children}

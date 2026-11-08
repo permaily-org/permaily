@@ -8,11 +8,14 @@ export function ViewSwitch<T extends string>({
   value,
   onChange,
   label,
+  size = 'md',
 }: {
   options: Array<{ value: T; label: ReactNode }>
   value: T
   onChange: (value: T) => void
   label: string
+  /** sm fits beside a section heading. */
+  size?: 'md' | 'sm'
 }) {
   return (
     <div role="radiogroup" aria-label={label} className="inline-flex">
@@ -26,7 +29,8 @@ export function ViewSwitch<T extends string>({
             aria-checked={selected}
             onClick={() => onChange(option.value)}
             className={cx(
-              'border border-ink px-[11px] py-[5px] text-small font-medium',
+              'border border-ink font-medium',
+              size === 'sm' ? 'px-2 py-px text-mono' : 'px-[11px] py-[5px] text-small',
               i > 0 && '-ml-px',
               selected ? 'bg-ink text-paper' : 'text-ink hover:bg-sunken',
               focusRing,

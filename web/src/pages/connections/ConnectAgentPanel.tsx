@@ -1,13 +1,10 @@
 import { Bar, Headline } from '../../components/ui/index.ts'
 
 const promises = [
-  {
-    title: 'It gets a Permaily token, never a Gmail token',
-    detail: "The token only works for what you approve, and it can't reach anything else in your account.",
-  },
-  { title: "It can ask for more, but can't take more", detail: 'If it needs something new, you get a new approval screen.' },
-  { title: 'Every email it opens gets a receipt', detail: 'You can see exactly what left, and when.' },
-  { title: 'You can revoke it here at any time', detail: "Access ends at once. Mail it has already received can't be recalled." },
+  'It gets a Permaily token, never a Gmail token',
+  "It can ask for more, but can't take more",
+  'Every email it opens gets a receipt',
+  'You can revoke it here at any time',
 ]
 
 /** What connecting gives the agent: nothing until the person chooses. */
@@ -19,12 +16,10 @@ export function ConnectAgentPanel() {
         <Bar width={56} height={38} />
         <span id="connect-gives">Nothing, yet.</span>
       </Headline>
-      <p className="mt-5 text-ink-2">Connecting alone gives your agent no mail. You choose what it can read on the next screen.</p>
-      <ul className="mt-5 border-t border-rule-strong">
-        {promises.map(({ title, detail }) => (
-          <li key={title} className="flex flex-col gap-0.5 border-b border-rule py-3">
-            <h3 className="font-medium">{title}</h3>
-            <p className="text-small text-ink-2">{detail}</p>
+      <ul className="mt-6 border-t border-rule-strong">
+        {promises.map((promise) => (
+          <li key={promise} className="border-b border-rule py-3 font-medium">
+            {promise}
           </li>
         ))}
       </ul>

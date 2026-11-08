@@ -1,14 +1,14 @@
 import { ChevronRight } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { Bar, ButtonLink, Mark, SectionHeading, TextLink } from '../../components/ui/index.ts'
-import { connectionById, formatCount, rules, type Receipt } from '../../data/sample.ts'
+import { Bar, ButtonLink, InfoTip, Mark, SectionHeading, TextLink } from '../../components/ui/index.ts'
+import { connectionById, formatCount, rules, vendorOf, type Receipt } from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import { domainOf, fullTime, previousReceipt, shortHash } from './data.ts'
 
-function Fact({ label, children }: { label: string; children: ReactNode }) {
+function Fact({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
     <div className="flex min-h-[34px] items-center gap-4 border-b border-rule py-[5px]">
-      <dt className="w-[80px] shrink-0 text-small text-ink-2">{label}</dt>
+      <dt className="flex w-[80px] shrink-0 items-center gap-1.5 text-small text-ink-2">{label}</dt>
       <dd className="flex min-w-0 flex-1 items-center gap-3">{children}</dd>
     </div>
   )
@@ -16,7 +16,9 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 
 export function ReceiptPanel({ receipt }: { receipt: Receipt }) {
   const connection = connectionById(receipt.connectionId)
-  const name = connection?.name ?? receipt.connectionId
+  const vendor = connection && vendorOf(connection)
+  const name = vendor?.name ?? receipt.connectionId
+  const page = `/connections/${receipt.connectionId}`
   const domain = domainOf(receipt.from)
   const removedBy = receipt.removed && rules.find((rule) => rule.id === receipt.removed?.ruleId)
 
@@ -27,7 +29,7 @@ export function ReceiptPanel({ receipt }: { receipt: Receipt }) {
       <p className="mt-1 font-mono text-mono">{fullTime(receipt)}</p>
 
       <section aria-labelledby="what-left" className="mt-5">
-        <SectionHeading id="what-left" title="What left" action={<TextLink to={`/connections/${receipt.connectionId}`}>See exactly what left</TextLink>} />
+        <SectionHeading id="what-left" title="What left" />
         <dl>
           <Fact label="From">
             <span className="truncate font-mono text-small">{receipt.from}</span>
@@ -60,17 +62,21 @@ export function ReceiptPanel({ receipt }: { receipt: Receipt }) {
             </Fact>
           )}
         </dl>
-        {receipt.removed && <p className="mt-2 text-small text-ink-2">{name} got the email without it, and wasn't told.</p>}
       </section>
 
       <section aria-labelledby="why-allowed" className="mt-5">
         <SectionHeading id="why-allowed" title="Why it was allowed" />
         <dl>
+          <Fact label="Connection">
+            <TextLink to={page} size="sm">
+              {connection?.name ?? receipt.connectionId}
+            </TextLink>
+          </Fact>
           <Fact label="Query">
-            <span className={connection?.kind === 'Agent' ? 'font-mono text-mono' : 'text-body'}>{receipt.query}</span>
+            <span className={receipt.query.startsWith('"') ? 'font-mono text-mono' : 'text-body'}>{receipt.query}</span>
           </Fact>
           <Fact label="Access">
-            <span className="text-body">{receipt.approved}</span>
+            <span className="text-body">{connection?.approved}</span>
           </Fact>
           <Fact label="Request">
             <span className="font-mono text-mono">{receipt.request}</span>
@@ -88,8 +94,8 @@ export function ReceiptPanel({ receipt }: { receipt: Receipt }) {
             New rule for this sender
           </ButtonLink>
         </div>
-        <TextLink to={`/connections/${receipt.connectionId}`} tone="danger" className="mt-2.5">
-          Revoke {name}'s access
+        <TextLink to={page} tone="danger" className="mt-2.5">
+          Revoke {connection ? `${name} · ${connection.name}` : name}
         </TextLink>
       </section>
 
@@ -124,16 +130,22 @@ function TechnicalRecord({ receipt }: { receipt: Receipt }) {
               <span className="font-mono text-mono">{shortHash(receipt.id)}</span>
             </Fact>
             {previous && (
-              <Fact label="Previous">
+              <Fact
+                label={
+                  <>
+                    Previous
+                    <InfoTip label="About the hash chain" align="start">
+                      Each receipt carries the hash of the one before it, so a changed or missing receipt breaks the chain.
+                    </InfoTip>
+                  </>
+                }
+              >
                 <span className="font-mono text-mono">
                   {previous.id} <span className="text-ink-2">{shortHash(previous.id)}</span>
                 </span>
               </Fact>
             )}
           </dl>
-          <p className="mt-2.5 text-small text-ink-2">
-            Each receipt carries the hash of the one before it, so a changed or missing receipt breaks the chain.
-          </p>
         </div>
       )}
     </div>

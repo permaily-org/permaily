@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { Button } from '../../components/ui/index.ts'
-import { connections, receipts, rules } from '../../data/sample.ts'
+import { useRules } from '../../data/ruleScopes.ts'
+import { connections, receipts, vendors } from '../../data/sample.ts'
 import { downloadText } from '../activity/data.ts'
 
 const filename = 'permaily-export.json'
@@ -11,26 +12,39 @@ function formatSize(bytes: number): string {
 
 /** The export ready state, shown in place under Your data. */
 export function ExportReady() {
+  const rules = useRules()
   const json = useMemo(
     () =>
       JSON.stringify(
         {
           rules,
-          access: connections.map(({ id, name, kind, asksFor, query, parts, actions, time, ends }) => ({ id, name, kind, asksFor, query, parts, actions, time, ends })),
+          vendors,
+          connections: connections.map(({ id, vendorId, name, asksFor, query, trigger, webhook, parts, actions, time, ends }) => ({
+            id,
+            vendorId,
+            name,
+            asksFor,
+            query,
+            trigger,
+            webhook: webhook?.url,
+            parts,
+            actions,
+            time,
+            ends,
+          })),
           receipts,
         },
         null,
         2,
       ),
-    [],
+    [rules],
   )
   const size = formatSize(new Blob([json]).size)
 
   return (
     <div role="status" className="border-b border-rule pt-5 pb-6">
       <h3 className="text-title font-medium">Your export is ready.</h3>
-      <p className="mt-1.5 text-small text-ink-2">It holds your rules, access settings and receipts. It doesn't include email.</p>
-      <div className="mt-3.5 flex items-center justify-between gap-4 border-y border-rule py-2.5 font-mono text-mono">
+      <div className="mt-3.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-y border-rule py-2.5 font-mono text-mono">
         <span>{filename}</span>
         <span className="text-ink-2">{size}, link ends in 24 h</span>
       </div>

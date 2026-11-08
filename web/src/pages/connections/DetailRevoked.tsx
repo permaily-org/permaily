@@ -1,16 +1,26 @@
 import { Check } from 'lucide-react'
 import { useState } from 'react'
 import { Button, Notice } from '../../components/ui/index.ts'
-import type { Connection, Receipt } from '../../data/sample.ts'
+import type { Connection, Receipt, Vendor } from '../../data/sample.ts'
 import { deletionRequest, revokedAt } from './DetailData.ts'
 
 type CopyState = 'idle' | 'copied' | 'failed'
 
-/** Says what revoking did and didn't do, and writes the deletion request for the person. */
-export function DetailRevokedNotice({ connection, items, headersOnly }: { connection: Connection; items: Receipt[]; headersOnly: boolean }) {
+/** Says what revoking didn't do, and writes the deletion request for the person. */
+export function DetailRevokedNotice({
+  vendor,
+  connection,
+  items,
+  headersOnly,
+}: {
+  vendor: Vendor
+  connection: Connection
+  items: Receipt[]
+  headersOnly: boolean
+}) {
   const [copy, setCopy] = useState<CopyState>('idle')
   const held = connection.hasRead > 0
-  const request = deletionRequest(connection, items, headersOnly)
+  const request = deletionRequest(vendor, connection, items, headersOnly)
 
   async function copyRequest() {
     try {
@@ -30,14 +40,12 @@ export function DetailRevokedNotice({ connection, items, headersOnly }: { connec
 
   return (
     <div className="mt-4">
-      <Notice tone="neutral" title={`Access ended at ${revokedAt}. ${connection.name} can't read anything new.`} action={action}>
-        {held
-          ? `Permaily can't recall what ${connection.name} has already read. You can ask its provider to delete it, and we've written the request for you.`
-          : `It hadn't read anything, so there's nothing to ask its provider to delete.`}
+      <Notice tone="neutral" title={`Access ended at ${revokedAt}.`} action={action}>
+        {held ? `Permaily can't recall what it already read. ${vendor.name} can delete it.` : undefined}
       </Notice>
       {copy === 'failed' && (
         <label className="mt-3 block">
-          <span className="text-small text-ink-2">Couldn't copy to the clipboard. Select the request below and copy it yourself.</span>
+          <span className="text-small text-ink-2">Couldn't copy. Select the request and copy it yourself.</span>
           <textarea
             readOnly
             value={request}

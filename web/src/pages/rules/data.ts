@@ -2,17 +2,9 @@
   Page-only content for Rules and the rule editor.
   Shared numbers come from src/data/sample.ts. Company senders are illustrative.
 */
-import { connections, rules, suggestedRule, type Rule, type RuleEffect } from '../../data/sample.ts'
+import { everyConnection, rules, suggestedRule, type AppliesTo, type RuleEffect } from '../../data/sample.ts'
 
-/** "Trip App", "Trip App and Claude", "Trip App, Claude and Ledgerly" */
-export function joinNames(names: string[]): string {
-  if (names.length < 2) return names.join('')
-  return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
-}
-
-export function connectionName(id: string): string {
-  return connections.find((c) => c.id === id)?.name ?? id
-}
+export { joinNames } from '../../data/sample.ts'
 
 /* Rule editor */
 
@@ -33,10 +25,9 @@ export type PreviewMail = { id: string; date: string; sender: string; address: s
 export type RuleSeed = {
   name: string
   description: string
-  basedOnText: string
   effect: RuleEffect
   removes: string
-  appliesTo: Rule['appliesTo']
+  appliesTo: AppliesTo
   /** Matches with the conditions as loaded. */
   count: number
   /** How many of those the saved rule didn't match yet. */
@@ -141,8 +132,8 @@ const inboxRows: PreviewMail[] = newestFirst([
 function ruleFields(id: string) {
   const rule = rules.find((r) => r.id === id)
   if (!rule) throw new Error(`Unknown rule ${id}`)
-  const { name, basedOnText, matches, effect, removes, appliesTo } = rule
-  return { name, basedOnText, count: matches, newCount: 0, effect, removes: removes ?? '', appliesTo, butNot: [], unsaved: [] }
+  const { name, matches, effect, removes, appliesTo } = rule
+  return { name, count: matches, newCount: 0, effect, removes: removes ?? '', appliesTo, butNot: [], unsaved: [] }
 }
 
 const ruleSeeds: Record<string, () => RuleSeed> = {
@@ -199,10 +190,9 @@ function suggestedSeed(): RuleSeed {
   return {
     name: suggestedRule.name,
     description: 'Mail that could let someone into my accounts',
-    basedOnText: 'Suggested by Permaily',
     effect: 'hold',
     removes: '',
-    appliesTo: 'all',
+    appliesTo: everyConnection,
     count,
     newCount: count,
     blocks: signInBlocks(),
@@ -216,10 +206,9 @@ function newRuleSeed(): RuleSeed {
   return {
     name: 'New rule',
     description: '',
-    basedOnText: 'Your own rule',
     effect: 'hold',
     removes: '',
-    appliesTo: 'all',
+    appliesTo: everyConnection,
     count: 0,
     newCount: 0,
     blocks: [

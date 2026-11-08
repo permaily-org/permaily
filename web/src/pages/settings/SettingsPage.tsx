@@ -1,18 +1,19 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Button, Dialog, SectionHeading, TextAction, ViewSwitch } from '../../components/ui/index.ts'
+import { Button, Dialog, InfoTip, SectionHeading, TextAction, ViewSwitch } from '../../components/ui/index.ts'
 import { connections, user } from '../../data/sample.ts'
+import { pagePadding } from '../../lib/styles.ts'
 import { solidDanger } from '../accounts/styles.ts'
 import { ExportReady } from './ExportReady.tsx'
 import { EditableRow, NotificationRow, SettingRow } from './rows.tsx'
 import { applyTheme, readTheme, saveTheme, type Theme } from '../../lib/theme.ts'
 
 const notificationOptions = [
-  { id: 'requests', title: 'New access requests', detail: 'An app or agent wants to connect', on: true },
-  { id: 'widening', title: 'Access that would widen', detail: 'A connection asks for more than you approved', on: true },
-  { id: 'unusual', title: 'Unusual rule activity', detail: 'A rule matches far more mail than usual', on: true },
-  { id: 'unused', title: 'Unused access', detail: "A connection hasn't used its access in 60 days", on: true },
-  { id: 'weekly', title: 'Weekly summary', detail: 'What left your mailbox this week', on: false },
+  { id: 'requests', title: 'New connection requests', on: true },
+  { id: 'widening', title: 'Requests for more access', on: true },
+  { id: 'unusual', title: 'A rule matching far more than usual', on: true },
+  { id: 'unused', title: 'Connections unused for 60 days', on: true },
+  { id: 'weekly', title: 'Weekly summary of what left', on: false },
 ]
 
 const themeOptions: Array<{ value: Theme; label: string }> = [
@@ -25,10 +26,10 @@ export function SettingsPage() {
   const [deleting, setDeleting] = useState(false)
 
   return (
-    <div className="px-14 pt-10 pb-16">
+    <div className={pagePadding}>
       <h1 className="text-display font-medium">Settings</h1>
 
-      <div className="mt-8 grid grid-cols-2 items-start gap-14">
+      <div className="mt-8 grid grid-cols-1 items-start gap-8 xl:grid-cols-2 xl:gap-14">
         <div className="flex flex-col gap-8">
           <Profile />
           <SignIn />
@@ -40,15 +41,10 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <section aria-labelledby="delete-account" className="mt-8 flex items-center gap-6 border border-danger px-5 py-4">
-        <div className="min-w-0 flex-1">
-          <h2 id="delete-account" className="font-medium">
-            Delete your account
-          </h2>
-          <p className="mt-0.5 text-small text-ink-2">
-            Removes your rules, receipts and tokens straight away, and ends all access. Permaily can't recall mail your connections have already received.
-          </p>
-        </div>
+      <section aria-labelledby="delete-account" className="mt-8 flex flex-col items-start gap-3 border border-danger px-4 py-4 sm:flex-row sm:items-center sm:gap-6 sm:px-5">
+        <h2 id="delete-account" className="min-w-0 flex-1 font-medium">
+          Delete your account
+        </h2>
         <Button variant="danger" onClick={() => setDeleting(true)}>
           Delete my account
         </Button>
@@ -115,7 +111,7 @@ function SignIn() {
         {sessions.length === 1 ? '1 device signed in' : `${sessions.length} devices signed in`}
       </SettingRow>
       {reviewing && (
-        <ul className="border-b border-rule py-1.5 pl-[132px]">
+        <ul className="border-b border-rule py-1.5 sm:pl-[132px]">
           {sessions.map((session) => (
             <li key={session.id} className="flex items-center justify-between gap-3 py-1.5 text-small">
               <span>
@@ -180,7 +176,6 @@ function Notifications() {
         <NotificationRow
           key={option.id}
           title={option.title}
-          detail={option.detail}
           checked={on.has(option.id)}
           onChange={(checked) => toggle(option.id, checked)}
         />
@@ -202,9 +197,16 @@ function YourData() {
         onSave={setRetention}
         options={['Kept for 30 days', 'Kept for 90 days', 'Kept for 1 year', 'Kept for 2 years']}
       />
-      <SettingRow label="Queued mail">0 emails. Deleted after delivery, or after 7 days</SettingRow>
+      <SettingRow label="Queued mail">
+        <span className="inline-flex items-center gap-1.5">
+          0 emails
+          <InfoTip label="When queued mail is deleted" align="start">
+            Deleted after delivery, or after 7 days
+          </InfoTip>
+        </span>
+      </SettingRow>
       <SettingRow label="Export" action={exported ? undefined : <TextAction onClick={() => setExported(true)}>Export</TextAction>}>
-        Rules, access settings and receipts
+        Rules, connections and receipts. No email
       </SettingRow>
       {exported && <ExportReady />}
     </section>
@@ -218,8 +220,8 @@ function DeleteAccountDialog({ open, onClose }: { open: boolean; onClose: () => 
     <Dialog open={open} onClose={onClose} label="Delete your account">
       <h2 className="text-heading font-medium">Delete your account?</h2>
       <p className="mt-3 text-body text-ink-2">
-        All {connections.length} connections lose access now. Your rules and receipts are deleted, and this can't be undone. Permaily can't recall mail
-        connections have already received.
+        All {connections.length} connections lose access now, and your rules and receipts are deleted. This can't be undone, and Permaily can't recall
+        mail connections have already received.
       </p>
       <div className="mt-6 flex flex-wrap gap-3">
         <button

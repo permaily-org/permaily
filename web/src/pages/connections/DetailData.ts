@@ -1,4 +1,4 @@
-import { user, type Connection, type Receipt } from '../../data/sample.ts'
+import { user, type Connection, type Receipt, type Vendor } from '../../data/sample.ts'
 
 /** Revoking happens at a fixed time so it sits after today's sample receipts. */
 export const revokedAt = '14:22'
@@ -13,12 +13,12 @@ export const dayLabels: Record<Receipt['day'], string> = {
 }
 
 const changeRoutes: Record<string, string> = {
-  'trip-app': '/consent/trip-app',
-  claude: '/consent/claude',
-  ledgerly: '/consent/ledgerly',
+  'trip-app/bookings': '/consent/trip-app',
+  'claude/chat': '/consent/claude',
+  'ledgerly/bookkeeping': '/consent/ledgerly',
 }
 
-/** Where to change what a connection can do. Apps without a consent screen in the sample have none. */
+/** Where to change what a connection can do. Connections without a consent screen in the sample have none. */
 export function changeRoute(id: string): string | undefined {
   return changeRoutes[id]
 }
@@ -35,12 +35,12 @@ export function groupByDay(items: Receipt[]): Array<{ label: string; items: Rece
 }
 
 /** The text copied by "Copy a deletion request". The wording still needs a legal check. */
-export function deletionRequest(connection: Connection, items: Receipt[], headersOnly: boolean): string {
+export function deletionRequest(vendor: Vendor, connection: Connection, items: Receipt[], headersOnly: boolean): string {
   const what = headersOnly ? `the headers of ${connection.hasRead} of my emails` : `${connection.hasRead} of my emails`
   return [
-    `To the team behind ${connection.name} (${connection.domain}),`,
+    `To the team behind ${vendor.name} (${vendor.domain}),`,
     '',
-    `I revoked ${connection.name}'s access to my mailbox through Permaily today at ${revokedAt}. Before that, it read ${what}.`,
+    `I revoked the access of ${vendor.name}'s ${connection.name} connection to my mailbox through Permaily today at ${revokedAt}. Before that, it read ${what}.`,
     'Please delete them, along with anything made from them, and confirm when that is done.',
     '',
     ...(items.length > 0

@@ -10,8 +10,8 @@ export function ForwardingSetupPage() {
   const [showAddress, setShowAddress] = useState(false)
 
   return (
-    <div className="flex min-h-svh">
-      <div className="flex min-w-0 flex-1 flex-col px-14 pt-8 pb-8">
+    <div className="flex min-h-svh flex-col xl:flex-row">
+      <div className="flex min-w-0 flex-1 flex-col px-4 pt-6 pb-8 sm:px-8 sm:pt-8 lg:px-14">
         <FlowHeader />
 
         <main className="flex-1">
@@ -64,20 +64,13 @@ export function ForwardingSetupPage() {
               title="Create the filter"
               aside={verified ? null : <span className="font-mono text-mono text-ink-2">unlocks after step 2</span>}
             >
-              {verified ? (
-                <FilterInstructions />
-              ) : (
-                <p className="text-body text-ink-2">
-                  You paste a search into a new Gmail filter. We confirm when the first email arrives, and then suggest a rule that holds back sign-in and security mail.
-                </p>
-              )}
+              {verified && <FilterInstructions />}
             </OpenStep>
           </ol>
         </main>
 
-        <footer className="mt-12 flex flex-wrap items-center gap-3">
+        <footer className="mt-12">
           <TextLink to="/accounts">Finish later</TextLink>
-          <span className="text-small text-ink-2">Your progress is saved. Nothing is shared until this is done.</span>
         </footer>
       </div>
 
@@ -89,10 +82,10 @@ export function ForwardingSetupPage() {
 function FoldedStep({ number, title, aside, children }: { number: number; title: string; aside: ReactNode; children?: ReactNode }) {
   return (
     <li className="border-b border-rule">
-      <div className="flex items-center gap-5 py-[13px]">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 py-[13px]">
         <StepMarker state="done" number={number} />
-        <span className="min-w-0 flex-1 text-lead text-ink-2">{title}</span>
-        <span className="flex items-center gap-5">{aside}</span>
+        <span className="min-w-0 flex-1 basis-40 text-lead text-ink-2">{title}</span>
+        <span className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 break-all max-sm:w-full max-sm:pl-12">{aside}</span>
       </div>
       {children}
     </li>
@@ -116,7 +109,7 @@ function OpenStep({
     <li className="flex gap-5 border-b border-rule pt-[18px] pb-5" aria-current={state === 'current' ? 'step' : undefined}>
       <StepMarker state={state} number={number} />
       <div className="min-w-0 flex-1">
-        <div className="flex min-h-7 items-center justify-between gap-4">
+        <div className="flex min-h-7 flex-wrap items-center justify-between gap-x-4 gap-y-1">
           <h2 className={cx('text-title font-medium', state === 'next' && 'text-ink-2')}>{title}</h2>
           {aside}
         </div>
@@ -155,10 +148,7 @@ function FilterInstructions() {
       </p>
       <div className="mt-3 border-t border-rule pt-3">
         <p className="font-medium">When the first email arrives</p>
-        <p className="mt-0.5 text-small text-ink-2">
-          We confirm it here and email you. Then we suggest Sign-in and security, a rule that holds back password resets and login codes from
-          every connection.
-        </p>
+        <p className="mt-0.5 text-small text-ink-2">We confirm it here, then suggest the Sign-in and security rule.</p>
         <TextLink to={suggestedRulePath} size="sm" className="mt-2.5">
           Review the suggested rule
         </TextLink>
@@ -169,7 +159,10 @@ function FilterInstructions() {
 
 function WhatToExpect() {
   return (
-    <aside aria-label="What to expect" className="w-[460px] shrink-0 border-l border-rule bg-raised px-9 pt-8 pb-10">
+    <aside
+      aria-label="What to expect"
+      className="w-full shrink-0 border-t border-rule bg-raised px-4 pt-8 pb-10 sm:px-8 xl:w-[460px] xl:border-t-0 xl:border-l xl:px-9"
+    >
       <p className="font-mono text-mono text-ink-2">What to expect</p>
       <Headline as="h2" className="mt-4">
         About <Count>40</Count> a month.

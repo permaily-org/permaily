@@ -13,7 +13,14 @@ export function Headline({
   as?: 'h1' | 'h2' | 'p'
   className?: string
 }) {
-  const sizes = { 'display-l': 'text-display-l', display: 'text-display', 'display-m': 'text-display-m', 'display-s': 'text-display-s', heading: 'text-heading' }
+  // A step smaller on phones, so a long headline doesn't fill the screen.
+  const sizes = {
+    'display-l': 'text-display-m md:text-display-l',
+    display: 'text-display-s md:text-display',
+    'display-m': 'text-display-s md:text-display-m',
+    'display-s': 'text-heading md:text-display-s',
+    heading: 'text-heading',
+  }
   return <Tag className={cx('flex flex-wrap items-center gap-x-2.5 gap-y-1 font-medium', sizes[size], className)}>{children}</Tag>
 }
 
@@ -61,7 +68,8 @@ export function Notice({
     <div
       role={tone === 'alarm' ? 'alert' : 'status'}
       className={cx(
-        'flex items-center gap-4 rounded-sm px-3 py-3',
+        // On phones the action drops under the text.
+        'flex flex-col items-start gap-3 rounded-sm px-3 py-3 sm:flex-row sm:items-center sm:gap-4',
         tone === 'attention' && 'bg-attention-bg text-attention',
         tone === 'neutral' && 'border border-ink text-ink',
         tone === 'alarm' && 'bg-danger text-on-danger',

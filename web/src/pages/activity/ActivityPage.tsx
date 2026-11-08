@@ -11,7 +11,7 @@ import {
   TextAction,
   Tile,
 } from '../../components/ui/index.ts'
-import { connectionById, dailyCounts, type Receipt } from '../../data/sample.ts'
+import { connectionById, dailyCounts, vendorOf, type Receipt } from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import { downloadText, groupByDay, matchesSearch, receiptsCsv, thisWeek } from './data.ts'
 import { Histogram } from './Histogram.tsx'
@@ -30,8 +30,8 @@ function Ledger() {
   const leftThisWeek = dailyCounts.slice(7).reduce((total, n) => total + n, 0)
 
   return (
-    <div className="flex min-h-svh">
-      <div className="min-w-0 flex-1 px-10 pt-8 pb-16">
+    <div className="flex min-h-svh flex-col xl:flex-row">
+      <div className="min-w-0 flex-1 px-4 pt-6 pb-10 sm:px-8 sm:pt-8 sm:pb-16 xl:px-10">
         <Headline>
           <Count>{leftThisWeek}</Count> emails left this week.
         </Headline>
@@ -44,7 +44,7 @@ function Ledger() {
             placeholder="Search sender or subject"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="w-[225px]"
+            className="w-full sm:w-[225px]"
           />
           <FilterButton>All connections</FilterButton>
           <FilterButton>This week</FilterButton>
@@ -65,7 +65,13 @@ function Ledger() {
                     key={receipt.id}
                     receipt={receipt}
                     selected={receipt.id === selected?.id}
-                    onSelect={() => setSelectedId(receipt.id)}
+                    onSelect={() => {
+                      setSelectedId(receipt.id)
+                      // Below xl the receipt sits after the list, so bring it into view.
+                      if (!window.matchMedia('(min-width: 1280px)').matches) {
+                        document.getElementById('receipt-panel')?.scrollIntoView({ block: 'start' })
+                      }
+                    }}
                   />
                 ))}
               </ul>
@@ -74,7 +80,11 @@ function Ledger() {
         )}
       </div>
 
-      <aside aria-label="Receipt" className="sticky top-0 h-svh w-[420px] shrink-0 overflow-y-auto border-l border-rule bg-raised px-9 pt-8 pb-10">
+      <aside
+        id="receipt-panel"
+        aria-label="Receipt"
+        className="w-full shrink-0 border-t border-rule bg-raised px-4 pt-6 pb-10 sm:px-8 sm:pt-8 xl:sticky xl:top-0 xl:h-svh xl:w-[420px] xl:overflow-y-auto xl:border-t-0 xl:border-l xl:px-9"
+      >
         {selected ? <ReceiptPanel receipt={selected} /> : <p className="text-body text-ink-2">Pick an email to see its receipt.</p>}
       </aside>
     </div>
@@ -83,6 +93,7 @@ function Ledger() {
 
 function ReceiptRow({ receipt, selected, onSelect }: { receipt: Receipt; selected: boolean; onSelect: () => void }) {
   const connection = connectionById(receipt.connectionId)
+  const vendor = connection && vendorOf(connection)
   return (
     <li className="border-b border-rule">
       <button
@@ -90,19 +101,21 @@ function ReceiptRow({ receipt, selected, onSelect }: { receipt: Receipt; selecte
         aria-pressed={selected}
         onClick={onSelect}
         className={cx(
-          '-mx-2.5 flex h-[37px] w-[calc(100%+20px)] items-center border-l-2 pr-2.5 pl-2 text-left',
+          '-mx-2.5 grid w-[calc(100%+20px)] grid-cols-[auto_1fr_auto] items-center gap-x-2 gap-y-0.5 border-l-2 py-2 pr-2.5 pl-2 text-left sm:flex sm:h-[37px] sm:gap-0 sm:py-0',
           selected ? 'border-ink bg-sunken' : 'border-transparent hover:bg-sunken',
           focusRing,
         )}
       >
-        <span className="w-[52px] shrink-0 font-mono text-mono text-ink-2">{receipt.time}</span>
-        <span className="flex w-[104px] shrink-0 items-center gap-1.5">
-          <Tile initials={connection?.initials ?? '?'} size="sm" />
-          <span className="truncate">{connection?.name}</span>
+        <span className="row-start-3 shrink-0 font-mono text-mono text-ink-2 sm:w-[52px]">{receipt.time}</span>
+        <span className="col-span-2 row-start-3 flex min-w-0 items-center gap-1.5 sm:w-[104px] sm:shrink-0">
+          <Tile initials={vendor?.initials ?? '?'} size="sm" />
+          <span className="truncate">{vendor?.name}</span>
         </span>
-        <span className="w-[104px] shrink-0 truncate font-medium">{receipt.sender}</span>
-        <span className="min-w-0 flex-1 truncate pr-4">{receipt.subject}</span>
-        <PartsChip>{receipt.parts}</PartsChip>
+        <span className="col-span-2 row-start-1 truncate font-medium sm:w-[104px] sm:shrink-0">{receipt.sender}</span>
+        <span className="col-span-3 row-start-2 min-w-0 truncate sm:flex-1 sm:pr-4">{receipt.subject}</span>
+        <span className="col-start-3 row-start-1 flex justify-end">
+          <PartsChip>{receipt.parts}</PartsChip>
+        </span>
       </button>
     </li>
   )
@@ -110,11 +123,8 @@ function ReceiptRow({ receipt, selected, onSelect }: { receipt: Receipt; selecte
 
 function EmptyActivity() {
   return (
-    <div className="max-w-[720px] px-10 pt-8 pb-16">
+    <div className="w-full max-w-[720px] px-4 pt-6 pb-10 sm:px-8 sm:pt-8 sm:pb-16 xl:px-10">
       <Headline>Nothing has left your mailbox.</Headline>
-      <p className="mt-3 text-lead text-ink-2">
-        Each email a connection reads appears here, with a receipt showing who got it, which parts, and why.
-      </p>
       <ButtonLink to="/connections/new" className="mt-6">
         Connect an agent
       </ButtonLink>

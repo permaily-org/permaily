@@ -96,9 +96,10 @@ export function ConsentAgentPage() {
         {agentQueryIds.map((id) => {
           const checked = ticked.includes(id)
           return (
-            <div key={id} className="flex border-b border-rule py-2">
+            <div key={id} className="flex border-b border-rule">
+              {/* The padding sits on the label, so the whole row is the touch target. */}
               <Checkbox
-                className="w-full"
+                className="w-full py-2"
                 checked={checked}
                 onChange={() => toggle(id)}
                 label={
@@ -136,7 +137,7 @@ export function ConsentAgentPage() {
 
       <Decision
         allowLabel={total && !forwarding ? `Allow ${agent.name} to read ${formatCount(total)} emails` : `Allow ${agent.name}`}
-        onAllow={() => navigate('/connections/claude')}
+        onAllow={() => navigate('/connections/claude/chat')}
         allowDisabled={total === 0 || pending}
         declineLabel="Not now"
         onDecline={() => navigate('/')}

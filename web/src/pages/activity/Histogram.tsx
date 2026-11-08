@@ -25,9 +25,9 @@ export function Histogram() {
           />
         ))}
       </div>
-      <figcaption aria-hidden className="mt-1.5 grid grid-cols-[1fr_auto_1fr] font-mono text-micro text-ink-2">
+      <figcaption aria-hidden className="mt-1.5 grid grid-cols-2 sm:grid-cols-[1fr_auto_1fr] font-mono text-micro text-ink-2">
         <span>last week</span>
-        <span className="text-attention">{spike.label}</span>
+        <span className="col-span-2 row-start-2 mt-0.5 text-attention sm:col-span-1 sm:row-start-auto sm:mt-0">{spike.label}</span>
         <span className="text-right">this week</span>
       </figcaption>
     </figure>

@@ -4,9 +4,9 @@ import { actionClass, cx, focusRing } from '../../lib/styles.ts'
 
 export function SettingRow({ label, children, action }: { label: string; children: ReactNode; action?: ReactNode }) {
   return (
-    <div className="flex min-h-[39px] items-center gap-4 border-b border-rule py-2">
-      <div className="w-[116px] shrink-0 text-small text-ink-2">{label}</div>
-      <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+    <div className="flex min-h-[39px] flex-col items-start gap-0.5 border-b border-rule py-2 sm:flex-row sm:items-center sm:gap-4">
+      <div className="shrink-0 text-small text-ink-2 sm:w-[116px]">{label}</div>
+      <div className="flex w-full min-w-0 flex-1 items-center justify-between gap-3">
         <div className="min-w-0 flex-1 text-body">{children}</div>
         {action}
       </div>
@@ -14,7 +14,7 @@ export function SettingRow({ label, children, action }: { label: string; childre
   )
 }
 
-const field = cx('min-w-0 flex-1 rounded-sm border border-ink bg-paper px-2 py-px text-small text-ink', focusRing)
+const field = cx('min-w-0 flex-1 basis-32 rounded-sm border border-ink bg-paper px-2 py-px text-small text-ink max-md:min-h-8', focusRing)
 
 /** A setting whose value can be changed in place, with a text field or a list of choices. */
 export function EditableRow({
@@ -47,7 +47,7 @@ export function EditableRow({
   return (
     <SettingRow label={label}>
       <form
-        className="flex w-full items-center gap-3"
+        className="flex w-full flex-wrap items-center gap-x-3 gap-y-2"
         onSubmit={(event) => {
           event.preventDefault()
           if (draft.trim()) onSave(draft.trim())
@@ -80,23 +80,10 @@ export function EditableRow({
   )
 }
 
-export function NotificationRow({
-  title,
-  detail,
-  checked,
-  onChange,
-}: {
-  title: string
-  detail: string
-  checked: boolean
-  onChange: (checked: boolean) => void
-}) {
+export function NotificationRow({ title, checked, onChange }: { title: string; checked: boolean; onChange: (checked: boolean) => void }) {
   return (
-    <div className="flex items-center gap-4 border-b border-rule py-2">
-      <div className="min-w-0 flex-1">
-        <p className="font-medium">{title}</p>
-        <p className="text-small text-ink-2">{detail}</p>
-      </div>
+    <div className="flex min-h-[39px] items-center gap-4 border-b border-rule py-2">
+      <p className="min-w-0 flex-1">{title}</p>
       <Switch checked={checked} onChange={onChange} label={title} />
     </div>
   )

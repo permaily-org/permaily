@@ -31,7 +31,7 @@ export function Dialog({
       onClick={(event) => {
         if (event.target === ref.current) onClose()
       }}
-      className="m-auto w-[640px] max-w-[calc(100vw-32px)] bg-paper p-8 text-ink backdrop:bg-scrim"
+      className="m-auto w-[640px] max-w-[calc(100vw-32px)] bg-paper p-5 text-ink backdrop:bg-scrim sm:p-8"
     >
       {children}
     </dialog>

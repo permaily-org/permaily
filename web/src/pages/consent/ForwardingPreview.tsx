@@ -27,12 +27,12 @@ export function ForwardingPreview({ name, queries }: { name: string; queries: Qu
         {queries.length > 0 ? (
           <>
             <p className="mt-1.5 text-small text-ink-2">This opens the same search in Gmail, in your own account. You see the matches, and Permaily sees nothing.</p>
-            <div className="mt-3 flex min-w-0 items-center gap-3">
+            <div className="mt-3 flex min-w-0 items-center gap-3 max-sm:flex-wrap max-sm:gap-y-2">
               <ButtonAnchor variant="secondary" size="sm" className="bg-raised" href={gmailSearchUrl(gmailQuery(queries))}>
                 See matches in Gmail
                 <span className="sr-only"> (opens in a new tab)</span>
               </ButtonAnchor>
-              <code className="min-w-0 truncate font-mono text-mono text-ink-2">{gmailShortQuery(queries)}</code>
+              <code className="min-w-0 truncate font-mono text-mono text-ink-2 max-sm:whitespace-normal">{gmailShortQuery(queries)}</code>
             </div>
           </>
         ) : (

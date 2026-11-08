@@ -1,18 +1,24 @@
 import type { ReactNode } from 'react'
 import { Button, Tile } from '../../components/ui/index.ts'
 
-/** Consent page: the request and decision on the left, the preview raised on the right. */
+/**
+ * Consent page: the request and decision, then the preview raised beside them.
+ * Side by side from xl, the first width where the preview's mail rows fit next to the request. Stacked below that.
+ */
 export function ConsentLayout({ mailbox, children, preview }: { mailbox: ReactNode; children: ReactNode; preview: ReactNode }) {
   return (
-    <main className="flex min-h-svh flex-col lg:flex-row">
-      <div className="px-4 pt-7 pb-14 sm:px-14 lg:sticky lg:top-0 lg:max-h-svh lg:w-[600px] lg:shrink-0 lg:self-start lg:overflow-y-auto">
+    <main className="flex min-h-svh flex-col xl:flex-row">
+      <div className="w-full max-w-[600px] px-4 pt-6 pb-10 sm:px-8 lg:px-14 lg:pt-7 lg:pb-14 xl:sticky xl:top-0 xl:max-h-svh xl:shrink-0 xl:self-start xl:overflow-y-auto">
         <header className="flex items-center justify-between gap-4">
           <span className="text-wordmark font-semibold">Permaily</span>
           {mailbox}
         </header>
         {children}
       </div>
-      <section aria-label="Preview" className="min-w-0 flex-1 border-t border-rule bg-raised px-4 pt-7 pb-14 sm:px-12 lg:border-t-0 lg:border-l">
+      <section
+        aria-label="Preview"
+        className="min-w-0 flex-1 border-t border-rule bg-raised px-4 pt-6 pb-10 sm:px-8 lg:px-14 lg:pt-7 lg:pb-14 xl:border-t-0 xl:border-l xl:px-12"
+      >
         {preview}
       </section>
     </main>
@@ -58,7 +64,8 @@ export function Decision({
 }) {
   return (
     <>
-      <div className="mt-7 flex flex-wrap gap-2.5">
+      {/* Full width on phones, so both are easy to reach with a thumb. */}
+      <div className="mt-7 flex flex-col gap-2.5 sm:flex-row sm:flex-wrap">
         <Button onClick={onAllow} disabled={allowDisabled} aria-describedby="decision-note">
           {allowLabel}
         </Button>

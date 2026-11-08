@@ -21,7 +21,8 @@ export function App() {
       <Route element={<AppShell />}>
         <Route index element={<OverviewPage />} />
         <Route path="connections" element={<ConnectionsPage />} />
-        <Route path="connections/:id" element={<ConnectionDetailPage />} />
+        <Route path="connections/:vendorId" element={<ConnectionDetailPage />} />
+        <Route path="connections/:vendorId/:connectionId" element={<ConnectionDetailPage />} />
         <Route path="rules" element={<RulesPage />} />
         <Route path="rules/:id" element={<RuleEditorPage />} />
         <Route path="activity" element={<ActivityPage />} />

@@ -88,7 +88,7 @@ export function ConsentAppPage() {
       <Terms>
         <TermRow label="Asks for">Flight, hotel, rail and car bookings</TermRow>
         <TermRow label="Query">
-          <code className="min-w-0 truncate font-mono text-mono text-ink-2">{gmailShortQuery(asked)}</code>
+          <code className="min-w-0 truncate font-mono text-mono text-ink-2 max-sm:whitespace-normal">{gmailShortQuery(asked)}</code>
         </TermRow>
         {excluded.length > 0 && (
           <TermRow
@@ -120,7 +120,7 @@ export function ConsentAppPage() {
 
       <Decision
         allowLabel={`Allow ${app.name}`}
-        onAllow={() => navigate('/connections/trip-app')}
+        onAllow={() => navigate('/connections/trip-app/bookings')}
         allowDisabled={pending}
         declineLabel="Not now"
         onDecline={() => navigate('/')}

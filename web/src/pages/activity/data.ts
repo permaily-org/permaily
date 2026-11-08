@@ -1,4 +1,4 @@
-import { connectionById, receipts, type Receipt } from '../../data/sample.ts'
+import { connectionById, connectionLabel, receipts, type Receipt } from '../../data/sample.ts'
 
 export const thisWeek = receipts.filter((r) => r.day !== 'Last week')
 
@@ -15,6 +15,11 @@ const seconds: Record<string, string> = {
   r_5a91d0: '58',
   r_5a8f2b: '14',
   r_4c22e8: '39',
+  r_7d02b7: '46',
+  r_7a0e51: '04',
+  r_7a0e4f: '02',
+  r_6e5b10: '21',
+  r_6e2a03: '03',
 }
 
 export function fullTime(receipt: Receipt): string {
@@ -61,6 +66,12 @@ export function matchesSearch(receipt: Receipt, query: string): boolean {
   return [receipt.sender, receipt.from, receipt.subject].some((field) => field.toLowerCase().includes(q))
 }
 
+/** "Claude · Chat", or the id if the connection is gone. */
+function connectionText(id: string): string {
+  const connection = connectionById(id)
+  return connection ? connectionLabel(connection) : id
+}
+
 function csvField(value: string | number): string {
   const text = String(value)
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
@@ -72,7 +83,7 @@ export function receiptsCsv(list: Receipt[]): string {
     r.id,
     r.day,
     r.time,
-    connectionById(r.connectionId)?.name ?? r.connectionId,
+    connectionText(r.connectionId),
     r.sender,
     r.from,
     r.subject,

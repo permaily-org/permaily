@@ -10,7 +10,7 @@ import { ErrorPreview, LoadingPreview } from './PreviewStates.tsx'
 import { usePreviewState } from './previewState.ts'
 
 const app = requesters.ledgerly
-const connection = connectionById('ledgerly')
+const connection = connectionById('ledgerly/bookkeeping')
 const existing = new Set<QueryId>(['invoices', 'receipts'])
 const added = new Set<QueryId>(['bank-statements'])
 const rows = viewRows(ledgerlyTimeline, wideningLens(existing, added))
@@ -54,7 +54,7 @@ export function WideningPage() {
       <Terms>
         <TermRow label="Adds">Bank and card statements</TermRow>
         <TermRow label="To its query">
-          <code className="min-w-0 truncate font-mono text-mono text-ink-2">OR {gmailShortQuery(['bank-statements'])}</code>
+          <code className="min-w-0 truncate font-mono text-mono text-ink-2 max-sm:whitespace-normal">OR {gmailShortQuery(['bank-statements'])}</code>
         </TermRow>
         <TermRow
           label="The rest"
@@ -76,7 +76,7 @@ export function WideningPage() {
 
       <Decision
         allowLabel="Allow the addition"
-        onAllow={() => navigate('/connections/ledgerly')}
+        onAllow={() => navigate('/connections/ledgerly/bookkeeping')}
         allowDisabled={pending}
         declineLabel="Keep it as it is"
         onDecline={() => navigate('/')}

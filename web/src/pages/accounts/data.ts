@@ -1,4 +1,4 @@
-import { connections, mailboxes, type Mailbox } from '../../data/sample.ts'
+import { connections, mailboxes, vendors, type Mailbox } from '../../data/sample.ts'
 
 export const forwardingMailbox = mailboxes.find((m) => m.method === 'forwarding') ?? mailboxes[0]
 
@@ -56,7 +56,13 @@ export const methods = [
 ] as const
 
 export function connectionsUsing(mailbox: Mailbox) {
-  return mailbox.usedBy.flatMap((initials) => connections.filter((c) => c.initials === initials))
+  return connections.filter((c) => mailbox.usedBy.includes(c.id))
+}
+
+/** The vendors behind the connections that read a mailbox. */
+export function vendorsUsing(mailbox: Mailbox) {
+  const using = connectionsUsing(mailbox)
+  return vendors.filter((v) => using.some((c) => c.vendorId === v.id))
 }
 
 export function listNames(names: string[]): string {

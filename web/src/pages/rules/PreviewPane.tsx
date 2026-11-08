@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { Count, Headline, MailRow, TextAction } from '../../components/ui/index.ts'
-import { appliesToText, formatCount, inbox, type Rule, type RuleEffect } from '../../data/sample.ts'
+import { formatCount, inbox, type RuleEffect } from '../../data/sample.ts'
 import { emails, type Preview, type RowView } from './draft.ts'
 
 type RowActions = {
@@ -9,19 +9,18 @@ type RowActions = {
   onInclude: (rowId: string, entry: string) => void
 }
 
-/** What the rule takes out of every connection's view: whole emails, or details inside them. A rule never shares anything. */
+/**
+ * What the rule takes out of every connection's view: whole emails, or details inside them. A rule never shares anything.
+ * It sits beside the editor from xl, and under it below that.
+ */
 export function PreviewPane({
   preview,
   effect,
-  removes,
-  appliesTo,
   onExclude,
   onInclude,
 }: {
   preview: Preview
   effect: RuleEffect
-  removes: string
-  appliesTo: Rule['appliesTo']
   onExclude: (address: string) => void
   onInclude: (entry: string) => void
 }) {
@@ -52,16 +51,26 @@ export function PreviewPane({
   const matched = visible.filter((r) => r.status === 'new' || r.status === 'soft').length
 
   return (
-    <section aria-label="Live preview" className="min-h-svh min-w-0 flex-1 border-l border-rule bg-raised px-10 pt-8 pb-12">
-      <p className="font-mono text-mono text-ink-2">Live preview, updating as you edit</p>
+    <section
+      aria-label="Live preview"
+      className="min-w-0 flex-1 border-t border-rule bg-raised px-4 pt-6 pb-12 sm:px-8 sm:pt-8 lg:px-10 xl:min-h-svh xl:border-t-0 xl:border-l"
+    >
+      <p className="font-mono text-mono text-ink-2">Live preview</p>
       <Headline as="h2" className="mt-3">
         <Count tone="bar">{formatCount(count)}</Count> of {formatCount(inbox.total)} emails
       </Headline>
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-        {newCount > 0 && <span className="font-mono text-mono">+{formatCount(newCount)} from this edit</span>}
-        <p className="text-small text-ink-2">{note(count, dropped, effect, removes, appliesTo)}</p>
-      </div>
+      {(count === 0 || newCount > 0 || dropped > 0) && (
+        <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-mono">
+          {count === 0 && <span className="text-ink-2">Nothing matches yet</span>}
+          {newCount > 0 && <span>+{formatCount(newCount)} from this edit</span>}
+          {dropped > 0 && (
+            <span className="text-ink-2">
+              {emails(dropped)} no longer {dropped === 1 ? 'matches' : 'match'}
+            </span>
+          )}
+        </p>
+      )}
 
       <div ref={listRef} className="mt-4 border-t border-rule-strong">
         {visible.map((view) => (
@@ -77,29 +86,13 @@ export function PreviewPane({
   )
 }
 
-function note(count: number, dropped: number, effect: RuleEffect, removes: string, appliesTo: Rule['appliesTo']): string {
-  if (count === 0) return 'Nothing matches yet. Add a condition on the left.'
-  const target = appliesToText(appliesTo)
-  const parts =
-    effect === 'hold'
-      ? [
-          `Held back from ${appliesTo === 'all' ? 'every connection, including ones you approve later' : target}.`,
-          appliesTo !== 'all' && appliesTo.length === 1 ? "It isn't told." : "They aren't told.",
-        ]
-      : [
-          `${capitalize(removes.trim() || 'the matching details')} ${removes.trim().endsWith('s') ? 'are' : 'is'} taken out before ${appliesTo === 'all' ? 'any connection' : target} gets them.`,
-          'The rest of each email goes through.',
-        ]
-  if (dropped > 0) parts.push(`${emails(dropped)} no longer ${dropped === 1 ? 'matches' : 'match'}.`)
-  return parts.join(' ')
-}
-
-function capitalize(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1)
-}
-
-const hoverAction = 'absolute top-1/2 right-2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
-const hoverRow = 'group relative hover:bg-sunken focus-within:bg-sunken'
+/**
+ * The action can land on the bar, so it covers what's under it in the row's own color. A narrow row has two lines,
+ * as MailRow does below 512px, and the action sits on the first, in place of the "new" tag.
+ */
+const hoverAction =
+  'absolute top-1/2 right-2 -translate-y-1/2 bg-sunken opacity-0 group-hover:opacity-100 focus-visible:opacity-100 @max-lg:top-2 @max-lg:translate-y-0'
+const hoverRow = 'group relative @container hover:bg-sunken focus-within:bg-sunken'
 
 function PreviewRow({ view, actions }: { view: RowView; actions: RowActions }) {
   const { row, status, excludedBy } = view

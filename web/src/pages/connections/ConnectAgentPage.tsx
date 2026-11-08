@@ -36,8 +36,6 @@ const agents: Array<{ id: AgentId; name: string; initials: string; detail: strin
   },
 ]
 
-const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
-
 async function copyAddress(): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(address)
@@ -87,7 +85,6 @@ export function ConnectAgentPage() {
         <ol className="mt-8 border-t border-rule">
           {stage === 'choose' || !agent ? (
             <Step number={1} state="current" title="Choose your agent" headingRef={headingRef('choose')}>
-              <p className="mt-1.5 text-ink-2">Pick the agent you want to connect. You can add others later.</p>
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
                 {agents.map((a) => (
                   <AgentChoice
@@ -116,13 +113,11 @@ export function ConnectAgentPage() {
               aside={stage === 'copy' ? <span className="font-mono text-mono">copy it now</span> : <Aside>unlocks after step 1</Aside>}
               headingRef={headingRef('copy')}
             >
-              {stage === 'copy' && agent ? (
+              {stage === 'copy' && agent && (
                 <>
                   <AddressBox onCopy={copyAndContinue} label="Copy" className="mt-2" />
                   <p className="mt-2.5 text-ink-2">{agent.setup}</p>
                 </>
-              ) : (
-                <p className="mt-1.5 text-ink-2">You paste one address into your agent's settings.</p>
               )}
             </Step>
           )}
@@ -134,13 +129,7 @@ export function ConnectAgentPage() {
             aside={stage === 'wait' ? undefined : <Aside>{agent ? `waiting for ${agent.subject}` : 'unlocks after step 2'}</Aside>}
             headingRef={headingRef('wait')}
           >
-            {stage === 'wait' && agent ? (
-              <Waiting subject={agent.subject} />
-            ) : (
-              <p className="mt-1.5 text-ink-2">
-                {capitalize(agent?.subject ?? 'your agent')} will send you back here. Nothing is shared until you finish this step.
-              </p>
-            )}
+            {stage === 'wait' && agent && <Waiting subject={agent.subject} />}
           </Step>
         </ol>
       </div>
@@ -163,7 +152,7 @@ function Step({
   title: string
   aside?: ReactNode
   headingRef?: Ref<HTMLHeadingElement>
-  children: ReactNode
+  children?: ReactNode
 }) {
   return (
     <li className="flex gap-5 border-b border-rule pt-4 pb-5">
@@ -234,7 +223,6 @@ function Waiting({ subject }: { subject: string }) {
         Waiting for {subject} to connect
       </p>
       <p className="mt-3 text-heading font-medium">Add the address in {subject}, then come back.</p>
-      <p className="mt-2 text-ink-2">This page moves on by itself. Nothing is shared while you wait.</p>
       <AddressBox className="mt-4" label={copied ? 'Copied' : 'Copy'} onCopy={async () => setCopied(await copyAddress())} />
       <p className="mt-4 text-small text-ink-2">
         Already added it? <TextLink to="/consent/claude">Continue</TextLink>

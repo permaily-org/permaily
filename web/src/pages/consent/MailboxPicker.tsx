@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { mailboxes, type Mailbox } from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 
-const box = 'inline-flex items-center gap-1.5 rounded-sm border border-rule px-2.5 py-[5px] font-mono text-mono'
+const box = 'inline-flex max-w-full items-center gap-1.5 rounded-sm border border-rule px-2.5 py-[5px] font-mono text-mono'
 
 /** The mailbox an access belongs to, as a small menu. */
 export function MailboxPicker({ value, onChange }: { value: Mailbox['id']; onChange: (id: Mailbox['id']) => void }) {
@@ -45,7 +45,7 @@ export function MailboxPicker({ value, onChange }: { value: Mailbox['id']; onCha
   }
 
   return (
-    <div ref={root} className="relative">
+    <div ref={root} className="relative min-w-0">
       <button
         ref={trigger}
         type="button"
@@ -55,11 +55,16 @@ export function MailboxPicker({ value, onChange }: { value: Mailbox['id']; onCha
         onClick={() => setOpen((v) => !v)}
         className={cx(box, 'hover:border-ink', focusRing)}
       >
-        {current.address}
-        <ChevronDown aria-hidden size={14} className="text-ink-2" />
+        <span className="truncate">{current.address}</span>
+        <ChevronDown aria-hidden size={14} className="shrink-0 text-ink-2" />
       </button>
       {open && (
-        <div role="menu" aria-label="Mailbox" onKeyDown={onMenuKey} className="absolute top-full right-0 z-10 mt-1 flex w-72 flex-col border border-rule bg-raised py-1">
+        <div
+          role="menu"
+          aria-label="Mailbox"
+          onKeyDown={onMenuKey}
+          className="absolute top-full right-0 z-10 mt-1 flex w-72 max-w-[calc(100vw-32px)] flex-col border border-rule bg-raised py-1"
+        >
           {mailboxes.map((mailbox, i) => (
             <button
               key={mailbox.id}
@@ -89,9 +94,9 @@ export function MailboxPicker({ value, onChange }: { value: Mailbox['id']; onCha
 export function MailboxLabel({ id }: { id: Mailbox['id'] }) {
   const mailbox = mailboxes.find((m) => m.id === id) ?? mailboxes[0]
   return (
-    <span className={box}>
+    <span className={cx(box, 'min-w-0')}>
       <span className="sr-only">Mailbox: </span>
-      {mailbox.address}
+      <span className="truncate">{mailbox.address}</span>
     </span>
   )
 }
