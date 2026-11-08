@@ -1,11 +1,11 @@
-import type { AnchorHTMLAttributes, ButtonHTMLAttributes } from 'react'
+import type { AnchorHTMLAttributes, ComponentProps } from 'react'
 import { Link, type LinkProps } from 'react-router'
 import { actionClass, buttonClass, type ActionTone, type ButtonSize, type ButtonVariant } from '../../lib/styles.ts'
 
 type ButtonStyle = { variant?: ButtonVariant; size?: ButtonSize }
 type ActionStyle = { tone?: ActionTone; size?: 'md' | 'sm' }
 
-export function Button({ variant, size, className, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & ButtonStyle) {
+export function Button({ variant, size, className, ...props }: ComponentProps<'button'> & ButtonStyle) {
   return <button type="button" {...props} className={buttonClass(variant, size, className)} />
 }
 
@@ -18,7 +18,7 @@ export function ButtonAnchor({ variant, size, className, ...props }: AnchorHTMLA
   return <a target="_blank" rel="noopener noreferrer" {...props} className={buttonClass(variant, size, className)} />
 }
 
-export function TextAction({ tone, size, className, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & ActionStyle) {
+export function TextAction({ tone, size, className, ...props }: ComponentProps<'button'> & ActionStyle) {
   return <button type="button" {...props} className={actionClass(tone, size, className)} />
 }
 

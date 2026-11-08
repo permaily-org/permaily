@@ -9,11 +9,11 @@ export function Headline({
   className,
 }: {
   children: ReactNode
-  size?: 'display-l' | 'display' | 'display-s' | 'heading'
+  size?: 'display-l' | 'display' | 'display-m' | 'display-s' | 'heading'
   as?: 'h1' | 'h2' | 'p'
   className?: string
 }) {
-  const sizes = { 'display-l': 'text-display-l', display: 'text-display', 'display-s': 'text-display-s', heading: 'text-heading' }
+  const sizes = { 'display-l': 'text-display-l', display: 'text-display', 'display-m': 'text-display-m', 'display-s': 'text-display-s', heading: 'text-heading' }
   return <Tag className={cx('flex flex-wrap items-center gap-x-2.5 gap-y-1 font-medium', sizes[size], className)}>{children}</Tag>
 }
 
@@ -61,7 +61,7 @@ export function Notice({
     <div
       role={tone === 'alarm' ? 'alert' : 'status'}
       className={cx(
-        'flex items-center gap-4 rounded-sm px-4 py-3',
+        'flex items-center gap-4 rounded-sm px-3 py-3',
         tone === 'attention' && 'bg-attention-bg text-attention',
         tone === 'neutral' && 'border border-ink text-ink',
         tone === 'alarm' && 'bg-danger text-on-danger',

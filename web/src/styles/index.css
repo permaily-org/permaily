@@ -39,6 +39,9 @@
   --text-display-s: 32px;
   --text-display-s--line-height: 1.12;
   --text-display-s--letter-spacing: -0.6px;
+  --text-display-m: 40px;
+  --text-display-m--line-height: 1.12;
+  --text-display-m--letter-spacing: -0.8px;
   --text-display: 44px;
   --text-display--line-height: 1.1;
   --text-display--letter-spacing: -0.9px;
@@ -73,6 +76,7 @@
   --color-danger: var(--danger);
   --color-danger-bg: var(--danger-bg);
   --color-on-danger: var(--on-danger);
+  --color-scrim: var(--scrim);
 }
 
 :root {
@@ -98,6 +102,7 @@
   --danger: light-dark(#b8301a, #ff8a6e);
   --danger-bg: light-dark(#fae8e3, #33170f);
   --on-danger: light-dark(#f6f6f3, #2a0e07);
+  --scrim: light-dark(rgb(19 19 18 / 0.4), rgb(0 0 0 / 0.6));
 }
 
 :root[data-theme='light'] {

@@ -4,7 +4,7 @@ import { Bar, Mark } from './marks.tsx'
 
 type WithheldProps = { kind: 'withheld'; widths?: [number, number, number] }
 type SharedProps = { kind: 'shared' | 'soft' | 'new'; date: string; sender: string; subject: string; trailing?: ReactNode; hover?: boolean }
-type ReasonProps = { kind: 'blocked' | 'excluded'; date: string; sender: string; reason: string; barWidth?: number }
+type ReasonProps = { kind: 'blocked' | 'excluded'; date: string; sender: string; reason: string; barWidth?: number; trailing?: ReactNode }
 
 export type MailRowProps = WithheldProps | SharedProps | ReasonProps
 
@@ -47,12 +47,13 @@ function Who({ date, sender }: { date: string; sender: string }) {
   )
 }
 
-function ReasonRow({ kind, date, sender, reason, barWidth }: ReasonProps) {
+function ReasonRow({ kind, date, sender, reason, barWidth, trailing }: ReasonProps) {
   return (
     <div className={row}>
       <Who date={date} sender={sender} />
-      <Bar width={barWidth ?? 200} />
-      <span className={cx('truncate font-mono text-mono', kind === 'blocked' ? 'text-danger' : 'text-ink-2')}>{reason}</span>
+      <Bar width={`min(${barWidth ?? 200}px, 30%)`} />
+      <span className={cx('min-w-0 flex-1 truncate font-mono text-mono', kind === 'blocked' ? 'text-danger' : 'text-ink-2')}>{reason}</span>
+      {trailing}
     </div>
   )
 }

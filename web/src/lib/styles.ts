@@ -9,8 +9,8 @@ export type ButtonVariant = 'primary' | 'secondary' | 'danger'
 export type ButtonSize = 'md' | 'sm'
 
 const sizes: Record<ButtonSize, string> = {
-  md: 'px-[18px] py-2.5 text-body',
-  sm: 'px-3 py-1.5 text-small',
+  md: 'px-[18px] py-[9px] text-body leading-[1.2]',
+  sm: 'px-3 py-[5px] text-small leading-[1.2]',
 }
 
 const variants: Record<ButtonVariant, string> = {
