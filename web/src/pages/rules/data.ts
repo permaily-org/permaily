@@ -1,12 +1,8 @@
 /*
-  Page-only content for Rules, Community packs and the rule editor.
+  Page-only content for Rules and the rule editor.
   Shared numbers come from src/data/sample.ts. Company senders are illustrative.
 */
-import { connections, packs, rules, suggestedRule, withheldRules, type Pack, type Rule } from '../../data/sample.ts'
-
-export function connectionNames(initials: string[]): string[] {
-  return initials.map((i) => connections.find((c) => c.initials === i)?.name ?? i)
-}
+import { connections, rules, suggestedRule, type Rule, type RuleEffect } from '../../data/sample.ts'
 
 /** "Trip App", "Trip App and Claude", "Trip App, Claude and Ledgerly" */
 export function joinNames(names: string[]): string {
@@ -14,295 +10,71 @@ export function joinNames(names: string[]): string {
   return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
 }
 
-export type PackCategory = 'All' | 'Travel' | 'Finance' | 'Shopping' | 'Bills' | 'Events'
-
-/** Category chips filter by the first part of the pack id. */
-export const categoryPrefixes: Record<Exclude<PackCategory, 'All'>, string[]> = {
-  Travel: ['travel'],
-  Finance: ['finance'],
-  Shopping: ['shopping'],
-  Bills: ['utilities', 'subscriptions'],
-  Events: ['events'],
-}
-
-export function packPrefix(id: string): string {
-  return id.split('.')[0] ?? id
-}
-
-/** Structured data an email can carry, such as a flight reservation. Machine names stay in the pack source. */
-export type PackData = { label: string; editorLabel: string; machine: string[]; plain: string[] }
-
-export type PackSource = {
-  version: number
-  data?: PackData
-  senders?: string[]
-  subject?: string[]
-  header?: string[]
-  reviewedBy: number
-  contributors: number
-  checks: string
-  update?: { version: number; adds: string[] }
-}
-
-const freeMailCheck = 'No free-mail domains or wildcard senders'
-
-export const packSources: Record<string, PackSource> = {
-  'travel.bookings': {
-    version: 3,
-    data: {
-      label: 'Booking data',
-      editorLabel: 'has booking data',
-      machine: ['FlightReservation', 'LodgingReservation', 'TrainReservation', 'RentalCarReservation'],
-      plain: ['flight', 'hotel', 'train', 'car hire'],
-    },
-    senders: [
-      'iberia.com',
-      'booking.com',
-      'airbnb.com',
-      'renfe.es',
-      'ryanair.com',
-      'easyjet.com',
-      'expedia.com',
-      'hotels.com',
-      'marriott.com',
-      'hilton.com',
-      'europcar.com',
-      'sixt.com',
-    ],
-    subject: ['booking', 'reservation', 'itinerary'],
-    reviewedBy: 3,
-    contributors: 41,
-    checks: freeMailCheck,
-    update: { version: 4, adds: ['vueling.com', 'flixbus.com'] },
-  },
-  'finance.invoices': {
-    version: 2,
-    senders: ['holded.com', 'vodafone.es', 'iberdrola.es', 'endesa.es', 'movistar.es', 'orange.es', 'stripe.com', 'paddle.com', 'quaderno.io'],
-    subject: ['invoice', 'factura'],
-    reviewedBy: 4,
-    contributors: 28,
-    checks: freeMailCheck,
-  },
-  'finance.receipts': {
-    version: 1,
-    data: { label: 'Order data', editorLabel: 'has order data', machine: ['Order', 'Invoice'], plain: ['order', 'payment'] },
-    subject: ['receipt', 'recibo'],
-    reviewedBy: 2,
-    contributors: 19,
-    checks: freeMailCheck,
-  },
-  'finance.statements': {
-    version: 1,
-    senders: ['santander.es', 'ing.es', 'revolut.com', 'caixabank.es', 'n26.com', 'openbank.es'],
-    subject: ['statement', 'extracto'],
-    reviewedBy: 3,
-    contributors: 22,
-    checks: freeMailCheck,
-  },
-  'shopping.orders': {
-    version: 2,
-    data: { label: 'Order data', editorLabel: 'has order data', machine: ['Order', 'ParcelDelivery'], plain: ['order', 'delivery'] },
-    senders: ['amazon.es', 'zalando.es', 'elcorteingles.es', 'aliexpress.com', 'ikea.com'],
-    reviewedBy: 2,
-    contributors: 33,
-    checks: freeMailCheck,
-  },
-  'utilities.bills': {
-    version: 1,
-    senders: ['iberdrola.es', 'endesa.es', 'naturgy.es', 'vodafone.es', 'movistar.es', 'digi.es'],
-    subject: ['factura', 'bill'],
-    reviewedBy: 2,
-    contributors: 15,
-    checks: freeMailCheck,
-  },
-  'subscriptions.renewals': {
-    version: 1,
-    senders: ['spotify.com', 'netflix.com', 'apple.com', 'adobe.com'],
-    subject: ['renewal', 'price change', 'renovación'],
-    reviewedBy: 2,
-    contributors: 12,
-    checks: freeMailCheck,
-  },
-  'events.tickets': {
-    version: 1,
-    data: { label: 'Event data', editorLabel: 'has event data', machine: ['EventReservation'], plain: ['event ticket'] },
-    senders: ['ticketmaster.es', 'entradas.com', 'dice.fm', 'eventbrite.com'],
-    reviewedBy: 2,
-    contributors: 9,
-    checks: freeMailCheck,
-  },
-}
-
-export function packById(id: string | null | undefined): Pack | undefined {
-  return packs.find((p) => p.id === id)
-}
-
-/** The rule that uses a pack, if any. Rule packs carry a version, such as travel.bookings@3. */
-export function ruleForPack(packId: string): Rule | undefined {
-  return rules.find((r) => r.pack?.split('@')[0] === packId)
-}
-
-/** "a, b, c, and 9 more" */
-export function listWithMore(items: string[], shown = 3): string {
-  if (items.length <= shown) return items.join(', ')
-  return `${items.slice(0, shown).join(', ')}, and ${items.length - shown} more`
+export function connectionName(id: string): string {
+  return connections.find((c) => c.id === id)?.name ?? id
 }
 
 /* Rule editor */
 
-export type GroupKind = 'data' | 'type' | 'sender' | 'subject' | 'header' | 'label' | 'mailbox'
+/** about and text run on a model inside the verified service. The rest match on the email's own fields. */
+export type GroupKind = 'about' | 'text' | 'type' | 'sender' | 'subject' | 'label'
 
 export type ConditionGroup = { id: string; kind: GroupKind; label: string; chips: string[] }
 
 /** Groups inside a block must all match. Blocks are joined by "or". */
 export type ConditionBlock = ConditionGroup[]
 
-type MailSeed = { kind: 'mail'; date: string; sender: string; address: string; subject: string; keys?: string[] }
-
-export type PreviewRow =
-  | { kind: 'other'; widths: [number, number, number] }
-  | (MailSeed & { id: string })
-  | { kind: 'blocked'; id: string; date: string; sender: string; reason: string }
+/**
+ * A sample email. keys are what it can match on besides its sender. Square brackets in the snippet
+ * mark the detail a remove rule takes out.
+ */
+export type PreviewMail = { id: string; date: string; sender: string; address: string; subject: string; snippet?: string; keys?: string[] }
 
 export type RuleSeed = {
   name: string
   description: string
-  pack?: string
-  basedOnText?: string
+  basedOnText: string
+  effect: RuleEffect
+  removes: string
+  appliesTo: Rule['appliesTo']
   /** Matches with the conditions as loaded. */
   count: number
   /** How many of those the saved rule didn't match yet. */
   newCount: number
-  usedBy: string[]
-  usedByNote?: string
   blocks: ConditionBlock[]
   butNot: string[]
   /** Positive chips the saved rule didn't have, so they count as part of this edit. */
   unsaved: string[]
-  readOnly?: boolean
-  /** Withheld from every connection, as saved. */
-  withheld?: boolean
-  rows: PreviewRow[]
+  rows: PreviewMail[]
 }
 
 let rowId = 0
-function mail(date: string, sender: string, address: string, subject: string, keys?: string[]): PreviewRow {
+function mail(date: string, sender: string, address: string, subject: string, keys?: string[], snippet?: string): PreviewMail {
   rowId += 1
-  return { kind: 'mail', id: `m${rowId}`, date, sender, address, subject, keys }
+  return { id: `m${rowId}`, date, sender, address, subject, keys, snippet }
 }
-function other(a: number, b: number, c: number): PreviewRow {
-  return { kind: 'other', widths: [a, b, c] }
-}
-function blocked(date: string, sender: string, reason: string): PreviewRow {
-  rowId += 1
-  return { kind: 'blocked', id: `b${rowId}`, date, sender, reason }
-}
-
-const flightsRows: PreviewRow[] = [
-  other(44, 92, 300),
-  mail('12 Mar', 'Iberia', 'confirmaciones@iberia.com', 'Your flight to Lisbon is confirmed', ['flight']),
-  other(38, 108, 240),
-  mail('11 Mar', 'Iberia', 'news@iberia.com', 'Spring fares to Lisbon and Porto'),
-  mail('09 Mar', 'Booking.com', 'noreply@booking.com', 'Hotel reservation, 14 to 17 March', ['hotel', 'reservation']),
-  other(44, 100, 200),
-  other(38, 84, 330),
-  mail('04 Mar', 'Norwegian', 'noreply@norwegian.com', 'Your booking KX72QM'),
-  other(44, 112, 260),
-  mail('27 Feb', 'Renfe', 'billetes@renfe.es', 'Madrid to Valencia, 6 April', ['train']),
-  mail('22 Feb', 'Norwegian', 'noreply@norwegian.com', 'Boarding pass, Oslo to Madrid'),
-  other(38, 70, 320),
-  mail('19 Feb', 'Airbnb', 'automated@airbnb.com', 'Reservation confirmed in Porto', ['reservation']),
-  other(44, 96, 290),
-  mail('11 Jan', 'Norwegian', 'noreply@norwegian.com', 'Receipt for your flight'),
-]
-
-const invoiceRows: PreviewRow[] = [
-  other(44, 96, 280),
-  mail('14 Mar', 'Holded', 'facturas@holded.com', 'Invoice F-2291, February', ['invoice']),
-  other(38, 112, 220),
-  mail('12 Mar', 'Vodafone', 'facturas@vodafone.es', 'Your March bill is ready'),
-  other(44, 84, 320),
-  mail('10 Mar', 'Iberdrola', 'facturas@iberdrola.es', 'Factura de luz, febrero', ['factura']),
-  other(38, 100, 260),
-  other(44, 76, 300),
-  mail('02 Mar', 'Holded', 'facturas@holded.com', 'Invoice F-2277, January', ['invoice']),
-  other(44, 108, 240),
-  mail('28 Feb', 'Endesa', 'facturas@endesa.es', 'Factura de gas, enero', ['factura']),
-  other(38, 92, 310),
-]
-
-const receiptRows: PreviewRow[] = [
-  mail('14 Mar', 'Amazon', 'auto-confirm@amazon.es', 'Your receipt, order 402-881', ['order', 'receipt']),
-  other(44, 100, 260),
-  other(38, 84, 300),
-  mail('11 Mar', 'Apple', 'no_reply@email.apple.com', 'Your receipt from Apple', ['payment', 'receipt']),
-  other(44, 112, 220),
-  mail('08 Mar', 'Glovo', 'pedidos@glovo.com', 'Recibo de tu pedido', ['order', 'recibo']),
-  other(38, 92, 330),
-  other(44, 76, 250),
-  mail('03 Mar', 'PayPal', 'service@paypal.es', 'Receipt for your payment to Zara', ['payment', 'receipt']),
-  other(44, 104, 280),
-]
-
-const newsletterRows: PreviewRow[] = [
-  mail('14 Mar', 'Spotify', 'news@spotify.com', 'New releases for you', ['List-Unsubscribe']),
-  other(44, 96, 240),
-  mail('13 Mar', 'Medium', 'noreply@medium.com', 'Your daily digest', ['List-Unsubscribe']),
-  mail('12 Mar', 'Renfe', 'ofertas@renfe.es', 'Ofertas de primavera', ['List-Unsubscribe']),
-  other(38, 112, 300),
-  mail('10 Mar', 'Zara', 'newsletter@zara.com', 'New arrivals this week', ['List-Unsubscribe']),
-  other(44, 84, 260),
-  mail('09 Mar', 'IKEA', 'news@ikea.com', 'Ideas for small spaces', ['List-Unsubscribe']),
-  other(44, 100, 320),
-]
-
-const statementRows: PreviewRow[] = [
-  other(44, 96, 280),
-  mail('06 Mar', 'Santander', 'avisos@santander.es', 'Extracto de febrero', ['extracto']),
-  other(38, 108, 240),
-  blocked('04 Mar', 'BBVA', 'blocked by Private'),
-  mail('02 Mar', 'Revolut', 'no-reply@revolut.com', 'Your February statement', ['statement']),
-  other(44, 84, 300),
-  other(38, 100, 260),
-  mail('03 Feb', 'ING', 'extractos@ing.es', 'Extracto mensual, enero', ['extracto']),
-  other(44, 92, 320),
-]
-
-const everythingRows: PreviewRow[] = [
-  mail('14 Mar', 'Holded', 'facturas@holded.com', 'Invoice F-2291, February'),
-  mail('14 Mar', 'Iberia', 'confirmaciones@iberia.com', 'Your flight to Lisbon is confirmed'),
-  blocked('14 Mar', 'Google', 'blocked by Sign-in and security'),
-  mail('13 Mar', 'Amazon', 'auto-confirm@amazon.es', 'Your receipt, order 402-881'),
-  mail('12 Mar', 'Vodafone', 'facturas@vodafone.es', 'Your March bill is ready'),
-  blocked('12 Mar', 'Booking.com', 'blocked by Sign-in and security'),
-  mail('11 Mar', 'Spotify', 'news@spotify.com', 'New releases for you'),
-  mail('09 Mar', 'Booking.com', 'noreply@booking.com', 'Hotel reservation, 14 to 17 March'),
-  blocked('08 Mar', 'Dr. Elena Vidal', 'blocked by Private'),
-  mail('06 Mar', 'Santander', 'avisos@santander.es', 'Extracto de febrero'),
-]
-
-/** Senders a withheld rule might add, such as from a receipt. Hidden in its preview until they match. */
-const candidateRows: PreviewRow[] = [
-  mail('14 Mar', 'Holded', 'facturas@holded.com', 'Invoice F-2291, February'),
-  mail('14 Mar', 'Iberia', 'confirmaciones@iberia.com', 'Your flight to Lisbon is confirmed'),
-  mail('13 Mar', 'Amazon', 'auto-confirm@amazon.es', 'Your receipt, order 402-881'),
-  mail('12 Mar', 'Vodafone', 'facturas@vodafone.es', 'Your March bill is ready'),
-  mail('10 Mar', 'Iberdrola', 'facturas@iberdrola.es', 'Factura de luz, febrero'),
-  mail('09 Mar', 'Booking.com', 'noreply@booking.com', 'Hotel reservation, 14 to 17 March'),
-  mail('27 Feb', 'Renfe', 'billetes@renfe.es', 'Madrid to Valencia, 6 April'),
-  mail('28 Feb', 'Endesa', 'facturas@endesa.es', 'Factura de gas, enero'),
-  mail('19 Feb', 'Airbnb', 'automated@airbnb.com', 'Reservation confirmed in Porto'),
-]
 
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-const dayOf = (row: PreviewRow) => (row.kind === 'other' ? 0 : months.indexOf(row.date.slice(3)) * 100 + Number(row.date.slice(0, 2)))
+const dayOf = (row: PreviewMail) => months.indexOf(row.date.slice(3)) * 100 + Number(row.date.slice(0, 2))
 
 /** Newest first, so senders added in an edit land among the rest. */
-function newestFirst(rows: PreviewRow[]): PreviewRow[] {
+function newestFirst(rows: PreviewMail[]): PreviewMail[] {
   return [...rows].sort((a, b) => dayOf(b) - dayOf(a))
 }
 
-const signInRows: PreviewRow[] = newestFirst([
+/** Mail a rule doesn't match yet. Hidden in its preview until an edit makes it match. */
+const otherMail: PreviewMail[] = [
+  mail('14 Mar', 'Holded', 'facturas@holded.com', 'Invoice F-2291, February', ['invoice']),
+  mail('14 Mar', 'Iberia', 'confirmaciones@iberia.com', 'Your flight to Lisbon is confirmed', ['flight']),
+  mail('12 Mar', 'Vodafone', 'facturas@vodafone.es', 'Your March bill is ready', ['bill']),
+  mail('11 Mar', 'Spotify', 'news@spotify.com', 'Your plan renews on 1 April', ['renewal']),
+  mail('06 Mar', 'Santander', 'avisos@santander.es', 'Extracto de febrero', ['statement']),
+  mail('02 Mar', 'Ticketmaster', 'entradas@ticketmaster.es', 'Your tickets for 21 March', ['event ticket']),
+  mail('27 Feb', 'Renfe', 'billetes@renfe.es', 'Madrid to Valencia, 6 April', ['train']),
+  mail('19 Feb', 'Airbnb', 'automated@airbnb.com', 'Reservation confirmed in Porto', ['reservation']),
+]
+
+const signInRows = newestFirst([
   mail('14 Mar', 'Google', 'no-reply@accounts.google.com', 'Your verification code', ['one-time code']),
   mail('13 Mar', 'Revolut', 'no-reply@revolut.com', 'New sign-in from Madrid', ['security alert']),
   mail('12 Mar', 'Booking.com', 'noreply@booking.com', 'Reset your password', ['password reset']),
@@ -311,17 +83,47 @@ const signInRows: PreviewRow[] = newestFirst([
   mail('07 Mar', 'Amazon', 'account-update@amazon.es', 'Your one-time password', ['one-time code']),
   mail('05 Mar', 'Holded', 'no-reply@holded.com', 'Change your password', ['password reset']),
   mail('02 Mar', 'Apple', 'no_reply@email.apple.com', 'Your Apple ID was used to sign in', ['security alert']),
-  ...candidateRows,
+  ...otherMail,
 ])
 
-const privateRows: PreviewRow[] = newestFirst([
+const privateRows = newestFirst([
+  mail('13 Mar', 'Dr. Elena Vidal', 'e.vidal@clinicanova.example', 'Your new patient portal'),
   mail('12 Mar', 'Dr. Elena Vidal', 'e.vidal@clinic.example', 'Your test results'),
   mail('08 Mar', 'Dr. Elena Vidal', 'e.vidal@clinic.example', 'Appointment on 20 March'),
   mail('04 Mar', 'BBVA', 'avisos@bbva.es', 'Tu extracto de febrero'),
   mail('02 Mar', 'Lucía Ruiz', 'lucia@example.com', 'Sunday lunch', ['Family']),
   mail('27 Feb', 'BBVA', 'avisos@bbva.es', 'Cambios en tu tarjeta'),
   mail('21 Feb', 'Pablo Ruiz', 'pablo@example.com', 'Photos from the weekend', ['Family']),
-  ...candidateRows,
+  ...otherMail,
+])
+
+const address = ['my home address']
+const homeAddressRows = newestFirst([
+  mail('13 Mar', 'Amazon', 'auto-confirm@amazon.es', 'Your receipt, order 402-881', address, 'Delivering to [Calle Falsa 123, 4B], Madrid'),
+  mail('12 Mar', 'Zalando', 'info@zalando.es', 'Your order is on its way', address, 'Arriving at [Calle Falsa 123, 4B] on Friday'),
+  mail('10 Mar', 'Iberdrola', 'facturas@iberdrola.es', 'Factura de luz, febrero', address, 'Supply address: [Calle Falsa 123, 4B, 28000 Madrid]'),
+  mail('06 Mar', 'Glovo', 'pedidos@glovo.com', 'Recibo de tu pedido', address, 'Delivered to [Calle Falsa 123]'),
+  mail('02 Mar', 'Santander', 'avisos@santander.es', 'Your new card is on its way', address, 'Posted to [Calle Falsa 123, 4B, 28000 Madrid]'),
+  mail('27 Feb', 'Correos', 'avisos@correos.es', 'Your parcel is waiting', address, 'We left a notice at [Calle Falsa 123]'),
+  ...otherMail,
+])
+
+const kids = ['my children']
+const childrenRows = newestFirst([
+  mail('11 Mar', 'Colegio San José', 'secretaria@colegio-sanjose.example', 'Class trip on Friday', kids, 'Please sign the form for [Leo] by Wednesday'),
+  mail('09 Mar', 'Booking.com', 'noreply@booking.com', 'Hotel reservation, 14 to 17 March', kids, 'Guests: Marta Ruiz, [Leo Ruiz], [Alba Ruiz]'),
+  mail('04 Mar', 'Dr. Ana Soler', 'consulta@pediatria.example', 'Vaccination reminder', kids, '[Alba] is due for her booster'),
+  mail('25 Feb', 'Colegio San José', 'secretaria@colegio-sanjose.example', 'Parents evening', kids, 'A slot to talk about [Leo] and [Alba]'),
+  ...otherMail,
+])
+
+const car = ['my car']
+const carRows = newestFirst([
+  mail('12 Mar', 'Mapfre', 'polizas@mapfre.es', 'Your car insurance renews on 1 April', car),
+  mail('05 Mar', 'ITV Madrid', 'citas@itv.example', 'Inspection booked for 1234 KLM', car),
+  mail('20 Feb', 'DGT', 'notificaciones@dgt.es', 'Traffic fine notice', car),
+  mail('14 Feb', 'Mapfre', 'polizas@mapfre.es', 'Policy documents for 1234 KLM'),
+  ...otherMail,
 ])
 
 const signInBlocks = (): ConditionBlock[] => [
@@ -329,105 +131,25 @@ const signInBlocks = (): ConditionBlock[] => [
 ]
 
 /** A slice of the inbox for new rules. Nothing matches until a condition is added. */
-const inboxRows: PreviewRow[] = [
-  mail('14 Mar', 'Holded', 'facturas@holded.com', 'Invoice F-2291, February', ['invoice']),
-  mail('14 Mar', 'Iberia', 'confirmaciones@iberia.com', 'Your flight to Lisbon is confirmed', ['flight']),
-  other(44, 96, 280),
+const inboxRows: PreviewMail[] = newestFirst([
+  ...otherMail,
   mail('13 Mar', 'Amazon', 'auto-confirm@amazon.es', 'Your receipt, order 402-881', ['order', 'receipt']),
-  mail('12 Mar', 'Vodafone', 'facturas@vodafone.es', 'Your March bill is ready', ['bill']),
-  other(38, 108, 240),
-  mail('11 Mar', 'Spotify', 'news@spotify.com', 'Your plan renews on 1 April', ['renewal']),
   mail('09 Mar', 'Booking.com', 'noreply@booking.com', 'Hotel reservation, 14 to 17 March', ['hotel', 'reservation']),
-  other(44, 84, 320),
-  mail('06 Mar', 'Santander', 'avisos@santander.es', 'Extracto de febrero', ['extracto', 'statement']),
   mail('04 Mar', 'Zalando', 'info@zalando.es', 'Your order is on its way', ['order', 'delivery']),
-  other(38, 100, 260),
-  mail('02 Mar', 'Ticketmaster', 'entradas@ticketmaster.es', 'Your tickets for 21 March', ['event ticket']),
-  mail('27 Feb', 'Renfe', 'billetes@renfe.es', 'Madrid to Valencia, 6 April', ['train']),
-  other(44, 92, 300),
-]
+])
 
 function ruleFields(id: string) {
   const rule = rules.find((r) => r.id === id)
   if (!rule) throw new Error(`Unknown rule ${id}`)
-  const { name, pack, basedOnText, matches, usedBy, usedByNote } = rule
-  return { name, pack, basedOnText, count: matches, newCount: 0, usedBy, usedByNote, unsaved: [] }
+  const { name, basedOnText, matches, effect, removes, appliesTo } = rule
+  return { name, basedOnText, count: matches, newCount: 0, effect, removes: removes ?? '', appliesTo, butNot: [], unsaved: [] }
 }
-
-function packGroups(source: PackSource): ConditionBlock[] {
-  const blocks: ConditionBlock[] = []
-  if (source.data) blocks.push([{ id: 'data', kind: 'data', label: source.data.editorLabel, chips: [...source.data.plain] }])
-  const second: ConditionBlock = []
-  if (source.senders) second.push({ id: 'from', kind: 'sender', label: 'is from', chips: [...source.senders] })
-  if (source.subject) second.push({ id: 'subject', kind: 'subject', label: 'subject has', chips: [...source.subject] })
-  if (second.length) blocks.push(second)
-  return blocks
-}
-
-const travel = packSources['travel.bookings']!
 
 const ruleSeeds: Record<string, () => RuleSeed> = {
-  'flights-and-hotels': () => ({
-    ...ruleFields('flights-and-hotels'),
-    description: 'Flight and hotel bookings',
-    count: 50,
-    newCount: 3,
-    blocks: [
-      [{ id: 'data', kind: 'data', label: 'has booking data', chips: [...travel.data!.plain] }],
-      [
-        { id: 'from', kind: 'sender', label: 'is from', chips: ['norwegian.com', ...travel.senders!] },
-        { id: 'subject', kind: 'subject', label: 'subject has', chips: [...travel.subject!] },
-      ],
-    ],
-    butNot: ['news@iberia.com', 'deals@booking.com'],
-    unsaved: ['norwegian.com'],
-    rows: flightsRows,
-  }),
-  invoices: () => ({
-    ...ruleFields('invoices'),
-    description: 'Invoices and bills',
-    blocks: [
-      [{ id: 'from', kind: 'sender', label: 'is from', chips: [...packSources['finance.invoices']!.senders!] }],
-      [{ id: 'subject', kind: 'subject', label: 'subject has', chips: ['invoice', 'factura'] }],
-    ],
-    butNot: [],
-    rows: invoiceRows,
-  }),
-  receipts: () => ({
-    ...ruleFields('receipts'),
-    description: 'Receipts for things I buy',
-    blocks: packGroups(packSources['finance.receipts']!),
-    butNot: [],
-    rows: receiptRows,
-  }),
-  newsletters: () => ({
-    ...ruleFields('newsletters'),
-    description: 'Newsletters and mailing lists',
-    blocks: [[{ id: 'header', kind: 'header', label: 'has header', chips: ['List-Unsubscribe'] }]],
-    butNot: [],
-    rows: newsletterRows,
-  }),
-  'bank-statements': () => ({
-    ...ruleFields('bank-statements'),
-    description: 'Monthly statements from my banks',
-    blocks: packGroups(packSources['finance.statements']!),
-    butNot: [],
-    rows: statementRows,
-  }),
-  everything: () => ({
-    ...ruleFields('everything'),
-    description: "All my mail, minus what's withheld",
-    blocks: [[{ id: 'mailbox', kind: 'mailbox', label: 'is in', chips: ['marta.ruiz@example.com', 'marta@estudioruiz.example'] }]],
-    butNot: [],
-    readOnly: true,
-    rows: everythingRows,
-  }),
   'sign-in-and-security': () => ({
     ...ruleFields('sign-in-and-security'),
     description: 'Mail that could let someone into my accounts',
     blocks: signInBlocks(),
-    butNot: [],
-    withheld: true,
     rows: signInRows,
   }),
   private: () => ({
@@ -437,36 +159,78 @@ const ruleSeeds: Record<string, () => RuleSeed> = {
       [{ id: 'from', kind: 'sender', label: 'is from', chips: ['e.vidal@clinic.example', 'bbva.es'] }],
       [{ id: 'label', kind: 'label', label: 'has label', chips: ['Family'] }],
     ],
-    butNot: [],
-    withheld: true,
     rows: privateRows,
+  }),
+  'home-address': () => ({
+    ...ruleFields('home-address'),
+    description: 'My home address, wherever it appears',
+    blocks: [
+      [{ id: 'about', kind: 'about', label: 'mentions', chips: ['my home address'] }],
+      [{ id: 'text', kind: 'text', label: 'has the words', chips: ['Calle Falsa 123', '28000'] }],
+    ],
+    rows: homeAddressRows,
+  }),
+  children: () => ({
+    ...ruleFields('children'),
+    description: "My children's names",
+    blocks: [
+      [{ id: 'about', kind: 'about', label: 'mentions', chips: ['my children'] }],
+      [{ id: 'text', kind: 'text', label: 'has the words', chips: ['Leo', 'Alba'] }],
+    ],
+    rows: childrenRows,
+  }),
+  car: () => ({
+    ...ruleFields('car'),
+    description: 'Anything about my car',
+    blocks: [
+      [{ id: 'about', kind: 'about', label: 'is about', chips: ['my car'] }],
+      [{ id: 'from', kind: 'sender', label: 'is from', chips: ['mapfre.es', 'dgt.es'] }],
+    ],
+    rows: carRows,
   }),
 }
 
 /** Where a new account reviews the suggested rule before adding it. */
 export const suggestedRulePath = `/rules/new?suggested=${suggestedRule.id}`
 
-/** The suggested rule as a new, unsaved rule, withheld from every connection. */
+/** The suggested rule as a new, unsaved rule that holds back the email from every connection. */
 function suggestedSeed(): RuleSeed {
   const count = suggestedRule.covers.reduce((sum, item) => sum + item.count, 0)
   return {
     name: suggestedRule.name,
     description: 'Mail that could let someone into my accounts',
     basedOnText: 'Suggested by Permaily',
+    effect: 'hold',
+    removes: '',
+    appliesTo: 'all',
     count,
     newCount: count,
-    usedBy: [],
-    usedByNote: 'Not used',
     blocks: signInBlocks(),
     butNot: [],
     unsaved: [],
-    withheld: true,
     rows: signInRows,
   }
 }
 
-/** The names of the rules withheld from all, for the read-only "but not" of a built-in rule. */
-export const withheldRuleNames = withheldRules.map((rule) => rule.name)
+function newRuleSeed(): RuleSeed {
+  return {
+    name: 'New rule',
+    description: '',
+    basedOnText: 'Your own rule',
+    effect: 'hold',
+    removes: '',
+    appliesTo: 'all',
+    count: 0,
+    newCount: 0,
+    blocks: [
+      [{ id: 'about', kind: 'about', label: 'is about', chips: [] }],
+      [{ id: 'from', kind: 'sender', label: 'is from', chips: [] }],
+    ],
+    butNot: [],
+    unsaved: [],
+    rows: inboxRows,
+  }
+}
 
 function sameSender(address: string, entry: string): boolean {
   const a = address.toLowerCase()
@@ -478,57 +242,17 @@ function sameSender(address: string, entry: string): boolean {
 function withSender(seed: RuleSeed, sender: string): RuleSeed {
   const value = sender.trim().toLowerCase()
   const bi = seed.blocks.findIndex((block) => block.some((g) => g.kind === 'sender'))
-  if (!value || bi < 0 || seed.readOnly) return seed
+  if (!value || bi < 0) return seed
   const group = seed.blocks[bi]!.find((g) => g.kind === 'sender')!
   if (group.chips.some((c) => c.toLowerCase() === value)) return seed
-  const hits = seed.rows.filter((r) => r.kind === 'mail' && sameSender(r.address, value)).length
+  const hits = seed.rows.filter((r) => sameSender(r.address, value)).length
   const blocks = seed.blocks.map((block, b) =>
     b !== bi ? block : block.map((g) => (g.id === group.id ? { ...g, chips: [value, ...g.chips] } : g)),
   )
   return { ...seed, blocks, unsaved: [...seed.unsaved, value], count: seed.count + hits, newCount: seed.newCount + hits }
 }
 
-/** A new rule, empty or with a community pack loaded for preview. */
-function newRuleSeed(packId: string | null): RuleSeed {
-  const pack = packById(packId)
-  const source = pack && packSources[pack.id]
-  if (pack && source) {
-    return {
-      name: pack.description,
-      description: pack.description,
-      pack: `${pack.id}@${source.version}`,
-      count: pack.yours,
-      newCount: pack.yours,
-      usedBy: [],
-      usedByNote: 'Not used yet',
-      blocks: packGroups(source),
-      butNot: [],
-      unsaved: [],
-      rows: inboxRows,
-    }
-  }
-  return {
-    name: 'New rule',
-    description: '',
-    basedOnText: 'Your own rule',
-    count: 0,
-    newCount: 0,
-    usedBy: [],
-    usedByNote: 'Not used yet',
-    blocks: [
-      [
-        { id: 'from', kind: 'sender', label: 'is from', chips: [] },
-        { id: 'subject', kind: 'subject', label: 'subject has', chips: [] },
-      ],
-    ],
-    butNot: [],
-    unsaved: [],
-    rows: inboxRows,
-  }
-}
-
-export function ruleSeed(id: string, params: { pack: string | null; suggested: string | null; add: string | null }): RuleSeed | undefined {
-  if (id === 'new') return params.suggested === suggestedRule.id ? suggestedSeed() : newRuleSeed(params.pack)
-  const seed = ruleSeeds[id]?.()
+export function ruleSeed(id: string, params: { suggested: string | null; add: string | null }): RuleSeed | undefined {
+  const seed = id === 'new' ? (params.suggested === suggestedRule.id ? suggestedSeed() : newRuleSeed()) : ruleSeeds[id]?.()
   return seed && params.add ? withSender(seed, params.add) : seed
 }

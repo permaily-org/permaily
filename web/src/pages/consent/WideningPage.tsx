@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Count, Headline, Tag, TermRow, TextAction } from '../../components/ui/index.ts'
+import { Count, Headline, TermRow, TextAction } from '../../components/ui/index.ts'
 import { connectionById, formatCount } from '../../data/sample.ts'
 import { ConsentLayout, Decision, Requester, Terms } from './ConsentLayout.tsx'
-import { ledgerlyTimeline, neverText, requesters, rulePack, viewRows, wideningLens, type RuleId } from './data.ts'
+import { gmailShortQuery, ledgerlyTimeline, requesters, viewRows, wideningLens, type QueryId } from './data.ts'
 import { InboxPreview } from './InboxPreview.tsx'
 import { MailboxLabel } from './MailboxPicker.tsx'
 import { ErrorPreview, LoadingPreview } from './PreviewStates.tsx'
@@ -11,8 +11,8 @@ import { usePreviewState } from './previewState.ts'
 
 const app = requesters.ledgerly
 const connection = connectionById('ledgerly')
-const existing = new Set<RuleId>(['invoices', 'receipts'])
-const added = new Set<RuleId>(['bank-statements'])
+const existing = new Set<QueryId>(['invoices', 'receipts'])
+const added = new Set<QueryId>(['bank-statements'])
 const rows = viewRows(ledgerlyTimeline, wideningLens(existing, added))
 const newCount = rows.filter((row) => row.kind === 'new').length
 const currentCount = rows.filter((row) => row.kind === 'soft').length
@@ -52,8 +52,9 @@ export function WideningPage() {
       <Headline size="display-m" className="mt-6">Ledgerly wants to add your bank statements.</Headline>
 
       <Terms>
-        <TermRow label="Adds" action={<Tag>{rulePack('bank-statements')}</Tag>}>
-          Bank and card statements
+        <TermRow label="Adds">Bank and card statements</TermRow>
+        <TermRow label="To its query">
+          <code className="min-w-0 truncate font-mono text-mono text-ink-2">OR {gmailShortQuery(['bank-statements'])}</code>
         </TermRow>
         <TermRow
           label="The rest"
@@ -63,14 +64,13 @@ export function WideningPage() {
             </TextAction>
           }
         >
-          Parts, actions, time and what's withheld stay the same.
+          Parts, actions and time stay the same.
         </TermRow>
         <div id="unchanged-terms" hidden={!showRest} className="text-ink-2">
-          <TermRow label="Emails">{connection?.ruleNames}</TermRow>
+          <TermRow label="Asks for">{connection?.asksFor}</TermRow>
           <TermRow label="Parts">{connection?.parts}</TermRow>
           <TermRow label="Actions">{connection?.actions}</TermRow>
           <TermRow label="Time">{connection?.time}</TermRow>
-          <TermRow label="Never">{neverText}</TermRow>
         </div>
       </Terms>
 

@@ -2,36 +2,31 @@ import { Plus, X } from 'lucide-react'
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { TextAction } from '../../components/ui/index.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
-import { withheldRuleNames, type ConditionBlock, type GroupKind } from './data.ts'
+import type { ConditionBlock, GroupKind } from './data.ts'
 
 const placeholders: Record<GroupKind, string> = {
-  data: 'type of data',
+  about: 'in your own words',
+  text: 'word or phrase',
   type: 'kind of mail',
   sender: 'domain or address',
   subject: 'word',
-  header: 'header name',
   label: 'Gmail label',
-  mailbox: 'address',
 }
 
 export function Conditions({
   blocks,
   butNot,
-  packChips,
-  readOnly,
   onBlocksChange,
   onButNotChange,
 }: {
   blocks: ConditionBlock[]
   butNot: string[]
-  /** Chips that came from the pack. Anything else in a positive group is outlined as your own. */
-  packChips: Set<string> | null
-  readOnly?: boolean
   onBlocksChange: (blocks: ConditionBlock[]) => void
   onButNotChange: (butNot: string[]) => void
 }) {
   const matchId = useId()
   const notId = useId()
+  const usesModel = blocks.some((block) => block.some((g) => (g.kind === 'about' || g.kind === 'text') && g.chips.length > 0))
 
   function setChips(bi: number, gi: number, chips: string[]) {
     onBlocksChange(blocks.map((block, b) => (b !== bi ? block : block.map((group, g) => (g !== gi ? group : { ...group, chips })))))
@@ -54,8 +49,6 @@ export function Conditions({
                   kind={group.kind}
                   chips={group.chips}
                   collapseAfter={group.kind === 'sender' ? 4 : undefined}
-                  isOutlined={(chip) => Boolean(packChips && !packChips.has(chip.toLowerCase()))}
-                  readOnly={readOnly}
                   onChange={(chips) => setChips(bi, gi, chips)}
                 />
               ))}
@@ -69,13 +62,15 @@ export function Conditions({
           But not
         </p>
         <Box>
-          {readOnly ? (
-            <GroupRow label="is withheld by" kind="sender" chips={withheldRuleNames} readOnly onChange={() => {}} />
-          ) : (
-            <GroupRow label="from" kind="sender" chips={butNot} onChange={onButNotChange} />
-          )}
+          <GroupRow label="from" kind="sender" chips={butNot} onChange={onButNotChange} />
         </Box>
       </div>
+
+      {usesModel && (
+        <p className="mt-2 font-mono text-micro text-ink-2">
+          Words and topics are checked by a model inside Permaily's verified service. Your mail doesn't leave it.
+        </p>
+      )}
     </>
   )
 }
@@ -89,16 +84,12 @@ function GroupRow({
   kind,
   chips,
   collapseAfter,
-  isOutlined,
-  readOnly,
   onChange,
 }: {
   label: string
   kind: GroupKind
   chips: string[]
   collapseAfter?: number
-  isOutlined?: (chip: string) => boolean
-  readOnly?: boolean
   onChange: (chips: string[]) => void
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -132,31 +123,29 @@ function GroupRow({
       <span className="w-[98px] shrink-0 py-0.5 text-small whitespace-nowrap">{label}</span>
       <div ref={listRef} className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-2">
         {visible.map((chip, i) => (
-          <Chip key={chip} value={chip} outlined={isOutlined?.(chip)} onRemove={readOnly ? undefined : () => remove(i)} />
+          <Chip key={chip} value={chip} onRemove={() => remove(i)} />
         ))}
         {hidden > 0 && (
           <TextAction onClick={() => setExpanded(true)}>
             and {hidden} more
           </TextAction>
         )}
-        {!readOnly && <AddChip label={`Add to ${label}`} placeholder={placeholders[kind]} onAdd={add} />}
+        <AddChip label={`Add to ${label}`} placeholder={placeholders[kind]} onAdd={add} />
       </div>
     </div>
   )
 }
 
-function Chip({ value, outlined, onRemove }: { value: string; outlined?: boolean; onRemove?: () => void }) {
+function Chip({ value, onRemove }: { value: string; onRemove?: () => void }) {
   return (
     <span
       className={cx(
-        'inline-flex h-[22px] items-center gap-0.5 rounded-sm bg-sunken font-mono text-mono text-ink',
-        outlined ? 'border border-ink pl-[7px]' : 'pl-2',
-        onRemove ? (outlined ? 'pr-[3px]' : 'pr-1') : outlined ? 'pr-[7px]' : 'pr-2',
+        'inline-flex h-[22px] items-center gap-0.5 rounded-sm bg-sunken pl-2 font-mono text-mono text-ink',
+        onRemove ? 'pr-1' : 'pr-2',
         'has-[button:focus-visible]:outline-2 has-[button:focus-visible]:outline-offset-2 has-[button:focus-visible]:outline-ink',
       )}
     >
       {value}
-      {outlined && <span className="sr-only">, your own</span>}
       {onRemove && (
         <button
           type="button"

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Count, Headline, Tag, TermRow, TextAction } from '../../components/ui/index.ts'
+import { Count, Headline, TermRow, TextAction } from '../../components/ui/index.ts'
 import { formatCount, inbox, mailboxes, type Mailbox } from '../../data/sample.ts'
 import { ChoiceTerm } from './ChoiceDialog.tsx'
 import { ConsentLayout, Decision, Requester, Terms } from './ConsentLayout.tsx'
-import { appPartsChoices, endChoices, endOptions, mailSince, neverText, requesters, rulePack, sharedLens, tripTimeline, viewRows, type RuleId } from './data.ts'
+import { appPartsChoices, endChoices, endOptions, gmailShortQuery, mailSince, requesters, sharedLens, tripTimeline, viewRows, type QueryId } from './data.ts'
 import { ForwardingPreview } from './ForwardingPreview.tsx'
 import { InboxPreview } from './InboxPreview.tsx'
 import { MailboxPicker } from './MailboxPicker.tsx'
@@ -12,7 +12,7 @@ import { ErrorPreview, LoadingPreview } from './PreviewStates.tsx'
 import { usePreviewState } from './previewState.ts'
 
 const app = requesters.tripApp
-const asked: RuleId[] = ['flights-and-hotels']
+const asked: QueryId[] = ['flights-and-hotels']
 
 export function ConsentAppPage() {
   const navigate = useNavigate()
@@ -55,7 +55,7 @@ export function ConsentAppPage() {
       mailbox={<MailboxPicker value={mailboxId} onChange={setMailboxId} />}
       preview={
         forwarding ? (
-          <ForwardingPreview name={app.name} rules={asked} />
+          <ForwardingPreview name={app.name} queries={asked} />
         ) : state === 'loading' ? (
           <LoadingPreview />
         ) : state === 'error' ? (
@@ -86,8 +86,9 @@ export function ConsentAppPage() {
       <Headline size="display-m" className="mt-6">Trip App wants your flights and hotels. Nothing else.</Headline>
 
       <Terms>
-        <TermRow label="Emails" action={<Tag>{rulePack('flights-and-hotels')}</Tag>}>
-          Flight, hotel, rail and car bookings
+        <TermRow label="Asks for">Flight, hotel, rail and car bookings</TermRow>
+        <TermRow label="Query">
+          <code className="min-w-0 truncate font-mono text-mono text-ink-2">{gmailShortQuery(asked)}</code>
         </TermRow>
         {excluded.length > 0 && (
           <TermRow
@@ -115,7 +116,6 @@ export function ConsentAppPage() {
             display={`${mailSince}, ends ${end}`}
           />
         )}
-        <TermRow label="Never">{neverText}</TermRow>
       </Terms>
 
       <Decision

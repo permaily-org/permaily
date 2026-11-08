@@ -1,18 +1,19 @@
 import { ChevronRight } from 'lucide-react'
 import { Link } from 'react-router'
-import { ButtonLink, TextLink, Tile, VisibilityStrip } from '../../components/ui/index.ts'
+import { ButtonLink, Mark, TextLink, Tile } from '../../components/ui/index.ts'
 import { connections, type Connection } from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
-import { attentionFor, stripCells, stripLabel } from './ConnectionsAccess.ts'
+import { attentionFor, isHeadersOnly } from './ConnectionsAccess.ts'
 
-const headings = ['Connection', 'Can read', 'Parts and actions', 'Last used', 'Ends']
+const headings = ['Connection', 'Asks for', 'Can read', 'Parts and actions', 'Last used', 'Ends']
 
 export function ConnectionsTable() {
   return (
-    <table aria-label="Connections and what each one can read" className="w-full table-fixed border-collapse">
+    <table aria-label="Connections, what each one asks for and what it can read" className="w-full table-fixed border-collapse">
       <colgroup>
-        <col className="w-[260px]" />
+        <col className="w-[240px]" />
         <col />
+        <col className="w-[140px]" />
         <col className="w-[166px]" />
         <col className="w-[116px]" />
         <col className="w-[72px]" />
@@ -57,11 +58,13 @@ function ConnectionRow({ connection: c }: { connection: Connection }) {
         </div>
       </td>
       <td className="py-[10px] pr-4">
-        <div className="flex">
-          <VisibilityStrip cells={stripCells(c)} label={stripLabel(c)} />
-        </div>
-        <p className="mt-1 truncate text-small">{c.ruleNames}</p>
-        <p className="font-mono text-micro text-ink-2">{c.readLabel}</p>
+        <p className="truncate text-body">{c.asksFor}</p>
+        <p className="truncate font-mono text-micro text-ink-2">{c.query}</p>
+      </td>
+      <td className="py-[10px] pr-4">
+        <Mark tone={isHeadersOnly(c) ? 'soft' : 'shared'} size="sm">
+          {c.readLabel}
+        </Mark>
       </td>
       <td className="py-[10px] pr-4 text-small">
         <p>{c.parts}</p>

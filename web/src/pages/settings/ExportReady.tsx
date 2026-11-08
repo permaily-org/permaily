@@ -16,7 +16,7 @@ export function ExportReady() {
       JSON.stringify(
         {
           rules,
-          access: connections.map(({ id, name, kind, ruleNames, parts, actions, time, ends }) => ({ id, name, kind, ruleNames, parts, actions, time, ends })),
+          access: connections.map(({ id, name, kind, asksFor, query, parts, actions, time, ends }) => ({ id, name, kind, asksFor, query, parts, actions, time, ends })),
           receipts,
         },
         null,

@@ -1,4 +1,4 @@
-import { user, withheldRules, type Connection, type Receipt } from '../../data/sample.ts'
+import { user, type Connection, type Receipt } from '../../data/sample.ts'
 
 /** Revoking happens at a fixed time so it sits after today's sample receipts. */
 export const revokedAt = '14:22'
@@ -12,34 +12,15 @@ export const dayLabels: Record<Receipt['day'], string> = {
   'Last week': 'Last week',
 }
 
-/** What every connection is refused: mail matching the rules withheld from all. */
-export const neverSummary = `Mail matching ${withheldRules.map((rule) => rule.name).join(' or ')}`
-
-/** Requests each connection made that Permaily turned down. */
-export const refusedRequests: Record<string, Array<{ when: string; text: string }>> = {
-  claude: [
-    { when: 'Today', text: 'Attachment on Invoice F-2291. Not part of this access.' },
-    { when: 'Mon', text: 'Search outside its rules. 0 results returned.' },
-  ],
-  'trip-app': [
-    { when: 'Today', text: 'Password reset from Booking.com. Withheld by Sign-in and security.' },
-    { when: 'Mon', text: 'Login link from Iberia. Withheld by Sign-in and security.' },
-  ],
-  ledgerly: [
-    { when: 'Sun', text: 'Mail from bbva.es. Withheld by Private.' },
-    { when: 'Sat', text: 'Security alert from Revolut. Withheld by Sign-in and security.' },
-  ],
-}
-
 const changeRoutes: Record<string, string> = {
   'trip-app': '/consent/trip-app',
   claude: '/consent/claude',
   ledgerly: '/consent/ledgerly',
-  'inbox-tidy': '/rules/everything',
 }
 
-export function changeRoute(id: string): string {
-  return changeRoutes[id] ?? '/rules'
+/** Where to change what a connection can do. Apps without a consent screen in the sample have none. */
+export function changeRoute(id: string): string | undefined {
+  return changeRoutes[id]
 }
 
 export function groupByDay(items: Receipt[]): Array<{ label: string; items: Receipt[] }> {

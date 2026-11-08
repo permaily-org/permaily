@@ -13,7 +13,7 @@ type Status = { label: string; detail: string; tone: 'ok' | 'attention' | 'dange
 
 function statusOf(mailbox: Mailbox, state: PageState): Status {
   if (state === 'filter-behind' && mailbox.method === 'forwarding')
-    return { label: 'Filter out of date', detail: '2 rule changes not covered', tone: 'attention' }
+    return { label: 'Filter out of date', detail: '1 approved query not covered', tone: 'attention' }
   if (state === 'mailbox-error' && mailbox.method === 'google')
     return { label: 'Access ended', detail: 'Reconnect to resume', tone: 'danger' }
   return { label: mailbox.status, detail: mailbox.statusDetail, tone: 'ok' }
@@ -42,14 +42,14 @@ export function AccountsPage() {
       {state === 'filter-behind' && mailboxes.some((m) => m.method === 'forwarding') && (
         <div className="mt-8 mb-2">
           <Notice
-            title="Your Gmail filter is behind your rules."
+            title="Your Gmail filter is behind your connections."
             action={
               <Link to="/accounts/new/forwarding" className={attentionButton}>
                 Update filter
               </Link>
             }
           >
-            You changed 2 rules, so new mail from norwegian.com isn't reaching Permaily. Nothing extra is being shared.
+            You approved norwegian.com for Trip App, so new mail from it isn't reaching Permaily. Nothing extra is being shared.
           </Notice>
         </div>
       )}

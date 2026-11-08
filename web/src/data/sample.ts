@@ -1,21 +1,38 @@
 /*
   Sample data for the screens, matching the numbers in the designs so they add up across pages.
   Addresses for people use reserved example domains. Company senders are illustrative.
+
+  Two things decide what a connection gets, in this order:
+  1. Rules, which the person writes. They run first, on the whole mailbox, and hold back emails or
+     remove details from them. Connections are never told about them.
+  2. Queries, which connections bring. Each one runs on what the rules left, and the approved query
+     caps what that connection can fetch.
 */
-import type { Cell } from '../components/ui/marks.tsx'
 
 export const user = { name: 'Marta Ruiz', email: 'marta.ruiz@example.com' }
 
-export const inbox = { total: 12304, readable: 647, headersOnly: 11980, withheld: 324 }
+/** withheld: held back from every connection by rules. trimmed: emails that rules remove details from. */
+export const inbox = { total: 12304, readable: 647, headersOnly: 11980, withheld: 324, trimmed: 449 }
 
-/** Overview columns, in order. Rules withheld from all come after these as one last column that nobody can read. */
-export const ruleColumns = [
-  { id: 'flights-and-hotels', name: 'Flights and hotels', count: 47 },
-  { id: 'invoices', name: 'Invoices', count: 212 },
-  { id: 'receipts', name: 'Receipts', count: 388 },
-  { id: 'newsletters', name: 'Newsletters', count: 1204 },
-  { id: 'everything-else', name: 'Everything else', count: 10129 },
-] as const
+/** Kinds of mail a connection can ask for. A consent screen shows a query in these words. */
+export type QueryId = 'flights-and-hotels' | 'invoices' | 'receipts' | 'bank-statements' | 'newsletters'
+
+export type QueryKind = { id: QueryId; name: string; detail: string; matches: number }
+
+export const queryKinds: QueryKind[] = [
+  { id: 'flights-and-hotels', name: 'Flights and hotels', detail: 'Flight, hotel, rail and car bookings', matches: 47 },
+  { id: 'invoices', name: 'Invoices', detail: 'Invoices and bills', matches: 212 },
+  { id: 'receipts', name: 'Receipts', detail: 'Order and payment receipts', matches: 388 },
+  { id: 'bank-statements', name: 'Bank statements', detail: 'Bank and card statements', matches: 96 },
+  { id: 'newsletters', name: 'Newsletters', detail: 'Mail sent to a mailing list', matches: 1204 },
+]
+
+export function queryKind(id: QueryId): QueryKind {
+  return queryKinds.find((q) => q.id === id) ?? queryKinds[0]
+}
+
+/** One query a connection ran, as its page lists it. */
+export type QueryRun = { when: string; query: string; result: string; refused?: boolean }
 
 export type Connection = {
   id: string
@@ -24,12 +41,13 @@ export type Connection = {
   domain: string
   kind: 'App' | 'Agent'
   delivery: 'API' | 'MCP'
-  /** One cell per Overview column, not counting the withheld rules. */
-  cells: Cell[]
+  /** The approved query in plain words. For an agent, the scope its own searches stay inside. */
+  asksFor: string
+  /** The approved query as it runs. An agent writes its own searches inside its scope. */
+  query: string
   readCount: number
   readLabel: string
   hasRead: number
-  ruleNames: string
   parts: string
   actions: string
   time: string
@@ -40,6 +58,7 @@ export type Connection = {
   overviewDetail: string
   connectedVia: string
   flag?: string
+  runs: QueryRun[]
 }
 
 export const connections: Connection[] = [
@@ -50,11 +69,11 @@ export const connections: Connection[] = [
     domain: 'trip-app.com',
     kind: 'App',
     delivery: 'API',
-    cells: ['shared', 'withheld', 'withheld', 'withheld', 'withheld'],
+    asksFor: 'Flights and hotels',
+    query: 'from:(iberia.com OR booking.com OR renfe.es OR airbnb.com …) subject:(booking OR reservation OR itinerary)',
     readCount: 47,
     readLabel: '47 emails',
     hasRead: 9,
-    ruleNames: 'Flights and hotels',
     parts: 'Subject and body text',
     actions: 'Read only',
     time: 'Mail since 1 Jan 2026, until 18 May',
@@ -63,6 +82,11 @@ export const connections: Connection[] = [
     ends: '18 May',
     overviewDetail: 'API, used 2 hours ago',
     connectedVia: 'App connected through the API',
+    runs: [
+      { when: 'Today', query: 'Its query, new mail since Sunday', result: '1 email' },
+      { when: 'Sun', query: 'Its query, new mail since Thursday', result: '1 email' },
+      { when: 'Thu', query: 'Its query, new mail since Monday', result: 'Nothing new' },
+    ],
   },
   {
     id: 'claude',
@@ -71,11 +95,11 @@ export const connections: Connection[] = [
     domain: 'claude.ai',
     kind: 'Agent',
     delivery: 'MCP',
-    cells: ['shared', 'shared', 'withheld', 'withheld', 'withheld'],
+    asksFor: 'Flights and hotels, Invoices',
+    query: 'Its own searches, inside that scope',
     readCount: 259,
     readLabel: '259 emails',
     hasRead: 38,
-    ruleNames: 'Flights and hotels, Invoices',
     parts: 'Subject and body text',
     actions: 'Read only',
     time: 'Mail since 1 Jan 2026, until 4 June',
@@ -84,6 +108,13 @@ export const connections: Connection[] = [
     ends: '4 June',
     overviewDetail: 'MCP, used 12 minutes ago',
     connectedVia: 'Agent connected through MCP',
+    runs: [
+      { when: 'Today', query: '"attachment of Invoice F-2291"', result: 'Refused: attachments are not part of its access', refused: true },
+      { when: 'Today', query: '"invoice holded february"', result: '1 email' },
+      { when: 'Today', query: '"vodafone bill march"', result: '1 email' },
+      { when: 'Mon', query: '"car insurance renewal"', result: '0 emails' },
+      { when: 'Mon', query: '"trips to lisbon or valencia"', result: '2 emails' },
+    ],
   },
   {
     id: 'ledgerly',
@@ -92,11 +123,11 @@ export const connections: Connection[] = [
     domain: 'ledgerly.app',
     kind: 'App',
     delivery: 'API',
-    cells: ['withheld', 'shared', 'shared', 'withheld', 'withheld'],
+    asksFor: 'Invoices, Receipts',
+    query: 'from:(holded.com OR vodafone.es OR iberdrola.es …) OR subject:(invoice OR factura OR receipt OR recibo)',
     readCount: 600,
     readLabel: '600 emails',
     hasRead: 112,
-    ruleNames: 'Invoices, Receipts',
     parts: 'Subject and body text',
     actions: 'Read only',
     time: 'Mail since 1 Jan 2026, until 2 Sep',
@@ -106,6 +137,11 @@ export const connections: Connection[] = [
     overviewDetail: 'API, asking for more',
     connectedVia: 'App connected through the API',
     flag: 'Wants bank statements',
+    runs: [
+      { when: 'Today', query: 'Its query, new mail since yesterday', result: '1 email' },
+      { when: 'Mon', query: 'Bank statements since January', result: 'Refused: outside its query. It asked you to add them', refused: true },
+      { when: 'Mon', query: 'Its query, new mail since Sunday', result: '1 email' },
+    ],
   },
   {
     id: 'inbox-tidy',
@@ -114,11 +150,11 @@ export const connections: Connection[] = [
     domain: 'inboxtidy.io',
     kind: 'App',
     delivery: 'API',
-    cells: ['headers', 'headers', 'headers', 'headers', 'headers'],
+    asksFor: 'All mail',
+    query: 'in:anywhere -in:spam -in:trash',
     readCount: 11980,
     readLabel: '11,980 headers',
     hasRead: 0,
-    ruleNames: 'All mail',
     parts: 'Headers only',
     actions: 'Label, archive',
     time: 'All mail, until 30 Apr',
@@ -129,6 +165,7 @@ export const connections: Connection[] = [
     overviewDetail: 'API, unused for 64 days',
     connectedVia: 'App connected through the API',
     flag: 'Unused for 64 days',
+    runs: [],
   },
 ]
 
@@ -141,7 +178,7 @@ export type AttentionItem = {
   title: string
   detail: string
   action: string
-  /** Where the action goes. "pack-update" opens the pack update dialog on Overview. */
+  /** Where the action goes. */
   to: string
 }
 
@@ -156,15 +193,6 @@ export const attention: AttentionItem[] = [
     to: '/consent/ledgerly',
   },
   {
-    id: 'travel-bookings-v4',
-    area: 'rules',
-    kind: 'decision',
-    title: 'travel.bookings has a new version',
-    detail: 'Adds 2 senders, so Trip App and Claude need your approval',
-    action: 'Review',
-    to: 'pack-update',
-  },
-  {
     id: 'inbox-tidy-unused',
     area: 'connections',
     kind: 'suggestion',
@@ -174,125 +202,105 @@ export const attention: AttentionItem[] = [
     to: '/connections/inbox-tidy',
   },
   {
-    id: 'invoices-spike',
+    id: 'private-new-address',
     area: 'rules',
     kind: 'suggestion',
-    title: 'Invoices matched 3 times more mail than usual this week',
-    detail: 'Worth checking before more is shared',
+    title: 'Your doctor wrote from a new address',
+    detail: 'Private covers e.vidal@clinic.example, not clinicanova.example',
     action: 'Check rule',
-    to: '/rules/invoices',
+    to: '/rules/private?add=clinicanova.example',
   },
 ]
+
+/** hold: the whole email is held back. remove: only the matching details are taken out, and the rest goes through. */
+export type RuleEffect = 'hold' | 'remove'
 
 export type Rule = {
   id: string
   name: string
   description: string
-  pack?: string
-  basedOnText?: string
-  basedOnNote?: string
-  basedOnFlag?: boolean
+  effect: RuleEffect
+  /** What a remove rule takes out, such as "the address". */
+  removes?: string
+  /** Every connection, including ones approved later, or only these connection ids. */
+  appliesTo: 'all' | string[]
+  basedOnText: string
   matches: number
   matchNote?: string
-  usedBy: string[]
-  usedByNote?: string
-  /** Withheld from every connection. Wins over any rule a connection uses. */
-  withheld?: boolean
   changed: string
 }
 
 export const rules: Rule[] = [
   {
-    id: 'flights-and-hotels',
-    name: 'Flights and hotels',
-    description: 'Booking data, or travel senders with booking words',
-    pack: 'travel.bookings@3',
-    basedOnNote: 'plus 1 sender, version 4 ready',
-    basedOnFlag: true,
-    matches: 47,
-    usedBy: ['TA', 'CL'],
-    changed: '12 Mar',
-  },
-  {
-    id: 'invoices',
-    name: 'Invoices',
-    description: 'Billing senders, or subject has invoice or factura',
-    pack: 'finance.invoices@2',
-    matches: 212,
-    matchNote: '3x on Fri',
-    usedBy: ['CL', 'LE'],
-    changed: '20 Feb',
-  },
-  {
-    id: 'receipts',
-    name: 'Receipts',
-    description: 'Order and payment receipts',
-    pack: 'finance.receipts@1',
-    matches: 388,
-    usedBy: ['LE'],
-    changed: '20 Feb',
-  },
-  {
-    id: 'newsletters',
-    name: 'Newsletters',
-    description: 'Anything with a mailing list header',
-    basedOnText: 'Your own rule',
-    matches: 1204,
-    usedBy: [],
-    usedByNote: 'Not used',
-    changed: '9 Jan',
-  },
-  {
-    id: 'bank-statements',
-    name: 'Bank statements',
-    description: 'Statements from your banks',
-    pack: 'finance.statements@1',
-    matches: 96,
-    usedBy: [],
-    usedByNote: 'Ledgerly is asking',
-    changed: '16 Mar',
-  },
-  {
-    id: 'everything',
-    name: 'All mail',
-    description: "Everything in your mailboxes, minus what's withheld",
-    basedOnText: 'Built in',
-    matches: 11980,
-    usedBy: ['IT'],
-    usedByNote: 'headers only',
-    changed: 'Built in',
-  },
-  {
     id: 'sign-in-and-security',
     name: 'Sign-in and security',
     description: 'Password resets, login links, one-time codes and security alerts',
+    effect: 'hold',
+    appliesTo: 'all',
     basedOnText: 'Suggested by Permaily',
     matches: 300,
-    usedBy: [],
-    withheld: true,
     changed: '9 Jan',
   },
   {
     id: 'private',
     name: 'Private',
     description: 'My doctor, my bank and the Family label',
+    effect: 'hold',
+    appliesTo: 'all',
     basedOnText: 'Your own rule',
     matches: 24,
-    usedBy: [],
-    withheld: true,
+    matchNote: 'new sender',
     changed: '2 Feb',
+  },
+  {
+    id: 'home-address',
+    name: 'Home address',
+    description: 'My address, wherever it appears',
+    effect: 'remove',
+    removes: 'the address',
+    appliesTo: 'all',
+    basedOnText: 'Your own rule',
+    matches: 412,
+    changed: '14 Feb',
+  },
+  {
+    id: 'children',
+    name: 'Children',
+    description: "Lucía's and Pablo's names",
+    effect: 'remove',
+    removes: 'their names',
+    appliesTo: 'all',
+    basedOnText: 'Your own rule',
+    matches: 37,
+    changed: '20 Feb',
+  },
+  {
+    id: 'car',
+    name: 'Car',
+    description: 'Insurance, inspections and fines for my car',
+    effect: 'hold',
+    appliesTo: ['claude'],
+    basedOnText: 'Your own rule',
+    matches: 18,
+    changed: '3 Mar',
   },
 ]
 
-/** Rules withheld from every connection. Their matches add up to inbox.withheld. */
-export const withheldRules = rules.filter((rule) => rule.withheld)
+/** "Holds back the email" or "Removes the address" */
+export function effectText(rule: Pick<Rule, 'effect' | 'removes'>): string {
+  return rule.effect === 'hold' ? 'Holds back the email' : `Removes ${rule.removes ?? 'the details'}`
+}
 
-/** "Sign-in and security and Private" */
-export const withheldNames = withheldRules.map((rule) => rule.name).join(' and ')
+/** "Every connection" or "Claude", from the connection ids a rule applies to. */
+export function appliesToText(appliesTo: Rule['appliesTo']): string {
+  if (appliesTo === 'all') return 'Every connection'
+  const names = appliesTo.map((id) => connections.find((c) => c.id === id)?.name ?? id)
+  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
+}
 
 /**
- * The rule Permaily suggests on every new account. It's an ordinary rule, withheld from every
- * connection, so people can change it or turn it off later.
+ * The rule Permaily suggests on every new account. It's an ordinary rule that holds back the email
+ * from every connection, so people can change it or delete it later.
  */
 export const suggestedRule = {
   id: 'sign-in-and-security',
@@ -305,21 +313,6 @@ export const suggestedRule = {
   ],
 }
 
-export type Pack = { id: string; description: string; yours: number; state: 'update' | 'in-use' | 'available' }
-
-export const packs: Pack[] = [
-  { id: 'travel.bookings', description: 'Flight, hotel, rail and car bookings', yours: 47, state: 'update' },
-  { id: 'finance.invoices', description: 'Invoices from common billing services', yours: 212, state: 'in-use' },
-  { id: 'finance.receipts', description: 'Order and payment receipts', yours: 388, state: 'in-use' },
-  { id: 'finance.statements', description: 'Bank and card statements', yours: 96, state: 'available' },
-  { id: 'shopping.orders', description: 'Orders and delivery updates', yours: 143, state: 'available' },
-  { id: 'utilities.bills', description: 'Power, water, phone and internet', yours: 64, state: 'available' },
-  { id: 'subscriptions.renewals', description: 'Renewals and price changes', yours: 37, state: 'available' },
-  { id: 'events.tickets', description: 'Tickets for concerts and events', yours: 18, state: 'available' },
-]
-
-export const packCategories = ['All', 'Travel', 'Finance', 'Shopping', 'Bills', 'Events'] as const
-
 export type Receipt = {
   id: string
   day: 'Today' | 'Monday' | 'Sunday' | 'Saturday' | 'Last week'
@@ -331,27 +324,29 @@ export type Receipt = {
   parts: string
   bodyChars: number
   attachment: 'withheld' | 'none'
-  ruleId: string
-  ruleTag: string
+  /** The query that fetched it: an agent's own search, or an app's approved query. */
+  query: string
+  /** Details a rule took out before it left. */
+  removed?: { what: string; ruleId: string }
   approved: string
   request: string
 }
 
 /** This week's receipts, newest first, plus a few from last week for connection pages. */
 export const receipts: Receipt[] = [
-  { id: 'r_8f21c4', day: 'Today', time: '14:02', connectionId: 'claude', sender: 'Holded', from: 'facturas@holded.com', subject: 'Invoice F-2291, February', parts: 'subject, body', bodyChars: 1204, attachment: 'withheld', ruleId: 'invoices', ruleTag: 'invoices', approved: 'Approved by you on 6 March', request: 'get_message' },
-  { id: 'r_8f21c3', day: 'Today', time: '14:02', connectionId: 'claude', sender: 'Iberia', from: 'confirmaciones@iberia.com', subject: 'Your flight to Lisbon is confirmed', parts: 'subject, body', bodyChars: 2310, attachment: 'none', ruleId: 'flights-and-hotels', ruleTag: 'flights-and-hotels', approved: 'Approved by you on 6 March', request: 'get_message' },
-  { id: 'r_7d10a9', day: 'Today', time: '11:40', connectionId: 'trip-app', sender: 'Iberia', from: 'confirmaciones@iberia.com', subject: 'Your flight to Lisbon is confirmed', parts: 'subject, body', bodyChars: 2310, attachment: 'none', ruleId: 'flights-and-hotels', ruleTag: 'flights-and-hotels', approved: 'Approved by you on 17 Feb', request: 'messages.list' },
-  { id: 'r_7c0b12', day: 'Today', time: '09:31', connectionId: 'claude', sender: 'Vodafone', from: 'facturas@vodafone.es', subject: 'Your March bill is ready', parts: 'subject, body', bodyChars: 860, attachment: 'withheld', ruleId: 'invoices', ruleTag: 'invoices', approved: 'Approved by you on 6 March', request: 'get_message' },
-  { id: 'r_7b9e04', day: 'Today', time: '09:14', connectionId: 'ledgerly', sender: 'Amazon', from: 'auto-confirm@amazon.es', subject: 'Your receipt, order 402-881', parts: 'subject, body', bodyChars: 1530, attachment: 'none', ruleId: 'receipts', ruleTag: 'receipts', approved: 'Approved by you on 4 March', request: 'messages.list' },
-  { id: 'r_6f33a1', day: 'Monday', time: '18:47', connectionId: 'claude', sender: 'Booking.com', from: 'noreply@booking.com', subject: 'Hotel reservation, 14 to 17 March', parts: 'subject, body', bodyChars: 2875, attachment: 'none', ruleId: 'flights-and-hotels', ruleTag: 'flights-and-hotels', approved: 'Approved by you on 6 March', request: 'get_message' },
-  { id: 'r_6f339e', day: 'Monday', time: '18:46', connectionId: 'claude', sender: 'Renfe', from: 'billetes@renfe.es', subject: 'Madrid to Valencia, 6 April', parts: 'subject, body', bodyChars: 1102, attachment: 'none', ruleId: 'flights-and-hotels', ruleTag: 'flights-and-hotels', approved: 'Approved by you on 6 March', request: 'get_message' },
-  { id: 'r_6e0c77', day: 'Monday', time: '11:20', connectionId: 'ledgerly', sender: 'Iberdrola', from: 'facturas@iberdrola.es', subject: 'Factura de luz, febrero', parts: 'subject, body', bodyChars: 940, attachment: 'withheld', ruleId: 'invoices', ruleTag: 'invoices', approved: 'Approved by you on 4 March', request: 'messages.list' },
-  { id: 'r_5a91d0', day: 'Sunday', time: '20:03', connectionId: 'trip-app', sender: 'Airbnb', from: 'automated@airbnb.com', subject: 'Reservation confirmed in Porto', parts: 'subject, body', bodyChars: 3120, attachment: 'none', ruleId: 'flights-and-hotels', ruleTag: 'flights-and-hotels', approved: 'Approved by you on 17 Feb', request: 'messages.list' },
-  { id: 'r_5a8f2b', day: 'Sunday', time: '09:12', connectionId: 'ledgerly', sender: 'Holded', from: 'facturas@holded.com', subject: 'Invoice F-2277, January', parts: 'subject, body', bodyChars: 1188, attachment: 'withheld', ruleId: 'invoices', ruleTag: 'invoices', approved: 'Approved by you on 4 March', request: 'messages.list' },
-  { id: 'r_4c22e8', day: 'Saturday', time: '16:40', connectionId: 'ledgerly', sender: 'Endesa', from: 'facturas@endesa.es', subject: 'Factura de gas, enero', parts: 'subject, body', bodyChars: 990, attachment: 'withheld', ruleId: 'invoices', ruleTag: 'invoices', approved: 'Approved by you on 4 March', request: 'messages.list' },
-  { id: 'r_3b10f5', day: 'Last week', time: 'Thu 16:08', connectionId: 'claude', sender: 'Airbnb', from: 'automated@airbnb.com', subject: 'Reservation confirmed in Porto', parts: 'subject, body', bodyChars: 3120, attachment: 'none', ruleId: 'flights-and-hotels', ruleTag: 'flights-and-hotels', approved: 'Approved by you on 6 March', request: 'get_message' },
-  { id: 'r_3a07c9', day: 'Last week', time: 'Tue 10:15', connectionId: 'claude', sender: 'Holded', from: 'facturas@holded.com', subject: 'Invoice F-2277, January', parts: 'subject, body', bodyChars: 1188, attachment: 'withheld', ruleId: 'invoices', ruleTag: 'invoices', approved: 'Approved by you on 6 March', request: 'get_message' },
+  { id: 'r_8f21c4', day: 'Today', time: '14:02', connectionId: 'claude', sender: 'Holded', from: 'facturas@holded.com', subject: 'Invoice F-2291, February', parts: 'subject, body', bodyChars: 1204, attachment: 'withheld', query: '"invoice holded february"', approved: 'Approved by you on 6 March', request: 'get_message' },
+  { id: 'r_8f21c3', day: 'Today', time: '14:02', connectionId: 'claude', sender: 'Iberia', from: 'confirmaciones@iberia.com', subject: 'Your flight to Lisbon is confirmed', parts: 'subject, body', bodyChars: 2310, attachment: 'none', query: '"flight to lisbon"', approved: 'Approved by you on 6 March', request: 'get_message' },
+  { id: 'r_7d10a9', day: 'Today', time: '11:40', connectionId: 'trip-app', sender: 'Iberia', from: 'confirmaciones@iberia.com', subject: 'Your flight to Lisbon is confirmed', parts: 'subject, body', bodyChars: 2310, attachment: 'none', query: 'Flights and hotels', approved: 'Approved by you on 17 Feb', request: 'messages.list' },
+  { id: 'r_7c0b12', day: 'Today', time: '09:31', connectionId: 'claude', sender: 'Vodafone', from: 'facturas@vodafone.es', subject: 'Your March bill is ready', parts: 'subject, body', bodyChars: 860, attachment: 'withheld', query: '"vodafone bill march"', approved: 'Approved by you on 6 March', request: 'get_message' },
+  { id: 'r_7b9e04', day: 'Today', time: '09:14', connectionId: 'ledgerly', sender: 'Amazon', from: 'auto-confirm@amazon.es', subject: 'Your receipt, order 402-881', parts: 'subject, body', bodyChars: 1530, attachment: 'none', query: 'Invoices, Receipts', removed: { what: 'the address', ruleId: 'home-address' }, approved: 'Approved by you on 4 March', request: 'messages.list' },
+  { id: 'r_6f33a1', day: 'Monday', time: '18:47', connectionId: 'claude', sender: 'Booking.com', from: 'noreply@booking.com', subject: 'Hotel reservation, 14 to 17 March', parts: 'subject, body', bodyChars: 2875, attachment: 'none', query: '"hotel in lisbon"', removed: { what: "Lucía's and Pablo's names", ruleId: 'children' }, approved: 'Approved by you on 6 March', request: 'get_message' },
+  { id: 'r_6f339e', day: 'Monday', time: '18:46', connectionId: 'claude', sender: 'Renfe', from: 'billetes@renfe.es', subject: 'Madrid to Valencia, 6 April', parts: 'subject, body', bodyChars: 1102, attachment: 'none', query: '"trips to lisbon or valencia"', approved: 'Approved by you on 6 March', request: 'get_message' },
+  { id: 'r_6e0c77', day: 'Monday', time: '11:20', connectionId: 'ledgerly', sender: 'Iberdrola', from: 'facturas@iberdrola.es', subject: 'Factura de luz, febrero', parts: 'subject, body', bodyChars: 940, attachment: 'withheld', query: 'Invoices, Receipts', approved: 'Approved by you on 4 March', request: 'messages.list' },
+  { id: 'r_5a91d0', day: 'Sunday', time: '20:03', connectionId: 'trip-app', sender: 'Airbnb', from: 'automated@airbnb.com', subject: 'Reservation confirmed in Porto', parts: 'subject, body', bodyChars: 3120, attachment: 'none', query: 'Flights and hotels', approved: 'Approved by you on 17 Feb', request: 'messages.list' },
+  { id: 'r_5a8f2b', day: 'Sunday', time: '09:12', connectionId: 'ledgerly', sender: 'Holded', from: 'facturas@holded.com', subject: 'Invoice F-2277, January', parts: 'subject, body', bodyChars: 1188, attachment: 'withheld', query: 'Invoices, Receipts', approved: 'Approved by you on 4 March', request: 'messages.list' },
+  { id: 'r_4c22e8', day: 'Saturday', time: '16:40', connectionId: 'ledgerly', sender: 'Endesa', from: 'facturas@endesa.es', subject: 'Factura de gas, enero', parts: 'subject, body', bodyChars: 990, attachment: 'withheld', query: 'Invoices, Receipts', approved: 'Approved by you on 4 March', request: 'messages.list' },
+  { id: 'r_3b10f5', day: 'Last week', time: 'Thu 16:08', connectionId: 'claude', sender: 'Airbnb', from: 'automated@airbnb.com', subject: 'Reservation confirmed in Porto', parts: 'subject, body', bodyChars: 3120, attachment: 'none', query: '"airbnb porto"', approved: 'Approved by you on 6 March', request: 'get_message' },
+  { id: 'r_3a07c9', day: 'Last week', time: 'Tue 10:15', connectionId: 'claude', sender: 'Holded', from: 'facturas@holded.com', subject: 'Invoice F-2277, January', parts: 'subject, body', bodyChars: 1188, attachment: 'withheld', query: '"invoice holded january"', approved: 'Approved by you on 6 March', request: 'get_message' },
 ]
 
 /** Emails that left per day for the last 14 days, oldest first. The last 7 add up to 74. */
@@ -377,7 +372,7 @@ export const mailboxes: Mailbox[] = [
     address: 'marta.ruiz@example.com',
     label: 'Personal, forwarding',
     method: 'forwarding',
-    receives: 'Only mail matching your rules',
+    receives: 'Only mail your connections ask for',
     history: 'New mail only',
     actions: 'None',
     usedBy: ['TA'],

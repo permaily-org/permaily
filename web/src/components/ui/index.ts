@@ -3,4 +3,4 @@ export { Checkbox, FilterButton, SearchField, StepMarker, Switch, ViewSwitch, ty
 export { Dialog } from './Dialog.tsx'
 export { DayHeading, Headline, Notice, SectionHeading, TermRow } from './layout.tsx'
 export { MailRow, type MailRowProps } from './mail.tsx'
-export { Bar, Count, Legend, Mark, PartsChip, Tag, Tile, VisibilityStrip, type Cell, type Share } from './marks.tsx'
+export { Bar, Count, EffectMark, Mark, PartsChip, Tag, Tile, type Share } from './marks.tsx'

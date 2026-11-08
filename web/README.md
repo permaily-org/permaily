@@ -6,14 +6,14 @@ The web app people use to decide what each app, agent or vendor can read from th
 
 | Section | Purpose |
 | --- | --- |
-| Overview | Who can read what, and anything waiting for a decision |
-| Connections | Each app, agent and vendor, what it can read, what it has read, and revoking access |
-| Rules | Rules that define which emails match, including community packs. A rule can be withheld from every connection, and new accounts get one suggested for sign-in and security mail |
+| Overview | Your rules, then what each connection asks for, and anything waiting for a decision |
+| Connections | Each app, agent and vendor: the query it asks for, the queries it ran, what it has read, and revoking access. Rules never appear here |
+| Rules | The person's own filters. Each one holds back emails or removes details from them, for every connection or only some, before any query runs. New accounts get one suggested for sign-in and security mail |
 | Activity | A receipt for every email that leaves, showing who got it, which parts and why |
 | Accounts | Connected mailboxes and how Permaily reaches them |
 | Settings | Profile, sign-in, notifications and your data |
 
-Apps and agents also send people to the consent screen. There they see a preview of exactly what would be shared before they allow it.
+Apps and agents also send people to the consent screen. There they see the query the connection asks for, and a preview of exactly what it would get, before they allow it. The approved query caps what that connection can fetch.
 
 The proof that the running service matches the public code is a separate public page, not part of this app.
 
@@ -38,13 +38,12 @@ Every screen runs on sample data in `src/data/sample.ts`, and nothing talks to a
 
 | Route | Screen | States |
 | --- | --- | --- |
-| `/` | Overview: who can read what, and what needs a decision | `?state=first-use` |
+| `/` | Overview: your rules, what connections ask for, and what needs a decision | `?state=first-use` |
 | `/connections` | Every app, agent and vendor | `?state=empty` |
 | `/connections/:id` | One connection, for example `claude` | Revoke shows what it may still hold |
 | `/connections/new` | Connect an agent | |
 | `/rules` | Your rules | `?state=empty` shows the suggested rule |
-| `/rules/packs` | Community packs | `?state=error`, `?pack=<id>` |
-| `/rules/:id` | Rule editor with a live preview, for example `flights-and-hotels`, `sign-in-and-security` or `new` | `/rules/new?suggested=sign-in-and-security`, `?add=<sender>` |
+| `/rules/:id` | Rule editor with a live preview, for example `sign-in-and-security`, `home-address` or `new` | `/rules/new?suggested=sign-in-and-security`, `?add=<sender>` |
 | `/activity` | Receipts for every email that left | `?state=empty` |
 | `/accounts` | Connected mailboxes | `?state=filter-behind`, `?state=mailbox-error` |
 | `/accounts/new` | Connect a mailbox | |

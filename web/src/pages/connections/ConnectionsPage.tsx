@@ -1,13 +1,7 @@
 import { useSearchParams } from 'react-router'
-import { ButtonAnchor, ButtonLink, Headline, Legend, SectionHeading, TextLink, type Cell } from '../../components/ui/index.ts'
-import { attentionCount, connections, formatCount, formerConnections, ruleColumns } from '../../data/sample.ts'
+import { ButtonAnchor, ButtonLink, Headline, SectionHeading, TextLink } from '../../components/ui/index.ts'
+import { attentionCount, connections, formatCount, formerConnections } from '../../data/sample.ts'
 import { ConnectionsTable } from './ConnectionsTable.tsx'
-
-const legend: Array<{ cell: Cell; label: string }> = [
-  { cell: 'shared', label: 'Can read' },
-  { cell: 'headers', label: 'Headers only' },
-  { cell: 'withheld', label: 'Withheld' },
-]
 
 export function ConnectionsPage() {
   const [params] = useSearchParams()
@@ -23,7 +17,7 @@ export function ConnectionsPage() {
             {connections.length} {connections.length === 1 ? 'connection' : 'connections'}.
           </Headline>
           <p className="mt-2 text-lead text-ink-2">
-            Each one started with nothing.
+            Each one gets only what its query asks for and you approved.
             {waiting > 0 && ` ${waiting} ${waiting === 1 ? 'needs' : 'need'} you.`}
           </p>
         </div>
@@ -32,11 +26,6 @@ export function ConnectionsPage() {
 
       <div className="mt-4">
         <ConnectionsTable />
-      </div>
-
-      <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2">
-        <Legend items={legend} />
-        <p className="text-mono text-ink-2">Cells run in Overview's order, from {ruleColumns[0].name} to what's withheld from all</p>
       </div>
 
       {formerConnections.length > 0 && (

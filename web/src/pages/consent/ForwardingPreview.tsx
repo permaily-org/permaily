@@ -1,5 +1,5 @@
 import { ButtonAnchor, Count, Headline, MailRow, SectionHeading, TermRow } from '../../components/ui/index.ts'
-import { gmailQuery, gmailSearchUrl, gmailShortQuery, matchDetails, ruleName, type RuleId } from './data.ts'
+import { gmailQuery, gmailSearchUrl, gmailShortQuery, matchDetails, queryName, type QueryId } from './data.ts'
 import { PreviewEyebrow } from './InboxPreview.tsx'
 
 const stays: Array<[number, number, number]> = [
@@ -10,7 +10,7 @@ const stays: Array<[number, number, number]> = [
 ]
 
 /** A forwarding mailbox has no inbox to preview, so the search runs in Gmail instead. */
-export function ForwardingPreview({ name, rules }: { name: string; rules: RuleId[] }) {
+export function ForwardingPreview({ name, queries }: { name: string; queries: QueryId[] }) {
   return (
     <>
       <PreviewEyebrow>Preview for a forwarding mailbox</PreviewEyebrow>
@@ -24,28 +24,28 @@ export function ForwardingPreview({ name, rules }: { name: string; rules: RuleId
 
       <div className="mt-5 bg-sunken px-4 py-4">
         <h3 className="font-medium">Check it against your real mail</h3>
-        {rules.length > 0 ? (
+        {queries.length > 0 ? (
           <>
             <p className="mt-1.5 text-small text-ink-2">This opens the same search in Gmail, in your own account. You see the matches, and Permaily sees nothing.</p>
             <div className="mt-3 flex min-w-0 items-center gap-3">
-              <ButtonAnchor variant="secondary" size="sm" className="bg-raised" href={gmailSearchUrl(gmailQuery(rules))}>
+              <ButtonAnchor variant="secondary" size="sm" className="bg-raised" href={gmailSearchUrl(gmailQuery(queries))}>
                 See matches in Gmail
                 <span className="sr-only"> (opens in a new tab)</span>
               </ButtonAnchor>
-              <code className="min-w-0 truncate font-mono text-mono text-ink-2">{gmailShortQuery(rules)}</code>
+              <code className="min-w-0 truncate font-mono text-mono text-ink-2">{gmailShortQuery(queries)}</code>
             </div>
           </>
         ) : (
-          <p className="mt-1.5 text-small text-ink-2">Tick a rule and its Gmail search appears here.</p>
+          <p className="mt-1.5 text-small text-ink-2">Tick a kind of mail and its Gmail search appears here.</p>
         )}
       </div>
 
-      {rules.length > 0 && (
+      {queries.length > 0 && (
         <section className="mt-5">
           <SectionHeading title="New mail that would match" />
-          {rules.map((id) => (
+          {queries.map((id) => (
             <div key={id}>
-              {rules.length > 1 && <h3 className="border-b border-rule pt-4 pb-2 text-small font-medium">{ruleName(id)}</h3>}
+              {queries.length > 1 && <h3 className="border-b border-rule pt-4 pb-2 text-small font-medium">{queryName(id)}</h3>}
               {matchDetails(id).map((row) => (
                 <TermRow key={row.label} label={row.label}>
                   <span className={row.mono ? 'font-mono text-mono' : undefined}>{row.value}</span>

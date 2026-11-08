@@ -67,7 +67,7 @@ function csvField(value: string | number): string {
 }
 
 export function receiptsCsv(list: Receipt[]): string {
-  const header = ['receipt', 'day', 'time', 'connection', 'sender', 'from', 'subject', 'parts', 'body_chars', 'attachment', 'rule']
+  const header = ['receipt', 'day', 'time', 'connection', 'sender', 'from', 'subject', 'parts', 'body_chars', 'attachment', 'query', 'removed']
   const rows = list.map((r) => [
     r.id,
     r.day,
@@ -79,7 +79,8 @@ export function receiptsCsv(list: Receipt[]): string {
     r.parts,
     r.bodyChars,
     r.attachment,
-    r.ruleTag,
+    r.query,
+    r.removed?.what ?? '',
   ])
   return [header, ...rows].map((row) => row.map(csvField).join(',')).join('\n')
 }

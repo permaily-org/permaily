@@ -9,7 +9,7 @@ import { applyTheme, readTheme, saveTheme, type Theme } from '../../lib/theme.ts
 
 const notificationOptions = [
   { id: 'requests', title: 'New access requests', detail: 'An app or agent wants to connect', on: true },
-  { id: 'widening', title: 'Access that would widen', detail: 'A connection or pack update asks for more', on: true },
+  { id: 'widening', title: 'Access that would widen', detail: 'A connection asks for more than you approved', on: true },
   { id: 'unusual', title: 'Unusual rule activity', detail: 'A rule matches far more mail than usual', on: true },
   { id: 'unused', title: 'Unused access', detail: "A connection hasn't used its access in 60 days", on: true },
   { id: 'weekly', title: 'Weekly summary', detail: 'What left your mailbox this week', on: false },

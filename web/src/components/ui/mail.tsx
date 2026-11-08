@@ -5,8 +5,10 @@ import { Bar, Mark } from './marks.tsx'
 type WithheldProps = { kind: 'withheld'; widths?: [number, number, number] }
 type SharedProps = { kind: 'shared' | 'soft' | 'new'; date: string; sender: string; subject: string; trailing?: ReactNode; hover?: boolean }
 type ReasonProps = { kind: 'blocked' | 'excluded' | 'held'; date: string; sender: string; reason: string; barWidth?: number; trailing?: ReactNode }
+/** A line of an email with details taken out. Square brackets in the snippet mark what was removed. */
+type TrimmedProps = { kind: 'trimmed'; date: string; sender: string; snippet: string; trailing?: ReactNode }
 
-export type MailRowProps = WithheldProps | SharedProps | ReasonProps
+export type MailRowProps = WithheldProps | SharedProps | ReasonProps | TrimmedProps
 
 const row = 'flex h-10 items-center gap-4 border-b border-rule'
 
@@ -17,6 +19,7 @@ const row = 'flex h-10 items-center gap-4 border-b border-rule'
 export function MailRow(props: MailRowProps) {
   if ('subject' in props) return <SharedRow {...props} />
   if ('reason' in props) return <ReasonRow {...props} />
+  if ('snippet' in props) return <TrimmedRow {...props} />
   return <WithheldRow {...props} />
 }
 
@@ -47,7 +50,7 @@ function Who({ date, sender }: { date: string; sender: string }) {
   )
 }
 
-/** Blocked is a request turned down. Held is mail a rule withholds on purpose. Excluded is mail left out of a rule. */
+/** Blocked is a request turned down. Held is mail a rule holds back on purpose. Excluded is mail left out of a rule. */
 const reasonTone: Record<ReasonProps['kind'], string> = { blocked: 'text-danger', held: 'text-ink', excluded: 'text-ink-2' }
 
 function ReasonRow({ kind, date, sender, reason, barWidth, trailing }: ReasonProps) {
@@ -68,6 +71,30 @@ function SharedRow({ kind, date, sender, subject, trailing, hover }: SharedProps
       <span className="flex min-w-0 flex-1 items-center gap-3">
         <Mark tone={kind === 'soft' ? 'soft' : 'shared'}>{subject}</Mark>
         {kind === 'new' && <span className="font-mono text-mono font-medium text-ink">new</span>}
+      </span>
+      {trailing}
+    </div>
+  )
+}
+
+function TrimmedRow({ date, sender, snippet, trailing }: TrimmedProps) {
+  const parts = snippet.split(/(\[[^\]]+\])/).filter(Boolean)
+  return (
+    <div className={row}>
+      <Who date={date} sender={sender} />
+      <span className="flex min-w-0 flex-1 items-center overflow-hidden whitespace-pre text-body">
+        {parts.map((part, i) =>
+          part.startsWith('[') ? (
+            <span key={i} className="inline-flex">
+              <Bar width={Math.min(200, (part.length - 2) * 7)} />
+              <span className="sr-only">(removed)</span>
+            </span>
+          ) : (
+            <span key={i} className="truncate">
+              {part}
+            </span>
+          ),
+        )}
       </span>
       {trailing}
     </div>

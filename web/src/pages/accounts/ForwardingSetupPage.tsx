@@ -15,7 +15,7 @@ export function ForwardingSetupPage() {
         <FlowHeader />
 
         <main className="flex-1">
-          <Headline className="mt-7">Forward only what your rules cover.</Headline>
+          <Headline className="mt-7">Forward only what your connections ask for.</Headline>
           <p className="mt-2 flex gap-3 font-mono text-mono">
             <span>Step {verified ? 3 : 2} of 3</span>
             <span className="text-ink-2">{forwardingMailbox.address}</span>
@@ -68,7 +68,7 @@ export function ForwardingSetupPage() {
                 <FilterInstructions />
               ) : (
                 <p className="text-body text-ink-2">
-                  You paste a search into a new Gmail filter. We confirm when the first email arrives, and then suggest a rule that withholds sign-in and security mail.
+                  You paste a search into a new Gmail filter. We confirm when the first email arrives, and then suggest a rule that holds back sign-in and security mail.
                 </p>
               )}
             </OpenStep>
@@ -156,7 +156,7 @@ function FilterInstructions() {
       <div className="mt-3 border-t border-rule pt-3">
         <p className="font-medium">When the first email arrives</p>
         <p className="mt-0.5 text-small text-ink-2">
-          We confirm it here and email you. Then we suggest Sign-in and security, a rule that withholds password resets and login codes from
+          We confirm it here and email you. Then we suggest Sign-in and security, a rule that holds back password resets and login codes from
           every connection.
         </p>
         <TextLink to={suggestedRulePath} size="sm" className="mt-2.5">

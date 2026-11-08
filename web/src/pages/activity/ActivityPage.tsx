@@ -47,7 +47,6 @@ function Ledger() {
             className="w-[225px]"
           />
           <FilterButton>All connections</FilterButton>
-          <FilterButton>All rules</FilterButton>
           <FilterButton>This week</FilterButton>
           <TextAction className="ml-auto" onClick={() => downloadText('permaily-activity.csv', receiptsCsv(shown), 'text/csv')}>
             Export CSV

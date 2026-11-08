@@ -1,20 +1,16 @@
 /*
   Live preview for the rule editor. Each sample email carries the keys it can match on:
-  its sender address and domain, plus any data type or subject word it was given in data.ts.
+  its sender address and domain, plus any kind, label or topic it was given in data.ts.
   The preview only knows the sample rows, so mail outside them stays counted as loaded.
 */
-import type { ConditionBlock, PreviewRow, RuleSeed } from './data.ts'
+import type { ConditionBlock, PreviewMail, RuleSeed } from './data.ts'
 
 export type Draft = { blocks: ConditionBlock[]; butNot: string[] }
 
-type MailRow = Extract<PreviewRow, { kind: 'mail' }>
+/** new and soft both match: new only since this edit. dropped matched before this edit. none never matched. */
+export type RowStatus = 'new' | 'soft' | 'excluded' | 'dropped' | 'none'
 
-export type RowStatus = 'new' | 'soft' | 'excluded' | 'dropped' | 'withheld'
-
-export type RowView =
-  | { kind: 'other'; widths: [number, number, number] }
-  | { kind: 'blocked'; id: string; date: string; sender: string; reason: string }
-  | { kind: 'mail'; row: MailRow; status: RowStatus; excludedBy?: string; matchedBy?: string }
+export type RowView = { row: PreviewMail; status: RowStatus; excludedBy?: string; matchedBy?: string }
 
 export function domainOf(address: string): string {
   return address.split('@')[1]?.toLowerCase() ?? address.toLowerCase()
@@ -24,7 +20,7 @@ function positiveChips(blocks: ConditionBlock[]): Set<string> {
   return new Set(blocks.flatMap((block) => block.flatMap((group) => group.chips.map((chip) => chip.toLowerCase()))))
 }
 
-function exclusionFor(row: MailRow, butNot: string[]): string | undefined {
+function exclusionFor(row: PreviewMail, butNot: string[]): string | undefined {
   const address = row.address.toLowerCase()
   const domain = domainOf(address)
   return butNot.find((entry) => {
@@ -33,17 +29,13 @@ function exclusionFor(row: MailRow, butNot: string[]): string | undefined {
   })
 }
 
-function matchingKey(row: MailRow, chips: Set<string>): string | undefined {
+function matchingKey(row: PreviewMail, chips: Set<string>): string | undefined {
   return [row.address, domainOf(row.address), ...(row.keys ?? [])].find((k) => chips.has(k.toLowerCase()))
 }
 
-function hitsChips(row: MailRow, chips: Set<string>): boolean {
-  return matchingKey(row, chips) !== undefined
-}
-
-function matcher(draft: Draft, matchAll: boolean) {
+function matcher(draft: Draft) {
   const chips = positiveChips(draft.blocks)
-  return (row: MailRow) => (matchAll || hitsChips(row, chips)) && !exclusionFor(row, draft.butNot)
+  return (row: PreviewMail) => matchingKey(row, chips) !== undefined && !exclusionFor(row, draft.butNot)
 }
 
 /** The rule as it was before this edit: chips added in this edit removed, and nothing at all for a new rule. */
@@ -63,39 +55,35 @@ export function initialDraft(seed: RuleSeed): Draft {
 export type Preview = { rows: RowView[]; count: number; newCount: number; dropped: number }
 
 export function preview(seed: RuleSeed, isNew: boolean, draft: Draft): Preview {
-  const matchAll = Boolean(seed.readOnly)
-  const mailRows = seed.rows.filter((r): r is MailRow => r.kind === 'mail')
-  const now = matcher(draft, matchAll)
-  const before = matcher(savedDraft(seed, isNew), matchAll)
-  const atLoad = matcher(initialDraft(seed), matchAll)
+  const now = matcher(draft)
+  const before = matcher(savedDraft(seed, isNew))
+  const atLoad = matcher(initialDraft(seed))
 
-  const loadedMatches = mailRows.filter(atLoad).length
-  const loadedNew = mailRows.filter((r) => atLoad(r) && !before(r)).length
+  const loadedMatches = seed.rows.filter(atLoad).length
+  const loadedNew = seed.rows.filter((r) => atLoad(r) && !before(r)).length
   const chips = positiveChips(draft.blocks)
-  const hasChips = matchAll || chips.size > 0
 
   let matched = 0
   let fresh = 0
   let dropped = 0
   const rows = seed.rows.map((row): RowView => {
-    if (row.kind !== 'mail') return row
     const isMatch = now(row)
     const wasMatch = before(row)
     if (isMatch) {
       matched += 1
       if (!wasMatch) fresh += 1
-      return { kind: 'mail', row, status: wasMatch ? 'soft' : 'new', matchedBy: matchAll ? undefined : matchingKey(row, chips) }
+      return { row, status: wasMatch ? 'soft' : 'new', matchedBy: matchingKey(row, chips) }
     }
     if (wasMatch) dropped += 1
     const excludedBy = exclusionFor(row, draft.butNot)
-    if (excludedBy && (matchAll || hitsChips(row, chips))) return { kind: 'mail', row, status: 'excluded', excludedBy }
-    return { kind: 'mail', row, status: wasMatch ? 'dropped' : 'withheld' }
+    if (excludedBy && matchingKey(row, chips)) return { row, status: 'excluded', excludedBy }
+    return { row, status: wasMatch ? 'dropped' : 'none' }
   })
 
   return {
     rows,
-    count: hasChips ? Math.max(0, seed.count - loadedMatches + matched) : 0,
-    newCount: hasChips ? Math.max(0, seed.newCount - loadedNew + fresh) : 0,
+    count: chips.size > 0 ? Math.max(0, seed.count - loadedMatches + matched) : 0,
+    newCount: chips.size > 0 ? Math.max(0, seed.newCount - loadedNew + fresh) : 0,
     dropped,
   }
 }

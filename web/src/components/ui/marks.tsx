@@ -2,9 +2,8 @@ import type { ReactNode } from 'react'
 import { cx } from '../../lib/styles.ts'
 
 export type Share = 'shared' | 'soft'
-export type Cell = 'shared' | 'headers' | 'withheld'
 
-/** Mono label for machine facts, such as pack names. */
+/** Mono label for machine facts, such as a query or a file type. */
 export function Tag({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <span className={cx('inline-flex items-center rounded-sm border border-rule px-[7px] py-[3px] font-mono text-mono text-ink', className)}>
@@ -80,28 +79,14 @@ export function Count({ children, tone = 'shared' }: { children: ReactNode; tone
   )
 }
 
-const cellFill: Record<Cell, string> = { shared: 'bg-highlight', headers: 'bg-highlight-soft', withheld: 'bg-bar' }
-
-/** Six small cells, one per Overview column, with the last always the rules withheld from all. */
-export function VisibilityStrip({ cells, label }: { cells: Cell[]; label: string }) {
+/** A rule's effect at a glance: a full bar holds back the whole email, a bar inside a line removes a detail. */
+export function EffectMark({ effect }: { effect: 'hold' | 'remove' }) {
+  if (effect === 'hold') return <Bar width={14} height={14} />
   return (
-    <span role="img" aria-label={label} className="inline-flex gap-0.5">
-      {cells.map((cell, i) => (
-        <span key={i} className={cx('h-3.5 w-5', cellFill[cell])} />
-      ))}
+    <span aria-hidden className="inline-flex h-3.5 w-3.5 shrink-0 flex-col justify-center gap-[2px]">
+      <span className="h-px w-full bg-ink-2" />
+      <span className="h-1.5 w-2.5 bg-bar" />
+      <span className="h-px w-full bg-ink-2" />
     </span>
-  )
-}
-
-export function Legend({ items }: { items: Array<{ cell: Cell; label: string }> }) {
-  return (
-    <div className="flex items-center gap-5">
-      {items.map(({ cell, label }) => (
-        <span key={label} className="inline-flex items-center gap-1.5 text-mono text-ink-2">
-          <span aria-hidden className={cx('size-3.5', cellFill[cell])} />
-          {label}
-        </span>
-      ))}
-    </div>
   )
 }

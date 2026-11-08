@@ -1,7 +1,7 @@
 import { ChevronRight } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { Bar, ButtonLink, Mark, SectionHeading, Tag, TextLink } from '../../components/ui/index.ts'
-import { connectionById, formatCount, type Receipt } from '../../data/sample.ts'
+import { Bar, ButtonLink, Mark, SectionHeading, TextLink } from '../../components/ui/index.ts'
+import { connectionById, formatCount, rules, type Receipt } from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import { domainOf, fullTime, previousReceipt, shortHash } from './data.ts'
 
@@ -18,6 +18,7 @@ export function ReceiptPanel({ receipt }: { receipt: Receipt }) {
   const connection = connectionById(receipt.connectionId)
   const name = connection?.name ?? receipt.connectionId
   const domain = domainOf(receipt.from)
+  const removedBy = receipt.removed && rules.find((rule) => rule.id === receipt.removed?.ruleId)
 
   return (
     <div>
@@ -47,14 +48,26 @@ export function ReceiptPanel({ receipt }: { receipt: Receipt }) {
               <span className="text-body text-ink-2">None</span>
             )}
           </Fact>
+          {receipt.removed && (
+            <Fact label="Removed">
+              <Bar width={64} />
+              <span className="min-w-0 text-small">
+                {receipt.removed.what}, by{' '}
+                <TextLink to={`/rules/${receipt.removed.ruleId}`} size="sm">
+                  {removedBy ? removedBy.name : 'your rule'}
+                </TextLink>
+              </span>
+            </Fact>
+          )}
         </dl>
+        {receipt.removed && <p className="mt-2 text-small text-ink-2">{name} got the email without it, and wasn't told.</p>}
       </section>
 
       <section aria-labelledby="why-allowed" className="mt-5">
         <SectionHeading id="why-allowed" title="Why it was allowed" />
         <dl>
-          <Fact label="Rule">
-            <Tag>{receipt.ruleTag}</Tag>
+          <Fact label="Query">
+            <span className={connection?.kind === 'Agent' ? 'font-mono text-mono' : 'text-body'}>{receipt.query}</span>
           </Fact>
           <Fact label="Access">
             <span className="text-body">{receipt.approved}</span>
@@ -69,10 +82,10 @@ export function ReceiptPanel({ receipt }: { receipt: Receipt }) {
         <SectionHeading id="not-wanted" title="Not what you wanted?" />
         <div className="mt-2.5 flex flex-wrap gap-2">
           <ButtonLink to={`/rules/private?add=${encodeURIComponent(domain)}`} variant="secondary" size="sm">
-            Withhold {domain}
+            Hold back {domain}
           </ButtonLink>
-          <ButtonLink to={`/rules/${receipt.ruleId}`} variant="secondary" size="sm">
-            Change this rule
+          <ButtonLink to={`/rules/new?add=${encodeURIComponent(domain)}`} variant="secondary" size="sm">
+            New rule for this sender
           </ButtonLink>
         </div>
         <TextLink to={`/connections/${receipt.connectionId}`} tone="danger" className="mt-2.5">

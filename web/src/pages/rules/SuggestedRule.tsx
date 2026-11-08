@@ -3,14 +3,14 @@ import { ButtonLink, TextAction } from '../../components/ui/index.ts'
 import { formatCount, suggestedRule } from '../../data/sample.ts'
 import { suggestedRulePath } from './data.ts'
 
-/** The rule Permaily suggests on a new account: sign-in and security mail, withheld from every connection. */
+/** The rule Permaily suggests on a new account: sign-in and security mail, held back from every connection. */
 export function SuggestedRule({ onDismiss }: { onDismiss?: () => void }) {
   const id = useId()
   return (
     <section aria-labelledby={id} className="border-y border-rule-strong py-4">
       <p className="font-mono text-mono text-ink-2">Suggested rule</p>
       <h2 id={id} className="mt-1 text-title font-medium">
-        Withhold {suggestedRule.name.toLowerCase()} mail from every connection
+        Hold back {suggestedRule.name.toLowerCase()} mail from every connection
       </h2>
       <p className="mt-0.5 text-small text-ink-2">{suggestedRule.why}</p>
       <ul className="mt-3 border-t border-rule">

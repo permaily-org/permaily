@@ -1,36 +1,25 @@
 import { ChevronLeft, Pencil } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
-import { Bar, Button, ButtonLink, Notice, Switch, Tag, TextLink } from '../../components/ui/index.ts'
-import { attention } from '../../data/sample.ts'
+import { Button, ButtonLink, Checkbox, EffectMark, Notice, TextLink, ViewSwitch } from '../../components/ui/index.ts'
+import { appliesToText, attention, connections, type Rule, type RuleEffect } from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import { Conditions } from './Conditions.tsx'
-import { connectionNames, joinNames, ruleSeed, type ConditionBlock, type RuleSeed } from './data.ts'
+import { connectionName, joinNames, ruleSeed, type RuleSeed } from './data.ts'
 import { emails, initialDraft, preview, savedDraft, type Draft, type Preview } from './draft.ts'
 import { PreviewPane } from './PreviewPane.tsx'
-import { UsedBy } from './UsedBy.tsx'
 
 export function RuleEditorPage() {
   const { id = 'new' } = useParams()
   const [params] = useSearchParams()
-  const pack = params.get('pack')
   const suggested = params.get('suggested')
   const add = params.get('add')
-  const seed = useMemo(() => ruleSeed(id, { pack, suggested, add }), [id, pack, suggested, add])
+  const seed = useMemo(() => ruleSeed(id, { suggested, add }), [id, suggested, add])
   if (!seed) return <UnknownRule />
-  return <RuleEditor key={`${id}:${pack ?? ''}:${suggested ?? ''}:${add ?? ''}`} ruleId={id} seed={seed} />
+  return <RuleEditor key={`${id}:${suggested ?? ''}:${add ?? ''}`} ruleId={id} seed={seed} />
 }
 
-function packChipSet(seed: RuleSeed): Set<string> | null {
-  if (!seed.pack) return null
-  const unsaved = new Set(seed.unsaved)
-  return new Set(seed.blocks.flatMap((block) => block.flatMap((g) => g.chips.filter((c) => !unsaved.has(c)).map((c) => c.toLowerCase()))))
-}
-
-function ownChips(blocks: ConditionBlock[], pack: Set<string> | null): string[] {
-  if (!pack) return []
-  return blocks.flatMap((block) => block.flatMap((g) => g.chips.filter((c) => !pack.has(c.toLowerCase()))))
-}
+type Scope = 'all' | 'some'
 
 function RuleEditor({ ruleId, seed }: { ruleId: string; seed: RuleSeed }) {
   const navigate = useNavigate()
@@ -39,22 +28,27 @@ function RuleEditor({ ruleId, seed }: { ruleId: string; seed: RuleSeed }) {
   const [name, setName] = useState(seed.name)
   const [description, setDescription] = useState(seed.description)
   const [hint, setHint] = useState<string | null>(null)
-  const [withhold, setWithhold] = useState(Boolean(seed.withheld))
+  const [effect, setEffect] = useState<RuleEffect>(seed.effect)
+  const [removes, setRemoves] = useState(seed.removes)
+  const [scope, setScope] = useState<Scope>(seed.appliesTo === 'all' ? 'all' : 'some')
+  const [picked, setPicked] = useState<string[]>(seed.appliesTo === 'all' ? [] : seed.appliesTo)
   const descriptionId = useId()
+  const removesId = useId()
 
+  const appliesTo: Rule['appliesTo'] = scope === 'all' ? 'all' : connections.filter((c) => picked.includes(c.id)).map((c) => c.id)
   const result = useMemo(() => preview(seed, isNew, draft), [seed, isNew, draft])
-  const packChips = useMemo(() => packChipSet(seed), [seed])
-  const own = ownChips(draft.blocks, packChips)
   const saved = useMemo(() => savedDraft(seed, isNew), [seed, isNew])
   const changed =
     isNew ||
     name !== seed.name ||
     description !== seed.description ||
-    withhold !== Boolean(seed.withheld) ||
+    effect !== seed.effect ||
+    removes !== seed.removes ||
+    JSON.stringify(appliesTo) !== JSON.stringify(seed.appliesTo) ||
     JSON.stringify(draft) !== JSON.stringify(saved)
   const hasConditions = draft.blocks.some((block) => block.some((g) => g.chips.length > 0))
-  const flag = attention.find((item) => item.to === `/rules/${ruleId}`)
-  const readOnly = Boolean(seed.readOnly)
+  const complete = hasConditions && (scope === 'all' || picked.length > 0) && (effect === 'hold' || removes.trim() !== '')
+  const flag = attention.find((item) => item.to.split('?')[0] === `/rules/${ruleId}`)
 
   function rewrite() {
     setHint(description.trim() ? 'The conditions below already cover this sentence.' : 'Write a sentence first, then rewrite the rule from it.')
@@ -64,6 +58,10 @@ function RuleEditor({ ruleId, seed }: { ruleId: string; seed: RuleSeed }) {
     setDraft((d) => (d.butNot.includes(address) ? d : { ...d, butNot: [...d.butNot, address] }))
   }
 
+  function toggle(id: string) {
+    setPicked((list) => (list.includes(id) ? list.filter((p) => p !== id) : [...list, id]))
+  }
+
   return (
     <div className="flex min-h-svh">
       <div className="sticky top-0 flex h-svh w-[560px] shrink-0 flex-col">
@@ -71,22 +69,11 @@ function RuleEditor({ ruleId, seed }: { ruleId: string; seed: RuleSeed }) {
           <BackToRules />
 
           <div className="mt-3 flex items-center justify-between gap-4">
-            <RuleTitle name={name} readOnly={readOnly} onRename={setName} />
-            <div className="flex shrink-0 items-center gap-2">
-              {withhold ? (
-                <>
-                  <Bar width={14} height={14} />
-                  <span className="text-small text-ink-2">Withheld from all</span>
-                </>
-              ) : seed.usedBy.length > 0 ? (
-                <>
-                  <span className="text-small text-ink-2">Used by</span>
-                  <UsedBy initials={seed.usedBy} note={seed.usedByNote} />
-                </>
-              ) : (
-                <span className="text-small text-ink-2">{seed.usedByNote}</span>
-              )}
-            </div>
+            <RuleTitle name={name} onRename={setName} />
+            <span className="flex shrink-0 items-center gap-2 text-small text-ink-2">
+              <EffectMark effect={effect} />
+              {effect === 'hold' ? 'Holds back' : 'Removes details'}
+            </span>
           </div>
 
           {flag && (
@@ -98,85 +85,126 @@ function RuleEditor({ ruleId, seed }: { ruleId: string; seed: RuleSeed }) {
           <label htmlFor={descriptionId} className="mt-3.5 block text-small text-ink-2">
             Describe it in your own words
           </label>
-          <div
-            className={cx(
-              'mt-1.5 flex items-center gap-2 rounded-sm border py-1 pr-1 pl-3 has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-ink',
-              readOnly ? 'border-rule' : 'border-ink',
-            )}
-          >
+          <div className="mt-1.5 flex items-center gap-2 rounded-sm border border-ink py-1 pr-1 pl-3 has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-ink">
             <input
               id={descriptionId}
               value={description}
-              readOnly={readOnly}
               onChange={(event) => {
                 setDescription(event.target.value)
                 setHint(null)
               }}
-              placeholder="For example, receipts from shops I buy from"
+              placeholder="For example, never share my children's names"
               className="min-w-0 flex-1 bg-transparent py-1.5 text-body outline-none placeholder:text-ink-3"
             />
-            {!readOnly && (
-              <Button variant="secondary" size="sm" onClick={rewrite}>
-                Rewrite the rule
-              </Button>
-            )}
+            <Button variant="secondary" size="sm" onClick={rewrite}>
+              Rewrite the rule
+            </Button>
           </div>
           <p aria-live="polite" className="mt-1.5 font-mono text-micro text-ink-2">
             {hint ?? 'Only this sentence goes to the model. Your mail does not.'}
           </p>
 
-          {!readOnly && (
-            <div className="mt-3 flex items-center justify-between gap-4 border-y border-rule py-2.5">
-              <div className="flex min-w-0 flex-col">
-                <span className="text-body">Withhold from every connection</span>
-                <span className="text-small text-ink-2">Wins over every other rule, including access you approve later.</span>
-              </div>
-              <Switch checked={withhold} onChange={setWithhold} label="Withhold from every connection" />
-            </div>
-          )}
+          <div className="mt-3 border-y border-rule">
+            <Setting
+              label="What happens"
+              hint={effect === 'hold' ? 'Connections never get matching emails.' : 'Only the matching details are taken out. The rest of each email goes through.'}
+            >
+              <ViewSwitch
+                label="What happens"
+                value={effect}
+                onChange={setEffect}
+                options={[
+                  { value: 'hold', label: 'Hold back the email' },
+                  { value: 'remove', label: 'Remove details' },
+                ]}
+              />
+              {effect === 'remove' && (
+                <div className="flex w-full items-center gap-2">
+                  <label htmlFor={removesId} className="shrink-0 text-small text-ink-2">
+                    Takes out
+                  </label>
+                  <input
+                    id={removesId}
+                    value={removes}
+                    onChange={(event) => setRemoves(event.target.value)}
+                    placeholder="For example, the address"
+                    className={cx('min-w-0 flex-1 rounded-sm border border-ink bg-transparent px-2 py-1 text-body placeholder:text-ink-3', focusRing)}
+                  />
+                </div>
+              )}
+            </Setting>
+            <Setting
+              label="Applies to"
+              hint={
+                scope === 'all'
+                  ? 'Including connections you approve later. None of them are told about this rule.'
+                  : 'Only the connections you tick. They aren’t told about this rule.'
+              }
+            >
+              <ViewSwitch
+                label="Applies to"
+                value={scope}
+                onChange={setScope}
+                options={[
+                  { value: 'all', label: 'Every connection' },
+                  { value: 'some', label: 'Only some' },
+                ]}
+              />
+              {scope === 'some' && (
+                <div role="group" aria-label="Connections this rule applies to" className="flex flex-wrap gap-x-5 gap-y-2">
+                  {connections.map((c) => (
+                    <Checkbox key={c.id} label={c.name} checked={picked.includes(c.id)} onChange={() => toggle(c.id)} />
+                  ))}
+                </div>
+              )}
+            </Setting>
+          </div>
 
           <div className="mt-3">
             <Conditions
               blocks={draft.blocks}
               butNot={draft.butNot}
-              packChips={packChips}
-              readOnly={readOnly}
               onBlocksChange={(blocks) => setDraft((d) => ({ ...d, blocks }))}
               onButNotChange={(butNot) => setDraft((d) => ({ ...d, butNot }))}
             />
           </div>
 
-          <div className="mt-3.5 flex flex-wrap items-center gap-2 text-small text-ink-2">
-            {seed.pack ? (
-              <>
-                <span>Based on</span>
-                <Tag>{seed.pack}</Tag>
-                {own.length > 0 && <span>plus {joinNames(own)}, outlined above</span>}
-              </>
-            ) : (
-              <span>{seed.basedOnText}</span>
-            )}
-          </div>
+          <p className="mt-3.5 text-small text-ink-2">{seed.basedOnText}</p>
         </div>
 
         <SaveBar
           seed={seed}
           isNew={isNew}
-          withhold={withhold}
+          effect={effect}
+          removes={removes}
+          appliesTo={appliesTo}
           result={result}
           changed={changed}
-          canSave={changed && hasConditions}
+          canSave={changed && complete}
           onLeave={() => navigate('/rules')}
         />
       </div>
 
       <PreviewPane
         preview={result}
-        readOnly={readOnly}
-        withheld={withhold}
+        effect={effect}
+        removes={removes}
+        appliesTo={appliesTo}
         onExclude={exclude}
         onInclude={(entry) => setDraft((d) => ({ ...d, butNot: d.butNot.filter((e) => e !== entry) }))}
       />
+    </div>
+  )
+}
+
+function Setting({ label, hint, children }: { label: string; hint: string; children: ReactNode }) {
+  return (
+    <div className="flex items-start gap-3 border-b border-rule py-3 last:border-b-0">
+      <span className="w-[98px] shrink-0 pt-1.5 text-small">{label}</span>
+      <div className="flex min-w-0 flex-1 flex-col items-start gap-2.5">
+        {children}
+        <p className="text-small text-ink-2">{hint}</p>
+      </div>
     </div>
   )
 }
@@ -190,7 +218,7 @@ function BackToRules() {
   )
 }
 
-function RuleTitle({ name, readOnly, onRename }: { name: string; readOnly: boolean; onRename: (name: string) => void }) {
+function RuleTitle({ name, onRename }: { name: string; onRename: (name: string) => void }) {
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(name)
   const returnFocus = useRef(false)
@@ -233,29 +261,40 @@ function RuleTitle({ name, readOnly, onRename }: { name: string; readOnly: boole
   return (
     <div className="flex min-w-0 items-center gap-2">
       <h1 className="min-w-0 text-display-s font-medium break-words">{name}</h1>
-      {!readOnly && (
-        <button
-          ref={button}
-          type="button"
-          aria-label="Rename rule"
-          onClick={() => {
-            done.current = false
-            setValue(name)
-            setEditing(true)
-          }}
-          className={cx('shrink-0 rounded-sm p-1 text-ink-2 hover:text-ink', focusRing)}
-        >
-          <Pencil aria-hidden size={16} />
-        </button>
-      )}
+      <button
+        ref={button}
+        type="button"
+        aria-label="Rename rule"
+        onClick={() => {
+          done.current = false
+          setValue(name)
+          setEditing(true)
+        }}
+        className={cx('shrink-0 rounded-sm p-1 text-ink-2 hover:text-ink', focusRing)}
+      >
+        <Pencil aria-hidden size={16} />
+      </button>
     </div>
   )
+}
+
+/** Connections a change of "Applies to" lets back in, and the ones it newly covers. */
+function scopeChange(before: Rule['appliesTo'], after: Rule['appliesTo']) {
+  const all = connections.map((c) => c.id)
+  const was = before === 'all' ? all : before
+  const now = after === 'all' ? all : after
+  return {
+    freed: was.filter((id) => !now.includes(id)).map(connectionName),
+    added: now.filter((id) => !was.includes(id)).map(connectionName),
+  }
 }
 
 function SaveBar({
   seed,
   isNew,
-  withhold,
+  effect,
+  removes,
+  appliesTo,
   result,
   changed,
   canSave,
@@ -263,92 +302,81 @@ function SaveBar({
 }: {
   seed: RuleSeed
   isNew: boolean
-  withhold: boolean
+  effect: RuleEffect
+  removes: string
+  appliesTo: Rule['appliesTo']
   result: Preview
   changed: boolean
   canSave: boolean
   onLeave: () => void
 }) {
   const bar = 'shrink-0 border-t border-rule-strong px-10 pt-4 pb-3.5'
+  const { count, newCount: n, dropped } = result
+  const target = appliesTo === 'all' ? 'every connection' : appliesToText(appliesTo)
+  const what = removes.trim() || 'the matching details'
+  const { freed, added } = scopeChange(seed.appliesTo, appliesTo)
+  let notice: ReactNode
 
-  if (seed.readOnly) {
-    return (
-      <div className={bar}>
-        <p className="text-small text-ink-2">Built-in rules can't be edited. Rules withheld from all still apply on top of them.</p>
-        <div className="mt-2.5">
-          <ButtonLink to="/rules" variant="secondary">
-            Back to rules
-          </ButtonLink>
-        </div>
-      </div>
-    )
-  }
-
-  const users = seed.usedBy.length
-  const names = joinNames(connectionNames(seed.usedBy))
-  const n = result.newCount
-  let notice: ReactNode = null
-  let saveLabel = 'Save rule'
-
-  const count = result.count
-  const wasWithheld = Boolean(seed.withheld)
-
-  if (withhold && isNew) {
+  if (isNew) {
+    notice =
+      effect === 'hold' ? (
+        <Notice tone="neutral" title={`Saving holds back ${emails(count)} from ${target}.`}>
+          {appliesTo === 'all' ? 'That includes connections you approve later. None of them are told.' : appliesTo.length === 1 ? "It isn't told." : "They aren't told."}
+        </Notice>
+      ) : (
+        <Notice tone="neutral" title={`Saving takes ${what} out of ${emails(count)}.`}>
+          The rest of each email still goes to {appliesTo === 'all' ? 'connections whose queries ask for it' : target}.
+        </Notice>
+      )
+  } else if (effect !== seed.effect) {
+    notice =
+      effect === 'hold' ? (
+        <Notice tone="neutral" title={`Saving holds back all ${emails(count)}, not just ${seed.removes}.`} />
+      ) : (
+        <Notice title={`These ${emails(count)} go through again, with ${what} taken out.`}>Connections whose queries ask for them can get them.</Notice>
+      )
+  } else if (freed.length > 0) {
     notice = (
-      <Notice tone="neutral" title={`Saving withholds ${emails(count)} from every connection.`}>
-        That includes connections you approve later. You can change or turn off this rule at any time.
+      <Notice title={`${joinNames(freed)} can get ${effect === 'hold' ? `these ${emails(count)}` : `${what} in these ${emails(count)}`} again.`}>
+        Only if {freed.length === 1 ? 'its query asks' : 'their queries ask'} for them.
       </Notice>
     )
-  } else if (withhold && !wasWithheld && users > 0) {
-    saveLabel = 'Save and withhold'
+  } else if (added.length > 0) {
     notice = (
-      <Notice title={`${names} ${users === 1 ? 'stops' : 'stop'} getting the ${emails(count)} this rule matches.`}>
-        A withheld rule wins over every connection, including the ones that use it.
+      <Notice tone="neutral" title={effect === 'hold' ? `${joinNames(added)} ${added.length === 1 ? 'stops' : 'stop'} getting these ${emails(count)}.` : `${joinNames(added)} ${added.length === 1 ? 'gets' : 'get'} these ${emails(count)} without ${what}.`}>
+        {added.length === 1 ? "It isn't told." : "They aren't told."}
       </Notice>
     )
-  } else if (withhold && n > 0) {
+  } else if (n > 0) {
     notice = (
-      <Notice tone="neutral" title={`This edit withholds ${emails(n)} more.`}>
-        No connection gets them, whatever its own rules match.
+      <Notice tone="neutral" title={effect === 'hold' ? `This edit holds back ${emails(n)} more.` : `This edit takes ${what} out of ${emails(n)} more.`}>
+        Connections aren't told.
       </Notice>
     )
-  } else if (withhold && result.dropped > 0) {
+  } else if (dropped > 0) {
     notice = (
-      <Notice title={`${emails(result.dropped)} stop being withheld.`}>Connections whose rules match them can read them again.</Notice>
-    )
-  } else if (withhold && changed) {
-    notice = <Notice tone="neutral" title={wasWithheld ? 'This edit withholds nothing new.' : `Saving withholds ${emails(count)} from every connection.`} />
-  } else if (withhold) {
-    notice = <p className="text-small text-ink-2">Withheld from every connection, including ones you approve later.</p>
-  } else if (wasWithheld) {
-    notice = (
-      <Notice title={`${emails(count)} stop being withheld.`}>
-        Connections whose rules match them can read them again. Nothing is shared until a connection uses this rule.
+      <Notice title={effect === 'hold' ? `${emails(dropped)} stop being held back.` : `${emails(dropped)} go through untouched again.`}>
+        Connections whose queries ask for them can get them again.
       </Notice>
     )
-  } else if (users > 0 && n > 0) {
-    saveLabel = 'Save and review access'
+  } else if (changed) {
+    notice = <Notice tone="neutral" title="This edit changes nothing your connections can get." />
+  } else {
     notice = (
-      <Notice title={`This edit shares ${n.toLocaleString('en-US')} more ${n === 1 ? 'email' : 'emails'}.`}>
-        {names} {users === 1 ? 'uses this rule, so it stays' : 'use this rule, so they stay'} on the old version until you approve.
-      </Notice>
+      <p className="text-small text-ink-2">
+        {effect === 'hold'
+          ? `Holds back matching emails from ${appliesTo === 'all' ? 'every connection, including ones you approve later' : target}.`
+          : `Takes ${what} out before ${appliesTo === 'all' ? 'any connection' : target} gets them.`}
+      </p>
     )
-  } else if (users > 0 && changed) {
-    notice = (
-      <Notice tone="neutral" title="This edit shares nothing new.">
-        {names} {users === 1 ? 'gets' : 'get'} the new version as soon as you save.
-      </Notice>
-    )
-  } else if (users === 0) {
-    notice = <p className="text-small text-ink-2">No connection uses this rule yet, so saving it shares nothing.</p>
   }
 
   return (
     <div className={bar}>
       {notice}
-      <div className={cx('flex gap-3', notice !== null && 'mt-2.5')}>
+      <div className="mt-2.5 flex gap-3">
         <Button onClick={onLeave} disabled={!canSave}>
-          {saveLabel}
+          Save rule
         </Button>
         <Button variant="secondary" onClick={onLeave}>
           Discard
@@ -364,6 +392,11 @@ function UnknownRule() {
       <BackToRules />
       <h1 className="mt-3 text-display-s font-medium">There's no rule with that name.</h1>
       <p className="mt-2 text-lead text-ink-2">It may have been deleted. Your other rules are on the Rules page.</p>
+      <div className="mt-6">
+        <ButtonLink to="/rules" variant="secondary">
+          Back to rules
+        </ButtonLink>
+      </div>
     </div>
   )
 }

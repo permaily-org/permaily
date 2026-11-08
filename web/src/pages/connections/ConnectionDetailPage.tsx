@@ -1,9 +1,9 @@
 import { ChevronLeft } from 'lucide-react'
 import { useState } from 'react'
 import { useParams } from 'react-router'
-import { Button, ButtonLink, Count, Headline, Notice, TextLink, Tile, VisibilityStrip } from '../../components/ui/index.ts'
+import { Button, ButtonLink, Count, Headline, Notice, TextLink, Tile } from '../../components/ui/index.ts'
 import { connectionById, formatCount, receipts, type Connection } from '../../data/sample.ts'
-import { attentionFor, isHeadersOnly, stripCells, stripLabel } from './ConnectionsAccess.ts'
+import { attentionFor, isHeadersOnly } from './ConnectionsAccess.ts'
 import { revokedAt } from './DetailData.ts'
 import { DetailReceipts } from './DetailReceipts.tsx'
 import { DetailRevokedNotice } from './DetailRevoked.tsx'
@@ -62,8 +62,9 @@ function Detail({ connection: c }: { connection: Connection }) {
       ) : (
         <>
           <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <VisibilityStrip cells={stripCells(c)} label={stripLabel(c)} />
-            <span className="text-body">{c.ruleNames}</span>
+            <span className="text-body">
+              {c.kind === 'Agent' ? 'Searches inside' : 'Asks for'} {c.asksFor.toLowerCase()}
+            </span>
             <span className="font-mono text-mono">access ends {c.ends}</span>
           </div>
           <PendingNotice connection={c} />
