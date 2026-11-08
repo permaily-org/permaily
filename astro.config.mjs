@@ -24,7 +24,12 @@ export default defineConfig({
       // The website's own 404 page serves the whole site, docs included.
       disable404Route: true,
       customCss: ['./src/styles/docs.css'],
-      head: [{ tag: 'meta', attrs: { property: 'og:image', content: 'https://permaily.com/og.png' } }],
+      // Starlight links /favicon.svg itself; these add the fallbacks the website's own pages use.
+      head: [
+        { tag: 'meta', attrs: { property: 'og:image', content: 'https://permaily.com/og.png' } },
+        { tag: 'link', attrs: { rel: 'icon', href: '/favicon.ico', sizes: '32x32' } },
+        { tag: 'link', attrs: { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' } },
+      ],
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 2 },
       components: {
         Header: './src/components/docs/Header.astro',
