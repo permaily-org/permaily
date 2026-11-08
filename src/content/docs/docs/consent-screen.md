@@ -10,7 +10,7 @@ This is where a person decides. An app or agent sends them here, and they see wh
 - **Who is asking,** with facts about them: how long they've been registered, how many users they have, and whether they're verified.
 - **What they want,** in plain language, with the pack name.
 - **A live preview on their own mail.** For example, "47 of 12,304 emails would be shared", followed by real subject lines, with everything else visibly withheld.
-- **What they'll never get.** [Never share](/docs/concepts/#never-share) sits above every request.
+- **What they'll never get.** The person's [withheld rules](/docs/concepts/#withheld-rules), such as Sign-in and security, sit above every request.
 - **How long access lasts,** and how to revoke it.
 
 ## Send someone there

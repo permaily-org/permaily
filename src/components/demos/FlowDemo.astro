@@ -60,7 +60,7 @@ import Redact from '../Redact.astro';
               </span>
               <span class="subj">
                 <Redact text={mail.subject} highlighted={keep} withheld={!keep} pad ghost={!keep} />
-                {mail.never && <span class="never-tag">never share</span>}
+                {mail.never && <span class="never-tag">never</span>}
               </span>
             </div>
           </>

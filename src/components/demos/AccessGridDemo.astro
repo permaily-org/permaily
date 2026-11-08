@@ -21,7 +21,7 @@ const connections = [
   <div class="ag">
     <div class="ch"></div>
     {columns.map((c) => <div class="ch"><span>{c.label}</span><span class="mono">{c.count}</span></div>)}
-    <div class="ch"><span>Never share</span><span class="mono">324</span></div>
+    <div class="ch"><span>Withheld from all</span><span class="mono">324</span></div>
     <div class="ch centered"><span>On</span></div>
     {
       connections.map((connection) => (
@@ -47,9 +47,9 @@ const connections = [
               </button>
             );
           })}
-          <button class="cell never" aria-disabled="true" aria-label={`${connection.name}, Never share. This can't be shared.`}>
+          <button class="cell never" aria-disabled="true" aria-label={`${connection.name}, Withheld from all. These rules win over every rule a connection uses.`}>
             <span class="blk" />
-            <span class="lab">Never share</span>
+            <span class="lab">Withheld from all</span>
             <span class="nv">never</span>
           </button>
           <div class="sw-cell">

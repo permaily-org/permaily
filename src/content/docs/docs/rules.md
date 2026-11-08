@@ -34,7 +34,7 @@ messages:
 
 ## When a rule goes wrong
 
-[Never share](/docs/concepts/#never-share) overrides every rule, so a sloppy one can't reach password resets. Beyond that:
+A [withheld rule](/docs/concepts/#withheld-rules) wins over every rule a connection uses, so with the suggested Sign-in and security rule in place, a sloppy one can't reach password resets. Beyond that:
 
 | Problem | What catches it |
 | --- | --- |

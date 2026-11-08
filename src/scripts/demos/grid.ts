@@ -88,7 +88,7 @@ export function initGrid(root: HTMLElement) {
   $$('.cell.never', root).forEach((cell) =>
     cell.addEventListener('click', () => {
       const label = $('.nv', cell);
-      label.textContent = 'can’t be shared';
+      label.textContent = 'always wins';
       setTimeout(() => (label.textContent = 'never'), 1500);
     }),
   );

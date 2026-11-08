@@ -9,10 +9,9 @@ These words are used everywhere: in the app, the API and the code.
 | --- | --- |
 | **Account** | A mailbox connected to Permaily |
 | **Connection** | An app, agent or vendor that receives mail through Permaily |
-| **Rule** | A named definition of which emails match, such as "Flights and hotels" |
+| **Rule** | A named definition of which emails match, such as "Flights and hotels". A rule is either used by the connections a person picks, or withheld from all of them |
 | **Pack** | A community-maintained, versioned rule, such as `travel.bookings` |
 | **Access** | What one connection may do: its rules, parts, actions and time limits |
-| **Never share** | A list that overrides every rule and every access |
 | **Delivery** | How a connection receives mail: MCP, API, webhook or forwarding |
 | **Receipt** | A record of one release of mail to one connection |
 | **Proof** | Evidence that the running service matches the public code |
@@ -52,7 +51,7 @@ expires_in: 90d
 | --- | --- | --- | --- | --- |
 | Trip planner | Flights and hotels | Body, or booking fields | Read | Forwarding for new mail, OAuth for history |
 | Finance tracker | Invoices and receipts | Body and attachments | Read | Forwarding for new mail, OAuth for history |
-| Inbox tidy-up | Everything except Never share | Headers only | Label, archive | OAuth only |
+| Inbox tidy-up | Everything not withheld | Headers only | Label, archive | OAuth only |
 | Claude through MCP | Whatever the person picks | Body | Read | Either |
 | Company vendor | Set by company policy | Set by company policy | Read | Workspace or Microsoft 365 admin |
 
@@ -62,22 +61,25 @@ expires_in: 90d
 
 Every release passes through these steps, in this order, inside the verified boundary.
 
-1. **Never share.** If the message is on the list, it's blocked.
+1. **Withheld rules.** If the message matches a rule withheld from all connections, it's blocked.
 2. **Rule.** If it doesn't match this connection's rule, it's blocked.
 3. **Parts.** Only the approved parts stay.
 4. **Marking.** The message is marked as [untrusted content](/docs/untrusted-content/).
 5. **Release.** The connection receives it.
 6. **Receipt.** The release is [written to the ledger](/docs/receipts/).
 
-## Never share
+## Withheld rules
 
-This is on by default and sits above everything. It blocks:
+Any rule can be withheld from every connection. A withheld rule sits above everything: it wins over any rule a connection uses, including access approved later. There's no separate list for this. It's a rule like any other, so it has the same editor, preview and history.
+
+Permaily suggests one on every new account, called **Sign-in and security**. It covers:
 
 - Password resets, login links and one-time codes
 - Security alerts
-- Anything the person adds: someone they know, a domain, a label or a search
 
 The reason is account takeover. Any connection that can read a password reset can take over the account it belongs to. A sloppy rule or a compromised connection shouldn't be able to reach those messages.
+
+It's offered when a person connects a mailbox, and they can add it or skip it. Because it's an ordinary rule, they can later add to it, change it or turn it off, and someone who skips it has no such protection. Other private mail works the same way: a doctor, a bank or a label goes in a withheld rule of the person's own.
 
 ## Connecting a mailbox
 

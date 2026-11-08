@@ -26,6 +26,7 @@ export interface Mail {
   apps?: AppId[];
   /** Part of the snippet held back from the app that can read the rest. It has to appear in the snippet. */
   cut?: { app: AppId; text: string };
+  /** Matches a rule withheld from every connection, such as Sign-in and security. */
   never?: boolean;
 }
 

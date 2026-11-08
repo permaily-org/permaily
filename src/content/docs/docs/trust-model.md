@@ -76,7 +76,7 @@ Apple's [Private Cloud Compute](https://security.apple.com/blog/private-cloud-co
 | Database or backup stolen | Ciphertext only. Keys need an approved measurement |
 | Connection asks for too much | Preview at consent, plain-language scope, expiry, unused-access revocation |
 | Connection is compromised | Short-lived tokens, per-connection limits, instant revocation, unusual-activity alerts |
-| Password reset or login code exposed | Never share, on by default, above every rule |
+| Password reset or login code exposed | Sign-in and security, a rule suggested on every new account and withheld from every connection, above every other rule. It only protects people who keep it |
 | Over-broad rule | Preview before saving, alerts on sudden match volume |
 | Pack silently widened | Version pinning, fresh consent for widening, review and automated checks |
 | Spoofed sender enters a slice | Match on authenticated sender, not the `From:` header |
