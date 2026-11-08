@@ -1,0 +1,53 @@
+---
+interface Props {
+  intro?: string;
+}
+
+const { intro } = Astro.props;
+const hasActions = Astro.slots.has('actions');
+---
+
+<section class="page-head">
+  <div class="wrap top">
+    <h1 class="h-xl"><slot /></h1>
+    {
+      hasActions ? (
+        <div class="side">
+          <p class="intro">{intro}</p>
+          <div class="actions">
+            <slot name="actions" />
+          </div>
+        </div>
+      ) : (
+        <p class="intro">{intro}</p>
+      )
+    }
+  </div>
+</section>
+
+<style is:global>
+  .page-head .top {
+    display: grid;
+    gap: var(--space-24);
+  }
+
+  .page-head .side {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--space-20) var(--space-48);
+  }
+
+  .page-head .intro {
+    max-width: 36em;
+  }
+
+  @media (max-width: 860px) {
+    /* A break inside a sentence goes, so the line wraps freely. A break between two sentences,
+       marked keep, stays: they have no period between them, so they'd run together. */
+    .page-head .h-xl br:not(.keep) {
+      display: none;
+    }
+  }
+</style>

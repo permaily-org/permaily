@@ -1,0 +1,115 @@
+/* Design tokens. These mirror design/permaily-system.lib.pen, which is the source of truth. */
+
+:root {
+  --paper: #f6f6f3;
+  --raised: #fff;
+  --sunken: #ecece7;
+  --ink: #131312;
+  --ink-2: #5b5b55;
+  --ink-3: #6c6c65;
+  --rule: #deded8;
+  --rule-strong: #131312;
+  --bar: #131312;
+  --on-bar: #f6f6f3;
+  --highlight: #ddf45b;
+  --on-highlight: #131312;
+  --attention: #7d5300;
+  --attention-bg: #f8efd6;
+  --ok: #1c6642;
+  --danger: #b8301a;
+  color-scheme: light;
+
+  --font-sans: 'Instrument Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, Menlo, monospace;
+
+  --text-micro: 11px;
+  --text-mono: 12px;
+  --text-small: 13px;
+  --text-body: 14px;
+  --text-lead: 15px;
+  --text-wordmark: 17px;
+  --text-title: 18px;
+  --text-heading: 28px;
+  --text-display: 44px;
+  --text-display-l: 64px;
+
+  --fs-xl: clamp(44px, 6.67vw, 96px);
+  --fs-l: clamp(38px, 4.44vw, 64px);
+  --fs-d: clamp(30px, 3.05vw, 44px);
+  --fs-intro: clamp(18px, 1.53vw, 22px);
+
+  --leading-tight: 1.05;
+  --leading-display: 1.1;
+  --leading-snug: 1.15;
+  --leading-body: 1.45;
+
+  --tracking-xl: -0.0146em;
+  --tracking-l: -0.022em;
+  --tracking-d: -0.02em;
+  --tracking-h: -0.018em;
+  --tracking-w: -0.018em;
+
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-10: 10px;
+  --space-12: 12px;
+  --space-14: 14px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-40: 40px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+
+  --r: 2px;
+  --hair: 1px;
+  --gutter: clamp(20px, 6.67vw, 96px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --paper: #111210;
+    --raised: #191a18;
+    --sunken: #0b0c0b;
+    --ink: #f1f1ec;
+    --ink-2: #ababa3;
+    --ink-3: #85857d;
+    --rule: #2a2b27;
+    --rule-strong: #f1f1ec;
+    --bar: #3c3d37;
+    --on-bar: #f1f1ec;
+    --attention: #e8b954;
+    --attention-bg: #2e2410;
+    --ok: #7fd6a6;
+    --danger: #ff8a6e;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'],
+.on-dark {
+  --paper: #111210;
+  --raised: #191a18;
+  --sunken: #0b0c0b;
+  --ink: #f1f1ec;
+  --ink-2: #ababa3;
+  --ink-3: #85857d;
+  --rule: #2a2b27;
+  --rule-strong: #f1f1ec;
+  --bar: #3c3d37;
+  --on-bar: #f1f1ec;
+  --attention: #e8b954;
+  --attention-bg: #2e2410;
+  --ok: #7fd6a6;
+  --danger: #ff8a6e;
+  color-scheme: dark;
+}
+
+.on-dark {
+  background: var(--sunken);
+  color: var(--ink);
+}

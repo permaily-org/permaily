@@ -1,0 +1,98 @@
+---
+import Cta from '../components/Cta.astro';
+import VendorsDemo from '../components/demos/VendorsDemo.astro';
+import Faq from '../components/Faq.astro';
+import PageHead from '../components/PageHead.astro';
+import Base from '../layouts/Base.astro';
+
+const reviewAnswers = [
+  ['SSO with SAML or OIDC', 'SCIM provisioning', 'Audit export to your SIEM', 'Per-vendor limits and central policy'],
+  ['Data processing agreement', 'Published subprocessor list', 'EU and US hosting regions', 'Self-hosting in your own AWS account'],
+  ['Public code in the mail path', 'Reproducible builds', 'Public release log', 'Security review pack on request'],
+];
+
+const questions = [
+  {
+    question: 'What if a vendor hasn’t integrated with Permaily?',
+    answer: 'Most can keep working through forwarding of the mail your policy covers. A compatibility layer lets others change a base URL instead of building something new.',
+  },
+  {
+    question: 'Can employees see what’s shared?',
+    answer: 'Yes, by default. Each person sees which apps their admin connected and what those apps can read.',
+  },
+  {
+    question: 'Can we start with one team?',
+    answer: 'Yes. A policy can apply to one group while you try it.',
+  },
+];
+---
+
+<Base title="Companies" description="Your vendors see what their job needs, and you keep a record of what each one received.">
+  <PageHead intro="One central plan for your company’s inboxes. Set a limit for each vendor that touches employee mail, and keep a record of what each one received.">
+    Your vendors see what <br />their job needs
+    <Fragment slot="actions">
+      <a class="btn lg" href="/contact/">Talk to us</a>
+      <a class="btn lg sec-b" href="/security/">See how it’s secured</a>
+    </Fragment>
+  </PageHead>
+
+  <section>
+    <div class="wrap"><VendorsDemo /></div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap three">
+      <div class="fact">
+        <h3>Policy comes from you, and employees can see it</h3>
+        <p>People see which apps their admin connected and what each one can read, right next to the ones they added themselves.</p>
+      </div>
+      <div class="fact">
+        <h3>An audit trail you can hand to anyone</h3>
+        <p>Show what each vendor received, when, and under which rule. Receipts are hash chained, so a missing one shows.</p>
+      </div>
+      <div class="fact">
+        <h3>Run it in your own cloud</h3>
+        <p>The same image in your own AWS account. You hold the keys, and you check the running build with the same command everyone else uses.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec rule-top">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2 class="h-l">What your security review will ask</h2>
+      </div>
+      <div class="three">
+        {
+          reviewAnswers.map((group) => (
+            <ul class="checks">
+              {group.map((item) => <li>{item}</li>)}
+            </ul>
+          ))
+        }
+      </div>
+      <p class="note-box legal"><b>Reading employee mail has legal limits</b>Many countries restrict it, and works councils may have a say. Permaily narrows access and keeps a record, and it doesn’t replace legal advice.</p>
+    </div>
+  </section>
+
+  <section class="sec rule-top">
+    <div class="wrap two">
+      <h2 class="h-l">Tell your vendors what changed</h2>
+      <Faq items={questions} />
+    </div>
+  </section>
+
+  <Cta
+    title="Bring us your vendor list"
+    body="We’ll show you what each one would see through Permaily. Plans are $12 per seat billed yearly, or $15 monthly."
+    primary={{ label: 'Talk to us', href: '/contact/' }}
+    secondary={{ label: 'See pricing', href: '/pricing/' }}
+  />
+</Base>
+
+<style>
+  .legal {
+    max-width: 44em;
+    margin-top: var(--space-40);
+  }
+</style>

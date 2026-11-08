@@ -1,0 +1,37 @@
+---
+// Text that can be highlighted as shared or covered by a bar as withheld.
+// A demo animates --hl and --bk. The values here are the final state.
+interface Props {
+  text: string;
+  snippet?: string;
+  /** Part of the snippet that a bar can cover on its own, inside the highlight. A demo animates its --cut. */
+  cut?: { text: string; app: string; on: boolean };
+  highlighted?: boolean;
+  withheld?: boolean;
+  /** Adds the padding a highlight needs. */
+  pad?: boolean;
+  /** Keeps the width of the text without showing it, for mail an app never received. */
+  ghost?: boolean;
+  /** Marks the text that gets highlighted when the hero starts. */
+  subject?: boolean;
+}
+
+const { text, snippet, cut, highlighted = false, withheld = false, pad = false, ghost = false, subject = false } = Astro.props;
+const at = snippet && cut ? snippet.indexOf(cut.text) : -1;
+if (cut && at < 0) throw new Error(`Redact: "${cut.text}" isn't in the snippet "${snippet}"`);
+const head = at >= 0 ? snippet!.slice(0, at) : snippet;
+const tail = at >= 0 ? snippet!.slice(at + cut!.text.length) : '';
+---
+
+<span
+  class:list={['t', { pad }]}
+  data-h={subject ? '1' : undefined}
+  style={`--hl:${highlighted ? 1 : 0};--bk:${withheld ? 1 : 0}`}
+  ><span class="tx" style={ghost ? 'visibility:hidden' : undefined}
+    >{text}{snippet && <span class="snip">{head}{cut && <span class="cut">{cut.text}</span>}{tail}</span>}</span
+  ><i class="hb"
+    ><span
+      >{text}{snippet && <span class="snip">{head}{cut && <span class="cut" data-cut={cut.app} style={`--cut:${cut.on ? 1 : 0}`}>{cut.text}<i class="cb"></i></span>}{tail}</span>}</span
+    ></i
+  ><i class="bb"></i></span
+>

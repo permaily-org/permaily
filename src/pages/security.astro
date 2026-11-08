@@ -1,0 +1,132 @@
+---
+import Cta from '../components/Cta.astro';
+import FingerprintDemo from '../components/demos/FingerprintDemo.astro';
+import PageHead from '../components/PageHead.astro';
+import { LINKS } from '../config/site';
+import Base from '../layouts/Base.astro';
+
+const proves = [
+  'The service runs an image built from this public code',
+  'Your stored data can only be decrypted by approved builds',
+  'Every approved build is listed publicly, before it goes live',
+];
+
+const doesNotProve = [
+  'That the public code has no bugs or hidden flaws',
+  'That AWS and its hardware behave as documented',
+  'What an app does with mail after receiving it',
+  'That Google or Microsoft can’t see mail they host',
+  'That traffic patterns are hidden from us',
+];
+
+const retention = [
+  { data: 'Mail fetched through an account connection', where: 'Memory only, inside the enclave', kept: 'Not stored' },
+  { data: 'Mail received by forwarding', where: 'Object storage, under your key', kept: 'Until delivered, or a short limit' },
+  { data: 'Mailbox tokens', where: 'Database, under your key', kept: 'Until you disconnect' },
+  { data: 'Rules and access settings', where: 'Database, under your key', kept: 'Until you delete them' },
+  { data: 'Receipts', where: 'Database, under your key, hash chained', kept: 'You decide, with a default limit' },
+];
+---
+
+<Base title="Security" description="You can check that we run the public code, and what that does and does not prove.">
+  <PageHead intro="A middleman only helps if it’s more trustworthy than what it replaces. So the code is open, and the running service proves which build it’s running.">
+    You can check that we <br />run the public code
+    <Fragment slot="actions">
+      <a class="btn lg" href={LINKS.source}>View the source</a>
+      <a class="btn lg sec-b" href={LINKS.trustModel}>Read the trust model</a>
+    </Fragment>
+  </PageHead>
+
+  <section>
+    <div class="wrap"><FingerprintDemo /></div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap two even">
+      <div>
+        <h2 class="h-h list-title">What this proves</h2>
+        <ul class="checks large">
+          {proves.map((item) => <li>{item}</li>)}
+        </ul>
+      </div>
+      <div>
+        <h2 class="h-h list-title">What this doesn’t prove</h2>
+        <ul class="stack limits">
+          {doesNotProve.map((item) => <li>{item}</li>)}
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec rule-top">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2 class="h-l">What we keep, and for how long</h2>
+        <p class="intro">Mail passes through rather than piling up. No third-party model reads it, and it isn’t used to train anything.</p>
+      </div>
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th scope="col">Data</th>
+              <th scope="col">Where</th>
+              <th scope="col">Kept for</th>
+            </tr>
+          </thead>
+          <tbody>
+            {
+              retention.map((row) => (
+                <tr>
+                  <th scope="row">{row.data}</th>
+                  <td>{row.where}</td>
+                  <td>{row.kept}</td>
+                </tr>
+              ))
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec rule-top">
+    <div class="wrap two even">
+      <div class="stack">
+        <h2 class="h-h">Why a web page isn’t enough</h2>
+        <p class="body">A browser can’t confirm the page it just loaded came from the verified service. The command checks the connection itself, and rogue certificates would show up in public logs.</p>
+        <pre class="code-block">$ permaily verify app.permaily.com</pre>
+      </div>
+      <div class="stack">
+        <h2 class="h-h">Try to break it</h2>
+        <p class="body">We publish the trust model and invite people to attack it. If you find something, tell us, and we’ll credit you in the release log.</p>
+        <div class="actions">
+          <a class="link" href={LINKS.vulnerability}>Report a vulnerability</a>
+          <a class="link" href={LINKS.trustModel}>Read the trust model</a>
+          <a class="link" href={LINKS.releaseLog}>Open the release log</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <Cta
+    title="See it on your own mail"
+    body="Connect a mailbox and read the preview. Nothing is shared yet."
+    primary={{ label: 'Get started free', href: LINKS.signup }}
+    secondary={{ label: 'Talk to us', href: '/contact/' }}
+  />
+</Base>
+
+<style>
+  .list-title {
+    margin-bottom: var(--space-16);
+  }
+
+  .large {
+    font-size: var(--text-title);
+  }
+
+  .limits {
+    gap: var(--space-8);
+    color: var(--ink-2);
+  }
+</style>

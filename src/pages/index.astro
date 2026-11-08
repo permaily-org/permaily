@@ -1,0 +1,156 @@
+---
+import Cta from '../components/Cta.astro';
+import AccessGridDemo from '../components/demos/AccessGridDemo.astro';
+import ChatDemo from '../components/demos/ChatDemo.astro';
+import FlowDemo from '../components/demos/FlowDemo.astro';
+import InboxDemo from '../components/demos/InboxDemo.astro';
+import ProofDemo from '../components/demos/ProofDemo.astro';
+import { LINKS } from '../config/site';
+import Base from '../layouts/Base.astro';
+---
+
+<Base description="Share only the part of your email each app or AI agent needs, and check that we kept our word.">
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero-top">
+        <h1 class="h-xl">Share <span class="mk">47</span> emails, <br />not 12,304</h1>
+        <div class="hero-side">
+          <p class="intro">When an app or AI agent connects to your email, it can read all of it. Permaily lets it read only what you approve.</p>
+          <div class="actions">
+            <a class="btn lg" href={LINKS.signup}>Get started free</a>
+            <span class="note">Free for personal use. No card needed.</span>
+          </div>
+        </div>
+      </div>
+      <InboxDemo />
+      <p class="works">Connects to Gmail, Google Workspace, Outlook and Microsoft 365. Shares with Claude, ChatGPT and any app or agent you approve.</p>
+    </div>
+  </section>
+
+  <section class="sec" id="how">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2 class="h-l"><span class="dim">Gmail has no smaller option</span> <br />Permaily is the smaller option</h2>
+        <p class="intro">It sits between your inbox and everything that wants to read it.</p>
+      </div>
+      <FlowDemo />
+    </div>
+  </section>
+
+  <section class="sec rule-top" id="agents">
+    <div class="wrap two">
+      <div class="stack">
+        <h2 class="h-l">Agents start with nothing. You choose what they see</h2>
+        <p class="intro">Add one address to Claude, ChatGPT or any AI agent. Connecting shares no mail, and it can’t send or delete anything without asking you.</p>
+      </div>
+      <ChatDemo />
+    </div>
+  </section>
+
+  <section class="sec rule-top" id="control">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2 class="h-l">One page shows who can read what</h2>
+      </div>
+      <AccessGridDemo />
+      <div class="three facts">
+        <div class="fact">
+          <h3>Some emails never leave</h3>
+          <p>Password resets, login codes and security alerts are blocked above every rule, on by default.</p>
+        </div>
+        <div class="fact">
+          <h3>Every email shared leaves a receipt</h3>
+          <p>See what left, when, and under which rule.</p>
+        </div>
+        <div class="fact">
+          <h3>What an app already has, it keeps</h3>
+          <p>Turning off access stops anything new. We can’t recall mail it already received, so we show you what each one holds.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="on-dark sec" id="proof">
+    <div class="wrap two">
+      <div class="stack">
+        <h2 class="h-l">Don’t take our word for it</h2>
+        <p class="intro">Permaily has to read your mail to apply your rules. It does that inside an isolated environment running public code, and that environment proves which code it’s running.</p>
+        <p class="fine">This doesn’t prove the code has no bugs, or control what an app does with mail it received. We list every limit.</p>
+        <a class="link fine limits" href="/security/">What this proves, and what it doesn’t</a>
+      </div>
+      <ProofDemo />
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap routes">
+      <a class="route" href="/developers/">
+        <h3>Building an app that reads email?</h3>
+        <p>Ask for one kind of email instead of a whole inbox. Stop paying your LLM to read the rest, and get typed data back.</p>
+        <span class="go">For developers</span>
+      </a>
+      <a class="route" href="/companies/">
+        <h3>Have vendors in employee mailboxes?</h3>
+        <p>Give each one only what its job needs, and keep a record of what it received.</p>
+        <span class="go">For companies</span>
+      </a>
+    </div>
+  </section>
+
+  <Cta
+    title="Start with nothing"
+    body="Connect your inbox in about three minutes. Nothing is shared until you approve it."
+    primary={{ label: 'Get started free', href: LINKS.signup }}
+    secondary={{ label: 'See pricing', href: '/pricing/' }}
+  />
+</Base>
+
+<style>
+  .hero {
+    padding-block: clamp(36px, 3.4vw, 48px) 0;
+  }
+
+  .hero-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
+    align-items: start;
+    gap: clamp(24px, 3.4vw, 48px);
+    margin-bottom: clamp(28px, 2.8vw, 40px);
+  }
+
+  .hero-side {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-20);
+    padding-top: 10px;
+  }
+
+  .note {
+    color: var(--ink-2);
+    font-size: var(--text-body);
+  }
+
+  .works {
+    margin-top: var(--space-20);
+    color: var(--ink-2);
+    font-size: var(--text-lead);
+  }
+
+  .facts {
+    margin-top: clamp(40px, 4.4vw, 64px);
+  }
+
+  .limits {
+    justify-self: start;
+  }
+
+  @media (max-width: 1040px) {
+    .hero-top {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hero-side {
+      padding-top: 0;
+    }
+  }
+</style>

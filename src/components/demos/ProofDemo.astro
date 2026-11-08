@@ -1,0 +1,95 @@
+---
+import Hash from '../Hash.astro';
+
+const command = 'permaily verify app.permaily.com';
+---
+
+<div>
+  <figure
+    class="term demo"
+    data-demo="proof"
+    data-cmd={command}
+    aria-label="The command permaily verify app.permaily.com compares the public build with what is running now. The two hashes are identical, and the result is: matches public code."
+  >
+    <span class="cmd"><span class="p">$ </span><span class="vis">{command}</span><span class="inv"></span></span>
+    <div class="ln" data-at="1700"><span class="k">attestation</span><span>signature valid, AWS Nitro root</span></div>
+    <div class="ln" data-at="2050"><span class="k">release log</span><span>found, v1.4.2, logged 2 Mar</span></div>
+    <div class="gap"></div>
+    <div class="ln" data-at="2450"><span class="k">public build</span><Hash /></div>
+    <div class="ln second" data-at="2450"><span class="k">running now</span><Hash /></div>
+    <div class="ln res-line" data-at="5000"><span class="k">result</span><span class="ok">matches public code</span></div>
+  </figure>
+  <div class="demo-foot"><span></span><button class="demo-ctl">Replay</button></div>
+</div>
+
+<style is:global>
+  .term {
+    overflow: hidden;
+    padding: var(--space-20);
+    border: var(--hair) solid var(--rule);
+    border-radius: var(--r);
+    background: var(--raised);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  .term .ln {
+    display: grid;
+    grid-template-columns: 13ch minmax(0, 1fr);
+    gap: 0 1ch;
+    opacity: var(--o, 1);
+  }
+
+  .term .ln.second {
+    margin-top: 6px;
+  }
+
+  .term .ln .k {
+    color: var(--ink-3);
+  }
+
+  .term .cmd {
+    display: block;
+    margin-bottom: var(--space-10);
+  }
+
+  .term .cmd .p {
+    color: var(--ink-3);
+  }
+
+  .term .inv {
+    visibility: hidden;
+  }
+
+  .term .gap {
+    height: 10px;
+  }
+
+  .term .res-line {
+    margin-top: var(--space-10);
+  }
+
+  .term .ok {
+    color: var(--ok);
+    font-weight: 500;
+  }
+
+  @media (max-width: 520px) {
+    .term {
+      padding: var(--space-14);
+      font-size: 11px;
+    }
+
+    .term .ln {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>
+
+<script>
+  import { initProof } from '../../scripts/demos/proof';
+
+  document.querySelectorAll<HTMLElement>('[data-demo="proof"]').forEach(initProof);
+</script>

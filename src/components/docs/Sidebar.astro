@@ -1,0 +1,37 @@
+---
+// Search, then plain groups of links, as in the approved design. On a phone this panel is the menu, so it also holds the site's links.
+import Search from '@astrojs/starlight/components/Search.astro';
+import { LINKS, NAV } from '../../config/site';
+
+const { sidebar } = Astro.locals.starlightRoute;
+const groups = sidebar.flatMap((item) => (item.type === 'group' ? [item] : []));
+---
+
+<Search />
+
+{
+  groups.map((group, index) => (
+    <div class="docs-nav-group" role="group" aria-labelledby={`docs-nav-${index}`}>
+      <p class="docs-nav-title" id={`docs-nav-${index}`}>{group.label}</p>
+      <ul>
+        {group.entries.map(
+          (item) =>
+            item.type === 'link' && (
+              <li>
+                <a href={item.href} aria-current={item.isCurrent ? 'page' : undefined}>
+                  {item.label}
+                </a>
+              </li>
+            ),
+        )}
+      </ul>
+    </div>
+  ))
+}
+
+<div class="docs-nav-site md:sl-hidden">
+  <ul>
+    {NAV.map((item) => <li><a href={item.href}>{item.label}</a></li>)}
+    <li><a href={LINKS.login}>Log in</a></li>
+  </ul>
+</div>

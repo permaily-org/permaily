@@ -1,0 +1,123 @@
+---
+import { LINKS } from '../config/site';
+import Base from '../layouts/Base.astro';
+
+const data = [
+  { data: 'Mail fetched from your account', where: 'Memory, inside the enclave', kept: 'Not stored' },
+  { data: 'Mail received by forwarding', where: 'Encrypted storage, under your key', kept: 'Until delivered, or a short limit' },
+  { data: 'Tokens for your mailbox', where: 'Encrypted database, under your key', kept: 'Until you disconnect' },
+  { data: 'Rules and access settings', where: 'Encrypted database, under your key', kept: 'Until you delete them' },
+  { data: 'Receipts', where: 'Encrypted database, hash chained', kept: 'You decide, with a default limit' },
+  { data: 'Your account email and billing details', where: 'Our database and our payment provider', kept: 'Until you delete your account' },
+];
+---
+
+<Base title="Privacy" description="What we keep, and why.">
+  <section class="page-head">
+    <div class="wrap">
+      <nav class="tabs" aria-label="Legal">
+        <a href="/privacy/" aria-current="page">Privacy</a>
+        <a href={LINKS.terms}>Terms</a>
+        <a href={LINKS.dataProcessing}>Data processing</a>
+        <a href={LINKS.subprocessors}>Subprocessors</a>
+      </nav>
+      <p class="small updated">Updated 2 March 2026</p>
+      <h1 class="h-l title">What we keep, and why</h1>
+      <p class="intro plain">This is the plain version of our privacy policy. We don’t sell, mine or advertise on email, and we don’t train models on it.</p>
+    </div>
+  </section>
+
+  <section class="page-end">
+    <div class="wrap stack sections">
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th scope="col">Data</th>
+              <th scope="col">Where it lives</th>
+              <th scope="col">How long</th>
+            </tr>
+          </thead>
+          <tbody>
+            {
+              data.map((row) => (
+                <tr>
+                  <th scope="row">{row.data}</th>
+                  <td>{row.where}</td>
+                  <td>{row.kept}</td>
+                </tr>
+              ))
+            }
+          </tbody>
+        </table>
+      </div>
+      <div class="prose">
+        <h2>What we do with your mail</h2>
+        <p>The service reads mail inside the enclave to apply your rules, then releases only what you approved to the connection you approved. No third-party model reads it, and it isn’t used to train anything.</p>
+        <h2>Who else is involved</h2>
+        <p>Your mail provider hosts your mail, and we can’t change that. AWS runs the hardware. Connections you approve receive what you approved, and what they do next is covered by their own policies.</p>
+        <h2>Your rights</h2>
+        <p>You can export your data, revoke any access and delete your account at any time, on any plan. Mail a connection already received can’t be recalled, and we show you what each one holds, so you can ask them to delete it.</p>
+        <h2>Contact</h2>
+        <p>Write to <a class="link" href="mailto:privacy@permaily.com">privacy@permaily.com</a>. If you’re in the EU or UK, you can also complain to your local data protection authority.</p>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-24);
+    margin-bottom: var(--space-40);
+    border-bottom: var(--hair) solid var(--rule);
+  }
+
+  .tabs a {
+    margin-bottom: -1px;
+    padding-block: var(--space-10);
+    color: var(--ink-2);
+    font-size: var(--text-body);
+    text-decoration: none;
+  }
+
+  .tabs a[aria-current='page'] {
+    border-bottom: 2px solid var(--ink);
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  .updated {
+    margin-bottom: var(--space-12);
+  }
+
+  .title {
+    margin-bottom: var(--space-20);
+  }
+
+  .plain {
+    max-width: 38em;
+  }
+
+  .sections {
+    gap: var(--space-48);
+  }
+
+  .prose {
+    display: grid;
+    gap: var(--space-24);
+    max-width: 42em;
+  }
+
+  .prose h2 {
+    font-size: var(--text-heading);
+    font-weight: 500;
+    letter-spacing: var(--tracking-h);
+    line-height: var(--leading-snug);
+  }
+
+  .prose p {
+    color: var(--ink-2);
+  }
+</style>

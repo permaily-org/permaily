@@ -1,0 +1,19 @@
+---
+// Replaces Starlight's own theme store, so the docs and the website share one choice.
+---
+
+{/* Inlined so a page never flashes the wrong theme. Starlight's styles and code blocks read data-theme, so docs pages always set it. */}
+<script is:inline>
+  (function () {
+    var theme;
+    try {
+      theme = new URLSearchParams(location.search).get('theme') || localStorage.getItem('permaily-theme');
+    } catch (e) {}
+    document.documentElement.dataset.theme =
+      theme === 'light' || theme === 'dark'
+        ? theme
+        : matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark'
+          : 'light';
+  })();
+</script>

@@ -1,0 +1,28 @@
+---
+import { LINKS } from '../config/site';
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Not found" description="This page doesn’t exist." noindex>
+  <section class="sec">
+    <div class="wrap stack missing">
+      <p class="mono status">404 not found</p>
+      <h1 class="h-xl">Nothing is withheld here <br /><span class="dim">This page doesn’t exist</span></h1>
+      <div class="actions">
+        <a class="btn lg" href="/">Back to home</a>
+        <a class="btn lg sec-b" href={LINKS.docs}>Read the docs</a>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .missing {
+    gap: var(--space-24);
+    padding-block: var(--space-48);
+  }
+
+  .status {
+    color: var(--ink-2);
+  }
+</style>
