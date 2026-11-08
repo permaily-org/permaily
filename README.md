@@ -36,7 +36,7 @@ npm run dev
 | `src/styles/global.css` | The reset, layout, type and parts used across pages |
 | `src/config/site.ts` | Every outside link, so each can be changed in one place |
 | `src/data/` | Sample mail, sample vendors and logo shapes |
-| `src/content/docs/docs/` | The docs pages. A file's path is its address, so `packs.md` is `/docs/packs/` |
+| `src/content/docs/docs/` | The docs pages. A file's path is its address, so `queries.md` is `/docs/queries/` |
 | `src/components/docs/` | What replaces parts of Starlight, so the docs use the site's header, footer and theme |
 | `src/styles/docs.css` | Starlight's look, mapped onto the site's tokens. Only docs pages load it |
 | `src/scripts/docs.ts` | The theme switch on docs pages |
@@ -84,11 +84,9 @@ Astro caches rendered Markdown between builds, and that cache misses changes to 
 
 ### Generated pages, not wired up yet
 
-The API reference and the pack catalogue should be generated from the code, so neither can drift from it. Both come from [`permaily-org/permaily`](https://github.com/permaily-org/permaily), which is empty today, so there's nothing to generate them from. The Packs page has one hand-written row until then.
+The API reference should be generated from the code, so it can't drift from it. It comes from [`permaily-org/permaily`](https://github.com/permaily-org/permaily), which is empty today, so there's nothing to generate it from.
 
-Both should read from a tagged release of that repository, never `main`, with the tag pinned here so a build can be repeated. A new release should trigger a rebuild, through a deploy hook from whichever host is chosen.
-
-**API reference**
+It should read from a tagged release of that repository, never `main`, with the tag pinned here so a build can be repeated. A new release should trigger a rebuild, through a deploy hook from whichever host is chosen.
 
 1. Add the API spec to the core repository. OpenAPI is the assumption, and neither the format nor the path is decided.
 2. Fetch it at build time from the pinned tag.
@@ -97,21 +95,13 @@ Both should read from a tagged release of that repository, never `main`, with th
 
 Missing: the API itself, its spec, and tagged releases.
 
-**Pack catalogue**
-
-1. Add `packs/` to the core repository, with one YAML file per pack. The docs already show `packs/travel.bookings.yaml`.
-2. Add a `packs` collection to `src/content.config.ts`, with a loader that reads those files from the pinned tag, and a schema that mirrors the pack format, so a malformed pack fails the build.
-3. Replace the table under Catalogue in `packs.md` with a component that renders the collection. Give each pack a page through `src/pages/docs/packs/[id].astro`, using Starlight's `StarlightPage`.
-
-Missing: the `packs/` folder, a final pack format, as `travel.bookings` is the only example, and the contribution process.
-
 ## Not connected yet
 
 - **Forms.** Contact, Sign up and Log in don't send anything. They're marked `data-no-backend`, and the Google and Microsoft buttons do nothing.
 - **Sign up and Log in links.** They go to the pages here until the app has its own address. Change them in `src/config/site.ts`.
 - **Terms, Data processing and Subprocessors.** These links are placeholders until the pages have had legal review.
 - **The domain.** `permaily.com` is set in `astro.config.mjs` and is used for canonical links, the sitemap and the social image.
-- **API reference and pack catalogue.** See [Generated pages](#generated-pages-not-wired-up-yet).
+- **API reference.** See [Generated pages](#generated-pages-not-wired-up-yet).
 
 The product docs list the rest, including sample numbers and claims to check before publishing: see `docs/10-website.md` in the Permaily project folder.
 

@@ -83,7 +83,7 @@ export default defineConfig({
         {
           label: 'Reading mail',
           items: [
-            { label: 'Packs', slug: 'docs/packs' },
+            { label: 'Queries', slug: 'docs/queries' },
             { label: 'Fields, types and tokens', slug: 'docs/fields-types-tokens' },
             { label: 'Rules', slug: 'docs/rules' },
             { label: 'Messages', slug: 'docs/messages' },

@@ -15,7 +15,7 @@ export const LINKS = {
   signup: '/signup/',
   login: '/login/',
   docs: `${DOCS}/`,
-  packs: `${DOCS}/packs/`,
+  queries: `${DOCS}/queries/`,
   selfHosting: `${DOCS}/self-hosting/`,
   trustModel: `${DOCS}/trust-model/`,
   source: SOURCE,

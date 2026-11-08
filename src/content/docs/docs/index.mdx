@@ -1,12 +1,12 @@
 ---
-title: Read your first pack
-description: Ask for one pack, send a person through the consent screen, and read what they approved.
+title: Run your first query
+description: Ask for the mail your app needs, send a person through the consent screen, and read what they approved.
 head:
   - tag: title
     content: Quickstart | Permaily docs
 ---
 
-Ask for one pack, send a person through the consent screen, and read what they approved. This takes about ten minutes, using a sandbox mailbox with sample mail.
+Ask for the mail your app needs, send a person through the consent screen, and read what they approved. This takes about ten minutes, using a sandbox mailbox with sample mail.
 
 <div class="doc-steps">
 
@@ -18,13 +18,15 @@ Create an app in the developer console and copy its test key. Test keys only see
 npm install @permaily/sdk
 ```
 
-## Ask for a pack
+## Ask for access
 
-Request the smallest access that does the job. The response gives you a link to the consent screen.
+Request the smallest access that does the job. Your [query](/docs/queries/) says which emails you want, and the response gives you a link to the consent screen.
 
 ```ts
 const { consentUrl, access } = await permaily.access.request({
-  pack: "travel.bookings@3",
+  query:
+    "from:(iberia.com OR booking.com OR renfe.es OR airbnb.com) " +
+    "subject:(booking OR reservation OR itinerary)",
   parts: ["headers", "body_text"],
   actions: ["read"],
   expiresIn: "90d",

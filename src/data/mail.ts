@@ -24,9 +24,9 @@ export interface Mail {
   snippet: string;
   /** The apps that can read it with Permaily. */
   apps?: AppId[];
-  /** Part of the snippet held back from the app that can read the rest. It has to appear in the snippet. */
+  /** A detail a rule removes from an email the app can read. It has to appear in the snippet. */
   cut?: { app: AppId; text: string };
-  /** Matches a rule withheld from every connection, such as Sign-in and security. */
+  /** Held back from every connection by a rule, such as Sign-in and security. */
   never?: boolean;
 }
 

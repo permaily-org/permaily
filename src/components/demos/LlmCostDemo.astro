@@ -14,8 +14,8 @@ const before = [
 ];
 
 const after = [
-  '// Ask for one pack. Only matching mail comes back.',
-  'const bookings = await permaily.read("travel.bookings@3");',
+  '// Ask for what you need. Only matching mail comes back.',
+  'const bookings = await permaily.read(bookingsQuery);',
   ' ',
   'for (const booking of bookings) {',
   '  booking.subject;           // string',
@@ -28,7 +28,7 @@ const after = [
 <figure
   class="panel demo"
   data-demo="dev"
-  aria-label="The same feature two ways, for 1,000 mailboxes. With Gmail and your own LLM, you fetch all 12,304 emails in each and pay the LLM to read them, $1,230 in total, and you get untyped text. With Permaily, you ask for one pack and receive only the 47 emails in each that match, as typed fields, so no LLM has to read them. Permaily costs under 1¢."
+  aria-label="The same feature two ways, for 1,000 mailboxes. With Gmail and your own LLM, you fetch all 12,304 emails in each and pay the LLM to read them, $1,230 in total, and you get untyped text. With Permaily, you ask for what you need and receive only the 47 emails in each that match, as typed fields, so no LLM has to read them. Permaily costs under 1¢."
 >
   <div class="dev-demo">
     <div class="dev-head">

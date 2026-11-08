@@ -10,7 +10,7 @@ export function initGrid(root: HTMLElement) {
   const connWord = $('[data-pl]', root);
   const reset = $('[data-reset]', root);
   const hint = $('[data-hint]', root);
-  const cells = $$('.cell:not(.never)', root);
+  const cells = $$('.cell', root);
   const switches = $$('.sw', root);
   const initial = cells.map((c) => c.dataset.on!);
   const remembered: Record<string, string[]> = {};
@@ -82,14 +82,6 @@ export function initGrid(root: HTMLElement) {
       setSwitch(s.dataset.c!, s.getAttribute('aria-checked') !== 'true');
       touched();
       setTimeout(() => update(), reducedMotion ? 0 : 180);
-    }),
-  );
-
-  $$('.cell.never', root).forEach((cell) =>
-    cell.addEventListener('click', () => {
-      const label = $('.nv', cell);
-      label.textContent = 'always wins';
-      setTimeout(() => (label.textContent = 'never'), 1500);
     }),
   );
 

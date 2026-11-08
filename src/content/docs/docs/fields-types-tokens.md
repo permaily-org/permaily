@@ -1,16 +1,18 @@
 ---
 title: Fields, types and tokens
-description: How a pack defines what comes back, how the SDK turns that into types, and what it costs.
+description: How a query asks for what comes back, how the SDK turns that into types, and what it costs.
 ---
 
-A pack defines which emails match and which fields come back. The SDK turns that into types, so you skip the prompt, the parsing and the validation.
+A query says which emails you want, and it can also say which fields come back. The SDK turns those fields into types, so you skip the prompt, the parsing and the validation.
 
 ## Fields
 
-Fields sit in the pack, next to its match rules. A `?` marks a field that can be empty.
+Fields sit next to the query in the [access](/docs/concepts/#what-an-access-answers). A `?` marks a field that can be empty.
 
 ```yaml
-# packs/travel.bookings.yaml
+query: >
+  from:(iberia.com OR booking.com OR renfe.es OR airbnb.com)
+  subject:(booking OR reservation OR itinerary)
 fields:
   is_cancellation: boolean
   cancellation_notes: string?

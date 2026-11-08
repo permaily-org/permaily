@@ -8,9 +8,8 @@ This is where a person decides. An app or agent sends them here, and they see wh
 ## What the person sees
 
 - **Who is asking,** with facts about them: how long they've been registered, how many users they have, and whether they're verified.
-- **What they want,** in plain language, with the pack name.
-- **A live preview on their own mail.** For example, "47 of 12,304 emails would be shared", followed by real subject lines, with everything else visibly withheld.
-- **What they'll never get.** The person's [withheld rules](/docs/concepts/#withheld-rules), such as Sign-in and security, sit above every request.
+- **What you ask for,** in plain language, and the [query](/docs/queries/) that will run.
+- **A live preview on their own mail.** For example, "47 of 12,304 emails would be shared", followed by real subject lines, with everything else as black bars. Mail the person's rules hold back looks the same as mail your query doesn't match.
 - **How long access lasts,** and how to revoke it.
 
 ## Send someone there
@@ -19,11 +18,11 @@ Permaily hosts this screen, so there's nothing for you to build. Asking for acce
 
 ## Asking for more later
 
-An access pins a pack version. A new version that widens what matches needs fresh consent, and the person sees only the difference. Narrowing can apply automatically.
+The approved query is a cap. To get mail outside it, ask for access again with the wider query. The person sees exactly what it would add, and nothing new reaches you until they approve.
 
 ## Agents choose differently
 
-An app asks for something specific, such as a pack. An agent connected through MCP has no such request to make, so consent works the other way round. The agent starts with nothing, and the person ticks the rules it can use while the preview updates. See [Remote MCP](/docs/remote-mcp/).
+An app asks for something specific, its query. An agent connected through MCP has no such request to make, so consent works the other way round. The agent starts with nothing, and the person ticks the kinds of mail it may search while the preview updates. See [Remote MCP](/docs/remote-mcp/).
 
 ## Revoking
 

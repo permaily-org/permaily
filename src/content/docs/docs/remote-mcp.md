@@ -15,7 +15,7 @@ https://mcp.permaily.com
 2. Add the Permaily address to it.
 3. Come back and choose what it can see, while the preview updates.
 
-An agent doesn't request a pack, because MCP clients have no way to declare what they need up front. The person picks the rules at [consent](/docs/consent-screen/#agents-choose-differently).
+An agent doesn't declare a [query](/docs/queries/), because MCP clients have no way to declare what they need up front. The person ticks the kinds of mail it may search at [consent](/docs/consent-screen/#agents-choose-differently), and every search it writes stays inside that scope.
 
 ## Tools
 
@@ -23,8 +23,8 @@ Each tool is limited to the access the token carries.
 
 | Tool | Purpose | Available when |
 | --- | --- | --- |
-| `describe_access` | Explains what this connection can see, so agents can plan | Always |
-| `search_messages` | Searches within the slice | Read allowed |
+| `describe_access` | Describes this connection's scope, parts and actions, so agents can plan | Always |
+| `search_messages` | Runs the agent's own search, inside its scope | Read allowed |
 | `get_message` | Returns the approved parts of one message | Read allowed |
 | `apply_label`, `archive` | Tidying actions | Granted explicitly |
 | `create_draft` | Prepares a message without sending it | Granted explicitly |

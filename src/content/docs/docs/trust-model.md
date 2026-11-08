@@ -74,11 +74,12 @@ Apple's [Private Cloud Compute](https://security.apple.com/blog/private-cloud-co
 | Operator deploys altered code | Measurement-bound keys, public log, independent monitors |
 | Operator intercepts traffic before the enclave | TLS ends in the enclave, attested key, Certificate Transparency monitoring |
 | Database or backup stolen | Ciphertext only. Keys need an approved measurement |
-| Connection asks for too much | Preview at consent, plain-language scope, expiry, unused-access revocation |
+| Connection asks for too much | Preview at consent, the query in plain words, a cap on what it can fetch, fresh approval to widen, expiry, unused-access revocation |
 | Connection is compromised | Short-lived tokens, per-connection limits, instant revocation, unusual-activity alerts |
-| Password reset or login code exposed | Sign-in and security, a rule suggested on every new account and withheld from every connection, above every other rule. It only protects people who keep it |
-| Over-broad rule | Preview before saving, alerts on sudden match volume |
-| Pack silently widened | Version pinning, fresh consent for widening, review and automated checks |
+| Password reset or login code exposed | Sign-in and security, a rule suggested on every new account that holds this mail back from every connection before any query runs. It uses exact conditions, not a topic. It only protects people who keep it |
+| A rule misses what it should catch | Preview on the person's own mail before saving, alerts on sudden match volume. A missed match is a leak, which is why rules written in words are previewed like any other |
+| A connection learns what a rule protects | Held-back mail looks the same as mail its query didn't match, and no rule name or count leaves Permaily |
+| The model that checks rules leaks mail | It runs inside the measured image under the same egress policy, so it can only send data where the public code allows |
 | Spoofed sender enters a slice | Match on authenticated sender, not the `From:` header |
 | Mail sent straight to the inbound address | Secret per-account addresses, and checks that mail came through the provider |
 | Malicious email attacks the parser | Memory-safe language, fuzz testing, resource limits |

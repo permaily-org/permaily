@@ -1,9 +1,18 @@
 ---
 title: Rules
-description: How a rule decides which emails match, and why rules read mail while AI only writes them.
+description: The filters a person writes, which run on the whole mailbox before any query, and what that means for your app.
 ---
 
-A rule is a named definition of which emails match, such as "Flights and hotels". Rules are deterministic, so they can be previewed and audited.
+A rule is a filter the person writes, such as "Sign-in and security" or "Home address". Rules run first, on the whole mailbox, before any connection's [query](/docs/queries/). Your app never sees them.
+
+## What a rule does
+
+Each rule does one of two things, chosen per rule:
+
+- **Hold back the email.** No connection the rule applies to gets it.
+- **Remove details.** Only the matching words are taken out, such as an address or a child's name, and the rest of the email goes through. A finance app still gets the order confirmation, without the delivery address.
+
+A rule applies to every connection, including ones approved later, or only to the connections the person picks. "Car, held back from Claude" is a rule for one connection.
 
 ## What a rule can match
 
@@ -11,32 +20,33 @@ A rule is a named definition of which emails match, such as "Flights and hotels"
 - Recipient, subject terms, labels and categories, and date.
 - Attachment presence and file type.
 - List headers, such as `List-Id`.
-- Structured markup. Some booking emails embed schema.org types such as `FlightReservation`.
+- The kind of mail, such as a password reset or a one-time code.
+- A topic in the person's words, such as "my car" or "my children".
+- Words or phrases, such as a street address or a name.
 
-Where the provider supports it, a rule compiles to a provider query, so non-matching mail is never fetched. The result is then checked again inside the enclave.
+Field conditions are exact, so they can be previewed and audited.
 
-## AI writes rules, and rules read mail
+## Rules written in words
 
-A person types "flights and hotel bookings". A model turns that sentence into a rule, seeing only the sentence and the public pack catalogue. It never sees the mailbox. The preview then runs inside the enclave, and the person judges the result on their own mail.
+A person can describe a rule in a sentence, and a model turns it into conditions. That model sees only the sentence, never the mailbox.
 
-This gives people natural-language setup without sending their email to an LLM. The cost is real: fuzzy categories are harder. "Anything about my kids' school" can't be expressed well as a rule.
+Some rules can't become conditions at all, such as "my children's names" or "anything about my car". For those, a small model inside the enclave checks each email against the topic and finds the words a rule removes. It runs inside the measured image, so no mail leaves the verified boundary and no third party reads it.
 
-## Adding to a pack
+A model can miss, and a missed match is a leak. So the person previews every rule on their own mail before saving it.
 
-An access can start from a [pack](/docs/packs/) and add to it. This one takes `travel.bookings` and also matches one more sender.
+## Suggested on every account
 
-```yaml
-messages:
-  pack: travel.bookings@3
-  add:
-    from_domain: [norwegian.com]
-```
+Permaily suggests one rule on every new account, called **Sign-in and security**. It holds back, from every connection:
 
-## When a rule goes wrong
+- Password resets, login links and one-time codes
+- Security alerts
 
-A [withheld rule](/docs/concepts/#withheld-rules) wins over every rule a connection uses, so with the suggested Sign-in and security rule in place, a sloppy one can't reach password resets. Beyond that:
+The reason is account takeover. Any connection that can read a password reset can take over the account it belongs to. A broad query or a compromised connection shouldn't be able to reach those messages. This rule uses exact conditions, not a topic.
 
-| Problem | What catches it |
-| --- | --- |
-| A rule matches too much | A preview before saving, and alerts on sudden match volume |
-| A spoofed sender tries to enter a slice | Rules match the authenticated sender, not the `From:` header |
+The person can add it or skip it when they connect a mailbox, and later change it or delete it like any rule.
+
+## What your app sees
+
+Nothing about rules. An email a rule held back looks the same as one your query didn't match, and nothing tells your app that a detail was removed. No rule name or count leaves Permaily.
+
+So treat results as what the person chose to share. A missing email isn't proof that it doesn't exist.

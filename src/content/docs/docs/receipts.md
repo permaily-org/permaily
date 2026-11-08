@@ -7,7 +7,7 @@ A receipt is a record of one release of mail to one connection. A person can ope
 
 ## What a receipt records
 
-Who received which message, which parts, when, and under which rule.
+Who received which message, which parts, when, for which query, and which details a rule removed. Only the person sees that last part.
 
 ## Where you meet them
 
@@ -15,7 +15,7 @@ Every message you read carries its receipt id, as `message.receipt` in the SDK, 
 
 ## The ledger
 
-Together, receipts form the ledger a person sees as Activity. Receipts are hash chained, so a missing one shows. Companies can [export them](/pricing/) for an audit, to show what each vendor received, when, and under which rule.
+Together, receipts form the ledger a person sees as Activity. Receipts are hash chained, so a missing one shows. Companies can [export them](/pricing/) for an audit, to show what each vendor received, when, and for which query.
 
 ## How they're kept
 
