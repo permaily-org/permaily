@@ -266,7 +266,7 @@ export const rules: Rule[] = [
   {
     id: 'children',
     name: 'Children',
-    description: "Lucía's and Pablo's names",
+    description: "Leo's and Alba's names",
     effect: 'remove',
     removes: 'their names',
     appliesTo: 'all',
@@ -339,7 +339,7 @@ export const receipts: Receipt[] = [
   { id: 'r_7d10a9', day: 'Today', time: '11:40', connectionId: 'trip-app', sender: 'Iberia', from: 'confirmaciones@iberia.com', subject: 'Your flight to Lisbon is confirmed', parts: 'subject, body', bodyChars: 2310, attachment: 'none', query: 'Flights and hotels', approved: 'Approved by you on 17 Feb', request: 'messages.list' },
   { id: 'r_7c0b12', day: 'Today', time: '09:31', connectionId: 'claude', sender: 'Vodafone', from: 'facturas@vodafone.es', subject: 'Your March bill is ready', parts: 'subject, body', bodyChars: 860, attachment: 'withheld', query: '"vodafone bill march"', approved: 'Approved by you on 6 March', request: 'get_message' },
   { id: 'r_7b9e04', day: 'Today', time: '09:14', connectionId: 'ledgerly', sender: 'Amazon', from: 'auto-confirm@amazon.es', subject: 'Your receipt, order 402-881', parts: 'subject, body', bodyChars: 1530, attachment: 'none', query: 'Invoices, Receipts', removed: { what: 'the address', ruleId: 'home-address' }, approved: 'Approved by you on 4 March', request: 'messages.list' },
-  { id: 'r_6f33a1', day: 'Monday', time: '18:47', connectionId: 'claude', sender: 'Booking.com', from: 'noreply@booking.com', subject: 'Hotel reservation, 14 to 17 March', parts: 'subject, body', bodyChars: 2875, attachment: 'none', query: '"hotel in lisbon"', removed: { what: "Lucía's and Pablo's names", ruleId: 'children' }, approved: 'Approved by you on 6 March', request: 'get_message' },
+  { id: 'r_6f33a1', day: 'Monday', time: '18:47', connectionId: 'claude', sender: 'Booking.com', from: 'noreply@booking.com', subject: 'Hotel reservation, 14 to 17 March', parts: 'subject, body', bodyChars: 2875, attachment: 'none', query: '"hotel in lisbon"', removed: { what: "Leo's and Alba's names", ruleId: 'children' }, approved: 'Approved by you on 6 March', request: 'get_message' },
   { id: 'r_6f339e', day: 'Monday', time: '18:46', connectionId: 'claude', sender: 'Renfe', from: 'billetes@renfe.es', subject: 'Madrid to Valencia, 6 April', parts: 'subject, body', bodyChars: 1102, attachment: 'none', query: '"trips to lisbon or valencia"', approved: 'Approved by you on 6 March', request: 'get_message' },
   { id: 'r_6e0c77', day: 'Monday', time: '11:20', connectionId: 'ledgerly', sender: 'Iberdrola', from: 'facturas@iberdrola.es', subject: 'Factura de luz, febrero', parts: 'subject, body', bodyChars: 940, attachment: 'withheld', query: 'Invoices, Receipts', approved: 'Approved by you on 4 March', request: 'messages.list' },
   { id: 'r_5a91d0', day: 'Sunday', time: '20:03', connectionId: 'trip-app', sender: 'Airbnb', from: 'automated@airbnb.com', subject: 'Reservation confirmed in Porto', parts: 'subject, body', bodyChars: 3120, attachment: 'none', query: 'Flights and hotels', approved: 'Approved by you on 17 Feb', request: 'messages.list' },
