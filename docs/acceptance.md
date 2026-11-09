@@ -23,6 +23,24 @@ Each criterion, the evidence that proves it, and its status: **covered** (a test
 | Debug mode, a modified image and a MITM fail against production | manual negative runs | blocked (AWS Paid Plan) |
 | A certificate is issued inside the enclave with TLS-ALPN-01 | first deployment | blocked (AWS Paid Plan) |
 
+## F1: inbox
+
+| Criterion | Evidence | Status |
+|---|---|---|
+| A message sent over SMTP with STARTTLS is readable through the API with the token, and not without it | `TestMailEndToEnd` (dev mode, whole service) | covered |
+| The MX rejects unknown recipients, oversize messages, and fails temporarily (4xx) when storage fails | `TestRejections` | covered |
+| The store never holds plaintext senders, subjects, bodies or attachment names | `TestStoreNeverSeesPlaintext` | covered |
+| Sealed data cannot be opened with another key, context or after tampering | `TestSealOpen` | covered |
+| Data keys come from KMS through Recipient and CMS (DER and BER), and a key other than the pinned one is rejected | `TestKMSRoundTrip`, `TestKMSRejectsOtherKey` | covered |
+| The CMS and mail parsers never panic | `FuzzCMS`, `FuzzParse` (CI) | covered |
+| The mailbox survives an enclave restart (data key unwrapped again) | `TestRestartKeepsAccess` | covered |
+| Retention applies and expired mail is not served | `TestRetention`, store contract test | covered |
+| DynamoDB and S3 storage behave as the in-memory store | `TestAWS` against DynamoDB Local and S3Mock (CI services) | covered |
+| Gmail forwarding codes are recorded, verified only with a google.com DKIM signature | `TestForwardingConfirmation` | covered |
+| Account administrators cannot obtain data keys from the mail KMS key | `aws kms generate-data-key` with the admin role returns AccessDenied | covered in production (2026-11-09) |
+| The enclave obtains a data key from KMS with its attestation; a non-allowlisted image is denied | first deployment | blocked (AWS Paid Plan) |
+| Gmail delivers forwarded mail to the MX over TLS (MTA-STS) | first deployment | blocked (AWS Paid Plan) |
+
 ## Public site
 
 | Criterion | Evidence | Status |
@@ -32,9 +50,10 @@ Each criterion, the evidence that proves it, and its status: **covered** (a test
 | No WCAG 2.2 AA violations, light and dark, desktop and mobile | `site/e2e/a11y.spec.ts` | covered |
 | Internal links resolve | `site/tests/content.test.ts` | covered |
 | The footer never shows an example hash as the real build | `site/tests/content.test.ts` | covered |
-| Security headers are served | `.github/workflows/site-smoke.yml` | blocked (Amplify not connected to this repo) |
+| Security headers are served | `.github/workflows/site-smoke.yml` | covered in production (2026-11-09) |
 
 ## Follow-ups
 
 1. First deployment: run every blocked row, record dates, commit the attestation fixture.
 2. Pebble-based tests for `internal/tlsacme`.
+3. F1 deployment: add the release PCR0 to `enclave_pcr0_allowlist`, publish the mail DNS, forward a Gmail account, record the blocked F1 rows.

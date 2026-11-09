@@ -6,13 +6,15 @@ Apps such as travel assistants ask for full Gmail access to read a few messages.
 
 What sets Permaily apart is verifiability: the whole service runs inside an AWS Nitro Enclave built reproducibly from this repository, so anyone can check that the code running is the published code. See [verification.md](verification.md) and [threat-model.md](threat-model.md). Phases and planned work are in [plan.md](plan.md); the visual design is in [design.md](design.md).
 
-## Components (F0)
+## Components (F0 and F1)
 
 ```
 client / verifier ──TLS──▶ EIP:443 ─▶ permaily-host (parent EC2, untrusted) ─vsock 443─▶ permaily-enclave
-                                                                                         ├─ ACME TLS-ALPN-01, key only in RAM
-                         permaily-host vsock 8000 (CONNECT allowlist) ◀──────────────────┤  egress (Let's Encrypt)
-                                                                                         └─ /dev/nsm → attestation(nonce, sha256(SPKI))
+sending MTA ─STARTTLS───▶ EIP:25  ─▶ permaily-host ──────────────────────────────vsock 25──▶  ├─ ACME TLS-ALPN-01, key only in RAM
+                                                                                            ├─ SMTP → inbox: parse, DKIM, seal, store
+                         permaily-host vsock 8000 (CONNECT allowlist) ◀─────────────────────┤  egress: Let's Encrypt, KMS, DynamoDB, S3, DoH
+                         permaily-host vsock 8002 (instance role credentials) ◀─────────────┤  AWS credentials (useless without attestation)
+                                                                                            └─ /dev/nsm → attestation(nonce, sha256(SPKI)); KMS Recipient
 ```
 
 - **permaily-enclave** (`cmd/permaily-enclave`): one Go binary. Terminates TLS, obtains one certificate for all hosts, dispatches by Host:
@@ -20,15 +22,17 @@ client / verifier ──TLS──▶ EIP:443 ─▶ permaily-host (parent EC2, u
   | Host | Serves |
   |---|---|
   | `app.permaily.com` | web app (see [web.md](web.md)), embedded with `go:embed` |
-  | `api.permaily.com` | API for integrated apps (F2) |
+  | `api.permaily.com` | `/v1/mailbox` for the F1 test mailbox (token); API for integrated apps in F2 |
   | `mcp.permaily.com` | remote MCP server for ChatGPT and Claude (F2) |
-  | `inbox.permaily.com` | MX for forwarded mail (F1) |
+  | `inbox.permaily.com` | MX (SMTP on port 25 with STARTTLS) for forwarded mail (F1) |
+  | `mta-sts.inbox.permaily.com` | MTA-STS policy for the MX (F1) |
 
   Every host serves `/attestation?nonce=<hex>` and `/version`.
-- **permaily-host** (`cmd/permaily-host`): forwards TCP 443 to vsock and exposes an allowlisted HTTP CONNECT proxy on vsock 8000 for the enclave's outbound TLS.
+- **Mail (F1)**: `internal/smtpd` (MX), `internal/inbox` (parse, Gmail confirmation codes, seal, serve), `internal/msgauth` (DKIM over DoH), `internal/keys` (KMS Recipient and CMS), `internal/envelope` (AES-256-GCM with key commitment), `internal/store` (DynamoDB and S3). Design: [plan.md](plan.md), ADR 0008 and 0009; data: [data.md](data.md).
+- **permaily-host** (`cmd/permaily-host`): forwards TCP 443 and 25 to vsock, exposes an allowlisted HTTP CONNECT proxy on vsock 8000 for the enclave's outbound TLS, and serves the instance role credentials on vsock 8002.
 - **permaily-verify** (`cmd/permaily-verify`, `pkg/attestation`): verifier CLI and library.
 - **Build** (`flake.nix`, `nix/`): Nix with [monzo/aws-nitro-util](https://github.com/monzo/aws-nitro-util) and AWS's prebuilt kernel/init blobs; PCR0 is identical from x86_64 and arm64 builders.
-- **Infrastructure** (`deploy/`): OpenTofu; one Graviton `c7g.large` in `us-east-2` (enclave: 1 vCPU, 2 GiB), Cloudflare DNS (DNS only), S3 for deploy artifacts, SSM for administration.
+- **Infrastructure** (`deploy/`): OpenTofu; one Graviton `c7g.large` in `us-east-2` (enclave: 1 vCPU, 2 GiB), Cloudflare DNS (DNS only), S3 for deploy artifacts, SSM for administration; for mail, a KMS key, a DynamoDB table and an S3 bucket (`mail.tf`). The image's runtime configuration is `deploy/enclave.json`.
 
 The landing page at `permaily.com` (apex) is a separate project hosted on Amplify and is not part of the verifiable surface. Rule for F2: session cookies on `app.` use the `__Host-` prefix (no `Domain` attribute) so the apex cannot read or overwrite them.
 

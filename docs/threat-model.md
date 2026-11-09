@@ -45,6 +45,20 @@ The host proxy only tunnels to:
 |---|---|
 | `acme-v02.api.letsencrypt.org:443` | certificate issuance |
 | `acme-staging-v02.api.letsencrypt.org:443` | test deployments |
+| `kms.us-east-2.amazonaws.com:443` | mailbox data keys (Recipient with attestation) |
+| `dynamodb.us-east-2.amazonaws.com:443` | sealed mailbox and message records |
+| `s3.us-east-2.amazonaws.com:443` | sealed raw messages (path-style requests) |
+| `cloudflare-dns.com:443` | DNS-over-HTTPS for DKIM lookups, so the host cannot forge DNS answers |
+
+## Mail (F1)
+
+- **Keys.** Each mailbox has an AES-256 data key, wrapped by the KMS key `alias/permaily-mail`. The key policy grants `GenerateDataKey` and `Decrypt` only to the instance role **and** only with an attestation document whose PCR0 is in the allowlist (`kms:RecipientAttestation:ImageSha384`); KMS then encrypts the key to an RSA key that exists only in the enclave (CMS, RSAES-OAEP-SHA-256). The account's administrators have no data-key permissions: an attempt with the account admin role returns `AccessDenied` (checked 2026-11-09).
+- **Pinned key.** The KMS key ARN is compiled into the image and every KMS response's `KeyId` must match it (`keys.ErrKeyMismatch`). The host supplies the AWS credentials (its own instance role); credentials for another account cannot make the enclave use a key the operator controls.
+- **Encryption.** Message metadata, raw message and mailbox state are sealed with AES-256-GCM plus a key commitment, bound to mailbox, message id and purpose (`internal/envelope`).
+- **What the operator sees.** Message sizes and arrival times, retention period, the number of messages, and (until accounts exist) the single test mailbox. Not senders, subjects, bodies or attachments.
+- **Transport.** SMTP STARTTLS terminates in the enclave with the attested certificate. MTA-STS (`mode: testing` at first, `enforce` once delivery is confirmed) tells senders to require TLS to `inbox.permaily.com`; TLS-RPT reports go to the test mailbox.
+- **Senders.** Any sender may deliver to the mailbox (decision for F1); DKIM results are recorded with each message. A Gmail forwarding confirmation is only marked verified when it carries a valid `google.com` DKIM signature.
+- **Gap: key policy changes.** An administrator can rewrite the key policy (`kms:PutKeyPolicy`) to grant themselves data keys. Planned mitigations: the enclave publishes the hash of the live key policy in an attested `/status`, the verifier compares it with the repository, and the policy gets a deny on `PutKeyPolicy` once releases are stable.
 
 ## Invariants
 
@@ -59,6 +73,12 @@ Each one has, or must get, a test that tries to break it.
 | Enclave | No configuration is read from the parent at runtime | review (entry point arguments are baked into the image) |
 | Production code | Fake attesters and test chains are never linked | `depguard` |
 | Web | Every response carries HSTS, CSP, `nosniff`, `no-referrer` | `TestRouter` |
+| Mail | The store never holds plaintext senders, subjects, bodies or attachment names | `TestStoreNeverSeesPlaintext` |
+| Mail | A sealed value cannot be opened under another key or context | `TestSealOpen` |
+| Mail | KMS answers for any key other than the pinned one are rejected | `TestKMSRejectsOtherKey` |
+| Mail | The CMS parser never panics or accepts garbage | `FuzzCMS`, `TestCMSRejectsGarbage` |
+| Mail | The mailbox API rejects missing or wrong tokens | `TestMailboxAuth` |
+| Mail | Account administrators cannot obtain data keys | manual check (2026-11-09), `docs/acceptance.md` |
 | Site | No CSP violations and a strict script policy on every page | `site/e2e/a11y.spec.ts` |
 
 ## Logging
@@ -81,6 +101,10 @@ For every change that touches the enclave, the host, auth, storage or the build:
 - [ ] Site: move the demos' inline `style` attributes to classes and remove `style-src-attr 'unsafe-inline'` from `site/astro.config.mjs`.
 - [ ] CT monitoring for certificates of the enclave names not bound to an attested key (F4).
 - [ ] CAA `accounturi` once the ACME account key is sealed with KMS (F1).
+- [ ] Attested `/status` with the SHA-256 of the live KMS key policy, compared by `permaily-verify` with `deploy/tofu/mail.tf` (F1).
+- [ ] Deny `kms:PutKeyPolicy` in the key policy once releases are stable (after a dual-PCR0 upgrade has been exercised).
+- [ ] MTA-STS `mode: enforce` once delivery from Gmail over TLS is confirmed in production.
+- [ ] Move the OpenTofu state to S3 with state encryption: the local state holds sensitive values (the Amplify webhook URL, a revoked GitHub token used once to create the Amplify app).
 
 ## Reporting vulnerabilities
 

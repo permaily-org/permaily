@@ -11,4 +11,6 @@ Architecture Decision Records. Each one records the context, the options conside
 | [0005](0005-monorepo-with-the-site.md) | One repository for the service, the web app and the public site | Accepted |
 | [0006](0006-personal-use-license.md) | Source-available personal use license with a CLA | Accepted, pending legal review |
 | [0007](0007-oauth-server.md) | OAuth authorization server for apps and MCP clients | Proposed, needs a spike |
+| [0008](0008-mailbox-keys-with-kms-attestation.md) | Mailbox data keys from KMS with attestation | Accepted, to verify in production |
+| [0009](0009-f1-test-mailbox.md) | One test mailbox in F1 | Accepted |
 | [0008](0008-org-community-health-files.md) | Community health files live in the organization's .github repository | Accepted |

@@ -9,11 +9,14 @@
 #   - entrypoint and environment: below, one argument per line (AWS init splits
 #     /cmd and /env on newlines).
 { lib, runCommand, fetchFromGitHub, jq, nitro, enclaveBin, acmeDirectory
-, domain ? "permaily.com"
 , gomemlimit ? "1536MiB"
 }:
 
 let
+  # Runtime configuration compiled into the image (and therefore into PCR0).
+  # Edit deploy/enclave.json, never pass configuration from the parent instance.
+  config = builtins.fromJSON (builtins.readFile ../deploy/enclave.json);
+
   awsNitroCli = fetchFromGitHub {
     owner = "aws";
     repo = "aws-nitro-enclaves-cli";
@@ -40,10 +43,16 @@ let
     copyToRootWithClosure = false;
     entrypoint = lib.concatStringsSep "\n" [
       "/permaily-enclave"
-      "-domain"
-      domain
-      "-acme-directory"
-      acmeDirectory
+      "-domain" config.domain
+      "-acme-directory" acmeDirectory
+      "-mailbox-id" config.mailbox_id
+      "-mailbox-address" config.mailbox_address
+      "-mailbox-token-sha256" config.mailbox_token_sha256
+      "-mta-sts-mode" config.mta_sts_mode
+      "-aws-region" config.aws_region
+      "-kms-key-arn" config.kms_key_arn
+      "-dynamodb-table" config.dynamodb_table
+      "-s3-bucket" config.s3_bucket
     ];
     env = "GOMEMLIMIT=${gomemlimit}";
   };
