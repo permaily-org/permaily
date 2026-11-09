@@ -1,0 +1,65 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  eif:
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - run: |
+          nix build .#eif --out-link eif -L
+          nix build .#permaily-host --out-link host
+          nix build .#permaily-verify --out-link verify
+          mkdir out
+          cp eif/permaily.eif eif/pcrs.json eif/SHA256SUMS out/
+          cp host/bin/permaily-host out/permaily-host-linux-arm64
+          arch=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+          cp verify/bin/permaily-verify out/permaily-verify-linux-$arch
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-${{ matrix.runner }}
+          path: out/
+
+  release:
+    needs: eif
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - name: x86_64 and arm64 builds are identical
+        run: |
+          for f in permaily.eif pcrs.json SHA256SUMS permaily-host-linux-arm64; do
+            cmp build-ubuntu-24.04/$f build-ubuntu-24.04-arm/$f
+          done
+          mkdir dist
+          cp build-ubuntu-24.04-arm/* dist/
+          cp build-ubuntu-24.04/permaily-verify-linux-amd64 dist/
+          (cd dist && sha256sum permaily-host-linux-arm64 permaily-verify-* >> SHA256SUMS)
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Enclave image measurements (reproduce with \`scripts/verify.sh ${GITHUB_REF_NAME}\`):"
+            echo
+            echo '```json'
+            cat dist/pcrs.json
+            echo '```'
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file notes.md
