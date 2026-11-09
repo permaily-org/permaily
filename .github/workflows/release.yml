@@ -87,3 +87,30 @@ jobs:
           if [ -n "$AMPLIFY_RELEASE_WEBHOOK" ]; then
             curl -sSf --retry 3 -X POST -H "Content-Type: application/json" -d '{}' "$AMPLIFY_RELEASE_WEBHOOK" >/dev/null
           fi
+
+  # After a release, fast-forward develop to main so both point at the same
+  # commit (no "main had recent pushes" and a clean next release diff). The
+  # permaily-release GitHub App is the only actor allowed to bypass the develop
+  # ruleset for this push.
+  sync-develop:
+    needs: release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          repositories: permaily
+          permission-contents: write
+          permission-workflows: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Fast-forward develop to main
+        run: |
+          git fetch origin main
+          git merge --ff-only origin/main
+          git push origin HEAD:develop
