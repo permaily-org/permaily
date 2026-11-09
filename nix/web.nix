@@ -47,7 +47,7 @@ let
     outputHashAlgo = "sha256";
     outputHash = {
       x86_64-linux = "sha256-jJBoNJFCazdhxJezmNS1yiK1dNLDAt4Im3m180DA9hk=";
-      aarch64-linux = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+      aarch64-linux = "sha256-MquQwsBKmQEr09Epp1nwUvbqjEPlU6FhnbjOxtoECWQ=";
     }.${stdenv.hostPlatform.system};
   };
 in

@@ -2,6 +2,8 @@ module github.com/permaily-org/permaily
 
 go 1.26.0
 
+toolchain go1.26.10
+
 require (
 	github.com/fxamacker/cbor/v2 v2.10.0
 	github.com/hf/nsm v0.0.0-20220930140112-cd181bd646b9
