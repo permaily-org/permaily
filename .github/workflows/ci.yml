@@ -57,7 +57,8 @@ jobs:
             sha256sum bin/bin/permaily-enclave | sed 's| .*| permaily-enclave|'
             (cd web-dist && find . -type f | sort | xargs sha256sum)
           } > out/components.txt
-          cat out/*
+          cp bin/bin/permaily-enclave out/permaily-enclave.bin
+          cat out/*.txt out/*.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: eif-${{ matrix.runner }}
