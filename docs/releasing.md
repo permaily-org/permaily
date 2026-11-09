@@ -15,11 +15,12 @@ On every push to `main`, `.github/workflows/release.yml`:
 
 Versions start from `v0.0.0`, a tag on the repository's first commit, so the first release is 0.1.0 and the project stays below 1.0 until it is declared stable. `scripts/check-release-notes.mjs` (CI) renders sample notes with the configured preset, so an incompatible semantic-release or preset upgrade fails on the pull request.
 
-After publishing, it calls the Amplify release webhook so permaily.com rebuilds and its footer shows the new PCR0.
+After publishing, it fast-forwards `develop` to `main` and calls the Amplify release webhook so permaily.com rebuilds and its footer shows the new PCR0.
 
 The tag points at the built commit; there is no release commit. So `scripts/verify.sh <tag>` rebuilds exactly the published PCRs.
 
 ## Depends on
 
-- Branch rulesets on `develop` and `main` (required checks, pull requests only; admins can bypass). `main` is never merged back into `develop`: it only receives merge commits from `develop`, so the next release diff is computed from their merge base without conflicts.
+- Branch rulesets on `develop` and `main` (required checks, pull requests only; admins can bypass).
+- The `permaily-release` GitHub App (installed on this repository only, contents and workflows write) is the only actor allowed to bypass the `develop` ruleset. `release.yml` uses it, through `RELEASE_APP_CLIENT_ID` (variable) and `RELEASE_APP_PRIVATE_KEY` (secret), to fast-forward `develop` to `main` after each release, so both branches point at the same commit.
 - Deploying a release is manual for now ([operations.md](operations.md)), because the AWS account cannot run the instance yet.
