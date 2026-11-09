@@ -50,6 +50,13 @@ jobs:
           mkdir out
           cp result/pcrs.json result/SHA256SUMS out/
           cp result-1/pcrs.json out/pcrs-staging.json
+          # Per-component hashes, to locate any cross-architecture difference.
+          nix build .#permaily-enclave --out-link bin
+          nix build .#web --out-link web-dist
+          {
+            sha256sum bin/bin/permaily-enclave | sed 's| .*| permaily-enclave|'
+            (cd web-dist && find . -type f | sort | xargs sha256sum)
+          } > out/components.txt
           cat out/*
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -63,8 +70,9 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       - name: x86_64 and arm64 builds are identical
         run: |
-          for f in pcrs.json pcrs-staging.json SHA256SUMS; do
-            diff -u eif-ubuntu-24.04/$f eif-ubuntu-24.04-arm/$f
+          for f in components.txt pcrs.json pcrs-staging.json SHA256SUMS; do
+            diff -u eif-ubuntu-24.04/$f eif-ubuntu-24.04-arm/$f || failed=1
           done
+          [ -z "$failed" ]
           echo "PCRs reproduced across architectures:"
           cat eif-ubuntu-24.04/pcrs.json
