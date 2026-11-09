@@ -63,14 +63,14 @@ func VerifyRemote(ctx context.Context, client *http.Client, baseURL string, opts
 	}
 	var body remoteResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
-		return nil, fmt.Errorf("%w: response: %v", ErrMalformed, err)
+		return nil, fmt.Errorf("%w: response: %w", ErrMalformed, err)
 	}
 	if body.UserDataScheme != UserDataScheme {
 		return nil, fmt.Errorf("%w: unsupported user_data_scheme %q", ErrMalformed, body.UserDataScheme)
 	}
 	raw, err := base64.StdEncoding.DecodeString(body.Document)
 	if err != nil {
-		return nil, fmt.Errorf("%w: document encoding: %v", ErrMalformed, err)
+		return nil, fmt.Errorf("%w: document encoding: %w", ErrMalformed, err)
 	}
 
 	leaf := resp.TLS.PeerCertificates[0]

@@ -17,6 +17,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"time"
 
@@ -128,18 +129,18 @@ func Verify(raw []byte, opts Options) (*Document, error) {
 
 	var msg coseSign1
 	if err := cbor.Unmarshal(raw, &msg); err != nil {
-		return nil, fmt.Errorf("%w: COSE_Sign1: %v", ErrMalformed, err)
+		return nil, fmt.Errorf("%w: COSE_Sign1: %w", ErrMalformed, err)
 	}
 	var protected map[int]int
 	if err := cbor.Unmarshal(msg.Protected, &protected); err != nil {
-		return nil, fmt.Errorf("%w: protected header: %v", ErrMalformed, err)
+		return nil, fmt.Errorf("%w: protected header: %w", ErrMalformed, err)
 	}
 	if protected[1] != coseAlgES384 {
 		return nil, fmt.Errorf("%w: unsupported algorithm %d", ErrMalformed, protected[1])
 	}
 	var p payload
 	if err := cbor.Unmarshal(msg.Payload, &p); err != nil {
-		return nil, fmt.Errorf("%w: payload: %v", ErrMalformed, err)
+		return nil, fmt.Errorf("%w: payload: %w", ErrMalformed, err)
 	}
 	if p.Digest != "SHA384" || p.ModuleID == "" || p.Timestamp == 0 || len(p.Certificate) == 0 || len(p.CABundle) == 0 {
 		return nil, fmt.Errorf("%w: missing mandatory fields", ErrMalformed)
@@ -147,12 +148,12 @@ func Verify(raw []byte, opts Options) (*Document, error) {
 
 	leaf, err := x509.ParseCertificate(p.Certificate)
 	if err != nil {
-		return nil, fmt.Errorf("%w: certificate: %v", ErrMalformed, err)
+		return nil, fmt.Errorf("%w: certificate: %w", ErrMalformed, err)
 	}
 	bundle := make([]*x509.Certificate, len(p.CABundle))
 	for i, der := range p.CABundle {
 		if bundle[i], err = x509.ParseCertificate(der); err != nil {
-			return nil, fmt.Errorf("%w: cabundle[%d]: %v", ErrMalformed, i, err)
+			return nil, fmt.Errorf("%w: cabundle[%d]: %w", ErrMalformed, i, err)
 		}
 	}
 
@@ -160,6 +161,9 @@ func Verify(raw []byte, opts Options) (*Document, error) {
 		return nil, err
 	}
 
+	if p.Timestamp > math.MaxInt64 {
+		return nil, fmt.Errorf("%w: timestamp out of range", ErrMalformed)
+	}
 	ts := time.UnixMilli(int64(p.Timestamp))
 	if err := verifyChain(leaf, bundle, opts.Root, ts); err != nil {
 		return nil, err
@@ -210,7 +214,7 @@ func verifySignature(msg coseSign1, leaf *x509.Certificate) error {
 	}
 	toBeSigned, err := SigStructure(msg.Protected, msg.Payload)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrMalformed, err)
+		return fmt.Errorf("%w: %w", ErrMalformed, err)
 	}
 	digest := sha512.Sum384(toBeSigned)
 	r := new(big.Int).SetBytes(msg.Signature[:48])
@@ -245,7 +249,7 @@ func verifyChain(leaf *x509.Certificate, bundle []*x509.Certificate, root *x509.
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrChain, err)
+		return fmt.Errorf("%w: %w", ErrChain, err)
 	}
 	return nil
 }

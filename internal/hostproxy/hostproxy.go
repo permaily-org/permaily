@@ -117,7 +117,7 @@ func (p *ConnectProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// Bytes the client sent right after the CONNECT request (e.g. a TLS ClientHello).
 	if n := buf.Reader.Buffered(); n > 0 {
-		early, _ := buf.Reader.Peek(n)
+		early, _ := buf.Peek(n)
 		if _, err := upstream.Write(early); err != nil {
 			client.Close()
 			upstream.Close()

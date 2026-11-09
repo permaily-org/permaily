@@ -15,3 +15,13 @@ Fonts are Instrument Sans for text and JetBrains Mono for machine facts, both bu
 - Hairline rules instead of cards, 2px corners, and no shadows or gradients.
 - No explanatory text on the page. A fact worth keeping but not worth the space goes behind an info icon (`InfoTip`), and only when people may need it.
 - Every screen works from a 375px phone up, and nothing scrolls sideways. Below 768px the sidebar becomes a top bar with a drawer, and below 1024px an icon rail. Pages use `pagePadding` from `web/src/lib/styles.ts`. Tables drop their secondary columns before they would overflow, by the width they get rather than the window's, and hide a column in every row so the rest stay aligned.
+
+## Checks
+
+`scripts/check-design-system.ts` (part of `make check`) fails on raw color values outside `packages/ui/colors.css` and on em dashes used as punctuation in copy. A line containing `design-check-ignore` is skipped.
+
+## TODO
+
+- [ ] Replace the arbitrary Tailwind values in the web app (`p-[13px]`, `w-[80px]`, about 100 today) with theme tokens, then make the rule an error. List them with `bun scripts/check-design-system.ts --warnings`.
+- [ ] Remove the inline `style={{...}}` uses in the web app (8 today), then make the rule an error.
+- [ ] Confirm the dark value of `--bar`: the web app used `#65665d` and the site `#3c3d37`; `packages/ui/colors.css` now uses `#65665d` for both.

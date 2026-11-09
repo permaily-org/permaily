@@ -116,7 +116,7 @@ func httpClient(caFile string, timeout time.Duration) (*http.Client, error) {
 	if caFile == "" {
 		return &http.Client{Timeout: timeout}, nil
 	}
-	pem, err := os.ReadFile(caFile)
+	pem, err := os.ReadFile(caFile) //nolint:gosec // path given by the user on purpose
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func loadPCRs(file, release string) (map[uint][]byte, string, error) {
 	case file != "" && release != "":
 		return nil, "", fmt.Errorf("use either -pcrs or -release, not both")
 	case file != "":
-		data, err := os.ReadFile(file)
+		data, err := os.ReadFile(file) //nolint:gosec // path given by the user on purpose
 		if err != nil {
 			return nil, "", err
 		}
@@ -145,7 +145,7 @@ func loadPCRs(file, release string) (map[uint][]byte, string, error) {
 		return pcrs, "local build: " + file, err
 	case release != "":
 		url := fmt.Sprintf(releaseURL, release)
-		resp, err := http.Get(url)
+		resp, err := http.Get(url) //nolint:gosec // fixed GitHub URL with the tag given by the user
 		if err != nil {
 			return nil, "", err
 		}

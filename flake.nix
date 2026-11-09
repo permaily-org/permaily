@@ -44,7 +44,7 @@
 
       devShells = forAll (system: pkgs: {
         default = pkgs.mkShell {
-          packages = with pkgs; [ go gopls bun opentofu awscli2 jq ];
+          packages = with pkgs; [ go gopls golangci-lint govulncheck gnumake bun nodejs_24 opentofu awscli2 jq ];
         };
       });
     };

@@ -25,11 +25,11 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	if err != nil {
 		return nil, err
 	}
-	certs, err := tlsacme.New(hosts.All(), cfg.acmeDirectory, enclave.EgressClient(uint32(cfg.egressPort)), log)
+	certs, err := tlsacme.New(hosts.All(), cfg.acmeDirectory, enclave.EgressClient(cfg.egressPort), log)
 	if err != nil {
 		return nil, err
 	}
-	ln, err := enclave.Listen(uint32(cfg.port))
+	ln, err := enclave.Listen(cfg.port)
 	if err != nil {
 		return nil, err
 	}

@@ -21,6 +21,10 @@ func Handler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
+	return handler(sub)
+}
+
+func handler(sub fs.FS) http.Handler {
 	files := http.FileServerFS(sub)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
@@ -40,7 +44,7 @@ func Handler() http.Handler {
 				http.Error(w, "web UI not built into this binary", http.StatusNotFound)
 				return
 			}
-			http.ServeFileFS(w, r, sub, p)
+			http.ServeFileFS(w, r, sub, p) //nolint:gosec // p is path.Clean-ed and served from an embedded fs.FS, which rejects ".."
 			return
 		}
 		if strings.HasPrefix(p, "assets/") {

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -31,22 +32,34 @@ import (
 type config struct {
 	domain        string
 	acmeDirectory string
-	port          uint
-	egressPort    uint
+	port          uint32
+	egressPort    uint32
 }
 
 func main() {
 	var cfg config
 	flag.StringVar(&cfg.domain, "domain", "permaily.com", "parent domain; serves app., api., mcp. and inbox. under it")
 	flag.StringVar(&cfg.acmeDirectory, "acme-directory", "https://acme-v02.api.letsencrypt.org/directory", "ACME directory URL")
-	flag.UintVar(&cfg.port, "port", 443, "listen port (vsock in the enclave, TCP in dev mode)")
-	flag.UintVar(&cfg.egressPort, "egress-port", 8000, "vsock port of the host's CONNECT proxy")
+	cfg.port, cfg.egressPort = 443, 8000
+	flag.Func("port", "listen port (vsock in the enclave, TCP in dev mode) (default 443)", uint32Flag(&cfg.port))
+	flag.Func("egress-port", "vsock port of the host's CONNECT proxy (default 8000)", uint32Flag(&cfg.egressPort))
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(cfg, log); err != nil {
 		log.Error("fatal", "err", err)
 		os.Exit(1)
+	}
+}
+
+func uint32Flag(dst *uint32) func(string) error {
+	return func(s string) error {
+		v, err := strconv.ParseUint(s, 10, 32)
+		if err != nil {
+			return err
+		}
+		*dst = uint32(v)
+		return nil
 	}
 }
 

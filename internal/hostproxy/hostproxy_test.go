@@ -39,16 +39,18 @@ func TestForward(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go Forward(ctx, ln, func(ctx context.Context) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "tcp", echo.Addr().String())
-	}, slog.New(slog.DiscardHandler))
+	go func() {
+		_ = Forward(ctx, ln, func(ctx context.Context) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", echo.Addr().String())
+		}, slog.New(slog.DiscardHandler))
+	}()
 
 	c, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	c.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
 	fmt.Fprint(c, "ping\n")
 	line, err := bufio.NewReader(c).ReadString('\n')
 	if err != nil || line != "ping\n" {
@@ -65,7 +67,7 @@ func TestConnectProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := &http.Server{Handler: proxy}
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 	defer srv.Close()
 
 	connect := func(target string) (net.Conn, *bufio.Reader, int) {
@@ -73,7 +75,7 @@ func TestConnectProxy(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		c.SetDeadline(time.Now().Add(5 * time.Second))
+		_ = c.SetDeadline(time.Now().Add(5 * time.Second))
 		fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
 		br := bufio.NewReader(c)
 		res, err := http.ReadResponse(br, &http.Request{Method: http.MethodConnect})
