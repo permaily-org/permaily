@@ -1,0 +1,128 @@
+---
+import Cta from '../components/Cta.astro';
+import { LINKS } from '../config/site';
+import Base from '../layouts/Base.astro';
+
+const principles = [
+  { title: 'Least access by default', detail: 'Every connection starts with nothing.' },
+  { title: 'Show, don’t describe', detail: 'Before approving, you see the actual emails.' },
+  {
+    title: 'Your rules come first',
+    detail:
+      'They hold back mail, or remove details from it, before any app’s request runs. Apps are never told.',
+  },
+  {
+    title: 'No third-party model reads mail',
+    detail:
+      'Rules written in words run on a model inside the verified service, and mail never leaves it.',
+  },
+  { title: 'Keep as little as possible', detail: 'Mail passes through rather than piling up.' },
+  {
+    title: 'Claims must be checkable',
+    detail: 'If you can’t verify a promise, it doesn’t go in the marketing.',
+  },
+  {
+    title: 'Leaving is easy',
+    detail: 'Revocation is immediate, and deleting an account deletes the data.',
+  },
+];
+
+const refusals = [
+  'Sell, mine or advertise on your mail.',
+  'Train models on your mail.',
+  'Use a third-party model to read your mail.',
+  'Ship closed-source code in the path that handles your mail.',
+  'Claim to control what an app does after it receives its slice.',
+];
+---
+
+<Base title="About" description="Why Permaily exists, and what we will not do.">
+  <section class="page-head">
+    <div class="wrap">
+      <h1 class="h-l statement">A closed version of this product would just be one more company asking for your whole inbox</h1>
+      <p class="intro why">Email is the most complete record of a person’s life, and products increasingly want to read it. Permaily exists so they can have the part they need, and you can check that the rest stayed put.</p>
+    </div>
+  </section>
+
+  <section class="sec rule-top">
+    <div class="wrap two">
+      <h2 class="h-d">What we hold to</h2>
+      <ul class="principles">
+        {
+          principles.map((principle) => (
+            <li>
+              <b>{principle.title}</b>
+              <span>{principle.detail}</span>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec rule-top">
+    <div class="wrap two">
+      <h2 class="h-d">What we will not do</h2>
+      <ul class="stack refusals">
+        {refusals.map((item) => <li>{item}</li>)}
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec rule-top">
+    <div class="wrap two">
+      <h2 class="h-d">How we make money</h2>
+      <p class="body">Personal is free. Developers pay for the tokens they use, and companies pay per seat. That’s all of it. <a class="link" href="/pricing/">See pricing</a></p>
+    </div>
+  </section>
+
+  <Cta
+    title="Start with nothing"
+    body="Connect your inbox in about three minutes. Nothing is shared until you approve it."
+    primary={{ label: 'Get started free', href: LINKS.signup }}
+    secondary={{ label: 'Talk to us', href: '/contact/' }}
+  />
+</Base>
+
+<style>
+  .statement {
+    max-width: 20em;
+    margin-bottom: var(--space-24);
+  }
+
+  .why {
+    max-width: 38em;
+  }
+
+  .principles {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 clamp(24px, 4vw, 56px);
+  }
+
+  .principles li {
+    display: grid;
+    gap: 2px;
+    padding-block: var(--space-14);
+    border-top: var(--hair) solid var(--rule);
+  }
+
+  .principles b {
+    font-weight: 500;
+  }
+
+  .principles span {
+    color: var(--ink-2);
+    font-size: var(--text-lead);
+  }
+
+  .refusals {
+    gap: var(--space-10);
+  }
+
+  @media (max-width: 760px) {
+    .principles {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

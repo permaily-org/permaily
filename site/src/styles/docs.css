@@ -1,0 +1,624 @@
+/* Starlight, dressed in the website's design system. Only docs pages load this file.
+   Starlight keeps its styles in cascade layers, so plain rules here win without extra specificity. */
+
+/* The website's styles sit below Starlight's, so its reset can't undo the docs' lists and spacing, and its parts stay available. */
+@layer site, starlight;
+
+@import '@fontsource-variable/instrument-sans';
+@import '@fontsource-variable/jetbrains-mono';
+@import './tokens.css';
+@import './global.css' layer(site);
+
+:root {
+  --docs-sidebar: 224px;
+  --docs-toc: 176px;
+  --docs-gap: clamp(24px, 3.33vw, 48px);
+
+  /* Type */
+  --sl-font: var(--font-sans);
+  --sl-font-mono: var(--font-mono);
+  --sl-text-body: var(--text-lead);
+  --sl-text-body-sm: var(--text-small);
+  --sl-text-code: 13px;
+  --sl-text-code-sm: 13px;
+  --sl-text-h1: var(--fs-d);
+  --sl-text-h2: var(--text-heading);
+  --sl-text-h3: var(--text-title);
+  --sl-text-h4: var(--text-lead);
+  --sl-text-h5: var(--text-lead);
+  --sl-line-height: 1.6;
+  --sl-line-height-headings: var(--leading-snug);
+
+  /* Colour. Highlight and bar are left out on purpose, because they only ever mean shared and withheld. */
+  --sl-color-white: var(--ink);
+  --sl-color-gray-1: var(--ink);
+  --sl-color-gray-2: var(--ink-2);
+  --sl-color-gray-3: var(--ink-2);
+  --sl-color-gray-4: var(--ink-3);
+  --sl-color-gray-5: var(--rule);
+  --sl-color-gray-6: var(--rule);
+  --sl-color-gray-7: var(--sunken);
+  --sl-color-black: var(--paper);
+
+  --sl-color-accent-low: var(--sunken);
+  --sl-color-accent: var(--ink);
+  --sl-color-accent-high: var(--ink);
+
+  --sl-color-text: var(--ink-2);
+  --sl-color-text-accent: var(--ink);
+  --sl-color-text-invert: var(--paper);
+  --sl-color-bg: var(--paper);
+  --sl-color-bg-nav: var(--paper);
+  --sl-color-bg-sidebar: var(--paper);
+  --sl-color-bg-inline-code: var(--sunken);
+  --sl-color-bg-accent: var(--ink);
+  --sl-color-hairline-light: var(--rule);
+  --sl-color-hairline: var(--rule);
+  --sl-color-hairline-shade: var(--rule);
+
+  --sl-shadow-sm: none;
+  --sl-shadow-md: none;
+  --sl-shadow-lg: none;
+
+  /* Layout on a phone. The header is the site's: 56px plus its hairline. */
+  --sl-nav-height: 57px;
+  --sl-nav-pad-x: var(--gutter);
+  --sl-nav-pad-y: 0px;
+  /* Narrow screens have no "On this page" bar, so Starlight shouldn't leave room for one. */
+  --sl-mobile-toc-height: 0px;
+  --sl-sidebar-width: var(--docs-sidebar);
+  --sl-sidebar-pad-x: var(--gutter);
+  --sl-content-width: 752px;
+  --sl-content-pad-x: var(--gutter);
+  --sl-content-gap-y: var(--space-16);
+  --sl-main-pad: 0 0 var(--space-64);
+  --sl-menu-button-size: 24px;
+}
+
+@media (min-width: 50rem) {
+  :root {
+    --sl-nav-height: 65px;
+    --sl-sidebar-pad-x: 0px;
+    --sl-content-pad-x: 0px;
+  }
+}
+
+body {
+  color: var(--ink);
+  font-size: var(--sl-text-body);
+  overflow-wrap: break-word;
+}
+
+.sl-markdown-content {
+  color: var(--ink-2);
+}
+
+/* Starlight's reset of all margins outranks the site's layer, so the centring has to come back here. */
+.wrap {
+  margin-inline: auto;
+}
+
+/* Header. The site's own bar sits in Starlight's fixed one. */
+.header {
+  padding: 0;
+  border-bottom: 0;
+  background: none;
+}
+
+.header .site-head {
+  position: static;
+}
+
+/* Starlight's menu does this job on docs pages, and also holds the sidebar. */
+.header .menu-btn {
+  display: none;
+}
+
+.header .site-act {
+  padding-inline-end: calc(var(--sl-menu-button-size) + var(--space-16));
+}
+
+@media (min-width: 50rem) {
+  .header .site-act {
+    gap: var(--space-20);
+    padding-inline-end: 0;
+  }
+
+  /* The site collapses its navigation at 860px, but Starlight's menu button is gone from 800px, so the full bar has to stay. */
+  .header .site-head .inner {
+    grid-template-columns: 1fr auto 1fr;
+    height: 64px;
+  }
+
+  .header .site-nav {
+    display: flex;
+  }
+
+  .header .site-act .only-wide {
+    display: inline;
+    white-space: nowrap;
+  }
+}
+
+/* Page: the site's width, with the sidebar and contents scrolling away before the footer. */
+.main-frame {
+  padding-inline-start: 0;
+}
+
+.sidebar-pane {
+  background: var(--paper);
+}
+
+.sidebar-content {
+  padding-block: var(--space-24);
+  gap: var(--space-20);
+}
+
+@media (min-width: 50rem) {
+  .page {
+    display: grid;
+    grid-template-columns: var(--docs-sidebar) minmax(0, 1fr);
+    column-gap: var(--docs-gap);
+    width: min(1248px, 100% - 2 * var(--gutter));
+    margin-inline: auto;
+  }
+
+  .sidebar {
+    padding-top: var(--sl-nav-height);
+  }
+
+  .sidebar-pane {
+    position: sticky;
+    inset-block: var(--sl-nav-height) auto;
+    width: auto;
+    max-height: calc(100vh - var(--sl-nav-height));
+    border: 0;
+    background: none;
+    scrollbar-color: var(--rule) transparent;
+    scrollbar-gutter: auto;
+    scrollbar-width: thin;
+  }
+
+  .sidebar-content {
+    height: auto;
+    padding-block: var(--space-40) var(--space-24);
+  }
+
+  .sidebar-content::after {
+    display: none;
+  }
+}
+
+@media (min-width: 72rem) {
+  [data-has-sidebar][data-has-toc] .main-pane {
+    --sl-content-margin-inline: 0;
+    flex: 1 1 0%;
+    width: auto;
+    min-width: 0;
+  }
+
+  .right-sidebar-container {
+    flex: none;
+    width: var(--docs-toc);
+    margin-inline-start: var(--docs-gap);
+  }
+
+  .right-sidebar {
+    position: sticky;
+    top: var(--sl-nav-height);
+    width: 100%;
+    height: auto;
+    max-height: calc(100vh - var(--sl-nav-height));
+    padding-top: var(--space-40);
+    border: 0;
+  }
+
+  .right-sidebar-panel {
+    padding: 0;
+  }
+
+  .right-sidebar-panel .sl-container {
+    width: auto;
+    max-width: none;
+  }
+}
+
+/* Sidebar */
+.docs-nav-group ul,
+.docs-nav-site ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.docs-nav-title {
+  margin-bottom: var(--space-4);
+  color: var(--ink);
+  font-size: var(--text-small);
+  font-weight: 500;
+}
+
+.docs-nav-group a,
+.docs-nav-site a {
+  display: block;
+  padding-block: 3px;
+  color: var(--ink-2);
+  font-size: var(--text-body);
+  text-decoration: none;
+}
+
+.docs-nav-group a:hover,
+.docs-nav-site a:hover {
+  color: var(--ink);
+}
+
+.docs-nav-group a[aria-current='page'] {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.docs-nav-site {
+  margin-top: var(--space-8);
+  padding-block: var(--space-16) var(--space-24);
+  border-top: var(--hair) solid var(--rule);
+}
+
+/* Search */
+site-search button[data-open-modal] {
+  width: 100%;
+  max-width: none;
+  height: 30px;
+  padding-inline: var(--space-10);
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--r);
+  background: var(--raised);
+  color: var(--ink-2);
+  font-size: var(--text-small);
+}
+
+site-search button[data-open-modal] svg {
+  width: 14px;
+  height: 14px;
+}
+
+site-search button[data-open-modal] > span {
+  display: block;
+  margin-inline-start: 0;
+}
+
+/* The shortcut still works. The approved design doesn't show it. */
+site-search button[data-open-modal] > kbd {
+  display: none;
+}
+
+site-search dialog {
+  border-color: var(--rule-strong);
+  border-radius: var(--r);
+  background: var(--paper);
+}
+
+site-search dialog::backdrop {
+  background: var(--scrim);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+#starlight__search {
+  --pagefind-ui-primary: var(--ink);
+  --pagefind-ui-text: var(--ink-2);
+  --pagefind-ui-background: var(--raised);
+  --pagefind-ui-border: var(--rule);
+  --pagefind-ui-border-radius: 2px;
+  --pagefind-ui-tag: var(--sunken);
+  --sl-search-corners: 2px;
+}
+
+#starlight__search mark {
+  color: var(--ink);
+}
+
+/* Title */
+.content-panel {
+  padding-block: var(--space-24) 0;
+}
+
+.content-panel + .content-panel {
+  padding-top: var(--space-16);
+  border-top: 0;
+}
+
+@media (min-width: 50rem) {
+  .content-panel:first-child {
+    padding-top: var(--space-40);
+  }
+}
+
+.docs-crumb {
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+}
+
+.docs-crumb a {
+  text-decoration: none;
+}
+
+.docs-crumb a:hover {
+  color: var(--ink);
+}
+
+.content-panel h1 {
+  margin-top: var(--space-12);
+  font-weight: 500;
+  letter-spacing: var(--tracking-d);
+  line-height: var(--leading-display);
+}
+
+/* Text */
+.sl-markdown-content > p:first-child {
+  max-width: 40em;
+  font-size: var(--text-title);
+  line-height: var(--leading-body);
+}
+
+.sl-markdown-content :is(h2, h3, h4):not(:where(.not-content *)) {
+  font-weight: 500;
+}
+
+.sl-markdown-content h2:not(:where(.not-content *)) {
+  letter-spacing: var(--tracking-h);
+}
+
+.sl-markdown-content strong:not(:where(.not-content *)) {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.sl-markdown-content a:not(.sl-anchor-link, :where(.not-content *)) {
+  color: var(--ink);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.sl-markdown-content a:not(.sl-anchor-link, :where(.not-content *)):hover {
+  color: var(--ink);
+  text-decoration-thickness: 2px;
+}
+
+.sl-markdown-content .sl-anchor-link {
+  color: var(--ink-3);
+}
+
+.sl-markdown-content ul:not(:where(.not-content *)) {
+  padding-inline-start: 1.25em;
+  list-style: disc;
+}
+
+.sl-markdown-content ol:not(:where(.not-content *)) {
+  padding-inline-start: 1.25em;
+  list-style: decimal;
+}
+
+.sl-markdown-content li:not(:where(.not-content *))::marker {
+  color: var(--ink-3);
+}
+
+.sl-markdown-content code:not(:where(.not-content *)) {
+  border-radius: var(--r);
+  color: var(--ink);
+}
+
+/* Tables follow the site's .tbl: a strong rule under the head, hairlines between rows.
+   They fill the column and wrap their text. A table too wide for a phone goes in a <div class="tbl-scroll" tabindex="0">. */
+.sl-markdown-content table:not(:where(.not-content *)) {
+  display: table;
+  width: 100%;
+  overflow: visible;
+  border-collapse: collapse;
+  line-height: 1.4;
+}
+
+.sl-markdown-content .tbl-scroll table:not(:where(.not-content *)) {
+  min-width: 600px;
+}
+
+.sl-markdown-content :is(th, td):not(:where(.not-content *)) {
+  padding: 12px 16px 12px 0;
+  vertical-align: top;
+}
+
+.sl-markdown-content th:not(:where(.not-content *)) {
+  border-bottom-color: var(--rule-strong);
+  font-weight: 500;
+}
+
+.sl-markdown-content td code:not(:where(.not-content *)) {
+  overflow-wrap: anywhere;
+}
+
+/* Asides follow the site's .note-box. */
+.starlight-aside {
+  padding: var(--space-14) var(--space-16);
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--r);
+  background: none;
+  color: var(--ink-2);
+}
+
+.starlight-aside__title {
+  color: var(--ink);
+  font-size: var(--text-lead);
+  font-weight: 500;
+}
+
+.starlight-aside__icon {
+  display: none;
+}
+
+.starlight-aside__title + .starlight-aside__content {
+  margin-top: 0;
+}
+
+.sl-markdown-content .starlight-aside code:not(:where(.not-content *)) {
+  background: var(--sunken);
+}
+
+/* Steps on the Quickstart, numbered like the approved design. */
+.doc-steps {
+  margin-top: var(--space-24);
+  counter-reset: step;
+}
+
+.doc-steps .sl-heading-wrapper {
+  margin-top: var(--space-32);
+  padding-top: var(--space-24);
+  border-top: var(--hair) solid var(--rule);
+}
+
+.doc-steps .sl-heading-wrapper:first-child {
+  margin-top: 0;
+}
+
+.sl-markdown-content .doc-steps .sl-heading-wrapper.level-h2 {
+  display: flex;
+  align-items: center;
+  font-size: var(--text-title);
+}
+
+.sl-markdown-content .doc-steps .sl-heading-wrapper + p {
+  margin-top: var(--space-12);
+}
+
+.sl-markdown-content .doc-steps h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-10);
+  font-size: inherit;
+  letter-spacing: normal;
+  counter-increment: step;
+}
+
+.doc-steps h2::before {
+  content: counter(step);
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: var(--hair) solid var(--rule);
+  border-radius: var(--r);
+  background: var(--raised);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  font-weight: 500;
+}
+
+.doc-consent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12) var(--space-16);
+  margin-top: var(--space-16);
+  padding: var(--space-14) var(--space-16);
+  border: var(--hair) solid var(--rule);
+  border-radius: var(--r);
+  background: var(--raised);
+}
+
+.doc-consent p {
+  color: var(--ink);
+  font-size: var(--text-heading);
+  font-weight: 500;
+  letter-spacing: var(--tracking-h);
+  line-height: var(--leading-snug);
+}
+
+.doc-consent .actions {
+  pointer-events: none;
+}
+
+.expressive-code .copy button,
+.expressive-code .copy .feedback {
+  border-radius: var(--r);
+}
+
+/* Fully opaque whenever it shows, so long lines of code don't read through the copy button. It stays hidden until hover where there is one. */
+@media (hover: none) {
+  .expressive-code .copy button {
+    opacity: 1;
+  }
+}
+
+@media (hover: hover) {
+  .expressive-code .frame:hover .copy button:not(:hover),
+  .expressive-code .frame:focus-within :focus-visible ~ .copy button:not(:hover),
+  .expressive-code .frame .copy .feedback.show ~ button:not(:hover) {
+    opacity: 1;
+  }
+}
+
+/* Contents */
+.right-sidebar-panel a {
+  border-radius: var(--r);
+}
+
+.right-sidebar-panel h2 {
+  margin-bottom: var(--space-4);
+  font-size: var(--text-small);
+  font-weight: 500;
+}
+
+/* The first entry is a link back to the page title, which the approved design leaves out. */
+starlight-toc nav > ul > li:first-child {
+  display: none;
+}
+
+starlight-toc a {
+  --pad-inline: 0px;
+  font-size: var(--text-small);
+}
+
+/* Next and previous */
+.pagination-links {
+  gap: var(--space-16);
+  padding-top: var(--space-14);
+  border-top: var(--hair) solid var(--rule);
+}
+
+.pagination-links a {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--ink-2);
+  font-size: var(--text-small);
+  line-height: var(--leading-body);
+}
+
+.pagination-links svg {
+  display: none;
+}
+
+.pagination-links .link-title {
+  color: var(--ink);
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+
+.pagination-links a:hover .link-title {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+@media print {
+  .site-head,
+  .site-foot {
+    display: none;
+  }
+}

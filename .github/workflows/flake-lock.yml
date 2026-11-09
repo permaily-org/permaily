@@ -1,0 +1,30 @@
+name: flake-lock
+
+# Dependabot does not update flake.lock. This opens a weekly PR into develop;
+# CI then shows whether the enclave image is still reproducible and how the
+# PCRs change.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: DeterminateSystems/update-flake-lock@da03c0f078bc4b2c37ee4f7e072d34bf8f188bb3 # v29
+        with:
+          base: develop
+          branch: build/update-flake-lock
+          pr-title: "build: update flake.lock"
+          commit-msg: "build: update flake.lock"
+          pr-labels: dependencies

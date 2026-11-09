@@ -1,0 +1,16 @@
+---
+// Starlight's frame, with the website's footer running full width underneath it.
+import Default from '@astrojs/starlight/components/PageFrame.astro';
+import Footer from '../Footer.astro';
+---
+
+<Default>
+  <slot name="header" slot="header" />
+  <slot name="sidebar" slot="sidebar" />
+  <slot />
+</Default>
+<Footer />
+
+<script>
+  import '../../scripts/docs';
+</script>

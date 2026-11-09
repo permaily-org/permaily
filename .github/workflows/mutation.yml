@@ -1,0 +1,33 @@
+name: mutation
+
+# Mutation testing of the attestation verifier, the security core of
+# verification. Slow, so it runs on demand. Raise the threshold as tests
+# improve (docs/testing.md); never lower it.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gremlins:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install gremlins (pinned by version and SHA-256)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=0.6.0
+          gh release download "v${v}" --repo go-gremlins/gremlins --pattern "gremlins_${v}_linux_amd64.tar.gz" --output gremlins.tgz
+          echo "b02a42e47935f891c9a411d68c07e211c7082609e79c2435b67c85ee9658c538  gremlins.tgz" | sha256sum -c -
+          tar -xzf gremlins.tgz gremlins
+      - name: Mutation testing of pkg/attestation
+        # Measured 2026-11-09: efficacy 100%, mutator coverage 55.77% (docs/testing.md).
+        run: ./gremlins unleash --threshold-efficacy 90 --threshold-mcover 55 ./pkg/attestation

@@ -1,0 +1,26 @@
+# AWS Amplify build for the public site (site/). The repo is a monorepo:
+# the Amplify app must set the environment variable AMPLIFY_MONOREPO_APP_ROOT=site.
+# Production deploys from main; develop can be connected as a preview branch.
+version: 1
+applications:
+  - appRoot: site
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            # Same bun version as packageManager in site/package.json, from npm
+            # (GitHub release downloads, used by bun's installer, return 5xx at times).
+            - npm install --global --no-fund --no-audit bun@1.3.13
+            - bun install --frozen-lockfile
+        build:
+          commands:
+            - bun run build
+            - bun run test
+      artifacts:
+        baseDirectory: dist
+        files:
+          - "**/*"
+      cache:
+        paths:
+          - node_modules/**/*
+    # Security headers are set on the Amplify app (deploy/tofu/site.tf, custom_headers).

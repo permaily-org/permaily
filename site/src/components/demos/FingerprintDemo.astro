@@ -1,0 +1,144 @@
+---
+import Hash from '../Hash.astro';
+
+const sides = [
+  {
+    title: 'Public build',
+    facts: [
+      ['Source', 'Release v1.4.2, commit a41f9c2'],
+      ['Rebuilt by', '3 independent builders, identical result'],
+      ['Logged', '2 March, 7 days before going live'],
+    ],
+  },
+  {
+    title: 'Running now',
+    facts: [
+      ['Signed by', 'AWS Nitro attestation, chain valid'],
+      ['Connection', 'TLS key bound to this attestation'],
+      ['Debug mode', 'Off'],
+    ],
+  },
+];
+---
+
+<figure
+  class="demo"
+  data-demo="chain"
+  aria-label="Two fingerprints. One comes from rebuilding the public code, and the other is signed by the running service. They are identical, so the running service matches the public code."
+>
+  <p class="h-d running" data-status>
+    <span>Running now <span class="ok">matches</span> the public code</span>
+    <span class="mono">checked 14 seconds ago, from your browser</span>
+  </p>
+  <div class="match">
+    <div class="side">
+      <h3>{sides[0]!.title}</h3>
+      <Hash />
+      <dl>{sides[0]!.facts.map(([k, v]) => <><dt>{k}</dt><dd>{v}</dd></>)}</dl>
+    </div>
+    <div class="eq"><span>=</span></div>
+    <div class="side">
+      <h3>{sides[1]!.title}</h3>
+      <Hash />
+      <dl>{sides[1]!.facts.map(([k, v]) => <><dt>{k}</dt><dd>{v}</dd></>)}</dl>
+    </div>
+  </div>
+  <div class="demo-foot">
+    <span class="small">Rebuild the public code and you get the same fingerprint. The running service signs its own.</span>
+    <button class="demo-ctl">Replay</button>
+  </div>
+</figure>
+
+<style is:global>
+  .running {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-4) var(--space-14);
+    margin-bottom: var(--space-20);
+    opacity: var(--o, 1);
+  }
+
+  .running .ok {
+    color: var(--ok);
+  }
+
+  .running .mono {
+    color: var(--ink-2);
+  }
+
+  .match {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr);
+    border-block: var(--hair) solid var(--rule-strong);
+  }
+
+  .match .side {
+    display: grid;
+    align-content: start;
+    gap: var(--space-14);
+    padding-block: var(--space-20);
+  }
+
+  .match h3 {
+    font-size: var(--text-title);
+    font-weight: 500;
+  }
+
+  .match .hash {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: clamp(11px, 1.02vw, 14px);
+    line-height: 1.6;
+  }
+
+  .match .eq {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ok);
+    font-size: var(--text-display-l);
+    font-weight: 500;
+    line-height: 1;
+  }
+
+  .match .eq span {
+    opacity: var(--o, 1);
+    transform: scale(calc(0.9 + var(--o, 1) * 0.1));
+  }
+
+  .match dl {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    font-size: var(--text-body);
+  }
+
+  .match dt {
+    padding-block: 6px;
+    padding-right: var(--space-16);
+    border-top: var(--hair) solid var(--rule);
+    color: var(--ink-2);
+  }
+
+  .match dd {
+    padding-block: 6px;
+    border-top: var(--hair) solid var(--rule);
+  }
+
+  @media (max-width: 860px) {
+    .match {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .match .eq {
+      padding-block: var(--space-4);
+      font-size: var(--text-display);
+    }
+  }
+</style>
+
+<script>
+  import { initFingerprints } from '../../scripts/demos/fingerprints';
+
+  document.querySelectorAll<HTMLElement>('[data-demo="chain"]').forEach(initFingerprints);
+</script>

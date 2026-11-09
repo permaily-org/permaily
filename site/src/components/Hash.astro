@@ -1,0 +1,19 @@
+---
+import { SITE } from '../config/site';
+
+const lines = [SITE.hash.slice(0, 48), SITE.hash.slice(48)];
+---
+
+<span class="hash" data-v={SITE.hash}>{lines.map((line) => <span class="p" data-n={line.length}>{line}</span>)}</span>
+
+<style is:global>
+  .hash .p {
+    display: block;
+    white-space: nowrap;
+  }
+
+  .hash .p i {
+    color: var(--ink-3);
+    font-style: normal;
+  }
+</style>

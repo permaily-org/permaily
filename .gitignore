@@ -1,8 +1,22 @@
 node_modules/
-dist/
+web/dist/
 coverage/
 *.log
+*.tsbuildinfo
 .env
 .env.*
 !.env.example
 .DS_Store
+*.local
+# Nix build outputs
+result
+result-*
+# Embedded SPA build (copied from web/dist at build time)
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep
+# OpenTofu
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example

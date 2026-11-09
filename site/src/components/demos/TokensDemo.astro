@@ -1,0 +1,286 @@
+---
+import Redact from '../Redact.astro';
+import Segmented from '../Segmented.astro';
+
+const headers = [
+  { label: 'From', value: 'noreply@iberia.com' },
+  { label: 'Date', value: '12 March 2026' },
+  { label: 'Subject', value: 'Your booking KX72QM has been cancelled' },
+];
+const basic = [
+  { field: 'from', value: '"noreply@iberia.com"', type: 'string' },
+  { field: 'date', value: '"2026-03-12"', type: 'string' },
+  { field: 'subject', value: '"Your booking KX72QM has been cancelled"', type: 'string' },
+];
+const extra = [
+  { field: 'isCancellation', value: 'true', type: 'boolean' },
+  { field: 'cancellationNotes', value: '"Storm in Madrid"', type: 'string | null' },
+  { field: 'refunded', value: 'true', type: 'boolean' },
+];
+---
+
+<figure
+  class="panel demo"
+  data-demo="tokens"
+  aria-label="One email, two requests. Basic info returns the sender, date and subject for 1 token per email, and the body stays withheld. Asking for three more fields returns whether it's a cancellation, the notes and whether it was refunded, each with a type, for 3 tokens per email. One million emails cost $0.01 or $0.03."
+>
+  <div class="dev-head">
+    <span class="lbl">One email, two requests</span>
+    <Segmented before="Basic info" after="With custom fields" label="Compare requests" />
+  </div>
+  <div class="tok-body" aria-hidden="true">
+    <div class="tok-mail">
+      <span class="lbl">The email</span>
+      <dl class="tm-head">
+        {
+          headers.map((header) => (
+            <>
+              <dt>{header.label}</dt>
+              <dd data-hd>
+                <Redact text={header.value} highlighted pad />
+              </dd>
+            </>
+          ))
+        }
+      </dl>
+      <div class="tm-body">
+        <div><Redact text="Dear Marta," withheld /></div>
+        <div>
+          <Redact text="We’ve" withheld />{' '}
+          <span data-field><Redact text="cancelled your flight" highlighted pad /></span>{' '}
+          <Redact text="to Lisbon" withheld />
+        </div>
+        <div>
+          <Redact text="because of" withheld />{' '}
+          <span data-field><Redact text="a storm in Madrid." highlighted pad /></span>
+        </div>
+        <div>
+          <span data-field><Redact text="€142.30 has been refunded" highlighted pad /></span>{' '}
+          <Redact text="to your card." withheld />
+        </div>
+      </div>
+    </div>
+    <div class="tok-out">
+      <span class="lbl">What you receive</span>
+      <div class="tr head"><span>Field</span><span>Value</span><span>Type</span></div>
+      {basic.map((row) => <div class="tr"><span>{row.field}</span><span>{row.value}</span><span class="ty">{row.type}</span></div>)}
+      {
+        extra.map((row) => (
+          <div class="tr new" data-new style="--w:1">
+            <div class="in"><span>{row.field}</span><span>{row.value}</span><span>{row.type}</span></div>
+          </div>
+        ))
+      }
+    </div>
+  </div>
+  <div class="tok-meter">
+    <div class="blocks" aria-hidden="true"><i style="--f:1"></i><i data-b style="--f:1"></i><i data-b style="--f:1"></i></div>
+    <div class="tm-n"><b data-n>3</b> <span data-tk>tokens</span> per email</div>
+    <div class="tm-p">1 million emails cost <b data-p>$0.03</b></div>
+    <button class="demo-ctl">Replay</button>
+  </div>
+</figure>
+
+<style is:global>
+  .tok-body {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  }
+
+  .tok-mail,
+  .tok-out {
+    display: grid;
+    align-content: start;
+    padding: var(--space-20);
+  }
+
+  .tok-mail {
+    gap: var(--space-12);
+    border-right: var(--hair) solid var(--rule);
+  }
+
+  .tok-mail .lbl,
+  .tok-out .lbl {
+    color: var(--ink-2);
+    font-size: var(--text-small);
+  }
+
+  .tok-out .lbl {
+    margin-bottom: var(--space-12);
+  }
+
+  .tm-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-8) var(--space-14);
+    font-size: var(--text-lead);
+  }
+
+  .tm-head dt {
+    color: var(--ink-2);
+    font-size: var(--text-small);
+  }
+
+  .tm-head dd {
+    overflow: hidden;
+    padding-block: 3px;
+  }
+
+  .tm-body {
+    --bar-h: 13px;
+    display: grid;
+    gap: var(--space-8);
+    overflow: hidden;
+    padding-top: var(--space-14);
+    border-top: var(--hair) solid var(--rule);
+    font-size: var(--text-lead);
+  }
+
+  .tm-body > div {
+    padding-block: 3px;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+
+  .tr {
+    display: grid;
+    grid-template-columns: 170px minmax(0, 1fr) 110px;
+    gap: var(--space-12);
+    padding: var(--space-8) var(--space-6);
+    border-top: var(--hair) solid var(--rule);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.35;
+  }
+
+  .tr.head {
+    padding-block: 0 var(--space-8);
+    border-top: 0;
+    border-bottom: var(--hair) solid var(--rule-strong);
+    color: var(--ink-2);
+    font-family: var(--font-sans);
+  }
+
+  .tr.head + .tr {
+    border-top: 0;
+  }
+
+  .tr > span,
+  .tr .in > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tr .ty {
+    color: var(--ink-3);
+  }
+
+  .tr.new {
+    display: block;
+    overflow: hidden;
+    height: calc(var(--w, 1) * 34px);
+    padding: 0;
+    border-top: 0;
+  }
+
+  .tr.new .in {
+    display: grid;
+    grid-template-columns: 170px minmax(0, 1fr) 110px;
+    align-items: center;
+    gap: var(--space-12);
+    height: 32px;
+    margin-top: 2px;
+    padding-inline: var(--space-6);
+    background: var(--highlight);
+    clip-path: inset(0 calc((1 - var(--w, 1)) * 100%) 0 0);
+    color: var(--on-highlight);
+  }
+
+  .tok-meter {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-10) var(--space-24);
+    padding: var(--space-14) var(--space-20);
+    border-top: var(--hair) solid var(--rule-strong);
+  }
+
+  .tok-meter .demo-ctl {
+    margin-left: auto;
+  }
+
+  .blocks {
+    display: flex;
+    gap: 3px;
+  }
+
+  .blocks i {
+    position: relative;
+    display: block;
+    width: 22px;
+    height: 22px;
+    background: var(--sunken);
+  }
+
+  .blocks i::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--highlight);
+    transform: scaleX(var(--f, 1));
+    transform-origin: left;
+  }
+
+  .tm-n {
+    font-size: var(--text-title);
+    font-weight: 500;
+  }
+
+  .tm-n b {
+    font-weight: 600;
+  }
+
+  .tm-p {
+    color: var(--ink-2);
+    font-size: var(--text-lead);
+  }
+
+  .tm-p b {
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: var(--text-small);
+    font-weight: 500;
+  }
+
+  @media (max-width: 860px) {
+    .tok-body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .tok-mail {
+      border-right: 0;
+      border-bottom: var(--hair) solid var(--rule);
+    }
+
+    .tr,
+    .tr.new .in {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 0 var(--space-8);
+      font-size: 12px;
+    }
+
+    .tr .ty,
+    .tr.head > span:last-child,
+    .tr.new .in > span:last-child {
+      display: none;
+    }
+  }
+</style>
+
+<script>
+  import { initTokens } from '../../scripts/demos/tokens';
+
+  document.querySelectorAll<HTMLElement>('[data-demo="tokens"]').forEach(initTokens);
+</script>

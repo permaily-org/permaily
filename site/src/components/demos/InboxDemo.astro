@@ -1,0 +1,205 @@
+---
+import { APPS, MAIL, reads } from '../../data/mail';
+import Redact from '../Redact.astro';
+import Segmented from '../Segmented.astro';
+
+// The HTML shows the first app with Permaily, which is where the animation ends.
+const first = APPS[0]!;
+---
+
+<figure
+  class="panel demo"
+  data-demo="hero"
+  aria-label="The same inbox, as two apps see it. With Gmail access, either app can read all 12,304 emails, including statements, test results and password resets. With Permaily, Trip App can read 47 emails about flights and hotels, and your rule removes the door code from one of them. Ledgerly can read 600 invoices and receipts, and your rule removes the card number from a phone bill. Everything else is covered by black bars."
+>
+  <div class="inbox-head">
+    <div class="ih-who">
+      <span>What</span>
+      <div class="seg ih-apps" role="group" aria-label="Choose an app">
+        {
+          APPS.map((app) => (
+            <button data-app={app.id} data-total={app.count} aria-pressed={app.id === first.id ? 'true' : 'false'}>{app.name}</button>
+          ))
+        }
+      </div>
+      <span>can read</span>
+    </div>
+    <Segmented before="With Gmail access" after="With Permaily" />
+    <div class="ih-count">
+      <span class="num"><span class="mk" data-count>{first.count}</span> of 12,304 emails</span>
+      <span class="ih-cap">
+        <span data-cap="before" hidden>Everything. Statements, test results, password resets.</span>
+        {APPS.map((app) => <span data-cap={app.id} hidden={app.id !== first.id}>{app.reads}. Everything else is withheld.</span>)}
+      </span>
+    </div>
+  </div>
+  <ol class="rows" aria-hidden="true">
+    {
+      MAIL.map((mail) => {
+        const shared = reads(mail, first.id);
+        const cut = mail.cut && { ...mail.cut, on: shared && mail.cut.app === first.id };
+        return (
+          <li class="row" data-apps={(mail.apps ?? []).join(' ')}>
+            <span class="c-date">
+              <Redact text={mail.date} withheld={!shared} />
+            </span>
+            <span class="c-from">
+              <Redact text={mail.from} withheld={!shared} />
+            </span>
+            <span class="c-subj">
+              <Redact text={mail.subject} snippet={mail.snippet} cut={cut} highlighted withheld={!shared} pad subject />
+            </span>
+          </li>
+        );
+      })
+    }
+  </ol>
+</figure>
+
+<style is:global>
+  .inbox-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: var(--space-14) var(--space-24);
+    padding: var(--space-20) var(--space-24);
+    border-bottom: var(--hair) solid var(--rule-strong);
+  }
+
+  .ih-who {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-6) var(--space-10);
+    min-height: 32px;
+    color: var(--ink-2);
+    font-size: var(--text-lead);
+  }
+
+  .ih-count {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-4) var(--space-20);
+  }
+
+  .ih-count .num {
+    font-size: var(--fs-d);
+    font-weight: 500;
+    letter-spacing: var(--tracking-d);
+    line-height: var(--leading-display);
+  }
+
+  .ih-cap {
+    color: var(--ink-2);
+    font-size: var(--text-title);
+  }
+
+  .row {
+    --bar-h: 15px;
+    display: grid;
+    grid-template-columns: 76px 170px minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-16);
+    height: 52px;
+    padding-inline: var(--space-24);
+    border-bottom: var(--hair) solid var(--rule);
+  }
+
+  .row:last-child {
+    border-bottom: 0;
+  }
+
+  .row .c-date {
+    --bar-h: 12px;
+    color: var(--ink-2);
+    font-family: var(--font-mono);
+    font-size: var(--text-mono);
+  }
+
+  .row .c-from {
+    overflow: hidden;
+    font-size: var(--text-lead);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .row .c-subj {
+    overflow: hidden;
+    padding-block: 6px;
+    font-size: var(--text-lead);
+    white-space: nowrap;
+  }
+
+  .row .c-subj .t {
+    max-width: none;
+  }
+
+  /* Senders are short, so narrower screens give that room to the subject, where the cut sits. */
+  @media (max-width: 900px) {
+    .row {
+      grid-template-columns: 76px 120px minmax(0, 1fr);
+    }
+  }
+
+  @media (max-width: 760px) {
+    .inbox-head {
+      padding: var(--space-16);
+    }
+
+    /* The app picker sits inside a sentence, so it keeps its own width here. */
+    .inbox-head .ih-who {
+      grid-column: 1 / -1;
+      gap: var(--space-6) var(--space-8);
+    }
+
+    .ih-who .ih-apps {
+      width: auto;
+    }
+
+    .ih-who .ih-apps button {
+      flex: none;
+      padding-inline: 10px;
+    }
+
+    .row {
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: 'from date' 'subj subj';
+      gap: 2px var(--space-10);
+      height: auto;
+      padding: var(--space-10) var(--space-16);
+    }
+
+    .row .c-date {
+      grid-area: date;
+    }
+
+    .row .c-from {
+      grid-area: from;
+    }
+
+    .row .c-subj {
+      grid-area: subj;
+      font-size: var(--text-body);
+    }
+
+    .row .snip {
+      display: none;
+    }
+
+    .row:nth-child(n + 8) {
+      display: none;
+    }
+
+    .row:nth-child(7) {
+      border-bottom: 0;
+    }
+  }
+</style>
+
+<script>
+  import { initHero } from '../../scripts/demos/hero';
+
+  document.querySelectorAll<HTMLElement>('[data-demo="hero"]').forEach(initHero);
+</script>

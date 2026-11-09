@@ -1,0 +1,8 @@
+# Minimum statement coverage per Go package, checked by scripts/check-coverage.sh.
+# Set to the measured value rounded down; raise them as tests improve, never lower them.
+# Target for pkg/attestation is 95.
+github.com/permaily-org/permaily/pkg/attestation 80
+github.com/permaily-org/permaily/internal/router 95
+github.com/permaily-org/permaily/internal/httpapi 75
+github.com/permaily-org/permaily/internal/webui 70
+github.com/permaily-org/permaily/internal/hostproxy 65

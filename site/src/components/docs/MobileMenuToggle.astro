@@ -1,0 +1,66 @@
+---
+// The site's phone menu icon, opening Starlight's panel. It works without JavaScript, because the panel is a popover.
+---
+
+<button
+  popovertarget="starlight__sidebar"
+  class="docs-menu-btn sl-flex md:sl-hidden print:hidden"
+  aria-label={Astro.locals.t('menuButton.accessibleLabel')}
+>
+  <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+    <path class="b" d="M2 5h14M2 9h14M2 13h14"></path>
+    <path class="x" d="M4 4l10 10M14 4L4 14"></path>
+  </svg>
+</button>
+
+<style>
+  @layer starlight.core {
+    .docs-menu-btn {
+      position: fixed;
+      top: calc((var(--sl-nav-height) - var(--sl-menu-button-size)) / 2);
+      inset-inline-end: var(--gutter);
+      z-index: var(--sl-z-index-navbar);
+      align-items: center;
+      justify-content: center;
+      width: var(--sl-menu-button-size);
+      height: var(--sl-menu-button-size);
+      padding: 0;
+      border: 0;
+      background: none;
+      cursor: pointer;
+    }
+
+    svg {
+      display: block;
+      fill: none;
+      stroke: var(--ink);
+      stroke-width: 1.5;
+    }
+
+    .x {
+      display: none;
+    }
+
+    .docs-menu-btn:has(~ :popover-open) .x {
+      display: block;
+    }
+
+    .docs-menu-btn:has(~ :popover-open) .b {
+      display: none;
+    }
+  }
+</style>
+
+<style is:global>
+  @layer starlight.core {
+    body:has(#starlight__sidebar:popover-open) {
+      overflow: hidden;
+    }
+
+    @media (min-width: 50rem) {
+      body:has(#starlight__sidebar:popover-open) {
+        overflow: auto;
+      }
+    }
+  }
+</style>

@@ -1,0 +1,104 @@
+---
+interface Props {
+  name: string;
+  price: string;
+  unit: string;
+  note: string;
+  description: string;
+  items: string[];
+  action: { label: string; href: string };
+  primary?: boolean;
+  /** Puts what's included beside the price, for a plan shown on its own. */
+  split?: boolean;
+}
+
+const {
+  name,
+  price,
+  unit,
+  note,
+  description,
+  items,
+  action,
+  primary = false,
+  split = false,
+} = Astro.props;
+---
+
+<div class:list={['plan', { split }]}>
+  <div class="plan-head">
+    <div class="name">{name}</div>
+    <div class="price"><b>{price}</b><span>{unit}</span></div>
+    <div class="note">{note}</div>
+    <p class="for">{description}</p>
+    {split && <a class="btn lg" href={action.href}>{action.label}</a>}
+  </div>
+  <ul class="checks">
+    {items.map((item) => <li>{item}</li>)}
+  </ul>
+  {!split && <a class:list={['btn', { 'sec-b': !primary }]} href={action.href}>{action.label}</a>}
+</div>
+
+<style is:global>
+  .plan {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    justify-items: start;
+    gap: var(--space-16);
+    padding-top: var(--space-14);
+    border-top: var(--hair) solid var(--rule-strong);
+  }
+
+  .plan.split {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: auto;
+    gap: var(--space-24) clamp(20px, 3vw, 40px);
+    margin-top: var(--space-48);
+  }
+
+  .plan.split .btn {
+    margin-top: var(--space-20);
+  }
+
+  .plan .name {
+    font-size: var(--text-title);
+    font-weight: 500;
+  }
+
+  .plan .price {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-6);
+    margin-top: var(--space-10);
+  }
+
+  .plan .price b {
+    font-size: var(--fs-d);
+    font-weight: 500;
+    letter-spacing: var(--tracking-d);
+    line-height: 1;
+  }
+
+  .plan .price span,
+  .plan .note {
+    color: var(--ink-2);
+    font-size: var(--text-small);
+  }
+
+  .plan .note {
+    min-height: 1.4em;
+    margin-top: var(--space-6);
+  }
+
+  .plan .for {
+    margin-top: var(--space-10);
+    color: var(--ink-2);
+    font-size: var(--text-lead);
+  }
+
+  @media (max-width: 760px) {
+    .plan.split {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

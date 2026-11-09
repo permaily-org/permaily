@@ -1,0 +1,45 @@
+name: site-smoke
+
+# After a push to main, Amplify rebuilds the public site. This waits until
+# permaily.com serves the new commit (the permaily-build meta tag) and checks
+# the security headers and the key content.
+# Depends on the Amplify app being connected to this repo (docs/deploy.md).
+
+on:
+  push:
+    branches: [main]
+    paths: [site/**, packages/ui/**, amplify.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Wait for the deploy of this commit
+        run: |
+          for i in $(seq 1 50); do
+            served=$(curl -sf https://permaily.com/ | grep -o 'name="permaily-build" content="[^"]*"' | cut -d'"' -f4 || true)
+            echo "attempt $i: serving ${served:-nothing}"
+            [ "$served" = "$GITHUB_SHA" ] && exit 0
+            sleep 30
+          done
+          echo "permaily.com never served $GITHUB_SHA"
+          exit 1
+      - name: Security headers
+        run: |
+          headers=$(curl -sfI https://permaily.com/)
+          echo "$headers"
+          for h in "strict-transport-security" "x-content-type-options: nosniff" "x-frame-options: DENY" "content-security-policy: frame-ancestors 'none'"; do
+            echo "$headers" | grep -qi "^$h" || { echo "missing header: $h"; exit 1; }
+          done
+      - name: Content and CSP meta
+        run: |
+          page=$(curl -sf https://permaily.com/)
+          echo "$page" | grep -q 'http-equiv="content-security-policy"'
+          echo "$page" | grep -q 'application/ld+json'
+          curl -sf -o /dev/null https://permaily.com/docs/verifying-the-build/
+          curl -sf -o /dev/null https://permaily.com/sitemap-index.xml
