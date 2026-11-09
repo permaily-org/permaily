@@ -7,6 +7,8 @@ const SOURCE = 'https://github.com/permaily-org/permaily';
 export const SITE = {
   name: 'Permaily',
   tagline: 'Share only the part of your email each app or agent needs.',
+  // Example measurement for the animated demos only. The real one comes from
+  // src/config/release.ts and is what the footer shows.
   build: '7f3a…c91e',
   hash: '7f3a9d04be12c7a85e61f0d2b9437ac6e8150fd3a2c46b79d1e08f35ab6c72d49e03b18f6ca4d7250be9f1c38a7dc91e',
 };
@@ -18,6 +20,7 @@ export const LINKS = {
   queries: `${DOCS}/queries/`,
   selfHosting: `${DOCS}/self-hosting/`,
   trustModel: `${DOCS}/trust-model/`,
+  verify: `${DOCS}/verifying-the-build/`,
   source: SOURCE,
   releaseLog: `${SOURCE}/releases`,
   vulnerability: 'mailto:security@permaily.com',

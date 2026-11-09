@@ -1,0 +1,47 @@
+# AWS Amplify build for the public site (site/). The repo is a monorepo:
+# the Amplify app must set the environment variable AMPLIFY_MONOREPO_APP_ROOT=site.
+# Production deploys from main; develop can be connected as a preview branch.
+version: 1
+applications:
+  - appRoot: site
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            # Same bun version as packageManager in site/package.json.
+            - curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.13"
+            - export PATH="$HOME/.bun/bin:$PATH"
+            - bun install --frozen-lockfile
+        build:
+          commands:
+            - export PATH="$HOME/.bun/bin:$PATH"
+            - bun run build
+            - bun run test
+      artifacts:
+        baseDirectory: dist
+        files:
+          - "**/*"
+      cache:
+        paths:
+          - node_modules/**/*
+    # Script and style hashes are in each page's CSP <meta> (site/astro.config.mjs).
+    # Directives that only work as headers are set here.
+    customHeaders:
+      - pattern: "**/*"
+        headers:
+          - key: Strict-Transport-Security
+            value: max-age=31536000; includeSubDomains
+          - key: X-Content-Type-Options
+            value: nosniff
+          - key: X-Frame-Options
+            value: DENY
+          - key: Referrer-Policy
+            value: strict-origin-when-cross-origin
+          - key: Permissions-Policy
+            value: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+          - key: Content-Security-Policy
+            value: frame-ancestors 'none'; base-uri 'none'; object-src 'none'
+      - pattern: "_astro/**/*"
+        headers:
+          - key: Cache-Control
+            value: public, max-age=31536000, immutable

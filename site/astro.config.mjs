@@ -2,6 +2,7 @@ import sitemap from '@astrojs/sitemap';
 import starlight from '@astrojs/starlight';
 import { ExpressiveCodeTheme } from '@astrojs/starlight/expressive-code';
 import { defineConfig } from 'astro/config';
+import cspInlineHashes from './integrations/csp-inline-hashes.mjs';
 
 // Code blocks stay in ink, with comments one step dimmer. Colour carries meaning on this site, so syntax colours would muddy it.
 const codeTheme = (name, type, background, ink, comment) =>
@@ -18,8 +19,32 @@ const codeTheme = (name, type, background, ink, comment) =>
 
 export default defineConfig({
   site: 'https://permaily.com',
+  // Astro hashes every inline script and style and emits a CSP <meta> per page.
+  // frame-ancestors and the other header-only directives are set by the host (amplify.yml).
+  security: {
+    csp: {
+      directives: [
+        "default-src 'self'",
+        "img-src 'self' data:",
+        "font-src 'self' data:",
+        "connect-src 'self'",
+        "base-uri 'none'",
+        "object-src 'none'",
+        "form-action 'self'",
+      ],
+      // Pagefind (docs search) compiles WebAssembly.
+      scriptDirective: { resources: ["'self'", "'wasm-unsafe-eval'"] },
+      // <style> elements stay hash-restricted. Inline style attributes (the demos'
+      // custom properties) are allowed through style-src-attr only.
+      // TODO(docs/security.md): move them to classes and drop this exception.
+      styleDirective: {
+        resources: ["'self'", { resource: "'unsafe-inline'", kind: 'attribute' }],
+      },
+    },
+  },
   integrations: [
     sitemap(),
+    cspInlineHashes(),
     // The docs are part of this site. Pages live in src/content/docs/docs/, so they build under /docs/.
     starlight({
       title: 'Permaily docs',
@@ -48,7 +73,7 @@ export default defineConfig({
           codeTheme('permaily-light', 'light', '#ecece7', '#131312', '#6c6c65'),
         ],
         // Plain blocks with no window frame, whatever the language. A file name stays in the code as a comment, as it does on the website.
-        defaultProps: { frame: 'code' },
+        defaultProps: { frame: 'code', overridesByLang: { text: { wrap: true } } },
         frames: { extractFileNameFromCode: false },
         styleOverrides: {
           borderRadius: 'var(--r)',

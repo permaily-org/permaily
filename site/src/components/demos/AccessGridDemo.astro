@@ -42,8 +42,8 @@ const connections = [
                 data-k={c.key}
                 data-on={on}
                 aria-pressed={on}
-                aria-label={`${connection.name}, ${c.label}`}
               >
+                <span class="sr-only">{connection.name}, </span>
                 <span class="blk" />
                 <span class="lab">{c.label}</span>
                 <span class="val">{c.count}</span>

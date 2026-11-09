@@ -1,4 +1,5 @@
 ---
+import { release } from '../config/release';
 import { LINKS, SITE } from '../config/site';
 
 const columns = [
@@ -49,7 +50,16 @@ const columns = [
       }
     </div>
     <div class="foot-end">
-      <span class="mono">build {SITE.build} <span class="ok">matches the public code</span></span>
+      {
+        release ? (
+          <a class="mono" href={release.url}>
+            {release.tag} PCR0 {release.pcr0.slice(0, 4)}…{release.pcr0.slice(-4)}
+          </a>
+        ) : (
+          <span class="mono">no public release yet</span>
+        )
+      }
+      <a href={LINKS.verify}>Verify it yourself</a>
       <span>© 2026 {SITE.name}</span>
       <span class="theme" role="group" aria-label="Color theme">
         <button data-t="system">System</button>

@@ -1,25 +1,29 @@
-# Permaily website
+# Public site
 
 The public site for Permaily: the marketing pages, pricing, security, changelog, the sign-up and log-in screens, and the docs at `/docs`. It's a static site built with [Astro](https://astro.build), and the docs use [Starlight](https://starlight.astro.build).
 
+It lives in `site/` and is not part of the enclave image: it is hosted on AWS Amplify from `main` (see `amplify.yml` at the repo root) and changing it never changes the PCRs.
+
 ## Run it
 
-Use Node 24 (see `.nvmrc`), then install the dependencies and start the dev server at `http://localhost:4321`:
+Use bun, then install the dependencies and start the dev server at `http://localhost:4321`:
 
 ```bash
-npm install
-```
-
-```bash
-npm run dev
+cd site
+bun install
+bun run dev
 ```
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | Starts the dev server |
-| `npm run build` | Clears Astro's content cache, then builds the static site and the docs search into `dist/` |
-| `npm run preview` | Serves `dist/`, to check the real build. Docs search only works here, not in `npm run dev` |
-| `npm run check` | Type-checks pages, components and scripts |
+| `bun run dev` | Starts the dev server |
+| `bun run build` | Clears Astro's content cache, then builds the static site and the docs search into `dist/` |
+| `bun run preview` | Serves `dist/`, to check the real build. Docs search only works here, not in `bun run dev` |
+| `bun run check` | Type-checks pages, components and scripts |
+| `bun run test` | Checks the built pages: metadata, one h1, CSP, structured data, internal links, the release measurement |
+| `bun run test:e2e` | axe (WCAG 2.2 AA) and CSP violations in Chromium, desktop and mobile, light and dark |
+
+Lint and format with Biome from the repo root (`bun run lint`).
 
 ## Where things are
 
@@ -32,9 +36,11 @@ npm run dev
 | `src/scripts/demos/` | What each animation does over time |
 | `src/scripts/timeline.ts` | The engine they all use |
 | `src/scripts/site.ts` | The phone menu, the theme switch and form handling |
-| `src/styles/tokens.css` | Colours, type and spacing, with the same values as the design system |
+| `src/styles/tokens.css` | Type and spacing. Colours and fonts come from `packages/ui/colors.css` |
 | `src/styles/global.css` | The reset, layout, type and parts used across pages |
 | `src/config/site.ts` | Every outside link, so each can be changed in one place |
+| `src/config/release.ts` | Reads the latest release's PCR0 at build time for the footer |
+| `integrations/csp-inline-hashes.mjs` | Adds hashes for inline scripts Astro's CSP misses (Starlight) |
 | `src/data/` | Sample mail, sample vendors and logo shapes |
 | `src/content/docs/docs/` | The docs pages. A file's path is its address, so `queries.md` is `/docs/queries/` |
 | `src/components/docs/` | What replaces parts of Starlight, so the docs use the site's header, footer and theme |
