@@ -1,0 +1,17 @@
+---
+import AuthForm from '../components/AuthForm.astro';
+import { LINKS } from '../config/site';
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Log in" description="Log in to Permaily." minimal>
+  <div class="auth single">
+    <AuthForm
+      title="Log in to Permaily"
+      subtitle="Use the same method you used when you created your account."
+      switchQuestion="New to Permaily?"
+      switchLabel="Create an account"
+      switchHref={LINKS.signup}
+    />
+  </div>
+</Base>

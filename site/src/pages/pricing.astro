@@ -1,0 +1,128 @@
+---
+import Cta from '../components/Cta.astro';
+import Faq from '../components/Faq.astro';
+import PageHead from '../components/PageHead.astro';
+import PlanCard from '../components/PlanCard.astro';
+import { LINKS } from '../config/site';
+import Base from '../layouts/Base.astro';
+
+const questions = [
+  {
+    question: 'Is Personal really free?',
+    answer:
+      'Yes. Developers and companies pay for Permaily, and we don’t sell, mine or advertise on email.',
+  },
+  {
+    question: 'Can companies pay monthly?',
+    answer: 'Yes. It’s $12 per seat on a yearly plan, or $15 on a monthly one.',
+  },
+  {
+    question: 'What happens to my data if I leave?',
+    answer:
+      'Revoking, exporting and deleting are free on every plan, and deleting your account deletes your data.',
+  },
+  {
+    question: 'Which payment methods do you accept?',
+    answer: 'Cards, and invoices on yearly Companies plans.',
+  },
+];
+---
+
+<Base title="Pricing" description="Free for people. Developers pay for what they extract, and companies pay per seat.">
+  <PageHead intro="Developers pay for what they extract, and companies pay per seat. That’s how we stay in business, so we don’t sell, mine or advertise on email.">
+    Free for people <br class="keep" /><span class="dim">Never paid for with your mail</span>
+  </PageHead>
+
+  <section>
+    <div class="wrap">
+      <div class="plans">
+        <PlanCard
+          name="Personal"
+          price="$0"
+          unit="forever"
+          note="No card needed"
+          description="For everyday people connecting their own tools."
+          items={[
+            'Your own mailboxes',
+            'Any app or AI agent you approve',
+            'Rules that hold back emails or remove details',
+            'Rules in your own words, such as “my car”',
+            'A receipt for every email shared',
+          ]}
+          action={{ label: 'Get started free', href: LINKS.signup }}
+          primary
+        />
+        <PlanCard
+          name="Companies"
+          price="$12"
+          unit="per seat, per month"
+          note="Billed yearly, or $15 monthly"
+          description="One central plan for your company’s inboxes."
+          items={[
+            'Google Workspace and Microsoft 365',
+            'Per-vendor limits and central policy',
+            'SSO and SCIM',
+            'Audit export',
+            'Priority support',
+          ]}
+          action={{ label: 'Talk to us', href: '/contact/' }}
+        />
+      </div>
+      <p class="plan-dev">Building a product that reads email? Developers pay per token. <a class="link" href="/developers/#pricing">See developer pricing</a></p>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap routes">
+      <div class="route">
+        <h3>Leaving is never a paid feature</h3>
+        <p>Revoking access, exporting your data, deleting your account and checking the proof are free on every plan.</p>
+      </div>
+      <div class="route">
+        <h3>Or run it yourself</h3>
+        <p>The same public code, in your own AWS account. You hold the keys. Companies pay to self-host.</p>
+        <a class="go link guide" href={LINKS.selfHosting}>Read the self-hosting guide</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec rule-top">
+    <div class="wrap two">
+      <h2 class="h-l">Questions about pricing</h2>
+      <Faq items={questions} />
+    </div>
+  </section>
+
+  <Cta
+    title="Personal is free"
+    body="Connect your inbox in about three minutes. No card needed, and nothing is shared until you approve it."
+    primary={{ label: 'Get started free', href: LINKS.signup }}
+    secondary={{ label: 'Talk to us', href: '/contact/' }}
+  />
+</Base>
+
+<style>
+  .plans {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: clamp(20px, 3vw, 40px);
+  }
+
+  .plan-dev {
+    margin-top: var(--space-32);
+    padding-top: var(--space-14);
+    border-top: var(--hair) solid var(--rule);
+    color: var(--ink-2);
+    font-size: var(--text-title);
+  }
+
+  .guide {
+    justify-self: start;
+  }
+
+  @media (max-width: 860px) {
+    .plans {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

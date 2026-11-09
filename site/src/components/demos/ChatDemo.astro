@@ -1,0 +1,142 @@
+---
+const firstAnswer = 'Saturday 14 March at 09:40, from Madrid. Your booking reference is KX72QM.';
+const secondAnswer = 'I can’t see that. Your bank emails aren’t part of what you shared with me.';
+---
+
+<figure
+  class="demo"
+  data-demo="chat"
+  data-dur="6600"
+  aria-label="A conversation with Claude. Asked about a flight, it gets one email through Permaily and answers. Asked about a bank statement, Permaily shares nothing, and Claude says it can't see that."
+>
+  <div class="panel">
+    <div class="chat-head">
+      <span class="who"><span class="tile">CL</span>Claude</span>
+      <span class="small">Shared</span>
+      <span class="chip s">Flights and hotels</span>
+      <span class="small">Withheld</span>
+      <span class="chip w">Everything else</span>
+    </div>
+    <div class="chat-body" aria-hidden="true">
+      <p class="msg you" data-at="300">When does my Lisbon flight leave?</p>
+      <p class="tool" data-at="950">Asked Permaily <span class="res s" data-at="1400">1 email shared</span></p>
+      <p class="msg bot" data-at="1900" data-stream={firstAnswer}><span class="vis">{firstAnswer}</span><span class="inv"></span></p>
+      <p class="msg you" data-at="3500">And what’s on my Revolut statement?</p>
+      <p class="tool" data-at="4150">Asked Permaily <span class="res w" data-at="4600">0 emails shared</span></p>
+      <p class="msg bot" data-at="5100" data-stream={secondAnswer}><span class="vis">{secondAnswer}</span><span class="inv"></span></p>
+    </div>
+  </div>
+  <div class="demo-foot"><span></span><button class="demo-ctl">Replay</button></div>
+</figure>
+
+<style is:global>
+  .chat-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-8) var(--space-12);
+    padding: var(--space-14) var(--space-20);
+    border-bottom: var(--hair) solid var(--rule);
+  }
+
+  .chat-head .who {
+    display: flex;
+    align-items: center;
+    gap: var(--space-10);
+    margin-right: auto;
+    font-size: var(--text-lead);
+    font-weight: 500;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: var(--r);
+    font-size: var(--text-small);
+    white-space: nowrap;
+  }
+
+  .chip.s {
+    background: var(--highlight);
+    color: var(--on-highlight);
+  }
+
+  .chip.w {
+    background: var(--bar);
+    color: var(--on-bar);
+  }
+
+  .chat-body {
+    display: grid;
+    align-content: start;
+    gap: var(--space-14);
+    padding: var(--space-24) var(--space-20);
+  }
+
+  .msg {
+    font-size: var(--text-title);
+    line-height: var(--leading-body);
+    opacity: var(--o, 1);
+    transform: translateY(calc((1 - var(--o, 1)) * 6px));
+  }
+
+  .msg.you {
+    justify-self: end;
+    max-width: 80%;
+    padding: var(--space-8) var(--space-14);
+    border-radius: var(--r);
+    background: var(--sunken);
+  }
+
+  .msg.bot {
+    max-width: 92%;
+  }
+
+  .msg.bot .inv {
+    visibility: hidden;
+  }
+
+  .tool {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-8);
+    color: var(--ink-2);
+    font-family: var(--font-mono);
+    font-size: var(--text-mono);
+    opacity: var(--o, 1);
+  }
+
+  .res {
+    position: relative;
+    display: inline-flex;
+    overflow: hidden;
+    padding: 3px 8px;
+    border-radius: var(--r);
+    clip-path: inset(0 calc((1 - var(--w, 1)) * 100%) 0 0);
+    font-size: var(--text-mono);
+  }
+
+  .res.s {
+    background: var(--highlight);
+    color: var(--on-highlight);
+  }
+
+  .res.w {
+    background: var(--bar);
+    color: var(--on-bar);
+  }
+
+  @media (max-width: 520px) {
+    .chat-head .who {
+      flex-basis: 100%;
+    }
+  }
+</style>
+
+<script>
+  import { initChat } from '../../scripts/demos/chat';
+
+  document.querySelectorAll<HTMLElement>('[data-demo="chat"]').forEach(initChat);
+</script>

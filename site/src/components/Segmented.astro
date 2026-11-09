@@ -1,0 +1,15 @@
+---
+// A before-and-after toggle. The demo's script keeps it in step with the animation.
+interface Props {
+  before: string;
+  after: string;
+  label?: string;
+}
+
+const { before, after, label = 'Compare access' } = Astro.props;
+---
+
+<div class="seg" role="group" aria-label={label}>
+  <button data-mode="before" aria-pressed="false">{before}</button>
+  <button data-mode="after" aria-pressed="true">{after}</button>
+</div>

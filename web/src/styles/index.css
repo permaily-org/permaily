@@ -1,0 +1,97 @@
+@import 'tailwindcss';
+@import '../../../packages/ui/colors.css';
+
+/*
+  Tailwind theme for the web app. Colors come from packages/ui/colors.css.
+  Black means withheld and the highlight means shared. Nothing else uses either.
+  Colors follow the system setting, and data-theme on <html> overrides it.
+*/
+
+@theme {
+  --color-*: initial;
+  --font-*: initial;
+  --text-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --drop-shadow-*: initial;
+  --inset-shadow-*: initial;
+
+  --font-sans: 'Instrument Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, Menlo, monospace;
+
+  --text-micro: 11px;
+  --text-micro--line-height: 1.4;
+  --text-mono: 12px;
+  --text-mono--line-height: 1.4;
+  --text-small: 13px;
+  --text-small--line-height: 1.4;
+  --text-body: 14px;
+  --text-body--line-height: 1.45;
+  --text-lead: 15px;
+  --text-lead--line-height: 1.45;
+  --text-wordmark: 17px;
+  --text-wordmark--line-height: 1.2;
+  --text-wordmark--letter-spacing: -0.3px;
+  --text-title: 18px;
+  --text-title--line-height: 1.3;
+  --text-heading: 28px;
+  --text-heading--line-height: 1.15;
+  --text-heading--letter-spacing: -0.4px;
+  --text-display-s: 32px;
+  --text-display-s--line-height: 1.12;
+  --text-display-s--letter-spacing: -0.6px;
+  --text-display-m: 40px;
+  --text-display-m--line-height: 1.12;
+  --text-display-m--letter-spacing: -0.8px;
+  --text-display: 44px;
+  --text-display--line-height: 1.1;
+  --text-display--letter-spacing: -0.9px;
+  --text-display-l: 64px;
+  --text-display-l--line-height: 1.1;
+  --text-display-l--letter-spacing: -1.4px;
+
+  --radius-sm: 2px;
+
+  --color-transparent: transparent;
+  --color-current: currentColor;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-raised: var(--raised);
+  --color-sunken: var(--sunken);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
+  --color-bar: var(--bar);
+  --color-on-bar: var(--on-bar);
+  --color-highlight: var(--highlight);
+  --color-on-highlight: var(--on-highlight);
+  --color-highlight-soft: var(--highlight-soft);
+  --color-on-highlight-soft: var(--on-highlight-soft);
+  --color-attention: var(--attention);
+  --color-attention-bg: var(--attention-bg);
+  --color-ok: var(--ok);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-on-danger: var(--on-danger);
+  --color-scrim: var(--scrim);
+}
+
+@layer base {
+  html {
+    background-color: var(--color-paper);
+  }
+
+  /* Body text is 14px. The root stays at the browser default so rem-based spacing keeps its 4px steps. */
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    -webkit-font-smoothing: antialiased;
+  }
+}

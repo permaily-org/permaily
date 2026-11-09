@@ -1,0 +1,28 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    target-branch: develop
+    schedule: { interval: weekly }
+    commit-message: { prefix: build }
+    groups:
+      go: { patterns: ["*"] }
+  - package-ecosystem: bun
+    directories: [/, /web, /site]
+    target-branch: develop
+    schedule: { interval: weekly }
+    commit-message: { prefix: build }
+    groups:
+      js: { patterns: ["*"] }
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule: { interval: weekly }
+    commit-message: { prefix: ci }
+    groups:
+      actions: { patterns: ["*"] }
+  - package-ecosystem: terraform
+    directory: /deploy/tofu
+    target-branch: develop
+    schedule: { interval: weekly }
+    commit-message: { prefix: build }

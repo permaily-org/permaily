@@ -1,0 +1,59 @@
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Contact" description="Talk to us about your vendors and mailboxes.">
+  <section class="sec">
+    <div class="wrap two even">
+      <div class="stack side">
+        <div class="stack">
+          <h1 class="h-l">Talk to us</h1>
+          <p class="intro">Tell us what’s connected to your mailboxes today. We’ll show you what each vendor would see through Permaily.</p>
+        </div>
+        <div class="fact">
+          <h3>What happens next</h3>
+          <p>We reply within one working day, go through your vendor list together for about 30 minutes, and send a written plan, including what we can’t do for you.</p>
+        </div>
+        <p class="fine">
+          Need help with your account? <a class="link" href="mailto:support@permaily.com">support@permaily.com</a><br />
+          Found a vulnerability? <a class="link" href="mailto:security@permaily.com">security@permaily.com</a>
+        </p>
+      </div>
+      <form class="form" data-no-backend>
+        <label class="field">Your name<input name="name" autocomplete="name" placeholder="Marta Ruiz" /></label>
+        <label class="field">Work email<input type="email" name="email" autocomplete="email" placeholder="marta@halden.example" /></label>
+        <label class="field">Company<input name="company" autocomplete="organization" placeholder="Halden Logistics" /></label>
+        <label class="field">
+          How many people have a mailbox?
+          <select name="mailboxes">
+            <option>Under 100</option>
+            <option>100 to 1,000</option>
+            <option>Over 1,000</option>
+          </select>
+        </label>
+        <label class="field">
+          Which vendors can read employee mail today?
+          <textarea name="vendors" placeholder="A CRM that syncs sales mail, an expense tool, and a recruiting tool we’re not sure about."></textarea>
+        </label>
+        <button class="btn lg send">Send</button>
+        <p class="small">We only use this to reply to you. It doesn’t go on a mailing list.</p>
+      </form>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .side {
+    gap: var(--space-32);
+  }
+
+  .form {
+    display: grid;
+    gap: var(--space-12);
+    width: 100%;
+  }
+
+  .send {
+    justify-self: start;
+  }
+</style>

@@ -1,0 +1,57 @@
+/* Site layout and type tokens. Colors and fonts come from packages/ui/colors.css. */
+@import '../../../packages/ui/colors.css';
+
+:root {
+  --text-micro: 11px;
+  --text-mono: 12px;
+  --text-small: 13px;
+  --text-body: 14px;
+  --text-lead: 15px;
+  --text-wordmark: 17px;
+  --text-title: 18px;
+  --text-heading: 28px;
+  --text-display: 44px;
+  --text-display-l: 64px;
+
+  --fs-xl: clamp(44px, 6.67vw, 96px);
+  --fs-l: clamp(38px, 4.44vw, 64px);
+  --fs-d: clamp(30px, 3.05vw, 44px);
+  --fs-intro: clamp(18px, 1.53vw, 22px);
+
+  --leading-tight: 1.05;
+  --leading-display: 1.1;
+  --leading-snug: 1.15;
+  --leading-body: 1.45;
+
+  --tracking-xl: -0.0146em;
+  --tracking-l: -0.022em;
+  --tracking-d: -0.02em;
+  --tracking-h: -0.018em;
+  --tracking-w: -0.018em;
+
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-10: 10px;
+  --space-12: 12px;
+  --space-14: 14px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-40: 40px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+
+  --r: 2px;
+  --hair: 1px;
+  --gutter: clamp(20px, 6.67vw, 96px);
+}
+
+.on-dark {
+  color-scheme: dark;
+  background: var(--sunken);
+  color: var(--ink);
+}

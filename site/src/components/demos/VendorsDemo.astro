@@ -1,0 +1,154 @@
+---
+import { logos, VENDORS } from '../../data/vendors';
+import Segmented from '../Segmented.astro';
+
+const total = VENDORS.reduce((sum, vendor) => sum + vendor.emails, 0);
+const names = VENDORS.map((vendor) => vendor.name).join(', ');
+---
+
+<figure
+  class="panel demo"
+  data-demo="vendors"
+  aria-label={`With mailbox access, each of ${VENDORS.length} vendors, ${names}, can read all 1.2 million company emails. With Permaily, each one reads only what its job needs, ${total.toLocaleString('en-US')} emails in total.`}
+>
+  <div class="vendors-head">
+    <p class="num-line">
+      {VENDORS.length} vendors can read <span class="mk" data-count>{total.toLocaleString('en-US')}</span> of 1.2 million emails this month
+    </p>
+    <Segmented before="With mailbox access" after="With Permaily" />
+  </div>
+  {
+    VENDORS.map((vendor) => (
+      <div class="vrow" data-n={vendor.emails}>
+        <div class="who">
+          <span class="tile logo">
+            <svg viewBox={logos[vendor.logo].viewBox} aria-hidden="true">
+              <path d={logos[vendor.logo].d} />
+            </svg>
+          </span>
+          <div>
+            <b>{vendor.name}</b>
+            <small>{vendor.intent}</small>
+          </div>
+        </div>
+        <div class="vbar" style={`--keep:max(3px,${(vendor.emails / 12000).toFixed(3)}%);--p:1`}>
+          <i />
+        </div>
+        <div class="n">{vendor.emails.toLocaleString('en-US')}</div>
+      </div>
+    ))
+  }
+</figure>
+
+<style is:global>
+  .vendors-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: var(--space-14) var(--space-24);
+    padding: var(--space-20) var(--space-24);
+    border-bottom: var(--hair) solid var(--rule-strong);
+  }
+
+  .vendors-head .num-line {
+    max-width: 22em;
+    font-size: var(--fs-d);
+    font-weight: 500;
+    letter-spacing: var(--tracking-d);
+    line-height: var(--leading-display);
+  }
+
+  .vrow {
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr) 110px;
+    align-items: center;
+    gap: var(--space-16);
+    padding: var(--space-10) var(--space-24);
+    border-bottom: var(--hair) solid var(--rule);
+  }
+
+  .vrow:last-child {
+    border-bottom: 0;
+  }
+
+  .tile.logo {
+    width: 36px;
+    height: 36px;
+  }
+
+  .tile.logo svg {
+    display: block;
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+  }
+
+  .vrow .who {
+    display: flex;
+    align-items: center;
+    gap: var(--space-10);
+    min-width: 0;
+  }
+
+  .vrow .who b {
+    display: block;
+    font-size: var(--text-lead);
+    font-weight: 500;
+    line-height: 1.2;
+  }
+
+  .vrow .who small {
+    display: block;
+    color: var(--ink-2);
+    font-size: var(--text-small);
+    line-height: 1.2;
+  }
+
+  .vbar {
+    position: relative;
+    overflow: hidden;
+    height: 28px;
+    background: var(--highlight);
+  }
+
+  .vbar i {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: var(--keep);
+    background: var(--bar);
+    transform: scaleX(var(--p, 1));
+    transform-origin: right;
+  }
+
+  .vrow .n {
+    font-family: var(--font-mono);
+    font-size: var(--text-small);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
+  @media (max-width: 760px) {
+    .vendors-head {
+      grid-template-columns: minmax(0, 1fr);
+      padding: var(--space-16);
+    }
+
+    .vrow {
+      grid-template-columns: minmax(0, 1fr) auto;
+      padding: var(--space-12) var(--space-16);
+    }
+
+    .vrow .vbar {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+  }
+</style>
+
+<script>
+  import { initVendors } from '../../scripts/demos/vendors';
+
+  document.querySelectorAll<HTMLElement>('[data-demo="vendors"]').forEach(initVendors);
+</script>

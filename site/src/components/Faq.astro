@@ -1,0 +1,65 @@
+---
+interface Props {
+  items: { question: string; answer: string }[];
+}
+
+const { items } = Astro.props;
+---
+
+<div class="faq">
+  {
+    items.map((item) => (
+      <details>
+        <summary>{item.question}</summary>
+        <p>{item.answer}</p>
+      </details>
+    ))
+  }
+</div>
+
+<style is:global>
+  .faq details {
+    border-bottom: var(--hair) solid var(--rule);
+  }
+
+  .faq details:first-child {
+    border-top: var(--hair) solid var(--rule-strong);
+  }
+
+  .faq summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-16);
+    padding-block: var(--space-16);
+    font-size: var(--text-title);
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .faq summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .faq summary::after {
+    content: '';
+    flex: none;
+    width: 8px;
+    height: 8px;
+    margin-right: 4px;
+    border-right: 1.5px solid var(--ink-2);
+    border-bottom: 1.5px solid var(--ink-2);
+    transform: translateY(-2px) rotate(45deg);
+  }
+
+  .faq details[open] summary::after {
+    transform: translateY(2px) rotate(-135deg);
+  }
+
+  .faq p {
+    max-width: 40em;
+    padding-bottom: var(--space-16);
+    color: var(--ink-2);
+    font-size: var(--text-lead);
+  }
+</style>

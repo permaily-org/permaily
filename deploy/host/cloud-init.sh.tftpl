@@ -1,0 +1,30 @@
+#!/bin/bash
+# First-boot setup of the parent instance (Amazon Linux 2023, arm64).
+# The parent is untrusted: it only runs nitro-cli and permaily-host.
+set -euxo pipefail
+
+dnf install -y aws-nitro-enclaves-cli jq
+
+cat > /etc/nitro_enclaves/allocator.yaml <<'EOF'
+---
+memory_mib: ${enclave_memory_mib}
+cpu_count: ${enclave_cpus}
+EOF
+systemctl enable --now nitro-enclaves-allocator.service
+
+install -d -m 0755 /opt/permaily /etc/permaily
+cat > /etc/permaily/enclave.env <<'EOF'
+ENCLAVE_CPUS=${enclave_cpus}
+ENCLAVE_MEMORY_MIB=${enclave_memory_mib}
+ENCLAVE_EXTRA_FLAGS=
+EOF
+
+cat > /etc/systemd/system/permaily-host.service <<'EOF'
+${host_unit}
+EOF
+cat > /etc/systemd/system/permaily-enclave.service <<'EOF'
+${enclave_unit}
+EOF
+systemctl daemon-reload
+# Units are enabled now and start once scripts/deploy.sh has delivered the artifacts.
+systemctl enable permaily-host.service permaily-enclave.service

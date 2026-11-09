@@ -1,0 +1,150 @@
+---
+import PageHead from '../components/PageHead.astro';
+import { LINKS } from '../config/site';
+import Base from '../layouts/Base.astro';
+
+const releases = [
+  {
+    version: 'v1.4.2',
+    dates: '9 March, logged 2 March',
+    measurement: '7f3a…c91e',
+    commit: 'a41f9c2',
+    title: 'Microsoft 365 mailboxes',
+    changes: [
+      'Connect Microsoft 365 and Outlook accounts',
+      'Rules and queries work the same across providers',
+      'Receipts now name the provider a message came from',
+    ],
+  },
+  {
+    version: 'v1.4.1',
+    dates: '25 February, logged 18 February',
+    measurement: '2cb1…04f7',
+    commit: '88d02be',
+    title: 'Alerts when a rule jumps',
+    changes: [
+      'You’re told when a rule suddenly matches far more mail',
+      'Activity marks unusual days on the histogram',
+      'Unused access is suggested for revocation after 60 days',
+    ],
+  },
+  {
+    version: 'v1.4.0',
+    dates: '10 February, logged 3 February',
+    measurement: 'e90a…3b12',
+    commit: '1e7d6aa',
+    title: 'Asking for more needs fresh consent',
+    changes: [
+      'An app that wants more than its approved query now asks you first',
+      'Asking for more shows only the difference',
+    ],
+  },
+  {
+    version: 'v1.3.9',
+    dates: '28 January, logged 28 January',
+    measurement: '51dd…a820',
+    commit: 'c70fa31',
+    title: 'Urgent fix for malformed MIME headers',
+    changes: [
+      'Hardened the parser against malformed headers',
+      'Added fuzz cases for the failure, in the public repository',
+    ],
+    skippedWait: true,
+  },
+];
+---
+
+<Base title="Changelog" description="Every release, with its measurement.">
+  <PageHead intro="A new build is logged publicly before it can receive keys, then goes live after a waiting period. This page says what changed, and the release log proves it.">
+    Every release, <br />with its measurement
+    <Fragment slot="actions">
+      <a class="btn lg sec-b" href={LINKS.releaseLog}>Open the release log</a>
+    </Fragment>
+  </PageHead>
+
+  <section class="page-end">
+    <div class="wrap">
+      {
+        releases.map((release) => (
+          <article class="release">
+            <div class="meta">
+              <b>{release.version}</b>
+              <span class="fine">{release.dates}</span>
+              <span class="mono ids">
+                measurement {release.measurement}
+                <br />
+                commit {release.commit}
+              </span>
+            </div>
+            <div>
+              <h3>{release.title}</h3>
+              {release.skippedWait && (
+                <p class="notice">
+                  <b>The waiting period was skipped for this release</b>
+                  We logged it publicly first, and the reason is in the release log.
+                </p>
+              )}
+              <ul class="checks">
+                {release.changes.map((change) => <li>{change}</li>)}
+              </ul>
+            </div>
+          </article>
+        ))
+      }
+    </div>
+  </section>
+</Base>
+
+<style>
+  .release {
+    display: grid;
+    grid-template-columns: 400px minmax(0, 1fr);
+    gap: var(--space-24);
+    padding-block: var(--space-24) var(--space-48);
+    border-top: var(--hair) solid var(--rule-strong);
+  }
+
+  .meta {
+    display: grid;
+    align-content: start;
+    gap: var(--space-6);
+  }
+
+  .meta b {
+    font-family: var(--font-mono);
+    font-size: var(--text-body);
+    font-weight: 500;
+  }
+
+  .ids {
+    color: var(--ink-2);
+  }
+
+  .release h3 {
+    margin-bottom: var(--space-12);
+    font-size: var(--text-heading);
+    font-weight: 500;
+    letter-spacing: var(--tracking-h);
+    line-height: var(--leading-snug);
+  }
+
+  .notice {
+    margin-bottom: var(--space-14);
+    padding: var(--space-14) var(--space-16);
+    background: var(--attention-bg);
+    color: var(--attention);
+    font-size: var(--text-body);
+  }
+
+  .notice b {
+    display: block;
+    font-size: var(--text-lead);
+    font-weight: 500;
+  }
+
+  @media (max-width: 760px) {
+    .release {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

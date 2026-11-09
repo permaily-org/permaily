@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://permaily.com/sitemap-index.xml
