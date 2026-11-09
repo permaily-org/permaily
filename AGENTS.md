@@ -9,7 +9,7 @@ Permaily runs an email access broker inside an AWS Nitro Enclave whose image any
 | [docs/architecture.md](docs/architecture.md) | Before changing how components fit together |
 | [docs/plan.md](docs/plan.md) | Before starting work from a later phase (F1+) |
 | [docs/decisions/](docs/decisions/index.md) | Before revisiting a decision; add an ADR for a new one |
-| [docs/security.md](docs/security.md) | Before touching networking, TLS, attestation, the host, auth or logging |
+| [docs/threat-model.md](docs/threat-model.md) | Before touching networking, TLS, attestation, the host, auth or logging |
 | [docs/verification.md](docs/verification.md) | Before changing `/attestation`, `pkg/attestation` or the build |
 | [docs/build.md](docs/build.md) | Before changing dependencies, Nix or anything in the image |
 | [docs/testing.md](docs/testing.md) | Before writing or changing tests |
@@ -49,5 +49,5 @@ Stale instructions are a bug. Before finishing a change, check:
 1. Did a command, path or tool change? Update the commands above and the layer's AGENTS.md.
 2. Did you make a decision someone could reverse later? Add an ADR in `docs/decisions/`.
 3. Did you add evidence for an acceptance criterion? Update `docs/acceptance.md`.
-4. Did you change what is trusted, logged or reachable? Update `docs/security.md`.
+4. Did you change what is trusted, logged or reachable? Update `docs/threat-model.md`.
 5. Did a TODO get done or a new one appear? Update the TODO list in the relevant doc.
