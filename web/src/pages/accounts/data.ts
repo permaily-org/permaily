@@ -1,4 +1,4 @@
-import { connections, mailboxes, vendors, type Mailbox } from '../../data/sample.ts'
+import { connections, type Mailbox, mailboxes, vendors } from '../../data/sample.ts'
 
 export const forwardingMailbox = mailboxes.find((m) => m.method === 'forwarding') ?? mailboxes[0]
 
@@ -12,7 +12,8 @@ export const filterSearch =
 export const expectations = [
   {
     title: 'Gmail will show you a notice',
-    detail: "It appears for a week after you turn forwarding on. That's expected, and it means Gmail is keeping you informed.",
+    detail:
+      "It appears for a week after you turn forwarding on. That's expected, and it means Gmail is keeping you informed.",
   },
   {
     title: 'Only new mail is forwarded',

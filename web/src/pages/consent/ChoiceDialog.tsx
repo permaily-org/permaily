@@ -10,7 +10,14 @@ type ChoiceProps = {
   onSave: (value: string) => void
 }
 
-function ChoiceDialog({ open, onClose, title, choices, value, onSave }: ChoiceProps & { open: boolean; onClose: () => void }) {
+function ChoiceDialog({
+  open,
+  onClose,
+  title,
+  choices,
+  value,
+  onSave,
+}: ChoiceProps & { open: boolean; onClose: () => void }) {
   const [draft, setDraft] = useState(value)
   const name = useId()
   return (
@@ -25,7 +32,10 @@ function ChoiceDialog({ open, onClose, title, choices, value, onSave }: ChoicePr
           <legend className="text-title font-medium">{title}</legend>
           <div className="mt-4 border-t border-rule-strong">
             {choices.map((choice) => (
-              <label key={choice.value} className="flex cursor-pointer items-start gap-3 border-b border-rule py-3">
+              <label
+                key={choice.value}
+                className="flex cursor-pointer items-start gap-3 border-b border-rule py-3"
+              >
                 <input
                   type="radio"
                   name={name}
@@ -54,7 +64,11 @@ function ChoiceDialog({ open, onClose, title, choices, value, onSave }: ChoicePr
 }
 
 /** A term with a Change action that opens a short list of choices. */
-export function ChoiceTerm({ label, display, ...props }: ChoiceProps & { label: string; display?: string }) {
+export function ChoiceTerm({
+  label,
+  display,
+  ...props
+}: ChoiceProps & { label: string; display?: string }) {
   const [open, setOpen] = useState(false)
   const [session, setSession] = useState(0)
   return (

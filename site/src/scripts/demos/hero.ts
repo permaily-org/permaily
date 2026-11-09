@@ -1,4 +1,4 @@
-import { $, $$, Timeline, fmt, lerp, out3, out4, seg, setPressed, setVar } from '../timeline';
+import { $, $$, fmt, lerp, out3, out4, seg, setPressed, setVar, Timeline } from '../timeline';
 
 const ALL = 12304;
 
@@ -36,7 +36,8 @@ export function initHero(root: HTMLElement) {
   let from: string | null = null;
   let plan: { a: Look; b: Look; s: number }[] = [];
 
-  const total = (id: string | null) => (id === null ? ALL : Number(apps.find((b) => b.dataset.app === id)!.dataset.total));
+  const total = (id: string | null) =>
+    id === null ? ALL : Number(apps.find((b) => b.dataset.app === id)!.dataset.total);
 
   const look = (line: (typeof lines)[number], id: string | null): Look => {
     const shared = id === null || line.apps.includes(id);

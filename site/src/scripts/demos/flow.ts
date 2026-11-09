@@ -1,4 +1,4 @@
-import { $, $$, Timeline, fmt, out3, seg, setVar } from '../timeline';
+import { $, $$, fmt, out3, seg, setVar, Timeline } from '../timeline';
 
 /** Home: how it works. The inbox connects, the person approves, and only matching mail goes through. */
 export function initFlow(root: HTMLElement) {
@@ -14,7 +14,18 @@ export function initFlow(root: HTMLElement) {
   const shared = $('[data-shared]', root);
   const held = $('[data-held]', root);
   const receipts = $('[data-receipts]', root);
-  const T = { rowEach: 70, wire: 900, s2: 2500, ask: 2500, prev: 3050, prevEach: 230, press: 5900, s3: 6200, lane: 380, end: 9800 };
+  const T = {
+    rowEach: 70,
+    wire: 900,
+    s2: 2500,
+    ask: 2500,
+    prev: 3050,
+    prevEach: 230,
+    press: 5900,
+    s3: 6200,
+    lane: 380,
+    end: 9800,
+  };
   const kept = outRows.filter((r) => r.dataset.keep === '1').length;
 
   const render = (t: number) => {
@@ -35,7 +46,11 @@ export function initFlow(root: HTMLElement) {
       const subject = $('.subj .t', row);
       if (row.dataset.keep === '1') {
         const k = matched++;
-        setVar($('.subj .t', inRows[i]!), '--hl', out3(seg(t, T.prev + k * T.prevEach, T.prev + k * T.prevEach + 360)));
+        setVar(
+          $('.subj .t', inRows[i]!),
+          '--hl',
+          out3(seg(t, T.prev + k * T.prevEach, T.prev + k * T.prevEach + 360)),
+        );
         setVar(wiresOut[i]!, '--w', out3(seg(t, s, s + 200)));
         setVar(subject, '--hl', out3(seg(t, s + 120, s + 460)));
         $('.tx', subject).style.opacity = String(seg(t, s + 120, s + 200));
@@ -57,7 +72,15 @@ export function initFlow(root: HTMLElement) {
     held.textContent = fmt(12257 * out3(seg(t, T.s3, T.end - 400)));
 
     setVar(states[0]!, '--o', t < T.ask - 150 ? 1 : Math.max(0, 1 - (t - (T.ask - 150)) / 150));
-    setVar(states[1]!, '--o', t < T.ask ? 0 : t < T.s3 - 120 ? seg(t, T.ask, T.ask + 220) : Math.max(0, 1 - (t - (T.s3 - 120)) / 120));
+    setVar(
+      states[1]!,
+      '--o',
+      t < T.ask
+        ? 0
+        : t < T.s3 - 120
+          ? seg(t, T.ask, T.ask + 220)
+          : Math.max(0, 1 - (t - (T.s3 - 120)) / 120),
+    );
     setVar(states[2]!, '--o', seg(t, T.s3, T.s3 + 220));
     allow.dataset.pressed = String(t >= T.press);
 
@@ -68,5 +91,12 @@ export function initFlow(root: HTMLElement) {
     });
   };
 
-  new Timeline({ name: 'flow', root, duration: T.end, render, threshold: 0.35, control: $('.demo-ctl', root) });
+  new Timeline({
+    name: 'flow',
+    root,
+    duration: T.end,
+    render,
+    threshold: 0.35,
+    control: $('.demo-ctl', root),
+  });
 }

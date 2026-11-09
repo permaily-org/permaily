@@ -3,7 +3,14 @@ import { useNavigate } from 'react-router'
 import { Count, Headline, TermRow, TextAction } from '../../components/ui/index.ts'
 import { connectionById, formatCount } from '../../data/sample.ts'
 import { ConsentLayout, Decision, Requester, Terms } from './ConsentLayout.tsx'
-import { gmailShortQuery, ledgerlyTimeline, requesters, viewRows, wideningLens, type QueryId } from './data.ts'
+import {
+  gmailShortQuery,
+  ledgerlyTimeline,
+  type QueryId,
+  requesters,
+  viewRows,
+  wideningLens,
+} from './data.ts'
 import { InboxPreview } from './InboxPreview.tsx'
 import { MailboxLabel } from './MailboxPicker.tsx'
 import { ErrorPreview, LoadingPreview } from './PreviewStates.tsx'
@@ -48,18 +55,30 @@ export function WideningPage() {
         )
       }
     >
-      <Requester initials={app.initials} line={`${app.domain} has access and is asking for more`} facts={app.facts} />
-      <Headline size="display-m" className="mt-6">Ledgerly wants to add your bank statements.</Headline>
+      <Requester
+        initials={app.initials}
+        line={`${app.domain} has access and is asking for more`}
+        facts={app.facts}
+      />
+      <Headline size="display-m" className="mt-6">
+        Ledgerly wants to add your bank statements.
+      </Headline>
 
       <Terms>
         <TermRow label="Adds">Bank and card statements</TermRow>
         <TermRow label="To its query">
-          <code className="min-w-0 truncate font-mono text-mono text-ink-2 max-sm:whitespace-normal">OR {gmailShortQuery(['bank-statements'])}</code>
+          <code className="min-w-0 truncate font-mono text-mono text-ink-2 max-sm:whitespace-normal">
+            OR {gmailShortQuery(['bank-statements'])}
+          </code>
         </TermRow>
         <TermRow
           label="The rest"
           action={
-            <TextAction aria-expanded={showRest} aria-controls="unchanged-terms" onClick={() => setShowRest((v) => !v)}>
+            <TextAction
+              aria-expanded={showRest}
+              aria-controls="unchanged-terms"
+              onClick={() => setShowRest((v) => !v)}
+            >
               {showRest ? 'Hide' : 'Show'}
             </TextAction>
           }
@@ -80,7 +99,11 @@ export function WideningPage() {
         allowDisabled={pending}
         declineLabel="Keep it as it is"
         onDecline={() => navigate('/')}
-        note={pending ? "You decide after you've seen the preview." : `Saying no changes nothing. ${app.name} keeps the access it already has.`}
+        note={
+          pending
+            ? "You decide after you've seen the preview."
+            : `Saying no changes nothing. ${app.name} keeps the access it already has.`
+        }
       />
     </ConsentLayout>
   )

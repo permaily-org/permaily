@@ -1,4 +1,4 @@
-import { connectionById, connectionLabel, receipts, type Receipt } from '../../data/sample.ts'
+import { connectionById, connectionLabel, type Receipt, receipts } from '../../data/sample.ts'
 
 export const thisWeek = receipts.filter((r) => r.day !== 'Last week')
 
@@ -63,7 +63,9 @@ export function groupByDay(list: Receipt[]): Array<{ day: Receipt['day']; rows: 
 export function matchesSearch(receipt: Receipt, query: string): boolean {
   const q = query.trim().toLowerCase()
   if (!q) return true
-  return [receipt.sender, receipt.from, receipt.subject].some((field) => field.toLowerCase().includes(q))
+  return [receipt.sender, receipt.from, receipt.subject].some((field) =>
+    field.toLowerCase().includes(q),
+  )
 }
 
 /** "Claude · Chat", or the id if the connection is gone. */
@@ -78,7 +80,20 @@ function csvField(value: string | number): string {
 }
 
 export function receiptsCsv(list: Receipt[]): string {
-  const header = ['receipt', 'day', 'time', 'connection', 'sender', 'from', 'subject', 'parts', 'body_chars', 'attachment', 'query', 'removed']
+  const header = [
+    'receipt',
+    'day',
+    'time',
+    'connection',
+    'sender',
+    'from',
+    'subject',
+    'parts',
+    'body_chars',
+    'attachment',
+    'query',
+    'removed',
+  ]
   const rows = list.map((r) => [
     r.id,
     r.day,

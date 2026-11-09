@@ -19,18 +19,39 @@ export const user = { name: 'Marta Ruiz', email: 'marta.ruiz@example.com' }
  * readable: emails at least one connection can read in full, the union of the queries below.
  * withheld: held back from every connection by rules. trimmed: emails that rules remove details from.
  */
-export const inbox = { total: 12304, readable: 752, headersOnly: 11980, withheld: 324, trimmed: 449 }
+export const inbox = {
+  total: 12304,
+  readable: 752,
+  headersOnly: 11980,
+  withheld: 324,
+  trimmed: 449,
+}
 
 /** Kinds of mail a connection can ask for. A consent screen shows a query in these words. */
-export type QueryId = 'flights-and-hotels' | 'invoices' | 'receipts' | 'bank-statements' | 'newsletters'
+export type QueryId =
+  | 'flights-and-hotels'
+  | 'invoices'
+  | 'receipts'
+  | 'bank-statements'
+  | 'newsletters'
 
 export type QueryKind = { id: QueryId; name: string; detail: string; matches: number }
 
 export const queryKinds: QueryKind[] = [
-  { id: 'flights-and-hotels', name: 'Flights and hotels', detail: 'Flight, hotel, rail and car bookings', matches: 47 },
+  {
+    id: 'flights-and-hotels',
+    name: 'Flights and hotels',
+    detail: 'Flight, hotel, rail and car bookings',
+    matches: 47,
+  },
   { id: 'invoices', name: 'Invoices', detail: 'Invoices and bills', matches: 212 },
   { id: 'receipts', name: 'Receipts', detail: 'Order and payment receipts', matches: 388 },
-  { id: 'bank-statements', name: 'Bank statements', detail: 'Bank and card statements', matches: 96 },
+  {
+    id: 'bank-statements',
+    name: 'Bank statements',
+    detail: 'Bank and card statements',
+    matches: 96,
+  },
   { id: 'newsletters', name: 'Newsletters', detail: 'Mail sent to a mailing list', matches: 1204 },
 ]
 
@@ -48,10 +69,38 @@ export type Vendor = {
 }
 
 export const vendors: Vendor[] = [
-  { id: 'claude', name: 'Claude', initials: 'CL', domain: 'claude.ai', kind: 'Agent', delivery: 'MCP' },
-  { id: 'trip-app', name: 'Trip App', initials: 'TA', domain: 'trip-app.com', kind: 'App', delivery: 'API' },
-  { id: 'ledgerly', name: 'Ledgerly', initials: 'LE', domain: 'ledgerly.app', kind: 'App', delivery: 'API' },
-  { id: 'inbox-tidy', name: 'Inbox Tidy', initials: 'IT', domain: 'inboxtidy.io', kind: 'App', delivery: 'API' },
+  {
+    id: 'claude',
+    name: 'Claude',
+    initials: 'CL',
+    domain: 'claude.ai',
+    kind: 'Agent',
+    delivery: 'MCP',
+  },
+  {
+    id: 'trip-app',
+    name: 'Trip App',
+    initials: 'TA',
+    domain: 'trip-app.com',
+    kind: 'App',
+    delivery: 'API',
+  },
+  {
+    id: 'ledgerly',
+    name: 'Ledgerly',
+    initials: 'LE',
+    domain: 'ledgerly.app',
+    kind: 'App',
+    delivery: 'API',
+  },
+  {
+    id: 'inbox-tidy',
+    name: 'Inbox Tidy',
+    initials: 'IT',
+    domain: 'inboxtidy.io',
+    kind: 'App',
+    delivery: 'API',
+  },
 ]
 
 /**
@@ -110,7 +159,12 @@ export const connections: Connection[] = [
     ends: '4 June',
     approved: 'Approved by you on 6 March',
     runs: [
-      { when: 'Today', query: '"attachment of Invoice F-2291"', result: 'Refused, attachments are not part of its access', refused: true },
+      {
+        when: 'Today',
+        query: '"attachment of Invoice F-2291"',
+        result: 'Refused, attachments are not part of its access',
+        refused: true,
+      },
       { when: 'Today', query: '"invoice holded february"', result: '1 email' },
       { when: 'Today', query: '"vodafone bill march"', result: '1 email' },
       { when: 'Mon', query: '"car insurance renewal"', result: '0 emails' },
@@ -145,7 +199,8 @@ export const connections: Connection[] = [
     vendorId: 'claude',
     name: 'Finances',
     asksFor: 'Invoices, Receipts, Bank statements',
-    query: 'from:(holded.com OR amazon.es OR santander.es …) OR subject:(invoice OR receipt OR extracto)',
+    query:
+      'from:(holded.com OR amazon.es OR santander.es …) OR subject:(invoice OR receipt OR extracto)',
     trigger: { kind: 'new-mail' },
     webhook: { url: 'https://claude.ai/hooks/…4f2a', lastCall: 'Today, 11:02' },
     readCount: 696,
@@ -169,7 +224,8 @@ export const connections: Connection[] = [
     vendorId: 'trip-app',
     name: 'Bookings',
     asksFor: 'Flights and hotels',
-    query: 'from:(iberia.com OR booking.com OR renfe.es OR airbnb.com …) subject:(booking OR reservation OR itinerary)',
+    query:
+      'from:(iberia.com OR booking.com OR renfe.es OR airbnb.com …) subject:(booking OR reservation OR itinerary)',
     trigger: { kind: 'new-mail' },
     webhook: { url: 'https://api.trip-app.com/hooks/…91c0', lastCall: 'Today, 11:40' },
     readCount: 47,
@@ -192,7 +248,8 @@ export const connections: Connection[] = [
     vendorId: 'ledgerly',
     name: 'Bookkeeping',
     asksFor: 'Invoices, Receipts',
-    query: 'from:(holded.com OR vodafone.es OR iberdrola.es …) OR subject:(invoice OR factura OR receipt OR recibo)',
+    query:
+      'from:(holded.com OR vodafone.es OR iberdrola.es …) OR subject:(invoice OR factura OR receipt OR recibo)',
     trigger: { kind: 'schedule', at: '09:00' },
     readCount: 600,
     readLabel: '600 emails',
@@ -207,7 +264,12 @@ export const connections: Connection[] = [
     flag: 'Wants bank statements',
     runs: [
       { when: 'Today', query: '09:00, new mail since yesterday', result: '1 email' },
-      { when: 'Mon', query: 'Bank statements since January', result: 'Refused, outside its query', refused: true },
+      {
+        when: 'Mon',
+        query: 'Bank statements since January',
+        result: 'Refused, outside its query',
+        refused: true,
+      },
       { when: 'Mon', query: '09:00, new mail since Sunday', result: '1 email' },
     ],
   },
@@ -401,7 +463,9 @@ export const rules: Rule[] = [
 
 /** "Holds back the email" or "Removes the address" */
 export function effectText(rule: Pick<Rule, 'effect' | 'removes'>): string {
-  return rule.effect === 'hold' ? 'Holds back the email' : `Removes ${rule.removes ?? 'the details'}`
+  return rule.effect === 'hold'
+    ? 'Holds back the email'
+    : `Removes ${rule.removes ?? 'the details'}`
 }
 
 /** "Trip App", "Trip App and Claude", "Trip App, Claude and Ledgerly" */
@@ -445,22 +509,41 @@ export function ruleCovers(appliesTo: AppliesTo, connection: Connection): boolea
 
 /** Targets with this connection taken out. A vendor that covered it is replaced by its other connections. */
 function without(targets: string[], connection: Connection): string[] {
-  const siblings = connections.filter((c) => c.vendorId === connection.vendorId && c.id !== connection.id).map((c) => c.id)
-  return [...new Set(targets.flatMap((t) => (!covers(t, connection) ? [t] : isConnectionTarget(t) ? [] : siblings)))]
+  const siblings = connections
+    .filter((c) => c.vendorId === connection.vendorId && c.id !== connection.id)
+    .map((c) => c.id)
+  return [
+    ...new Set(
+      targets.flatMap((t) =>
+        !covers(t, connection) ? [t] : isConnectionTarget(t) ? [] : siblings,
+      ),
+    ),
+  ]
 }
 
 /** The same rule, applied to this connection or not, as when it's ticked on the connection's page. */
-export function withConnection(appliesTo: AppliesTo, connection: Connection, on: boolean): AppliesTo {
+export function withConnection(
+  appliesTo: AppliesTo,
+  connection: Connection,
+  on: boolean,
+): AppliesTo {
   if (on === ruleCovers(appliesTo, connection)) return appliesTo
   if (appliesTo.to === 'all') {
-    return on ? { to: 'all', except: without(appliesTo.except, connection) } : { to: 'all', except: [...appliesTo.except, connection.id] }
+    return on
+      ? { to: 'all', except: without(appliesTo.except, connection) }
+      : { to: 'all', except: [...appliesTo.except, connection.id] }
   }
-  return on ? { to: 'some', only: [...appliesTo.only, connection.id] } : { to: 'some', only: without(appliesTo.only, connection) }
+  return on
+    ? { to: 'some', only: [...appliesTo.only, connection.id] }
+    : { to: 'some', only: without(appliesTo.only, connection) }
 }
 
 /** "Every connection", "Every connection except Claude · Morning summary", or "Claude and Trip App". */
 export function appliesToText(appliesTo: AppliesTo): string {
-  if (appliesTo.to === 'some') return appliesTo.only.length === 0 ? 'No connection' : joinNames(appliesTo.only.map(targetLabel))
+  if (appliesTo.to === 'some')
+    return appliesTo.only.length === 0
+      ? 'No connection'
+      : joinNames(appliesTo.only.map(targetLabel))
   if (appliesTo.except.length === 0) return 'Every connection'
   return `Every connection except ${joinNames(appliesTo.except.map(targetLabel))}`
 }
@@ -500,27 +583,305 @@ export type Receipt = {
 
 /** This week's receipts, newest first, plus a few from last week for connection pages. */
 export const receipts: Receipt[] = [
-  { id: 'r_8f21c4', day: 'Today', time: '14:02', connectionId: 'claude/chat', sender: 'Holded', from: 'facturas@holded.com', subject: 'Invoice F-2291, February', parts: 'subject, body', bodyChars: 1204, attachment: 'withheld', query: '"invoice holded february"', request: 'get_message' },
-  { id: 'r_8f21c3', day: 'Today', time: '14:02', connectionId: 'claude/chat', sender: 'Iberia', from: 'confirmaciones@iberia.com', subject: 'Your flight to Lisbon is confirmed', parts: 'subject, body', bodyChars: 2310, attachment: 'none', query: '"flight to lisbon"', request: 'get_message' },
-  { id: 'r_7d10a9', day: 'Today', time: '11:40', connectionId: 'trip-app/bookings', sender: 'Iberia', from: 'confirmaciones@iberia.com', subject: 'Your flight to Lisbon is confirmed', parts: 'subject, body', bodyChars: 2310, attachment: 'none', query: 'Flights and hotels', request: 'webhook' },
-  { id: 'r_7d02b7', day: 'Today', time: '11:02', connectionId: 'claude/finances', sender: 'Iberdrola', from: 'facturas@iberdrola.es', subject: 'Factura de luz, marzo', parts: 'subject, body', bodyChars: 960, attachment: 'withheld', query: 'Invoices, Receipts, Bank statements', removed: { what: 'the address', ruleId: 'home-address' }, request: 'webhook' },
-  { id: 'r_7c0b12', day: 'Today', time: '09:31', connectionId: 'claude/chat', sender: 'Vodafone', from: 'facturas@vodafone.es', subject: 'Your March bill is ready', parts: 'subject, body', bodyChars: 860, attachment: 'withheld', query: '"vodafone bill march"', request: 'get_message' },
-  { id: 'r_7b9e04', day: 'Today', time: '09:14', connectionId: 'ledgerly/bookkeeping', sender: 'Amazon', from: 'auto-confirm@amazon.es', subject: 'Your receipt, order 402-881', parts: 'subject, body', bodyChars: 1530, attachment: 'none', query: 'Invoices, Receipts', removed: { what: 'the address', ruleId: 'home-address' }, request: 'messages.list' },
-  { id: 'r_7a0e51', day: 'Today', time: '07:00', connectionId: 'claude/morning-summary', sender: 'Zalando', from: 'info@zalando.es', subject: 'Your order is on its way', parts: 'subject, body', bodyChars: 1410, attachment: 'none', query: 'All new mail', request: 'messages.list' },
-  { id: 'r_7a0e4f', day: 'Today', time: '07:00', connectionId: 'claude/morning-summary', sender: 'Colegio San José', from: 'secretaria@colegio-sanjose.example', subject: 'Class trip on Friday', parts: 'subject, body', bodyChars: 720, attachment: 'none', query: 'All new mail', removed: { what: "Leo's and Alba's names", ruleId: 'children' }, request: 'messages.list' },
-  { id: 'r_6f33a1', day: 'Monday', time: '18:47', connectionId: 'claude/chat', sender: 'Booking.com', from: 'noreply@booking.com', subject: 'Hotel reservation, 14 to 17 March', parts: 'subject, body', bodyChars: 2875, attachment: 'none', query: '"hotel in lisbon"', removed: { what: "Leo's and Alba's names", ruleId: 'children' }, request: 'get_message' },
-  { id: 'r_6f339e', day: 'Monday', time: '18:46', connectionId: 'claude/chat', sender: 'Renfe', from: 'billetes@renfe.es', subject: 'Madrid to Valencia, 6 April', parts: 'subject, body', bodyChars: 1102, attachment: 'none', query: '"trips to lisbon or valencia"', request: 'get_message' },
-  { id: 'r_6e0c77', day: 'Monday', time: '11:20', connectionId: 'ledgerly/bookkeeping', sender: 'Iberdrola', from: 'facturas@iberdrola.es', subject: 'Factura de luz, febrero', parts: 'subject, body', bodyChars: 940, attachment: 'withheld', query: 'Invoices, Receipts', request: 'messages.list' },
-  { id: 'r_6e5b10', day: 'Monday', time: '08:15', connectionId: 'claude/finances', sender: 'Santander', from: 'avisos@santander.es', subject: 'Extracto de febrero', parts: 'subject, body', bodyChars: 1880, attachment: 'withheld', query: 'Invoices, Receipts, Bank statements', request: 'webhook' },
-  { id: 'r_6e2a03', day: 'Monday', time: '07:00', connectionId: 'claude/morning-summary', sender: 'Correos', from: 'avisos@correos.es', subject: 'Your parcel is waiting', parts: 'subject, body', bodyChars: 640, attachment: 'none', query: 'All new mail', request: 'messages.list' },
-  { id: 'r_5a91d0', day: 'Sunday', time: '20:03', connectionId: 'trip-app/bookings', sender: 'Airbnb', from: 'automated@airbnb.com', subject: 'Reservation confirmed in Porto', parts: 'subject, body', bodyChars: 3120, attachment: 'none', query: 'Flights and hotels', request: 'webhook' },
-  { id: 'r_5a8f2b', day: 'Sunday', time: '09:12', connectionId: 'ledgerly/bookkeeping', sender: 'Holded', from: 'facturas@holded.com', subject: 'Invoice F-2277, January', parts: 'subject, body', bodyChars: 1188, attachment: 'withheld', query: 'Invoices, Receipts', request: 'messages.list' },
-  { id: 'r_4c22e8', day: 'Saturday', time: '16:40', connectionId: 'ledgerly/bookkeeping', sender: 'Endesa', from: 'facturas@endesa.es', subject: 'Factura de gas, enero', parts: 'subject, body', bodyChars: 990, attachment: 'withheld', query: 'Invoices, Receipts', request: 'messages.list' },
-  { id: 'r_3b10f5', day: 'Last week', time: 'Thu 16:08', connectionId: 'claude/chat', sender: 'Airbnb', from: 'automated@airbnb.com', subject: 'Reservation confirmed in Porto', parts: 'subject, body', bodyChars: 3120, attachment: 'none', query: '"airbnb porto"', request: 'get_message' },
-  { id: 'r_3b0c11', day: 'Last week', time: 'Thu 09:12', connectionId: 'claude/finances', sender: 'Holded', from: 'facturas@holded.com', subject: 'Invoice F-2277, January', parts: 'subject, body', bodyChars: 1188, attachment: 'withheld', query: 'Invoices, Receipts, Bank statements', request: 'webhook' },
-  { id: 'r_3ad7e0', day: 'Last week', time: 'Wed 18:20', connectionId: 'claude/finances', sender: 'Amazon', from: 'auto-confirm@amazon.es', subject: 'Your receipt, order 402-117', parts: 'subject, body', bodyChars: 1490, attachment: 'none', query: 'Invoices, Receipts, Bank statements', removed: { what: 'the address', ruleId: 'home-address' }, request: 'webhook' },
-  { id: 'r_3a07c9', day: 'Last week', time: 'Tue 10:15', connectionId: 'claude/chat', sender: 'Holded', from: 'facturas@holded.com', subject: 'Invoice F-2277, January', parts: 'subject, body', bodyChars: 1188, attachment: 'withheld', query: '"invoice holded january"', request: 'get_message' },
-  { id: 'r_3a01f8', day: 'Last week', time: 'Tue 08:40', connectionId: 'claude/finances', sender: 'Endesa', from: 'facturas@endesa.es', subject: 'Factura de gas, enero', parts: 'subject, body', bodyChars: 990, attachment: 'withheld', query: 'Invoices, Receipts, Bank statements', request: 'webhook' },
+  {
+    id: 'r_8f21c4',
+    day: 'Today',
+    time: '14:02',
+    connectionId: 'claude/chat',
+    sender: 'Holded',
+    from: 'facturas@holded.com',
+    subject: 'Invoice F-2291, February',
+    parts: 'subject, body',
+    bodyChars: 1204,
+    attachment: 'withheld',
+    query: '"invoice holded february"',
+    request: 'get_message',
+  },
+  {
+    id: 'r_8f21c3',
+    day: 'Today',
+    time: '14:02',
+    connectionId: 'claude/chat',
+    sender: 'Iberia',
+    from: 'confirmaciones@iberia.com',
+    subject: 'Your flight to Lisbon is confirmed',
+    parts: 'subject, body',
+    bodyChars: 2310,
+    attachment: 'none',
+    query: '"flight to lisbon"',
+    request: 'get_message',
+  },
+  {
+    id: 'r_7d10a9',
+    day: 'Today',
+    time: '11:40',
+    connectionId: 'trip-app/bookings',
+    sender: 'Iberia',
+    from: 'confirmaciones@iberia.com',
+    subject: 'Your flight to Lisbon is confirmed',
+    parts: 'subject, body',
+    bodyChars: 2310,
+    attachment: 'none',
+    query: 'Flights and hotels',
+    request: 'webhook',
+  },
+  {
+    id: 'r_7d02b7',
+    day: 'Today',
+    time: '11:02',
+    connectionId: 'claude/finances',
+    sender: 'Iberdrola',
+    from: 'facturas@iberdrola.es',
+    subject: 'Factura de luz, marzo',
+    parts: 'subject, body',
+    bodyChars: 960,
+    attachment: 'withheld',
+    query: 'Invoices, Receipts, Bank statements',
+    removed: { what: 'the address', ruleId: 'home-address' },
+    request: 'webhook',
+  },
+  {
+    id: 'r_7c0b12',
+    day: 'Today',
+    time: '09:31',
+    connectionId: 'claude/chat',
+    sender: 'Vodafone',
+    from: 'facturas@vodafone.es',
+    subject: 'Your March bill is ready',
+    parts: 'subject, body',
+    bodyChars: 860,
+    attachment: 'withheld',
+    query: '"vodafone bill march"',
+    request: 'get_message',
+  },
+  {
+    id: 'r_7b9e04',
+    day: 'Today',
+    time: '09:14',
+    connectionId: 'ledgerly/bookkeeping',
+    sender: 'Amazon',
+    from: 'auto-confirm@amazon.es',
+    subject: 'Your receipt, order 402-881',
+    parts: 'subject, body',
+    bodyChars: 1530,
+    attachment: 'none',
+    query: 'Invoices, Receipts',
+    removed: { what: 'the address', ruleId: 'home-address' },
+    request: 'messages.list',
+  },
+  {
+    id: 'r_7a0e51',
+    day: 'Today',
+    time: '07:00',
+    connectionId: 'claude/morning-summary',
+    sender: 'Zalando',
+    from: 'info@zalando.es',
+    subject: 'Your order is on its way',
+    parts: 'subject, body',
+    bodyChars: 1410,
+    attachment: 'none',
+    query: 'All new mail',
+    request: 'messages.list',
+  },
+  {
+    id: 'r_7a0e4f',
+    day: 'Today',
+    time: '07:00',
+    connectionId: 'claude/morning-summary',
+    sender: 'Colegio San José',
+    from: 'secretaria@colegio-sanjose.example',
+    subject: 'Class trip on Friday',
+    parts: 'subject, body',
+    bodyChars: 720,
+    attachment: 'none',
+    query: 'All new mail',
+    removed: { what: "Leo's and Alba's names", ruleId: 'children' },
+    request: 'messages.list',
+  },
+  {
+    id: 'r_6f33a1',
+    day: 'Monday',
+    time: '18:47',
+    connectionId: 'claude/chat',
+    sender: 'Booking.com',
+    from: 'noreply@booking.com',
+    subject: 'Hotel reservation, 14 to 17 March',
+    parts: 'subject, body',
+    bodyChars: 2875,
+    attachment: 'none',
+    query: '"hotel in lisbon"',
+    removed: { what: "Leo's and Alba's names", ruleId: 'children' },
+    request: 'get_message',
+  },
+  {
+    id: 'r_6f339e',
+    day: 'Monday',
+    time: '18:46',
+    connectionId: 'claude/chat',
+    sender: 'Renfe',
+    from: 'billetes@renfe.es',
+    subject: 'Madrid to Valencia, 6 April',
+    parts: 'subject, body',
+    bodyChars: 1102,
+    attachment: 'none',
+    query: '"trips to lisbon or valencia"',
+    request: 'get_message',
+  },
+  {
+    id: 'r_6e0c77',
+    day: 'Monday',
+    time: '11:20',
+    connectionId: 'ledgerly/bookkeeping',
+    sender: 'Iberdrola',
+    from: 'facturas@iberdrola.es',
+    subject: 'Factura de luz, febrero',
+    parts: 'subject, body',
+    bodyChars: 940,
+    attachment: 'withheld',
+    query: 'Invoices, Receipts',
+    request: 'messages.list',
+  },
+  {
+    id: 'r_6e5b10',
+    day: 'Monday',
+    time: '08:15',
+    connectionId: 'claude/finances',
+    sender: 'Santander',
+    from: 'avisos@santander.es',
+    subject: 'Extracto de febrero',
+    parts: 'subject, body',
+    bodyChars: 1880,
+    attachment: 'withheld',
+    query: 'Invoices, Receipts, Bank statements',
+    request: 'webhook',
+  },
+  {
+    id: 'r_6e2a03',
+    day: 'Monday',
+    time: '07:00',
+    connectionId: 'claude/morning-summary',
+    sender: 'Correos',
+    from: 'avisos@correos.es',
+    subject: 'Your parcel is waiting',
+    parts: 'subject, body',
+    bodyChars: 640,
+    attachment: 'none',
+    query: 'All new mail',
+    request: 'messages.list',
+  },
+  {
+    id: 'r_5a91d0',
+    day: 'Sunday',
+    time: '20:03',
+    connectionId: 'trip-app/bookings',
+    sender: 'Airbnb',
+    from: 'automated@airbnb.com',
+    subject: 'Reservation confirmed in Porto',
+    parts: 'subject, body',
+    bodyChars: 3120,
+    attachment: 'none',
+    query: 'Flights and hotels',
+    request: 'webhook',
+  },
+  {
+    id: 'r_5a8f2b',
+    day: 'Sunday',
+    time: '09:12',
+    connectionId: 'ledgerly/bookkeeping',
+    sender: 'Holded',
+    from: 'facturas@holded.com',
+    subject: 'Invoice F-2277, January',
+    parts: 'subject, body',
+    bodyChars: 1188,
+    attachment: 'withheld',
+    query: 'Invoices, Receipts',
+    request: 'messages.list',
+  },
+  {
+    id: 'r_4c22e8',
+    day: 'Saturday',
+    time: '16:40',
+    connectionId: 'ledgerly/bookkeeping',
+    sender: 'Endesa',
+    from: 'facturas@endesa.es',
+    subject: 'Factura de gas, enero',
+    parts: 'subject, body',
+    bodyChars: 990,
+    attachment: 'withheld',
+    query: 'Invoices, Receipts',
+    request: 'messages.list',
+  },
+  {
+    id: 'r_3b10f5',
+    day: 'Last week',
+    time: 'Thu 16:08',
+    connectionId: 'claude/chat',
+    sender: 'Airbnb',
+    from: 'automated@airbnb.com',
+    subject: 'Reservation confirmed in Porto',
+    parts: 'subject, body',
+    bodyChars: 3120,
+    attachment: 'none',
+    query: '"airbnb porto"',
+    request: 'get_message',
+  },
+  {
+    id: 'r_3b0c11',
+    day: 'Last week',
+    time: 'Thu 09:12',
+    connectionId: 'claude/finances',
+    sender: 'Holded',
+    from: 'facturas@holded.com',
+    subject: 'Invoice F-2277, January',
+    parts: 'subject, body',
+    bodyChars: 1188,
+    attachment: 'withheld',
+    query: 'Invoices, Receipts, Bank statements',
+    request: 'webhook',
+  },
+  {
+    id: 'r_3ad7e0',
+    day: 'Last week',
+    time: 'Wed 18:20',
+    connectionId: 'claude/finances',
+    sender: 'Amazon',
+    from: 'auto-confirm@amazon.es',
+    subject: 'Your receipt, order 402-117',
+    parts: 'subject, body',
+    bodyChars: 1490,
+    attachment: 'none',
+    query: 'Invoices, Receipts, Bank statements',
+    removed: { what: 'the address', ruleId: 'home-address' },
+    request: 'webhook',
+  },
+  {
+    id: 'r_3a07c9',
+    day: 'Last week',
+    time: 'Tue 10:15',
+    connectionId: 'claude/chat',
+    sender: 'Holded',
+    from: 'facturas@holded.com',
+    subject: 'Invoice F-2277, January',
+    parts: 'subject, body',
+    bodyChars: 1188,
+    attachment: 'withheld',
+    query: '"invoice holded january"',
+    request: 'get_message',
+  },
+  {
+    id: 'r_3a01f8',
+    day: 'Last week',
+    time: 'Tue 08:40',
+    connectionId: 'claude/finances',
+    sender: 'Endesa',
+    from: 'facturas@endesa.es',
+    subject: 'Factura de gas, enero',
+    parts: 'subject, body',
+    bodyChars: 990,
+    attachment: 'withheld',
+    query: 'Invoices, Receipts, Bank statements',
+    request: 'webhook',
+  },
 ]
 
 /** Emails that left per day for the last 14 days, oldest first. The last 7 add up to 74. */

@@ -3,13 +3,26 @@
   each email, and the rest of its access. The connection's page shows it in plain words and as the
   exact file, in the same YAML the docs use.
 */
-import { connectionLabel, mailboxes, vendorOf, type Connection, type QueryId, type Receipt } from './sample.ts'
+import {
+  type Connection,
+  connectionLabel,
+  mailboxes,
+  type QueryId,
+  type Receipt,
+  vendorOf,
+} from './sample.ts'
 
 /** A list of words means one of them. A `?` in the file marks a field that can be empty. */
 export type FieldType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | readonly string[]
 
 /** A field with `fields` is a group of others, such as the trip on a booking. */
-export type Field = { name: string; label: string; type?: FieldType; optional?: boolean; fields?: Field[] }
+export type Field = {
+  name: string
+  label: string
+  type?: FieldType
+  optional?: boolean
+  fields?: Field[]
+}
 
 /**
  * What a field held in one email. A value a remove rule matches, such as the home address, is taken
@@ -53,12 +66,25 @@ const definitions: Record<string, QueryDefinition> = {
     fields: [
       yesNo('needs_reply', 'Does it need a reply?'),
       yesNo('is_order', 'Is it about an order?'),
-      { name: 'delivery_address', label: 'Delivery address on an order', type: 'string', optional: true },
+      {
+        name: 'delivery_address',
+        label: 'Delivery address on an order',
+        type: 'string',
+        optional: true,
+      },
       { name: 'act_by', label: 'A date it asks you to act by', type: 'date', optional: true },
     ],
     example: {
       receiptId: 'r_7a0e51',
-      values: { needs_reply: false, is_order: true, delivery_address: { value: 'Calle Falsa 123, 4B, 28000 Madrid', removableBy: 'home-address' }, act_by: null },
+      values: {
+        needs_reply: false,
+        is_order: true,
+        delivery_address: {
+          value: 'Calle Falsa 123, 4B, 28000 Madrid',
+          removableBy: 'home-address',
+        },
+        act_by: null,
+      },
     },
     parts: ['subject', 'body_text'],
     actions: ['read'],
@@ -66,7 +92,8 @@ const definitions: Record<string, QueryDefinition> = {
     expires: '2026-06-02',
   },
   'claude/finances': {
-    matchText: 'Mail from Holded, Vodafone, Iberdrola, Amazon, Santander and 5 more, or with invoice, factura, receipt, recibo or extracto in the subject',
+    matchText:
+      'Mail from Holded, Vodafone, Iberdrola, Amazon, Santander and 5 more, or with invoice, factura, receipt, recibo or extracto in the subject',
     search: [
       'from:(holded.com OR vodafone.es OR iberdrola.es OR endesa.es OR amazon.es OR apple.com',
       'OR paypal.com OR santander.es OR ing.es OR revolut.com)',
@@ -100,7 +127,10 @@ const definitions: Record<string, QueryDefinition> = {
         'amount.total': '61.20',
         'amount.tax': '10.62',
         'amount.currency': 'EUR',
-        billing_address: { value: 'Calle Falsa 123, 4B, 28000 Madrid', removableBy: 'home-address' },
+        billing_address: {
+          value: 'Calle Falsa 123, 4B, 28000 Madrid',
+          removableBy: 'home-address',
+        },
         is_paid: false,
         is_refund: false,
       },
@@ -111,7 +141,8 @@ const definitions: Record<string, QueryDefinition> = {
     expires: '2026-06-04',
   },
   'trip-app/bookings': {
-    matchText: 'Mail from Iberia, Booking.com, Renfe, Airbnb and 8 more travel companies, with booking, reservation or itinerary in the subject',
+    matchText:
+      'Mail from Iberia, Booking.com, Renfe, Airbnb and 8 more travel companies, with booking, reservation or itinerary in the subject',
     search: [
       'from:(iberia.com OR booking.com OR renfe.es OR airbnb.com OR vueling.com OR ryanair.com',
       'OR nh-hotels.com OR hertz.com OR alsa.es OR easyjet.com OR expedia.com OR trainline.com)',
@@ -132,7 +163,12 @@ const definitions: Record<string, QueryDefinition> = {
       },
       { name: 'travelers', label: 'How many people', type: 'number' },
       yesNo('is_cancellation', 'Is it a cancellation?'),
-      { name: 'cancellation_notes', label: 'What the cancellation says', type: 'string', optional: true },
+      {
+        name: 'cancellation_notes',
+        label: 'What the cancellation says',
+        type: 'string',
+        optional: true,
+      },
       yesNo('refunded', 'Was it refunded?'),
     ],
     example: {
@@ -156,7 +192,8 @@ const definitions: Record<string, QueryDefinition> = {
     expires: '2026-05-18',
   },
   'ledgerly/bookkeeping': {
-    matchText: 'Mail from Holded, Vodafone, Iberdrola and 5 more, or with invoice, factura, receipt or recibo in the subject',
+    matchText:
+      'Mail from Holded, Vodafone, Iberdrola and 5 more, or with invoice, factura, receipt or recibo in the subject',
     search: [
       'from:(holded.com OR vodafone.es OR iberdrola.es OR endesa.es OR movistar.es OR adobe.com',
       'OR figma.com OR amazon.es)',
@@ -185,7 +222,10 @@ const definitions: Record<string, QueryDefinition> = {
         tax: '6.07',
         currency: 'EUR',
         category: 'Home',
-        billing_address: { value: 'Calle Falsa 123, 4B, 28000 Madrid', removableBy: 'home-address' },
+        billing_address: {
+          value: 'Calle Falsa 123, 4B, 28000 Madrid',
+          removableBy: 'home-address',
+        },
         is_paid: true,
       },
     },
@@ -198,7 +238,11 @@ const definitions: Record<string, QueryDefinition> = {
     matchText: 'All your mail, except spam and trash',
     search: ['in:anywhere -in:spam -in:trash'],
     fields: [
-      { name: 'category', label: 'What kind of mail', type: ['newsletter', 'promotion', 'update', 'personal'] },
+      {
+        name: 'category',
+        label: 'What kind of mail',
+        type: ['newsletter', 'promotion', 'update', 'personal'],
+      },
       yesNo('is_list', 'Was it sent to a mailing list?'),
       yesNo('has_unsubscribe', 'Does it have an unsubscribe link?'),
     ],
@@ -219,7 +263,10 @@ export type FieldRow = { field: Field; depth: number; path: string }
 export function fieldRows(fields: Field[], depth = 0, prefix = ''): FieldRow[] {
   return fields.flatMap((field) => {
     const path = prefix ? `${prefix}.${field.name}` : field.name
-    return [{ field, depth, path }, ...(field.fields ? fieldRows(field.fields, depth + 1, path) : [])]
+    return [
+      { field, depth, path },
+      ...(field.fields ? fieldRows(field.fields, depth + 1, path) : []),
+    ]
   })
 }
 
@@ -248,7 +295,11 @@ function fileType(field: Field): string {
 }
 
 function fieldLines(fields: Field[], indent: string): string[] {
-  return fields.flatMap((f) => (f.fields ? [`${indent}${f.name}:`, ...fieldLines(f.fields, `${indent}  `)] : [`${indent}${f.name}: ${fileType(f)}`]))
+  return fields.flatMap((f) =>
+    f.fields
+      ? [`${indent}${f.name}:`, ...fieldLines(f.fields, `${indent}  `)]
+      : [`${indent}${f.name}: ${fileType(f)}`],
+  )
 }
 
 const snake = (id: string) => id.replace(/-/g, '_')
@@ -265,7 +316,8 @@ export function queryFile(connection: Connection): string {
     `connection: ${connection.id}`,
     accounts.length === 1 ? `account: ${accounts[0]}` : `accounts: [${accounts.join(', ')}]`,
   ]
-  if (def.within) lines.push('query:', '  own_searches: true', `  within: [${def.within.map(snake).join(', ')}]`)
+  if (def.within)
+    lines.push('query:', '  own_searches: true', `  within: [${def.within.map(snake).join(', ')}]`)
   else lines.push('query: >', ...def.search.map((line) => `  ${line}`))
   if (def.fields.length > 0) lines.push('fields:', ...fieldLines(def.fields, '  '))
   lines.push(`parts: [${def.parts.join(', ')}]`, `actions: [${def.actions.join(', ')}]`)
@@ -273,7 +325,10 @@ export function queryFile(connection: Connection): string {
   if (trigger.kind === 'schedule') lines.push('runs:', '  every: day', `  at: "${trigger.at}"`)
   else lines.push(`runs: ${trigger.kind === 'new-mail' ? 'on_new_mail' : 'when_asked'}`)
   if (connection.webhook) lines.push(`webhook: ${connection.webhook.url}`)
-  lines.push(/^\d/.test(def.history) ? `history_from: ${def.history}` : `history: ${def.history}`, `expires: ${def.expires}`)
+  lines.push(
+    /^\d/.test(def.history) ? `history_from: ${def.history}` : `history: ${def.history}`,
+    `expires: ${def.expires}`,
+  )
   return lines.join('\n')
 }
 

@@ -100,7 +100,13 @@ function PreviewRow({ view, actions }: { view: RowView; actions: RowActions }) {
   if (status === 'excluded' && excludedBy) {
     return (
       <div className={hoverRow}>
-        <MailRow kind="excluded" date={row.date} sender={row.sender} reason={`excluded: ${excludedBy}`} barWidth={130} />
+        <MailRow
+          kind="excluded"
+          date={row.date}
+          sender={row.sender}
+          reason={`excluded: ${excludedBy}`}
+          barWidth={130}
+        />
         <TextAction
           size="sm"
           data-include={row.id}
@@ -113,12 +119,23 @@ function PreviewRow({ view, actions }: { view: RowView; actions: RowActions }) {
       </div>
     )
   }
-  if (status === 'dropped') return <MailRow kind="excluded" date={row.date} sender={row.sender} reason="no longer matches" barWidth={130} />
+  if (status === 'dropped')
+    return (
+      <MailRow
+        kind="excluded"
+        date={row.date}
+        sender={row.sender}
+        reason="no longer matches"
+        barWidth={130}
+      />
+    )
 
   const trailing = (
     <>
       {status === 'new' && (
-        <span className="shrink-0 pr-2 font-mono text-mono font-medium text-ink group-hover:invisible group-focus-within:invisible">new</span>
+        <span className="shrink-0 pr-2 font-mono text-mono font-medium text-ink group-hover:invisible group-focus-within:invisible">
+          new
+        </span>
       )}
       <TextAction
         size="sm"
@@ -135,9 +152,22 @@ function PreviewRow({ view, actions }: { view: RowView; actions: RowActions }) {
   return (
     <div className={hoverRow}>
       {actions.effect === 'hold' ? (
-        <MailRow kind="held" date={row.date} sender={row.sender} reason={`held back: ${view.matchedBy ?? row.subject}`} barWidth={100} trailing={trailing} />
+        <MailRow
+          kind="held"
+          date={row.date}
+          sender={row.sender}
+          reason={`held back: ${view.matchedBy ?? row.subject}`}
+          barWidth={100}
+          trailing={trailing}
+        />
       ) : (
-        <MailRow kind="trimmed" date={row.date} sender={row.sender} snippet={row.snippet ?? `${row.subject} [details]`} trailing={trailing} />
+        <MailRow
+          kind="trimmed"
+          date={row.date}
+          sender={row.sender}
+          snippet={row.snippet ?? `${row.subject} [details]`}
+          trailing={trailing}
+        />
       )}
     </div>
   )

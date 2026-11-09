@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Checkbox, Count, Headline, TermRow } from '../../components/ui/index.ts'
-import { formatCount, inbox, mailboxes, type Mailbox } from '../../data/sample.ts'
+import { formatCount, inbox, type Mailbox, mailboxes } from '../../data/sample.ts'
 import { cx } from '../../lib/styles.ts'
 import { ChoiceTerm } from './ChoiceDialog.tsx'
 import { ConsentLayout, Decision, Requester, Terms } from './ConsentLayout.tsx'
@@ -13,12 +13,12 @@ import {
   endChoices,
   endOptions,
   mailSince,
+  type QueryId,
   queryCount,
   queryName,
   requesters,
   sharedLens,
   viewRows,
-  type QueryId,
 } from './data.ts'
 import { ForwardingPreview } from './ForwardingPreview.tsx'
 import { InboxPreview } from './InboxPreview.tsx'
@@ -43,7 +43,8 @@ export function ConsentAgentPage() {
   const pending = !forwarding && state !== 'ready'
   const rows = useMemo(() => viewRows(agentTimeline, sharedLens(new Set(ticked))), [ticked])
 
-  const toggle = (id: QueryId) => setTicked((list) => (list.includes(id) ? list.filter((r) => r !== id) : [...list, id]))
+  const toggle = (id: QueryId) =>
+    setTicked((list) => (list.includes(id) ? list.filter((r) => r !== id) : [...list, id]))
 
   const note =
     total === 0
@@ -85,14 +86,24 @@ export function ConsentAgentPage() {
         )
       }
     >
-      <Requester initials={agent.initials} line={`${agent.domain} is asking to connect`} facts={agent.facts} />
+      <Requester
+        initials={agent.initials}
+        line={`${agent.domain} is asking to connect`}
+        facts={agent.facts}
+      />
       <Headline size="display-m" className="mt-6">
         <span className="w-full">Claude starts with nothing.</span>
         <span className="w-full">You choose what it can search.</span>
       </Headline>
 
-      <p className="mt-3 text-ink-2">{agent.name} writes its own searches. They only ever reach the kinds of mail you tick.</p>
-      <div role="group" aria-label={`Mail ${agent.name} can search`} className="mt-4 border-t border-rule-strong">
+      <p className="mt-3 text-ink-2">
+        {agent.name} writes its own searches. They only ever reach the kinds of mail you tick.
+      </p>
+      <div
+        role="group"
+        aria-label={`Mail ${agent.name} can search`}
+        className="mt-4 border-t border-rule-strong"
+      >
         {agentQueryIds.map((id) => {
           const checked = ticked.includes(id)
           return (
@@ -105,7 +116,9 @@ export function ConsentAgentPage() {
                 label={
                   <span className="flex items-center justify-between gap-4">
                     <span>{queryName(id)}</span>
-                    <span className={cx('font-mono text-mono', checked ? 'text-ink' : 'text-ink-2')}>
+                    <span
+                      className={cx('font-mono text-mono', checked ? 'text-ink' : 'text-ink-2')}
+                    >
                       <span className="sr-only">, </span>
                       {formatCount(queryCount(id))}
                       <span className="sr-only"> emails</span>
@@ -119,8 +132,20 @@ export function ConsentAgentPage() {
       </div>
 
       <Terms strong={false}>
-        <ChoiceTerm label="Parts" title={`Parts ${agent.name} can read`} choices={agentPartsChoices} value={parts} onSave={setParts} />
-        <ChoiceTerm label="Actions" title={`What ${agent.name} can do`} choices={agentActionChoices} value={actions} onSave={setActions} />
+        <ChoiceTerm
+          label="Parts"
+          title={`Parts ${agent.name} can read`}
+          choices={agentPartsChoices}
+          value={parts}
+          onSave={setParts}
+        />
+        <ChoiceTerm
+          label="Actions"
+          title={`What ${agent.name} can do`}
+          choices={agentActionChoices}
+          value={actions}
+          onSave={setActions}
+        />
         {forwarding ? (
           <TermRow label="Time">New mail only, until {end}</TermRow>
         ) : (
@@ -136,7 +161,11 @@ export function ConsentAgentPage() {
       </Terms>
 
       <Decision
-        allowLabel={total && !forwarding ? `Allow ${agent.name} to read ${formatCount(total)} emails` : `Allow ${agent.name}`}
+        allowLabel={
+          total && !forwarding
+            ? `Allow ${agent.name} to read ${formatCount(total)} emails`
+            : `Allow ${agent.name}`
+        }
         onAllow={() => navigate('/connections/claude/chat')}
         allowDisabled={total === 0 || pending}
         declineLabel="Not now"

@@ -1,0 +1,4 @@
+[install]
+# Do not install versions published in the last 3 days, so a compromised
+# release has time to be caught. Pick an older version instead of lowering this.
+minimumReleaseAge = 259200

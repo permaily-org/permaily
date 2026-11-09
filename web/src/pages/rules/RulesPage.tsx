@@ -18,13 +18,18 @@ const changedColumn = '@max-4xl:hidden'
 
 export function RulesPage() {
   const [params] = useSearchParams()
-  return <div className={pagePadding}>{params.get('state') === 'empty' ? <NoRules /> : <RuleList />}</div>
+  return (
+    <div className={pagePadding}>
+      {params.get('state') === 'empty' ? <NoRules /> : <RuleList />}
+    </div>
+  )
 }
 
 function RuleList() {
   const rules = useRules()
   const flagged = rules.filter((rule) => rule.matchNote).length
-  const look = flagged === 0 ? 'None need a look.' : `${flagged} ${flagged === 1 ? 'needs' : 'need'} a look.`
+  const look =
+    flagged === 0 ? 'None need a look.' : `${flagged} ${flagged === 1 ? 'needs' : 'need'} a look.`
   return (
     <>
       {/* On a phone the button goes under the headline. */}
@@ -37,7 +42,13 @@ function RuleList() {
 
       <div className="mt-5 @container">
         {/* Stacked rows have no columns to label, so the list keeps the strong rule itself. */}
-        <div aria-hidden className={cx(columns, 'border-b border-rule-strong py-2 text-small text-ink-2 @max-2xl:hidden')}>
+        <div
+          aria-hidden
+          className={cx(
+            columns,
+            'border-b border-rule-strong py-2 text-small text-ink-2 @max-2xl:hidden',
+          )}
+        >
           <span>Rule</span>
           <span>What it does</span>
           <span>Applies to</span>
@@ -58,7 +69,10 @@ function RuleList() {
 
 function RuleRow({ rule }: { rule: Rule }) {
   return (
-    <Link to={`/rules/${rule.id}`} className={cx(columns, 'border-b border-rule py-2.5 hover:bg-sunken', focusRing)}>
+    <Link
+      to={`/rules/${rule.id}`}
+      className={cx(columns, 'border-b border-rule py-2.5 hover:bg-sunken', focusRing)}
+    >
       <span className="flex min-w-0 flex-col @2xl:pr-6">
         <span className="text-body font-medium">{rule.name}</span>
         <span className="text-small text-ink-2">{rule.description}</span>
@@ -83,7 +97,9 @@ function RuleRow({ rule }: { rule: Rule }) {
           {formatCount(rule.matches)}
           <span className="sr-only"> emails</span>
         </span>
-        {rule.matchNote && <span className="font-mono text-mono text-attention">{rule.matchNote}</span>}
+        {rule.matchNote && (
+          <span className="font-mono text-mono text-attention">{rule.matchNote}</span>
+        )}
       </span>
 
       <span className={cx('font-mono text-mono text-ink-2', changedColumn)}>
@@ -91,7 +107,11 @@ function RuleRow({ rule }: { rule: Rule }) {
         {rule.changed}
       </span>
 
-      <ChevronRight aria-hidden size={16} className="text-ink-2 @max-2xl:col-3 @max-2xl:row-1 @max-2xl:mt-0.5" />
+      <ChevronRight
+        aria-hidden
+        size={16}
+        className="text-ink-2 @max-2xl:col-3 @max-2xl:row-1 @max-2xl:mt-0.5"
+      />
     </Link>
   )
 }

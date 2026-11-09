@@ -11,7 +11,7 @@ import {
   TextAction,
   Tile,
 } from '../../components/ui/index.ts'
-import { connectionById, dailyCounts, vendorOf, type Receipt } from '../../data/sample.ts'
+import { connectionById, dailyCounts, type Receipt, vendorOf } from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import { downloadText, groupByDay, matchesSearch, receiptsCsv, thisWeek } from './data.ts'
 import { Histogram } from './Histogram.tsx'
@@ -48,13 +48,18 @@ function Ledger() {
           />
           <FilterButton>All connections</FilterButton>
           <FilterButton>This week</FilterButton>
-          <TextAction className="ml-auto" onClick={() => downloadText('permaily-activity.csv', receiptsCsv(shown), 'text/csv')}>
+          <TextAction
+            className="ml-auto"
+            onClick={() => downloadText('permaily-activity.csv', receiptsCsv(shown), 'text/csv')}
+          >
             Export CSV
           </TextAction>
         </div>
 
         {shown.length === 0 ? (
-          <p className="py-6 text-body text-ink-2">No email from this week matches “{query.trim()}”.</p>
+          <p className="py-6 text-body text-ink-2">
+            No email from this week matches “{query.trim()}”.
+          </p>
         ) : (
           groupByDay(shown).map(({ day, rows }) => (
             <section key={day} aria-label={day}>
@@ -85,13 +90,25 @@ function Ledger() {
         aria-label="Receipt"
         className="w-full shrink-0 border-t border-rule bg-raised px-4 pt-6 pb-10 sm:px-8 sm:pt-8 xl:sticky xl:top-0 xl:h-svh xl:w-[420px] xl:overflow-y-auto xl:border-t-0 xl:border-l xl:px-9"
       >
-        {selected ? <ReceiptPanel receipt={selected} /> : <p className="text-body text-ink-2">Pick an email to see its receipt.</p>}
+        {selected ? (
+          <ReceiptPanel receipt={selected} />
+        ) : (
+          <p className="text-body text-ink-2">Pick an email to see its receipt.</p>
+        )}
       </aside>
     </div>
   )
 }
 
-function ReceiptRow({ receipt, selected, onSelect }: { receipt: Receipt; selected: boolean; onSelect: () => void }) {
+function ReceiptRow({
+  receipt,
+  selected,
+  onSelect,
+}: {
+  receipt: Receipt
+  selected: boolean
+  onSelect: () => void
+}) {
   const connection = connectionById(receipt.connectionId)
   const vendor = connection && vendorOf(connection)
   return (
@@ -106,13 +123,19 @@ function ReceiptRow({ receipt, selected, onSelect }: { receipt: Receipt; selecte
           focusRing,
         )}
       >
-        <span className="row-start-3 shrink-0 font-mono text-mono text-ink-2 sm:w-[52px]">{receipt.time}</span>
+        <span className="row-start-3 shrink-0 font-mono text-mono text-ink-2 sm:w-[52px]">
+          {receipt.time}
+        </span>
         <span className="col-span-2 row-start-3 flex min-w-0 items-center gap-1.5 sm:w-[104px] sm:shrink-0">
           <Tile initials={vendor?.initials ?? '?'} size="sm" />
           <span className="truncate">{vendor?.name}</span>
         </span>
-        <span className="col-span-2 row-start-1 truncate font-medium sm:w-[104px] sm:shrink-0">{receipt.sender}</span>
-        <span className="col-span-3 row-start-2 min-w-0 truncate sm:flex-1 sm:pr-4">{receipt.subject}</span>
+        <span className="col-span-2 row-start-1 truncate font-medium sm:w-[104px] sm:shrink-0">
+          {receipt.sender}
+        </span>
+        <span className="col-span-3 row-start-2 min-w-0 truncate sm:flex-1 sm:pr-4">
+          {receipt.subject}
+        </span>
         <span className="col-start-3 row-start-1 flex justify-end">
           <PartsChip>{receipt.parts}</PartsChip>
         </span>

@@ -12,7 +12,17 @@ interface Props {
   split?: boolean;
 }
 
-const { name, price, unit, note, description, items, action, primary = false, split = false } = Astro.props;
+const {
+  name,
+  price,
+  unit,
+  note,
+  description,
+  items,
+  action,
+  primary = false,
+  split = false,
+} = Astro.props;
 ---
 
 <div class:list={['plan', { split }]}>

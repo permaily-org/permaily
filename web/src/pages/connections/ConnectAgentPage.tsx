@@ -1,6 +1,13 @@
 import { Check } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react'
-import { Headline, StepMarker, TextAction, TextLink, Tile, type StepState } from '../../components/ui/index.ts'
+import { type ReactNode, type Ref, useEffect, useRef, useState } from 'react'
+import {
+  Headline,
+  StepMarker,
+  type StepState,
+  TextAction,
+  TextLink,
+  Tile,
+} from '../../components/ui/index.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import { ConnectAgentPanel } from './ConnectAgentPanel.tsx'
 
@@ -9,7 +16,14 @@ const address = 'https://mcp.permaily.com'
 type AgentId = 'claude' | 'chatgpt' | 'other'
 type Stage = 'choose' | 'copy' | 'wait'
 
-const agents: Array<{ id: AgentId; name: string; initials: string; detail: string; subject: string; setup: string }> = [
+const agents: Array<{
+  id: AgentId
+  name: string
+  initials: string
+  detail: string
+  subject: string
+  setup: string
+}> = [
   {
     id: 'claude',
     name: 'Claude',
@@ -84,7 +98,12 @@ export function ConnectAgentPage() {
 
         <ol className="mt-8 border-t border-rule">
           {stage === 'choose' || !agent ? (
-            <Step number={1} state="current" title="Choose your agent" headingRef={headingRef('choose')}>
+            <Step
+              number={1}
+              state="current"
+              title="Choose your agent"
+              headingRef={headingRef('choose')}
+            >
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
                 {agents.map((a) => (
                   <AgentChoice
@@ -100,17 +119,34 @@ export function ConnectAgentPage() {
               </div>
             </Step>
           ) : (
-            <FoldedStep number={1} label={`Agent chosen: ${agent.name}`} action={<TextAction onClick={() => go('choose')}>Change</TextAction>} />
+            <FoldedStep
+              number={1}
+              label={`Agent chosen: ${agent.name}`}
+              action={<TextAction onClick={() => go('choose')}>Change</TextAction>}
+            />
           )}
 
           {stage === 'wait' && agent ? (
-            <FoldedStep number={2} label={copied ? 'Address copied' : 'Address ready, copy it below'} />
+            <FoldedStep
+              number={2}
+              label={copied ? 'Address copied' : 'Address ready, copy it below'}
+            />
           ) : (
             <Step
               number={2}
               state={stage === 'copy' ? 'current' : 'next'}
-              title={agent && stage === 'copy' ? `Add this address to ${agent.subject}` : 'Add the address to your agent'}
-              aside={stage === 'copy' ? <span className="font-mono text-mono">copy it now</span> : <Aside>unlocks after step 1</Aside>}
+              title={
+                agent && stage === 'copy'
+                  ? `Add this address to ${agent.subject}`
+                  : 'Add the address to your agent'
+              }
+              aside={
+                stage === 'copy' ? (
+                  <span className="font-mono text-mono">copy it now</span>
+                ) : (
+                  <Aside>unlocks after step 1</Aside>
+                )
+              }
               headingRef={headingRef('copy')}
             >
               {stage === 'copy' && agent && (
@@ -126,7 +162,11 @@ export function ConnectAgentPage() {
             number={3}
             state={stage === 'wait' ? 'current' : 'next'}
             title="Choose what it can see"
-            aside={stage === 'wait' ? undefined : <Aside>{agent ? `waiting for ${agent.subject}` : 'unlocks after step 2'}</Aside>}
+            aside={
+              stage === 'wait' ? undefined : (
+                <Aside>{agent ? `waiting for ${agent.subject}` : 'unlocks after step 2'}</Aside>
+              )
+            }
             headingRef={headingRef('wait')}
           >
             {stage === 'wait' && agent && <Waiting subject={agent.subject} />}
@@ -170,7 +210,15 @@ function Step({
   )
 }
 
-function FoldedStep({ number, label, action }: { number: number; label: string; action?: ReactNode }) {
+function FoldedStep({
+  number,
+  label,
+  action,
+}: {
+  number: number
+  label: string
+  action?: ReactNode
+}) {
   return (
     <li className="flex items-center gap-5 border-b border-rule py-3.5">
       <StepMarker state="done" number={number} />
@@ -184,13 +232,25 @@ function Aside({ children }: { children: ReactNode }) {
   return <span className="font-mono text-mono text-ink-2">{children}</span>
 }
 
-function AgentChoice({ agent, chosen, onChoose }: { agent: (typeof agents)[number]; chosen: boolean; onChoose: () => void }) {
+function AgentChoice({
+  agent,
+  chosen,
+  onChoose,
+}: {
+  agent: (typeof agents)[number]
+  chosen: boolean
+  onChoose: () => void
+}) {
   return (
     <button
       type="button"
       aria-pressed={chosen}
       onClick={onChoose}
-      className={cx('relative flex flex-col items-start gap-3 rounded-sm border p-4 text-left hover:bg-sunken', chosen ? 'border-ink' : 'border-rule hover:border-ink', focusRing)}
+      className={cx(
+        'relative flex flex-col items-start gap-3 rounded-sm border p-4 text-left hover:bg-sunken',
+        chosen ? 'border-ink' : 'border-rule hover:border-ink',
+        focusRing,
+      )}
     >
       <Tile initials={agent.initials} />
       <span className="flex flex-col gap-0.5">
@@ -202,7 +262,15 @@ function AgentChoice({ agent, chosen, onChoose }: { agent: (typeof agents)[numbe
   )
 }
 
-function AddressBox({ onCopy, label, className }: { onCopy: () => void; label: string; className?: string }) {
+function AddressBox({
+  onCopy,
+  label,
+  className,
+}: {
+  onCopy: () => void
+  label: string
+  className?: string
+}) {
   return (
     <div className={cx('flex h-9 items-center justify-between gap-4 bg-sunken px-3', className)}>
       <code className="min-w-0 truncate font-mono text-small select-all">{address}</code>
@@ -223,7 +291,11 @@ function Waiting({ subject }: { subject: string }) {
         Waiting for {subject} to connect
       </p>
       <p className="mt-3 text-heading font-medium">Add the address in {subject}, then come back.</p>
-      <AddressBox className="mt-4" label={copied ? 'Copied' : 'Copy'} onCopy={async () => setCopied(await copyAddress())} />
+      <AddressBox
+        className="mt-4"
+        label={copied ? 'Copied' : 'Copy'}
+        onCopy={async () => setCopied(await copyAddress())}
+      />
       <p className="mt-4 text-small text-ink-2">
         Already added it? <TextLink to="/consent/claude">Continue</TextLink>
       </p>

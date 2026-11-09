@@ -16,7 +16,16 @@ interface Props {
   subject?: boolean;
 }
 
-const { text, snippet, cut, highlighted = false, withheld = false, pad = false, ghost = false, subject = false } = Astro.props;
+const {
+  text,
+  snippet,
+  cut,
+  highlighted = false,
+  withheld = false,
+  pad = false,
+  ghost = false,
+  subject = false,
+} = Astro.props;
 const at = snippet && cut ? snippet.indexOf(cut.text) : -1;
 if (cut && at < 0) throw new Error(`Redact: "${cut.text}" isn't in the snippet "${snippet}"`);
 const head = at >= 0 ? snippet!.slice(0, at) : snippet;

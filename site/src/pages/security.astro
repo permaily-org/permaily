@@ -20,11 +20,27 @@ const doesNotProve = [
 ];
 
 const retention = [
-  { data: 'Mail fetched through an account connection', where: 'Memory only, inside the enclave', kept: 'Not stored' },
-  { data: 'Mail received by forwarding', where: 'Object storage, under your key', kept: 'Until delivered, or a short limit' },
+  {
+    data: 'Mail fetched through an account connection',
+    where: 'Memory only, inside the enclave',
+    kept: 'Not stored',
+  },
+  {
+    data: 'Mail received by forwarding',
+    where: 'Object storage, under your key',
+    kept: 'Until delivered, or a short limit',
+  },
   { data: 'Mailbox tokens', where: 'Database, under your key', kept: 'Until you disconnect' },
-  { data: 'Rules and access settings', where: 'Database, under your key', kept: 'Until you delete them' },
-  { data: 'Receipts', where: 'Database, under your key, hash chained', kept: 'You decide, with a default limit' },
+  {
+    data: 'Rules and access settings',
+    where: 'Database, under your key',
+    kept: 'Until you delete them',
+  },
+  {
+    data: 'Receipts',
+    where: 'Database, under your key, hash chained',
+    kept: 'You decide, with a default limit',
+  },
 ];
 ---
 

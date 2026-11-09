@@ -23,12 +23,22 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-h1, h2, h3, h4, p, ol, ul, figure, dl, dd {
+h1,
+h2,
+h3,
+h4,
+p,
+ol,
+ul,
+figure,
+dl,
+dd {
   margin: 0;
   padding: 0;
 }
 
-ol, ul {
+ol,
+ul {
   list-style: none;
 }
 
@@ -45,7 +55,9 @@ button {
   cursor: pointer;
 }
 
-input, select, textarea {
+input,
+select,
+textarea {
   font: inherit;
   color: inherit;
 }
@@ -246,7 +258,9 @@ input, select, textarea {
   font-weight: 500;
   text-decoration: none;
   white-space: nowrap;
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
 
 .btn:hover {
@@ -309,7 +323,9 @@ input, select, textarea {
   font-size: var(--text-small);
   font-weight: 500;
   white-space: nowrap;
-  transition: background 0.2s, color 0.2s;
+  transition:
+    background 0.2s,
+    color 0.2s;
 }
 
 .seg button[aria-pressed='true'] {

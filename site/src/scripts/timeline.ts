@@ -7,23 +7,27 @@
 
 export const clamp = (x: number, a = 0, b = 1) => Math.min(b, Math.max(a, x));
 export const seg = (t: number, a: number, b: number) => clamp((t - a) / (b - a));
-export const out3 = (x: number) => 1 - Math.pow(1 - x, 3);
-export const out4 = (x: number) => 1 - Math.pow(1 - x, 4);
+export const out3 = (x: number) => 1 - (1 - x) ** 3;
+export const out4 = (x: number) => 1 - (1 - x) ** 4;
 export const lerp = (a: number, b: number, p: number) => a + (b - a) * p;
 export const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
 
 // NoInfer keeps the default of HTMLElement when the result is passed straight to something that accepts null.
-export const $ = <T extends Element = HTMLElement>(selector: string, root: ParentNode = document): NoInfer<T> =>
-  root.querySelector<T>(selector)!;
-export const $$ = <T extends Element = HTMLElement>(selector: string, root: ParentNode = document) => [
-  ...root.querySelectorAll<T>(selector),
-];
+export const $ = <T extends Element = HTMLElement>(
+  selector: string,
+  root: ParentNode = document,
+): NoInfer<T> => root.querySelector<T>(selector)!;
+export const $$ = <T extends Element = HTMLElement>(
+  selector: string,
+  root: ParentNode = document,
+) => [...root.querySelectorAll<T>(selector)];
 
 export const setVar = (el: HTMLElement, name: string, value: number | string) =>
   el.style.setProperty(name, String(value));
 
 const params = new URLSearchParams(location.search);
-export const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches || params.has('still');
+export const reducedMotion =
+  matchMedia('(prefers-reduced-motion: reduce)').matches || params.has('still');
 export const seekParam = (params.get('seek') ?? '').split(':');
 
 declare global {
@@ -161,13 +165,16 @@ export class Timeline {
 
   private updateControl() {
     if (!this.control) return;
-    this.control.textContent = this.state === 'playing' ? 'Pause' : this.state === 'paused' ? 'Resume' : 'Replay';
+    this.control.textContent =
+      this.state === 'playing' ? 'Pause' : this.state === 'paused' ? 'Resume' : 'Replay';
   }
 }
 
 /** Keeps a before-and-after toggle in step with the timeline. */
 export const setPressed = (buttons: HTMLElement[], after: boolean) =>
-  buttons.forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.mode === 'after') === after)));
+  buttons.forEach((b) =>
+    b.setAttribute('aria-pressed', String((b.dataset.mode === 'after') === after)),
+  );
 
 /** Runs the timeline back to just before the flip, or forward to the end. */
 export const bindToggle = (timeline: Timeline, buttons: HTMLElement[], flip: number, end: number) =>

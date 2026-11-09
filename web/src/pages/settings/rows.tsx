@@ -1,8 +1,16 @@
-import { useState, type ReactNode } from 'react'
+import { type ReactNode, useState } from 'react'
 import { Switch, TextAction } from '../../components/ui/index.ts'
 import { actionClass, cx, focusRing } from '../../lib/styles.ts'
 
-export function SettingRow({ label, children, action }: { label: string; children: ReactNode; action?: ReactNode }) {
+export function SettingRow({
+  label,
+  children,
+  action,
+}: {
+  label: string
+  children: ReactNode
+  action?: ReactNode
+}) {
   return (
     <div className="flex min-h-[39px] flex-col items-start gap-0.5 border-b border-rule py-2 sm:flex-row sm:items-center sm:gap-4">
       <div className="shrink-0 text-small text-ink-2 sm:w-[116px]">{label}</div>
@@ -14,7 +22,10 @@ export function SettingRow({ label, children, action }: { label: string; childre
   )
 }
 
-const field = cx('min-w-0 flex-1 basis-32 rounded-sm border border-ink bg-paper px-2 py-px text-small text-ink max-md:min-h-8', focusRing)
+const field = cx(
+  'min-w-0 flex-1 basis-32 rounded-sm border border-ink bg-paper px-2 py-px text-small text-ink max-md:min-h-8',
+  focusRing,
+)
 
 /** A setting whose value can be changed in place, with a text field or a list of choices. */
 export function EditableRow({
@@ -38,7 +49,10 @@ export function EditableRow({
 
   if (draft === null) {
     return (
-      <SettingRow label={label} action={<TextAction onClick={() => setDraft(value)}>{actionLabel}</TextAction>}>
+      <SettingRow
+        label={label}
+        action={<TextAction onClick={() => setDraft(value)}>{actionLabel}</TextAction>}
+      >
         <span className={cx(mono && 'font-mono text-small')}>{value}</span>
       </SettingRow>
     )
@@ -55,7 +69,13 @@ export function EditableRow({
         }}
       >
         {options ? (
-          <select aria-label={label} autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} className={field}>
+          <select
+            aria-label={label}
+            autoFocus
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            className={field}
+          >
             {options.map((option) => (
               <option key={option}>{option}</option>
             ))}
@@ -80,7 +100,15 @@ export function EditableRow({
   )
 }
 
-export function NotificationRow({ title, checked, onChange }: { title: string; checked: boolean; onChange: (checked: boolean) => void }) {
+export function NotificationRow({
+  title,
+  checked,
+  onChange,
+}: {
+  title: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+}) {
   return (
     <div className="flex min-h-[39px] items-center gap-4 border-b border-rule py-2">
       <p className="min-w-0 flex-1">{title}</p>

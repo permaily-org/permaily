@@ -1,5 +1,5 @@
 import { Button, Dialog, Tile } from '../../components/ui/index.ts'
-import { vendorOf, type Mailbox } from '../../data/sample.ts'
+import { type Mailbox, vendorOf } from '../../data/sample.ts'
 import { connectionsUsing } from './data.ts'
 import { solidDanger } from './styles.ts'
 
@@ -30,7 +30,10 @@ export function DisconnectDialog({
           {losing.length > 0 && (
             <ul className="mt-2 border-t border-rule">
               {losing.map((connection) => (
-                <li key={connection.id} className="flex items-center gap-3 border-b border-rule py-2">
+                <li
+                  key={connection.id}
+                  className="flex items-center gap-3 border-b border-rule py-2"
+                >
                   <Tile initials={vendorOf(connection).initials} size="sm" />
                   <span className="font-medium">{connection.name}</span>
                   <span className="text-small text-ink-2">{vendorOf(connection).name}</span>

@@ -6,11 +6,25 @@ import Base from '../layouts/Base.astro';
 const principles = [
   { title: 'Least access by default', detail: 'Every connection starts with nothing.' },
   { title: 'Show, don’t describe', detail: 'Before approving, you see the actual emails.' },
-  { title: 'Your rules come first', detail: 'They hold back mail, or remove details from it, before any app’s request runs. Apps are never told.' },
-  { title: 'No third-party model reads mail', detail: 'Rules written in words run on a model inside the verified service, and mail never leaves it.' },
+  {
+    title: 'Your rules come first',
+    detail:
+      'They hold back mail, or remove details from it, before any app’s request runs. Apps are never told.',
+  },
+  {
+    title: 'No third-party model reads mail',
+    detail:
+      'Rules written in words run on a model inside the verified service, and mail never leaves it.',
+  },
   { title: 'Keep as little as possible', detail: 'Mail passes through rather than piling up.' },
-  { title: 'Claims must be checkable', detail: 'If you can’t verify a promise, it doesn’t go in the marketing.' },
-  { title: 'Leaving is easy', detail: 'Revocation is immediate, and deleting an account deletes the data.' },
+  {
+    title: 'Claims must be checkable',
+    detail: 'If you can’t verify a promise, it doesn’t go in the marketing.',
+  },
+  {
+    title: 'Leaving is easy',
+    detail: 'Revocation is immediate, and deleting an account deletes the data.',
+  },
 ];
 
 const refusals = [

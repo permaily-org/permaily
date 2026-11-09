@@ -29,7 +29,9 @@ export function Sidebar(props: SidebarProps) {
   )
 
   const header = (
-    <div className={cx('flex items-center', collapsed ? 'justify-center' : 'justify-between pl-2.5')}>
+    <div
+      className={cx('flex items-center', collapsed ? 'justify-center' : 'justify-between pl-2.5')}
+    >
       {!collapsed && <div className="text-wordmark font-semibold">Permaily</div>}
       <button
         type="button"
@@ -59,7 +61,9 @@ export function Sidebar(props: SidebarProps) {
               cx(
                 'relative flex items-center rounded-sm py-2 text-body',
                 collapsed ? 'justify-center px-0' : 'gap-2.5 px-2.5',
-                isActive ? 'bg-sunken font-medium text-ink' : 'text-ink-2 hover:bg-sunken hover:text-ink',
+                isActive
+                  ? 'bg-sunken font-medium text-ink'
+                  : 'text-ink-2 hover:bg-sunken hover:text-ink',
                 focusRing,
               )
             }
@@ -88,7 +92,15 @@ export function Sidebar(props: SidebarProps) {
   )
 
   return drawer ? (
-    <div ref={rootRef} id={id} role="dialog" aria-modal="true" aria-label="Menu" tabIndex={-1} className={rootClass}>
+    <div
+      ref={rootRef}
+      id={id}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Menu"
+      tabIndex={-1}
+      className={rootClass}
+    >
       {body}
     </div>
   ) : (
@@ -114,7 +126,12 @@ function AccountMenu({ compact }: { compact: boolean }) {
   useEffect(() => {
     if (!open) return
     const close = (event: MouseEvent | KeyboardEvent) => {
-      if (event instanceof KeyboardEvent ? event.key === 'Escape' : !ref.current?.contains(event.target as Node)) setOpen(false)
+      if (
+        event instanceof KeyboardEvent
+          ? event.key === 'Escape'
+          : !ref.current?.contains(event.target as Node)
+      )
+        setOpen(false)
     }
     document.addEventListener('mousedown', close)
     document.addEventListener('keydown', close)
@@ -127,8 +144,15 @@ function AccountMenu({ compact }: { compact: boolean }) {
   return (
     <div ref={ref} className="relative border-t border-rule pt-3">
       {open && (
-        <div role="menu" className="absolute bottom-full left-0 mb-2 flex w-full min-w-32 flex-col border border-rule bg-raised py-1">
-          <button type="button" role="menuitem" className={cx('px-3 py-2 text-left text-body hover:bg-sunken', focusRing)}>
+        <div
+          role="menu"
+          className="absolute bottom-full left-0 mb-2 flex w-full min-w-32 flex-col border border-rule bg-raised py-1"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className={cx('px-3 py-2 text-left text-body hover:bg-sunken', focusRing)}
+          >
             Sign out
           </button>
         </div>

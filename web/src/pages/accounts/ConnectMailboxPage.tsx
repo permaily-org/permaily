@@ -10,16 +10,17 @@ export function ConnectMailboxPage() {
 
       <main>
         <Headline className="mt-10">How should Permaily reach your mail?</Headline>
-        <p className="mt-2 text-lead text-ink-2">
-          Not sure? Forwarding gives Permaily the least.
-        </p>
+        <p className="mt-2 text-lead text-ink-2">Not sure? Forwarding gives Permaily the least.</p>
 
         <div className="mt-9 grid grid-cols-1 border-t border-rule-strong">
           {methods.map((method, i) => (
             <section
               key={method.id}
               aria-labelledby={`method-${method.id}`}
-              className={cx('pt-6.5 pb-6', i === 0 ? 'lg:pr-10' : 'border-t border-rule lg:border-t-0 lg:border-l lg:pl-10')}
+              className={cx(
+                'pt-6.5 pb-6',
+                i === 0 ? 'lg:pr-10' : 'border-t border-rule lg:border-t-0 lg:border-l lg:pl-10',
+              )}
             >
               <h2 id={`method-${method.id}`} className="text-heading font-medium">
                 {method.title}
@@ -28,8 +29,13 @@ export function ConnectMailboxPage() {
 
               <dl className="mt-4">
                 {method.facts.map(([label, value]) => (
-                  <div key={label} className="flex min-h-9 items-center gap-4 border-b border-rule py-2">
-                    <dt className="w-[104px] shrink-0 sm:w-[146px] text-small text-ink-2">{label}</dt>
+                  <div
+                    key={label}
+                    className="flex min-h-9 items-center gap-4 border-b border-rule py-2"
+                  >
+                    <dt className="w-[104px] shrink-0 sm:w-[146px] text-small text-ink-2">
+                      {label}
+                    </dt>
                     <dd className="min-w-0 text-small">{value}</dd>
                   </div>
                 ))}
@@ -44,7 +50,9 @@ export function ConnectMailboxPage() {
                   <ButtonLink to="/accounts" variant="secondary">
                     Continue with Google
                   </ButtonLink>
-                  <span className="font-mono text-mono text-ink-2">Limited while Google reviews Permaily</span>
+                  <span className="font-mono text-mono text-ink-2">
+                    Limited while Google reviews Permaily
+                  </span>
                 </div>
               )}
             </section>

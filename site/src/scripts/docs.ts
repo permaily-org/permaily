@@ -9,7 +9,9 @@ const buttons = [...document.querySelectorAll<HTMLElement>('.theme button')];
 
 const initial = (): string => {
   try {
-    return new URLSearchParams(location.search).get('theme') ?? localStorage.getItem(KEY) ?? 'system';
+    return (
+      new URLSearchParams(location.search).get('theme') ?? localStorage.getItem(KEY) ?? 'system'
+    );
   } catch {
     return 'system';
   }
@@ -18,8 +20,11 @@ const initial = (): string => {
 let choice = initial();
 
 const paint = () => {
-  root.dataset.theme = choice === 'light' || choice === 'dark' ? choice : system.matches ? 'dark' : 'light';
-  buttons.forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.t === choice)));
+  root.dataset.theme =
+    choice === 'light' || choice === 'dark' ? choice : system.matches ? 'dark' : 'light';
+  buttons.forEach((button) =>
+    button.setAttribute('aria-pressed', String(button.dataset.t === choice)),
+  );
 };
 
 buttons.forEach((button) =>

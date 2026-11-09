@@ -30,7 +30,7 @@ cd web
 bun install
 bun run dev        # http://localhost:5173
 bun run build      # type check, then build to dist/
-bun run lint
+bun run --cwd .. lint   # Biome, from the repo root
 ```
 
 The production build is embedded in the enclave binary (`internal/webui`) and is part of PCR0, so it must stay reproducible. See [build.md](build.md).

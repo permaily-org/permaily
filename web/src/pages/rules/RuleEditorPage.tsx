@@ -1,13 +1,28 @@
 import { ChevronLeft, Pencil } from 'lucide-react'
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
-import { Button, ButtonLink, InfoTip, Notice, TextLink, ViewSwitch } from '../../components/ui/index.ts'
+import {
+  Button,
+  ButtonLink,
+  InfoTip,
+  Notice,
+  TextLink,
+  ViewSwitch,
+} from '../../components/ui/index.ts'
 import { setRuleScopes, useRuleScopes } from '../../data/ruleScopes.ts'
-import { attention, connectionById, connectionLabel, ruleConnections, targetLabel, type AppliesTo, type RuleEffect } from '../../data/sample.ts'
+import {
+  type AppliesTo,
+  attention,
+  connectionById,
+  connectionLabel,
+  type RuleEffect,
+  ruleConnections,
+  targetLabel,
+} from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import { Conditions } from './Conditions.tsx'
-import { joinNames, ruleSeed, type RuleSeed } from './data.ts'
-import { emails, initialDraft, preview, savedDraft, type Draft, type Preview } from './draft.ts'
+import { joinNames, type RuleSeed, ruleSeed } from './data.ts'
+import { type Draft, emails, initialDraft, type Preview, preview, savedDraft } from './draft.ts'
 import { PreviewPane } from './PreviewPane.tsx'
 import { Targets } from './Targets.tsx'
 
@@ -23,7 +38,9 @@ export function RuleEditorPage() {
     const base = ruleSeed(id, { suggested, add })
     if (!base) return base
     if (id !== 'new') return { ...base, appliesTo: scopes[id] ?? base.appliesTo }
-    return forConnection ? { ...base, appliesTo: { to: 'some', only: [forConnection.id] } satisfies AppliesTo } : base
+    return forConnection
+      ? { ...base, appliesTo: { to: 'some', only: [forConnection.id] } satisfies AppliesTo }
+      : base
   }, [id, suggested, add, forConnection, scopes])
   if (!seed) return <UnknownRule />
   return (
@@ -38,7 +55,15 @@ export function RuleEditorPage() {
 
 type Scope = 'all' | 'some'
 
-function RuleEditor({ ruleId, seed, returnTo }: { ruleId: string; seed: RuleSeed; returnTo: string }) {
+function RuleEditor({
+  ruleId,
+  seed,
+  returnTo,
+}: {
+  ruleId: string
+  seed: RuleSeed
+  returnTo: string
+}) {
   const navigate = useNavigate()
   const isNew = ruleId === 'new'
   const [draft, setDraft] = useState<Draft>(() => initialDraft(seed))
@@ -48,8 +73,12 @@ function RuleEditor({ ruleId, seed, returnTo }: { ruleId: string; seed: RuleSeed
   const [effect, setEffect] = useState<RuleEffect>(seed.effect)
   const [removes, setRemoves] = useState(seed.removes)
   const [scope, setScope] = useState<Scope>(seed.appliesTo.to)
-  const [except, setExcept] = useState<string[]>(seed.appliesTo.to === 'all' ? seed.appliesTo.except : [])
-  const [only, setOnly] = useState<string[]>(seed.appliesTo.to === 'some' ? seed.appliesTo.only : [])
+  const [except, setExcept] = useState<string[]>(
+    seed.appliesTo.to === 'all' ? seed.appliesTo.except : [],
+  )
+  const [only, setOnly] = useState<string[]>(
+    seed.appliesTo.to === 'some' ? seed.appliesTo.only : [],
+  )
   const descriptionId = useId()
   const removesId = useId()
 
@@ -65,11 +94,18 @@ function RuleEditor({ ruleId, seed, returnTo }: { ruleId: string; seed: RuleSeed
     JSON.stringify(appliesTo) !== JSON.stringify(seed.appliesTo) ||
     JSON.stringify(draft) !== JSON.stringify(saved)
   const hasConditions = draft.blocks.some((block) => block.some((g) => g.chips.length > 0))
-  const complete = hasConditions && (scope === 'all' || only.length > 0) && (effect === 'hold' || removes.trim() !== '')
+  const complete =
+    hasConditions &&
+    (scope === 'all' || only.length > 0) &&
+    (effect === 'hold' || removes.trim() !== '')
   const flag = attention.find((item) => item.to.split('?')[0] === `/rules/${ruleId}`)
 
   function rewrite() {
-    setHint(description.trim() ? 'The conditions below already cover this sentence.' : 'Write a sentence first, then rewrite the rule from it.')
+    setHint(
+      description.trim()
+        ? 'The conditions below already cover this sentence.'
+        : 'Write a sentence first, then rewrite the rule from it.',
+    )
   }
 
   function exclude(address: string) {
@@ -98,7 +134,9 @@ function RuleEditor({ ruleId, seed, returnTo }: { ruleId: string; seed: RuleSeed
             <label htmlFor={descriptionId} className="text-small text-ink-2">
               Describe it in your own words
             </label>
-            <InfoTip label="What the model sees">Only this sentence goes to the model. Your mail doesn't.</InfoTip>
+            <InfoTip label="What the model sees">
+              Only this sentence goes to the model. Your mail doesn't.
+            </InfoTip>
           </div>
           <div className="mt-1.5 flex items-center gap-2 rounded-sm border border-ink py-1 pr-1 pl-3 has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-ink">
             <input
@@ -140,7 +178,10 @@ function RuleEditor({ ruleId, seed, returnTo }: { ruleId: string; seed: RuleSeed
                     value={removes}
                     onChange={(event) => setRemoves(event.target.value)}
                     placeholder="For example, the address"
-                    className={cx('min-w-0 flex-1 rounded-sm border border-ink bg-transparent px-2 py-1 text-body placeholder:text-ink-3', focusRing)}
+                    className={cx(
+                      'min-w-0 flex-1 rounded-sm border border-ink bg-transparent px-2 py-1 text-body placeholder:text-ink-3',
+                      focusRing,
+                    )}
                   />
                 </div>
               )}
@@ -159,7 +200,9 @@ function RuleEditor({ ruleId, seed, returnTo }: { ruleId: string; seed: RuleSeed
                 ]}
               />
               <div className="flex w-full items-start gap-3">
-                <span className="w-12 shrink-0 py-0.5 text-small text-ink-2">{scope === 'all' ? 'Except' : 'Only'}</span>
+                <span className="w-12 shrink-0 py-0.5 text-small text-ink-2">
+                  {scope === 'all' ? 'Except' : 'Only'}
+                </span>
                 {scope === 'all' ? (
                   <Targets key="except" label="Except" targets={except} onChange={setExcept} />
                 ) : (
@@ -200,7 +243,9 @@ function RuleEditor({ ruleId, seed, returnTo }: { ruleId: string; seed: RuleSeed
         preview={result}
         effect={effect}
         onExclude={exclude}
-        onInclude={(entry) => setDraft((d) => ({ ...d, butNot: d.butNot.filter((e) => e !== entry) }))}
+        onInclude={(entry) =>
+          setDraft((d) => ({ ...d, butNot: d.butNot.filter((e) => e !== entry) }))
+        }
       />
     </div>
   )
@@ -266,7 +311,10 @@ function RuleTitle({ name, onRename }: { name: string; onRename: (name: string) 
             if (event.key === 'Enter') finish(true)
             if (event.key === 'Escape') finish(false)
           }}
-          className={cx('w-full rounded-sm border-b border-ink bg-transparent text-display-s font-medium', focusRing)}
+          className={cx(
+            'w-full rounded-sm border-b border-ink bg-transparent text-display-s font-medium',
+            focusRing,
+          )}
         />
       </h1>
     )
@@ -306,7 +354,9 @@ function scopeChange(before: AppliesTo, after: AppliesTo) {
 function targetText(appliesTo: AppliesTo): string {
   if (appliesTo.to === 'some') return joinNames(appliesTo.only.map(targetLabel))
   const all = 'every connection'
-  return appliesTo.except.length === 0 ? all : `${all} except ${joinNames(appliesTo.except.map(targetLabel))}`
+  return appliesTo.except.length === 0
+    ? all
+    : `${all} except ${joinNames(appliesTo.except.map(targetLabel))}`
 }
 
 /** What saving would change, in one line, above the buttons. */
@@ -342,18 +392,29 @@ function SaveBar({
     notice = (
       <Notice
         tone="neutral"
-        title={effect === 'hold' ? `Saving holds back ${emails(count)} from ${targetText(appliesTo)}.` : `Saving takes ${what} out of ${emails(count)}.`}
+        title={
+          effect === 'hold'
+            ? `Saving holds back ${emails(count)} from ${targetText(appliesTo)}.`
+            : `Saving takes ${what} out of ${emails(count)}.`
+        }
       />
     )
   } else if (effect !== seed.effect) {
     notice =
       effect === 'hold' ? (
-        <Notice tone="neutral" title={`Saving holds back all ${emails(count)}, not just ${seed.removes}.`} />
+        <Notice
+          tone="neutral"
+          title={`Saving holds back all ${emails(count)}, not just ${seed.removes}.`}
+        />
       ) : (
         <Notice title={`These ${emails(count)} go through again, with ${what} taken out.`} />
       )
   } else if (freed.length > 0) {
-    notice = <Notice title={`${joinNames(freed)} can get ${effect === 'hold' ? `these ${emails(count)}` : `${what} in these ${emails(count)}`} again.`} />
+    notice = (
+      <Notice
+        title={`${joinNames(freed)} can get ${effect === 'hold' ? `these ${emails(count)}` : `${what} in these ${emails(count)}`} again.`}
+      />
+    )
   } else if (added.length > 0) {
     notice = (
       <Notice
@@ -366,9 +427,26 @@ function SaveBar({
       />
     )
   } else if (n > 0) {
-    notice = <Notice tone="neutral" title={effect === 'hold' ? `This edit holds back ${emails(n)} more.` : `This edit takes ${what} out of ${emails(n)} more.`} />
+    notice = (
+      <Notice
+        tone="neutral"
+        title={
+          effect === 'hold'
+            ? `This edit holds back ${emails(n)} more.`
+            : `This edit takes ${what} out of ${emails(n)} more.`
+        }
+      />
+    )
   } else if (dropped > 0) {
-    notice = <Notice title={effect === 'hold' ? `${emails(dropped)} stop being held back.` : `${emails(dropped)} go through untouched again.`} />
+    notice = (
+      <Notice
+        title={
+          effect === 'hold'
+            ? `${emails(dropped)} stop being held back.`
+            : `${emails(dropped)} go through untouched again.`
+        }
+      />
+    )
   } else if (changed) {
     notice = <Notice tone="neutral" title="This edit changes nothing your connections can get." />
   }

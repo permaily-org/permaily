@@ -7,7 +7,9 @@ import { downloadText } from '../activity/data.ts'
 const filename = 'permaily-export.json'
 
 function formatSize(bytes: number): string {
-  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return bytes < 1024 * 1024
+    ? `${Math.max(1, Math.round(bytes / 1024))} KB`
+    : `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
 /** The export ready state, shown in place under Your data. */
@@ -19,19 +21,33 @@ export function ExportReady() {
         {
           rules,
           vendors,
-          connections: connections.map(({ id, vendorId, name, asksFor, query, trigger, webhook, parts, actions, time, ends }) => ({
-            id,
-            vendorId,
-            name,
-            asksFor,
-            query,
-            trigger,
-            webhook: webhook?.url,
-            parts,
-            actions,
-            time,
-            ends,
-          })),
+          connections: connections.map(
+            ({
+              id,
+              vendorId,
+              name,
+              asksFor,
+              query,
+              trigger,
+              webhook,
+              parts,
+              actions,
+              time,
+              ends,
+            }) => ({
+              id,
+              vendorId,
+              name,
+              asksFor,
+              query,
+              trigger,
+              webhook: webhook?.url,
+              parts,
+              actions,
+              time,
+              ends,
+            }),
+          ),
           receipts,
         },
         null,

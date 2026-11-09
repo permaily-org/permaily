@@ -41,11 +41,15 @@ export function DetailRevokedNotice({
   return (
     <div className="mt-4">
       <Notice tone="neutral" title={`Access ended at ${revokedAt}.`} action={action}>
-        {held ? `Permaily can't recall what it already read. ${vendor.name} can delete it.` : undefined}
+        {held
+          ? `Permaily can't recall what it already read. ${vendor.name} can delete it.`
+          : undefined}
       </Notice>
       {copy === 'failed' && (
         <label className="mt-3 block">
-          <span className="text-small text-ink-2">Couldn't copy. Select the request and copy it yourself.</span>
+          <span className="text-small text-ink-2">
+            Couldn't copy. Select the request and copy it yourself.
+          </span>
           <textarea
             readOnly
             value={request}

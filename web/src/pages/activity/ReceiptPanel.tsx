@@ -1,7 +1,14 @@
 import { ChevronRight } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
-import { Bar, ButtonLink, InfoTip, Mark, SectionHeading, TextLink } from '../../components/ui/index.ts'
-import { connectionById, formatCount, rules, vendorOf, type Receipt } from '../../data/sample.ts'
+import { type ReactNode, useState } from 'react'
+import {
+  Bar,
+  ButtonLink,
+  InfoTip,
+  Mark,
+  SectionHeading,
+  TextLink,
+} from '../../components/ui/index.ts'
+import { connectionById, formatCount, type Receipt, rules, vendorOf } from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import { domainOf, fullTime, previousReceipt, shortHash } from './data.ts'
 
@@ -73,7 +80,9 @@ export function ReceiptPanel({ receipt }: { receipt: Receipt }) {
             </TextLink>
           </Fact>
           <Fact label="Query">
-            <span className={receipt.query.startsWith('"') ? 'font-mono text-mono' : 'text-body'}>{receipt.query}</span>
+            <span className={receipt.query.startsWith('"') ? 'font-mono text-mono' : 'text-body'}>
+              {receipt.query}
+            </span>
           </Fact>
           <Fact label="Access">
             <span className="text-body">{connection?.approved}</span>
@@ -87,10 +96,18 @@ export function ReceiptPanel({ receipt }: { receipt: Receipt }) {
       <section aria-labelledby="not-wanted" className="mt-5">
         <SectionHeading id="not-wanted" title="Not what you wanted?" />
         <div className="mt-2.5 flex flex-wrap gap-2">
-          <ButtonLink to={`/rules/private?add=${encodeURIComponent(domain)}`} variant="secondary" size="sm">
+          <ButtonLink
+            to={`/rules/private?add=${encodeURIComponent(domain)}`}
+            variant="secondary"
+            size="sm"
+          >
             Hold back {domain}
           </ButtonLink>
-          <ButtonLink to={`/rules/new?add=${encodeURIComponent(domain)}`} variant="secondary" size="sm">
+          <ButtonLink
+            to={`/rules/new?add=${encodeURIComponent(domain)}`}
+            variant="secondary"
+            size="sm"
+          >
             New rule for this sender
           </ButtonLink>
         </div>
@@ -115,10 +132,17 @@ function TechnicalRecord({ receipt }: { receipt: Receipt }) {
         aria-expanded={open}
         aria-controls="technical-record"
         onClick={() => setOpen((v) => !v)}
-        className={cx('flex w-full items-center justify-between py-3 text-small text-ink-2 hover:text-ink', focusRing)}
+        className={cx(
+          'flex w-full items-center justify-between py-3 text-small text-ink-2 hover:text-ink',
+          focusRing,
+        )}
       >
         Technical record
-        <ChevronRight aria-hidden size={16} className={cx('transition-transform', open && 'rotate-90')} />
+        <ChevronRight
+          aria-hidden
+          size={16}
+          className={cx('transition-transform', open && 'rotate-90')}
+        />
       </button>
       {open && (
         <div id="technical-record" className="pb-2">
@@ -135,7 +159,8 @@ function TechnicalRecord({ receipt }: { receipt: Receipt }) {
                   <>
                     Previous
                     <InfoTip label="About the hash chain" align="start">
-                      Each receipt carries the hash of the one before it, so a changed or missing receipt breaks the chain.
+                      Each receipt carries the hash of the one before it, so a changed or missing
+                      receipt breaks the chain.
                     </InfoTip>
                   </>
                 }

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { type ReactNode, useState } from 'react'
 import { Headline, MailRow, TextAction, ViewSwitch } from '../../components/ui/index.ts'
 import { formatCount } from '../../data/sample.ts'
 import type { PreviewRow } from './data.ts'
@@ -80,7 +80,12 @@ export function InboxPreview({
   )
 }
 
-function visibleRows(rows: PreviewRow[], view: View, expanded: boolean, focus: 'shared' | 'new'): PreviewRow[] {
+function visibleRows(
+  rows: PreviewRow[],
+  view: View,
+  expanded: boolean,
+  focus: 'shared' | 'new',
+): PreviewRow[] {
   if (view === 'only') {
     const list = rows.filter((row) => row.kind === focus || row.kind === 'excluded')
     return expanded ? list : list.slice(0, pageSize)
@@ -99,7 +104,9 @@ function Row({ row, action }: { row: PreviewRow; action?: (row: SharedRow) => Re
         <MailRow
           {...row}
           trailing={
-            <span className="pr-2 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">{action(row)}</span>
+            <span className="pr-2 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+              {action(row)}
+            </span>
           }
         />
       </div>

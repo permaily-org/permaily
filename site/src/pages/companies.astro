@@ -6,19 +6,36 @@ import PageHead from '../components/PageHead.astro';
 import Base from '../layouts/Base.astro';
 
 const reviewAnswers = [
-  ['SSO with SAML or OIDC', 'SCIM provisioning', 'Audit export to your SIEM', 'Per-vendor limits and central policy'],
-  ['Data processing agreement', 'Published subprocessor list', 'EU and US hosting regions', 'Self-hosting in your own AWS account'],
-  ['Public code in the mail path', 'Reproducible builds', 'Public release log', 'Security review pack on request'],
+  [
+    'SSO with SAML or OIDC',
+    'SCIM provisioning',
+    'Audit export to your SIEM',
+    'Per-vendor limits and central policy',
+  ],
+  [
+    'Data processing agreement',
+    'Published subprocessor list',
+    'EU and US hosting regions',
+    'Self-hosting in your own AWS account',
+  ],
+  [
+    'Public code in the mail path',
+    'Reproducible builds',
+    'Public release log',
+    'Security review pack on request',
+  ],
 ];
 
 const questions = [
   {
     question: 'What if a vendor hasn’t integrated with Permaily?',
-    answer: 'Most can keep working through forwarding of the mail your policy covers. A compatibility layer lets others change a base URL instead of building something new.',
+    answer:
+      'Most can keep working through forwarding of the mail your policy covers. A compatibility layer lets others change a base URL instead of building something new.',
   },
   {
     question: 'Can employees see what’s shared?',
-    answer: 'Yes, by default. Each person sees which apps their admin connected and what those apps can read.',
+    answer:
+      'Yes, by default. Each person sees which apps their admin connected and what those apps can read.',
   },
   {
     question: 'Can we start with one team?',

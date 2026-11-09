@@ -1,4 +1,4 @@
-import { user, type Connection, type Receipt, type Vendor } from '../../data/sample.ts'
+import { type Connection, type Receipt, user, type Vendor } from '../../data/sample.ts'
 
 /** Revoking happens at a fixed time so it sits after today's sample receipts. */
 export const revokedAt = '14:22'
@@ -35,8 +35,15 @@ export function groupByDay(items: Receipt[]): Array<{ label: string; items: Rece
 }
 
 /** The text copied by "Copy a deletion request". The wording still needs a legal check. */
-export function deletionRequest(vendor: Vendor, connection: Connection, items: Receipt[], headersOnly: boolean): string {
-  const what = headersOnly ? `the headers of ${connection.hasRead} of my emails` : `${connection.hasRead} of my emails`
+export function deletionRequest(
+  vendor: Vendor,
+  connection: Connection,
+  items: Receipt[],
+  headersOnly: boolean,
+): string {
+  const what = headersOnly
+    ? `the headers of ${connection.hasRead} of my emails`
+    : `${connection.hasRead} of my emails`
   return [
     `To the team behind ${vendor.name} (${vendor.domain}),`,
     '',
@@ -44,7 +51,11 @@ export function deletionRequest(vendor: Vendor, connection: Connection, items: R
     'Please delete them, along with anything made from them, and confirm when that is done.',
     '',
     ...(items.length > 0
-      ? ['The most recent ones are below. I can share the Permaily receipt for each one on request.', ...items.map((r) => `- ${r.sender}, "${r.subject}" (receipt ${r.id})`), '']
+      ? [
+          'The most recent ones are below. I can share the Permaily receipt for each one on request.',
+          ...items.map((r) => `- ${r.sender}, "${r.subject}" (receipt ${r.id})`),
+          '',
+        ]
       : []),
     user.name,
     user.email,

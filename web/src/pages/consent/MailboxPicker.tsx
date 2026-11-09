@@ -1,12 +1,19 @@
 import { Check, ChevronDown } from 'lucide-react'
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { mailboxes, type Mailbox } from '../../data/sample.ts'
+import { type KeyboardEvent, useEffect, useRef, useState } from 'react'
+import { type Mailbox, mailboxes } from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 
-const box = 'inline-flex max-w-full items-center gap-1.5 rounded-sm border border-rule px-2.5 py-[5px] font-mono text-mono'
+const box =
+  'inline-flex max-w-full items-center gap-1.5 rounded-sm border border-rule px-2.5 py-[5px] font-mono text-mono'
 
 /** The mailbox an access belongs to, as a small menu. */
-export function MailboxPicker({ value, onChange }: { value: Mailbox['id']; onChange: (id: Mailbox['id']) => void }) {
+export function MailboxPicker({
+  value,
+  onChange,
+}: {
+  value: Mailbox['id']
+  onChange: (id: Mailbox['id']) => void
+}) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
@@ -75,7 +82,10 @@ export function MailboxPicker({ value, onChange }: { value: Mailbox['id']; onCha
               role="menuitemradio"
               aria-checked={mailbox.id === value}
               onClick={() => choose(mailbox.id)}
-              className={cx('flex items-center gap-3 px-3 py-2 text-left hover:bg-sunken', focusRing)}
+              className={cx(
+                'flex items-center gap-3 px-3 py-2 text-left hover:bg-sunken',
+                focusRing,
+              )}
             >
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="truncate font-mono text-mono">{mailbox.address}</span>

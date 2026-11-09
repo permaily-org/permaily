@@ -21,10 +21,28 @@ export function Headline({
     'display-s': 'text-heading md:text-display-s',
     heading: 'text-heading',
   }
-  return <Tag className={cx('flex flex-wrap items-center gap-x-2.5 gap-y-1 font-medium', sizes[size], className)}>{children}</Tag>
+  return (
+    <Tag
+      className={cx(
+        'flex flex-wrap items-center gap-x-2.5 gap-y-1 font-medium',
+        sizes[size],
+        className,
+      )}
+    >
+      {children}
+    </Tag>
+  )
 }
 
-export function SectionHeading({ title, action, id }: { title: ReactNode; action?: ReactNode; id?: string }) {
+export function SectionHeading({
+  title,
+  action,
+  id,
+}: {
+  title: ReactNode
+  action?: ReactNode
+  id?: string
+}) {
   return (
     <div className="flex items-center justify-between gap-4 border-b border-rule-strong pb-2.5">
       <h2 id={id} className="text-title font-medium">
@@ -36,7 +54,15 @@ export function SectionHeading({ title, action, id }: { title: ReactNode; action
 }
 
 /** One labelled row in a list of terms, such as Parts or Time. */
-export function TermRow({ label, children, action }: { label: ReactNode; children: ReactNode; action?: ReactNode }) {
+export function TermRow({
+  label,
+  children,
+  action,
+}: {
+  label: ReactNode
+  children: ReactNode
+  action?: ReactNode
+}) {
   return (
     <div className="flex items-center gap-4 border-b border-rule py-[11px]">
       <div className="w-[84px] shrink-0 text-small text-ink-2">{label}</div>
@@ -77,7 +103,9 @@ export function Notice({
     >
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <p className="font-medium">{title}</p>
-        {children && <div className={cx('text-small', tone === 'neutral' && 'text-ink-2')}>{children}</div>}
+        {children && (
+          <div className={cx('text-small', tone === 'neutral' && 'text-ink-2')}>{children}</div>
+        )}
       </div>
       {action}
     </div>

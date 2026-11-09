@@ -1,8 +1,25 @@
 import { useId, useState } from 'react'
 import { Link } from 'react-router'
-import { Button, Checkbox, Dialog, EffectMark, SectionHeading, TextAction, TextLink } from '../../components/ui/index.ts'
+import {
+  Button,
+  Checkbox,
+  Dialog,
+  EffectMark,
+  SectionHeading,
+  TextAction,
+  TextLink,
+} from '../../components/ui/index.ts'
 import { setRuleScopes, useRules } from '../../data/ruleScopes.ts'
-import { appliesToText, connectionLabel, effectText, joinNames, ruleCovers, withConnection, type Connection, type Rule } from '../../data/sample.ts'
+import {
+  appliesToText,
+  type Connection,
+  connectionLabel,
+  effectText,
+  joinNames,
+  type Rule,
+  ruleCovers,
+  withConnection,
+} from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 
 /**
@@ -37,7 +54,13 @@ export function DetailRules({ connection, revoked }: { connection: Connection; r
         <ul>
           {applied.map((rule) => (
             <li key={rule.id}>
-              <Link to={`/rules/${rule.id}`} className={cx('flex items-center gap-2.5 border-b border-rule py-[11px] hover:bg-sunken', focusRing)}>
+              <Link
+                to={`/rules/${rule.id}`}
+                className={cx(
+                  'flex items-center gap-2.5 border-b border-rule py-[11px] hover:bg-sunken',
+                  focusRing,
+                )}
+              >
                 <EffectMark effect={rule.effect} />
                 <span className="min-w-0 flex-1 truncate text-body">{rule.name}</span>
                 <span className="shrink-0 text-small text-ink-2">{effectText(rule)}</span>
@@ -46,16 +69,37 @@ export function DetailRules({ connection, revoked }: { connection: Connection; r
           ))}
         </ul>
       )}
-      {others.length > 0 && <p className="pt-2.5 text-small text-ink-2">Not applied: {joinNames(others.map((rule) => rule.name))}</p>}
-      {open && <RulesDialog key={session} connection={connection} rules={rules} onClose={() => setOpen(false)} />}
+      {others.length > 0 && (
+        <p className="pt-2.5 text-small text-ink-2">
+          Not applied: {joinNames(others.map((rule) => rule.name))}
+        </p>
+      )}
+      {open && (
+        <RulesDialog
+          key={session}
+          connection={connection}
+          rules={rules}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </section>
   )
 }
 
 /** Tick the rules that apply to this connection. Each row says who the rule will cover after saving. */
-function RulesDialog({ connection, rules, onClose }: { connection: Connection; rules: Rule[]; onClose: () => void }) {
+function RulesDialog({
+  connection,
+  rules,
+  onClose,
+}: {
+  connection: Connection
+  rules: Rule[]
+  onClose: () => void
+}) {
   const titleId = useId()
-  const [ticked, setTicked] = useState<Record<string, boolean>>(() => Object.fromEntries(rules.map((r) => [r.id, ruleCovers(r.appliesTo, connection)])))
+  const [ticked, setTicked] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(rules.map((r) => [r.id, ruleCovers(r.appliesTo, connection)])),
+  )
   const next = (rule: Rule) => withConnection(rule.appliesTo, connection, ticked[rule.id] ?? false)
   const changed = rules.filter((rule) => next(rule) !== rule.appliesTo)
 
@@ -80,7 +124,9 @@ function RulesDialog({ connection, rules, onClose }: { connection: Connection; r
                 <span className="flex items-center gap-3">
                   <EffectMark effect={rule.effect} />
                   <span className="font-medium">{rule.name}</span>
-                  <span className="ml-auto max-w-[300px] text-right text-small text-ink-2">{appliesToText(next(rule))}</span>
+                  <span className="ml-auto max-w-[300px] text-right text-small text-ink-2">
+                    {appliesToText(next(rule))}
+                  </span>
                 </span>
               }
             />

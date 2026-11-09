@@ -1,5 +1,14 @@
 import { Plus, X } from 'lucide-react'
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  type CSSProperties,
+  Fragment,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { Tile } from '../../components/ui/index.ts'
 import { connectionsOf, isConnectionTarget, targetLabel, vendors } from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
@@ -9,7 +18,15 @@ import { cx, focusRing } from '../../lib/styles.ts'
  * covers all of its connections, including ones it adds later, so it replaces any of them picked
  * one by one.
  */
-export function Targets({ label, targets, onChange }: { label: string; targets: string[]; onChange: (targets: string[]) => void }) {
+export function Targets({
+  label,
+  targets,
+  onChange,
+}: {
+  label: string
+  targets: string[]
+  onChange: (targets: string[]) => void
+}) {
   const focusAfterRemove = useRef<number | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -18,12 +35,17 @@ export function Targets({ label, targets, onChange }: { label: string; targets: 
     if (index === null) return
     focusAfterRemove.current = null
     const removes = listRef.current?.querySelectorAll<HTMLElement>('[data-remove]')
-    const next = removes?.[index] ?? removes?.[index - 1] ?? listRef.current?.querySelector<HTMLElement>('[data-add]')
+    const next =
+      removes?.[index] ??
+      removes?.[index - 1] ??
+      listRef.current?.querySelector<HTMLElement>('[data-add]')
     next?.focus()
   })
 
   function add(target: string) {
-    const kept = isConnectionTarget(target) ? targets : targets.filter((t) => t.split('/')[0] !== target)
+    const kept = isConnectionTarget(target)
+      ? targets
+      : targets.filter((t) => t.split('/')[0] !== target)
     onChange([...kept, target])
   }
 
@@ -33,7 +55,12 @@ export function Targets({ label, targets, onChange }: { label: string; targets: 
   }
 
   return (
-    <div ref={listRef} role="group" aria-label={label} className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-2">
+    <div
+      ref={listRef}
+      role="group"
+      aria-label={label}
+      className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-2"
+    >
       {targets.map((target, i) => (
         // Like a condition's chip: cut short rather than pushing past its row, with 24px to tap around the remove icon.
         <span
@@ -64,7 +91,15 @@ const gap = 4
  * The menu is fixed to the viewport, so the editor's scrolling column can't clip it. It opens
  * below the button, or above when there's no room, and closes if anything scrolls.
  */
-function TargetMenu({ label, taken, onPick }: { label: string; taken: string[]; onPick: (target: string) => void }) {
+function TargetMenu({
+  label,
+  taken,
+  onPick,
+}: {
+  label: string
+  taken: string[]
+  onPick: (target: string) => void
+}) {
   const [open, setOpen] = useState(false)
   const [style, setStyle] = useState<CSSProperties>({ width: menuWidth })
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -86,7 +121,9 @@ function TargetMenu({ label, taken, onPick }: { label: string; taken: string[]; 
 
   useEffect(() => {
     if (!open) return
-    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true })
+    menuRef.current
+      ?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')
+      ?.focus({ preventScroll: true })
     const closeOutside = (event: MouseEvent) => {
       if (!wrapRef.current?.contains(event.target as Node)) setOpen(false)
     }
@@ -113,9 +150,18 @@ function TargetMenu({ label, taken, onPick }: { label: string; taken: string[]; 
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])]
+    const items = [
+      ...(menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"]:not(:disabled)',
+      ) ?? []),
+    ]
     const at = items.indexOf(document.activeElement as HTMLButtonElement)
-    const moves: Record<string, number> = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }
+    const moves: Record<string, number> = {
+      ArrowDown: at + 1,
+      ArrowUp: at - 1,
+      Home: 0,
+      End: items.length - 1,
+    }
     const move = moves[event.key]
     if (move !== undefined) {
       event.preventDefault()
@@ -146,7 +192,14 @@ function TargetMenu({ label, taken, onPick }: { label: string; taken: string[]; 
         <Plus aria-hidden size={14} />
       </button>
       {open && (
-        <div ref={menuRef} role="menu" aria-label={label} onKeyDown={onKeyDown} style={style} className="fixed z-30 border border-rule-strong bg-raised py-1">
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={label}
+          onKeyDown={onKeyDown}
+          style={style}
+          className="fixed z-30 border border-rule-strong bg-raised py-1"
+        >
           {vendors.map((vendor) => {
             const list = connectionsOf(vendor.id)
             const vendorTaken = taken.includes(vendor.id)
@@ -155,11 +208,18 @@ function TargetMenu({ label, taken, onPick }: { label: string; taken: string[]; 
                 <MenuItem disabled={vendorTaken} onSelect={() => pick(vendor.id)}>
                   <Tile initials={vendor.initials} size="sm" />
                   <span className="min-w-0 flex-1 truncate font-medium">{vendor.name}</span>
-                  {list.length > 1 && <span className="font-mono text-mono text-ink-2">all {list.length}</span>}
+                  {list.length > 1 && (
+                    <span className="font-mono text-mono text-ink-2">all {list.length}</span>
+                  )}
                 </MenuItem>
                 {list.length > 1 &&
                   list.map((connection) => (
-                    <MenuItem key={connection.id} disabled={vendorTaken || taken.includes(connection.id)} onSelect={() => pick(connection.id)} indent>
+                    <MenuItem
+                      key={connection.id}
+                      disabled={vendorTaken || taken.includes(connection.id)}
+                      onSelect={() => pick(connection.id)}
+                      indent
+                    >
                       <span className="min-w-0 flex-1 truncate">{connection.name}</span>
                     </MenuItem>
                   ))}
@@ -172,7 +232,17 @@ function TargetMenu({ label, taken, onPick }: { label: string; taken: string[]; 
   )
 }
 
-function MenuItem({ children, disabled, indent, onSelect }: { children: ReactNode; disabled: boolean; indent?: boolean; onSelect: () => void }) {
+function MenuItem({
+  children,
+  disabled,
+  indent,
+  onSelect,
+}: {
+  children: ReactNode
+  disabled: boolean
+  indent?: boolean
+  onSelect: () => void
+}) {
   return (
     <button
       type="button"

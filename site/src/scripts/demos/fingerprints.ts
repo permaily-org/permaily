@@ -1,4 +1,4 @@
-import { $, $$, Timeline, out3, paintHash, seg, setVar } from '../timeline';
+import { $, $$, out3, paintHash, seg, setVar, Timeline } from '../timeline';
 
 /** Security: two fingerprints, computed apart, that turn out to be the same. */
 export function initFingerprints(root: HTMLElement) {
@@ -17,5 +17,12 @@ export function initFingerprints(root: HTMLElement) {
     setVar(status, '--o', seg(t, T.eq + 100, T.eq + 460));
   };
 
-  new Timeline({ name: 'chain', root, duration: T.end, render, threshold: 0.35, control: $('.demo-ctl', root) });
+  new Timeline({
+    name: 'chain',
+    root,
+    duration: T.end,
+    render,
+    threshold: 0.35,
+    control: $('.demo-ctl', root),
+  });
 }

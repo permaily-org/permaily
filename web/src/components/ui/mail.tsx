@@ -3,10 +3,30 @@ import { cx } from '../../lib/styles.ts'
 import { Bar, Mark } from './marks.tsx'
 
 type WithheldProps = { kind: 'withheld'; widths?: [number, number, number] }
-type SharedProps = { kind: 'shared' | 'soft' | 'new'; date: string; sender: string; subject: string; trailing?: ReactNode; hover?: boolean }
-type ReasonProps = { kind: 'blocked' | 'excluded' | 'held'; date: string; sender: string; reason: string; barWidth?: number; trailing?: ReactNode }
+type SharedProps = {
+  kind: 'shared' | 'soft' | 'new'
+  date: string
+  sender: string
+  subject: string
+  trailing?: ReactNode
+  hover?: boolean
+}
+type ReasonProps = {
+  kind: 'blocked' | 'excluded' | 'held'
+  date: string
+  sender: string
+  reason: string
+  barWidth?: number
+  trailing?: ReactNode
+}
 /** A line of an email with details taken out. Square brackets in the snippet mark what was removed. */
-type TrimmedProps = { kind: 'trimmed'; date: string; sender: string; snippet: string; trailing?: ReactNode }
+type TrimmedProps = {
+  kind: 'trimmed'
+  date: string
+  sender: string
+  snippet: string
+  trailing?: ReactNode
+}
 
 export type MailRowProps = WithheldProps | SharedProps | ReasonProps | TrimmedProps
 
@@ -17,7 +37,8 @@ export type MailRowProps = WithheldProps | SharedProps | ReasonProps | TrimmedPr
  */
 const row = '@container'
 // The rule is part of the line, so a single line stays 40px tall with it.
-const line = 'grid grid-cols-[4rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-b border-rule py-2 @lg:flex @lg:h-10 @lg:gap-4 @lg:py-0'
+const line =
+  'grid grid-cols-[4rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-b border-rule py-2 @lg:flex @lg:h-10 @lg:gap-4 @lg:py-0'
 
 /** The subject, reason or snippet: the second line of a narrow row. */
 const body = 'col-span-3 row-start-2'
@@ -65,11 +86,19 @@ function Who({ date, sender }: { date: string; sender: string }) {
 /** Any action on the row sits at the end of its first line. On a single line the wrapper steps aside, so the action is part of it. */
 function Trailing({ children }: { children: ReactNode }) {
   if (!children) return null
-  return <span className="col-start-3 row-start-1 flex shrink-0 items-center @lg:contents">{children}</span>
+  return (
+    <span className="col-start-3 row-start-1 flex shrink-0 items-center @lg:contents">
+      {children}
+    </span>
+  )
 }
 
 /** Blocked is a request turned down. Held is mail a rule holds back on purpose. Excluded is mail left out of a rule. */
-const reasonTone: Record<ReasonProps['kind'], string> = { blocked: 'text-danger', held: 'text-ink', excluded: 'text-ink-2' }
+const reasonTone: Record<ReasonProps['kind'], string> = {
+  blocked: 'text-danger',
+  held: 'text-ink',
+  excluded: 'text-ink-2',
+}
 
 function ReasonRow({ kind, date, sender, reason, barWidth, trailing }: ReasonProps) {
   return (
@@ -79,7 +108,9 @@ function ReasonRow({ kind, date, sender, reason, barWidth, trailing }: ReasonPro
         {/* On a single line the wrapper steps aside, so the bar and the reason sit in the line as before. */}
         <span className={cx('flex min-w-0 items-center gap-3 @lg:contents', body)}>
           <Bar width={`min(${barWidth ?? 200}px, 30%)`} />
-          <span className={cx('min-w-0 flex-1 truncate font-mono text-mono', reasonTone[kind])}>{reason}</span>
+          <span className={cx('min-w-0 flex-1 truncate font-mono text-mono', reasonTone[kind])}>
+            {reason}
+          </span>
         </span>
         <Trailing>{trailing}</Trailing>
       </div>
@@ -97,7 +128,9 @@ function SharedRow({ kind, date, sender, subject, trailing, hover }: SharedProps
           <Mark tone={kind === 'soft' ? 'soft' : 'shared'} className="min-w-0 max-w-full">
             <span className="truncate">{subject}</span>
           </Mark>
-          {kind === 'new' && <span className="shrink-0 font-mono text-mono font-medium text-ink">new</span>}
+          {kind === 'new' && (
+            <span className="shrink-0 font-mono text-mono font-medium text-ink">new</span>
+          )}
         </span>
         <Trailing>{trailing}</Trailing>
       </div>
@@ -111,7 +144,12 @@ function TrimmedRow({ date, sender, snippet, trailing }: TrimmedProps) {
     <div className={row}>
       <div className={line}>
         <Who date={date} sender={sender} />
-        <span className={cx('flex min-w-0 flex-1 items-center overflow-hidden whitespace-pre text-body', body)}>
+        <span
+          className={cx(
+            'flex min-w-0 flex-1 items-center overflow-hidden whitespace-pre text-body',
+            body,
+          )}
+        >
           {parts.map((part, i) =>
             part.startsWith('[') ? (
               <span key={i} className="inline-flex">

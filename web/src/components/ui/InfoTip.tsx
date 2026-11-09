@@ -1,5 +1,5 @@
 import { Info } from 'lucide-react'
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { type ReactNode, useId, useLayoutEffect, useRef, useState } from 'react'
 import { cx, focusRing } from '../../lib/styles.ts'
 
 /** The closest a tip comes to the edge of the window. */
@@ -9,7 +9,15 @@ const edge = 8
  * A fact worth having but not worth the space: an info icon that shows it on hover, focus or tap.
  * Use it sparingly, for facts people may need, never to explain the page.
  */
-export function InfoTip({ children, label = 'More about this', align = 'center' }: { children: ReactNode; label?: string; align?: 'start' | 'center' | 'end' }) {
+export function InfoTip({
+  children,
+  label = 'More about this',
+  align = 'center',
+}: {
+  children: ReactNode
+  label?: string
+  align?: 'start' | 'center' | 'end'
+}) {
   const id = useId()
   const [open, setOpen] = useState(false)
   const tipRef = useRef<HTMLSpanElement>(null)
@@ -26,7 +34,11 @@ export function InfoTip({ children, label = 'More about this', align = 'center' 
   }, [open])
 
   return (
-    <span className="relative inline-flex align-middle" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+    <span
+      className="relative inline-flex align-middle"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
       <button
         type="button"
         aria-label={label}
@@ -38,7 +50,10 @@ export function InfoTip({ children, label = 'More about this', align = 'center' 
           if (event.key === 'Escape') setOpen(false)
         }}
         // An invisible margin makes the 16px icon a 24px touch target.
-        className={cx('relative inline-flex size-4 items-center justify-center rounded-full text-ink-3 after:absolute after:-inset-1 hover:text-ink', focusRing)}
+        className={cx(
+          'relative inline-flex size-4 items-center justify-center rounded-full text-ink-3 after:absolute after:-inset-1 hover:text-ink',
+          focusRing,
+        )}
       >
         <Info aria-hidden size={14} />
       </button>

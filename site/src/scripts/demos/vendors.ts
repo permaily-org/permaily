@@ -1,4 +1,16 @@
-import { $, $$, Timeline, bindToggle, fmt, lerp, out3, out4, seg, setPressed, setVar } from '../timeline';
+import {
+  $,
+  $$,
+  bindToggle,
+  fmt,
+  lerp,
+  out3,
+  out4,
+  seg,
+  setPressed,
+  setVar,
+  Timeline,
+} from '../timeline';
 
 const ALL_MAIL = 1200000;
 
@@ -15,7 +27,9 @@ export function initVendors(root: HTMLElement) {
     rows.forEach((row, i) => {
       const s = T.go + i * T.each;
       setVar($('.vbar', row), '--p', out3(seg(t, s, s + 700)));
-      $('.n', row).textContent = fmt(lerp(ALL_MAIL, Number(row.dataset.n), out4(seg(t, s, s + 760))));
+      $('.n', row).textContent = fmt(
+        lerp(ALL_MAIL, Number(row.dataset.n), out4(seg(t, s, s + 760))),
+      );
     });
     num.textContent = fmt(lerp(ALL_MAIL, total, out4(seg(t, T.go, duration - 200))));
     setPressed(buttons, t >= T.flip);

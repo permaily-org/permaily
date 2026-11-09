@@ -1,12 +1,19 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Button, Dialog, InfoTip, SectionHeading, TextAction, ViewSwitch } from '../../components/ui/index.ts'
+import {
+  Button,
+  Dialog,
+  InfoTip,
+  SectionHeading,
+  TextAction,
+  ViewSwitch,
+} from '../../components/ui/index.ts'
 import { connections, user } from '../../data/sample.ts'
 import { pagePadding } from '../../lib/styles.ts'
+import { applyTheme, readTheme, saveTheme, type Theme } from '../../lib/theme.ts'
 import { solidDanger } from '../accounts/styles.ts'
 import { ExportReady } from './ExportReady.tsx'
 import { EditableRow, NotificationRow, SettingRow } from './rows.tsx'
-import { applyTheme, readTheme, saveTheme, type Theme } from '../../lib/theme.ts'
 
 const notificationOptions = [
   { id: 'requests', title: 'New connection requests', on: true },
@@ -41,7 +48,10 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <section aria-labelledby="delete-account" className="mt-8 flex flex-col items-start gap-3 border border-danger px-4 py-4 sm:flex-row sm:items-center sm:gap-6 sm:px-5">
+      <section
+        aria-labelledby="delete-account"
+        className="mt-8 flex flex-col items-start gap-3 border border-danger px-4 py-4 sm:flex-row sm:items-center sm:gap-6 sm:px-5"
+      >
         <h2 id="delete-account" className="min-w-0 flex-1 font-medium">
           Delete your account
         </h2>
@@ -65,7 +75,12 @@ function Profile() {
       <SectionHeading id="profile" title="Profile" />
       <EditableRow label="Name" value={name} onSave={setName} actionLabel="Edit" />
       <EditableRow label="Contact email" value={email} onSave={setEmail} type="email" mono />
-      <EditableRow label="Language" value={language} onSave={setLanguage} options={['English', 'Español', 'Català', 'Français', 'Deutsch']} />
+      <EditableRow
+        label="Language"
+        value={language}
+        onSave={setLanguage}
+        options={['English', 'Español', 'Català', 'Français', 'Deutsch']}
+      />
     </section>
   )
 }
@@ -74,7 +89,10 @@ const otherSession = { id: 'iphone', device: 'iPhone, Safari', seen: '2 days ago
 
 function SignIn() {
   const [passkeys, setPasskeys] = useState(['MacBook, added 6 March'])
-  const [sessions, setSessions] = useState([{ id: 'this', device: 'MacBook, Firefox', seen: 'This device' }, otherSession])
+  const [sessions, setSessions] = useState([
+    { id: 'this', device: 'MacBook, Firefox', seen: 'This device' },
+    otherSession,
+  ])
   const [reviewing, setReviewing] = useState(false)
   const newPasskey = 'This browser, added today'
 
@@ -83,7 +101,9 @@ function SignIn() {
       <SectionHeading id="sign-in" title="Sign-in" />
       {passkeys.length === 0 ? (
         <SettingRow label="Passkey">
-          <span className="text-ink-2">None. You sign in with a link sent to your contact email.</span>
+          <span className="text-ink-2">
+            None. You sign in with a link sent to your contact email.
+          </span>
         </SettingRow>
       ) : (
         passkeys.map((passkey) => (
@@ -91,7 +111,10 @@ function SignIn() {
             key={passkey}
             label="Passkey"
             action={
-              <TextAction onClick={() => setPasskeys((list) => list.filter((p) => p !== passkey))} aria-label={`Remove passkey ${passkey}`}>
+              <TextAction
+                onClick={() => setPasskeys((list) => list.filter((p) => p !== passkey))}
+                aria-label={`Remove passkey ${passkey}`}
+              >
                 Remove
               </TextAction>
             }
@@ -113,12 +136,18 @@ function SignIn() {
       {reviewing && (
         <ul className="border-b border-rule py-1.5 sm:pl-[132px]">
           {sessions.map((session) => (
-            <li key={session.id} className="flex items-center justify-between gap-3 py-1.5 text-small">
+            <li
+              key={session.id}
+              className="flex items-center justify-between gap-3 py-1.5 text-small"
+            >
               <span>
                 {session.device} <span className="text-ink-2">· {session.seen}</span>
               </span>
               {session.id !== 'this' && (
-                <TextAction size="sm" onClick={() => setSessions((list) => list.filter((s) => s.id !== session.id))}>
+                <TextAction
+                  size="sm"
+                  onClick={() => setSessions((list) => list.filter((s) => s.id !== session.id))}
+                >
                   Sign out
                 </TextAction>
               )}
@@ -158,7 +187,9 @@ function Appearance() {
 }
 
 function Notifications() {
-  const [on, setOn] = useState(() => new Set(notificationOptions.filter((n) => n.on).map((n) => n.id)))
+  const [on, setOn] = useState(
+    () => new Set(notificationOptions.filter((n) => n.on).map((n) => n.id)),
+  )
 
   function toggle(id: string, checked: boolean) {
     setOn((current) => {
@@ -205,7 +236,12 @@ function YourData() {
           </InfoTip>
         </span>
       </SettingRow>
-      <SettingRow label="Export" action={exported ? undefined : <TextAction onClick={() => setExported(true)}>Export</TextAction>}>
+      <SettingRow
+        label="Export"
+        action={
+          exported ? undefined : <TextAction onClick={() => setExported(true)}>Export</TextAction>
+        }
+      >
         Rules, connections and receipts. No email
       </SettingRow>
       {exported && <ExportReady />}
@@ -220,8 +256,9 @@ function DeleteAccountDialog({ open, onClose }: { open: boolean; onClose: () => 
     <Dialog open={open} onClose={onClose} label="Delete your account">
       <h2 className="text-heading font-medium">Delete your account?</h2>
       <p className="mt-3 text-body text-ink-2">
-        All {connections.length} connections lose access now, and your rules and receipts are deleted. This can't be undone, and Permaily can't recall
-        mail connections have already received.
+        All {connections.length} connections lose access now, and your rules and receipts are
+        deleted. This can't be undone, and Permaily can't recall mail connections have already
+        received.
       </p>
       <div className="mt-6 flex flex-wrap gap-3">
         <button

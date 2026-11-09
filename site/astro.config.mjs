@@ -1,7 +1,7 @@
-import { defineConfig } from 'astro/config';
 import sitemap from '@astrojs/sitemap';
 import starlight from '@astrojs/starlight';
 import { ExpressiveCodeTheme } from '@astrojs/starlight/expressive-code';
+import { defineConfig } from 'astro/config';
 
 // Code blocks stay in ink, with comments one step dimmer. Colour carries meaning on this site, so syntax colours would muddy it.
 const codeTheme = (name, type, background, ink, comment) =>
@@ -10,7 +10,9 @@ const codeTheme = (name, type, background, ink, comment) =>
       name,
       type,
       colors: { 'editor.background': background, 'editor.foreground': ink },
-      tokenColors: [{ scope: ['comment', 'punctuation.definition.comment'], settings: { foreground: comment } }],
+      tokenColors: [
+        { scope: ['comment', 'punctuation.definition.comment'], settings: { foreground: comment } },
+      ],
     }),
   );
 

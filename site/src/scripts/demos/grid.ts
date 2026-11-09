@@ -1,6 +1,12 @@
 import { $, $$, fmt, lerp, out3, reducedMotion, seekParam, seg } from '../timeline';
 
-const COUNTS: Record<string, number> = { flights: 47, invoices: 212, receipts: 388, news: 1204, rest: 10129 };
+const COUNTS: Record<string, number> = {
+  flights: 47,
+  invoices: 212,
+  receipts: 388,
+  news: 1204,
+  rest: 10129,
+};
 
 /** Home: the access grid. One scripted turn-off on first view, then every square and switch works. */
 export function initGrid(root: HTMLElement) {
@@ -63,7 +69,7 @@ export function initGrid(root: HTMLElement) {
     if (quiet) return;
     const row = rowOf(c);
     if (!on) remembered[c] = row.map((x) => x.dataset.on!);
-    const next = on ? remembered[c] ?? row.map(() => 'true') : row.map(() => 'false');
+    const next = on ? (remembered[c] ?? row.map(() => 'true')) : row.map(() => 'false');
     row.forEach((cell, i) => setTimeout(() => setCell(cell, next[i]!), reducedMotion ? 0 : i * 40));
   };
 
@@ -71,7 +77,11 @@ export function initGrid(root: HTMLElement) {
     cell.addEventListener('click', () => {
       setCell(cell, String(cell.dataset.on !== 'true'));
       const c = cell.dataset.c!;
-      setSwitch(c, rowOf(c).some((x) => x.dataset.on === 'true'), true);
+      setSwitch(
+        c,
+        rowOf(c).some((x) => x.dataset.on === 'true'),
+        true,
+      );
       touched();
       update();
     }),

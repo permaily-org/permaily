@@ -15,7 +15,10 @@ export function SuggestedRule({ onDismiss }: { onDismiss?: () => void }) {
       <p className="mt-0.5 text-small text-ink-2">{suggestedRule.why}</p>
       <ul className="mt-3 border-t border-rule">
         {suggestedRule.covers.map((item) => (
-          <li key={item.title} className="flex items-center justify-between gap-4 border-b border-rule py-2">
+          <li
+            key={item.title}
+            className="flex items-center justify-between gap-4 border-b border-rule py-2"
+          >
             <span className="text-body">{item.title}</span>
             <span className="font-mono text-mono text-ink-2">{formatCount(item.count)} emails</span>
           </li>

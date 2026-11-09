@@ -26,4 +26,3 @@ export function saveTheme(theme: Theme): void {
     // Storage can be unavailable, for example in a private window. The choice then lasts for this visit.
   }
 }
-

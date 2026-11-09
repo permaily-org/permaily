@@ -1,8 +1,33 @@
 import { useState } from 'react'
-import { Bar, DayHeading, Mark, SectionHeading, TermRow, TextAction, TextLink, ViewSwitch } from '../../components/ui/index.ts'
-import { exampleReceipt, fieldRows, queryDefinition, queryFile, typeText, type ExampleValue, type Field, type QueryDefinition } from '../../data/queries.ts'
+import {
+  Bar,
+  DayHeading,
+  Mark,
+  SectionHeading,
+  TermRow,
+  TextAction,
+  TextLink,
+  ViewSwitch,
+} from '../../components/ui/index.ts'
+import {
+  type ExampleValue,
+  exampleReceipt,
+  type Field,
+  fieldRows,
+  type QueryDefinition,
+  queryDefinition,
+  queryFile,
+  typeText,
+} from '../../data/queries.ts'
 import { useRules } from '../../data/ruleScopes.ts'
-import { formatCount, receipts, ruleCovers, type Connection, type Receipt, type Rule } from '../../data/sample.ts'
+import {
+  type Connection,
+  formatCount,
+  type Receipt,
+  type Rule,
+  receipts,
+  ruleCovers,
+} from '../../data/sample.ts'
 import { cx } from '../../lib/styles.ts'
 import { dayLabels } from './DetailData.ts'
 
@@ -39,7 +64,11 @@ export function QuerySection({ connection }: { connection: Connection }) {
           />
         }
       />
-      {view === 'readable' ? <Readable connection={connection} definition={definition} /> : <QueryFileView connection={connection} />}
+      {view === 'readable' ? (
+        <Readable connection={connection} definition={definition} />
+      ) : (
+        <QueryFileView connection={connection} />
+      )}
     </section>
   )
 }
@@ -50,7 +79,9 @@ function basicInfo(definition: QueryDefinition): Field[] {
     { name: 'from', label: 'Who sent it', type: 'string' },
     { name: 'date', label: 'When it arrived', type: 'datetime' },
     { name: 'subject', label: 'Subject', type: 'string' },
-    ...(definition.parts.includes('body_text') ? [{ name: 'body_text', label: 'Body text', type: 'string' } satisfies Field] : []),
+    ...(definition.parts.includes('body_text')
+      ? [{ name: 'body_text', label: 'Body text', type: 'string' } satisfies Field]
+      : []),
   ]
 }
 
@@ -63,11 +94,23 @@ function basicValues(receipt: Receipt): Record<string, ExampleValue> {
   }
 }
 
-function Readable({ connection, definition }: { connection: Connection; definition: QueryDefinition }) {
+function Readable({
+  connection,
+  definition,
+}: {
+  connection: Connection
+  definition: QueryDefinition
+}) {
   const rules = useRules()
-  const removing = (ruleId: string) => rules.find((r) => r.id === ruleId && r.effect === 'remove' && ruleCovers(r.appliesTo, connection))
-  const receipt = exampleReceipt(definition, receipts) ?? receipts.find((r) => r.connectionId === connection.id)
-  const values: Record<string, ExampleValue> = receipt ? { ...basicValues(receipt), ...definition.example?.values } : {}
+  const removing = (ruleId: string) =>
+    rules.find(
+      (r) => r.id === ruleId && r.effect === 'remove' && ruleCovers(r.appliesTo, connection),
+    )
+  const receipt =
+    exampleReceipt(definition, receipts) ?? receipts.find((r) => r.connectionId === connection.id)
+  const values: Record<string, ExampleValue> = receipt
+    ? { ...basicValues(receipt), ...definition.example?.values }
+    : {}
   const groups = [
     { label: 'Basic info', rows: fieldRows(basicInfo(definition)) },
     { label: 'Fields it asks for', rows: fieldRows(definition.fields) },
@@ -78,7 +121,11 @@ function Readable({ connection, definition }: { connection: Connection; definiti
       <TermRow label="Matches">
         <span className="flex flex-col gap-1">
           <span>{definition.matchText}</span>
-          {definition.search.length > 0 && <code className="font-mono text-micro text-ink-2 [overflow-wrap:anywhere]">{definition.search.join(' ')}</code>}
+          {definition.search.length > 0 && (
+            <code className="font-mono text-micro text-ink-2 [overflow-wrap:anywhere]">
+              {definition.search.join(' ')}
+            </code>
+          )}
         </span>
       </TermRow>
 
@@ -126,18 +173,35 @@ function Readable({ connection, definition }: { connection: Connection; definiti
                 group.rows.map(({ field, depth, path }) => (
                   <tr key={path} className="border-b border-rule align-top">
                     <td className="py-2.5 pr-3">
-                      <span className="flex items-center font-mono text-mono" style={{ paddingLeft: depth * 14 }}>
-                        {depth > 0 && <span aria-hidden className="mr-1.5 mb-1 inline-block size-2 shrink-0 border-b border-l border-ink-3" />}
+                      <span
+                        className="flex items-center font-mono text-mono"
+                        style={{ paddingLeft: depth * 14 }}
+                      >
+                        {depth > 0 && (
+                          <span
+                            aria-hidden
+                            className="mr-1.5 mb-1 inline-block size-2 shrink-0 border-b border-l border-ink-3"
+                          />
+                        )}
                         <span className="[overflow-wrap:anywhere]">{field.name}</span>
                       </span>
                       {/* Without its own column, what the field is sits under its name. */}
-                      <span className="block text-small text-ink-2 @md:hidden" style={{ paddingLeft: depth * 14 }}>
+                      <span
+                        className="block text-small text-ink-2 @md:hidden"
+                        style={{ paddingLeft: depth * 14 }}
+                      >
                         {field.label}
                       </span>
                     </td>
                     <td className={cx('py-2.5 pr-3 text-body', labelColumn)}>{field.label}</td>
-                    <td className={cx('py-2.5 pr-3 text-small text-ink-2', typeColumn)}>{typeText(field)}</td>
-                    {receipt && <td className="py-2.5">{!field.fields && <Value value={values[path]} removing={removing} />}</td>}
+                    <td className={cx('py-2.5 pr-3 text-small text-ink-2', typeColumn)}>
+                      {typeText(field)}
+                    </td>
+                    {receipt && (
+                      <td className="py-2.5">
+                        {!field.fields && <Value value={values[path]} removing={removing} />}
+                      </td>
+                    )}
                   </tr>
                 ))
               )}
@@ -150,7 +214,13 @@ function Readable({ connection, definition }: { connection: Connection; definiti
 }
 
 /** A value that leaves is marked as shared. One a rule takes out is a bar. An empty one is a dash. */
-function Value({ value, removing }: { value: ExampleValue | undefined; removing: (ruleId: string) => Rule | undefined }) {
+function Value({
+  value,
+  removing,
+}: {
+  value: ExampleValue | undefined
+  removing: (ruleId: string) => Rule | undefined
+}) {
   if (value === undefined || value === null) {
     return (
       <span className="text-ink-3">
@@ -206,7 +276,11 @@ function QueryFileView({ connection }: { connection: Connection }) {
           <span className="sr-only"> {name}</span>
         </TextAction>
       </div>
-      <pre tabIndex={0} aria-label={name} className="mt-2 overflow-x-auto bg-sunken px-4 py-3.5 font-mono text-mono leading-[1.65] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink">
+      <pre
+        tabIndex={0}
+        aria-label={name}
+        className="mt-2 overflow-x-auto bg-sunken px-4 py-3.5 font-mono text-mono leading-[1.65] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+      >
         <code>
           {file.split('\n').map((line, i) => (
             <span key={i} className={line.startsWith('#') ? 'text-ink-2' : 'text-ink'}>

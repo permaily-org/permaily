@@ -1,10 +1,28 @@
 import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
-import { ButtonLink, EffectMark, FilterButton, Headline, Mark, SectionHeading, TextLink, Tile } from '../../components/ui/index.ts'
+import {
+  ButtonLink,
+  EffectMark,
+  FilterButton,
+  Headline,
+  Mark,
+  SectionHeading,
+  TextLink,
+  Tile,
+} from '../../components/ui/index.ts'
 import { useRevoked } from '../../data/revoked.ts'
 import { useRules } from '../../data/ruleScopes.ts'
-import { attention, connectionLabel, connections, effectText, formatCount, vendorOf, type Connection, type Rule } from '../../data/sample.ts'
+import {
+  attention,
+  type Connection,
+  connectionLabel,
+  connections,
+  effectText,
+  formatCount,
+  type Rule,
+  vendorOf,
+} from '../../data/sample.ts'
 import { cx, focusRing, pagePadding } from '../../lib/styles.ts'
 import { isHeadersOnly } from '../connections/ConnectionsAccess.ts'
 import { Runs } from '../connections/Runs.tsx'
@@ -42,7 +60,11 @@ function Overview() {
       </div>
 
       <section aria-labelledby="rules-heading" className="mt-4">
-        <SectionHeading id="rules-heading" title="Your rules" action={<TextLink to="/rules">See rules</TextLink>} />
+        <SectionHeading
+          id="rules-heading"
+          title="Your rules"
+          action={<TextLink to="/rules">See rules</TextLink>}
+        />
         <ul className="@container">
           {rules.map((rule) => (
             <li key={rule.id}>
@@ -53,7 +75,11 @@ function Overview() {
       </section>
 
       <section aria-labelledby="connections-heading" className="mt-8">
-        <SectionHeading id="connections-heading" title="Connections" action={<TextLink to="/connections">See connections</TextLink>} />
+        <SectionHeading
+          id="connections-heading"
+          title="Connections"
+          action={<TextLink to="/connections">See connections</TextLink>}
+        />
         <ul className="@container">
           {connections.map((connection) => (
             <li key={connection.id}>
@@ -72,7 +98,10 @@ function Overview() {
 
 function RuleRow({ rule }: { rule: Rule }) {
   return (
-    <Link to={`/rules/${rule.id}`} className={cx(ruleColumns, 'group border-b border-rule py-2.5 hover:bg-sunken', focusRing)}>
+    <Link
+      to={`/rules/${rule.id}`}
+      className={cx(ruleColumns, 'group border-b border-rule py-2.5 hover:bg-sunken', focusRing)}
+    >
       <span className="flex min-w-0 items-center gap-2.5">
         <EffectMark effect={rule.effect} />
         <span className="truncate text-body font-medium">{rule.name}</span>
@@ -88,7 +117,11 @@ function RuleRow({ rule }: { rule: Rule }) {
         {formatCount(rule.matches)}
         <span className="sr-only"> emails</span>
       </span>
-      <ChevronRight aria-hidden size={16} className={cx('text-ink-2 group-hover:text-ink', chevronCell)} />
+      <ChevronRight
+        aria-hidden
+        size={16}
+        className={cx('text-ink-2 group-hover:text-ink', chevronCell)}
+      />
     </Link>
   )
 }
@@ -99,17 +132,25 @@ function ConnectionRow({ connection: c, revoked }: { connection: Connection; rev
     <Link
       to={`/connections/${c.id}`}
       aria-label={connectionLabel(c)}
-      className={cx(connectionColumns, 'group border-b border-rule py-2 hover:bg-sunken', focusRing)}
+      className={cx(
+        connectionColumns,
+        'group border-b border-rule py-2 hover:bg-sunken',
+        focusRing,
+      )}
     >
       <span className="flex min-w-0 items-center gap-2.5">
         <Tile initials={vendor.initials} />
         <span className="flex min-w-0 flex-col">
-          <span className={cx('truncate text-body font-medium', revoked && 'text-ink-2')}>{c.name}</span>
+          <span className={cx('truncate text-body font-medium', revoked && 'text-ink-2')}>
+            {c.name}
+          </span>
           <span className="truncate text-small text-ink-2">{vendor.name}</span>
         </span>
       </span>
       {/* Stacked, it wraps under the name instead of being cut off. */}
-      <span className="text-body @max-2xl:col-span-full @max-2xl:pl-[46px] @2xl:truncate">{c.asksFor}</span>
+      <span className="text-body @max-2xl:col-span-full @max-2xl:pl-[46px] @2xl:truncate">
+        {c.asksFor}
+      </span>
       <span className="text-small @max-4xl:hidden">
         <Runs trigger={c.trigger} />
       </span>
@@ -122,7 +163,11 @@ function ConnectionRow({ connection: c, revoked }: { connection: Connection; rev
           </Mark>
         )}
       </span>
-      <ChevronRight aria-hidden size={16} className={cx('text-ink-2 group-hover:text-ink', chevronCell)} />
+      <ChevronRight
+        aria-hidden
+        size={16}
+        className={cx('text-ink-2 group-hover:text-ink', chevronCell)}
+      />
     </Link>
   )
 }
@@ -132,7 +177,11 @@ function FirstUse() {
   return (
     <div className={pagePadding}>
       <Headline>Nothing can read your mail.</Headline>
-      <div role="img" aria-label="Every kind of mail is withheld from every connection" className="mt-6 grid max-w-[560px] grid-cols-5 gap-1">
+      <div
+        role="img"
+        aria-label="Every kind of mail is withheld from every connection"
+        className="mt-6 grid max-w-[560px] grid-cols-5 gap-1"
+      >
         {Array.from({ length: 15 }, (_, i) => (
           <span key={i} className="h-7 bg-bar" />
         ))}

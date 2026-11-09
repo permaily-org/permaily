@@ -10,14 +10,23 @@ export type Draft = { blocks: ConditionBlock[]; butNot: string[] }
 /** new and soft both match: new only since this edit. dropped matched before this edit. none never matched. */
 export type RowStatus = 'new' | 'soft' | 'excluded' | 'dropped' | 'none'
 
-export type RowView = { row: PreviewMail; status: RowStatus; excludedBy?: string; matchedBy?: string }
+export type RowView = {
+  row: PreviewMail
+  status: RowStatus
+  excludedBy?: string
+  matchedBy?: string
+}
 
 export function domainOf(address: string): string {
   return address.split('@')[1]?.toLowerCase() ?? address.toLowerCase()
 }
 
 function positiveChips(blocks: ConditionBlock[]): Set<string> {
-  return new Set(blocks.flatMap((block) => block.flatMap((group) => group.chips.map((chip) => chip.toLowerCase()))))
+  return new Set(
+    blocks.flatMap((block) =>
+      block.flatMap((group) => group.chips.map((chip) => chip.toLowerCase())),
+    ),
+  )
 }
 
 function exclusionFor(row: PreviewMail, butNot: string[]): string | undefined {
@@ -30,12 +39,15 @@ function exclusionFor(row: PreviewMail, butNot: string[]): string | undefined {
 }
 
 function matchingKey(row: PreviewMail, chips: Set<string>): string | undefined {
-  return [row.address, domainOf(row.address), ...(row.keys ?? [])].find((k) => chips.has(k.toLowerCase()))
+  return [row.address, domainOf(row.address), ...(row.keys ?? [])].find((k) =>
+    chips.has(k.toLowerCase()),
+  )
 }
 
 function matcher(draft: Draft) {
   const chips = positiveChips(draft.blocks)
-  return (row: PreviewMail) => matchingKey(row, chips) !== undefined && !exclusionFor(row, draft.butNot)
+  return (row: PreviewMail) =>
+    matchingKey(row, chips) !== undefined && !exclusionFor(row, draft.butNot)
 }
 
 /** The rule as it was before this edit: chips added in this edit removed, and nothing at all for a new rule. */
@@ -43,7 +55,9 @@ export function savedDraft(seed: RuleSeed, isNew: boolean): Draft {
   if (isNew) return { blocks: [], butNot: [] }
   const unsaved = new Set(seed.unsaved)
   return {
-    blocks: seed.blocks.map((block) => block.map((group) => ({ ...group, chips: group.chips.filter((c) => !unsaved.has(c)) }))),
+    blocks: seed.blocks.map((block) =>
+      block.map((group) => ({ ...group, chips: group.chips.filter((c) => !unsaved.has(c)) })),
+    ),
     butNot: seed.butNot,
   }
 }

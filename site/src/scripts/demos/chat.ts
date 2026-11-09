@@ -1,4 +1,4 @@
-import { $, $$, Timeline, clamp, out3, seg, setVar } from '../timeline';
+import { $, $$, clamp, out3, seg, setVar, Timeline } from '../timeline';
 
 /** Home: an agent asks, and Permaily answers with only what was shared. */
 export function initChat(root: HTMLElement) {
@@ -22,5 +22,12 @@ export function initChat(root: HTMLElement) {
     }
   };
 
-  new Timeline({ name: 'chat', root, duration, render, threshold: 0.45, control: $('.demo-ctl', root) });
+  new Timeline({
+    name: 'chat',
+    root,
+    duration,
+    render,
+    threshold: 0.45,
+    control: $('.demo-ctl', root),
+  });
 }

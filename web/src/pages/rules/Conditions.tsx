@@ -1,5 +1,5 @@
 import { Plus, X } from 'lucide-react'
-import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { Fragment, type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import { InfoTip, TextAction } from '../../components/ui/index.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import type { ConditionBlock, GroupKind } from './data.ts'
@@ -26,10 +26,16 @@ export function Conditions({
 }) {
   const matchId = useId()
   const notId = useId()
-  const usesModel = blocks.some((block) => block.some((g) => (g.kind === 'about' || g.kind === 'text') && g.chips.length > 0))
+  const usesModel = blocks.some((block) =>
+    block.some((g) => (g.kind === 'about' || g.kind === 'text') && g.chips.length > 0),
+  )
 
   function setChips(bi: number, gi: number, chips: string[]) {
-    onBlocksChange(blocks.map((block, b) => (b !== bi ? block : block.map((group, g) => (g !== gi ? group : { ...group, chips })))))
+    onBlocksChange(
+      blocks.map((block, b) =>
+        b !== bi ? block : block.map((group, g) => (g !== gi ? group : { ...group, chips })),
+      ),
+    )
   }
 
   return (
@@ -41,7 +47,8 @@ export function Conditions({
           </p>
           {usesModel && (
             <InfoTip label="How words and topics are checked" align="start">
-              Words and topics are checked by a model inside Permaily's verified service. Your mail doesn't leave it.
+              Words and topics are checked by a model inside Permaily's verified service. Your mail
+              doesn't leave it.
             </InfoTip>
           )}
         </div>
@@ -72,7 +79,6 @@ export function Conditions({
           <GroupRow label="from" kind="sender" chips={butNot} onChange={onButNotChange} />
         </Box>
       </div>
-
     </>
   )
 }
@@ -103,7 +109,10 @@ function GroupRow({
     if (index === null) return
     focusAfterRemove.current = null
     const removes = listRef.current?.querySelectorAll<HTMLElement>('[data-remove]')
-    const next = removes?.[index] ?? removes?.[index - 1] ?? listRef.current?.querySelector<HTMLElement>('[data-add]')
+    const next =
+      removes?.[index] ??
+      removes?.[index - 1] ??
+      listRef.current?.querySelector<HTMLElement>('[data-add]')
     next?.focus()
   })
 
@@ -122,17 +131,19 @@ function GroupRow({
 
   // On a phone the label goes above its chips, so they get the whole width.
   return (
-    <div role="group" aria-label={label} className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:gap-3">
-      <span className="text-small whitespace-nowrap sm:w-[98px] sm:shrink-0 sm:py-0.5">{label}</span>
+    <div
+      role="group"
+      aria-label={label}
+      className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:gap-3"
+    >
+      <span className="text-small whitespace-nowrap sm:w-[98px] sm:shrink-0 sm:py-0.5">
+        {label}
+      </span>
       <div ref={listRef} className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-2">
         {visible.map((chip, i) => (
           <Chip key={chip} value={chip} onRemove={() => remove(i)} />
         ))}
-        {hidden > 0 && (
-          <TextAction onClick={() => setExpanded(true)}>
-            and {hidden} more
-          </TextAction>
-        )}
+        {hidden > 0 && <TextAction onClick={() => setExpanded(true)}>and {hidden} more</TextAction>}
         <AddChip label={`Add to ${label}`} placeholder={placeholders[kind]} onAdd={add} />
       </div>
     </div>
@@ -165,7 +176,15 @@ function Chip({ value, onRemove }: { value: string; onRemove?: () => void }) {
   )
 }
 
-function AddChip({ label, placeholder, onAdd }: { label: string; placeholder: string; onAdd: (value: string) => void }) {
+function AddChip({
+  label,
+  placeholder,
+  onAdd,
+}: {
+  label: string
+  placeholder: string
+  onAdd: (value: string) => void
+}) {
   const [open, setOpen] = useState(false)
   const [value, setValue] = useState('')
   const returnFocus = useRef(false)
@@ -213,7 +232,10 @@ function AddChip({ label, placeholder, onAdd }: { label: string; placeholder: st
           commit()
           setOpen(false)
         }}
-        className={cx('h-[22px] w-40 max-w-full rounded-sm border border-ink bg-transparent px-1.5 font-mono text-mono placeholder:text-ink-3', focusRing)}
+        className={cx(
+          'h-[22px] w-40 max-w-full rounded-sm border border-ink bg-transparent px-1.5 font-mono text-mono placeholder:text-ink-3',
+          focusRing,
+        )}
       />
     )
   }

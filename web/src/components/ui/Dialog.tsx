@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { type ReactNode, useEffect, useRef } from 'react'
 
 /** A modal dialog using the native <dialog>, so focus and Escape work without extra code. */
 export function Dialog({

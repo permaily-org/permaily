@@ -1,4 +1,4 @@
-import { $, $$, Timeline, clamp, paintHash, seg, setVar } from '../timeline';
+import { $, $$, clamp, paintHash, seg, setVar, Timeline } from '../timeline';
 
 /** Home: one command, and two hashes that resolve into the same value. */
 export function initProof(root: HTMLElement) {
@@ -13,7 +13,9 @@ export function initProof(root: HTMLElement) {
     const n = Math.floor(clamp(((t - T.type) * T.cps) / 1000, 0, command.length));
     typed.textContent = command.slice(0, n);
     untyped.textContent = command.slice(n);
-    lines.forEach((line) => setVar(line, '--o', seg(t, Number(line.dataset.at), Number(line.dataset.at) + 120)));
+    lines.forEach((line) =>
+      setVar(line, '--o', seg(t, Number(line.dataset.at), Number(line.dataset.at) + 120)),
+    );
     const frame = Math.floor(t / 70);
     const progress = seg(t, T.hash, T.hash + T.hashDur);
     hashes.forEach((hash, i) => paintHash(hash, progress, frame, i));

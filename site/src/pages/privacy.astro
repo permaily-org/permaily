@@ -3,12 +3,36 @@ import { LINKS } from '../config/site';
 import Base from '../layouts/Base.astro';
 
 const data = [
-  { data: 'Mail fetched from your account', where: 'Memory, inside the enclave', kept: 'Not stored' },
-  { data: 'Mail received by forwarding', where: 'Encrypted storage, under your key', kept: 'Until delivered, or a short limit' },
-  { data: 'Tokens for your mailbox', where: 'Encrypted database, under your key', kept: 'Until you disconnect' },
-  { data: 'Rules and access settings', where: 'Encrypted database, under your key', kept: 'Until you delete them' },
-  { data: 'Receipts', where: 'Encrypted database, hash chained', kept: 'You decide, with a default limit' },
-  { data: 'Your account email and billing details', where: 'Our database and our payment provider', kept: 'Until you delete your account' },
+  {
+    data: 'Mail fetched from your account',
+    where: 'Memory, inside the enclave',
+    kept: 'Not stored',
+  },
+  {
+    data: 'Mail received by forwarding',
+    where: 'Encrypted storage, under your key',
+    kept: 'Until delivered, or a short limit',
+  },
+  {
+    data: 'Tokens for your mailbox',
+    where: 'Encrypted database, under your key',
+    kept: 'Until you disconnect',
+  },
+  {
+    data: 'Rules and access settings',
+    where: 'Encrypted database, under your key',
+    kept: 'Until you delete them',
+  },
+  {
+    data: 'Receipts',
+    where: 'Encrypted database, hash chained',
+    kept: 'You decide, with a default limit',
+  },
+  {
+    data: 'Your account email and billing details',
+    where: 'Our database and our payment provider',
+    kept: 'Until you delete your account',
+  },
 ];
 ---
 

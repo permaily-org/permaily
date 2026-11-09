@@ -5,7 +5,15 @@ import { Button, Tile } from '../../components/ui/index.ts'
  * Consent page: the request and decision, then the preview raised beside them.
  * Side by side from xl, the first width where the preview's mail rows fit next to the request. Stacked below that.
  */
-export function ConsentLayout({ mailbox, children, preview }: { mailbox: ReactNode; children: ReactNode; preview: ReactNode }) {
+export function ConsentLayout({
+  mailbox,
+  children,
+  preview,
+}: {
+  mailbox: ReactNode
+  children: ReactNode
+  preview: ReactNode
+}) {
   return (
     <main className="flex min-h-svh flex-col xl:flex-row">
       <div className="w-full max-w-[600px] px-4 pt-6 pb-10 sm:px-8 lg:px-14 lg:pt-7 lg:pb-14 xl:sticky xl:top-0 xl:max-h-svh xl:shrink-0 xl:self-start xl:overflow-y-auto">
@@ -26,7 +34,15 @@ export function ConsentLayout({ mailbox, children, preview }: { mailbox: ReactNo
 }
 
 /** Who is asking, with the facts that shape how to read the request. */
-export function Requester({ initials, line, facts }: { initials: string; line: string; facts: string[] }) {
+export function Requester({
+  initials,
+  line,
+  facts,
+}: {
+  initials: string
+  line: string
+  facts: string[]
+}) {
   return (
     <div className="mt-11 flex items-center gap-2.5">
       <Tile initials={initials} />
@@ -73,7 +89,11 @@ export function Decision({
           {declineLabel}
         </Button>
       </div>
-      <p id="decision-note" aria-live="polite" className="mt-3.5 max-w-[488px] text-small text-ink-2">
+      <p
+        id="decision-note"
+        aria-live="polite"
+        className="mt-3.5 max-w-[488px] text-small text-ink-2"
+      >
         {note}
       </p>
     </>

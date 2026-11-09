@@ -17,6 +17,6 @@ The web app (React, TypeScript, Vite, Tailwind v4, React Router), managed with *
 bun install
 bun run dev
 bun run build
-bun run lint
+bun run --cwd .. lint   # Biome for the whole repo
 bun run typecheck
 ```

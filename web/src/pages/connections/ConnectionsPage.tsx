@@ -1,6 +1,13 @@
 import { useState } from 'react'
 import { useSearchParams } from 'react-router'
-import { ButtonAnchor, ButtonLink, Headline, SearchField, SectionHeading, TextLink } from '../../components/ui/index.ts'
+import {
+  ButtonAnchor,
+  ButtonLink,
+  Headline,
+  SearchField,
+  SectionHeading,
+  TextLink,
+} from '../../components/ui/index.ts'
 import { connections, formatCount, formerVendors } from '../../data/sample.ts'
 import { pagePadding } from '../../lib/styles.ts'
 import { ConnectionsTable } from './ConnectionsTable.tsx'
@@ -36,10 +43,15 @@ export function ConnectionsPage() {
           <SectionHeading id="former-heading" title="No longer connected" />
           <ul>
             {formerVendors.map((former) => (
-              <li key={former.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule py-[11px]">
+              <li
+                key={former.id}
+                className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule py-[11px]"
+              >
                 <span className="font-medium">{former.name}</span>
                 <span className="font-mono text-mono text-ink-2">revoked {former.revoked}</span>
-                <span className="min-w-0 flex-1 text-small text-ink-2">May still hold {formatCount(former.held)} emails</span>
+                <span className="min-w-0 flex-1 text-small text-ink-2">
+                  May still hold {formatCount(former.held)} emails
+                </span>
                 <TextLink to="/activity" aria-label={`See what ${former.name} read`}>
                   See what it read
                 </TextLink>

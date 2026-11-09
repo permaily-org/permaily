@@ -1,5 +1,13 @@
-import { useState, type ReactNode } from 'react'
-import { Button, Count, Headline, StepMarker, TextAction, TextLink, type StepState } from '../../components/ui/index.ts'
+import { type ReactNode, useState } from 'react'
+import {
+  Button,
+  Count,
+  Headline,
+  StepMarker,
+  type StepState,
+  TextAction,
+  TextLink,
+} from '../../components/ui/index.ts'
 import { cx } from '../../lib/styles.ts'
 import { suggestedRulePath } from '../rules/data.ts'
 import { expectations, filterSearch, forwardingAddress, forwardingMailbox } from './data.ts'
@@ -37,13 +45,18 @@ export function ForwardingSetupPage() {
               {showAddress && (
                 <p className="pb-4 pl-12 text-body text-ink-2">
                   In Gmail, open Settings, then Forwarding and POP/IMAP, and add{' '}
-                  <span className="font-mono text-small text-ink">{forwardingAddress}</span> as a forwarding address.
+                  <span className="font-mono text-small text-ink">{forwardingAddress}</span> as a
+                  forwarding address.
                 </p>
               )}
             </FoldedStep>
 
             {verified ? (
-              <FoldedStep number={2} title="Gmail's verification message approved" aside={<span className="font-mono text-mono text-ink-2">approved just now</span>} />
+              <FoldedStep
+                number={2}
+                title="Gmail's verification message approved"
+                aside={<span className="font-mono text-mono text-ink-2">approved just now</span>}
+              />
             ) : (
               <OpenStep
                 number={2}
@@ -51,7 +64,10 @@ export function ForwardingSetupPage() {
                 title="Confirm Gmail's verification message"
                 aside={<span className="font-mono text-mono">we received it 12 seconds ago</span>}
               >
-                <p className="text-body text-ink-2">Gmail sent the confirmation to Permaily. Open it and approve it. Only you can do this step.</p>
+                <p className="text-body text-ink-2">
+                  Gmail sent the confirmation to Permaily. Open it and approve it. Only you can do
+                  this step.
+                </p>
                 <Button className="mt-3.5" onClick={() => setVerified(true)}>
                   Open verification link
                 </Button>
@@ -62,7 +78,11 @@ export function ForwardingSetupPage() {
               number={3}
               state={verified ? 'current' : 'next'}
               title="Create the filter"
-              aside={verified ? null : <span className="font-mono text-mono text-ink-2">unlocks after step 2</span>}
+              aside={
+                verified ? null : (
+                  <span className="font-mono text-mono text-ink-2">unlocks after step 2</span>
+                )
+              }
             >
               {verified && <FilterInstructions />}
             </OpenStep>
@@ -79,13 +99,25 @@ export function ForwardingSetupPage() {
   )
 }
 
-function FoldedStep({ number, title, aside, children }: { number: number; title: string; aside: ReactNode; children?: ReactNode }) {
+function FoldedStep({
+  number,
+  title,
+  aside,
+  children,
+}: {
+  number: number
+  title: string
+  aside: ReactNode
+  children?: ReactNode
+}) {
   return (
     <li className="border-b border-rule">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 py-[13px]">
         <StepMarker state="done" number={number} />
         <span className="min-w-0 flex-1 basis-40 text-lead text-ink-2">{title}</span>
-        <span className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 break-all max-sm:w-full max-sm:pl-12">{aside}</span>
+        <span className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 break-all max-sm:w-full max-sm:pl-12">
+          {aside}
+        </span>
       </div>
       {children}
     </li>
@@ -106,11 +138,16 @@ function OpenStep({
   children: ReactNode
 }) {
   return (
-    <li className="flex gap-5 border-b border-rule pt-[18px] pb-5" aria-current={state === 'current' ? 'step' : undefined}>
+    <li
+      className="flex gap-5 border-b border-rule pt-[18px] pb-5"
+      aria-current={state === 'current' ? 'step' : undefined}
+    >
       <StepMarker state={state} number={number} />
       <div className="min-w-0 flex-1">
         <div className="flex min-h-7 flex-wrap items-center justify-between gap-x-4 gap-y-1">
-          <h2 className={cx('text-title font-medium', state === 'next' && 'text-ink-2')}>{title}</h2>
+          <h2 className={cx('text-title font-medium', state === 'next' && 'text-ink-2')}>
+            {title}
+          </h2>
           {aside}
         </div>
         <div className="mt-2">{children}</div>
@@ -134,21 +171,27 @@ function FilterInstructions() {
   return (
     <>
       <p className="text-body text-ink-2">
-        In Gmail, open Settings, then Filters and blocked addresses, and create a new filter. Paste this search into Has the words, then choose
-        Forward it to <span className="font-mono text-small text-ink">{forwardingAddress}</span>.
+        In Gmail, open Settings, then Filters and blocked addresses, and create a new filter. Paste
+        this search into Has the words, then choose Forward it to{' '}
+        <span className="font-mono text-small text-ink">{forwardingAddress}</span>.
       </p>
       <div className="mt-3.5 flex items-start gap-4 bg-sunken px-3 py-2.5">
-        <code className="min-w-0 flex-1 font-mono text-mono break-words select-all">{filterSearch}</code>
+        <code className="min-w-0 flex-1 font-mono text-mono break-words select-all">
+          {filterSearch}
+        </code>
         <TextAction size="sm" onClick={copySearch}>
           {copy === 'copied' ? 'Copied' : 'Copy'}
         </TextAction>
       </div>
       <p aria-live="polite" className="mt-1.5 text-small text-ink-2">
-        {copy === 'failed' && "Couldn't reach the clipboard. Select the search and copy it yourself."}
+        {copy === 'failed' &&
+          "Couldn't reach the clipboard. Select the search and copy it yourself."}
       </p>
       <div className="mt-3 border-t border-rule pt-3">
         <p className="font-medium">When the first email arrives</p>
-        <p className="mt-0.5 text-small text-ink-2">We confirm it here, then suggest the Sign-in and security rule.</p>
+        <p className="mt-0.5 text-small text-ink-2">
+          We confirm it here, then suggest the Sign-in and security rule.
+        </p>
         <TextLink to={suggestedRulePath} size="sm" className="mt-2.5">
           Review the suggested rule
         </TextLink>
@@ -167,7 +210,9 @@ function WhatToExpect() {
       <Headline as="h2" className="mt-4">
         About <Count>40</Count> a month.
       </Headline>
-      <p className="mt-4.5 text-body text-ink-2">Roughly how much mail this filter sends Permaily. Everything else never leaves Gmail.</p>
+      <p className="mt-4.5 text-body text-ink-2">
+        Roughly how much mail this filter sends Permaily. Everything else never leaves Gmail.
+      </p>
       <ul className="mt-3 border-t border-rule-strong">
         {expectations.map((item) => (
           <li key={item.title} className="border-b border-rule py-2.5">

@@ -1,10 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Count, Headline, TermRow, TextAction } from '../../components/ui/index.ts'
-import { formatCount, inbox, mailboxes, type Mailbox } from '../../data/sample.ts'
+import { formatCount, inbox, type Mailbox, mailboxes } from '../../data/sample.ts'
 import { ChoiceTerm } from './ChoiceDialog.tsx'
 import { ConsentLayout, Decision, Requester, Terms } from './ConsentLayout.tsx'
-import { appPartsChoices, endChoices, endOptions, gmailShortQuery, mailSince, requesters, sharedLens, tripTimeline, viewRows, type QueryId } from './data.ts'
+import {
+  appPartsChoices,
+  endChoices,
+  endOptions,
+  gmailShortQuery,
+  mailSince,
+  type QueryId,
+  requesters,
+  sharedLens,
+  tripTimeline,
+  viewRows,
+} from './data.ts'
 import { ForwardingPreview } from './ForwardingPreview.tsx'
 import { InboxPreview } from './InboxPreview.tsx'
 import { MailboxPicker } from './MailboxPicker.tsx'
@@ -41,7 +52,10 @@ export function ConsentAppPage() {
 
   const forwarding = mailboxes.find((m) => m.id === mailboxId)?.method === 'forwarding'
   const pending = !forwarding && state !== 'ready'
-  const rows = useMemo(() => viewRows(tripTimeline, sharedLens(new Set(asked), new Set(excluded))), [excluded])
+  const rows = useMemo(
+    () => viewRows(tripTimeline, sharedLens(new Set(asked), new Set(excluded))),
+    [excluded],
+  )
   const shared = rows.filter((row) => row.kind === 'shared').length
 
   const note = forwarding
@@ -74,7 +88,10 @@ export function ConsentAppPage() {
             focus="shared"
             switchLabel={`Only the ${formatCount(shared)} shared`}
             rowAction={(row) => (
-              <TextAction aria-label={`Exclude sender ${row.sender}`} onClick={() => exclude(row.sender)}>
+              <TextAction
+                aria-label={`Exclude sender ${row.sender}`}
+                onClick={() => exclude(row.sender)}
+              >
                 Exclude sender
               </TextAction>
             )}
@@ -82,19 +99,31 @@ export function ConsentAppPage() {
         )
       }
     >
-      <Requester initials={app.initials} line={`${app.domain} is asking for access`} facts={app.facts} />
-      <Headline size="display-m" className="mt-6">Trip App wants your flights and hotels. Nothing else.</Headline>
+      <Requester
+        initials={app.initials}
+        line={`${app.domain} is asking for access`}
+        facts={app.facts}
+      />
+      <Headline size="display-m" className="mt-6">
+        Trip App wants your flights and hotels. Nothing else.
+      </Headline>
 
       <Terms>
         <TermRow label="Asks for">Flight, hotel, rail and car bookings</TermRow>
         <TermRow label="Query">
-          <code className="min-w-0 truncate font-mono text-mono text-ink-2 max-sm:whitespace-normal">{gmailShortQuery(asked)}</code>
+          <code className="min-w-0 truncate font-mono text-mono text-ink-2 max-sm:whitespace-normal">
+            {gmailShortQuery(asked)}
+          </code>
         </TermRow>
         {excluded.length > 0 && (
           <TermRow
             label="Except"
             action={
-              <TextAction id="undo-exclusion" aria-label={`Undo excluding ${excluded.join(', ')}`} onClick={undo}>
+              <TextAction
+                id="undo-exclusion"
+                aria-label={`Undo excluding ${excluded.join(', ')}`}
+                onClick={undo}
+              >
                 Undo
               </TextAction>
             }
@@ -102,7 +131,13 @@ export function ConsentAppPage() {
             {excluded.join(', ')}
           </TermRow>
         )}
-        <ChoiceTerm label="Parts" title={`Parts ${app.name} can read`} choices={appPartsChoices} value={parts} onSave={setParts} />
+        <ChoiceTerm
+          label="Parts"
+          title={`Parts ${app.name} can read`}
+          choices={appPartsChoices}
+          value={parts}
+          onSave={setParts}
+        />
         <TermRow label="Actions">Read only</TermRow>
         {forwarding ? (
           <TermRow label="Time">New mail only, until {end}</TermRow>
