@@ -26,6 +26,7 @@ check-repo:
 	bun scripts/check-design-system.ts
 	bun scripts/check-skills.ts
 	bun scripts/third-party-notices.ts --check
+	node scripts/check-release-notes.mjs
 
 # Short fuzzing run of the attestation parser (CI runs it too).
 fuzz:

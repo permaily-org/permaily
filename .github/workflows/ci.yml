@@ -59,6 +59,8 @@ jobs:
       - run: bun scripts/check-skills.ts
       - name: Third-party notices and license allowlist
         run: bun scripts/third-party-notices.ts --check
+      - name: Release notes render with the configured preset
+        run: node scripts/check-release-notes.mjs
 
   web:
     runs-on: ubuntu-24.04
