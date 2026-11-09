@@ -9,4 +9,4 @@ The [Permaily Personal Use License](../license.md) only allows individuals to us
 
 Verifying the public Permaily service never requires a license.
 
-To request a commercial license, open an issue titled "Commercial license" in the repository or contact the maintainer listed on the GitHub organization page. Pricing is set per agreement.
+Commercial licenses are granted by the Licensor (Leynier Gutiérrez González and Tony Raúl Blanco Fernández). To request one, open an issue titled "Commercial license" in the repository or write to the owners listed on the GitHub organization page. Pricing is set per agreement.

@@ -1,13 +1,13 @@
 # Permaily Personal Use License 1.0
 
-Copyright (c) 2026 Leynier Gutiérrez González. All rights reserved except as granted below.
+Copyright (c) 2026 Leynier Gutiérrez González and Tony Raúl Blanco Fernández. All rights reserved except as granted below.
 
 This license is not an open source license. The source code is published so that anyone can inspect it and verify that the Permaily service runs exactly this code.
 
 ## 1. Definitions
 
 - **Software** means the source code, build definitions, documentation and other material in this repository, and anything built from them.
-- **Licensor** means the copyright holder named above.
+- **Licensor** means the copyright holders named above, Leynier Gutiérrez González and Tony Raúl Blanco Fernández, acting jointly or through whoever they designate in writing.
 - **You** means the individual natural person exercising rights under this license. An entity (company, nonprofit, foundation, cooperative, school, university, government body or any other organization) is never "You", and an individual acting on behalf of, for the benefit of, or under the direction of an entity is not acting as "You".
 - **Personal Use** means use by You, for Yourself only, for no commercial purpose and with no expectation of commercial gain.
 - **Verification** means building the Software, measuring it, comparing measurements, attestation documents, certificates or published artifacts with a running service, and publishing the results of doing so.

@@ -32,7 +32,8 @@ jobs:
           path-to-document: https://github.com/permaily-org/permaily/blob/develop/docs/contributing.md#contributor-license-agreement-cla
           path-to-signatures: signatures/cla.json
           branch: cla-signatures
-          allowlist: leynier,dependabot[bot],github-actions[bot]
+          # The licensors (license.md) do not sign the CLA.
+          allowlist: leynier,tonyrbf96,dependabot[bot],github-actions[bot]
           custom-notsigned-prcomment: >-
             Thanks for your contribution. Before it can be merged, please read the
             [Contributor License Agreement](https://github.com/permaily-org/permaily/blob/develop/docs/contributing.md#contributor-license-agreement-cla)
