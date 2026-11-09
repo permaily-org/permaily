@@ -36,7 +36,7 @@ export default defineConfig({
       scriptDirective: { resources: ["'self'", "'wasm-unsafe-eval'"] },
       // <style> elements stay hash-restricted. Inline style attributes (the demos'
       // custom properties) are allowed through style-src-attr only.
-      // TODO(docs/security.md): move them to classes and drop this exception.
+      // TODO(docs/threat-model.md): move them to classes and drop this exception.
       styleDirective: {
         resources: ["'self'", { resource: "'unsafe-inline'", kind: 'attribute' }],
       },

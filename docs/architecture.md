@@ -4,7 +4,7 @@
 
 Apps such as travel assistants ask for full Gmail access to read a few messages. Permaily sits in between: the user connects their mailbox once, and each app or AI agent receives only the subset of messages the user authorized. Rules are enforced on every delivery, with an audit log and revocation.
 
-What sets Permaily apart is verifiability: the whole service runs inside an AWS Nitro Enclave built reproducibly from this repository, so anyone can check that the code running is the published code. See [verification.md](verification.md) and [security.md](security.md). Phases and planned work are in [plan.md](plan.md); the visual design is in [design.md](design.md).
+What sets Permaily apart is verifiability: the whole service runs inside an AWS Nitro Enclave built reproducibly from this repository, so anyone can check that the code running is the published code. See [verification.md](verification.md) and [threat-model.md](threat-model.md). Phases and planned work are in [plan.md](plan.md); the visual design is in [design.md](design.md).
 
 ## Components (F0)
 

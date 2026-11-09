@@ -1,4 +1,4 @@
-# Security model
+# Threat model
 
 ## What verification proves
 
@@ -84,4 +84,4 @@ For every change that touches the enclave, the host, auth, storage or the build:
 
 ## Reporting vulnerabilities
 
-Open a GitHub security advisory on the repository (private vulnerability reporting).
+Follow the [security policy](https://github.com/permaily-org/permaily/security/policy): report privately through the repository's Security tab (private vulnerability reporting), never in a public issue. The policy lives in [permaily-org/.github](https://github.com/permaily-org/.github/blob/main/security.md) and applies to every repository in the organization.
