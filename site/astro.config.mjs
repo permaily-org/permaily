@@ -73,7 +73,8 @@ export default defineConfig({
           codeTheme('permaily-light', 'light', '#ecece7', '#131312', '#6c6c65'),
         ],
         // Plain blocks with no window frame, whatever the language. A file name stays in the code as a comment, as it does on the website.
-        defaultProps: { frame: 'code', overridesByLang: { text: { wrap: true } } },
+        // Wrap long lines instead of scrolling: no horizontal scroll regions on phones (a11y).
+        defaultProps: { frame: 'code', wrap: true },
         frames: { extractFileNameFromCode: false },
         styleOverrides: {
           borderRadius: 'var(--r)',
