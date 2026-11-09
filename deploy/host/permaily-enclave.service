@@ -1,0 +1,19 @@
+[Unit]
+Description=Permaily Nitro Enclave
+After=nitro-enclaves-allocator.service permaily-host.service
+Requires=nitro-enclaves-allocator.service
+ConditionPathExists=/opt/permaily/permaily.eif
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/permaily/enclave.env
+ExecStartPre=-/usr/bin/nitro-cli terminate-enclave --all
+# ENCLAVE_EXTRA_FLAGS is empty in production. scripts/deploy.sh --debug sets it to
+# --debug-mode for troubleshooting; the attestation PCRs are then all zero and
+# permaily-verify rejects the enclave, by design.
+ExecStart=/usr/bin/nitro-cli run-enclave --eif-path /opt/permaily/permaily.eif --cpu-count ${ENCLAVE_CPUS} --memory ${ENCLAVE_MEMORY_MIB} --enclave-cid 16 --enclave-name permaily $ENCLAVE_EXTRA_FLAGS
+ExecStop=/usr/bin/nitro-cli terminate-enclave --all
+
+[Install]
+WantedBy=multi-user.target
