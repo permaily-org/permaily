@@ -2,7 +2,7 @@
 
 The public site for Permaily: the marketing pages, pricing, security, changelog, the sign-up and log-in screens, and the docs at `/docs`. It's a static site built with [Astro](https://astro.build), and the docs use [Starlight](https://starlight.astro.build).
 
-It lives in `site/` and is not part of the enclave image: it is hosted on AWS Amplify from `main` (see `amplify.yml` at the repo root) and changing it never changes the PCRs.
+It lives in `site/` and is not part of the enclave image: it is hosted on AWS Amplify (`main` at permaily.com, `develop` at beta.permaily.com, pull request previews; see [deploy.md](deploy.md)) and changing it never changes the PCRs.
 
 ## Run it
 
