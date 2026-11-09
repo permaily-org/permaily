@@ -23,7 +23,7 @@ jobs:
       - name: Install gremlins (pinned by version and SHA-256)
         run: |
           v=0.6.0
-          curl -sSfL -o gremlins.tgz "https://github.com/go-gremlins/gremlins/releases/download/v${v}/gremlins_${v}_linux_amd64.tar.gz"
+          curl -sSfL --retry 5 --retry-all-errors -o gremlins.tgz "https://github.com/go-gremlins/gremlins/releases/download/v${v}/gremlins_${v}_linux_amd64.tar.gz"
           echo "b02a42e47935f891c9a411d68c07e211c7082609e79c2435b67c85ee9658c538  gremlins.tgz" | sha256sum -c -
           tar -xzf gremlins.tgz gremlins
       - name: Mutation testing of pkg/attestation
