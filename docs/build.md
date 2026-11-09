@@ -16,7 +16,7 @@ Supported build systems: `x86_64-linux` and `aarch64-linux`. Without a local Nix
 ## Why the image is reproducible
 
 - **Pinned inputs**: `flake.lock` (nixpkgs, monzo/aws-nitro-util), `vendorHash` for Go modules, fixed-output hashes for `node_modules` (one per build platform, because some npm packages ship native binaries), and the hash of the AWS blobs.
-- **Go** binaries are static (`CGO_ENABLED=0`), built with `-trimpath`, no build ID, and cross-compiled by the Go toolchain through `GOARCH=arm64`. Go produces identical output regardless of the host architecture.
+- **Go** binaries are built with the official Go release from go.dev (pinned by hash), not nixpkgs' Go, which patches the standard library to embed `/nix/store` paths that differ per build platform. They are static (`CGO_ENABLED=0`), built with `-trimpath`, no build ID, and cross-compiled by the Go toolchain through `GOARCH=arm64`, which gives identical output regardless of the host architecture.
 - **SPA**: Vite output is content-hashed; no source maps or timestamps.
 - **Image**: AWS prebuilt kernel, init and nsm.ko for aarch64; a flat rootfs with only `/permaily-enclave`; cpio archives with fixed timestamps and ownership; `eif_build` with a fixed build time.
 
