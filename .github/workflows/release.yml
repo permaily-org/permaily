@@ -80,3 +80,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bunx semantic-release
+      - name: Rebuild the public site with the new release
+        env:
+          AMPLIFY_RELEASE_WEBHOOK: ${{ secrets.AMPLIFY_RELEASE_WEBHOOK }}
+        run: |
+          if [ -n "$AMPLIFY_RELEASE_WEBHOOK" ]; then
+            curl -sSf --retry 3 -X POST -H "Content-Type: application/json" -d '{}' "$AMPLIFY_RELEASE_WEBHOOK" >/dev/null
+          fi

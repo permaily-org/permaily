@@ -15,6 +15,8 @@ On every push to `main`, `.github/workflows/release.yml`:
 
 Versions start from `v0.0.0`, a tag on the repository's first commit, so the first release is 0.1.0 and the project stays below 1.0 until it is declared stable. `scripts/check-release-notes.mjs` (CI) renders sample notes with the configured preset, so an incompatible semantic-release or preset upgrade fails on the pull request.
 
+After publishing, it calls the Amplify release webhook so permaily.com rebuilds and its footer shows the new PCR0.
+
 The tag points at the built commit; there is no release commit. So `scripts/verify.sh <tag>` rebuilds exactly the published PCRs.
 
 ## Depends on

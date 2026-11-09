@@ -29,29 +29,30 @@ resource "aws_amplify_app" "site" {
   # Security headers. Script and style hashes are in each page's CSP <meta>
   # (site/astro.config.mjs); these are the directives that only work as headers.
   # Amplify ignores customHeaders in amplify.yml for monorepo apps, so they live here.
-  custom_headers = <<-EOT
-    applications:
-      - appRoot: site
-        customHeaders:
-          - pattern: '**'
-            headers:
-              - key: Strict-Transport-Security
-                value: max-age=31536000; includeSubDomains
-              - key: X-Content-Type-Options
-                value: nosniff
-              - key: X-Frame-Options
-                value: DENY
-              - key: Referrer-Policy
-                value: strict-origin-when-cross-origin
-              - key: Permissions-Policy
-                value: camera=(), microphone=(), geolocation=(), payment=(), usb=()
-              - key: Content-Security-Policy
-                value: frame-ancestors 'none'; base-uri 'none'; object-src 'none'
-          - pattern: '_astro/**'
-            headers:
-              - key: Cache-Control
-                value: public, max-age=31536000, immutable
-  EOT
+  custom_headers = jsonencode({
+    applications = [{
+      appRoot = "site"
+      customHeaders = [
+        {
+          pattern = "**"
+          headers = [
+            { key = "Strict-Transport-Security", value = "max-age=31536000; includeSubDomains" },
+            { key = "X-Content-Type-Options", value = "nosniff" },
+            { key = "X-Frame-Options", value = "DENY" },
+            { key = "Referrer-Policy", value = "strict-origin-when-cross-origin" },
+            { key = "Permissions-Policy", value = "camera=(), microphone=(), geolocation=(), payment=(), usb=()" },
+            { key = "Content-Security-Policy", value = "frame-ancestors 'none'; base-uri 'none'; object-src 'none'" },
+          ]
+        },
+        {
+          pattern = "_astro/**"
+          headers = [
+            { key = "Cache-Control", value = "public, max-age=31536000, immutable" },
+          ]
+        },
+      ]
+    }]
+  })
 
   # Serve the site's own 404 page for unknown paths.
   custom_rule {
@@ -184,4 +185,19 @@ resource "cloudflare_dns_record" "apex_caa_wild" {
     value = each.value
   }
   comment = "Amplify (ACM) wildcard certificate for the public site (managed by OpenTofu)"
+}
+
+# The footer shows the latest release's PCR0, read at build time. A release is
+# published after main was already built, so release.yml calls this webhook to
+# rebuild main once the new pcrs.json exists. Its URL is a secret
+# (AMPLIFY_RELEASE_WEBHOOK in GitHub).
+resource "aws_amplify_webhook" "release" {
+  app_id      = aws_amplify_app.site.id
+  branch_name = aws_amplify_branch.main.branch_name
+  description = "Rebuild main after a GitHub release"
+}
+
+output "site_release_webhook_url" {
+  value     = aws_amplify_webhook.release.url
+  sensitive = true
 }
