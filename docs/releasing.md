@@ -14,6 +14,8 @@ On every push to `main`, `.github/workflows/release.yml`:
 3. Runs semantic-release: computes the version from the commits since the last tag (`feat` minor, `fix` patch; breaking changes are minor below 1.0), creates the tag and the GitHub release with the notes, `permaily.eif`, `pcrs.json`, the binaries and `SHA256SUMS`.
 4. Merges `main` back into `develop`.
 
+Versions start from `v0.0.0`, a tag on the repository's first commit, so the first release is 0.1.0 and the project stays below 1.0 until it is declared stable. `scripts/check-release-notes.mjs` (CI) renders sample notes with the configured preset, so an incompatible semantic-release or preset upgrade fails on the pull request.
+
 The tag points at the built commit; there is no release commit. So `scripts/verify.sh <tag>` rebuilds exactly the published PCRs.
 
 ## Depends on
