@@ -13,7 +13,9 @@ terraform {
 }
 
 provider "aws" {
-  profile = var.aws_profile
+  # Empty profile means "use credentials from the environment" (e.g. exported
+  # from an `aws login` session with `aws configure export-credentials`).
+  profile = var.aws_profile != "" ? var.aws_profile : null
   region  = var.aws_region
   default_tags {
     tags = { Project = "permaily", ManagedBy = "opentofu" }

@@ -1,6 +1,6 @@
 # deploy/AGENTS.md: infrastructure
 
-OpenTofu for AWS (`us-east-1`, profile `permaily`) and Cloudflare DNS, plus the parent instance setup in `host/`. Procedure: [../docs/deploy.md](../docs/deploy.md).
+OpenTofu for AWS (`us-east-2`, profile `permaily`) and Cloudflare DNS, plus the parent instance setup in `host/`. Procedure: [../docs/deploy.md](../docs/deploy.md).
 
 ## Rules
 

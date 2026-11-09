@@ -1,6 +1,6 @@
 # Deploy
 
-Everything lives in AWS account profile `permaily`, region `us-east-1`, plus DNS records in the Cloudflare zone `permaily.com`.
+Everything lives in AWS account profile `permaily`, region `us-east-2`, plus DNS records in the Cloudflare zone `permaily.com`.
 
 ## Prerequisites
 

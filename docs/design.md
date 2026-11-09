@@ -28,7 +28,7 @@ client / verifier ──TLS──▶ EIP:443 ─▶ permaily-host (parent EC2, u
 - **permaily-host** (`cmd/permaily-host`): forwards TCP 443 to vsock and exposes an allowlisted HTTP CONNECT proxy on vsock 8000 for the enclave's outbound TLS.
 - **permaily-verify** (`cmd/permaily-verify`, `pkg/attestation`): verifier CLI and library.
 - **Build** (`flake.nix`, `nix/`): Nix with [monzo/aws-nitro-util](https://github.com/monzo/aws-nitro-util) and AWS's prebuilt kernel/init blobs; PCR0 is identical from x86_64 and arm64 builders.
-- **Infrastructure** (`deploy/`): OpenTofu; one Graviton `c7g.large` in `us-east-1` (enclave: 1 vCPU, 2 GiB), Cloudflare DNS (DNS only), S3 for deploy artifacts, SSM for administration.
+- **Infrastructure** (`deploy/`): OpenTofu; one Graviton `c7g.large` in `us-east-2` (enclave: 1 vCPU, 2 GiB), Cloudflare DNS (DNS only), S3 for deploy artifacts, SSM for administration.
 
 The landing page at `permaily.com` (apex) is a separate project hosted on Amplify and is not part of the verifiable surface. Rule for F2: session cookies on `app.` use the `__Host-` prefix (no `Domain` attribute) so the apex cannot read or overwrite them.
 
