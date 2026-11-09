@@ -1,0 +1,40 @@
+---
+interface Action {
+  label: string;
+  href: string;
+}
+
+interface Props {
+  title: string;
+  body: string;
+  primary: Action;
+  secondary: Action;
+}
+
+const { title, body, primary, secondary } = Astro.props;
+---
+
+<section class="on-dark cta">
+  <div class="wrap">
+    <h2 class="h-xl">{title}</h2>
+    <p class="intro">{body}</p>
+    <div class="actions">
+      <a class="btn lg" href={primary.href}>{primary.label}</a>
+      <a class="btn lg sec-b" href={secondary.href}>{secondary.label}</a>
+    </div>
+  </div>
+</section>
+
+<style is:global>
+  .cta {
+    padding-block: clamp(64px, 6.67vw, 96px);
+  }
+
+  .cta .h-xl {
+    margin-bottom: var(--space-20);
+  }
+
+  .cta .intro {
+    margin-bottom: var(--space-32);
+  }
+</style>

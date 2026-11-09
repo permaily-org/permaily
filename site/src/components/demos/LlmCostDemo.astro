@@ -1,0 +1,247 @@
+---
+import Redact from '../Redact.astro';
+import Segmented from '../Segmented.astro';
+
+const before = [
+  '// Fetch everything, then pay your LLM to sort it.',
+  'const { messages } = await gmail.list({ userId: "me" });',
+  ' ',
+  'for (const { id } of messages) {',
+  '  const mail = await gmail.get({ userId: "me", id });',
+  '  const text = await llm.complete(`Is this a booking? ${mail}`);',
+  '  const booking = JSON.parse(text); // any, if it parses',
+  '}',
+];
+
+const after = [
+  '// Ask for what you need. Only matching mail comes back.',
+  'const bookings = await permaily.read(bookingsQuery);',
+  ' ',
+  'for (const booking of bookings) {',
+  '  booking.subject;           // string',
+  '  booking.isCancellation;    // boolean',
+  '  booking.cancellationNotes; // string | null',
+  '}',
+];
+---
+
+<figure
+  class="panel demo"
+  data-demo="dev"
+  aria-label="The same feature two ways, for 1,000 mailboxes. With Gmail and your own LLM, you fetch all 12,304 emails in each and pay the LLM to read them, $1,230 in total, and you get untyped text. With Permaily, you ask for what you need and receive only the 47 emails in each that match, as typed fields, so no LLM has to read them. Permaily costs under 1¢."
+>
+  <div class="dev-demo">
+    <div class="dev-head">
+      <span class="lbl">The same feature, two ways</span>
+      <Segmented before="Gmail and your LLM" after="Permaily" />
+    </div>
+    <div class="code" aria-hidden="true">
+      <div class="swap">
+        <div class="old" style="opacity:0">
+          {before.map((line) => <span class="cl"><Redact text={line} withheld /></span>)}
+        </div>
+        <div>
+          {
+            after.map((line) => (
+              <span class="cl new" style="--w:1">
+                {line.startsWith('//') ? <span class="c">{line}</span> : line}
+              </span>
+            ))
+          }
+        </div>
+      </div>
+      <div class="maintain">
+        <span>What you maintain</span>
+        <b data-a="Prompts, parsing, validation and retries" data-b="One request">One request</b>
+      </div>
+    </div>
+    <div class="cost">
+      <span class="lbl">What you receive</span>
+      <div class="count"><span class="mk" data-count>47</span> of 12,304 emails</div>
+      <div class="q">
+        <span data-q="a" style="--o:0">Your LLM reads all of them to find what matters.</span>
+        <span data-q="b" style="--o:1">Only the 47 that matter, as typed fields. No LLM needed.</span>
+      </div>
+      <div class="kvs">
+        <span class="kvh">For 1,000 mailboxes</span>
+        <div class="kvr"><span>Your LLM</span><b data-money="1230.4" data-to="0" data-dec="0">$0</b></div>
+        <div class="kvr"><span>Permaily</span><b data-a="$0" data-b="under 1¢">under 1¢</b></div>
+        <div class="kvr total"><span>Total</span><b data-money="1230.4" data-to="0" data-dec="0" data-end="under 1¢">under 1¢</b></div>
+        <div class="kvr"><span>What comes back</span><b data-a="Untyped text" data-b="Typed fields">Typed fields</b></div>
+      </div>
+      <p class="small">Example: your LLM reads 1,000 tokens per email at $0.10 per 1M tokens, counting input only. Permaily counts 3 tokens per email at $0.01 per 1M.</p>
+    </div>
+  </div>
+</figure>
+
+<style is:global>
+  .dev-demo {
+    display: grid;
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  }
+
+  .code {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: var(--space-20);
+    overflow: hidden;
+    padding: var(--space-20);
+    background: var(--sunken);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
+  .code .c {
+    color: var(--ink-3);
+  }
+
+  .code .cl {
+    display: block;
+    white-space: pre;
+  }
+
+  .code .t {
+    white-space: pre;
+  }
+
+  .code .swap {
+    position: relative;
+    display: grid;
+  }
+
+  .code .swap > * {
+    grid-area: 1 / 1;
+  }
+
+  .code .new {
+    clip-path: inset(-4px calc((1 - var(--w, 0)) * 100%) -4px 0);
+  }
+
+  .maintain {
+    display: grid;
+    gap: var(--space-2);
+    padding-top: var(--space-14);
+    border-top: var(--hair) solid var(--rule);
+    font-family: var(--font-sans);
+  }
+
+  .maintain span {
+    color: var(--ink-2);
+    font-size: var(--text-small);
+  }
+
+  .maintain b {
+    font-size: var(--text-title);
+    font-weight: 500;
+    line-height: var(--leading-snug);
+  }
+
+  .cost {
+    display: grid;
+    align-content: start;
+    gap: var(--space-12);
+    padding: var(--space-20);
+    border-left: var(--hair) solid var(--rule);
+  }
+
+  .cost .lbl {
+    color: var(--ink-2);
+    font-size: var(--text-small);
+  }
+
+  .cost .count {
+    font-size: var(--fs-d);
+    font-weight: 500;
+    letter-spacing: var(--tracking-d);
+    line-height: var(--leading-display);
+  }
+
+  .cost .q {
+    position: relative;
+    display: grid;
+    min-height: 2.9em;
+  }
+
+  .cost .q > * {
+    grid-area: 1 / 1;
+    color: var(--ink-2);
+    font-size: var(--text-title);
+    line-height: var(--leading-body);
+    opacity: var(--o, 1);
+  }
+
+  .kvs {
+    display: grid;
+    border-bottom: var(--hair) solid var(--rule);
+  }
+
+  .kvr {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-16);
+    padding-block: var(--space-8);
+    border-top: var(--hair) solid var(--rule);
+    color: var(--ink-2);
+    font-size: var(--text-lead);
+  }
+
+  .kvr b {
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: var(--text-small);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  /* The scale the money rows share, so both options compare line by line. */
+  .kvh {
+    padding-bottom: var(--space-6);
+    color: var(--ink-2);
+    font-size: var(--text-small);
+  }
+
+  .kvr.total {
+    color: var(--ink);
+  }
+
+  @media (max-width: 860px) {
+    .dev-demo {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .cost {
+      border-left: 0;
+      border-top: var(--hair) solid var(--rule);
+    }
+
+    .code {
+      font-size: 11px;
+    }
+
+    .code .cl,
+    .code .t {
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
+    .code .t {
+      display: block;
+    }
+
+    .code .t > .bb {
+      top: 0;
+      height: 100%;
+      margin-top: 0;
+    }
+  }
+</style>
+
+<script>
+  import { initLlmCost } from '../../scripts/demos/llm-cost';
+
+  document.querySelectorAll<HTMLElement>('[data-demo="dev"]').forEach(initLlmCost);
+</script>

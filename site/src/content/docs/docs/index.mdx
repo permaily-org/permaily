@@ -1,0 +1,62 @@
+---
+title: Run your first query
+description: Ask for the mail your app needs, send a person through the consent screen, and read what they approved.
+head:
+  - tag: title
+    content: Quickstart | Permaily docs
+---
+
+Ask for the mail your app needs, send a person through the consent screen, and read what they approved. This takes about ten minutes, using a sandbox mailbox with sample mail.
+
+<div class="doc-steps">
+
+## Install the SDK
+
+Create an app in the developer console and copy its test key. Test keys only see sandbox mailboxes.
+
+```bash
+npm install @permaily/sdk
+```
+
+## Ask for access
+
+Request the smallest access that does the job. Your [query](/docs/queries/) says which emails you want, and the response gives you a link to the consent screen.
+
+```ts
+const { consentUrl, access } = await permaily.access.request({
+  query:
+    "from:(iberia.com OR booking.com OR renfe.es OR airbnb.com) " +
+    "subject:(booking OR reservation OR itinerary)",
+  parts: ["headers", "body_text"],
+  actions: ["read"],
+  expiresIn: "90d",
+});
+```
+
+## Send the person to the consent screen
+
+They see the exact emails you'd receive, on their own mail, then come back to your redirect address.
+
+<figure class="doc-consent not-content" aria-label="A consent screen showing that 47 of 12,304 emails would be shared with Trip App, with buttons to allow it or say not now.">
+  <p><span class="mk">47</span> of 12,304 emails</p>
+  <div class="actions" aria-hidden="true">
+    <span class="btn">Allow Trip App</span>
+    <span class="btn sec-b">Not now</span>
+  </div>
+</figure>
+
+## Read what they approved
+
+Every message carries its receipt id, and only the parts in the access.
+
+```ts
+for await (const message of permaily.messages.list({ access })) {
+  console.log(message.subject, message.receipt);
+}
+```
+
+</div>
+
+:::note[Treat every message as untrusted content]
+Email is attacker-controlled text. If you pass it to a language model, read the [guide on prompt injection](/docs/untrusted-content/) first.
+:::

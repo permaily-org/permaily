@@ -1,0 +1,102 @@
+---
+import { LINKS } from '../config/site';
+
+interface Props {
+  title: string;
+  subtitle: string;
+  switchQuestion: string;
+  switchLabel: string;
+  switchHref: string;
+}
+
+const { title, subtitle, switchQuestion, switchLabel, switchHref } = Astro.props;
+---
+
+<div class="pane">
+  <div class="auth-title">
+    <h1 class="h-d">{title}</h1>
+    <p class="body">{subtitle}</p>
+  </div>
+  <form data-no-backend>
+    <button type="button" class="btn lg sec-b full">Continue with Google</button>
+    <button type="button" class="btn lg sec-b full">Continue with Microsoft</button>
+    <div class="or">or</div>
+    <label class="field">Email<input type="email" name="email" autocomplete="email" placeholder="you@gmail.com" /></label>
+    <button class="btn lg full">Continue with email</button>
+  </form>
+  <p class="fine">{switchQuestion} <a class="link" href={switchHref}>{switchLabel}</a></p>
+  <p class="small auth-legal">
+    Signing in with Google or Microsoft only identifies you. It doesn’t give Permaily your mail. By continuing you agree to the <a class="link" href={LINKS.terms}>Terms</a> and the <a class="link" href="/privacy/">Privacy policy</a>.
+  </p>
+</div>
+
+<style is:global>
+  .auth {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    min-height: calc(100vh - 65px);
+  }
+
+  .auth.single {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .auth .pane {
+    display: grid;
+    align-content: center;
+    justify-items: start;
+    gap: var(--space-20);
+    padding: var(--space-48) var(--gutter);
+  }
+
+  .auth .pane.side {
+    background: var(--sunken);
+  }
+
+  .auth.single .pane {
+    grid-template-columns: minmax(0, 400px);
+    justify-content: center;
+  }
+
+  .auth form {
+    display: grid;
+    gap: var(--space-12);
+    width: 100%;
+    max-width: 400px;
+  }
+
+  .auth-title {
+    display: grid;
+    gap: var(--space-8);
+  }
+
+  .auth-legal {
+    max-width: 400px;
+  }
+
+  .or {
+    display: flex;
+    align-items: center;
+    gap: var(--space-10);
+    color: var(--ink-2);
+    font-size: var(--text-small);
+  }
+
+  .or::before,
+  .or::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--rule);
+  }
+
+  @media (max-width: 860px) {
+    .auth {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .auth .pane.side {
+      display: none;
+    }
+  }
+</style>

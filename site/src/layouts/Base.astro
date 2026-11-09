@@ -1,0 +1,71 @@
+---
+import '@fontsource-variable/instrument-sans';
+import '@fontsource-variable/jetbrains-mono';
+import '../styles/tokens.css';
+import '../styles/global.css';
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+import { SITE } from '../config/site';
+
+interface Props {
+  title?: string;
+  description: string;
+  /** Sign up and Log in show only the wordmark, with no navigation or footer. */
+  minimal?: boolean;
+  /** For the 404 page, which has no address of its own to index. */
+  noindex?: boolean;
+}
+
+const { title, description, minimal = false, noindex = false } = Astro.props;
+const fullTitle = title ? `${title} | ${SITE.name}` : SITE.name;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+const image = new URL('/og.png', Astro.site);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={canonical} />}
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="sitemap" href="/sitemap-index.xml" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={SITE.name} />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={image} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script is:inline>
+      (function () {
+        var d = document.documentElement;
+        try {
+          var theme = new URLSearchParams(location.search).get('theme') || localStorage.getItem('permaily-theme');
+          if (theme) d.dataset.theme = theme;
+        } catch (e) {}
+        if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          d.classList.add('demos-wait');
+          setTimeout(function () {
+            d.classList.remove('demos-wait');
+          }, 3000);
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <Header minimal={minimal} />
+    <main id="main">
+      <slot />
+    </main>
+    {!minimal && <Footer />}
+    <script>
+      import '../scripts/site';
+    </script>
+  </body>
+</html>

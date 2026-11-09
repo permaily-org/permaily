@@ -1,0 +1,428 @@
+---
+import { SITE } from '../../config/site';
+import { LANES, reads } from '../../data/mail';
+import Redact from '../Redact.astro';
+---
+
+<figure
+  class="demo flow-wrap"
+  data-demo="flow"
+  aria-label="Your inbox connects to Permaily. Trip App asks for flights and hotels, and you see the matching emails before you approve. Those emails go through to Trip App. Everything else stops at Permaily, and your inbox doesn't change."
+>
+  <div class="flow-grid">
+    <div class="fh fcell" style="--ord:2"><h3>Your inbox</h3><span class="mono">12,304 emails</span></div>
+    <div></div>
+    <div class="gate fcell">
+      <h3>Permaily</h3>
+      <div class="gs" style="--o:0">
+        <span class="lbl">Connected</span>
+        <span class="big">Nothing is shared yet</span>
+        <span class="kv"><span>shared</span><b>0</b></span>
+      </div>
+      <div class="gs" style="--o:0">
+        <span class="lbl">Trip App asks for</span>
+        <span class="rule-name">Flights and hotels</span>
+        <span class="kv"><span>would share</span><b><span data-would>47</span> of 12,304</b></span>
+        <span class="fake-btn" data-pressed="false">Allow Trip App</span>
+      </div>
+      <div class="gs" style="--o:1">
+        <span class="lbl">Trip App can read</span>
+        <span class="rule-name">Flights and hotels</span>
+        <span class="kv"><span>shared</span><b data-shared>47</b></span>
+        <span class="kv"><span>withheld</span><b data-held>12,257</b></span>
+        <span class="kv"><span>receipts</span><b data-receipts>47</b></span>
+      </div>
+      <div class="gate-foot">build {SITE.build}<b>matches the public code</b></div>
+    </div>
+    <div></div>
+    <div class="fh fcell" style="--ord:6"><h3>Trip App</h3><span class="mono"><span data-out>47</span> emails</span></div>
+    {
+      LANES.map((mail) => {
+        const keep = reads(mail, 'trip');
+        return (
+          <>
+            <div class="fl fl-in fcell" style="--ord:2">
+              <span class="from">{mail.from}</span>
+              <span class="subj">
+                <Redact text={mail.subject} highlighted={keep} pad />
+              </span>
+            </div>
+            <div class="wire in" style="--w:1">
+              <i />
+              <b />
+            </div>
+            <div class="wire out" style={`--w:${keep ? 1 : 0}`}>
+              <i />
+            </div>
+            <div class="fl fl-out fcell" style="--ord:6" data-keep={keep ? '1' : '0'}>
+              <span class="from">
+                <Redact text={mail.from} withheld={!keep} ghost={!keep} />
+              </span>
+              <span class="subj">
+                <Redact text={mail.subject} highlighted={keep} withheld={!keep} pad ghost={!keep} />
+                {mail.never && <span class="never-tag">never</span>}
+              </span>
+            </div>
+          </>
+        );
+      })
+    }
+  </div>
+  <div class="steps">
+    <div class="step" style="--ord:1;--sp:1" data-on="true">
+      <h3>1. Connect your inbox</h3>
+      <p>With a forwarding filter, or your Google or Microsoft account. It takes about three minutes, and nothing is shared.</p>
+    </div>
+    <div class="step" style="--ord:3;--sp:1" data-on="true">
+      <h3>2. Approve what it sees</h3>
+      <p>When an app asks, you see the actual emails it would get.</p>
+    </div>
+    <div class="step" style="--ord:5;--sp:1" data-on="true">
+      <h3>3. It gets those. Nothing else</h3>
+      <p>Your inbox doesn’t change, and every email shared leaves a receipt.</p>
+    </div>
+  </div>
+  <div class="demo-foot" style="order:9"><span></span><button class="demo-ctl">Replay</button></div>
+</figure>
+
+<style is:global>
+  .flow-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 36px 232px 36px minmax(0, 1fr);
+    row-gap: 0;
+  }
+
+  .fh {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-12);
+    padding-bottom: var(--space-12);
+    border-bottom: var(--hair) solid var(--rule-strong);
+  }
+
+  .fh h3 {
+    font-size: var(--text-title);
+    font-weight: 500;
+  }
+
+  .fh .mono {
+    color: var(--ink-2);
+    font-size: var(--text-small);
+  }
+
+  .fl {
+    --bar-h: 13px;
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-12);
+    overflow: hidden;
+    height: 46px;
+    border-bottom: var(--hair) solid var(--rule);
+    font-size: var(--text-body);
+  }
+
+  .fl .from {
+    overflow: hidden;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .fl .subj {
+    overflow: hidden;
+    padding-block: 5px;
+    white-space: nowrap;
+  }
+
+  .fl-in {
+    opacity: var(--in, 1);
+  }
+
+  .wire {
+    position: relative;
+    height: 46px;
+  }
+
+  .wire i {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 1px;
+    background: var(--ink-3);
+    transform: scaleX(var(--w, 1));
+    transform-origin: left;
+  }
+
+  .wire b {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 12px;
+    height: 3px;
+    margin-top: -1px;
+    background: var(--ink);
+    opacity: var(--po, 0);
+    transform: translateX(var(--px, 0));
+  }
+
+  .wire.out i {
+    right: 8px;
+    height: 6px;
+    margin-top: -3px;
+    background: var(--highlight);
+  }
+
+  .gate {
+    position: relative;
+    grid-column: 3;
+    grid-row: 1 / span 8;
+    overflow: hidden;
+    min-height: 260px;
+    padding: var(--space-16);
+    border: var(--hair) solid var(--rule-strong);
+    border-radius: var(--r);
+    background: var(--raised);
+  }
+
+  .gate h3 {
+    margin-bottom: var(--space-12);
+    padding-bottom: var(--space-10);
+    border-bottom: var(--hair) solid var(--rule);
+    font-size: var(--text-wordmark);
+    font-weight: 600;
+    letter-spacing: var(--tracking-w);
+  }
+
+  .gs {
+    position: absolute;
+    inset: 60px var(--space-16) var(--space-16);
+    display: grid;
+    align-content: start;
+    gap: var(--space-10);
+    opacity: var(--o, 0);
+    pointer-events: none;
+    transform: translateY(calc((1 - var(--o, 0)) * 6px));
+  }
+
+  .gate-foot {
+    position: absolute;
+    left: var(--space-16);
+    right: var(--space-16);
+    bottom: var(--space-14);
+    color: var(--ink-3);
+    font-family: var(--font-mono);
+    font-size: var(--text-micro);
+    line-height: 1.4;
+  }
+
+  .gate-foot b {
+    display: block;
+    color: var(--ok);
+    font-weight: 400;
+  }
+
+  .gs .lbl {
+    color: var(--ink-2);
+    font-size: var(--text-small);
+  }
+
+  .gs .big {
+    font-size: var(--text-heading);
+    font-weight: 500;
+    letter-spacing: var(--tracking-h);
+    line-height: var(--leading-snug);
+  }
+
+  .gs .rule-name {
+    font-size: var(--text-title);
+    font-weight: 500;
+    line-height: var(--leading-snug);
+  }
+
+  .gs .fake-btn {
+    display: inline-flex;
+    justify-content: center;
+    margin-top: var(--space-6);
+    padding: 9px 12px;
+    border: var(--hair) solid var(--ink);
+    border-radius: var(--r);
+    background: var(--ink);
+    color: var(--paper);
+    font-size: var(--text-body);
+    font-weight: 500;
+  }
+
+  .gs .fake-btn[data-pressed='true'] {
+    background: transparent;
+    color: var(--ink);
+  }
+
+  .gs .kv {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding-block: 6px;
+    border-top: var(--hair) solid var(--rule);
+    color: var(--ink-2);
+    font-family: var(--font-mono);
+    font-size: var(--text-mono);
+  }
+
+  .gs .kv b {
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  .steps {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 36px 232px 36px minmax(0, 1fr);
+    margin-top: var(--space-24);
+  }
+
+  .step {
+    position: relative;
+    display: grid;
+    align-content: start;
+    gap: var(--space-6);
+    padding-top: var(--space-14);
+    color: var(--ink-3);
+  }
+
+  .step::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 1px;
+    background: var(--rule);
+  }
+
+  .step::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -0.5px;
+    height: 2px;
+    background: var(--ink);
+    transform: scaleX(var(--sp, 0));
+    transform-origin: left;
+  }
+
+  .step[data-on='true'] {
+    color: var(--ink);
+  }
+
+  .step[data-on='true'] p {
+    color: var(--ink-2);
+  }
+
+  .step h3 {
+    font-size: var(--text-title);
+    font-weight: 500;
+    line-height: var(--leading-snug);
+  }
+
+  .step p {
+    color: inherit;
+    font-size: var(--text-lead);
+    line-height: var(--leading-body);
+  }
+
+  .step:nth-child(1) {
+    grid-column: 1;
+  }
+
+  .step:nth-child(2) {
+    grid-column: 3;
+  }
+
+  .step:nth-child(3) {
+    grid-column: 5;
+  }
+
+  .never-tag {
+    margin-left: 8px;
+    color: var(--danger);
+    font-family: var(--font-mono);
+    font-size: var(--text-micro);
+    opacity: var(--tag, 1);
+    white-space: nowrap;
+  }
+
+  @media (max-width: 1100px) {
+    .flow-grid,
+    .steps {
+      grid-template-columns: minmax(0, 1fr) 20px 180px 20px minmax(0, 1fr);
+    }
+
+    .fl {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+      height: auto;
+      padding-block: 4px;
+    }
+
+    .fl .from {
+      display: none;
+    }
+
+    .wire {
+      height: auto;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .flow-grid,
+    .steps {
+      display: contents;
+    }
+
+    .flow-wrap {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .wire {
+      display: none;
+    }
+
+    .step {
+      order: var(--ord);
+      margin-top: var(--space-24);
+      margin-bottom: var(--space-12);
+    }
+
+    .fcell {
+      order: var(--ord);
+    }
+
+    .gate {
+      order: 4;
+      min-height: 280px;
+    }
+
+    .gate-foot {
+      display: none;
+    }
+
+    .fl {
+      grid-template-columns: 96px minmax(0, 1fr);
+      height: 40px;
+      padding: 0;
+    }
+
+    .fl .from {
+      display: block;
+    }
+  }
+</style>
+
+<script>
+  import { initFlow } from '../../scripts/demos/flow';
+
+  document.querySelectorAll<HTMLElement>('[data-demo="flow"]').forEach(initFlow);
+</script>

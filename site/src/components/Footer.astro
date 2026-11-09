@@ -1,0 +1,139 @@
+---
+import { LINKS, SITE } from '../config/site';
+
+const columns = [
+  {
+    title: 'Product',
+    links: [
+      { label: 'Developers', href: '/developers/' },
+      { label: 'Companies', href: '/companies/' },
+      { label: 'Security', href: '/security/' },
+      { label: 'Pricing', href: '/pricing/' },
+    ],
+  },
+  {
+    title: 'Resources',
+    links: [
+      { label: 'Docs', href: LINKS.docs },
+      { label: 'Changelog', href: '/changelog/' },
+      { label: 'Source code', href: LINKS.source },
+      { label: 'Release log', href: LINKS.releaseLog },
+    ],
+  },
+  {
+    title: 'Company',
+    links: [
+      { label: 'About', href: '/about/' },
+      { label: 'Contact', href: '/contact/' },
+      { label: 'Privacy', href: '/privacy/' },
+      { label: 'Terms', href: LINKS.terms },
+    ],
+  },
+];
+---
+
+<footer class="site-foot">
+  <div class="wrap">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        <a class="word" href="/">{SITE.name}</a>
+        <p class="fine">{SITE.tagline}</p>
+      </div>
+      {
+        columns.map((column) => (
+          <div class="foot-col">
+            <h4>{column.title}</h4>
+            {column.links.map((link) => <a href={link.href}>{link.label}</a>)}
+          </div>
+        ))
+      }
+    </div>
+    <div class="foot-end">
+      <span class="mono">build {SITE.build} <span class="ok">matches the public code</span></span>
+      <span>© 2026 {SITE.name}</span>
+      <span class="theme" role="group" aria-label="Color theme">
+        <button data-t="system">System</button>
+        <button data-t="light">Light</button>
+        <button data-t="dark">Dark</button>
+      </span>
+    </div>
+  </div>
+</footer>
+
+<style is:global>
+  .site-foot {
+    padding-block: var(--space-48) var(--space-32);
+    border-top: var(--hair) solid var(--rule);
+  }
+
+  .foot-grid {
+    display: grid;
+    grid-template-columns: 2fr repeat(3, 1fr);
+    gap: var(--space-32);
+  }
+
+  .foot-brand .fine {
+    max-width: 22em;
+    margin-top: 8px;
+  }
+
+  .foot-col h4 {
+    margin-bottom: var(--space-10);
+    font-size: var(--text-body);
+    font-weight: 500;
+  }
+
+  .foot-col a {
+    display: block;
+    padding-block: 3px;
+    color: var(--ink-2);
+    font-size: var(--text-body);
+    text-decoration: none;
+  }
+
+  .foot-col a:hover {
+    color: var(--ink);
+  }
+
+  .foot-end {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-12) var(--space-24);
+    margin-top: var(--space-40);
+    padding-top: var(--space-20);
+    border-top: var(--hair) solid var(--rule);
+    color: var(--ink-2);
+    font-size: var(--text-small);
+  }
+
+  .foot-end .ok {
+    color: var(--ok);
+  }
+
+  .theme {
+    display: inline-flex;
+    gap: var(--space-12);
+  }
+
+  .theme button {
+    color: var(--ink-2);
+    font-size: var(--text-small);
+  }
+
+  .theme button[aria-pressed='true'] {
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  @media (max-width: 760px) {
+    .foot-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .foot-brand {
+      grid-column: 1 / -1;
+    }
+  }
+</style>

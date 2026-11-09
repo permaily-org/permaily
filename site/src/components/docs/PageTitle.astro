@@ -1,0 +1,14 @@
+---
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+import { LINKS } from '../../config/site';
+
+const { entry, sidebar } = Astro.locals.starlightRoute;
+
+// The sidebar's short name, such as Quickstart, even when the page's heading says more.
+const current = sidebar
+  .flatMap((item) => (item.type === 'group' ? item.entries : [item]))
+  .find((item) => item.type === 'link' && item.isCurrent);
+---
+
+<p class="docs-crumb"><a href={LINKS.docs}>Docs</a> / {current?.label ?? entry.data.title}</p>
+<Default />
