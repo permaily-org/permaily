@@ -14,6 +14,10 @@ updates:
     commit-message: { prefix: build }
     groups:
       js: { patterns: ["*"] }
+    ignore:
+      # astro check does not support TypeScript 7 yet (site/). The web app is already on 7.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     target-branch: develop
