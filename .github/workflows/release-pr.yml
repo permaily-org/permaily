@@ -1,0 +1,69 @@
+name: release-pr
+
+# The "Release" button: run this workflow (Actions > release-pr > Run workflow)
+# to open or update the pull request from develop into main, listing the changes
+# since the last release, with auto-merge on. When CI passes it merges, and
+# release.yml publishes the version.
+#
+# The pull request is opened with the permaily-release app's token: one opened
+# with GITHUB_TOKEN would not trigger CI, so it could never merge.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-pr
+  cancel-in-progress: false
+
+jobs:
+  open:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          repositories: permaily
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Changes since the last release
+        run: |
+          git fetch --tags origin
+          last=$(git describe --tags --abbrev=0 origin/main)
+          git log --no-merges --format='- %s' "$last..origin/develop" > changes.md
+          if [ ! -s changes.md ]; then
+            echo "Nothing to release: develop has no changes since $last."
+            exit 1
+          fi
+          {
+            echo "Release from \`develop\` into \`main\`, opened by the release-pr workflow."
+            echo
+            echo "## Changes since $last"
+            echo
+            cat changes.md
+            echo
+            echo "semantic-release decides the version from these Conventional Commits when this merges (\`feat\` minor, \`fix\` patch; \`docs\`, \`ci\` and \`chore\` alone publish nothing)."
+          } > body.md
+          cat body.md
+      - name: Open or update the release pull request with auto-merge
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --head develop --state open --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head develop \
+              --title "release: $(date -u +%Y-%m-%d)" --body-file body.md
+            pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --head develop --state open --json number --jq '.[0].number')
+          else
+            gh pr edit "$pr" --repo "$GITHUB_REPOSITORY" --body-file body.md
+          fi
+          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --auto --merge
+          echo "Release pull request: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/pull/$pr (auto-merge on)" >> "$GITHUB_STEP_SUMMARY"

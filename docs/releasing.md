@@ -5,6 +5,14 @@
 - `develop` is the default branch. Work happens on branches from `develop`; pull requests into it are squash-merged, so the PR title (lowercase Conventional Commit, checked by `.github/workflows/pr.yml`) becomes the commit.
 - `main` only receives merge commits from `develop` (also checked by `pr.yml`). Nobody tags or edits versions by hand.
 
+## How to release
+
+1. Run **Actions > release-pr > Run workflow** (or `gh workflow run release-pr.yml --repo permaily-org/permaily`).
+2. It opens (or updates) the pull request from `develop` into `main` with the changes since the last release and turns on auto-merge. The pull request is opened by the `permaily-release` app, so CI runs on it.
+3. When CI passes, it merges with a merge commit and the release starts. Nothing else to do.
+
+Opening the pull request by hand works too; it just needs auto-merge or a manual merge.
+
 ## What a release does
 
 On every push to `main`, `.github/workflows/release.yml`:
@@ -22,5 +30,5 @@ The tag points at the built commit; there is no release commit. So `scripts/veri
 ## Depends on
 
 - Branch rulesets on `develop` and `main` (required checks, pull requests only; admins can bypass).
-- The `permaily-release` GitHub App (installed on this repository only, contents and workflows write) is the only actor allowed to bypass the `develop` ruleset. `release.yml` uses it, through `RELEASE_APP_CLIENT_ID` (variable) and `RELEASE_APP_PRIVATE_KEY` (secret), to fast-forward `develop` to `main` after each release, so both branches point at the same commit.
+- The `permaily-release` GitHub App (installed on this repository only; contents, workflows and pull requests write) is the only actor allowed to bypass the `develop` ruleset. `release.yml` uses it, through `RELEASE_APP_CLIENT_ID` (variable) and `RELEASE_APP_PRIVATE_KEY` (secret), to fast-forward `develop` to `main` after each release, so both branches point at the same commit.
 - Deploying a release is manual for now ([operations.md](operations.md)), because the AWS account cannot run the instance yet.
