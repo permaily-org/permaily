@@ -2,13 +2,16 @@
 #
 # node_modules is a fixed-output derivation: bun installs exactly bun.lock.
 # Its hash differs per build platform because some dependencies ship native
-# binaries (rolldown, typescript, oxlint, tailwind), but the resulting dist/ is identical.
+# binaries (rolldown, typescript, tailwind), but the resulting dist/ is identical.
 { lib, stdenvNoCC, bun, stdenv }:
 
 let
+  # The web app imports the shared tokens from packages/ui by relative path,
+  # so the source root is the repo root and the build runs in web/.
   src = lib.fileset.toSource {
-    root = ../web;
+    root = ../.;
     fileset = lib.fileset.unions [
+      ../packages/ui/colors.css
       ../web/package.json
       ../web/bun.lock
       ../web/index.html
@@ -20,11 +23,12 @@ let
       ../web/src
     ];
   };
+  sourceRoot = "source/web";
 
   nodeModules = stdenvNoCC.mkDerivation {
     pname = "permaily-web-node-modules";
     version = "0";
-    inherit src;
+    inherit src sourceRoot;
     nativeBuildInputs = [ bun ];
     impureEnvVars = lib.fetchers.proxyImpureEnvVars;
     dontConfigure = true;
@@ -42,15 +46,15 @@ let
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
     outputHash = {
-      x86_64-linux = "sha256-dRhL6NgAkJ3PY/CYW7qGpHGBavWNMUUKgIbW/B/WSdE=";
-      aarch64-linux = "sha256-f+QCAPDSxH6neKn+Bw/UHNnDBJgyBu0x1/Se6ivmIe4=";
+      x86_64-linux = "sha256-jJBoNJFCazdhxJezmNS1yiK1dNLDAt4Im3m180DA9hk=";
+      aarch64-linux = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     }.${stdenv.hostPlatform.system};
   };
 in
 stdenvNoCC.mkDerivation {
   pname = "permaily-web";
   version = "0";
-  inherit src;
+  inherit src sourceRoot;
   nativeBuildInputs = [ bun ];
   dontConfigure = true;
   buildPhase = ''

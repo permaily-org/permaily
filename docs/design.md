@@ -4,7 +4,7 @@ Visual design of everything people see: the web app on `app.permaily.com` and th
 
 ## Tokens
 
-Tokens live in `web/src/styles/index.css` as Tailwind theme values, such as `bg-paper`, `text-ink-2` and `bg-highlight`. Tailwind's default colors, type sizes and shadows are switched off, so only the design system's values are available. Colors follow the system's light or dark setting, and `data-theme="light"` or `"dark"` on `<html>` overrides it.
+Colors and font stacks live in `packages/ui/colors.css`, the single source for the web app and the public site. The web app exposes them as Tailwind theme values in `web/src/styles/index.css`, such as `bg-paper`, `text-ink-2` and `bg-highlight`; the site uses the CSS variables directly and adds its own layout and type scale in `site/src/styles/tokens.css`. Tailwind's default colors, type sizes and shadows are switched off, so only the design system's values are available. Colors follow the system's light or dark setting, and `data-theme="light"` or `"dark"` on `<html>` overrides it.
 
 Fonts are Instrument Sans for text and JetBrains Mono for machine facts, both bundled with the app (`@fontsource-variable`), so pages make no requests to font services.
 

@@ -1,0 +1,43 @@
+/*
+  Permaily color tokens, shared by the web app (web/) and the public site (site/).
+  Black means withheld and the highlight means shared. Nothing else uses either.
+  Colors follow the system setting; data-theme="light" or "dark" on <html> overrides it,
+  and any element with color-scheme: dark (such as the site's .on-dark) gets the dark values.
+*/
+
+:root {
+  color-scheme: light dark;
+
+  --paper: light-dark(#f6f6f3, #111210);
+  --raised: light-dark(#ffffff, #191a18);
+  --sunken: light-dark(#ecece7, #0b0c0b);
+  --ink: light-dark(#131312, #f1f1ec);
+  --ink-2: light-dark(#5b5b55, #ababa3);
+  --ink-3: light-dark(#6c6c65, #85857d);
+  --rule: light-dark(#deded8, #2a2b27);
+  --rule-strong: light-dark(#131312, #f1f1ec);
+  --bar: light-dark(#131312, #65665d);
+  --on-bar: light-dark(#f6f6f3, #f1f1ec);
+  --highlight: #ddf45b;
+  --on-highlight: #131312;
+  --highlight-soft: light-dark(#edf6ba, #3d4220);
+  --on-highlight-soft: light-dark(#131312, #e8f29a);
+  --attention: light-dark(#7d5300, #e8b954);
+  --attention-bg: light-dark(#f8efd6, #2e2410);
+  --ok: light-dark(#1c6642, #7fd6a6);
+  --danger: light-dark(#b8301a, #ff8a6e);
+  --danger-bg: light-dark(#fae8e3, #33170f);
+  --on-danger: light-dark(#f6f6f3, #2a0e07);
+  --scrim: light-dark(rgb(19 19 18 / 0.4), rgb(0 0 0 / 0.6));
+
+  --font-sans: 'Instrument Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, Menlo, monospace;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
