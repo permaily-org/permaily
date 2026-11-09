@@ -1,6 +1,6 @@
 # web/AGENTS.md: SPA
 
-The web app (React, TypeScript, Vite, Tailwind v4, React Router), managed with **bun** (not npm or pnpm). Screens, routes, design tokens and design language: [../docs/web.md](../docs/web.md). The build output is embedded in the enclave binary and is part of PCR0: [../docs/build.md](../docs/build.md).
+The web app (React, TypeScript, Vite, Tailwind v4, React Router), managed with **bun** (not npm or pnpm). Screens and routes: [../docs/web.md](../docs/web.md). Visual design: [../docs/design.md](../docs/design.md). The build output is embedded in the enclave binary and is part of PCR0: [../docs/build.md](../docs/build.md).
 
 ## Rules
 

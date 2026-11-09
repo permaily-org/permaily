@@ -35,7 +35,7 @@ bun run lint
 
 The production build is embedded in the enclave binary (`internal/webui`) and is part of PCR0, so it must stay reproducible. See [build.md](build.md).
 
-Design tokens live in `web/src/styles/index.css` as Tailwind theme values, such as `bg-paper`, `text-ink-2` and `bg-highlight`. Tailwind's default colors, type sizes and shadows are switched off, so only the design system's values are available. Colors follow the system's light or dark setting, and `data-theme="light"` or `"dark"` on `<html>` overrides it.
+Design tokens, typography and the design language are in [design.md](design.md).
 
 ## Screens
 
@@ -58,11 +58,3 @@ Every screen runs on sample data in `web/src/data/sample.ts`, and nothing talks 
 | `/consent/trip-app` | An app asks for access. The mailbox picker switches to the forwarding preview | `?state=loading`, `?state=error` |
 | `/consent/claude` | An agent asks to connect and starts with nothing | `?state=loading`, `?state=error` |
 | `/consent/ledgerly` | A connection asks for more | `?state=loading`, `?state=error` |
-
-## Design language
-
-- Black means withheld, and the highlight color means shared. Nothing else uses either.
-- Monospace is for machine facts, such as addresses, hashes and timestamps.
-- Hairline rules instead of cards, 2px corners, and no shadows or gradients.
-- No explanatory text on the page. A fact worth keeping but not worth the space goes behind an info icon (`InfoTip`), and only when people may need it.
-- Every screen works from a 375px phone up, and nothing scrolls sideways. Below 768px the sidebar becomes a top bar with a drawer, and below 1024px an icon rail. Pages use `pagePadding` from `web/src/lib/styles.ts`. Tables drop their secondary columns before they would overflow, by the width they get rather than the window's, and hide a column in every row so the rest stay aligned.

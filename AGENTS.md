@@ -4,7 +4,9 @@ Permaily runs an email access broker inside an AWS Nitro Enclave whose image any
 
 ## Read first
 
-- [docs/design.md](docs/design.md): architecture, components, roadmap
+- [docs/architecture.md](docs/architecture.md): components and technology choices
+- [docs/plan.md](docs/plan.md): phases and the design of planned work
+- [docs/design.md](docs/design.md): visual design (tokens, typography, design language)
 - [docs/security.md](docs/security.md): what is trusted and what is not; read before touching networking, TLS, attestation or the host
 - [docs/build.md](docs/build.md): reproducible build rules and local development commands
 - [docs/verification.md](docs/verification.md): the verification protocol
@@ -13,7 +15,7 @@ Permaily runs an email access broker inside an AWS Nitro Enclave whose image any
 
 - [internal/AGENTS.md](internal/AGENTS.md): enclave service and host proxy (Go)
 - [pkg/attestation/AGENTS.md](pkg/attestation/AGENTS.md): verifier library and CLI
-- [web/AGENTS.md](web/AGENTS.md): web app (Vite, React, Tailwind, bun); screens and design in [docs/web.md](docs/web.md)
+- [web/AGENTS.md](web/AGENTS.md): web app (Vite, React, Tailwind, bun); screens in [docs/web.md](docs/web.md)
 - [nix/AGENTS.md](nix/AGENTS.md): reproducible image build
 - [deploy/AGENTS.md](deploy/AGENTS.md): OpenTofu, host setup, deployment
 

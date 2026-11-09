@@ -1,6 +1,6 @@
 # internal/AGENTS.md: enclave service and host proxy
 
-Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cmd/permaily-host` (untrusted, runs on the parent EC2 instance). Design: [../docs/design.md](../docs/design.md). Trust boundaries: [../docs/security.md](../docs/security.md).
+Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cmd/permaily-host` (untrusted, runs on the parent EC2 instance). Architecture: [../docs/architecture.md](../docs/architecture.md). Trust boundaries: [../docs/security.md](../docs/security.md).
 
 | Package | Role |
 |---|---|
