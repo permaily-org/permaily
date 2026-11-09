@@ -26,3 +26,8 @@ func New() (*Fake, error) {
 func (f *Fake) Attest(nonce, userData []byte) ([]byte, error) {
 	return f.CA.Sign(attestationtest.Fields{PCRs: f.PCRs, Nonce: nonce, UserData: userData})
 }
+
+// AttestPublicKey implements keys.Attester.
+func (f *Fake) AttestPublicKey(publicKey []byte) ([]byte, error) {
+	return f.CA.Sign(attestationtest.Fields{PCRs: f.PCRs, PublicKey: publicKey})
+}
