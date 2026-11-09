@@ -17,13 +17,21 @@ async function load(): Promise<Release | null> {
     return { tag, pcr0, url: `${SOURCE}/releases/tag/${tag}` };
   }
   try {
-    const res = await fetch(`${SOURCE}/releases/latest/download/pcrs.json`, {
+    // GitHub redirects "latest" to the release's own URL, which names the tag,
+    // and then to a storage URL that does not; read the tag from the first hop.
+    const latest = await fetch(`${SOURCE}/releases/latest/download/pcrs.json`, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(10_000),
+    });
+    const location = latest.headers.get('location') ?? '';
+    const tag = location.match(/\/releases\/download\/([^/]+)\/pcrs\.json$/)?.[1];
+    if (!tag) return null;
+    const res = await fetch(`${SOURCE}/releases/download/${tag}/pcrs.json`, {
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;
     const pcrs = (await res.json()) as { PCR0?: string };
-    const tag = res.url.match(/\/download\/([^/]+)\/pcrs\.json$/)?.[1];
-    if (!tag || !pcrs.PCR0 || !/^[0-9a-f]{96}$/.test(pcrs.PCR0)) return null;
+    if (!pcrs.PCR0 || !/^[0-9a-f]{96}$/.test(pcrs.PCR0)) return null;
     return { tag, pcr0: pcrs.PCR0, url: `${SOURCE}/releases/tag/${tag}` };
   } catch {
     return null;
