@@ -53,6 +53,7 @@ The site in `site/` is hosted on AWS Amplify, outside the enclave, managed by Op
 - The build is `amplify.yml` at the repo root (monorepo, app root `site`); security headers are set on the app (`custom_headers` in `site.tf`), because Amplify ignores them in `amplify.yml` for monorepo apps.
 - Repository access: the Amplify GitHub App for us-east-2 is installed on `permaily-org`, limited to this repository. Creating the app once needed a GitHub token with `admin:repo_hook` (`TF_VAR_github_access_token`); Amplify does not store it and later applies run without it.
 - DNS in Cloudflare (DNS only): CNAMEs for the apex, `www` and `beta`, the ACM validation record, and CAA `issue` and `issuewild` records for Amazon at the apex (Cloudflare publishes its own `issuewild` list there). The enclave subdomains keep their own CAA (`letsencrypt.org`).
+- The footer shows the latest release's PCR0, read at build time. A release is published after `main` was built, so `release.yml` calls an Amplify webhook (`aws_amplify_webhook.release`, URL in the `AMPLIFY_RELEASE_WEBHOOK` secret) to rebuild `main` once `pcrs.json` exists.
 - `.github/workflows/site-smoke.yml` checks the live site after each push to `main`.
 
 ## Teardown
