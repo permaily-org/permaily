@@ -29,7 +29,8 @@ for (const name of skills) {
       .filter((m): m is RegExpMatchArray => m !== null)
       .map((m) => [m[1], m[2].replace(/^["']|["']$/g, '')]),
   )
-  if (fields.name !== name) errors.push(`skills/${name}: name "${fields.name}" must equal "${name}"`)
+  if (fields.name !== name)
+    errors.push(`skills/${name}: name "${fields.name}" must equal "${name}"`)
   if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name) || name.length > 64) {
     errors.push(`skills/${name}: name must be kebab-case and at most 64 characters`)
   }

@@ -19,7 +19,11 @@ const allowColorsIn = ['packages/ui/colors.css']
 
 type Finding = { file: string; line: number; rule: string; text: string }
 
-const rules: { name: string; level: 'error' | 'warn'; test: (line: string, file: string) => boolean }[] = [
+const rules: {
+  name: string
+  level: 'error' | 'warn'
+  test: (line: string, file: string) => boolean
+}[] = [
   {
     name: 'raw color (use a token from packages/ui/colors.css)',
     level: 'error',

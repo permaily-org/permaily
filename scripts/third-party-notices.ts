@@ -59,14 +59,20 @@ function detectLicense(text: string): string {
   if (/Mozilla Public License,? (Version|v\.?) ?2\.0/i.test(t)) return 'MPL-2.0'
   if (/Apache License,? Version 2\.0/i.test(t)) return 'Apache-2.0'
   if (/Permission is hereby granted, free of charge/i.test(t)) return 'MIT'
-  if (/Permission to use, copy, modify, and\/or distribute this software for any purpose/i.test(t)) {
-    return /THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS/i.test(t) && /copyright notice and this permission notice appear/i.test(t) ? 'ISC' : '0BSD'
+  if (
+    /Permission to use, copy, modify, and\/or distribute this software for any purpose/i.test(t)
+  ) {
+    return /THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS/i.test(t) &&
+      /copyright notice and this permission notice appear/i.test(t)
+      ? 'ISC'
+      : '0BSD'
   }
   if (/Redistribution and use in source and binary forms/i.test(t)) {
     return /Neither the name|names of its contributors/i.test(t) ? 'BSD-3-Clause' : 'BSD-2-Clause'
   }
   if (/SIL OPEN FONT LICENSE/i.test(t)) return 'OFL-1.1'
-  if (/This is free and unencumbered software released into the public domain/i.test(t)) return 'Unlicense'
+  if (/This is free and unencumbered software released into the public domain/i.test(t))
+    return 'Unlicense'
   return 'UNKNOWN'
 }
 
@@ -79,11 +85,27 @@ function licenseFile(dir: string): string | undefined {
 }
 
 function goComponents(pkg: string): Component[] {
-  const out = execFileSync('go', ['list', '-deps', '-f', '{{with .Module}}{{if not .Main}}{{.Path}}\t{{.Dir}}{{end}}{{end}}', pkg], {
-    cwd: root,
-    encoding: 'utf8',
-    env: { ...process.env, CGO_ENABLED: '0', GOOS: 'linux', GOARCH: 'arm64', GOFLAGS: '-mod=mod' },
-  })
+  const out = execFileSync(
+    'go',
+    [
+      'list',
+      '-deps',
+      '-f',
+      '{{with .Module}}{{if not .Main}}{{.Path}}\t{{.Dir}}{{end}}{{end}}',
+      pkg,
+    ],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CGO_ENABLED: '0',
+        GOOS: 'linux',
+        GOARCH: 'arm64',
+        GOFLAGS: '-mod=mod',
+      },
+    },
+  )
   const modules = new Map<string, string>()
   for (const line of out.split('\n').filter(Boolean)) {
     const [path, dir] = line.split('\t')
@@ -91,7 +113,9 @@ function goComponents(pkg: string): Component[] {
   }
   const goroot = execFileSync('go', ['env', 'GOROOT'], { encoding: 'utf8' }).trim()
   const std = licenseFile(goroot) ?? ''
-  const list: Component[] = [{ name: 'Go standard library and runtime', license: detectLicense(std), text: std }]
+  const list: Component[] = [
+    { name: 'Go standard library and runtime', license: detectLicense(std), text: std },
+  ]
   for (const [path, dir] of [...modules].sort()) {
     const text = licenseFile(dir) ?? ''
     list.push({ name: path, license: text ? detectLicense(text) : 'MISSING', text })
@@ -112,7 +136,11 @@ function npmComponents(project: string): Component[] {
     const meta = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
     const declared = typeof meta.license === 'string' ? meta.license : meta.license?.type
     const text = licenseFile(dir) ?? ''
-    seen.set(name, { name, license: normalizeSpdx(declared) ?? (text ? detectLicense(text) : 'MISSING'), text })
+    seen.set(name, {
+      name,
+      license: normalizeSpdx(declared) ?? (text ? detectLicense(text) : 'MISSING'),
+      text,
+    })
     for (const dep of Object.keys(meta.dependencies ?? {})) visit(dep, dir)
   }
   for (const dep of Object.keys(pkg.dependencies ?? {})) visit(dep, base)
@@ -156,9 +184,21 @@ const sections = [
     note: 'The service that runs inside the AWS Nitro Enclave, including the embedded web app.',
     items: [...awsBlobs, ...goComponents('./cmd/permaily-enclave'), ...npmComponents('web')],
   },
-  { title: 'permaily-host', note: 'The proxy on the parent EC2 instance.', items: goComponents('./cmd/permaily-host') },
-  { title: 'permaily-verify', note: 'The verifier CLI.', items: goComponents('./cmd/permaily-verify') },
-  { title: 'Public site (permaily.com)', note: 'Runtime dependencies of the static site.', items: npmComponents('site') },
+  {
+    title: 'permaily-host',
+    note: 'The proxy on the parent EC2 instance.',
+    items: goComponents('./cmd/permaily-host'),
+  },
+  {
+    title: 'permaily-verify',
+    note: 'The verifier CLI.',
+    items: goComponents('./cmd/permaily-verify'),
+  },
+  {
+    title: 'Public site (permaily.com)',
+    note: 'Runtime dependencies of the static site.',
+    items: npmComponents('site'),
+  },
 ]
 
 const disallowed = sections
@@ -169,9 +209,12 @@ for (const c of disallowed) console.log(`not allowed: ${c.license} in ${c.name} 
 const content = render(sections)
 if (process.argv.includes('--check')) {
   const current = existsSync(output) ? readFileSync(output, 'utf8') : ''
-  if (current !== content) console.log('third-party-notices.md is stale: run bun scripts/third-party-notices.ts')
+  if (current !== content)
+    console.log('third-party-notices.md is stale: run bun scripts/third-party-notices.ts')
   process.exit(current !== content || disallowed.length ? 1 : 0)
 }
 writeFileSync(output, content)
-console.log(`wrote third-party-notices.md (${sections.reduce((n, s) => n + s.items.length, 0)} components, ${disallowed.length} not allowed)`)
+console.log(
+  `wrote third-party-notices.md (${sections.reduce((n, s) => n + s.items.length, 0)} components, ${disallowed.length} not allowed)`,
+)
 process.exit(disallowed.length ? 1 : 0)
