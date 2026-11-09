@@ -1,27 +1,39 @@
 name: release
 
+# A merge from develop into main builds the enclave image on x86_64 and arm64,
+# checks both are identical, attests provenance, and lets semantic-release cut
+# a version from the Conventional Commits since the last tag. The tag points at
+# the built commit (no release commit), so `scripts/verify.sh <tag>` rebuilds
+# exactly the published PCRs.
+
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
 
 permissions:
   contents: read
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  eif:
+  build:
     strategy:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
       - run: |
           nix build .#eif --out-link eif -L
           nix build .#permaily-host --out-link host
           nix build .#permaily-verify --out-link verify
           mkdir out
-          cp eif/permaily.eif eif/pcrs.json eif/SHA256SUMS out/
+          cp eif/permaily.eif eif/pcrs.json out/
           cp host/bin/permaily-host out/permaily-host-linux-arm64
           arch=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
           cp verify/bin/permaily-verify out/permaily-verify-linux-$arch
@@ -31,35 +43,60 @@ jobs:
           path: out/
 
   release:
-    needs: eif
+    needs: build
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      issues: write
+      pull-requests: write
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
       - name: x86_64 and arm64 builds are identical
         run: |
-          for f in permaily.eif pcrs.json SHA256SUMS permaily-host-linux-arm64; do
-            cmp build-ubuntu-24.04/$f build-ubuntu-24.04-arm/$f
+          for f in permaily.eif pcrs.json permaily-host-linux-arm64; do
+            cmp artifacts/build-ubuntu-24.04/$f artifacts/build-ubuntu-24.04-arm/$f
           done
           mkdir dist
-          cp build-ubuntu-24.04-arm/* dist/
-          cp build-ubuntu-24.04/permaily-verify-linux-amd64 dist/
-          (cd dist && sha256sum permaily-host-linux-arm64 permaily-verify-* >> SHA256SUMS)
+          cp artifacts/build-ubuntu-24.04-arm/* dist/
+          cp artifacts/build-ubuntu-24.04/permaily-verify-linux-amd64 dist/
+          (cd dist && sha256sum * > SHA256SUMS)
+          cat dist/pcrs.json
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*
-      - name: Publish release
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.13
+      - run: bun install --frozen-lockfile
+      - name: semantic-release
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          {
-            echo "Enclave image measurements (reproduce with \`scripts/verify.sh ${GITHUB_REF_NAME}\`):"
-            echo
-            echo '```json'
-            cat dist/pcrs.json
-            echo '```'
-          } > notes.md
-          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file notes.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bunx semantic-release
+
+  # Keep develop containing main, so the next release diff is clean.
+  # Needs a deploy key (RELEASE_DEPLOY_KEY) once branch rulesets block direct pushes.
+  sync-develop:
+    needs: release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+      - run: |
+          git fetch origin main
+          git config user.name "permaily-release"
+          git config user.email "release@permaily.com"
+          git merge --ff-only origin/main || git merge --no-edit origin/main
+          git push origin develop
