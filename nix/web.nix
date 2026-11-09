@@ -43,7 +43,7 @@ let
     outputHashAlgo = "sha256";
     outputHash = {
       x86_64-linux = "sha256-dRhL6NgAkJ3PY/CYW7qGpHGBavWNMUUKgIbW/B/WSdE=";
-      aarch64-linux = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+      aarch64-linux = "sha256-f+QCAPDSxH6neKn+Bw/UHNnDBJgyBu0x1/Se6ivmIe4=";
     }.${stdenv.hostPlatform.system};
   };
 in
@@ -58,7 +58,10 @@ stdenvNoCC.mkDerivation {
     export HOME=$TMPDIR
     cp -R ${nodeModules}/node_modules .
     chmod -R u+w node_modules
-    bun --bun run build
+    # Same as `bun run build`, but calling the entry points directly: the
+    # node_modules/.bin shims use #!/usr/bin/env, which the Nix sandbox lacks.
+    bun --bun node_modules/typescript/bin/tsc -b
+    bun --bun node_modules/vite/bin/vite.js build
     runHook postBuild
   '';
   installPhase = ''
