@@ -37,4 +37,15 @@ else
 fi
 
 echo "Reproduced PCRs for $ref:"; cat "$work/pcrs.json"; echo
+
+# Optional: compare with the PCRs CI published for that release, and check
+# their Sigstore build provenance. The rebuild above is what counts.
+if command -v gh >/dev/null && gh release download "$ref" --repo permaily-org/permaily --pattern pcrs.json --dir "$work/release" 2>/dev/null; then
+  if cmp -s <(jq -S . "$work/pcrs.json") <(jq -S . "$work/release/pcrs.json"); then
+    echo "Release $ref publishes the same PCRs."
+  else
+    echo "WARNING: release $ref publishes different PCRs than your rebuild." >&2
+  fi
+  gh attestation verify "$work/release/pcrs.json" --repo permaily-org/permaily >/dev/null && echo "Release provenance verified (Sigstore)."
+fi
 $verify -pcrs "$work/pcrs.json" "$@"

@@ -1,5 +1,10 @@
 # Permaily
 
+[![CI](https://github.com/permaily-org/permaily/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/permaily-org/permaily/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/permaily-org/permaily?include_prereleases&label=release)](https://github.com/permaily-org/permaily/releases)
+[![Reproducible build](https://img.shields.io/badge/build-reproducible-brightgreen)](docs/verification.md)
+[![License](https://img.shields.io/badge/license-personal%20use-blue)](license.md)
+
 **Give apps and AI agents the emails they need. Not your whole inbox.**
 
 Travel apps, assistants and AI agents keep asking for full access to your Gmail to read a handful of messages. Permaily sits between your mailbox and everyone who wants to read it: each app, agent or vendor gets only the mail you approve, nothing else.
@@ -26,7 +31,16 @@ scripts/verify.sh <release>
 
 ## Status
 
-Permaily is in early development. The verifiable foundation is being built in the open, and the app's screens are taking shape in [`web/`](web/).
+Permaily is in early development, built in the open.
+
+| Capability | Status |
+|---|---|
+| Reproducible service image anyone can rebuild | Available |
+| Cryptographic verification of the running service (`scripts/verify.sh`) | Available |
+| Connect your mailbox by forwarding | Planned |
+| Per-app and per-agent access rules, receipts and revocation | Planned |
+| Remote MCP server for Claude, ChatGPT and other agents | Planned |
+| API for apps | Planned |
 
 ## License
 

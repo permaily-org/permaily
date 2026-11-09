@@ -40,6 +40,17 @@ For tests, deploy `.#eif-staging` first to avoid Let's Encrypt production rate l
 
 `scripts/deploy.sh ... --debug` starts the enclave in debug mode so `nitro-cli console --enclave-name permaily` shows its logs through SSM (`aws ssm start-session --target <instance-id>`). Debug-mode PCRs are zero and verification fails on purpose; redeploy without `--debug` afterwards.
 
+## Public site (Amplify)
+
+The site in `site/` is hosted on AWS Amplify, outside the enclave, from `main`:
+
+1. In the Amplify app, connect the repository `permaily-org/permaily`, branch `main` (optionally `develop` as a preview branch).
+2. Mark it as a monorepo with app root `site` (environment variable `AMPLIFY_MONOREPO_APP_ROOT=site`); Amplify reads `amplify.yml` from the repo root.
+3. Keep the custom domain `permaily.com` (and `www`) on the app.
+4. After the first deploy from this repo, archive `permaily-org/permaily-website`.
+
+`amplify.yml` installs bun, builds, runs the content tests, and sets the security headers. `.github/workflows/site-smoke.yml` checks the live site after each push to `main`.
+
 ## Teardown
 
 ```sh

@@ -5,9 +5,9 @@ Bug reports, fixes and improvements are welcome. Permaily is source-available un
 ## How to contribute
 
 1. Open an issue describing the problem or change.
-2. Fork, make the change, run `go test ./...` and, if you touched the build, `nix build .#eif`.
+2. Fork, branch from `develop`, make the change, and run `make check` (and `nix build .#eif` if you touched the build).
 3. Open a pull request. Commit messages: lowercase English Conventional Commits (`fix: ...`, `feat: ...`).
-4. In your first pull request, state "I agree to the Contributor License Agreement in docs/contributing.md".
+4. Sign the Contributor License Agreement below: on your first pull request a bot asks you to comment `I have read the CLA Document and I hereby sign the CLA`. Signatures are stored in the `cla-signatures` branch.
 
 Read [../AGENTS.md](../AGENTS.md) and the AGENTS.md of the layer you change; they apply to humans too.
 

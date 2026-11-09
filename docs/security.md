@@ -46,6 +46,42 @@ The host proxy only tunnels to:
 | `acme-v02.api.letsencrypt.org:443` | certificate issuance |
 | `acme-staging-v02.api.letsencrypt.org:443` | test deployments |
 
+## Invariants
+
+Each one has, or must get, a test that tries to break it.
+
+| Area | Invariant | Test |
+|---|---|---|
+| Attestation | No document is accepted unless signed under the pinned AWS root, fresh, with the caller's nonce, non-zero PCRs equal to the rebuild, and `user_data` equal to the connection's SPKI hash | `pkg/attestation` tests and `FuzzVerify` |
+| Build | The image does not depend on the build machine | CI `reproducible` |
+| Host | The parent links no enclave code (NSM, TLS keys, web app) | `depguard` rules in `.golangci.yml` |
+| Host | Egress only reaches allowlisted destinations | `TestConnectProxy` |
+| Enclave | No configuration is read from the parent at runtime | review (entry point arguments are baked into the image) |
+| Production code | Fake attesters and test chains are never linked | `depguard` |
+| Web | Every response carries HSTS, CSP, `nosniff`, `no-referrer` | `TestRouter` |
+| Site | No CSP violations and a strict script policy on every page | `site/e2e/a11y.spec.ts` |
+
+## Logging
+
+Never log email content, email addresses, tokens, cookies, codes, presigned URLs or keys, in the enclave or on the host. Enclave logs leave through the untrusted host, so they are treated as public.
+
+## Review checklist
+
+For every change that touches the enclave, the host, auth, storage or the build:
+
+1. Does it add a way for the parent instance or a third party to read or alter user data?
+2. Does it read configuration or code from outside the image at runtime?
+3. Does it add an outbound destination? Is it on the allowlist and in this document?
+4. Does it log anything from the list above?
+5. Does every new rejection path have a negative test?
+6. Does the image still build identically on x86_64 and arm64?
+
+## TODO
+
+- [ ] Site: move the demos' inline `style` attributes to classes and remove `style-src-attr 'unsafe-inline'` from `site/astro.config.mjs`.
+- [ ] CT monitoring for certificates of the enclave names not bound to an attested key (F4).
+- [ ] CAA `accounturi` once the ACME account key is sealed with KMS (F1).
+
 ## Reporting vulnerabilities
 
 Open a GitHub security advisory on the repository (private vulnerability reporting).

@@ -56,4 +56,4 @@ go run ./cmd/permaily-verify -pcrs result-staging/pcrs.json -ca-file letsencrypt
 
 ## Planned
 
-Certificate Transparency monitoring for certificates not bound to an attested key, Rekor checks for release provenance, KMS key policy verification (F1).
+`scripts/verify.sh` also compares the reproduced PCRs with the ones published in the release and checks their Sigstore build provenance with `gh attestation verify` when `gh` is installed. Still planned: Certificate Transparency monitoring for certificates not bound to an attested key, and KMS key policy verification (F1).
