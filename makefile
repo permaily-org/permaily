@@ -34,6 +34,7 @@ fuzz:
 	go test -run='^$$' -fuzz=FuzzVerify -fuzztime=500000x ./pkg/attestation
 	go test -run='^$$' -fuzz=FuzzParsePCRFile -fuzztime=400000x ./pkg/attestation
 	go test -run='^$$' -fuzz=FuzzAnalyze -fuzztime=1000000x ./pkg/kmspolicy
+	go test -run='^$$' -fuzz=FuzzVerify -fuzztime=300000x ./pkg/provenance
 	go test -run='^$$' -fuzz=FuzzCMS -fuzztime=500000x ./internal/keys
 	go test -run='^$$' -fuzz=FuzzParse -fuzztime=150000x ./internal/inbox
 

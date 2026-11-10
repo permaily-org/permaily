@@ -32,13 +32,22 @@ linters:
             - pkg: github.com/permaily-org/permaily/internal/webui
               desc: the web app ships only inside the enclave
         no-fakes-in-production:
-          files: ["$all", "!$test", "!**/platform_dev.go", "!**/internal/nsm/fakensm/**"]
+          files:
+            [
+              "$all",
+              "!$test",
+              "!**/platform_dev.go",
+              "!**/internal/nsm/fakensm/**",
+              "!**/provenancetest/**",
+            ]
           list-mode: lax
           deny:
             - pkg: github.com/permaily-org/permaily/internal/nsm/fakensm
               desc: the fake attester is only for dev mode and tests
             - pkg: github.com/permaily-org/permaily/pkg/attestation/attestationtest
               desc: test chains are only for dev mode and tests
+            - pkg: github.com/permaily-org/permaily/pkg/provenance/provenancetest
+              desc: the test release authority is only for dev mode and tests
     gosec:
       excludes:
         - G104 # unhandled errors are covered by errcheck

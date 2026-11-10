@@ -4,7 +4,7 @@
 
 - A test asserts an observable outcome and fails when the code breaks. Break the code on purpose once and watch the test fail.
 - No snapshot-only tests for logic, and no committed `.skip` or `.only`.
-- Mock only true external boundaries (NSM, ACME CA, network, clock). Prefer fakes (`internal/nsm/fakensm`, `pkg/attestation/attestationtest`) over call-recording mocks.
+- Mock only true external boundaries (NSM, ACME CA, Sigstore, network, clock). Prefer fakes (`internal/nsm/fakensm`, `pkg/attestation/attestationtest`, `pkg/provenance/provenancetest`) over call-recording mocks.
 - Every bug fix starts with a failing test.
 - Security checks need a negative test that tries to break them: every rejection path in `pkg/attestation` has one (wrong nonce, wrong user data, MITM, debug PCRs, different image, stale, wrong root, tampered, malformed).
 
@@ -13,7 +13,8 @@
 | Layer | Tool | Where | Runs |
 |---|---|---|---|
 | Unit and local end to end (Go) | `go test`, `httptest` | `*_test.go` | `make check`, CI |
-| Fuzzing | Go native fuzzing | `pkg/attestation`, `pkg/kmspolicy`, `internal/keys` (CMS), `internal/inbox` (mail parser) | `make fuzz`, CI |
+| Fuzzing | Go native fuzzing | `pkg/attestation`, `pkg/kmspolicy`, `pkg/provenance`, `internal/keys` (CMS), `internal/inbox` (mail parser) | `make fuzz`, CI |
+| Differential | `pkg/provenance` against sigstore-go, on the published release v0.5.0 and on bundles from the test authority | `tests/sigstore-differential` (its own Go module, Go 1.27) | CI `sigstore-differential`; locally `cd tests/sigstore-differential && go test ./...` |
 | Storage contract | DynamoDB Local and S3Mock | `internal/store/store_test.go` | CI services; locally with `PERMAILY_TEST_DYNAMODB` and `PERMAILY_TEST_S3` |
 | ACME issuance and renewal | Pebble 2.6.0 (test CA that accepts every challenge) | `internal/tlsacme` (`TestObtainAgainstACME`) | CI service; locally with `PERMAILY_TEST_ACME` |
 | Whole service, dev mode | SMTP client and HTTPS | `cmd/permaily-enclave/main_dev_test.go` | `go test -tags dev ./cmd/permaily-enclave`, CI |
@@ -36,6 +37,7 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `pkg/attestation` | 85 (target 95) | 85.5 |
 | `pkg/kmspolicy` | 99 | 99.0 |
 | `pkg/certwatch` | 99 | 99.0 |
+| `pkg/provenance` | 97 | 97.3 |
 | `internal/tlsacme` | 90 (with Pebble) | 90.3 |
 | `internal/router` | 100 | 100.0 |
 | `internal/httpapi` | 87 | 87.3 |

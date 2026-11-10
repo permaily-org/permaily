@@ -10,7 +10,7 @@ Permaily runs an email access broker inside an AWS Nitro Enclave whose image any
 | [docs/plan.md](docs/plan.md) | Before starting work from a later phase (F1+) |
 | [docs/decisions/](docs/decisions/index.md) | Before revisiting a decision; add an ADR for a new one |
 | [docs/threat-model.md](docs/threat-model.md) | Before touching networking, TLS, attestation, the host, auth or logging |
-| [docs/verification.md](docs/verification.md) | Before changing `/attestation`, `/status`, `pkg/attestation`, `pkg/kmspolicy`, `pkg/certwatch`, the KMS key policy, CAA records or the build |
+| [docs/verification.md](docs/verification.md) | Before changing `/attestation`, `/status`, `pkg/attestation`, `pkg/kmspolicy`, `pkg/certwatch`, `pkg/provenance`, the KMS key policy, CAA records or the build |
 | [docs/build.md](docs/build.md) | Before changing dependencies, Nix or anything in the image |
 | [docs/testing.md](docs/testing.md) | Before writing or changing tests |
 | [docs/acceptance.md](docs/acceptance.md) | When a change adds evidence for a criterion (update its row) |

@@ -1,6 +1,6 @@
 # 0013 Authorize releases without editing the KMS key policy
 
-Status: Option 1 accepted and implemented (2026-11-10). Option 3 proposed; its spike is in `spikes/release-handoff/`.
+Status: Option 1 accepted and implemented (2026-11-10). Option 3 accepted (2026-11-10) and being built; its spike became `pkg/provenance` and `tests/sigstore-differential`.
 Date: 2026-11-10
 
 ## Context
@@ -36,7 +36,7 @@ What it still does not catch: a change made while the enclave cannot reach KMS (
 
 ## Plan for option 3
 
-1. **Spike** (`spikes/release-handoff/`), about three days:
+1. **Spike**, about three days (done, see the results below):
    - Verify a GitHub artifact attestation with `sigstore-go` inside a reproducible enclave image: size, build reproducibility, and how the pinned trust root is updated.
    - Confirm with AWS documentation and a test key that a policy without `PutKeyPolicy` cannot be changed by the account, and what AWS Support can do with such a key.
    - Decide whether old keys are deleted after a handoff (30 days at the earliest) and what a rollback needs.
@@ -50,7 +50,7 @@ About two weeks of work after the spike.
 
 ## Spike results (2026-11-10)
 
-[`spikes/release-handoff/`](../../spikes/release-handoff/readme.md):
+The spike's code was `spikes/release-handoff/`. Its verifier is now [`pkg/provenance`](../../pkg/provenance/provenance.go) and its comparison with `sigstore-go` is [`tests/sigstore-differential`](../../tests/sigstore-differential/reference.go).
 
 - An enclave can verify offline that a `pcrs.json` comes from this repository's release workflow on `main`, with the bundle `release.yml` already publishes. Checked against the real release v0.5.0 and 23 forged variants.
 - `sigstore-go` is too heavy for the image (556 packages, gRPC, Go 1.27). A verifier of our own with the standard library is 323 lines, adds no package to the enclave, and agrees with `sigstore-go` on every case.
