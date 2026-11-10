@@ -31,4 +31,4 @@ Option 1:
 
 ## To verify
 
-- First deployment: the enclave obtains a data key; a request without Recipient and a request from an image not in the allowlist are both denied.
+- First deployment: the enclave obtains a data key; a request without Recipient and a request from an image not in the allowlist are both denied. Checked on 2026-11-10 with release v0.2.0: the enclave got its key, the account administrator (no Recipient) and the same image in debug mode were denied.

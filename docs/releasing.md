@@ -31,4 +31,4 @@ The tag points at the built commit; there is no release commit. So `scripts/veri
 
 - Branch rulesets on `develop` and `main` (required checks, pull requests only; admins can bypass).
 - The `permaily-release` GitHub App (installed on this repository only; contents, workflows and pull requests write) is the only actor allowed to bypass the `develop` ruleset. `release.yml` uses it, through `RELEASE_APP_CLIENT_ID` (variable) and `RELEASE_APP_PRIVATE_KEY` (secret), to fast-forward `develop` to `main` after each release, so both branches point at the same commit.
-- Deploying a release is manual for now ([operations.md](operations.md)), because the AWS account cannot run the instance yet.
+- Deploying a release is manual ([operations.md](operations.md)).

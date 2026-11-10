@@ -79,6 +79,7 @@ Each one has, or must get, a test that tries to break it.
 | Mail | The CMS parser never panics or accepts garbage | `FuzzCMS`, `TestCMSRejectsGarbage` |
 | Mail | The mailbox API rejects missing or wrong tokens | `TestMailboxAuth` |
 | Mail | Account administrators cannot obtain data keys | manual check (2026-11-09), `docs/acceptance.md` |
+| Mail | KMS gives the data key to the allowlisted image and denies it in debug mode | production check (2026-11-10), `docs/acceptance.md` |
 | Site | No CSP violations and a strict script policy on every page | `site/e2e/a11y.spec.ts` |
 
 ## Logging

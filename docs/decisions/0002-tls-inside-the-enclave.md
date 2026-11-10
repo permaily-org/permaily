@@ -1,6 +1,6 @@
 # 0002 Terminate TLS inside the enclave with ACME TLS-ALPN-01
 
-Status: Accepted. To verify in production (blocked: the AWS account needs the Paid Plan).
+Status: Accepted. Verified in production with release v0.2.0 (2026-11-10).
 Date: 2026-11-08
 
 ## Context

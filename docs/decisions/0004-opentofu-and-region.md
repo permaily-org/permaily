@@ -20,5 +20,5 @@ Verification does not depend on the infrastructure tool: the parent instance is 
 
 ## Consequences
 
-- The project owner must switch the AWS account to the Paid Plan before the instance can be created.
+- The project owner must switch the AWS account to the Paid Plan before the instance can be created (done; the instance exists since 2026-11-10).
 - Local OpenTofu state for now; move it to S3 with state encryption before more than one person deploys.
