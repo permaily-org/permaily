@@ -16,7 +16,7 @@ tofu init
 tofu apply
 ```
 
-Creates a VPC with one public subnet, a security group with only 443 open, an Elastic IP, a `c7g.large` with Nitro Enclaves enabled (Amazon Linux 2023 arm64, SSM access, no SSH), an S3 bucket for deploy artifacts, and in Cloudflare the A and CAA records for `app`, `api`, `mcp` and `inbox`, always DNS only (grey cloud).
+Creates a VPC with one public subnet, a security group with only 443 and 25 open, an Elastic IP, a `c7g.large` with Nitro Enclaves enabled (Amazon Linux 2023 arm64, SSM access, no SSH), an S3 bucket for deploy artifacts, and in Cloudflare the A and CAA records for `app`, `api`, `mcp`, `inbox` and `mta-sts.inbox`, always DNS only (grey cloud), plus the MX, MTA-STS and TLS-RPT records of `inbox`.
 
 Approximate cost: 53 USD/month for the instance plus 3.6 USD/month for the public IPv4.
 

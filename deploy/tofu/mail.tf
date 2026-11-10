@@ -9,9 +9,9 @@ variable "enclave_pcr0_allowlist" {
 }
 
 variable "mail_dns_enabled" {
-  description = "Publish the MX, MTA-STS and TLS-RPT records. Keep false until the enclave serves SMTP."
+  description = "Publish the MX, MTA-STS and TLS-RPT records. Set false only for a deployment that must not receive mail."
   type        = bool
-  default     = false
+  default     = true
 }
 
 locals {
@@ -32,7 +32,8 @@ resource "aws_kms_key" "mail" {
       [{
         # Administration only: no principal in the account can use the key to
         # decrypt or generate data keys. Changing this policy is visible in
-        # CloudTrail and, from F1, in the enclave's attested status (TODO).
+        # CloudTrail and in the enclave's /status, which permaily-verify checks
+        # (pkg/kmspolicy). Keep every action here in that package's safe list.
         Sid       = "KeyAdministration"
         Effect    = "Allow"
         Principal = { AWS = "arn:aws:iam::${local.account_id}:root" }
@@ -43,6 +44,15 @@ resource "aws_kms_key" "mail" {
           "kms:CreateAlias", "kms:DeleteAlias", "kms:UpdateAlias",
         ]
         Resource = "*"
+        }, {
+        # The enclave reads this policy and the grants on the key and serves
+        # them on /status over its attested TLS key, so anyone can check which
+        # images may use the key. Neither action reveals key material.
+        Sid       = "EnclaveReadsPolicy"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.enclave_host.arn }
+        Action    = ["kms:GetKeyPolicy", "kms:ListGrants"]
+        Resource  = "*"
       }],
       length(var.enclave_pcr0_allowlist) == 0 ? [] : [{
         # Only the enclave, proving its image (PCR0) with an attestation
@@ -174,7 +184,7 @@ resource "aws_iam_role_policy" "mail" {
   })
 }
 
-# --- DNS for the inbox (published once the enclave serves SMTP) ---
+# --- DNS for the inbox. permaily-verify checks the MX and the MTA-STS record. ---
 
 resource "cloudflare_dns_record" "inbox_mx" {
   count    = var.mail_dns_enabled ? 1 : 0
@@ -193,7 +203,7 @@ resource "cloudflare_dns_record" "mta_sts" {
   name    = "_mta-sts.inbox.${var.domain}"
   type    = "TXT"
   # Change the id whenever the policy served by the enclave changes.
-  content = "\"v=STSv1; id=20261109\""
+  content = "\"v=STSv1; id=20261110\""
   ttl     = 300
   comment = "MTA-STS for the enclave MX (managed by OpenTofu)"
 }

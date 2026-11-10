@@ -6,6 +6,8 @@ Public Go package that verifies AWS Nitro attestation documents, used by `cmd/pe
 
 - This package is the security core of verification. Every check must have a negative test (`verify_test.go`, `remote_test.go`).
 - The AWS root is embedded (`aws_nitro_enclaves_root_g1.pem`) and pinned by fingerprint; `TestAWSRootFingerprint` must keep passing.
+- `testdata/` holds a real document from production with its nonce, PCRs and TLS certificate (`TestVerifyRealDocument`); all of it is public. Add a new one when the document format or the AWS chain changes.
+- `/status` carries no signature: accept it only through `FetchStatus`, which checks the TLS key against a verified attestation. `../kmspolicy` decides what a key policy allows; when in doubt it must report a problem, never pass.
 - Keep dependencies minimal (stdlib and `fxamacker/cbor`).
 - `attestationtest` builds documents with a throwaway chain for tests; it must never be accepted with the default (AWS) root.
 - Changing `UserDataScheme` or the response format of `/attestation` is a breaking change for every verifier: version it.

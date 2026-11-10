@@ -21,6 +21,7 @@ import (
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
+	"github.com/permaily-org/permaily/pkg/attestation"
 )
 
 type platform struct {
@@ -32,6 +33,9 @@ type platform struct {
 	keys         keys.Service
 	store        store.Store
 	auth         inbox.Authenticator
+	// kmsStatus reads the policy of the pinned KMS key for /status; nil when
+	// there is no KMS key (no mailbox, or dev mode).
+	kmsStatus func(context.Context) (attestation.KMSStatus, error)
 }
 
 func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.Logger) (*platform, error) {
@@ -62,9 +66,11 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			Credentials: aws.NewCredentialsCache(enclave.HostCredentials{Port: cfg.credentialsPort}),
 			HTTPClient:  egress,
 		}
-		if p.keys, err = keys.NewKMS(kms.NewFromConfig(awsCfg), cfg.kmsKeyARN, att); err != nil {
+		kmsClient := kms.NewFromConfig(awsCfg)
+		if p.keys, err = keys.NewKMS(kmsClient, cfg.kmsKeyARN, att); err != nil {
 			return nil, err
 		}
+		p.kmsStatus = keys.NewPolicyReader(kmsClient, cfg.kmsKeyARN).Status
 		p.store = &store.AWS{
 			DB: dynamodb.NewFromConfig(awsCfg),
 			// Path-style keeps every request on s3.<region>.amazonaws.com (one allowlist entry).

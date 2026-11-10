@@ -3,7 +3,8 @@
 // It terminates TLS itself (certificate obtained with ACME TLS-ALPN-01 from
 // inside the enclave), serves app./api./mcp./inbox./mta-sts.inbox. by Host,
 // answers GET /attestation?nonce=<hex> with an NSM attestation document whose
-// user_data is the SHA-256 of the TLS certificate's SPKI, and (F1) receives
+// user_data is the SHA-256 of the TLS certificate's SPKI, reports the live KMS
+// key policy on GET /status, and (F1) receives
 // mail for the mailbox over SMTP, encrypting it with a data key that only an
 // attested enclave can obtain from KMS.
 //
@@ -136,6 +137,7 @@ func run(cfg config, log *slog.Logger) error {
 
 	common := map[string]http.Handler{
 		"/attestation": httpapi.Attestation(p.attester, p.certs.UserData),
+		"/status":      httpapi.Status(p.kmsStatus),
 		"/version":     httpapi.Version(),
 	}
 	srv := &http.Server{

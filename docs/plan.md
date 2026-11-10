@@ -4,8 +4,8 @@ What is built, what comes next and how the planned parts are designed. Current a
 
 ## Phases
 
-- **F0 (current)**: verifiable hello end to end.
-- **F1 inbox** (implemented, not deployed): MX inside the enclave, encrypted storage, KMS bound to attestation, one test mailbox (ADR 0009).
+- **F0** (deployed): verifiable hello end to end.
+- **F1 inbox** (current, deployed with v0.2.0 on 2026-11-10): MX inside the enclave, encrypted storage, KMS bound to attestation, one test mailbox (ADR 0009).
 - **F2**: users (passkeys, Google sign-in), grants, API for apps, remote MCP, audit log.
 - **F3**: LLM classification (model and prompts embedded in the image).
 - **F4**: per-agent inboxes, a private inbox, scaling (NLB TCP passthrough, ASG), CT and Rekor monitoring in the verifier.
@@ -21,9 +21,11 @@ Implemented in `internal/smtpd`, `internal/inbox`, `internal/msgauth`, `internal
 ### Still to do in F1
 
 - [ ] Seal the ACME account key and the TLS key with KMS, so restarts reuse the certificate; then publish CAA `accounturi`.
-- [ ] Attested `/status` with the hash of the live KMS key policy, checked by `permaily-verify`.
-- [ ] MTA-STS `enforce` after the first deliveries.
-- [ ] Verify the KMS flow and the DNS records against production (blocked by the AWS Paid Plan).
+- [x] `/status` with the live KMS key policy, checked by `permaily-verify` (ADR 0010).
+- [x] MTA-STS `enforce`, an MX that refuses clear text, and the mail transport checked by `permaily-verify` (ADR 0011).
+- [x] Verify the KMS flow against production (2026-11-10, [acceptance.md](acceptance.md)).
+- [x] Publish the MX, MTA-STS and TLS-RPT records (2026-11-10).
+- [ ] Forward a Gmail account to the test mailbox with the release image.
 
 ## F2: lessons to apply
 

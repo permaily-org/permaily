@@ -1,7 +1,9 @@
 // Package smtpd is the MX for inbox.permaily.com, inside the enclave. It
-// offers STARTTLS with the enclave's own certificate (MTA-STS makes senders
-// require it), accepts mail only for the mailbox, and hands each message to
-// the inbox. It never logs addresses or content.
+// offers STARTTLS with the enclave's own certificate and refuses mail on a
+// connection without it, so no message reaches the mailbox in clear text
+// (MTA-STS makes senders require that certificate). It accepts mail only for
+// the mailbox and hands each message to the inbox. It never logs addresses or
+// content.
 package smtpd
 
 import (
@@ -57,20 +59,26 @@ type backend struct {
 	log *slog.Logger
 }
 
-func (b *backend) NewSession(*smtp.Conn) (smtp.Session, error) {
-	return &session{b: b}, nil
+func (b *backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
+	return &session{b: b, encrypted: func() bool { _, ok := c.TLSConnectionState(); return ok }}, nil
 }
 
 type session struct {
-	b     *backend
-	from  string
-	rcpts []string
+	b         *backend
+	encrypted func() bool
+	from      string
+	rcpts     []string
 }
 
 func (s *session) Reset()        { s.from, s.rcpts = "", nil }
 func (s *session) Logout() error { return nil }
 
 func (s *session) Mail(from string, _ *smtp.MailOptions) error {
+	if !s.encrypted() {
+		// Whoever sits between the sender and the enclave (the parent instance
+		// included) could read a message sent without TLS.
+		return &smtp.SMTPError{Code: 530, EnhancedCode: smtp.EnhancedCode{5, 7, 0}, Message: "Must issue a STARTTLS command first"}
+	}
 	s.from = from
 	return nil
 }

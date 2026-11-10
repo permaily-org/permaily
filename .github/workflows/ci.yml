@@ -46,12 +46,15 @@ jobs:
       - run: go test -race ./...
       - name: End to end in dev mode (SMTP to API)
         run: go test -race -tags dev ./cmd/permaily-enclave
-      - name: Fuzz the parsers (attestation, CMS, mail)
+      - name: Fuzz the parsers (attestation, KMS policy, CMS, mail)
+        # A number of executions, not a duration: Go's fuzzer sometimes fails with
+        # "context deadline exceeded" when a time limit ends mid-execution.
         run: |
-          go test -run='^$' -fuzz=FuzzVerify -fuzztime=30s ./pkg/attestation
-          go test -run='^$' -fuzz=FuzzParsePCRFile -fuzztime=15s ./pkg/attestation
-          go test -run='^$' -fuzz=FuzzCMS -fuzztime=20s ./internal/keys
-          go test -run='^$' -fuzz=FuzzParse -fuzztime=20s ./internal/inbox
+          go test -run='^$' -fuzz=FuzzVerify -fuzztime=500000x ./pkg/attestation
+          go test -run='^$' -fuzz=FuzzParsePCRFile -fuzztime=400000x ./pkg/attestation
+          go test -run='^$' -fuzz=FuzzAnalyze -fuzztime=1000000x ./pkg/kmspolicy
+          go test -run='^$' -fuzz=FuzzCMS -fuzztime=500000x ./internal/keys
+          go test -run='^$' -fuzz=FuzzParse -fuzztime=150000x ./internal/inbox
 
   repo:
     runs-on: ubuntu-24.04
