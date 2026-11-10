@@ -50,6 +50,7 @@ jobs:
         run: |
           go test -run='^$' -fuzz=FuzzVerify -fuzztime=30s ./pkg/attestation
           go test -run='^$' -fuzz=FuzzParsePCRFile -fuzztime=15s ./pkg/attestation
+          go test -run='^$' -fuzz=FuzzAnalyze -fuzztime=15s ./pkg/kmspolicy
           go test -run='^$' -fuzz=FuzzCMS -fuzztime=20s ./internal/keys
           go test -run='^$' -fuzz=FuzzParse -fuzztime=20s ./internal/inbox
 

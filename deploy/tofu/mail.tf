@@ -32,7 +32,8 @@ resource "aws_kms_key" "mail" {
       [{
         # Administration only: no principal in the account can use the key to
         # decrypt or generate data keys. Changing this policy is visible in
-        # CloudTrail and, from F1, in the enclave's attested status (TODO).
+        # CloudTrail and in the enclave's /status, which permaily-verify checks
+        # (pkg/kmspolicy). Keep every action here in that package's safe list.
         Sid       = "KeyAdministration"
         Effect    = "Allow"
         Principal = { AWS = "arn:aws:iam::${local.account_id}:root" }
@@ -43,6 +44,15 @@ resource "aws_kms_key" "mail" {
           "kms:CreateAlias", "kms:DeleteAlias", "kms:UpdateAlias",
         ]
         Resource = "*"
+        }, {
+        # The enclave reads this policy and the grants on the key and serves
+        # them on /status over its attested TLS key, so anyone can check which
+        # images may use the key. Neither action reveals key material.
+        Sid       = "EnclaveReadsPolicy"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.enclave_host.arn }
+        Action    = ["kms:GetKeyPolicy", "kms:ListGrants"]
+        Resource  = "*"
       }],
       length(var.enclave_pcr0_allowlist) == 0 ? [] : [{
         # Only the enclave, proving its image (PCR0) with an attestation
