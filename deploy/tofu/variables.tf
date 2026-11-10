@@ -18,7 +18,7 @@ variable "domain" {
 variable "enclave_subdomains" {
   description = "Subdomains served by the enclave. Must match the hosts compiled into the image."
   type        = list(string)
-  default     = ["app", "api", "mcp", "inbox"]
+  default     = ["app", "api", "mcp", "inbox", "mta-sts.inbox"]
 }
 
 variable "instance_type" {

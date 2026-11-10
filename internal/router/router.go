@@ -1,5 +1,5 @@
 // Package router dispatches requests by Host so one enclave binary serves
-// app., api., mcp. and inbox. on the same certificate.
+// app., api., mcp., inbox. and mta-sts.inbox. on the same certificate.
 package router
 
 import (
@@ -13,38 +13,60 @@ import (
 
 // Hosts names the virtual hosts the enclave serves.
 type Hosts struct {
-	App   string
-	API   string
-	MCP   string
-	Inbox string
+	App    string
+	API    string
+	MCP    string
+	Inbox  string
+	MTASTS string // MTA-STS policy host for the inbox domain
 }
 
-// All returns every host, App first.
-func (h Hosts) All() []string { return []string{h.App, h.API, h.MCP, h.Inbox} }
+// All returns every host, App first. They all go on the TLS certificate.
+func (h Hosts) All() []string { return []string{h.App, h.API, h.MCP, h.Inbox, h.MTASTS} }
 
 // HostsForDomain returns the standard subdomains of domain.
 func HostsForDomain(domain string) Hosts {
-	return Hosts{App: "app." + domain, API: "api." + domain, MCP: "mcp." + domain, Inbox: "inbox." + domain}
+	return Hosts{
+		App:    "app." + domain,
+		API:    "api." + domain,
+		MCP:    "mcp." + domain,
+		Inbox:  "inbox." + domain,
+		MTASTS: "mta-sts.inbox." + domain,
+	}
+}
+
+// Hello answers "/" with a plain greeting naming the host (placeholder for
+// hosts without a product yet).
+func Hello(name string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		fmt.Fprintf(w, "hello from permaily %s %s\n", name, buildinfo.Commit)
+	})
+}
+
+// MTASTSPolicy serves the MTA-STS policy (RFC 8461) for the inbox MX.
+// mode is "testing" or "enforce".
+func MTASTSPolicy(mx, mode string, maxAge int) http.Handler {
+	policy := fmt.Sprintf("version: STSv1\nmode: %s\nmx: %s\nmax_age: %d\n", mode, mx, maxAge)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/mta-sts.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(policy))
+	})
 }
 
 // New returns the top-level handler. common is mounted on every host
-// (/attestation, /version); app serves the SPA on the App host.
-func New(h Hosts, common map[string]http.Handler, app http.Handler) http.Handler {
-	hello := func(name string) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/" {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			fmt.Fprintf(w, "hello from permaily %s %s\n", name, buildinfo.Commit)
-		})
-	}
-	byHost := map[string]http.Handler{
-		h.App:   app,
-		h.API:   hello("api"),
-		h.MCP:   hello("mcp"),
-		h.Inbox: hello("inbox"),
+// (/attestation, /version); byHost maps each host name to its handler.
+func New(common map[string]http.Handler, byHost map[string]http.Handler) http.Handler {
+	hosts := make(map[string]http.Handler, len(byHost))
+	for k, v := range byHost {
+		hosts[strings.ToLower(k)] = v
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w)
@@ -56,7 +78,7 @@ func New(h Hosts, common map[string]http.Handler, app http.Handler) http.Handler
 		if hh, _, err := net.SplitHostPort(host); err == nil {
 			host = hh
 		}
-		if next, ok := byHost[strings.ToLower(host)]; ok {
+		if next, ok := hosts[strings.ToLower(host)]; ok {
 			next.ServeHTTP(w, r)
 			return
 		}

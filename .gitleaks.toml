@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+# Narrow, line-level exceptions only, each with its reason. Never allowlist a path.
+
+[[allowlists]]
+description = "deploy/enclave.json carries the public SHA-256 of the test mailbox token (ADR 0009); the token itself is never committed"
+regexTarget = "line"
+regexes = ['''^\s*"mailbox_token_sha256": "[0-9a-f]{64}",?\s*$''']

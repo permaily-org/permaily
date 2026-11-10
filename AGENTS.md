@@ -34,7 +34,7 @@ bun run format              # Biome, whole repo
 ## Rules
 
 - The enclave image must stay byte-for-byte reproducible on x86_64 and arm64 builders. CI compares both; never merge a change that breaks it.
-- Anything compiled into the enclave is covered by PCR0. Runtime configuration must not come from the parent instance; bake it into the image.
+- Anything compiled into the enclave is covered by PCR0. Runtime configuration must not come from the parent instance; it lives in `deploy/enclave.json` and is baked into the image.
 - The parent instance is untrusted. Do not add logic there that could read or alter user data. `depguard` enforces part of this.
 - Never log email content, addresses, tokens, cookies or codes.
 - Every bug fix starts with a failing test. Coverage thresholds only go up.

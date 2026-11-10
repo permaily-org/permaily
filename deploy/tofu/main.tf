@@ -81,6 +81,16 @@ resource "aws_security_group" "enclave_host" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Declared here, not as a separate rule resource: a security group with
+  # inline rules removes any rule it does not list on the next apply.
+  ingress {
+    description = "SMTP to the enclave MX (STARTTLS terminates in the enclave)"
+    from_port   = 25
+    to_port     = 25
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   egress {
     description = "Package installs, SSM, S3 and allowlisted enclave egress"
     from_port   = 0

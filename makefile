@@ -13,6 +13,7 @@ check-go:
 	golangci-lint run --build-tags dev ./...
 	govulncheck ./...
 	scripts/check-coverage.sh
+	go test -tags dev ./cmd/permaily-enclave
 
 check-web:
 	cd web && bun install --frozen-lockfile && bun run build
@@ -32,6 +33,8 @@ check-repo:
 fuzz:
 	go test -run='^$$' -fuzz=FuzzVerify -fuzztime=30s ./pkg/attestation
 	go test -run='^$$' -fuzz=FuzzParsePCRFile -fuzztime=15s ./pkg/attestation
+	go test -run='^$$' -fuzz=FuzzCMS -fuzztime=20s ./internal/keys
+	go test -run='^$$' -fuzz=FuzzParse -fuzztime=20s ./internal/inbox
 
 notices:
 	bun scripts/third-party-notices.ts

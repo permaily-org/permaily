@@ -13,7 +13,9 @@
 | Layer | Tool | Where | Runs |
 |---|---|---|---|
 | Unit and local end to end (Go) | `go test`, `httptest` | `*_test.go` | `make check`, CI |
-| Fuzzing | Go native fuzzing | `pkg/attestation/fuzz_test.go` | `make fuzz`, CI (45 s) |
+| Fuzzing | Go native fuzzing | `pkg/attestation`, `internal/keys` (CMS), `internal/inbox` (mail parser) | `make fuzz`, CI |
+| Storage contract | DynamoDB Local and S3Mock | `internal/store/store_test.go` | CI services; locally with `PERMAILY_TEST_DYNAMODB` and `PERMAILY_TEST_S3` |
+| Whole service, dev mode | SMTP client and HTTPS | `cmd/permaily-enclave/main_dev_test.go` | `go test -tags dev ./cmd/permaily-enclave`, CI |
 | Mutation | gremlins | `pkg/attestation` | manual (`mutation` workflow) |
 | Reproducibility | Nix | CI `eif` + `reproducible` jobs | every PR |
 | Site content | Vitest on the built HTML | `site/tests/` | `bun run test`, Amplify build, CI |
@@ -27,10 +29,16 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | Package | Threshold | Measured 2026-11-09 |
 |---|---|---|
 | `pkg/attestation` | 80 (target 95) | 80.3 |
-| `internal/router` | 95 | 96.3 |
-| `internal/httpapi` | 75 | 77.8 |
-| `internal/webui` | 70 | 75.0 |
-| `internal/hostproxy` | 65 | 65.3 |
+| `internal/router` | 100 | 100.0 |
+| `internal/httpapi` | 85 | 85.0 |
+| `internal/webui` | 75 | 75.0 |
+| `internal/hostproxy` | 69 | 69.6 |
+| `internal/envelope` | 91 (target 95) | 91.9 |
+| `internal/keys` | 82 (target 95) | 82.1 |
+| `internal/inbox` | 80 | 80.4 |
+| `internal/msgauth` | 86 | 86.0 |
+| `internal/smtpd` | 91 | 91.7 |
+| `internal/store` | 86 (with emulators) | 86.7 |
 
 Mutation testing of `pkg/attestation` (gremlins 0.6.0, 2026-11-09): efficacy 100% (29 killed, 0 lived, 22 timed out), mutator coverage 55.77%. Thresholds: efficacy 90, mutator coverage 55.
 

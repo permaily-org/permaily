@@ -15,6 +15,17 @@ concurrency:
 jobs:
   go:
     runs-on: ubuntu-24.04
+    # Emulators for the store contract test against the AWS implementation.
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86
+        ports: ["8000:8000"]
+      s3:
+        image: adobe/s3mock@sha256:ab01a6946750f451ca215a47e91030695b260e4003b8a5a6201d25029b8fca92
+        ports: ["9090:9090"]
+    env:
+      PERMAILY_TEST_DYNAMODB: http://localhost:8000
+      PERMAILY_TEST_S3: http://localhost:9090
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,10 +44,14 @@ jobs:
       - name: Tests with coverage thresholds
         run: scripts/check-coverage.sh
       - run: go test -race ./...
-      - name: Fuzz the attestation parser
+      - name: End to end in dev mode (SMTP to API)
+        run: go test -race -tags dev ./cmd/permaily-enclave
+      - name: Fuzz the parsers (attestation, CMS, mail)
         run: |
           go test -run='^$' -fuzz=FuzzVerify -fuzztime=30s ./pkg/attestation
           go test -run='^$' -fuzz=FuzzParsePCRFile -fuzztime=15s ./pkg/attestation
+          go test -run='^$' -fuzz=FuzzCMS -fuzztime=20s ./internal/keys
+          go test -run='^$' -fuzz=FuzzParse -fuzztime=20s ./internal/inbox
 
   repo:
     runs-on: ubuntu-24.04

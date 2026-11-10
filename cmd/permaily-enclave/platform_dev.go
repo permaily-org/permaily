@@ -14,21 +14,31 @@ import (
 	"net"
 	"time"
 
+	"github.com/permaily-org/permaily/internal/inbox"
+	"github.com/permaily-org/permaily/internal/keys"
+	"github.com/permaily-org/permaily/internal/msgauth"
 	"github.com/permaily-org/permaily/internal/nsm"
 	"github.com/permaily-org/permaily/internal/nsm/fakensm"
 	"github.com/permaily-org/permaily/internal/router"
+	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
 )
 
 type platform struct {
-	mode     string
-	listener net.Listener
-	attester nsm.Attester
-	certs    *tlsacme.Manager
+	mode         string
+	listener     net.Listener
+	smtpListener net.Listener
+	attester     nsm.Attester
+	certs        *tlsacme.Manager
+	keys         keys.Service
+	store        store.Store
+	auth         inbox.Authenticator
 }
 
-// newPlatform listens on TCP, uses a self-signed certificate (valid for every
-// host plus localhost) and a fake attester.
+// newPlatform listens on TCP (HTTPS on -port, SMTP on -smtp-port, default
+// 2525 in dev), uses a self-signed certificate (valid for every host plus
+// localhost), a fake attester, local keys and an in-memory store. DKIM uses
+// the system resolver.
 func newPlatform(_ context.Context, cfg config, hosts router.Hosts, log *slog.Logger) (*platform, error) {
 	att, err := fakensm.New()
 	if err != nil {
@@ -58,5 +68,19 @@ func newPlatform(_ context.Context, cfg config, hosts router.Hosts, log *slog.Lo
 	if err != nil {
 		return nil, err
 	}
-	return &platform{mode: "dev", listener: ln, attester: att, certs: certs}, nil
+	p := &platform{mode: "dev", listener: ln, attester: att, certs: certs, store: store.NewMemory()}
+	if cfg.mailboxID != "" {
+		port := cfg.smtpPort
+		if port == 25 {
+			port = 2525 // unprivileged default for local runs
+		}
+		if p.smtpListener, err = net.Listen("tcp", fmt.Sprintf(":%d", port)); err != nil {
+			return nil, err
+		}
+		if p.keys, err = keys.NewLocal(); err != nil {
+			return nil, err
+		}
+		p.auth = msgauth.DKIM(net.DefaultResolver.LookupTXT)
+	}
+	return p, nil
 }

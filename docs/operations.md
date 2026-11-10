@@ -46,8 +46,33 @@ scripts/verify.sh "$(gh release view --repo permaily-org/permaily --json tagName
 
 Run it after every deploy and record failures as incidents.
 
+## Deploy a release with mail (F1)
+
+Every release has a new PCR0, and the mail KMS key only serves allowlisted images. Before deploying a release:
+
+```sh
+pcr0=$(jq -r .PCR0 eif/pcrs.json)
+# deploy/tofu/terraform.tfvars (not committed):
+#   enclave_pcr0_allowlist = ["<current PCR0>", "<new PCR0>"]
+tofu -chdir=deploy/tofu apply
+```
+
+After the new enclave serves mail, remove the old PCR0 and apply again. The first time, also set `mail_dns_enabled = true` to publish the MX, MTA-STS and TLS-RPT records.
+
+## Read the test mailbox
+
+```sh
+token=$(cat ~/.config/permaily/test-mailbox-token)
+curl -s -H "Authorization: Bearer $token" https://api.permaily.com/v1/mailbox                  # address, retention, Gmail codes
+curl -s -H "Authorization: Bearer $token" https://api.permaily.com/v1/mailbox/messages         # newest first
+curl -s -H "Authorization: Bearer $token" https://api.permaily.com/v1/mailbox/messages/<id>/raw > message.eml
+curl -s -X PATCH -H "Authorization: Bearer $token" -d '{"retention_days":30}' https://api.permaily.com/v1/mailbox
+```
+
+To forward a Gmail account: in Gmail, Settings > Forwarding > Add a forwarding address (the mailbox address), read the confirmation code from `/v1/mailbox`, enter it in Gmail, then enable forwarding.
+
 ## Planned (F1+)
 
-- Rotate KMS keys and update the key policy with the PCR0 of a new release.
+- Rotate KMS keys (automatic yearly rotation is enabled).
 - Restore from backup, with a dated drill.
 - Delete a user's data (crypto-shredding).
