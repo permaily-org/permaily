@@ -31,7 +31,7 @@ const (
 	maxGaps    = 32
 )
 
-// PolicyReader reads the policy and grants of the pinned KMS key, so the
+// PolicyReader reads the policy and grants of a KMS key, so the
 // enclave can publish them over its attested TLS key. KMS is reached with TLS
 // from inside the enclave, so the host cannot alter the answer, and the key ARN
 // (account and key id) is compiled into the image.

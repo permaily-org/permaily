@@ -119,22 +119,6 @@ func (s *Service) dataKey(ctx context.Context) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		// A key that an older image wrapped directly with KMS moves under the
-		// root secret the first time it is loaded. Nothing else has written
-		// the mailbox record yet: every writer needs this key first.
-		if rw, ok := s.keys.(keys.Rewrapper); ok {
-			wrapped, changed, err := rw.Rewrap(ctx, mb.WrappedKey, s.keyContext())
-			if err != nil {
-				return nil, err
-			}
-			if changed {
-				mb.WrappedKey, mb.UpdatedAt = wrapped, s.now()
-				if err := s.store.PutMailbox(ctx, mb); err != nil {
-					return nil, err
-				}
-				s.log.Info("inbox: mailbox key moved under the root secret")
-			}
-		}
 		s.key = k
 	}
 	return s.key, nil

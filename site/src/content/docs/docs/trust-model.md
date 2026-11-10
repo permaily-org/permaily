@@ -44,12 +44,12 @@ Every release changes the measurement, which is exactly the point where trust ca
 
 AWS [recommends PCR3 and PCR8 together for flexibility](https://docs.aws.amazon.com/enclaves/latest/user/set-up-attestation.html), because keys then survive image changes. PCR8 identifies the signing certificate, so that design would trust whatever the operator signs. It undermines the whole claim, so we don't follow it. Instead:
 
-1. KMS is pinned to the image measurement, known as PCR0.
-2. Each new measurement is published to the log before it can receive keys.
+1. Each release has its own KMS key, pinned to its image measurement, known as PCR0. Only that image can use the key, and the key's policy gives nobody in the AWS account a way to change that.
+2. The running enclave hands the keys to the next release itself, and only after checking that its measurement was published by the public repository's release workflow in a public, append-only transparency log.
 3. A waiting period lets outside monitors react, with a defined and publicly logged route for urgent security fixes.
-4. Routine administrative access to the key policy is removed, so changes are rare and visible.
+4. Nothing in the AWS account is edited to let a release in, and no key policy can be edited at all.
 
-That still leaves the weakest link: what stops the operator from changing the key policy? AWS account control ultimately allows it. CloudTrail records it, but those records are private unless published. Two ways to close this are publishing key-policy events, and having the old enclave verify a new release and hand keys over, which would take KMS policy changes out of routine upgrades.
+What remains: an older release can still open the keys until its own KMS key is deleted; the release workflow runs on GitHub and is recorded by Sigstore, and we rely on both; and AWS operates KMS, whose support team can restore an account owner's access to a key. The enclave reads its key's policy every minute and reports every state it has seen, and the verifier checks them all, so such a change would be visible to anyone.
 
 ### Browsers can't verify attestation
 

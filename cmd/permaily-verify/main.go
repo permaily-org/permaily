@@ -90,16 +90,46 @@ type rootResult struct {
 	Origin    string                `json:"origin"`
 	WrittenAt time.Time             `json:"written_at"`
 	From      *attestation.RootFrom `json:"from,omitempty"`
+	// ReadAt is when the enclave last read the key's policy. WatchedSince is
+	// when it started reading it about once a minute (zero for v0.7.0, which
+	// read it once, when it started); Changes counts the other states it saw
+	// since then, all of which passed the same check. Gaps are periods in
+	// which it could not read.
+	ReadAt       time.Time            `json:"read_at"`
+	WatchedSince time.Time            `json:"watched_since,omitzero"`
+	Changes      int                  `json:"changes_since"`
+	Gaps         []attestation.KMSGap `json:"gaps,omitempty"`
 }
 
 // checkRoot decides whether the key the enclave reported keeps the root secret
-// to the verified image (pcr0, hex) for good.
-func checkRoot(rs *attestation.RootStatus, pcr0 string) (*rootResult, error) {
+// to the verified image (pcr0, hex): now, and in every state of the key's
+// policy the enclave has seen since it started.
+func checkRoot(rs *attestation.RootStatus, pcr0 string, now time.Time) (*rootResult, error) {
 	if !strings.EqualFold(rs.Image, pcr0) {
 		return nil, fmt.Errorf("the enclave reports a key for image %s, not for the one verified", rs.Image)
 	}
 	if _, err := kmspolicy.Sealed([]byte(rs.Policy), rs.Grants, rs.GrantsTruncated, rs.Key, pcr0); err != nil {
 		return nil, err
+	}
+	// Nobody in the account can change the policy, but AWS can for the
+	// account's owner. So an enclave that watches its key must have read it
+	// just now, and every state it saw must pass the same check.
+	if watched := !rs.WatchedSince.IsZero(); watched {
+		if age := now.Sub(rs.CheckedAt); age > maxPolicyAge || age < -maxPolicyAge {
+			return nil, fmt.Errorf("the key's policy was read by the enclave at %s, not within %s of now", rs.CheckedAt.UTC().Format(time.RFC3339), maxPolicyAge)
+		}
+		if rs.HistoryTruncated || len(rs.History) == 0 {
+			return nil, errors.New("the key's policy changed more times than the enclave remembers since it started; its history is incomplete")
+		}
+		last := rs.History[len(rs.History)-1]
+		if last.Policy != rs.Policy || last.Grants != rs.Grants || last.GrantsTruncated != rs.GrantsTruncated {
+			return nil, errors.New("the history the enclave reports does not end in the key's current policy")
+		}
+		for _, past := range rs.History[:len(rs.History)-1] {
+			if _, err := kmspolicy.Sealed([]byte(past.Policy), past.Grants, past.GrantsTruncated, rs.Key, pcr0); err != nil {
+				return nil, fmt.Errorf("from %s to %s: %w", past.FirstSeen.UTC().Format(time.RFC3339), past.LastSeen.UTC().Format(time.RFC3339), err)
+			}
+		}
 	}
 	switch {
 	case rs.Origin == attestation.RootCreated && rs.From == nil:
@@ -108,7 +138,17 @@ func checkRoot(rs *attestation.RootStatus, pcr0 string) (*rootResult, error) {
 		return nil, fmt.Errorf("the enclave does not say where its root secret came from (origin %q)", rs.Origin)
 	}
 	sum := sha256.Sum256([]byte(rs.Policy))
-	return &rootResult{KeyARN: rs.KeyARN, PolicySHA256: hex.EncodeToString(sum[:]), KeyState: rs.Key.State, Origin: rs.Origin, WrittenAt: rs.WrittenAt.UTC(), From: rs.From}, nil
+	res := &rootResult{
+		KeyARN: rs.KeyARN, PolicySHA256: hex.EncodeToString(sum[:]), KeyState: rs.Key.State, Origin: rs.Origin, WrittenAt: rs.WrittenAt.UTC(), From: rs.From,
+		ReadAt: rs.CheckedAt.UTC(), WatchedSince: rs.WatchedSince.UTC(), Gaps: rs.Gaps,
+	}
+	if len(rs.History) > 0 {
+		res.Changes = len(rs.History) - 1
+	}
+	if rs.WatchedSince.IsZero() {
+		res.WatchedSince = time.Time{}
+	}
+	return res, nil
 }
 
 // kmsResult is what the verified enclave reported about the key that wraps
@@ -274,7 +314,7 @@ func verify(ctx context.Context, client *http.Client, url string, expected map[u
 	}
 	pcr0 := hex.EncodeToString(expected[0])
 	if st.Root != nil {
-		if r.Root, err = checkRoot(st.Root, pcr0); err != nil {
+		if r.Root, err = checkRoot(st.Root, pcr0, kms.now); err != nil {
 			r.Root = nil
 			r.Error = "root secret: " + err.Error()
 			return r
@@ -746,8 +786,21 @@ func printRoot(w io.Writer, root *rootResult) {
 	if root == nil {
 		return
 	}
-	fmt.Fprintf(w, "      root secret locked by KMS key %s: only this image can open it, and nobody can change that\n", root.KeyARN)
+	fmt.Fprintf(w, "      root secret locked by KMS key %s: only this image can open it, and nobody in the account can change that\n", root.KeyARN)
 	fmt.Fprintf(w, "      that key's policy sha256 %s gives nobody a way to replace it or to add grants; no grants; key material never left KMS\n", root.PolicySHA256)
+	if root.WatchedSince.IsZero() {
+		fmt.Fprintf(w, "      that policy was read by the enclave once, at %s; AWS can change it for the account's owner, and this release would not show it\n", root.ReadAt.Format(time.RFC3339))
+	} else {
+		what := "unchanged"
+		if root.Changes > 0 {
+			what = fmt.Sprintf("%d other state(s), each open to this image alone and without grants", root.Changes)
+		}
+		fmt.Fprintf(w, "      that policy read by the enclave every minute since %s: %s\n", root.WatchedSince.Format(time.RFC3339), what)
+		for _, g := range root.Gaps {
+			fmt.Fprintf(w, "      warning: the enclave could not read the policy from %s to %s; a change made and undone in that time would not be seen\n", g.From.UTC().Format(time.RFC3339), g.To.UTC().Format(time.RFC3339))
+		}
+		fmt.Fprintln(w, "      note: AWS can change that policy for the account's owner; it would show here while this enclave runs, not before it started or after a restart")
+	}
 	at := root.WrittenAt.Format(time.RFC3339)
 	if root.Origin == attestation.RootHandedOver {
 		fmt.Fprintf(w, "      root secret handed to this image at %s by the enclave of release %s (image %s, published %s), which this image accepted only with that release's public build provenance\n",

@@ -37,9 +37,6 @@ type platform struct {
 	keys         keys.Service
 	store        store.Store
 	auth         inbox.Authenticator
-	// kmsStatus reads the policy of the KMS key that older images wrapped data
-	// keys with, for /status; nil when there is none (no mailbox, or dev mode).
-	kmsStatus func(context.Context) (attestation.KMSStatus, error)
 	// rootStatus describes the key that holds the root secret, and handoff
 	// gives the root secret to the next release; nil without a root secret.
 	rootStatus func(context.Context) (*attestation.RootStatus, error)
@@ -82,17 +79,6 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			HTTPClient:  egress,
 		}
 		kmsClient := kms.NewFromConfig(awsCfg)
-		// Data keys that images before the root secret wrapped directly with
-		// KMS: this image still opens them, to move them under the root secret.
-		var legacy keys.Service
-		if cfg.kmsKeyARN != "" {
-			if legacy, err = keys.NewKMS(kmsClient, cfg.kmsKeyARN, att); err != nil {
-				return nil, err
-			}
-			policy := keys.NewPolicyReader(kmsClient, cfg.kmsKeyARN)
-			p.kmsStatus = policy.Status
-			go policy.Run(ctx)
-		}
 		awsStore := &store.AWS{
 			DB: dynamodb.NewFromConfig(awsCfg),
 			// Path-style keeps every request on s3.<region>.amazonaws.com (one allowlist entry).
@@ -109,7 +95,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 		}
 		root, err := keys.NewRoot(keys.RootConfig{
 			API: kmsClient, Attester: att, Records: awsStore, Account: cfg.awsAccount, Region: cfg.awsRegion,
-			Releases: cfg.releases, Trust: trust, Legacy: legacy, Log: log,
+			Releases: cfg.releases, Trust: trust, Log: log,
 		})
 		if err != nil {
 			return nil, err

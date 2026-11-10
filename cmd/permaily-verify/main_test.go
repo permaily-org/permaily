@@ -587,12 +587,21 @@ func sealedPolicy(image string) string {
 {"Sid":"OnlyThisImageOpens","Effect":"Allow",` + root + `,"Action":"kms:Decrypt","Resource":"*","Condition":{"StringEqualsIgnoreCase":{"kms:RecipientAttestation:ImageSha384":"` + image + `"}}}]}`
 }
 
+var rootNow = time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+
+// openedPolicy is a policy AWS could put on the key for the account's owner.
+func openedPolicy(image string) string {
+	return strings.Replace(sealedPolicy(image), `"Statement":[`, `"Statement":[{"Sid":"Door","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::111122223333:root"},"Action":"kms:*","Resource":"*"},`, 1)
+}
+
 func rootStatus(change func(rs *attestation.RootStatus)) *attestation.RootStatus {
 	rs := &attestation.RootStatus{
 		Image: imageA, KeyARN: "arn:aws:kms:us-east-2:111122223333:key/a", Policy: sealedPolicy(imageA),
 		Key:       kmspolicy.Key{Origin: "AWS_KMS", Spec: "SYMMETRIC_DEFAULT", Usage: "ENCRYPT_DECRYPT", Manager: "CUSTOMER", State: "Enabled"},
-		CheckedAt: time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC), WrittenAt: time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC), Origin: attestation.RootCreated,
+		CheckedAt: rootNow, WrittenAt: rootNow.Add(-time.Hour), Origin: attestation.RootCreated,
+		WatchedSince: rootNow.Add(-time.Hour),
 	}
+	rs.History = []attestation.KMSObservation{{Policy: rs.Policy, FirstSeen: rs.WatchedSince, LastSeen: rootNow}}
 	if change != nil {
 		change(rs)
 	}
@@ -600,7 +609,7 @@ func rootStatus(change func(rs *attestation.RootStatus)) *attestation.RootStatus
 }
 
 func TestCheckRoot(t *testing.T) {
-	res, err := checkRoot(rootStatus(nil), strings.ToUpper(imageA))
+	res, err := checkRoot(rootStatus(nil), strings.ToUpper(imageA), rootNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -610,7 +619,7 @@ func TestCheckRoot(t *testing.T) {
 	handed := rootStatus(func(rs *attestation.RootStatus) {
 		rs.Origin, rs.From = attestation.RootHandedOver, &attestation.RootFrom{Image: imageB, Commit: "c0ffee"}
 	})
-	if res, err := checkRoot(handed, imageA); err != nil || res.From.Commit != "c0ffee" {
+	if res, err := checkRoot(handed, imageA, rootNow); err != nil || res.From.Commit != "c0ffee" {
 		t.Fatalf("handed over: %+v, %v", res, err)
 	}
 
@@ -618,7 +627,26 @@ func TestCheckRoot(t *testing.T) {
 		change func(rs *attestation.RootStatus)
 		want   string
 	}{
-		"a key for another image": {func(rs *attestation.RootStatus) { rs.Image, rs.Policy = imageB, sealedPolicy(imageB) }, "not for the one verified"},
+		"a key for another image":      {func(rs *attestation.RootStatus) { rs.Image, rs.Policy = imageB, sealedPolicy(imageB) }, "not for the one verified"},
+		"a reading that is not recent": {func(rs *attestation.RootStatus) { rs.CheckedAt = rootNow.Add(-time.Hour) }, "not within"},
+		"a reading from the future":    {func(rs *attestation.RootStatus) { rs.CheckedAt = rootNow.Add(time.Hour) }, "not within"},
+		"a policy that was open for a while": {func(rs *attestation.RootStatus) {
+			at := rs.WatchedSince
+			rs.History = []attestation.KMSObservation{
+				{Policy: rs.Policy, FirstSeen: at, LastSeen: at.Add(10 * time.Minute)},
+				{Policy: openedPolicy(imageA), FirstSeen: at.Add(11 * time.Minute), LastSeen: at.Add(12 * time.Minute)},
+				{Policy: rs.Policy, FirstSeen: at.Add(13 * time.Minute), LastSeen: rootNow},
+			}
+		}, "from 2026-11-20T08:11:00Z to 2026-11-20T08:12:00Z"},
+		"a grant that existed for a while": {func(rs *attestation.RootStatus) {
+			rs.History = append([]attestation.KMSObservation{{Policy: rs.Policy, Grants: 1, FirstSeen: rs.WatchedSince, LastSeen: rs.WatchedSince}}, rs.History...)
+		}, "grant"},
+		"a history that was cut":     {func(rs *attestation.RootStatus) { rs.HistoryTruncated = true }, "incomplete"},
+		"watching without a history": {func(rs *attestation.RootStatus) { rs.History = nil }, "incomplete"},
+		"a history that ends in another state": {func(rs *attestation.RootStatus) {
+			rs.History[0].Grants = 0
+			rs.History[0].Policy = sealedPolicy(imageA) + " "
+		}, "does not end in"},
 		"a key that also lets another image in": {func(rs *attestation.RootStatus) {
 			rs.Policy = strings.Replace(rs.Policy, `:"`+imageA+`"`, `:["`+imageA+`","`+imageB+`"]`, 1)
 		}, "released to other images"},
@@ -638,7 +666,7 @@ func TestCheckRoot(t *testing.T) {
 		"created, yet from a release": {func(rs *attestation.RootStatus) { rs.From = &attestation.RootFrom{Image: imageB} }, "where its root secret came from"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := checkRoot(rootStatus(c.change), imageA); err == nil || !strings.Contains(err.Error(), c.want) {
+			if _, err := checkRoot(rootStatus(c.change), imageA, rootNow); err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("got %v, want an error containing %q", err, c.want)
 			}
 		})
@@ -652,8 +680,9 @@ func TestPrintRoot(t *testing.T) {
 		printKMS(&b, r, imageA)
 		return b.String()
 	}
-	created := out(hostResult{Root: &rootResult{KeyARN: "arn:k", PolicySHA256: "ab", KeyState: "Enabled", Origin: attestation.RootCreated, WrittenAt: at}})
-	for _, w := range []string{"root secret locked by KMS key arn:k", "nobody can change that", "sha256 ab", "created inside an enclave of this image at 2026-11-20T08:00:00Z"} {
+	created := out(hostResult{Root: &rootResult{KeyARN: "arn:k", PolicySHA256: "ab", KeyState: "Enabled", Origin: attestation.RootCreated, WrittenAt: at, ReadAt: at.Add(time.Hour), WatchedSince: at}})
+	for _, w := range []string{"root secret locked by KMS key arn:k", "nobody in the account can change that", "sha256 ab", "created inside an enclave of this image at 2026-11-20T08:00:00Z",
+		"read by the enclave every minute since 2026-11-20T08:00:00Z: unchanged", "note: AWS can change that policy for the account's owner"} {
 		if !strings.Contains(created, w) {
 			t.Fatalf("output %q lacks %q", created, w)
 		}
@@ -662,11 +691,18 @@ func TestPrintRoot(t *testing.T) {
 		t.Fatalf("output %q", created)
 	}
 
+	// A release that read its key once (v0.7.0) says so.
+	once := out(hostResult{Root: &rootResult{KeyARN: "arn:k", KeyState: "Enabled", Origin: attestation.RootCreated, WrittenAt: at, ReadAt: at}})
+	if !strings.Contains(once, "read by the enclave once, at 2026-11-20T08:00:00Z") || strings.Contains(once, "every minute") {
+		t.Fatalf("output %q", once)
+	}
+
 	handed := out(hostResult{
-		Root: &rootResult{KeyARN: "arn:k", KeyState: "PendingDeletion", Origin: attestation.RootHandedOver, WrittenAt: at, From: &attestation.RootFrom{Image: imageB, Commit: "c0ffee", PublishedAt: at.Add(-time.Hour)}},
-		KMS:  &kmsResult{KeyARN: "arn:old", ReadAt: at},
+		Root: &rootResult{KeyARN: "arn:k", KeyState: "PendingDeletion", Origin: attestation.RootHandedOver, WrittenAt: at, From: &attestation.RootFrom{Image: imageB, Commit: "c0ffee", PublishedAt: at.Add(-time.Hour)},
+			ReadAt: at, WatchedSince: at, Changes: 2, Gaps: []attestation.KMSGap{{From: at, To: at.Add(time.Minute)}}},
+		KMS: &kmsResult{KeyARN: "arn:old", ReadAt: at},
 	})
-	for _, w := range []string{"handed to this image at 2026-11-20T08:00:00Z by the enclave of release c0ffee", imageB, "published 2026-11-20T07:00:00Z", "warning: that key is in state PendingDeletion", "also opens data keys", "KMS key arn:old releases data keys to no image"} {
+	for _, w := range []string{"handed to this image at 2026-11-20T08:00:00Z by the enclave of release c0ffee", imageB, "published 2026-11-20T07:00:00Z", "warning: that key is in state PendingDeletion", "also opens data keys", "2 other state(s), each open to this image alone", "could not read the policy from 2026-11-20T08:00:00Z to 2026-11-20T08:01:00Z", "KMS key arn:old releases data keys to no image"} {
 		if !strings.Contains(handed, w) {
 			t.Fatalf("output %q lacks %q", handed, w)
 		}

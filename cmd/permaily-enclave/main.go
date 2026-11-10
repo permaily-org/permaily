@@ -48,7 +48,6 @@ type config struct {
 	smtpPort           uint32
 	mtaSTSMode         string
 	awsRegion          string
-	kmsKeyARN          string
 	dynamoTable        string
 	s3Bucket           string
 	credentialsPort    uint32
@@ -77,7 +76,6 @@ func main() {
 	flag.StringVar(&cfg.mailboxTokenSHA256, "mailbox-token-sha256", "", "hex SHA-256 of the bearer token that reads the mailbox")
 	flag.StringVar(&cfg.mtaSTSMode, "mta-sts-mode", "testing", "MTA-STS policy mode: testing or enforce")
 	flag.StringVar(&cfg.awsRegion, "aws-region", "us-east-2", "AWS region of KMS, DynamoDB and S3")
-	flag.StringVar(&cfg.kmsKeyARN, "kms-key-arn", "", "ARN of the KMS key that images before the root secret wrapped data keys with (pinned); empty when none is left")
 	flag.StringVar(&cfg.awsAccount, "aws-account", "", "AWS account that holds the KMS key of each release (pinned)")
 	flag.StringVar(&cfg.adminTokenSHA256, "admin-token-sha256", "", "hex SHA-256 of the bearer token that may ask for a handoff")
 	flag.StringVar(&cfg.releases.Repository, "release-repository", "", "owner/name of the GitHub repository whose releases may receive the root secret")
@@ -159,7 +157,7 @@ func run(cfg config, log *slog.Logger) error {
 
 	common := map[string]http.Handler{
 		"/attestation": httpapi.Attestation(p.attester, p.certs.UserData),
-		"/status":      httpapi.Status(httpapi.StatusSources{Root: p.rootStatus, KMS: p.kmsStatus, TLS: p.certs.Status}),
+		"/status":      httpapi.Status(httpapi.StatusSources{Root: p.rootStatus, TLS: p.certs.Status}),
 		"/version":     httpapi.Version(),
 	}
 	srv := &http.Server{
