@@ -43,6 +43,8 @@ An old image can open the root secret for as long as its key exists. Once the ne
 
 ## Retire the old mail key
 
+Done in production on 2026-11-10 with v0.7.0. The steps stay here for a deployment that still runs an older release.
+
 Releases up to v0.6.0 wrapped data keys directly with `alias/permaily-mail`, whose policy named the allowed image. They cannot hand anything over, so the first release with a root secret is deployed the old way, and needs that key once, to move those data keys under the root secret it creates:
 
 ```sh
@@ -164,6 +166,7 @@ tofu -chdir=deploy/tofu apply
 
 ## Planned (F1+)
 
+- Drop the old mail key from the image (`kms_key_arn` in `deploy/enclave.json`, the legacy code in `internal/keys`) in a later release, then schedule the deletion of the key.
 - Rotate KMS keys (automatic yearly rotation is enabled).
 - Restore from backup, with a dated drill.
 - Delete a user's data (crypto-shredding).
