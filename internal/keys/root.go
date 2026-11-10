@@ -138,6 +138,9 @@ func NewRoot(cfg RootConfig) (*Root, error) {
 	if cfg.API == nil || cfg.Attester == nil || cfg.Records == nil || cfg.Trust == nil || cfg.Account == "" || cfg.Region == "" {
 		return nil, errors.New("keys: incomplete root configuration")
 	}
+	if err := cfg.Releases.Validate(); err != nil {
+		return nil, err
+	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}

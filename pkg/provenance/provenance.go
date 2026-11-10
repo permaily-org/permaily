@@ -70,8 +70,13 @@ type Policy struct {
 	RefPrefix string
 }
 
-func (p Policy) valid() bool {
-	return p.Repository != "" && p.Workflow != "" && (p.Ref == "") != (p.RefPrefix == "")
+// Validate reports whether the policy names a repository, a workflow and
+// either a ref or a ref prefix.
+func (p Policy) Validate() error {
+	if p.Repository == "" || p.Workflow == "" || (p.Ref == "") == (p.RefPrefix == "") {
+		return fmt.Errorf("%w: a release policy needs a repository, a workflow and either a ref or a ref prefix", ErrMalformed)
+	}
+	return nil
 }
 
 func (p Policy) allowsRef(ref string) bool {
@@ -253,8 +258,11 @@ type digest struct {
 // workflow and ref of p, on a GitHub-hosted runner, and recorded in the log
 // of tr. It needs no network and no clock: the time is the one the log signed.
 func Verify(p Policy, tr *TrustRoot, bundleJSON, pcrs []byte) (*Release, error) {
-	if !p.valid() || tr == nil || tr.Log.Key == nil {
-		return nil, fmt.Errorf("%w: incomplete policy or trust root", ErrMalformed)
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	if tr == nil || tr.Log.Key == nil {
+		return nil, fmt.Errorf("%w: incomplete trust root", ErrMalformed)
 	}
 	if len(bundleJSON) > maxBundle || len(pcrs) > maxPCRs {
 		return nil, fmt.Errorf("%w: input too large", ErrMalformed)

@@ -27,7 +27,7 @@ func (f *Fake) Attest(nonce, userData []byte) ([]byte, error) {
 	return f.CA.Sign(attestationtest.Fields{PCRs: f.PCRs, Nonce: nonce, UserData: userData})
 }
 
-// Measurements returns the PCRs the fake claims, like nsm.Device.PCRs.
+// Measurements returns the PCRs the fake claims, like nsm.Device.Measurements.
 func (f *Fake) Measurements() (map[uint][]byte, error) { return f.PCRs, nil }
 
 // AttestPublicKey implements keys.Attester.

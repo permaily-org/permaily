@@ -68,9 +68,9 @@ func (d *Device) AttestPublicKey(publicKey []byte) ([]byte, error) {
 	return res.Attestation.Document, nil
 }
 
-// PCRs returns the measurements of this enclave's own image (PCR0 to PCR2), as
-// the Nitro Security Module holds them. In debug mode they are all zero.
-func (d *Device) PCRs() (map[uint][]byte, error) {
+// Measurements returns the measurements of this enclave's own image (PCR0 to
+// PCR2), as the Nitro Security Module holds them. In debug mode they are all zero.
+func (d *Device) Measurements() (map[uint][]byte, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	out := map[uint][]byte{}
