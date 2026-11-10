@@ -7,7 +7,7 @@ git clone https://github.com/permaily-org/permaily && cd permaily
 scripts/verify.sh v0.1.0          # replace with the release you want to check
 ```
 
-The script needs Nix (with flakes) or Docker. It rebuilds the enclave image of that tag, prints the reproduced PCRs and runs `permaily-verify` against `app.`, `api.`, `mcp.` and `inbox.permaily.com`. Exit code 0 means every host passed.
+The script needs Nix (with flakes) or Docker. It rebuilds the enclave image of that tag, prints the reproduced PCRs and runs `permaily-verify` against `app.`, `api.`, `mcp.`, `inbox.` and `mta-sts.inbox.permaily.com`, then checks how mail gets in. Exit code 0 means every check passed.
 
 ## What is checked
 
@@ -34,6 +34,18 @@ Stored mail is encrypted with keys that AWS KMS releases only to an enclave that
 During an upgrade the old and the new release are both allowed for a short time. Then verification fails unless you accept the other release by its PCR0: `permaily-verify -pcrs pcrs.json -kms-also-allow <PCR0 of the other release>`. Releases before v0.3.0 do not report the policy; verify them with `-skip-kms-policy`.
 
 What this does not prove: the account's administrators can replace the policy later, and the verifier sees it only at the time of the check (it prints a note saying so). The policy's SHA-256 is printed so two checks can be compared.
+
+## How mail gets in
+
+Mail arrives over SMTP on port 25, which the HTTPS checks above do not cover. When no URLs are given, `permaily-verify` also checks:
+
+1. The MTA-STS policy at `https://mta-sts.inbox.permaily.com/.well-known/mta-sts.txt`, accepted only when served with the attested TLS key. It must say `mode: enforce`, allow only `inbox.permaily.com` as MX, and last at least a day. This is what makes a sending server refuse to deliver without a valid certificate.
+2. DNS: exactly one `_mta-sts.inbox.permaily.com` record (without it senders do not apply the policy) and an MX for `inbox.permaily.com` that points only at itself.
+3. Port 25: it connects as a sending server would, upgrades with STARTTLS, requires a certificate valid for `inbox.permaily.com`, and requires its key to be the attested one. It sends no mail.
+
+Many home and office networks block outbound port 25. Then step 3 cannot run: the verifier prints a warning and still exits 0. Run it from a server, or pass `-require-smtp` to make that a failure. `-skip-mail` skips these checks.
+
+What this does not prove: a sender that does not implement MTA-STS may still deliver in clear to whoever answers on port 25 (the enclave itself refuses mail without TLS), and the DNS records can change after the check.
 
 ## Reproducing the measurements yourself
 

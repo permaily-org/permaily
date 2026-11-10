@@ -57,7 +57,7 @@ pcr0=$(jq -r .PCR0 eif/pcrs.json)
 tofu -chdir=deploy/tofu apply
 ```
 
-While both PCR0s are allowed, `permaily-verify` fails on purpose (another image can read the mail); check the new enclave with `scripts/verify.sh <tag> -kms-also-allow <old PCR0>`. After the new enclave serves mail, remove the old PCR0 and apply again, then run `scripts/verify.sh <tag>` with no extra flags: it must pass. The first time, also set `mail_dns_enabled = true` to publish the MX, MTA-STS and TLS-RPT records.
+While both PCR0s are allowed, `permaily-verify` fails on purpose (another image can read the mail); check the new enclave with `scripts/verify.sh <tag> -kms-also-allow <old PCR0>`. After the new enclave serves mail, remove the old PCR0 and apply again, then run `scripts/verify.sh <tag>` with no extra flags: it must pass. Run it from a server with outbound port 25 (add `-require-smtp`) so the MX is checked too.
 
 ## Read the test mailbox
 
