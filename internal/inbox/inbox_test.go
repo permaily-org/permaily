@@ -200,6 +200,79 @@ func TestRestartKeepsAccess(t *testing.T) {
 	}
 }
 
+// migrating is a key service that wraps keys a new way and still opens the
+// ones the old service wrapped, like keys.Root with a legacy service.
+type migrating struct {
+	old  keys.Service
+	fail error
+}
+
+func (m migrating) NewDataKey(context.Context, map[string]string) (keys.DataKey, error) {
+	dk := bytes.Repeat([]byte{9}, 32)
+	return keys.DataKey{Plaintext: dk, Wrapped: append([]byte("NEW:"), dk...)}, nil
+}
+
+func (m migrating) Unwrap(ctx context.Context, wrapped []byte, c map[string]string) ([]byte, error) {
+	if dk, ok := bytes.CutPrefix(wrapped, []byte("NEW:")); ok {
+		return dk, nil
+	}
+	return m.old.Unwrap(ctx, wrapped, c)
+}
+
+func (m migrating) Rewrap(ctx context.Context, wrapped []byte, c map[string]string) ([]byte, bool, error) {
+	if m.fail != nil {
+		return nil, false, m.fail
+	}
+	if bytes.HasPrefix(wrapped, []byte("NEW:")) {
+		return wrapped, false, nil
+	}
+	dk, err := m.old.Unwrap(ctx, wrapped, c)
+	return append([]byte("NEW:"), dk...), err == nil, err
+}
+
+// The release that introduces the root secret finds a mailbox whose key an
+// older image wrapped with KMS, and moves it without losing mail.
+func TestMailboxKeyMovesUnderTheRootSecret(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	id, err := f.svc.Ingest(ctx, "sender@example.org", []string{address}, []byte("Subject: before\r\n\r\nold mail\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := f.store.GetMailbox(ctx, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A failure to move must not lose the old wrapping.
+	old := f.keys
+	f.keys = migrating{old: old, fail: errors.New("root secret unavailable")}
+	if _, err := f.newService().Get(ctx, id); err == nil {
+		t.Fatal("served mail without moving the key")
+	}
+	if mb, _ := f.store.GetMailbox(ctx, "test"); !bytes.Equal(mb.WrappedKey, before.WrappedKey) {
+		t.Fatal("the record changed after a failed move")
+	}
+
+	f.keys = migrating{old: old}
+	svc := f.newService()
+	if _, err := svc.Get(ctx, id); err != nil {
+		t.Fatalf("mail stored before the move: %v", err)
+	}
+	after, err := f.store.GetMailbox(ctx, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(after.WrappedKey, []byte("NEW:")) || !bytes.Equal(after.State, before.State) || after.RetentionDays != before.RetentionDays {
+		t.Fatalf("mailbox after the move: %q", after.WrappedKey)
+	}
+	// From here on the old key service is not needed.
+	f.keys = migrating{old: nil}
+	if _, err := f.newService().Get(ctx, id); err != nil {
+		t.Fatalf("after the move, without the old service: %v", err)
+	}
+}
+
 func TestUnparseableMessageIsKept(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

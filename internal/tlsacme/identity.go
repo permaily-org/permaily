@@ -158,6 +158,20 @@ func (s *Sealed) Load(ctx context.Context) (*Identity, error) {
 				return nil, err
 			}
 			s.dataKey, s.wrapped = key, rec.WrappedKey
+			// A key that an older image wrapped directly with KMS moves under
+			// the root secret the first time it is loaded.
+			if rw, ok := s.Keys.(keys.Rewrapper); ok {
+				wrapped, changed, err := rw.Rewrap(ctx, rec.WrappedKey, s.keyContext())
+				if err != nil {
+					return nil, err
+				}
+				if changed {
+					s.wrapped = wrapped
+					if err := s.put(ctx, id, false); err != nil {
+						return nil, err
+					}
+				}
+			}
 			return id, nil
 		case !errors.Is(err, store.ErrNotFound):
 			return nil, err
