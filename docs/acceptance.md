@@ -19,27 +19,28 @@ Each criterion, the evidence that proves it, and its status: **covered** (a test
 | Each host serves its content and security headers | `TestRouter` | covered |
 | `/attestation` binds nonce and TLS key, validates input | `TestAttestation` | covered |
 | The host proxy only tunnels to allowlisted destinations | `TestConnectProxy` | covered |
-| `permaily-verify` passes against production on all four hosts | `scripts/verify.sh <tag>` | blocked (AWS Paid Plan) |
-| Debug mode, a modified image and a MITM fail against production | manual negative runs | blocked (AWS Paid Plan) |
-| A certificate is issued inside the enclave with TLS-ALPN-01 | first deployment | blocked (AWS Paid Plan) |
+| `permaily-verify` passes against production on all four hosts | `scripts/verify.sh v0.2.0` from a fresh clone: image rebuilt in Docker, same PCRs as the release, Sigstore provenance | covered in production (2026-11-10) |
+| Debug mode, a modified image and a MITM fail against production | Debug mode (`PCRs are zero`) and the PCRs of another release (`PCR mismatch`) rejected on the production instance with the staging image; the MITM only in `TestVerifyRemote` | partial (2026-11-10) |
+| A certificate is issued inside the enclave with TLS-ALPN-01 | v0.2.0 serves a Let's Encrypt certificate for its five names, with its key bound in the attestation | covered in production (2026-11-10) |
+| A real attestation document verifies against the embedded AWS root, and fails with another nonce, TLS key, image or date | `TestVerifyRealDocument` (document from v0.2.0 in `pkg/attestation/testdata`) | covered |
 
 ## F1: inbox
 
 | Criterion | Evidence | Status |
 |---|---|---|
-| A message sent over SMTP with STARTTLS is readable through the API with the token, and not without it | `TestMailEndToEnd` (dev mode, whole service) | covered |
+| A message sent over SMTP with STARTTLS is readable through the API with the token, and not without it | `TestMailEndToEnd` (dev mode, whole service); sent from another server to `inbox.permaily.com:25` | covered in production (2026-11-10) |
 | The MX rejects unknown recipients, oversize messages, and fails temporarily (4xx) when storage fails | `TestRejections` | covered |
-| The store never holds plaintext senders, subjects, bodies or attachment names | `TestStoreNeverSeesPlaintext` | covered |
+| The store never holds plaintext senders, subjects, bodies or attachment names | `TestStoreNeverSeesPlaintext`; scan of the production table and bucket after a delivery | covered in production (2026-11-10) |
 | Sealed data cannot be opened with another key, context or after tampering | `TestSealOpen` | covered |
 | Data keys come from KMS through Recipient and CMS (DER and BER), and a key other than the pinned one is rejected | `TestKMSRoundTrip`, `TestKMSRejectsOtherKey` | covered |
 | The CMS and mail parsers never panic | `FuzzCMS`, `FuzzParse` (CI) | covered |
-| The mailbox survives an enclave restart (data key unwrapped again) | `TestRestartKeepsAccess` | covered |
+| The mailbox survives an enclave restart (data key unwrapped again) | `TestRestartKeepsAccess`; v0.2.0 read a message stored by the previous image | covered in production (2026-11-10) |
 | Retention applies and expired mail is not served | `TestRetention`, store contract test | covered |
 | DynamoDB and S3 storage behave as the in-memory store | `TestAWS` against DynamoDB Local and S3Mock (CI services) | covered |
 | Gmail forwarding codes are recorded, verified only with a google.com DKIM signature | `TestForwardingConfirmation` | covered |
 | Account administrators cannot obtain data keys from the mail KMS key | `aws kms generate-data-key` with the admin role returns AccessDenied | covered in production (2026-11-09) |
-| The enclave obtains a data key from KMS with its attestation; a non-allowlisted image is denied | first deployment | blocked (AWS Paid Plan) |
-| Gmail delivers forwarded mail to the MX over TLS (MTA-STS) | first deployment | blocked (AWS Paid Plan) |
+| The enclave obtains a data key from KMS with its attestation; a non-allowlisted image is denied | v0.2.0 serves the mailbox with only its PCR0 allowlisted; the same image in debug mode gets `AccessDeniedException` on `GenerateDataKey` | covered in production (2026-11-10) |
+| Gmail delivers forwarded mail to the MX over TLS (MTA-STS) | needs the MX, MTA-STS and TLS-RPT records (`mail_dns_enabled`) and a forwarded Gmail account | missing |
 
 ## Public site
 
@@ -54,6 +55,6 @@ Each criterion, the evidence that proves it, and its status: **covered** (a test
 
 ## Follow-ups
 
-1. First deployment: run every blocked row, record dates, commit the attestation fixture.
+1. Publish the mail DNS (`mail_dns_enabled = true`), forward a Gmail account and record the Gmail row; then switch MTA-STS to `enforce`.
 2. Pebble-based tests for `internal/tlsacme`.
-3. F1 deployment: add the release PCR0 to `enclave_pcr0_allowlist`, publish the mail DNS, forward a Gmail account, record the blocked F1 rows.
+3. Run the MITM check against production (a proxy with another certificate in front of the enclave).

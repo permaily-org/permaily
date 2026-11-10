@@ -20,7 +20,7 @@
 | Reproducibility | Nix | CI `eif` + `reproducible` jobs | every PR |
 | Site content | Vitest on the built HTML | `site/tests/` | `bun run test`, Amplify build, CI |
 | Accessibility and CSP | Playwright + axe | `site/e2e/` | `bun run test:e2e`, CI |
-| End to end against production | `permaily-verify` | `scripts/verify.sh` | after each deploy (blocked until the first deploy) |
+| End to end against production | `permaily-verify` | `scripts/verify.sh` | after each deploy |
 
 ## Thresholds
 
@@ -47,5 +47,5 @@ Mutation testing of `pkg/attestation` (gremlins 0.6.0, 2026-11-09): efficacy 100
 - [ ] `internal/tlsacme`: test issuance and renewal against a local ACME server (Pebble) in CI. Today it has no tests.
 - [ ] `internal/enclave` and `cmd/*`: test the vsock paths with a loopback vsock in CI or a fake listener.
 - [ ] Raise `pkg/attestation` coverage to 95% (covers the 23 mutants not reached today).
-- [ ] A real attestation document captured from the first deployment, committed as a fixture, verified in `TestVerify`.
+- [x] A real attestation document captured from the first deployment, committed as a fixture (`pkg/attestation/testdata`), verified in `TestVerifyRealDocument`.
 - [ ] Web app tests (Vitest + Testing Library, axe per component) when it talks to the backend.

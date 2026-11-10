@@ -4,7 +4,7 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 
 | Package | Role |
 |---|---|
-| `enclave` | vsock listener and egress HTTP client through the host's CONNECT proxy |
+| `enclave` | vsock listener and egress HTTP client through the host's CONNECT proxy (the parent instance is vsock CID 3) |
 | `tlsacme` | one multi-SAN certificate via ACME TLS-ALPN-01; key lives only in enclave memory |
 | `nsm`, `nsm/fakensm` | real NSM attester; fake attester for dev mode and tests |
 | `httpapi` | `/attestation`, `/version` |

@@ -2,11 +2,11 @@
 
 What Permaily stores, where, how it is protected, for how long, and who processes it. This is the basis for the privacy policy, the DPA and the subprocessor list.
 
-## F0 (today)
+## F0 (releases up to v0.1.1)
 
 No user data. The enclave keeps only its TLS key and ACME account key in memory; both disappear when it stops. The parent instance logs connection metadata (timestamps, destination host of egress) but never content.
 
-## F1 (implemented, not deployed)
+## F1 (deployed since v0.2.0, 2026-11-10)
 
 One test mailbox, compiled into the image (`deploy/enclave.json`), read with a bearer token whose SHA-256 is in the image.
 

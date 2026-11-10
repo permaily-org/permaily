@@ -17,7 +17,7 @@ scripts/verify.sh $tag
 
 ## Roll back
 
-Deploy the previous tag with the same steps. The enclave keeps no state in F0, so a rollback is only a redeploy. Each restart issues a new certificate (see Let's Encrypt below).
+Deploy the previous tag with the same steps, with its PCR0 back in `enclave_pcr0_allowlist` (see below); otherwise KMS denies it the mailbox keys. Mail lives in DynamoDB and S3, not in the enclave, so a rollback keeps it. Each restart issues a new certificate (see Let's Encrypt below).
 
 ## Look at enclave logs
 
@@ -68,6 +68,8 @@ curl -s -H "Authorization: Bearer $token" https://api.permaily.com/v1/mailbox/me
 curl -s -H "Authorization: Bearer $token" https://api.permaily.com/v1/mailbox/messages/<id>/raw > message.eml
 curl -s -X PATCH -H "Authorization: Bearer $token" -d '{"retention_days":30}' https://api.permaily.com/v1/mailbox
 ```
+
+To send a test message, connect to `inbox.permaily.com:25` with STARTTLS from a server: home connections usually block outbound port 25.
 
 To forward a Gmail account: in Gmail, Settings > Forwarding > Add a forwarding address (the mailbox address), read the confirmation code from `/v1/mailbox`, enter it in Gmail, then enable forwarding.
 
