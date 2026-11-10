@@ -1,0 +1,46 @@
+name: verify-production
+
+# Runs permaily-verify against the live service twice an hour and keeps the
+# output in the run's summary, in public. A policy or a certificate that was
+# changed and changed back between two manual checks shows up here, or in the
+# history the enclave reports (ADR 0013). A failed run is an incident.
+#
+# It uses the verifier and the measurements of the latest release (checked
+# against their Sigstore provenance), not a rebuild: scripts/verify.sh is the
+# full check. GitHub's runners block outbound port 25, so the SMTP certificate
+# is not checked here and the run prints a warning for it.
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  attestations: read
+
+concurrency:
+  group: verify-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify production
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          status=0
+          scripts/verify-production.sh 2>&1 | tee verify.txt || status=$?
+          {
+            echo '```'
+            cat verify.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

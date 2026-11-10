@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestStatus(t *testing.T) {
 		if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
 			t.Fatalf("status %d: %s", rec.Code, rec.Body)
 		}
-		if got.KMS == nil || *got.KMS != kms {
+		if got.KMS == nil || !reflect.DeepEqual(*got.KMS, kms) {
 			t.Fatalf("got %+v", got.KMS)
 		}
 	})

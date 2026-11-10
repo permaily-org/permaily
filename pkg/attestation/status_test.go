@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -16,7 +17,10 @@ import (
 func TestFetchStatus(t *testing.T) {
 	want := attestation.Status{Commit: "abc", KMS: &attestation.KMSStatus{
 		KeyARN: "arn:aws:kms:us-east-2:111122223333:key/k", Policy: `{"Statement":[]}`, Grants: 2,
-		FetchedAt: time.Date(2026, 11, 10, 4, 0, 0, 0, time.UTC),
+		FetchedAt:    time.Date(2026, 11, 10, 4, 0, 0, 0, time.UTC),
+		WatchedSince: time.Date(2026, 11, 10, 3, 0, 0, 0, time.UTC),
+		History:      []attestation.KMSObservation{{Policy: `{"Statement":[]}`, Grants: 2, FirstSeen: time.Date(2026, 11, 10, 3, 0, 0, 0, time.UTC), LastSeen: time.Date(2026, 11, 10, 4, 0, 0, 0, time.UTC)}},
+		Gaps:         []attestation.KMSGap{{From: time.Date(2026, 11, 10, 3, 10, 0, 0, time.UTC), To: time.Date(2026, 11, 10, 3, 12, 0, 0, time.UTC)}},
 	}}
 	var handler http.HandlerFunc = func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/status" {
@@ -35,7 +39,7 @@ func TestFetchStatus(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Commit != want.Commit || got.KMS == nil || *got.KMS != *want.KMS {
+		if got.Commit != want.Commit || got.KMS == nil || !reflect.DeepEqual(*got.KMS, *want.KMS) {
 			t.Fatalf("got %+v", got)
 		}
 	})
