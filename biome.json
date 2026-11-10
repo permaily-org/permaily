@@ -14,6 +14,9 @@
       "!third-party-notices.md",
       "!**/bun.lock",
       "!deploy/tofu",
+      "!spikes/**/testdata",
+      "!pkg/provenance/testdata",
+      "!pkg/provenance/sigstore_trusted_root.json",
       "!**/*.md",
       "!**/*.mdx",
       "!**/*.svg"

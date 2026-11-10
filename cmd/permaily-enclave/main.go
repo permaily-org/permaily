@@ -3,10 +3,10 @@
 // It terminates TLS itself (certificate obtained with ACME TLS-ALPN-01 from
 // inside the enclave), serves app./api./mcp./inbox./mta-sts.inbox. by Host,
 // answers GET /attestation?nonce=<hex> with an NSM attestation document whose
-// user_data is the SHA-256 of the TLS certificate's SPKI, reports the live KMS
-// key policy on GET /status, and (F1) receives
-// mail for the mailbox over SMTP, encrypting it with a data key that only an
-// attested enclave can obtain from KMS.
+// user_data is the SHA-256 of the TLS certificate's SPKI, reports the key that
+// holds its root secret on GET /status, and (F1) receives mail for the mailbox
+// over SMTP, encrypting it under a root secret that only an enclave running a
+// public release can obtain (ADR 0013).
 //
 // Build with -tags dev to run locally over TCP with a self-signed certificate,
 // a fake attester, local keys and an in-memory store.
@@ -32,6 +32,7 @@ import (
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/smtpd"
 	"github.com/permaily-org/permaily/internal/webui"
+	"github.com/permaily-org/permaily/pkg/provenance"
 )
 
 type config struct {
@@ -53,6 +54,12 @@ type config struct {
 	credentialsPort    uint32
 	dohEndpoint        string
 	logPort            uint32
+
+	// The root secret (ADR 0013). awsAccount is where release keys must live,
+	// and releases says which builds may receive the root secret.
+	awsAccount       string
+	adminTokenSHA256 string
+	releases         provenance.Policy
 }
 
 func main() {
@@ -70,7 +77,15 @@ func main() {
 	flag.StringVar(&cfg.mailboxTokenSHA256, "mailbox-token-sha256", "", "hex SHA-256 of the bearer token that reads the mailbox")
 	flag.StringVar(&cfg.mtaSTSMode, "mta-sts-mode", "testing", "MTA-STS policy mode: testing or enforce")
 	flag.StringVar(&cfg.awsRegion, "aws-region", "us-east-2", "AWS region of KMS, DynamoDB and S3")
-	flag.StringVar(&cfg.kmsKeyARN, "kms-key-arn", "", "ARN of the KMS key that wraps mailbox data keys (pinned)")
+	flag.StringVar(&cfg.kmsKeyARN, "kms-key-arn", "", "ARN of the KMS key that images before the root secret wrapped data keys with (pinned); empty when none is left")
+	flag.StringVar(&cfg.awsAccount, "aws-account", "", "AWS account that holds the KMS key of each release (pinned)")
+	flag.StringVar(&cfg.adminTokenSHA256, "admin-token-sha256", "", "hex SHA-256 of the bearer token that may ask for a handoff")
+	flag.StringVar(&cfg.releases.Repository, "release-repository", "", "owner/name of the GitHub repository whose releases may receive the root secret")
+	flag.StringVar(&cfg.releases.RepositoryID, "release-repository-id", "", "GitHub's numeric id of that repository")
+	flag.StringVar(&cfg.releases.OwnerID, "release-owner-id", "", "GitHub's numeric id of the repository's owner")
+	flag.StringVar(&cfg.releases.Workflow, "release-workflow", "", "path of the workflow that publishes releases")
+	flag.StringVar(&cfg.releases.Ref, "release-ref", "", "the git ref whose runs of that workflow are releases")
+	flag.StringVar(&cfg.releases.RefPrefix, "release-ref-prefix", "", "instead of -release-ref: every ref that starts with this (test images)")
 	flag.StringVar(&cfg.dynamoTable, "dynamodb-table", "", "DynamoDB table for mailboxes and messages")
 	flag.StringVar(&cfg.s3Bucket, "s3-bucket", "", "S3 bucket for raw messages")
 	flag.StringVar(&cfg.dohEndpoint, "doh-endpoint", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS endpoint for DKIM lookups")
@@ -126,6 +141,9 @@ func run(cfg config, log *slog.Logger) error {
 			}
 		}()
 		api.Handle("/v1/", httpapi.TokenAuth(cfg.mailboxTokenSHA256, httpapi.MailboxAPI(mailbox)))
+		if p.handoff != nil {
+			api.Handle("/v1/admin/handoff", httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Handoff(p.handoff, log)))
+		}
 
 		smtpSrv := smtpd.New(mailbox, smtpd.Config{Domain: hosts.Inbox, TLS: p.certs.TLSConfig()}, log)
 		go func() {
@@ -141,7 +159,7 @@ func run(cfg config, log *slog.Logger) error {
 
 	common := map[string]http.Handler{
 		"/attestation": httpapi.Attestation(p.attester, p.certs.UserData),
-		"/status":      httpapi.Status(p.kmsStatus, p.certs.Status),
+		"/status":      httpapi.Status(httpapi.StatusSources{Root: p.rootStatus, KMS: p.kmsStatus, TLS: p.certs.Status}),
 		"/version":     httpapi.Version(),
 	}
 	srv := &http.Server{

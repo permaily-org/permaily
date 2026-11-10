@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/permaily-org/permaily/pkg/kmspolicy"
 )
 
 // ErrNotBound means an answer came over a TLS connection whose key is not the
@@ -27,6 +29,50 @@ type Status struct {
 	// TLS describes the certificate key and the ACME account; nil in images
 	// older than this field.
 	TLS *TLSStatus `json:"tls,omitempty"`
+	// Root describes the key that holds the root secret for this image; nil in
+	// images that wrap every data key directly with KMS.
+	Root *RootStatus `json:"root,omitempty"`
+}
+
+// How an image got the root secret (RootStatus.Origin).
+const (
+	// RootCreated: an enclave running this same image created the secret.
+	RootCreated = "created"
+	// RootHandedOver: an enclave running another public release handed it over.
+	RootHandedOver = "handed_over"
+)
+
+// RootStatus is what the enclave reports about the root secret, the one
+// secret that everything it stores is sealed under. The secret is locked by a
+// KMS key that belongs to this image alone; a verifier checks that with
+// kmspolicy.Sealed, and because nobody can change the key's policy, what was
+// true when the enclave read it stays true.
+type RootStatus struct {
+	// Image is the PCR0 the enclave measured itself as.
+	Image  string `json:"image"`
+	KeyARN string `json:"key_arn"`
+	// Policy is the key policy document, exactly as KMS returned it.
+	Policy          string `json:"policy"`
+	Grants          int    `json:"grants"`
+	GrantsTruncated bool   `json:"grants_truncated,omitempty"`
+	// Key is what KMS says about the key itself.
+	Key kmspolicy.Key `json:"key"`
+	// CheckedAt is when the enclave read the policy, the grants and the key.
+	CheckedAt time.Time `json:"checked_at"`
+	// Origin is RootCreated or RootHandedOver, WrittenAt when the record for
+	// this image was written, and From the release that wrote it when it was
+	// handed over.
+	Origin    string    `json:"origin"`
+	WrittenAt time.Time `json:"written_at"`
+	From      *RootFrom `json:"from,omitempty"`
+}
+
+// RootFrom is the release whose enclave handed the root secret to this image.
+// The enclave accepted it only with that release's Sigstore provenance.
+type RootFrom struct {
+	Image       string    `json:"image"`
+	Commit      string    `json:"commit"`
+	PublishedAt time.Time `json:"published_at"`
 }
 
 // TLSStatus is what the enclave reports about its own TLS identity.

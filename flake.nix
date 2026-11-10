@@ -23,9 +23,9 @@
           web = pkgs.callPackage ./nix/web.nix { };
           goBin = args: pkgs.callPackage ./nix/go.nix ({ inherit rev; } // args);
           enclaveBin = goBin { subPackage = "permaily-enclave"; goarch = "arm64"; inherit web; };
-          mkEif = acmeDirectory: pkgs.callPackage ./nix/eif.nix {
+          mkEif = { acmeDirectory, staging ? false }: pkgs.callPackage ./nix/eif.nix {
             nitro = nitro-util.lib.${system};
-            inherit enclaveBin acmeDirectory;
+            inherit enclaveBin acmeDirectory staging;
           };
         in
         rec {
@@ -36,9 +36,11 @@
           # The verifier runs on the machine of whoever verifies.
           permaily-verify = goBin { subPackage = "permaily-verify"; goarch = pkgs.go.GOARCH; };
           # Production image: Let's Encrypt production. This is what releases publish.
-          eif = mkEif "https://acme-v02.api.letsencrypt.org/directory";
-          # Same image against Let's Encrypt staging, for test deployments.
-          eif-staging = mkEif "https://acme-staging-v02.api.letsencrypt.org/directory";
+          eif = mkEif { acmeDirectory = "https://acme-v02.api.letsencrypt.org/directory"; };
+          # The same code as a deployment of its own, for tests: Let's Encrypt
+          # staging, its own storage, and a root secret that only images built
+          # by the staging workflow can receive (deploy/enclave.json).
+          eif-staging = mkEif { acmeDirectory = "https://acme-staging-v02.api.letsencrypt.org/directory"; staging = true; };
           default = eif;
         });
 

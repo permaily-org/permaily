@@ -9,7 +9,8 @@ That the service answering on the Permaily hosts runs an enclave image built fro
 - **AWS Nitro hardware and hypervisor**, the Nitro Security Module and the AWS Nitro Enclaves root certificate (pinned by fingerprint in `pkg/attestation`).
 - **AWS prebuilt enclave kernel, init and nsm.ko** from aws-nitro-enclaves-cli (pinned by hash in `nix/eif.nix`).
 - **The source code and its pinned dependencies**: Go modules (`go.sum`, `vendorHash`), npm packages (`bun.lock` and the `node_modules` hash), nixpkgs (`flake.lock`).
-- **Let's Encrypt** for issuing certificates to the enclave's key, and the public WebPKI for the verifier's TLS checks.
+- **Let's Encrypt** for issuing certificates to the enclave's key, and the public WebPKI for the verifier's TLS checks and for the enclave's connections to KMS.
+- **Sigstore's public instance** (Fulcio and the Rekor transparency log, pinned in `pkg/provenance`) and **GitHub Actions** (its token issuer, its hosted runners, and the rule that `main` only changes through reviewed merges): together they say which images are public releases, and a running enclave hands the root secret only to those.
 - In later phases: the LLM provider used for classification (model and prompts are in the image).
 
 ## Not trusted
@@ -32,7 +33,7 @@ That the service answering on the Permaily hosts runs an enclave image built fro
 
 ## Known limits (F0)
 
-- The TLS key and the ACME account key are created once inside an enclave and stored sealed with KMS (ADR 0012), so restarts and upgrades keep the same key, certificate and account. Whoever the KMS key policy lets in can open them, like stored mail.
+- The TLS key and the ACME account key are created once inside an enclave and stored sealed under the root secret (ADR 0012, ADR 0013), so restarts and upgrades keep the same key, certificate and account. Only what can get the root secret can open them, like stored mail.
 - The enclave has no persistent state yet.
 - Availability is not protected: the operator can always take the service down.
 - Metadata visible to the operator: connection timing, sizes, destination hostnames of egress.
@@ -52,15 +53,18 @@ The host proxy only tunnels to:
 
 ## Mail (F1)
 
-- **Keys.** Each mailbox has an AES-256 data key, wrapped by the KMS key `alias/permaily-mail`. The key policy grants `GenerateDataKey` and `Decrypt` only to the instance role **and** only with an attestation document whose PCR0 is in the allowlist (`kms:RecipientAttestation:ImageSha384`); KMS then encrypts the key to an RSA key that exists only in the enclave (CMS, RSAES-OAEP-SHA-256). The account's administrators have no data-key permissions: an attempt with the account admin role returns `AccessDenied` (checked 2026-11-09).
-- **Pinned key.** The KMS key ARN is compiled into the image and every KMS response's `KeyId` must match it (`keys.ErrKeyMismatch`). The host supplies the AWS credentials (its own instance role); credentials for another account cannot make the enclave use a key the operator controls.
+- **Root secret.** Everything stored is sealed under data keys, and every data key is wrapped under one root secret created inside an enclave (ADR 0013). Outside enclaves the root secret exists only in records, one per image, each locked by a KMS key that belongs to that image alone.
+- **Keys nobody can open or change.** The policy of an image's KMS key lets only an enclave that proves that image (PCR0) decrypt, and gives nobody `kms:PutKeyPolicy` or `kms:CreateGrant`, so KMS refuses to change it: account administrators were denied `PutKeyPolicy`, `CreateGrant`, `Decrypt`, `Encrypt`, `DisableKey`, `ReplicateKey` and more on such a key (checked 2026-11-10). Anyone in the account can create a data key under it, which gives them nothing: see the next point.
+- **Only public releases receive the root secret.** An image accepts a record only with an AWS-signed attestation document from the enclave that wrote it, which must have run the same image or a public release, proved by that release's Sigstore bundle. The running enclave writes a record only for a release that was published, in the public transparency log, after itself, and whose key passes the check above. So neither a private image nor a record made by the operator gets the root secret, whoever asks, the account's owners included.
+- **Pinned account.** The AWS account and region are compiled into the image and every key must be in them; every KMS answer must name the key that was asked (`keys.ErrKeyMismatch`). The host supplies the AWS credentials (its own instance role); credentials for another account cannot make the enclave use a key elsewhere.
 - **Encryption.** Message metadata, raw message and mailbox state are sealed with AES-256-GCM plus a key commitment, bound to mailbox, message id and purpose (`internal/envelope`).
 - **What the operator sees.** Message sizes and arrival times, retention period, the number of messages, and (until accounts exist) the single test mailbox. Not senders, subjects, bodies or attachments.
 - **Transport.** SMTP STARTTLS terminates in the enclave with the attested certificate, and the MX refuses `MAIL` on a connection without TLS. MTA-STS (`mode: enforce`) tells senders to deliver only to `inbox.permaily.com` with a valid certificate; TLS-RPT reports go to the test mailbox. `permaily-verify` checks the policy (served with the attested key), the `_mta-sts` and MX records, and that port 25 answers with the attested key (ADR 0011).
 - **Gap: senders without MTA-STS, and DNS.** A sender that does not implement MTA-STS can be made to deliver in clear to whoever answers on port 25. DNS is the operator's: removing the `_mta-sts` record stops new senders from applying the policy (cached policies last a week); the verifier fails when it is missing.
 - **Senders.** Any sender may deliver to the mailbox (decision for F1); DKIM results are recorded with each message. A Gmail forwarding confirmation is only marked verified when it carries a valid `google.com` DKIM signature.
-- **Who can use the key is public.** The enclave reads the key's policy and grants from KMS and serves them on `/status`; `permaily-verify` accepts that only over the attested TLS key and fails if any image other than the verified one can get data keys, if a statement skips the image check, or if a grant exists (ADR 0010, `pkg/kmspolicy`).
-- **The policy between checks.** An administrator can still replace the key policy (`kms:PutKeyPolicy`), allow another image or themselves, and restore it. The enclave reads the policy every minute and reports every state it has seen since it started; the verifier checks all of them, and a public job runs the verifier twice an hour (ADR 0013). What remains: a change made while the enclave is cut off from KMS shows only as a gap, and restarting the enclave starts the history again (the start time is printed). Planned: a policy nobody can change, once releases can be authorized without editing it.
+- **Who can use the key is public.** The enclave reads the policy, the grants and the properties of its image's key from KMS and serves them on `/status`; `permaily-verify` accepts that only over the attested TLS key and applies the same rule the enclave does (`kmspolicy.Sealed`): this image only, no way to change the policy, no grants, key material that never left KMS. Because the policy cannot change, there is nothing to watch between checks.
+- **What remains.** An older release can still open its own record until its key is deleted, so a flaw in an old image stays a way in for that long (docs/operations.md). Whoever controls Sigstore's signing or GitHub's runners for this repository can publish an image that is accepted; it would be public in the transparency log and in the repository. What AWS Support can do with a key that nobody can manage is not documented. The operator can still delete keys or records, which destroys data and reads nothing.
+- **The old mail key.** Releases up to v0.6.0 wrapped data keys with `alias/permaily-mail`, whose policy administrators could replace. The first release with a root secret moves those data keys and the key is then retired with a policy that lets nobody use it or change it; until that is applied, the note about administrators in the verifier's output stands for that key.
 
 ## Invariants
 
@@ -75,6 +79,10 @@ Each one has, or must get, a test that tries to break it.
 | Enclave | No configuration is read from the parent at runtime | review (entry point arguments are baked into the image) |
 | Production code | Fake attesters and test chains are never linked | `depguard` |
 | Web | Every response carries HSTS, CSP, `nosniff`, `no-referrer` | `TestRouter` |
+| Keys | A key is used only if this image alone can use it and nobody can change that | `TestSealed`, `TestHandoffRefuses`, `TestRootNeedsItsOwnKey` |
+| Keys | The root secret is handed only to a public release newer than the running one | `TestHandoffRefuses`, `TestVerifyIdentity`, `TestVerifyARealRelease`, `FuzzVerify`, `tests/sigstore-differential` |
+| Keys | A record not written by an enclave of the same image or of a public release is refused | `TestRootRefusesPlantedRecords`, `TestRootChecksWhichKeyAnswered` |
+| Keys | A debug enclave, a failing store or a deployment that already has a root secret never leads to a new one | `TestRootInDebugMode`, `TestRootDoesNotCreateWhenTheStoreFails`, `TestRootHandoff` |
 | TLS | The TLS and ACME account keys leave the enclave only sealed, survive restarts, and are never replaced when storage fails | `TestSealedKeepsTheIdentity`, `TestSealedRejects`, `TestManagerSurvivesRestart`, `TestManagerWaitsForItsIdentity` |
 | TLS | CAA records that let another account, CA or a wildcard in, or a logged certificate with another key, fail verification | `TestCheckPinned`, `TestCheckNoWildcard`, `TestClassify`, `TestCheckCertificates` |
 | Logs | No log line names an address, a subject, content or a token | `TestMailEndToEnd` (log capture) |

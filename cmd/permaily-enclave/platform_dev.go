@@ -36,9 +36,13 @@ type platform struct {
 	keys         keys.Service
 	store        store.Store
 	auth         inbox.Authenticator
-	// kmsStatus reads the policy of the pinned KMS key for /status; nil when
-	// there is no KMS key (no mailbox, or dev mode).
+	// kmsStatus reads the policy of the KMS key that older images wrapped data
+	// keys with, for /status; nil when there is none (no mailbox, or dev mode).
 	kmsStatus func(context.Context) (attestation.KMSStatus, error)
+	// rootStatus describes the key that holds the root secret, and handoff
+	// gives the root secret to the next release; nil without a root secret.
+	rootStatus func(context.Context) (*attestation.RootStatus, error)
+	handoff    func(context.Context, keys.Handoff) (*keys.HandoffResult, error)
 }
 
 // logOutput is the terminal in dev mode.

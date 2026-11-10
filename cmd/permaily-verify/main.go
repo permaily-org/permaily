@@ -63,12 +63,52 @@ type hostResult struct {
 	SPKIHash  string            `json:"tls_spki_sha256,omitempty"`
 	CertNames []string          `json:"tls_dns_names,omitempty"`
 	PCRs      map[string]string `json:"pcrs,omitempty"`
-	// KMS is nil when the check was skipped or the image has no KMS key.
+	// Root is what the enclave reported about the key that holds its root
+	// secret, after it passed every check; nil when the check was skipped or
+	// the image has no root secret.
+	Root *rootResult `json:"root,omitempty"`
+	// KMS is nil when the check was skipped or the image has no KMS key that
+	// wraps data keys directly (images before the root secret did).
 	KMS        *kmsResult `json:"kms,omitempty"`
 	KMSSkipped string     `json:"kms_skipped,omitempty"`
 	// TLS is what the enclave reports about its certificate key and ACME
 	// account; nil when /status was not read or the image is older.
 	TLS *attestation.TLSStatus `json:"tls,omitempty"`
+}
+
+// rootResult is what the verified enclave reported about the KMS key that
+// holds the root secret for its image, after that key passed every check: only
+// this image can use it, and nobody can change that.
+type rootResult struct {
+	KeyARN       string `json:"key_arn"`
+	PolicySHA256 string `json:"policy_sha256"`
+	// KeyState is Enabled, or PendingDeletion once the key is scheduled for deletion.
+	KeyState string `json:"key_state"`
+	// Origin is "created" when an enclave of this image created the root
+	// secret and "handed_over" when another release's enclave gave it; From is
+	// that release, which the enclave accepted only with its public provenance.
+	Origin    string                `json:"origin"`
+	WrittenAt time.Time             `json:"written_at"`
+	From      *attestation.RootFrom `json:"from,omitempty"`
+}
+
+// checkRoot decides whether the key the enclave reported keeps the root secret
+// to the verified image (pcr0, hex) for good.
+func checkRoot(rs *attestation.RootStatus, pcr0 string) (*rootResult, error) {
+	if !strings.EqualFold(rs.Image, pcr0) {
+		return nil, fmt.Errorf("the enclave reports a key for image %s, not for the one verified", rs.Image)
+	}
+	if _, err := kmspolicy.Sealed([]byte(rs.Policy), rs.Grants, rs.GrantsTruncated, rs.Key, pcr0); err != nil {
+		return nil, err
+	}
+	switch {
+	case rs.Origin == attestation.RootCreated && rs.From == nil:
+	case rs.Origin == attestation.RootHandedOver && rs.From != nil && rs.From.Image != "" && !strings.EqualFold(rs.From.Image, pcr0):
+	default:
+		return nil, fmt.Errorf("the enclave does not say where its root secret came from (origin %q)", rs.Origin)
+	}
+	sum := sha256.Sum256([]byte(rs.Policy))
+	return &rootResult{KeyARN: rs.KeyARN, PolicySHA256: hex.EncodeToString(sum[:]), KeyState: rs.Key.State, Origin: rs.Origin, WrittenAt: rs.WrittenAt.UTC(), From: rs.From}, nil
 }
 
 // kmsResult is what the verified enclave reported about the key that wraps
@@ -232,11 +272,22 @@ func verify(ctx context.Context, client *http.Client, url string, expected map[u
 		r.OK = true
 		return r
 	}
+	pcr0 := hex.EncodeToString(expected[0])
+	if st.Root != nil {
+		if r.Root, err = checkRoot(st.Root, pcr0); err != nil {
+			r.Root = nil
+			r.Error = "root secret: " + err.Error()
+			return r
+		}
+	}
 	if st.KMS == nil {
-		r.OK, r.KMSSkipped = true, "this image uses no KMS key"
+		r.OK = true
+		if st.Root == nil {
+			r.KMSSkipped = "this image uses no KMS key"
+		}
 		return r
 	}
-	if r.KMS, err = checkKMS(st.KMS, hex.EncodeToString(expected[0]), kms.alsoAllow, kms.now); err != nil {
+	if r.KMS, err = checkKMS(st.KMS, pcr0, kms.alsoAllow, kms.now); err != nil {
 		r.KMS = nil
 		r.Error = "KMS key policy: " + err.Error()
 		return r
@@ -690,10 +741,35 @@ func printHuman(w io.Writer, source string, expected map[uint][]byte, results []
 	}
 }
 
-func printKMS(w io.Writer, r hostResult, pcr0 string) {
-	if r.KMS == nil {
-		fmt.Fprintf(w, "      KMS key policy: %s\n", r.KMSSkipped)
+// printRoot describes the key that holds the root secret.
+func printRoot(w io.Writer, root *rootResult) {
+	if root == nil {
 		return
+	}
+	fmt.Fprintf(w, "      root secret locked by KMS key %s: only this image can open it, and nobody can change that\n", root.KeyARN)
+	fmt.Fprintf(w, "      that key's policy sha256 %s gives nobody a way to replace it or to add grants; no grants; key material never left KMS\n", root.PolicySHA256)
+	at := root.WrittenAt.Format(time.RFC3339)
+	if root.Origin == attestation.RootHandedOver {
+		fmt.Fprintf(w, "      root secret handed to this image at %s by the enclave of release %s (image %s, published %s), which this image accepted only with that release's public build provenance\n",
+			at, root.From.Commit, root.From.Image, root.From.PublishedAt.UTC().Format(time.RFC3339))
+	} else {
+		fmt.Fprintf(w, "      root secret created inside an enclave of this image at %s\n", at)
+	}
+	if root.KeyState != "Enabled" {
+		fmt.Fprintf(w, "      warning: that key is in state %s; once it is gone this image cannot start again\n", root.KeyState)
+	}
+}
+
+func printKMS(w io.Writer, r hostResult, pcr0 string) {
+	printRoot(w, r.Root)
+	if r.KMS == nil {
+		if r.Root == nil {
+			fmt.Fprintf(w, "      KMS key policy: %s\n", r.KMSSkipped)
+		}
+		return
+	}
+	if r.Root != nil {
+		fmt.Fprintln(w, "      this image also opens data keys that releases before the root secret wrapped with another KMS key, to move them:")
 	}
 	who := "only to this image"
 	switch {
