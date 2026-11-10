@@ -225,6 +225,49 @@ func TestSealedMovesUnderTheRootSecret(t *testing.T) {
 	}
 }
 
+// failingStore fails every write with an error that is not "already exists".
+type failingStore struct {
+	store.Records
+	put error
+}
+
+func (f failingStore) PutRecord(context.Context, *store.Record, bool) error { return f.put }
+
+// failingKeys cannot create data keys.
+type failingKeys struct{ keys.Service }
+
+func (failingKeys) NewDataKey(context.Context, map[string]string) (keys.DataKey, error) {
+	return keys.DataKey{}, errors.New("no data key")
+}
+
+// A failure while creating or moving the identity gives no identity: the
+// caller waits and tries again instead of serving with keys that were not stored.
+func TestSealedFailuresGiveNoIdentity(t *testing.T) {
+	ctx := context.Background()
+	down := errors.New("dynamodb unreachable")
+
+	// Creating: the store refuses the record, or there is no data key.
+	if _, err := newSealed(t, failingStore{Records: store.NewMemory(), put: down}, localKeys(t)).Load(ctx); !errors.Is(err, down) {
+		t.Fatalf("store failure on creation: %v", err)
+	}
+	if _, err := newSealed(t, store.NewMemory(), failingKeys{}).Load(ctx); err == nil {
+		t.Fatal("created an identity without a data key")
+	}
+
+	// Moving: the key is rewrapped but the record cannot be written.
+	mem, old := store.NewMemory(), localKeys(t)
+	if _, err := newSealed(t, mem, old).Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := mem.GetRecord(ctx, "tls-ca.test")
+	if _, err := newSealed(t, failingStore{Records: mem, put: down}, migrating{old: old}).Load(ctx); !errors.Is(err, down) {
+		t.Fatalf("store failure on the move: %v", err)
+	}
+	if after, _ := mem.GetRecord(ctx, "tls-ca.test"); !bytes.Equal(after.WrappedKey, before.WrappedKey) {
+		t.Fatal("the record changed")
+	}
+}
+
 func TestSealedRejects(t *testing.T) {
 	ctx := context.Background()
 	fresh := func(t *testing.T) (*store.Memory, keys.Service, *store.Record) {
