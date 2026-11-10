@@ -45,8 +45,8 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `internal/hostproxy` | 73 | 73.7 |
 | `internal/enclave` | 87 | 87.7 |
 | `internal/envelope` | 91 (target 95) | 91.9 |
-| `internal/keys` | 87 (target 95) | 87.4 |
-| `internal/inbox` | 81 | 81.2 |
+| `internal/keys` | 88 (target 95) | 88.8 |
+| `internal/inbox` | 84 | 84.7 |
 | `internal/msgauth` | 86 | 86.0 |
 | `internal/smtpd` | 92 | 92.5 |
 | `internal/store` | 88 (with emulators) | 88.1 |

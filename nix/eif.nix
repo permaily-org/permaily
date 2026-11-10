@@ -67,8 +67,7 @@ let
       "-release-workflow" config.release_workflow
     ]
     ++ flag "-release-ref" config.release_ref
-    ++ flag "-release-ref-prefix" config.release_ref_prefix
-    ++ flag "-kms-key-arn" config.kms_key_arn);
+    ++ flag "-release-ref-prefix" config.release_ref_prefix);
     env = "GOMEMLIMIT=${gomemlimit}";
   };
 in

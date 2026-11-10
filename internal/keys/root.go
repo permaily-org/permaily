@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"math"
 	"strings"
 	"sync"
@@ -78,6 +77,12 @@ type RootAPI interface {
 	Decrypt(ctx context.Context, in *kms.DecryptInput, opts ...func(*kms.Options)) (*kms.DecryptOutput, error)
 }
 
+// Attester produces an attestation document that carries publicKey, which
+// KMS uses as the recipient of data keys (Recipient parameter).
+type Attester interface {
+	AttestPublicKey(publicKey []byte) ([]byte, error)
+}
+
 // RootAttester is the Nitro Security Module as the root secret uses it.
 type RootAttester interface {
 	Attester
@@ -101,11 +106,8 @@ type RootConfig struct {
 	Trust    *provenance.TrustRoot
 	// AttestationRoot signs attestation documents; nil is the AWS root.
 	AttestationRoot *x509.Certificate
-	// Legacy unwraps data keys wrapped directly by a KMS key, as images before
-	// the root secret did. Nil when there are none left.
-	Legacy Service
-	Now    func() time.Time
-	Log    *slog.Logger
+	Now             func() time.Time
+	Log             *slog.Logger
 }
 
 // Root is the root secret of a deployment: the one secret everything stored
@@ -125,10 +127,14 @@ type Root struct {
 	// retry is how long a failure to load is remembered, and how often Run tries.
 	retry time.Duration
 
-	mu      sync.Mutex
-	secret  []byte
-	kek     []byte
-	status  attestation.RootStatus
+	mu     sync.Mutex
+	secret []byte
+	kek    []byte
+	status attestation.RootStatus
+	// watch keeps reading the policy and grants of this image's key. Nobody in
+	// the account can change them, but AWS can for the account's owner, so the
+	// enclave reports every state it sees.
+	watch   *PolicyReader
 	lastTry time.Time
 	lastErr error
 }
@@ -158,7 +164,8 @@ func NewRoot(cfg RootConfig) (*Root, error) {
 	return &Root{cfg: cfg, rsa: priv, pub: pub, retry: rootRetry}, nil
 }
 
-// Run loads the root secret, retrying until it succeeds or ctx is done.
+// Run loads the root secret, retrying until it succeeds, and then keeps
+// reading the policy of its key once a minute, until ctx is done.
 func (r *Root) Run(ctx context.Context) {
 	t := time.NewTicker(r.retry)
 	defer t.Stop()
@@ -166,6 +173,10 @@ func (r *Root) Run(ctx context.Context) {
 	for {
 		err := r.ready(ctx)
 		if err == nil {
+			r.mu.Lock()
+			watch := r.watch
+			r.mu.Unlock()
+			watch.Run(ctx)
 			return
 		}
 		// The same failure is logged once: an image that waits for a handoff
@@ -261,6 +272,8 @@ func (r *Root) load(ctx context.Context) error {
 		return err
 	}
 	r.secret, r.kek, r.status = secret, kek, st
+	r.watch = NewPolicyReader(r.cfg.API, st.KeyARN)
+	r.watch.now = r.cfg.Now
 	r.cfg.Log.Info("root secret: loaded", "origin", st.Origin, "key", st.KeyARN)
 	return nil
 }
@@ -486,12 +499,21 @@ func (r *Root) Status(ctx context.Context) (*attestation.RootStatus, error) {
 		return nil, err
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	st := r.status
+	st, watch := r.status, r.watch
+	r.mu.Unlock()
 	if st.From != nil {
 		from := *st.From
 		st.From = &from
 	}
+	// The policy and the grants as they are now, and every state seen since
+	// this enclave started.
+	now, err := watch.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	st.Policy, st.Grants, st.GrantsTruncated, st.CheckedAt = now.Policy, now.Grants, now.GrantsTruncated, now.FetchedAt
+	st.WatchedSince, st.History, st.HistoryTruncated = now.WatchedSince, now.History, now.HistoryTruncated
+	st.Gaps, st.GapsTruncated = now.Gaps, now.GapsTruncated
 	return &st, nil
 }
 
@@ -611,43 +633,15 @@ func (r *Root) NewDataKey(ctx context.Context, c map[string]string) (DataKey, er
 	return DataKey{Plaintext: dk, Wrapped: wrapped}, nil
 }
 
-// Unwrap implements Service. A key that an older image wrapped directly with
-// KMS is unwrapped by the legacy service; Rewrap moves it under the root secret.
+// Unwrap implements Service.
 func (r *Root) Unwrap(ctx context.Context, wrapped []byte, c map[string]string) ([]byte, error) {
 	kek, err := r.wrappingKey(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if sealed, ok := bytes.CutPrefix(wrapped, []byte(wrapMagic)); ok {
-		return envelope.Open(kek, sealed, contextAAD(c))
-	}
-	if r.cfg.Legacy == nil {
+	sealed, ok := bytes.CutPrefix(wrapped, []byte(wrapMagic))
+	if !ok {
 		return nil, errors.New("keys: a data key that is not wrapped under the root secret")
 	}
-	return r.cfg.Legacy.Unwrap(ctx, wrapped, maps.Clone(c))
-}
-
-// Rewrapper is a Service that can move a data key wrapped the old way to the
-// current wrapping. Callers store the result in place of the old value.
-type Rewrapper interface {
-	// Rewrap returns the key wrapped the current way. changed is false when it
-	// already was.
-	Rewrap(ctx context.Context, wrapped []byte, context map[string]string) (out []byte, changed bool, err error)
-}
-
-// Rewrap implements Rewrapper.
-func (r *Root) Rewrap(ctx context.Context, wrapped []byte, c map[string]string) ([]byte, bool, error) {
-	if bytes.HasPrefix(wrapped, []byte(wrapMagic)) {
-		return wrapped, false, nil
-	}
-	dk, err := r.Unwrap(ctx, wrapped, c)
-	if err != nil {
-		return nil, false, err
-	}
-	kek, err := r.wrappingKey(ctx)
-	if err != nil {
-		return nil, false, err
-	}
-	out, err := r.wrap(kek, dk, c)
-	return out, err == nil, err
+	return envelope.Open(kek, sealed, contextAAD(c))
 }

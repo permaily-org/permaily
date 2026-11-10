@@ -112,9 +112,10 @@ func TestMailEndToEnd(t *testing.T) {
 	if code != 200 || json.Unmarshal([]byte(body), &page) != nil || len(page.Messages) != 1 || page.Messages[0].Subject != "Booking confirmed" {
 		t.Fatalf("messages: %d %s", code, body)
 	}
-	// Dev mode has no KMS key, and says so instead of inventing a policy.
-	// It reports its TLS key too, and that the key only lives in memory here.
-	if code, body := get("https://api.permaily.test/status", ""); code != 200 || !strings.Contains(body, `"kms":null`) || !strings.Contains(body, `"sealed":false`) || !strings.Contains(body, `"spki_sha256":"`) {
+	// Dev mode has no root secret and no KMS key, and reports neither instead
+	// of inventing a policy. It reports its TLS key, and that the key only
+	// lives in memory here.
+	if code, body := get("https://api.permaily.test/status", ""); code != 200 || strings.Contains(body, `"root"`) || strings.Contains(body, `"kms"`) || !strings.Contains(body, `"sealed":false`) || !strings.Contains(body, `"spki_sha256":"`) {
 		t.Fatalf("status: %d %s", code, body)
 	}
 	if code, body := get("https://mta-sts.inbox.permaily.test/.well-known/mta-sts.txt", ""); code != 200 || !strings.Contains(body, "mx: inbox.permaily.test") {

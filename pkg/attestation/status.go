@@ -23,9 +23,10 @@ var ErrNotBound = errors.New("attestation: not served with the attested TLS key"
 // fetched over the TLS key bound in an attestation document (FetchStatus).
 type Status struct {
 	Commit string `json:"commit"`
-	// KMS describes the key that wraps mailbox data keys; nil when the image
-	// stores no mail.
-	KMS *KMSStatus `json:"kms"`
+	// KMS describes the key that releases up to v0.7.0 wrapped data keys with
+	// directly, or (v0.7.0) still read them from; nil in later releases and
+	// when the image stores no mail.
+	KMS *KMSStatus `json:"kms,omitempty"`
 	// TLS describes the certificate key and the ACME account; nil in images
 	// older than this field.
 	TLS *TLSStatus `json:"tls,omitempty"`
@@ -57,8 +58,19 @@ type RootStatus struct {
 	GrantsTruncated bool   `json:"grants_truncated,omitempty"`
 	// Key is what KMS says about the key itself.
 	Key kmspolicy.Key `json:"key"`
-	// CheckedAt is when the enclave read the policy, the grants and the key.
+	// CheckedAt is when the enclave last read the policy and the grants.
 	CheckedAt time.Time `json:"checked_at"`
+	// WatchedSince is when this enclave started reading the policy and the
+	// grants, about once a minute, and History every different state it has
+	// read since then, oldest first; the last one is the current state. Nobody
+	// in the account can change the policy, but AWS can for the account's
+	// owner; a change would show up here. Gaps are the periods in which the
+	// enclave could not read from KMS.
+	WatchedSince     time.Time        `json:"watched_since,omitzero"`
+	History          []KMSObservation `json:"history,omitempty"`
+	HistoryTruncated bool             `json:"history_truncated,omitempty"`
+	Gaps             []KMSGap         `json:"gaps,omitempty"`
+	GapsTruncated    bool             `json:"gaps_truncated,omitempty"`
 	// Origin is RootCreated or RootHandedOver, WrittenAt when the record for
 	// this image was written, and From the release that wrote it when it was
 	// handed over.

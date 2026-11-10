@@ -44,12 +44,12 @@ Every release changes the measurement, which is exactly the point where trust ca
 
 AWS [recommends PCR3 and PCR8 together for flexibility](https://docs.aws.amazon.com/enclaves/latest/user/set-up-attestation.html), because keys then survive image changes. PCR8 identifies the signing certificate, so that design would trust whatever the operator signs. It undermines the whole claim, so we don't follow it. Instead:
 
-1. Each release has its own KMS key, pinned to its image measurement, known as PCR0. Only that image can use the key, and the key's policy gives nobody a way to change that, the account's owners included.
+1. Each release has its own KMS key, pinned to its image measurement, known as PCR0. Only that image can use the key, and the key's policy gives nobody in the AWS account a way to change that.
 2. The running enclave hands the keys to the next release itself, and only after checking that its measurement was published by the public repository's release workflow in a public, append-only transparency log.
 3. A waiting period lets outside monitors react, with a defined and publicly logged route for urgent security fixes.
 4. Nothing in the AWS account is edited to let a release in, and no key policy can be edited at all.
 
-What remains: an older release can still open the keys until its own KMS key is deleted; the release workflow runs on GitHub and is recorded by Sigstore, and we rely on both; and AWS operates KMS. The verifier checks the key's policy on every run, so anyone can confirm that it names one image and cannot change.
+What remains: an older release can still open the keys until its own KMS key is deleted; the release workflow runs on GitHub and is recorded by Sigstore, and we rely on both; and AWS operates KMS, whose support team can restore an account owner's access to a key. The enclave reads its key's policy every minute and reports every state it has seen, and the verifier checks them all, so such a change would be visible to anyone.
 
 ### Browsers can't verify attestation
 

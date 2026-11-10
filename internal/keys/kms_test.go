@@ -8,13 +8,8 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/asn1"
-	"errors"
 	"testing"
-
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/kms"
 )
 
 // --- CMS builders (DER and BER) used by the fake KMS ---
@@ -83,85 +78,6 @@ func envelop(t *testing.T, plaintext []byte, pub *rsa.PublicKey, ber bool) []byt
 	}
 	ed := tlv(seq, tlv(0x02, []byte{0}), tlv(set, ktri), eci)
 	return tlv(seq, oid(oidEnvelopedData), tlv(ctx0, ed))
-}
-
-// --- fakes ---
-
-type pubAttester struct{}
-
-// AttestPublicKey returns the key itself; the fake KMS reads it back.
-func (pubAttester) AttestPublicKey(pub []byte) ([]byte, error) { return pub, nil }
-
-type fakeKMS struct {
-	t      *testing.T
-	arn    string
-	ber    bool
-	stored map[string][]byte // wrapped -> plaintext
-}
-
-func (f *fakeKMS) recipientKey(doc []byte) *rsa.PublicKey {
-	k, err := x509.ParsePKIXPublicKey(doc)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	return k.(*rsa.PublicKey)
-}
-
-func (f *fakeKMS) GenerateDataKey(_ context.Context, in *kms.GenerateDataKeyInput, _ ...func(*kms.Options)) (*kms.GenerateDataKeyOutput, error) {
-	dk := make([]byte, 32)
-	_, _ = rand.Read(dk)
-	wrapped := append([]byte("wrapped:"), dk[:8]...)
-	f.stored[string(wrapped)] = dk
-	return &kms.GenerateDataKeyOutput{
-		KeyId:                  aws.String(f.arn),
-		CiphertextBlob:         wrapped,
-		CiphertextForRecipient: envelop(f.t, dk, f.recipientKey(in.Recipient.AttestationDocument), f.ber),
-	}, nil
-}
-
-func (f *fakeKMS) Decrypt(_ context.Context, in *kms.DecryptInput, _ ...func(*kms.Options)) (*kms.DecryptOutput, error) {
-	dk, ok := f.stored[string(in.CiphertextBlob)]
-	if !ok {
-		return nil, errors.New("InvalidCiphertextException")
-	}
-	return &kms.DecryptOutput{
-		KeyId:                  aws.String(f.arn),
-		CiphertextForRecipient: envelop(f.t, dk, f.recipientKey(in.Recipient.AttestationDocument), f.ber),
-	}, nil
-}
-
-const arn = "arn:aws:kms:us-east-2:111122223333:key/test"
-
-func TestKMSRoundTrip(t *testing.T) {
-	for _, ber := range []bool{false, true} {
-		api := &fakeKMS{t: t, arn: arn, ber: ber, stored: map[string][]byte{}}
-		svc, err := NewKMS(api, arn, pubAttester{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		dk, err := svc.NewDataKey(context.Background(), map[string]string{"mailbox": "m1"})
-		if err != nil {
-			t.Fatalf("ber=%v: %v", ber, err)
-		}
-		if len(dk.Plaintext) != 32 || len(dk.Wrapped) == 0 {
-			t.Fatalf("ber=%v: bad data key", ber)
-		}
-		got, err := svc.Unwrap(context.Background(), dk.Wrapped, map[string]string{"mailbox": "m1"})
-		if err != nil || !bytes.Equal(got, dk.Plaintext) {
-			t.Fatalf("ber=%v: unwrap: %v", ber, err)
-		}
-	}
-}
-
-func TestKMSRejectsOtherKey(t *testing.T) {
-	api := &fakeKMS{t: t, arn: "arn:aws:kms:us-east-2:999999999999:key/attacker", stored: map[string][]byte{}}
-	svc, err := NewKMS(api, arn, pubAttester{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.NewDataKey(context.Background(), nil); !errors.Is(err, ErrKeyMismatch) {
-		t.Fatalf("err = %v, want ErrKeyMismatch", err)
-	}
 }
 
 func TestCMSRejectsGarbage(t *testing.T) {

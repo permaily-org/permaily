@@ -668,40 +668,78 @@ func TestRootInDebugMode(t *testing.T) {
 	}
 }
 
-// Keys that older images wrapped directly with KMS move under the root secret.
-func TestRootRewrapsLegacyKeys(t *testing.T) {
+// Nobody in the account can change the policy of the key, but AWS can for the
+// account's owner. The enclave keeps reading it and reports every state.
+func TestRootWatchesItsKey(t *testing.T) {
 	w, ctx := newWorld(t), context.Background()
 	a := w.release(0xa1, time.Hour)
-	legacy, err := NewLocal()
+	r := w.boot(a)
+	st, err := r.Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, err := legacy.NewDataKey(ctx, keyCtx)
-	if err != nil {
-		t.Fatal(err)
+	if !st.WatchedSince.Equal(w.now.UTC().Truncate(time.Second)) || len(st.History) != 1 || st.History[0].Policy != sealedPolicy(a.pcr0) || len(st.Gaps) != 0 {
+		t.Fatalf("status %+v", st)
 	}
 
-	r := w.boot(a)
-	if _, err := r.Unwrap(ctx, old.Wrapped, keyCtx); err == nil {
-		t.Fatal("unwrapped a legacy key without a legacy service")
+	// The policy is opened: the account's administrators may now decrypt.
+	opened := strings.Replace(sealedPolicy(a.pcr0), `"Statement":[`, `"Statement":[{"Sid":"Door","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::`+testAccount+`:root"},"Action":"kms:*","Resource":"*"},`, 1)
+	w.kms.keys[a.keyARN].policy = opened
+	w.now = w.now.Add(policyInterval)
+	st, err = r.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	r.cfg.Legacy = legacy
-	if got, err := r.Unwrap(ctx, old.Wrapped, keyCtx); err != nil || !bytes.Equal(got, old.Plaintext) {
-		t.Fatalf("legacy unwrap: %v", err)
+	if st.Policy != opened || len(st.History) != 2 || st.History[0].Policy != sealedPolicy(a.pcr0) || st.History[1].Policy != opened || !st.CheckedAt.Equal(w.now.UTC().Truncate(time.Second)) {
+		t.Fatalf("after the change: %+v", st)
 	}
-	moved, changed, err := r.Rewrap(ctx, old.Wrapped, keyCtx)
-	if err != nil || !changed || bytes.Equal(moved, old.Wrapped) {
-		t.Fatalf("rewrap: changed=%v, %v", changed, err)
+	// And closed again: the open state stays in the history, with its times.
+	w.kms.keys[a.keyARN].policy = sealedPolicy(a.pcr0)
+	w.now = w.now.Add(policyInterval)
+	st, err = r.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if again, changed, err := r.Rewrap(ctx, moved, keyCtx); err != nil || changed || !bytes.Equal(again, moved) {
-		t.Fatalf("second rewrap: changed=%v, %v", changed, err)
+	if st.Policy != sealedPolicy(a.pcr0) || len(st.History) != 3 || st.History[1].Policy != opened {
+		t.Fatalf("after closing it: %+v", st.History)
 	}
-	// Without the legacy key, after a restart, the moved key still opens.
-	if got, err := w.boot(a).Unwrap(ctx, moved, keyCtx); err != nil || !bytes.Equal(got, old.Plaintext) {
-		t.Fatalf("after the move: %v", err)
+	if _, err := kmspolicy.Sealed([]byte(st.History[1].Policy), st.History[1].Grants, st.History[1].GrantsTruncated, st.Key, st.Image); !errors.Is(err, kmspolicy.ErrNotSealed) {
+		t.Fatalf("a verifier would accept the open state: %v", err)
 	}
-	if _, _, err := r.Rewrap(ctx, []byte("not a wrapped key"), keyCtx); err == nil {
-		t.Fatal("rewrapped garbage")
+
+	// A grant shows too.
+	w.kms.keys[a.keyARN].grants = 1
+	w.now = w.now.Add(policyInterval)
+	if st, err = r.Status(ctx); err != nil || st.Grants != 1 || len(st.History) != 4 {
+		t.Fatalf("after a grant: %+v, %v", st, err)
+	}
+
+	// While KMS cannot be reached the enclave does not vouch for its key.
+	w.kms.fail = errors.New("kms unreachable")
+	w.now = w.now.Add(policyInterval)
+	if _, err := r.Status(ctx); err == nil {
+		t.Fatal("reported a status without reading the key")
+	}
+	w.kms.fail = nil
+	w.now = w.now.Add(policyInterval)
+	if st, err = r.Status(ctx); err != nil || len(st.Gaps) != 1 {
+		t.Fatalf("after the outage: %+v, %v", st, err)
+	}
+	// The caller cannot change what the enclave remembers.
+	st.History[0].Policy = "changed"
+	if again, _ := r.Status(ctx); again.History[0].Policy == "changed" {
+		t.Fatal("the history is shared with the caller")
+	}
+}
+
+// A data key that was not wrapped under the root secret does not open.
+func TestRootRefusesOtherWrappings(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	r := w.boot(w.release(0xa1, time.Hour))
+	for _, wrapped := range [][]byte{nil, []byte("not a wrapped key"), []byte(wrapMagic), append([]byte(wrapMagic), make([]byte, 80)...)} {
+		if _, err := r.Unwrap(ctx, wrapped, keyCtx); err == nil {
+			t.Fatalf("unwrapped %q", wrapped)
+		}
 	}
 }
 
@@ -723,14 +761,23 @@ func TestRootRunWaitsForKMS(t *testing.T) {
 	w.kms.mu.Lock()
 	w.kms.fail = nil
 	w.kms.mu.Unlock()
-	select {
-	case <-done:
-	case <-ctx.Done():
-		t.Fatal("Run did not finish after KMS came back")
+	for r.ready(ctx) != nil {
+		if ctx.Err() != nil {
+			t.Fatal("Run did not load the root secret after KMS came back")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if _, err := r.NewDataKey(ctx, keyCtx); err != nil {
 		t.Fatal(err)
 	}
+	// Once loaded, Run keeps watching the key until its context ends.
+	select {
+	case <-done:
+		t.Fatal("Run stopped watching the key")
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancel()
+	<-done
 
 	// Run gives up when its context ends.
 	stuck := w.boot(&image{pcrs: attestationtest.PCRs(0)})
