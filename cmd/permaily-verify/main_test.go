@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"math/big"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/permaily-org/permaily/internal/smtpd"
 	"github.com/permaily-org/permaily/pkg/attestation"
+	"github.com/permaily-org/permaily/pkg/certwatch"
 )
 
 const (
@@ -296,5 +298,175 @@ func TestAttestedKey(t *testing.T) {
 	}
 	if attestedKey(results, "https://b") != nil || attestedKey(results, "https://c") != nil {
 		t.Fatal("a failed or missing host gave a key")
+	}
+}
+
+// certFixture serves CAA records and Certificate Transparency like the real
+// services, for a deployment whose records and certificates are all in order.
+type certFixture struct {
+	caa       map[string][]string
+	issuances []certwatch.Issuance
+	tls       *attestation.TLSStatus
+	deps      certDeps
+	hosts     []string
+	ctDown    bool
+}
+
+const acmeAccount = "https://acme-v02.api.letsencrypt.org/acme/acct/123"
+
+func newCertFixture(t *testing.T) *certFixture {
+	t.Helper()
+	created := time.Date(2026, 11, 10, 6, 0, 0, 0, time.UTC)
+	now := created.Add(20 * 24 * time.Hour)
+	pinned := `0 issue "letsencrypt.org; accounturi=` + acmeAccount + `; validationmethods=tls-alpn-01"`
+	issued := func(id, key string, notBefore time.Time, names ...string) certwatch.Issuance {
+		i := certwatch.Issuance{ID: id, DNSNames: names, PubkeySHA256: key, NotBefore: notBefore, NotAfter: notBefore.Add(90 * 24 * time.Hour)}
+		i.Issuer.FriendlyName = "Let's Encrypt"
+		return i
+	}
+	f := &certFixture{
+		hosts: []string{"app.permaily.test", "inbox.permaily.test"},
+		caa: map[string][]string{
+			"app.permaily.test":   {pinned},
+			"inbox.permaily.test": {pinned},
+			"permaily.test":       {`0 issue "amazon.com"`, `0 issuewild ";"`},
+		},
+		issuances: []certwatch.Issuance{
+			issued("1", "aa11", created.Add(-48*time.Hour), "*.permaily.test", "permaily.test"),
+			issued("2", "bb22", created.Add(-24*time.Hour), "app.permaily.test", "inbox.permaily.test"),
+			issued("3", "cafe", created.Add(time.Hour), "app.permaily.test", "inbox.permaily.test"),
+			issued("4", "dd44", created.Add(time.Hour), "permaily.test", "www.permaily.test"),
+		},
+		tls: &attestation.TLSStatus{SPKISHA256: "cafe", KeyCreatedAt: created, Sealed: true, ACMEAccount: acmeAccount},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/dns":
+			records, ok := f.caa[r.URL.Query().Get("name")]
+			if !ok {
+				http.Error(w, "resolver down", http.StatusBadGateway)
+				return
+			}
+			type answer struct {
+				Type int    `json:"type"`
+				Data string `json:"data"`
+			}
+			out := struct {
+				Status int
+				Answer []answer
+			}{}
+			for _, rec := range records {
+				out.Answer = append(out.Answer, answer{257, rec})
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		case "/ct":
+			if f.ctDown {
+				http.Error(w, "rate limited", http.StatusTooManyRequests)
+				return
+			}
+			if r.URL.Query().Get("after") != "" {
+				_, _ = w.Write([]byte("[]"))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(f.issuances)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	f.deps = certDeps{client: srv.Client(), resolver: srv.URL + "/dns", ctAPI: srv.URL + "/ct", now: now}
+	return f
+}
+
+func (f *certFixture) check() *certResult {
+	return checkCertificates(context.Background(), "permaily.test", f.hosts, f.tls, f.deps)
+}
+
+func TestCheckCertificates(t *testing.T) {
+	t.Run("only the enclave can get and holds certificates for its hosts", func(t *testing.T) {
+		r := newCertFixture(t).check()
+		if !r.OK || r.Own != 1 || len(r.Older) != 2 || len(r.Foreign) != 0 || r.Account != acmeAccount || r.Warning != "" {
+			t.Fatalf("result %+v", r)
+		}
+		if want := time.Date(2026, 11, 9, 6, 0, 0, 0, time.UTC).Add(90 * 24 * time.Hour); !r.OlderUntil.Equal(want) {
+			t.Fatalf("older certificates valid until %s, want %s", r.OlderUntil, want)
+		}
+	})
+	t.Run("the enclave's certificate is not in the logs yet", func(t *testing.T) {
+		f := newCertFixture(t)
+		f.issuances = f.issuances[:2]
+		if r := f.check(); !r.OK || r.Own != 0 || !strings.Contains(r.Warning, "does not list") {
+			t.Fatalf("result %+v", r)
+		}
+	})
+
+	after := time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)
+	rogue := func(names ...string) certwatch.Issuance {
+		i := certwatch.Issuance{ID: "9", DNSNames: names, PubkeySHA256: "0bad0bad0bad0bad0bad", NotBefore: after, NotAfter: after.Add(90 * 24 * time.Hour)}
+		i.Issuer.FriendlyName = "Some CA"
+		return i
+	}
+	fails := []struct {
+		name    string
+		breakIt func(f *certFixture)
+		want    string
+	}{
+		{"image does not report its TLS key", func(f *certFixture) { f.tls = nil }, "did not report its TLS key"},
+		{"key only in memory", func(f *certFixture) { f.tls.Sealed = false }, "not sealed"},
+		{"no ACME account yet", func(f *certFixture) { f.tls.ACMEAccount = "" }, "ACME account"},
+		{"any Let's Encrypt account may issue", func(f *certFixture) { f.caa["inbox.permaily.test"] = []string{`0 issue "letsencrypt.org"`} }, "CAA of inbox.permaily.test"},
+		{"another CA may issue", func(f *certFixture) {
+			f.caa["app.permaily.test"] = append(f.caa["app.permaily.test"], `0 issue "amazon.com"`)
+		}, "amazon.com"},
+		{"host without CAA records", func(f *certFixture) { f.caa["app.permaily.test"] = nil }, "no issue record"},
+		{"wildcards allowed for the domain", func(f *certFixture) { f.caa["permaily.test"] = []string{`0 issue "amazon.com"`} }, "wildcard"},
+		{"a CA may issue wildcards", func(f *certFixture) { f.caa["permaily.test"] = []string{`0 issuewild "amazon.com"`} }, "wildcard"},
+		{"resolver fails for a host", func(f *certFixture) { delete(f.caa, "app.permaily.test") }, "CAA of app.permaily.test"},
+		{"resolver fails for the domain", func(f *certFixture) { delete(f.caa, "permaily.test") }, "CAA of permaily.test"},
+		{"transparency service fails", func(f *certFixture) { f.ctDown = true }, "certificate transparency"},
+		{"new certificate with another key", func(f *certFixture) { f.issuances = append(f.issuances, rogue("app.permaily.test")) }, "Some CA for app.permaily.test, issued 2026-11-15, key 0bad0bad0bad0bad"},
+		{"new wildcard", func(f *certFixture) { f.issuances = append(f.issuances, rogue("*.permaily.test")) }, "*.permaily.test"},
+	}
+	for _, c := range fails {
+		t.Run(c.name, func(t *testing.T) {
+			f := newCertFixture(t)
+			c.breakIt(f)
+			if r := f.check(); r.OK || !strings.Contains(r.Error, c.want) {
+				t.Fatalf("result %+v, want an error containing %q", r, c.want)
+			}
+		})
+	}
+}
+
+func TestPrintCertificates(t *testing.T) {
+	out := func(c *certResult) string {
+		var b bytes.Buffer
+		printCertificates(&b, c)
+		return b.String()
+	}
+	if out(nil) != "" {
+		t.Fatal("output for a skipped check")
+	}
+	if s := out(&certResult{Error: "boom"}); !strings.HasPrefix(s, "FAIL  certificates outside the enclave") || !strings.Contains(s, "boom") {
+		t.Fatal(s)
+	}
+	created := time.Date(2026, 11, 10, 6, 0, 0, 0, time.UTC)
+	s := out(&certResult{OK: true, Account: acmeAccount, KeyCreatedAt: created, Own: 2, Older: make([]certwatch.Issuance, 4), OlderUntil: created.Add(24 * time.Hour), Warning: "lagging"})
+	for _, want := range []string{"PASS", acmeAccount, "tls-alpn-01", "2 valid certificate(s) with the attested key", "since 2026-11-10T06:00:00Z", "4 older certificate(s)", "until 2026-11-11", "warning: lagging"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("output %q lacks %q", s, want)
+		}
+	}
+	if s := out(&certResult{OK: true}); strings.Contains(s, "note:") || strings.Contains(s, "warning:") {
+		t.Fatal(s)
+	}
+}
+
+func TestReportedTLS(t *testing.T) {
+	tls := &attestation.TLSStatus{SPKISHA256: "ab"}
+	results := []hostResult{{URL: "https://app.x", OK: true, TLS: tls}, {URL: "https://api.x", TLS: tls}}
+	if reportedTLS(results, "https://app.x") != tls || reportedTLS(results, "https://api.x") != nil || reportedTLS(results, "https://mcp.x") != nil {
+		t.Fatal("only a verified host's report counts")
+	}
+	if got := hostsOf([]string{"https://app.x", "https://inbox.x"}); !slices.Equal(got, []string{"app.x", "inbox.x"}) {
+		t.Fatalf("hosts %v", got)
 	}
 }
