@@ -2,7 +2,7 @@
 # Set to the measured value rounded down; raise them as tests improve, never lower them.
 # Target for pkg/attestation, internal/envelope and internal/keys is 95.
 # internal/store is measured with the DynamoDB and S3 emulators (CI services).
-github.com/permaily-org/permaily/pkg/attestation 82
+github.com/permaily-org/permaily/pkg/attestation 85
 github.com/permaily-org/permaily/pkg/kmspolicy 99
 github.com/permaily-org/permaily/internal/router 100
 github.com/permaily-org/permaily/internal/httpapi 86
@@ -12,5 +12,5 @@ github.com/permaily-org/permaily/internal/envelope 91
 github.com/permaily-org/permaily/internal/keys 84
 github.com/permaily-org/permaily/internal/inbox 80
 github.com/permaily-org/permaily/internal/msgauth 86
-github.com/permaily-org/permaily/internal/smtpd 91
+github.com/permaily-org/permaily/internal/smtpd 92
 github.com/permaily-org/permaily/internal/store 86

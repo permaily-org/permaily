@@ -126,6 +126,24 @@ func TestDelivery(t *testing.T) {
 	}
 }
 
+// Without STARTTLS the parent instance could read the message, so the enclave
+// refuses it before any address or content is sent.
+func TestRefusesMailWithoutTLS(t *testing.T) {
+	in := &fakeInbox{}
+	addr, _ := start(t, in, 1<<20)
+	c, err := smtp.Dial(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Mail("sender@example.org"); code(err) != 530 {
+		t.Fatalf("MAIL without TLS: %v, want 530", err)
+	}
+	if err := send(c, "u@inbox.test", "Subject: hi\r\n\r\nhello\r\n"); err == nil || len(in.got) != 0 {
+		t.Fatalf("message accepted without TLS: %v, stored %q", err, in.got)
+	}
+}
+
 func TestRejections(t *testing.T) {
 	in := &fakeInbox{}
 	addr, pool := start(t, in, 100)

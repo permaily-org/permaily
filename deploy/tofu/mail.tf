@@ -9,9 +9,9 @@ variable "enclave_pcr0_allowlist" {
 }
 
 variable "mail_dns_enabled" {
-  description = "Publish the MX, MTA-STS and TLS-RPT records. Keep false until the enclave serves SMTP."
+  description = "Publish the MX, MTA-STS and TLS-RPT records. Set false only for a deployment that must not receive mail."
   type        = bool
-  default     = false
+  default     = true
 }
 
 locals {
@@ -184,7 +184,7 @@ resource "aws_iam_role_policy" "mail" {
   })
 }
 
-# --- DNS for the inbox (published once the enclave serves SMTP) ---
+# --- DNS for the inbox. permaily-verify checks the MX and the MTA-STS record. ---
 
 resource "cloudflare_dns_record" "inbox_mx" {
   count    = var.mail_dns_enabled ? 1 : 0
@@ -203,7 +203,7 @@ resource "cloudflare_dns_record" "mta_sts" {
   name    = "_mta-sts.inbox.${var.domain}"
   type    = "TXT"
   # Change the id whenever the policy served by the enclave changes.
-  content = "\"v=STSv1; id=20261109\""
+  content = "\"v=STSv1; id=20261110\""
   ttl     = 300
   comment = "MTA-STS for the enclave MX (managed by OpenTofu)"
 }
