@@ -73,6 +73,17 @@ To send a test message, connect to `inbox.permaily.com:25` with STARTTLS from a 
 
 To forward a Gmail account: in Gmail, Settings > Forwarding > Add a forwarding address (the mailbox address), read the confirmation code from `/v1/mailbox`, enter it in Gmail, then enable forwarding.
 
+## Look for certificates outside the enclave
+
+Until `permaily-verify` does it, list what Certificate Transparency has for the domain:
+
+```sh
+curl -s 'https://api.certspotter.com/v1/issuances?domain=permaily.com&include_subdomains=true&expand=dns_names&expand=issuer' |
+  jq -r '.[] | [.not_before[:10], .not_after[:10], .issuer.friendly_name, (.dns_names | join(",")), .pubkey_sha256[:16]] | @tsv'
+```
+
+Any certificate issued after 2026-11-10 that covers `app.`, `api.`, `mcp.`, `inbox.` or `mta-sts.inbox.` must have the `pubkey_sha256` that `permaily-verify` prints as the TLS key. A wildcard, or another key, is an incident (ADR 0012).
+
 ## Planned (F1+)
 
 - Rotate KMS keys (automatic yearly rotation is enabled).

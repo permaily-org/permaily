@@ -1,6 +1,8 @@
 # Deploy
 
-Everything lives in AWS account profile `permaily`, region `us-east-2`, plus DNS records in the Cloudflare zone `permaily.com`.
+Everything lives in AWS account profile `permaily`, region `us-east-2` (plus the public site's certificate, in `us-east-1`), and DNS records in the Cloudflare zone `permaily.com`.
+
+The Cloudflare zone must keep **Universal SSL disabled** (SSL/TLS > Edge Certificates) and every record DNS only: with it enabled Cloudflare issues `*.permaily.com` certificates, valid for the enclave hosts, with keys it holds (ADR 0012). It is a dashboard setting; the OpenTofu token cannot change it.
 
 ## Prerequisites
 
@@ -52,7 +54,8 @@ The site in `site/` is hosted on AWS Amplify, outside the enclave, managed by Op
 
 - The build is `amplify.yml` at the repo root (monorepo, app root `site`); security headers are set on the app (`custom_headers` in `site.tf`), because Amplify ignores them in `amplify.yml` for monorepo apps.
 - Repository access: the Amplify GitHub App for us-east-2 is installed on `permaily-org`, limited to this repository. Creating the app once needed a GitHub token with `admin:repo_hook` (`TF_VAR_github_access_token`); Amplify does not store it and later applies run without it.
-- DNS in Cloudflare (DNS only): CNAMEs for the apex, `www` and `beta`, the ACM validation record, and CAA `issue` and `issuewild` records for Amazon at the apex (Cloudflare publishes its own `issuewild` list there). The enclave subdomains keep their own CAA (`letsencrypt.org`).
+- Certificate: an ACM certificate for exactly `permaily.com`, `www.` and `beta.` (`aws_acm_certificate.site`, in `us-east-1`, which is where CloudFront takes certificates from), not Amplify's managed one, which also covers `*.permaily.com`.
+- DNS in Cloudflare (DNS only): CNAMEs for the apex, `www` and `beta`, the three ACM validation records, and CAA at the apex: `issue` for Amazon and `issuewild ";"`, so nobody can issue a wildcard for the domain. The enclave subdomains keep their own CAA (`letsencrypt.org`).
 - The footer shows the latest release's PCR0, read at build time. A release is published after `main` was built, so `release.yml` calls an Amplify webhook (`aws_amplify_webhook.release`, URL in the `AMPLIFY_RELEASE_WEBHOOK` secret) to rebuild `main` once `pcrs.json` exists.
 - `.github/workflows/site-smoke.yml` checks the live site after each push to `main`.
 
