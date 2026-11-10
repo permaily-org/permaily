@@ -174,15 +174,6 @@ resource "aws_iam_role_policy" "mail" {
   })
 }
 
-resource "aws_vpc_security_group_ingress_rule" "smtp" {
-  security_group_id = aws_security_group.enclave_host.id
-  description       = "SMTP to the enclave MX (STARTTLS terminates in the enclave)"
-  ip_protocol       = "tcp"
-  from_port         = 25
-  to_port           = 25
-  cidr_ipv4         = "0.0.0.0/0"
-}
-
 # --- DNS for the inbox (published once the enclave serves SMTP) ---
 
 resource "cloudflare_dns_record" "inbox_mx" {

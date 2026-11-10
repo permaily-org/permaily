@@ -17,8 +17,10 @@ import (
 	"github.com/mdlayher/vsock"
 )
 
-// HostCID is the vsock context ID of the parent EC2 instance.
-const HostCID = vsock.Host
+// HostCID is the vsock context ID of the parent EC2 instance. In Nitro
+// Enclaves the parent is always CID 3; the generic host CID (2, vsock.Host)
+// resets the connection.
+const HostCID = 3
 
 // Listen listens on a vsock port inside the enclave.
 func Listen(port uint32) (net.Listener, error) {
