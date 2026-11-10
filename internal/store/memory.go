@@ -15,6 +15,7 @@ type Memory struct {
 	mailboxes map[string]Mailbox
 	messages  map[string]map[string]Message
 	raw       map[string][]byte
+	records   map[string]Record
 }
 
 // NewMemory returns an empty Memory store.
@@ -24,7 +25,30 @@ func NewMemory() *Memory {
 		mailboxes: map[string]Mailbox{},
 		messages:  map[string]map[string]Message{},
 		raw:       map[string][]byte{},
+		records:   map[string]Record{},
 	}
+}
+
+// GetRecord implements Records.
+func (s *Memory) GetRecord(_ context.Context, name string) (*Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.records[name]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return &r, nil
+}
+
+// PutRecord implements Records.
+func (s *Memory) PutRecord(_ context.Context, r *Record, create bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.records[r.Name]; ok && create {
+		return ErrExists
+	}
+	s.records[r.Name] = *r
+	return nil
 }
 
 // GetMailbox implements Store.

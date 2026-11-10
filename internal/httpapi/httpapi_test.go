@@ -61,4 +61,12 @@ func TestAttestation(t *testing.T) {
 			t.Errorf("%s: status %d, want %d", name, got, tc.status)
 		}
 	}
+
+	// Before the TLS key is loaded there is nothing to bind a document to.
+	notReady := httpapi.Attestation(att, func() []byte { return nil })
+	rec = httptest.NewRecorder()
+	notReady.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/attestation?nonce="+hex.EncodeToString(nonce), nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no TLS key: status %d", rec.Code)
+	}
 }

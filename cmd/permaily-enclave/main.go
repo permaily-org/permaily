@@ -137,7 +137,7 @@ func run(cfg config, log *slog.Logger) error {
 
 	common := map[string]http.Handler{
 		"/attestation": httpapi.Attestation(p.attester, p.certs.UserData),
-		"/status":      httpapi.Status(p.kmsStatus),
+		"/status":      httpapi.Status(p.kmsStatus, p.certs.Status),
 		"/version":     httpapi.Version(),
 	}
 	srv := &http.Server{

@@ -17,6 +17,12 @@
 // MTA-STS policy (served with the attested key) must tell senders to require
 // TLS, the DNS must point senders at it, and the MX on port 25 must answer
 // STARTTLS with the attested key.
+//
+// And it looks for certificates the enclave does not hold: the CAA records
+// must let only the enclave's ACME account issue for its hosts and forbid
+// wildcards for the domain, and Certificate Transparency must show no
+// certificate for those hosts, issued since the enclave's key exists, with
+// another key.
 package main
 
 import (
@@ -38,6 +44,7 @@ import (
 	"time"
 
 	"github.com/permaily-org/permaily/pkg/attestation"
+	"github.com/permaily-org/permaily/pkg/certwatch"
 	"github.com/permaily-org/permaily/pkg/kmspolicy"
 )
 
@@ -59,6 +66,9 @@ type hostResult struct {
 	// KMS is nil when the check was skipped or the image has no KMS key.
 	KMS        *kmsResult `json:"kms,omitempty"`
 	KMSSkipped string     `json:"kms_skipped,omitempty"`
+	// TLS is what the enclave reports about its certificate key and ACME
+	// account; nil when /status was not read or the image is older.
+	TLS *attestation.TLSStatus `json:"tls,omitempty"`
 }
 
 // kmsResult is what the verified enclave reported about the key that wraps
@@ -85,6 +95,9 @@ func main() {
 		skipKMS  = flag.Bool("skip-kms-policy", false, "do not check the KMS key policy (releases before v0.3.0 do not report it)")
 		skipMail = flag.Bool("skip-mail", false, "do not check how mail gets in (MTA-STS, DNS and SMTP on port 25)")
 		needSMTP = flag.Bool("require-smtp", false, "fail when port 25 cannot be reached from this network, instead of warning")
+		skipCert = flag.Bool("skip-certificates", false, "do not check CAA records and Certificate Transparency (releases before v0.4.0 do not report their TLS key)")
+		resolver = flag.String("doh-resolver", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS resolver (JSON API) for CAA records")
+		ctAPI    = flag.String("ct-api", "https://api.certspotter.com/v1/issuances", "Certificate Transparency search API (Cert Spotter compatible)")
 	)
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "usage: permaily-verify (-pcrs FILE | -release TAG) [flags] [https://host ...]\n")
@@ -114,7 +127,7 @@ func main() {
 	allOK := true
 	for _, u := range urls {
 		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-		r := verify(ctx, client, u, expected, kmsOptions{skip: *skipKMS, alsoAllow: splitList(*kmsAllow), now: time.Now()})
+		r := verify(ctx, client, u, expected, kmsOptions{skip: *skipKMS, noStatus: *skipKMS && *skipCert, alsoAllow: splitList(*kmsAllow), now: time.Now()})
 		cancel()
 		allOK = allOK && r.OK
 		results = append(results, r)
@@ -133,13 +146,26 @@ func main() {
 		allOK = allOK && mail.OK
 	}
 
+	// Certificates are checked once per domain too, against the key and the
+	// ACME account the enclave reports on the app host.
+	var certs *certResult
+	if wholeDomain && !*skipCert {
+		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		certs = checkCertificates(ctx, *domain, hostsOf(urls), reportedTLS(results, "https://app."+*domain), certDeps{
+			client: &http.Client{Timeout: *timeout}, resolver: *resolver, ctAPI: *ctAPI, now: time.Now(),
+		})
+		cancel()
+		allOK = allOK && certs.OK
+	}
+
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(map[string]any{"ok": allOK, "expected_pcrs_source": source, "expected_pcrs": hexPCRs(expected), "hosts": results, "mail": mail})
+		_ = enc.Encode(map[string]any{"ok": allOK, "expected_pcrs_source": source, "expected_pcrs": hexPCRs(expected), "hosts": results, "mail": mail, "certificates": certs})
 	} else {
 		printHuman(os.Stdout, source, expected, results)
 		printMail(os.Stdout, mail)
+		printCertificates(os.Stdout, certs)
 	}
 	if !allOK {
 		os.Exit(1)
@@ -147,7 +173,8 @@ func main() {
 }
 
 type kmsOptions struct {
-	skip      bool
+	skip      bool // do not check the KMS key policy
+	noStatus  bool // do not read /status at all
 	alsoAllow []string
 	now       time.Time
 }
@@ -167,15 +194,34 @@ func verify(ctx context.Context, client *http.Client, url string, expected map[u
 		PCRs:      hexPCRs(pick(res.Document.PCRs, attestation.MeasuredPCRs)),
 	}
 	if kms.skip {
-		r.OK, r.KMSSkipped = true, "not checked (-skip-kms-policy)"
+		r.KMSSkipped = "not checked (-skip-kms-policy)"
+	}
+	if kms.noStatus {
+		r.OK = true
 		return r
 	}
 	st, err := attestation.FetchStatus(ctx, client, url, res.SPKIHash)
 	if err != nil {
-		r.Error = "KMS key policy: " + err.Error()
+		if kms.skip && strings.Contains(err.Error(), "HTTP 404") {
+			r.OK = true // an image from before /status existed
+			return r
+		}
+		r.Error = "status: " + err.Error()
 		if strings.Contains(err.Error(), "HTTP 404") {
 			r.Error += " (this image does not report it; releases before v0.3.0 need -skip-kms-policy)"
 		}
+		return r
+	}
+	if st.TLS != nil {
+		// The enclave must describe the key it is being verified with.
+		if st.TLS.SPKISHA256 != r.SPKIHash {
+			r.Error = "status: the enclave reports TLS key " + st.TLS.SPKISHA256 + ", not the attested one"
+			return r
+		}
+		r.TLS = st.TLS
+	}
+	if kms.skip {
+		r.OK = true
 		return r
 	}
 	if st.KMS == nil {
@@ -385,6 +431,139 @@ func mtaSTSRecordID(txt string) (string, bool) {
 	return "", false
 }
 
+// certResult is the outcome of looking for certificates outside the enclave.
+type certResult struct {
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`
+	Warning string `json:"warning,omitempty"`
+	// Account is the only ACME account the CAA records let issue for the hosts.
+	Account string `json:"acme_account,omitempty"`
+	// KeyCreatedAt is the time from which every certificate must carry the enclave's key.
+	KeyCreatedAt time.Time `json:"key_created_at,omitzero"`
+	// Own counts valid certificates with the enclave's key.
+	Own int `json:"with_attested_key"`
+	// Older are valid certificates with other keys, issued before the enclave's key existed.
+	Older      []certwatch.Issuance `json:"older_with_other_keys,omitempty"`
+	OlderUntil time.Time            `json:"older_valid_until,omitzero"`
+	// Foreign are valid certificates with other keys issued since: the failure.
+	Foreign []certwatch.Issuance `json:"with_other_keys,omitempty"`
+}
+
+// certDeps are the network services of the certificate check.
+type certDeps struct {
+	client   *http.Client
+	resolver string
+	ctAPI    string
+	now      time.Time
+}
+
+// reportedTLS returns what the enclave reported about its TLS key on url, or
+// nil when that host failed or reported nothing.
+func reportedTLS(results []hostResult, url string) *attestation.TLSStatus {
+	for _, r := range results {
+		if r.URL == url && r.OK {
+			return r.TLS
+		}
+	}
+	return nil
+}
+
+func hostsOf(urls []string) []string {
+	out := make([]string, 0, len(urls))
+	for _, u := range urls {
+		out = append(out, strings.TrimPrefix(u, "https://"))
+	}
+	return out
+}
+
+// caIssuer is the CAA name of the CA the enclave uses; method is the only
+// validation it can pass, since it answers TLS-ALPN-01 from inside the enclave.
+const (
+	caIssuer = "letsencrypt.org"
+	caMethod = "tls-alpn-01"
+)
+
+// checkCertificates looks for ways someone else could hold a certificate for
+// the enclave hosts: CAA records that let another account or CA issue, or a
+// wildcard for the domain, and certificates in Certificate Transparency with
+// another key issued since the enclave's key was created.
+func checkCertificates(ctx context.Context, domain string, hosts []string, tls *attestation.TLSStatus, deps certDeps) *certResult {
+	r := &certResult{}
+	fail := func(format string, args ...any) *certResult {
+		r.Error = fmt.Sprintf(format, args...)
+		return r
+	}
+	switch {
+	case tls == nil:
+		return fail("the enclave did not report its TLS key on https://app.%s (releases before v0.4.0 need -skip-certificates)", domain)
+	case !tls.Sealed:
+		return fail("the TLS key is not sealed: it changes at every restart, so no certificate history can be checked")
+	case tls.ACMEAccount == "":
+		return fail("the enclave has not registered an ACME account yet")
+	}
+	r.Account, r.KeyCreatedAt = tls.ACMEAccount, tls.KeyCreatedAt
+
+	for _, h := range hosts {
+		records, err := certwatch.LookupCAA(ctx, deps.client, deps.resolver, h)
+		if err != nil {
+			return fail("%v", err)
+		}
+		if err := certwatch.CheckPinned(records, caIssuer, tls.ACMEAccount, caMethod); err != nil {
+			return fail("CAA of %s %v", h, err)
+		}
+	}
+	records, err := certwatch.LookupCAA(ctx, deps.client, deps.resolver, domain)
+	if err != nil {
+		return fail("%v", err)
+	}
+	if err := certwatch.CheckNoWildcard(records); err != nil {
+		return fail("CAA of %s %v (a wildcard would be valid for the enclave hosts)", domain, err)
+	}
+
+	issuances, err := certwatch.Issuances(ctx, deps.client, deps.ctAPI, domain)
+	if err != nil {
+		return fail("%v", err)
+	}
+	rep := certwatch.Classify(issuances, hosts, tls.SPKISHA256, tls.KeyCreatedAt, deps.now)
+	r.Own, r.Older, r.Foreign = len(rep.Own), rep.Older, rep.Foreign
+	for _, o := range rep.Older {
+		if o.NotAfter.After(r.OlderUntil) {
+			r.OlderUntil = o.NotAfter
+		}
+	}
+	if len(rep.Foreign) > 0 {
+		var list []string
+		for _, f := range rep.Foreign {
+			list = append(list, fmt.Sprintf("%s for %s, issued %s, key %.16s", f.Issuer.FriendlyName, strings.Join(f.DNSNames, ","), f.NotBefore.Format("2006-01-02"), f.PubkeySHA256))
+		}
+		return fail("%d certificate(s) valid for the enclave hosts have a key the enclave does not hold: %s", len(rep.Foreign), strings.Join(list, "; "))
+	}
+	if r.Own == 0 {
+		r.Warning = "Certificate Transparency does not list a certificate with the attested key yet (it can lag, and test CAs do not log)"
+	}
+	r.OK = true
+	return r
+}
+
+func printCertificates(w io.Writer, c *certResult) {
+	if c == nil {
+		return
+	}
+	if !c.OK {
+		fmt.Fprintf(w, "FAIL  certificates outside the enclave\n      %s\n", c.Error)
+		return
+	}
+	fmt.Fprintln(w, "PASS  certificates outside the enclave")
+	fmt.Fprintf(w, "      CAA: only %s account %s with %s may issue for the hosts; no wildcards for the domain\n", caIssuer, c.Account, caMethod)
+	fmt.Fprintf(w, "      Certificate Transparency: %d valid certificate(s) with the attested key, none with another key since %s\n", c.Own, c.KeyCreatedAt.UTC().Format(time.RFC3339))
+	if len(c.Older) > 0 {
+		fmt.Fprintf(w, "      note: %d older certificate(s) with other keys, issued before the enclave's key existed, stay valid until %s\n", len(c.Older), c.OlderUntil.UTC().Format("2006-01-02"))
+	}
+	if c.Warning != "" {
+		fmt.Fprintf(w, "      warning: %s\n", c.Warning)
+	}
+}
+
 func printMail(w io.Writer, m *mailResult) {
 	if m == nil {
 		return
@@ -467,6 +646,9 @@ func printHuman(w io.Writer, source string, expected map[uint][]byte, results []
 		fmt.Fprintf(w, "      certificate names: %s\n", strings.Join(r.CertNames, ", "))
 		fmt.Fprintln(w, "      AWS Nitro signature and chain OK, nonce OK, not debug mode, PCR0-2 match")
 		printKMS(w, r, hex.EncodeToString(expected[0]))
+		if r.TLS != nil && r.TLS.Sealed {
+			fmt.Fprintf(w, "      TLS key created %s, kept sealed with KMS across restarts\n", r.TLS.KeyCreatedAt.UTC().Format(time.RFC3339))
+		}
 	}
 }
 

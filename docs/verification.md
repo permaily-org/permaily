@@ -7,7 +7,7 @@ git clone https://github.com/permaily-org/permaily && cd permaily
 scripts/verify.sh v0.1.0          # replace with the release you want to check
 ```
 
-The script needs Nix (with flakes) or Docker. It rebuilds the enclave image of that tag, prints the reproduced PCRs and runs `permaily-verify` against `app.`, `api.`, `mcp.`, `inbox.` and `mta-sts.inbox.permaily.com`, then checks how mail gets in. Exit code 0 means every check passed.
+The script needs Nix (with flakes) or Docker. It rebuilds the enclave image of that tag, prints the reproduced PCRs and runs `permaily-verify` against `app.`, `api.`, `mcp.`, `inbox.` and `mta-sts.inbox.permaily.com`, then checks how mail gets in and looks for certificates outside the enclave. Exit code 0 means every check passed.
 
 ## What is checked
 
@@ -47,6 +47,18 @@ Many home and office networks block outbound port 25. Then step 3 cannot run: th
 
 What this does not prove: a sender that does not implement MTA-STS may still deliver in clear to whoever answers on port 25 (the enclave itself refuses mail without TLS), and the DNS records can change after the check.
 
+## Certificates outside the enclave
+
+Everything above proves the connection the verifier makes. A browser cannot do that: it accepts any valid certificate for `app.permaily.com`. So the verifier also looks for certificates the enclave does not hold. When no URLs are given it checks:
+
+1. What the enclave reports in `/status`: the hash of its TLS key (it must be the attested one), when the key was created, that it is kept sealed with KMS, and the URL of its ACME account.
+2. CAA records, read through a DNS-over-HTTPS resolver: every enclave host must allow only Let's Encrypt, only that account and only `tls-alpn-01` validation, which is answered from inside the enclave; and the domain must forbid wildcards (`issuewild ";"`), because `*.permaily.com` would be valid for the hosts.
+3. Certificate Transparency, read through Cert Spotter's API: every unexpired certificate valid for an enclave host and issued since the enclave's key was created must carry that key. One with another key is a failure and is listed.
+
+Certificates with other keys issued before the enclave's key existed are counted as older, with the date the last one expires: four wildcards from before 2026-11-10 (ADR 0012) and the certificates of earlier releases, whose keys lived only in memory. Nothing can prove who holds an old key, so they are reported, not failed.
+
+What this does not prove: it trusts Cert Spotter's view of the logs, the DNS records can change after the check, and a certificate issued before the key's creation time is not judged. That time is printed; if it changes between two checks, the key was replaced. `-skip-certificates` skips these checks (releases before v0.4.0 do not report their TLS key); `-doh-resolver` and `-ct-api` choose the services.
+
 ## Reproducing the measurements yourself
 
 ```sh
@@ -83,6 +95,12 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
     "grants": 0,
     "grants_truncated": false,
     "fetched_at": "<when the enclave read it, RFC 3339>"
+  },
+  "tls": {
+    "spki_sha256": "<hex SHA-256 of the certificate key, as in the attestation>",
+    "key_created_at": "<when the key was generated, RFC 3339>",
+    "sealed": true,
+    "acme_account": "<URL of the ACME account that asks for certificates>"
   }
 }
 ```
@@ -101,4 +119,4 @@ go run ./cmd/permaily-verify -pcrs result-staging/pcrs.json -ca-file letsencrypt
 
 ## Planned
 
-`scripts/verify.sh` also compares the reproduced PCRs with the ones published in the release and checks their Sigstore build provenance with `gh attestation verify` when `gh` is installed. Still planned: Certificate Transparency monitoring for certificates not bound to an attested key.
+`scripts/verify.sh` also compares the reproduced PCRs with the ones published in the release and checks their Sigstore build provenance with `gh attestation verify` when `gh` is installed. Certificate Transparency is checked at verification time; nothing watches it continuously yet.

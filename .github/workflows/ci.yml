@@ -15,7 +15,7 @@ concurrency:
 jobs:
   go:
     runs-on: ubuntu-24.04
-    # Emulators for the store contract test against the AWS implementation.
+    # Emulators for the store contract test against the AWS implementation, and a test ACME CA.
     services:
       dynamodb:
         image: amazon/dynamodb-local@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86
@@ -23,9 +23,20 @@ jobs:
       s3:
         image: adobe/s3mock@sha256:ab01a6946750f451ca215a47e91030695b260e4003b8a5a6201d25029b8fca92
         ports: ["9090:9090"]
+      # Test ACME CA for internal/tlsacme. It accepts every challenge, so the
+      # test exercises registration, orders, finalization and renewal.
+      # 2.6.0: later versions omit the Location header golang.org/x/crypto/acme needs.
+      pebble:
+        image: ghcr.io/letsencrypt/pebble@sha256:18f6e3326ef8b307ce3e97a8c6f00613e318178450a684415e053507ed1f740f # 2.6.0
+        ports: ["14000:14000"]
+        env:
+          PEBBLE_VA_ALWAYS_VALID: "1"
+          PEBBLE_VA_NOSLEEP: "1"
+          PEBBLE_WFE_NONCEREJECT: "0"
     env:
       PERMAILY_TEST_DYNAMODB: http://localhost:8000
       PERMAILY_TEST_S3: http://localhost:9090
+      PERMAILY_TEST_ACME: https://localhost:14000/dir
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

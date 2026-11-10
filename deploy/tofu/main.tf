@@ -226,18 +226,30 @@ resource "cloudflare_dns_record" "enclave_a" {
   comment  = "Permaily enclave (managed by OpenTofu; must stay DNS-only)"
 }
 
-# Only Let's Encrypt may issue for the enclave names. A subdomain's own CAA
-# record takes precedence over the apex's (which also allows Amazon for Amplify).
+# Only the enclave's own ACME account may issue for the enclave names, and only
+# with TLS-ALPN-01, which is answered from inside the enclave. A subdomain's own
+# CAA record takes precedence over the apex's (which allows Amazon for the site).
+# permaily-verify checks these records against the account the enclave reports.
+locals {
+  enclave_caa_values = length(var.acme_account_uris) == 0 ? ["letsencrypt.org"] : [
+    for uri in var.acme_account_uris : "letsencrypt.org; accounturi=${uri}; validationmethods=tls-alpn-01"
+  ]
+  enclave_caa = {
+    for pair in setproduct(var.enclave_subdomains, range(length(local.enclave_caa_values))) :
+    "${pair[0]}/${pair[1]}" => { name = pair[0], value = local.enclave_caa_values[pair[1]] }
+  }
+}
+
 resource "cloudflare_dns_record" "enclave_caa" {
-  for_each = toset(var.enclave_subdomains)
+  for_each = local.enclave_caa
   zone_id  = data.cloudflare_zone.main.zone_id
-  name     = "${each.key}.${var.domain}"
+  name     = "${each.value.name}.${var.domain}"
   type     = "CAA"
   ttl      = 300
   data = {
     flags = 0
     tag   = "issue"
-    value = "letsencrypt.org"
+    value = each.value.value
   }
   comment = "Permaily enclave (managed by OpenTofu)"
 }

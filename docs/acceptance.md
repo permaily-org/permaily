@@ -42,7 +42,9 @@ Each criterion, the evidence that proves it, and its status: **covered** (a test
 | A key policy that lets another image, or anyone without an image, use the mail key fails verification | `TestAnalyzeProblems`, `TestCheckKMS`, `TestFetchStatus`; on the production instance a second allowed image and an added `kms:Decrypt` statement both failed `permaily-verify`, and creating a grant was denied | covered in production (2026-11-10, staging image; `scripts/verify.sh v0.3.0` passes with these checks) |
 | The enclave obtains a data key from KMS with its attestation; a non-allowlisted image is denied | v0.2.0 serves the mailbox with only its PCR0 allowlisted; the same image in debug mode gets `AccessDeniedException` on `GenerateDataKey` | covered in production (2026-11-10) |
 | The MX stores nothing that arrived without TLS, and a verifier can check that senders are told to require TLS and reach the attested key | `TestRefusesMailWithoutTLS`, `TestVerifySMTP`, `TestCheckMail`; on the production instance `MAIL` without TLS answered 530 and `permaily-verify -require-smtp` passed from a server | covered in production (2026-11-10, staging image; `scripts/verify.sh v0.3.0` passes with these checks) |
-| No unexpired certificate valid for an enclave host has a key outside the enclave | Certificate Transparency (Cert Spotter) on 2026-11-10: four `*.permaily.com` certificates held by Cloudflare and AWS, issued before the fix, expire by 2027-05-26; no new one can be issued (ADR 0012). No automated check yet | partial |
+| The TLS key and ACME account survive restarts and upgrades, sealed | `TestManagerSurvivesRestart`, `TestObtainAgainstACME` (Pebble); on the production instance the key, the certificate serial and the account were the same after two restarts | covered in production (2026-11-10, staging image) |
+| Only the enclave's ACME account can get certificates for its hosts, no wildcard can be issued, and a logged certificate with another key fails verification | `TestCheckCertificates`, `pkg/certwatch` tests; on the production instance the verifier failed until the CAA records named the account, then passed | covered in production (2026-11-10, staging image) |
+| No unexpired certificate valid for an enclave host has a key outside the enclave | The verifier reports the older ones: four `*.permaily.com` certificates held by Cloudflare and AWS and the certificates of earlier releases, the last expiring 2027-05-26 (ADR 0012) | partial until 2027-05-26 |
 | Gmail delivers forwarded mail to the MX over TLS (MTA-STS) | MX, MTA-STS and TLS-RPT records published (2026-11-10); needs a message from Gmail with the release image | missing |
 
 ## Public site
@@ -59,5 +61,5 @@ Each criterion, the evidence that proves it, and its status: **covered** (a test
 ## Follow-ups
 
 1. Send and forward mail from a Gmail account with the release image and record the Gmail row.
-2. Pebble-based tests for `internal/tlsacme`.
+2. After 2027-05-26, confirm the verifier reports no older certificates.
 3. Run the MITM check against production (a proxy with another certificate in front of the enclave).

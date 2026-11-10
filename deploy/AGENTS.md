@@ -5,6 +5,8 @@ OpenTofu for AWS (`us-east-2`, profile `permaily`; `us-east-1` only for the site
 ## Rules
 
 - Always pass `AWS_PROFILE=permaily`; there is no default profile.
+- The CAA records of the enclave hosts name the enclave's ACME account (`acme_account_uris`); `permaily-verify` compares them with what the enclave reports. Changing the TLS key or the CA needs the steps in docs/operations.md, or Let's Encrypt refuses every certificate.
+- After every `tofu apply`, `tofu plan` must show no changes: a half-applied CAA change stops certificate issuance.
 - No certificate for `*.permaily.com`, ever: it would be valid for the enclave hosts with a key outside the enclave (ADR 0012). Keep Cloudflare Universal SSL disabled, keep `issuewild ";"` at the apex, and give the site an exact-name certificate.
 - DNS records must stay `proxied = false`. `main.tf` owns the enclave subdomains; `site.tf` owns the public site (apex, `www`, `beta`) on Amplify. Do not touch other records (mail).
 - The parent instance is untrusted: no user data, secrets or business logic there. Only nitro-cli, `permaily-host` and SSM.

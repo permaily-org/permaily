@@ -27,10 +27,10 @@ sending MTA ─STARTTLS───▶ EIP:25  ─▶ permaily-host ─────
   | `inbox.permaily.com` | MX (SMTP on port 25 with STARTTLS) for forwarded mail (F1) |
   | `mta-sts.inbox.permaily.com` | MTA-STS policy for the MX (F1) |
 
-  Every host serves `/attestation?nonce=<hex>`, `/status` (the live KMS key policy) and `/version`.
+  Every host serves `/attestation?nonce=<hex>`, `/status` (the live KMS key policy and the TLS identity) and `/version`.
 - **Mail (F1)**: `internal/smtpd` (MX), `internal/inbox` (parse, Gmail confirmation codes, seal, serve), `internal/msgauth` (DKIM over DoH), `internal/keys` (KMS Recipient and CMS), `internal/envelope` (AES-256-GCM with key commitment), `internal/store` (DynamoDB and S3). Design: [plan.md](plan.md), ADR 0008 and 0009; data: [data.md](data.md).
 - **permaily-host** (`cmd/permaily-host`): forwards TCP 443 and 25 to vsock, exposes an allowlisted HTTP CONNECT proxy on vsock 8000 for the enclave's outbound TLS, and serves the instance role credentials on vsock 8002.
-- **permaily-verify** (`cmd/permaily-verify`, `pkg/attestation`, `pkg/kmspolicy`): verifier CLI and libraries. It checks the image, the TLS key and the policy of the KMS key that protects stored mail.
+- **permaily-verify** (`cmd/permaily-verify`, `pkg/attestation`, `pkg/kmspolicy`, `pkg/certwatch`): verifier CLI and libraries. It checks the image, the TLS key, the policy of the KMS key that protects stored mail, how mail gets in, and whether a certificate for the hosts exists outside the enclave.
 - **Build** (`flake.nix`, `nix/`): Nix with [monzo/aws-nitro-util](https://github.com/monzo/aws-nitro-util) and AWS's prebuilt kernel/init blobs; PCR0 is identical from x86_64 and arm64 builders.
 - **Infrastructure** (`deploy/`): OpenTofu; one Graviton `c7g.large` in `us-east-2` (enclave: 1 vCPU, 2 GiB), Cloudflare DNS (DNS only), S3 for deploy artifacts, SSM for administration; for mail, a KMS key, a DynamoDB table and an S3 bucket (`mail.tf`). The image's runtime configuration is `deploy/enclave.json`.
 
