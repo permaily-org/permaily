@@ -200,76 +200,63 @@ func TestRestartKeepsAccess(t *testing.T) {
 	}
 }
 
-// migrating is a key service that wraps keys a new way and still opens the
-// ones the old service wrapped, like keys.Root with a legacy service.
-type migrating struct {
-	old  keys.Service
-	fail error
+// noKeys is a key service that has no root secret yet, like an image that
+// waits for a handoff.
+type noKeys struct{}
+
+var errNoKeys = errors.New("waiting for the root secret")
+
+func (noKeys) NewDataKey(context.Context, map[string]string) (keys.DataKey, error) {
+	return keys.DataKey{}, errNoKeys
 }
 
-func (m migrating) NewDataKey(context.Context, map[string]string) (keys.DataKey, error) {
-	dk := bytes.Repeat([]byte{9}, 32)
-	return keys.DataKey{Plaintext: dk, Wrapped: append([]byte("NEW:"), dk...)}, nil
+func (noKeys) Unwrap(context.Context, []byte, map[string]string) ([]byte, error) {
+	return nil, errNoKeys
 }
 
-func (m migrating) Unwrap(ctx context.Context, wrapped []byte, c map[string]string) ([]byte, error) {
-	if dk, ok := bytes.CutPrefix(wrapped, []byte("NEW:")); ok {
-		return dk, nil
-	}
-	return m.old.Unwrap(ctx, wrapped, c)
-}
-
-func (m migrating) Rewrap(ctx context.Context, wrapped []byte, c map[string]string) ([]byte, bool, error) {
-	if m.fail != nil {
-		return nil, false, m.fail
-	}
-	if bytes.HasPrefix(wrapped, []byte("NEW:")) {
-		return wrapped, false, nil
-	}
-	dk, err := m.old.Unwrap(ctx, wrapped, c)
-	return append([]byte("NEW:"), dk...), err == nil, err
-}
-
-// The release that introduces the root secret finds a mailbox whose key an
-// older image wrapped with KMS, and moves it without losing mail.
-func TestMailboxKeyMovesUnderTheRootSecret(t *testing.T) {
-	f := newFixture(t)
+// Without its key the mailbox stores and serves nothing, and says why to the
+// caller instead of falling back to anything.
+func TestMailboxWithoutItsKey(t *testing.T) {
 	ctx := context.Background()
-	id, err := f.svc.Ingest(ctx, "sender@example.org", []string{address}, []byte("Subject: before\r\n\r\nold mail\r\n"))
-	if err != nil {
-		t.Fatal(err)
+
+	// A new mailbox: nothing is created without a data key.
+	mem := store.NewMemory()
+	fresh := New(Config{MailboxID: "test", Address: address}, mem, noKeys{}, nil, slog.New(slog.DiscardHandler))
+	if fresh.Address() != address {
+		t.Fatalf("address %q", fresh.Address())
 	}
-	before, err := f.store.GetMailbox(ctx, "test")
-	if err != nil {
-		t.Fatal(err)
+	if err := fresh.Ensure(ctx); !errors.Is(err, errNoKeys) {
+		t.Fatalf("ensure: %v", err)
+	}
+	if _, err := fresh.Ingest(ctx, "sender@example.org", []string{address}, []byte(plainMessage)); !errors.Is(err, errNoKeys) {
+		t.Fatalf("ingest: %v", err)
+	}
+	if _, err := mem.GetMailbox(ctx, "test"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a mailbox was stored: %v", err)
 	}
 
-	// A failure to move must not lose the old wrapping.
-	old := f.keys
-	f.keys = migrating{old: old, fail: errors.New("root secret unavailable")}
-	if _, err := f.newService().Get(ctx, id); err == nil {
-		t.Fatal("served mail without moving the key")
-	}
-	if mb, _ := f.store.GetMailbox(ctx, "test"); !bytes.Equal(mb.WrappedKey, before.WrappedKey) {
-		t.Fatal("the record changed after a failed move")
-	}
-
-	f.keys = migrating{old: old}
-	svc := f.newService()
-	if _, err := svc.Get(ctx, id); err != nil {
-		t.Fatalf("mail stored before the move: %v", err)
-	}
-	after, err := f.store.GetMailbox(ctx, "test")
+	// An existing mailbox whose key cannot be opened right now.
+	f := newFixture(t)
+	id, err := f.svc.Ingest(ctx, "sender@example.org", []string{address}, []byte(plainMessage))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.HasPrefix(after.WrappedKey, []byte("NEW:")) || !bytes.Equal(after.State, before.State) || after.RetentionDays != before.RetentionDays {
-		t.Fatalf("mailbox after the move: %q", after.WrappedKey)
+	f.keys = noKeys{}
+	locked := f.newService()
+	if _, err := locked.Get(ctx, id); !errors.Is(err, errNoKeys) {
+		t.Fatalf("get: %v", err)
 	}
-	// From here on the old key service is not needed.
-	f.keys = migrating{old: nil}
-	if _, err := f.newService().Get(ctx, id); err != nil {
-		t.Fatalf("after the move, without the old service: %v", err)
+	if _, err := locked.List(ctx, 10, ""); !errors.Is(err, errNoKeys) {
+		t.Fatalf("list: %v", err)
+	}
+	if _, err := locked.Mailbox(ctx); !errors.Is(err, errNoKeys) {
+		t.Fatalf("mailbox: %v", err)
+	}
+	if _, err := locked.Ingest(ctx, "sender@example.org", []string{address}, []byte(plainMessage)); !errors.Is(err, errNoKeys) {
+		t.Fatalf("ingest: %v", err)
+	}
+	if msgs, _ := f.store.ListMessages(ctx, "test", 10, ""); len(msgs) != 1 {
+		t.Fatalf("%d messages stored, want the one from before", len(msgs))
 	}
 }
 

@@ -41,31 +41,6 @@ Deploy the previous release again with `scripts/deploy.sh`. Its record and its k
 
 An old image can open the root secret for as long as its key exists. Once the new release has run long enough that no rollback is planned, remove the old release from `release_keys` and apply: its key is scheduled for deletion and gone after seven days. Never remove the release that is running.
 
-## Retire the old mail key
-
-Done in production on 2026-11-10 with v0.7.0. The steps stay here for a deployment that still runs an older release.
-
-Releases up to v0.6.0 wrapped data keys directly with `alias/permaily-mail`, whose policy named the allowed image. They cannot hand anything over, so the first release with a root secret is deployed the old way, and needs that key once, to move those data keys under the root secret it creates:
-
-```sh
-# deploy/tofu/production.auto.tfvars, before deploying that release:
-#   enclave_pcr0_allowlist = ["<its PCR0>"]            # in place of v0.6.0's, in one step
-#   release_keys           = { "<tag>" = "<its PCR0>" }
-tofu -chdir=deploy/tofu apply
-scripts/deploy.sh eif permaily-host-linux-arm64
-```
-
-Read the mailbox once (`/v1/mailbox`), and check in the journal `inbox: mailbox key moved under the root secret` and that the TLS key did not change. Then retire the key for good:
-
-```sh
-# deploy/tofu/production.auto.tfvars:
-#   enclave_pcr0_allowlist = []
-#   mail_key_retired       = true
-tofu -chdir=deploy/tofu apply
-```
-
-From then on nobody can use that key or change its policy, and `permaily-verify` shows it: `releases data keys to no image`, without the note about administrators. It cannot be undone, so run it only after the release has restarted once and still serves mail and the same certificate.
-
 ## A new deployment, or losing everything
 
 An image creates a root secret only when the table has neither a record `root-<its PCR0>` nor the record `deployment` (`pk=system`, `sk=record#deployment`). To start over on purpose, delete those items, the TLS identity (`sk=record#tls-<CA host>`) and the mailbox items; the next image creates a new root secret, a new TLS key and a new ACME account (see Certificates below), and everything stored before is unreadable. There is no way back.
@@ -166,7 +141,6 @@ tofu -chdir=deploy/tofu apply
 
 ## Planned (F1+)
 
-- Drop the old mail key from the image (`kms_key_arn` in `deploy/enclave.json`, the legacy code in `internal/keys`) in a later release, then schedule the deletion of the key.
 - Rotate KMS keys (automatic yearly rotation is enabled).
 - Restore from backup, with a dated drill.
 - Delete a user's data (crypto-shredding).

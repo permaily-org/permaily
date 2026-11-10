@@ -1,6 +1,6 @@
 # 0013 Authorize releases without editing the KMS key policy
 
-Status: Accepted. Option 1 implemented in v0.6.0, option 3 in the release after it (2026-11-10).
+Status: Accepted. Option 1 implemented in v0.6.0, option 3 in v0.7.0, and both together since v0.8.0: the key of each release cannot be changed from the account, and the enclave still watches it (2026-11-10).
 Date: 2026-11-10
 
 ## Context
@@ -55,11 +55,13 @@ The spike's code was `spikes/release-handoff/`. Its verifier is now [`pkg/proven
 - An enclave can verify offline that a `pcrs.json` comes from this repository's release workflow on `main`, with the bundle `release.yml` already publishes. Checked against the real release v0.5.0 and 23 forged variants.
 - `sigstore-go` is too heavy for the image (556 packages, gRPC, Go 1.27). A verifier of our own with the standard library is 323 lines, adds no package to the enclave, and agrees with `sigstore-go` on every case.
 - A KMS key policy can be made unchangeable: with the lockout check bypassed at creation, an account administrator was refused `PutKeyPolicy`, `CreateGrant` and every use of the key.
-- Open: what AWS Support can do with such a key, the move of the public log to Rekor v2, how the trust root is updated, and the handoff protocol itself.
+- Open then: what AWS Support can do with such a key (answered by AWS's documentation, see "Watching the key"), the move of the public log to Rekor v2, how the trust root is updated, and the handoff protocol itself (built, see below).
 
 ## Option 3 as built
 
-**Keys.** Every enclave image has its own KMS key, found by the alias `alias/permaily-release-<PCR0>`. Its policy (`deploy/tofu/releases.tf`) lets only that image decrypt, lets anyone in the account create a data key under it, lets the account read it and schedule its deletion, and gives nobody `kms:PutKeyPolicy`, `kms:CreateGrant` or anything else: KMS then refuses to change the policy, for the account's administrators too. `kmspolicy.Sealed` is that rule as code. The enclave applies it before it uses a key, and `permaily-verify` applies it to what the enclave reports; since the policy cannot change, a check made once stays true.
+**Keys.** Every enclave image has its own KMS key, found by the alias `alias/permaily-release-<PCR0>`. Its policy (`deploy/tofu/releases.tf`) lets only that image decrypt, lets anyone in the account create a data key under it, lets the account read it and schedule its deletion, and gives nobody `kms:PutKeyPolicy`, `kms:CreateGrant` or anything else: KMS then refuses to change the policy, for the account's administrators and its root user too. `kmspolicy.Sealed` is that rule as code. The enclave applies it before it uses a key, and `permaily-verify` applies it to what the enclave reports.
+
+**Watching the key.** AWS documents one way around: a key whose policy lets nobody manage it is "unmanageable", and the account's owner "must contact AWS Support to regain access" to it. So the policy cannot be changed from the account, but it can by AWS for the account's owner. The enclave therefore keeps reading the policy and the grants of its key once a minute and reports every state it has seen since it started, and the periods in which it could not read (option 1, applied to the new keys). The verifier requires a reading made just now and applies `kmspolicy.Sealed` to every state; the scheduled public verification does that around the clock. A change would need a support case with AWS, would show in every check from then on, and can only be hidden by restarting the enclave, which moves the start time that every check prints.
 
 **Root secret.** One random 32-byte secret per deployment, created inside an enclave. Every data key (mailbox, TLS identity) is wrapped under it (`keys.Root`), not by KMS. Outside enclaves it exists only in records `root-<PCR0>`, one per image: the secret sealed with a data key that KMS wrapped under that image's key, plus a Nitro attestation document from the enclave that wrote the record, whose user data binds the image, the key, the wrapped data key and the sealed secret.
 
@@ -69,7 +71,7 @@ The spike's code was `spikes/release-handoff/`. Its verifier is now [`pkg/proven
 
 **Starting.** An image without a record waits (`waiting for the running release to hand over the root secret`) when the deployment already has a root secret, and creates one only in an empty deployment. So starting the new image before the handoff is harmless. A store that fails is never taken for an empty one.
 
-**Moving from the old key.** The first release with a root secret still opens data keys wrapped by `alias/permaily-mail` and rewraps them under the root secret when it loads them. Once that is done the old key is retired: its policy is replaced by one that lets nobody use it or change it (`mail_key_retired`), which the verifier sees in the enclave's report. Copies of the old wrapped data keys are then useless for good.
+**Moving from the old key.** v0.7.0, the first release with a root secret, still opened the data keys that `alias/permaily-mail` had wrapped and rewrapped them under the root secret when it loaded them. The old key was then retired with a policy that lets nobody use it or change it from the account, and v0.8.0 dropped the code that read it; the key itself is scheduled for deletion. Copies of the old wrapped data keys are useless once it is gone.
 
 **Staging.** `.#eif-staging` is a deployment of its own: its own table and bucket, and a release policy that accepts only images built by `.github/workflows/staging-image.yml` on a `staging/` branch. A production image refuses to hand over to a staging image and the reverse, so tests never touch production's root secret.
 
@@ -80,7 +82,7 @@ What changed from the proposal: KMS wraps a transfer key instead of the root sec
 - **Sigstore's public instance and GitHub Actions.** Whoever can make Fulcio issue a certificate for this repository's release workflow, or make GitHub run that workflow on other code, can get an image accepted. The trust root (Fulcio's certificates, Rekor's key) is compiled into the image; a rotation needs a release signed under the old root first. GitHub's attestations are in Rekor v1; a move to Rekor v2 needs a second code path in `pkg/provenance` before the release workflow changes.
 - **`main` is public.** An image is accepted because it was built from a commit on `main`. Anyone can read that commit; nothing here judges it.
 - **Old releases.** An older image can still open its own record for as long as its key exists, so a flaw in an old release stays exploitable until its key is deleted (`release_keys` in OpenTofu; seven days after scheduling). The same record is what makes a rollback possible, so delete the key once the new release has run for a while.
-- **AWS.** KMS enforces the policy and the attestation check. What AWS Support can do with a key whose policy lets nobody manage it is not documented where we looked; asking AWS is still open.
+- **AWS.** KMS enforces the policy and the attestation check, and AWS Support can restore the account owner's access to a key that nobody can manage ([default key policy](https://docs.aws.amazon.com/kms/latest/developerguide/key-policy-default.html), "Reduces the risk of the KMS key becoming unmanageable"). That is why the enclave watches its key: the owners cannot change who may use it on their own or quietly, but with AWS they could, and it would show.
 - **TLS to KMS.** A data key that KMS returns is believed because the connection to KMS is authenticated with the public WebPKI, from inside the enclave. This was already so for the data keys of earlier releases.
 
 ## Risks

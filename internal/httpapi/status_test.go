@@ -21,46 +21,29 @@ func TestStatus(t *testing.T) {
 		h.ServeHTTP(rec, httptest.NewRequest(method, "/status", nil))
 		return rec
 	}
-	kms := attestation.KMSStatus{KeyARN: "arn:aws:kms:us-east-2:111122223333:key/k", Policy: `{"Statement":[]}`, FetchedAt: time.Date(2026, 11, 10, 4, 0, 0, 0, time.UTC)}
+	at := time.Date(2026, 11, 10, 4, 0, 0, 0, time.UTC)
 
-	t.Run("with a KMS key", func(t *testing.T) {
-		rec := call(httpapi.Status(httpapi.StatusSources{KMS: func(context.Context) (attestation.KMSStatus, error) { return kms, nil }}), http.MethodGet)
-		var got attestation.Status
-		if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
-			t.Fatalf("status %d: %s", rec.Code, rec.Body)
-		}
-		if got.KMS == nil || !reflect.DeepEqual(*got.KMS, kms) {
-			t.Fatalf("got %+v", got.KMS)
-		}
-	})
-
-	t.Run("without a KMS key", func(t *testing.T) {
+	t.Run("an image that stores nothing", func(t *testing.T) {
 		rec := call(httpapi.Status(httpapi.StatusSources{}), http.MethodGet)
-		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"kms":null`) {
-			t.Fatalf("status %d: %s", rec.Code, rec.Body)
-		}
-	})
-
-	t.Run("KMS unreachable", func(t *testing.T) {
-		// The enclave must not answer as if the key had no policy, and must not leak the cause.
-		rec := call(httpapi.Status(httpapi.StatusSources{KMS: func(context.Context) (attestation.KMSStatus, error) {
-			return attestation.KMSStatus{}, errors.New("secret detail arn:aws:iam::1:role/x")
-		}}), http.MethodGet)
-		if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "secret detail") {
+		if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" || strings.Contains(rec.Body.String(), `"root"`) || strings.Contains(rec.Body.String(), `"kms"`) {
 			t.Fatalf("status %d: %s", rec.Code, rec.Body)
 		}
 	})
 
 	t.Run("root secret", func(t *testing.T) {
-		root := &attestation.RootStatus{Image: "aa", KeyARN: "arn:aws:kms:us-east-2:1:key/k", Policy: "{}", Origin: attestation.RootHandedOver, From: &attestation.RootFrom{Image: "bb", Commit: "c1"}}
+		root := &attestation.RootStatus{
+			Image: "aa", KeyARN: "arn:aws:kms:us-east-2:1:key/k", Policy: "{}", Origin: attestation.RootHandedOver, From: &attestation.RootFrom{Image: "bb", Commit: "c1"},
+			CheckedAt: at, WatchedSince: at, History: []attestation.KMSObservation{{Policy: "{}", FirstSeen: at, LastSeen: at}},
+		}
 		rec := call(httpapi.Status(httpapi.StatusSources{Root: func(context.Context) (*attestation.RootStatus, error) { return root, nil }}), http.MethodGet)
 		var got attestation.Status
-		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || got.Root == nil || got.Root.KeyARN != root.KeyARN || got.Root.From == nil || got.Root.From.Image != "bb" {
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || got.Root == nil || got.Root.KeyARN != root.KeyARN || got.Root.From == nil || got.Root.From.Image != "bb" || !reflect.DeepEqual(got.Root.History, root.History) {
 			t.Fatalf("status %d: %s", rec.Code, rec.Body)
 		}
-		// An image that waits for its root secret does not answer as if it had none.
+		// An image that waits for its root secret, or cannot reach KMS, does not
+		// answer as if it had none, and does not leak the cause.
 		rec = call(httpapi.Status(httpapi.StatusSources{Root: func(context.Context) (*attestation.RootStatus, error) {
-			return nil, errors.New("secret detail")
+			return nil, errors.New("secret detail arn:aws:iam::1:role/x")
 		}}), http.MethodGet)
 		if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "secret detail") {
 			t.Fatalf("status %d: %s", rec.Code, rec.Body)
@@ -68,7 +51,7 @@ func TestStatus(t *testing.T) {
 	})
 
 	t.Run("TLS identity", func(t *testing.T) {
-		tls := &attestation.TLSStatus{SPKISHA256: "ab", KeyCreatedAt: kms.FetchedAt, Sealed: true, ACMEAccount: "https://ca.test/acct/1"}
+		tls := &attestation.TLSStatus{SPKISHA256: "ab", KeyCreatedAt: at, Sealed: true, ACMEAccount: "https://ca.test/acct/1"}
 		rec := call(httpapi.Status(httpapi.StatusSources{TLS: func() *attestation.TLSStatus { return tls }}), http.MethodGet)
 		var got attestation.Status
 		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || got.TLS == nil || *got.TLS != *tls {

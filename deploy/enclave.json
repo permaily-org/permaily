@@ -5,7 +5,6 @@
   "mailbox_token_sha256": "807b3fb58bb3bda476dc21545713b284eb7175be9e04c8e3995b93acf7f78b81",
   "mta_sts_mode": "enforce",
   "aws_region": "us-east-2",
-  "kms_key_arn": "arn:aws:kms:us-east-2:209207235911:key/fa1f8a93-55ba-489e-98d1-c19cab050363",
   "dynamodb_table": "permaily-mail",
   "s3_bucket": "permaily-mail-209207235911",
   "aws_account_id": "209207235911",
@@ -17,7 +16,6 @@
   "release_ref": "refs/heads/main",
   "release_ref_prefix": "",
   "staging": {
-    "kms_key_arn": "",
     "dynamodb_table": "permaily-mail-staging",
     "s3_bucket": "permaily-mail-staging-209207235911",
     "release_workflow": ".github/workflows/staging-image.yml",
