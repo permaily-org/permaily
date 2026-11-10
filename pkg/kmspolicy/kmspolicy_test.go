@@ -144,6 +144,78 @@ func TestAnalyzePolicyLock(t *testing.T) {
 	}
 }
 
+// The policy of a release key, as deploy/tofu creates it.
+func releasePolicy(image string) []byte {
+	return policy(
+		`{"Sid":"Read","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::111122223333:root"},"Action":["kms:DescribeKey","kms:GetKeyPolicy","kms:GetKeyRotationStatus","kms:ListGrants","kms:ListResourceTags","kms:ListKeyPolicies","kms:ScheduleKeyDeletion","kms:CancelKeyDeletion"],"Resource":"*"}`,
+		`{"Sid":"AnyoneEncrypts","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::111122223333:role/host"},"Action":"kms:Encrypt","Resource":"*"}`,
+		`{"Sid":"OnlyThisImageDecrypts","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::111122223333:role/host"},"Action":"kms:Decrypt","Resource":"*","Condition":`+pinned(image)+`}`,
+	)
+}
+
+var goodKey = kmspolicy.Key{Origin: "AWS_KMS", Spec: "SYMMETRIC_DEFAULT", Usage: "ENCRYPT_DECRYPT", Manager: "CUSTOMER", State: "Enabled"}
+
+func TestSealed(t *testing.T) {
+	rep, err := kmspolicy.Sealed(releasePolicy(imageA), 0, false, goodKey, strings.ToUpper(imageA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(rep.Images, []string{imageA}) {
+		t.Fatalf("report %+v", rep)
+	}
+	// A key scheduled for deletion is still sealed: it only stops working.
+	pending := goodKey
+	pending.State = "PendingDeletion"
+	if _, err := kmspolicy.Sealed(releasePolicy(imageA), 0, false, pending, imageA); err != nil {
+		t.Fatal(err)
+	}
+
+	key := func(change func(k *kmspolicy.Key)) kmspolicy.Key {
+		k := goodKey
+		change(&k)
+		return k
+	}
+	cases := []struct {
+		name      string
+		policy    []byte
+		grants    int
+		truncated bool
+		key       kmspolicy.Key
+		image     string
+		want      string
+	}{
+		{"the policy can be replaced", policy(admin, enclave(pinned(imageA))), 0, false, goodKey, imageA, "can be replaced"},
+		{"another image", releasePolicy(imageB), 0, false, goodKey, imageA, "not released to this image"},
+		{"two images", policy(enclave(pinned(imageA, imageB))), 0, false, goodKey, imageA, "released to other images: " + imageB},
+		{"no image at all", policy(`{"Effect":"Allow","Principal":"*","Action":"kms:DescribeKey","Resource":"*"}`), 0, false, goodKey, imageA, "no image can use the key"},
+		{"someone decrypts without an image", policy(enclave(pinned(imageA)), `{"Sid":"Door","Effect":"Allow","Principal":"*","Action":"kms:Decrypt","Resource":"*"}`), 0, false, goodKey, imageA, "statement Door"},
+		{"data keys without an image", policy(enclave(pinned(imageA)), `{"Sid":"Door","Effect":"Allow","Principal":"*","Action":["kms:Encrypt","kms:GenerateDataKey"],"Resource":"*"}`), 0, false, goodKey, imageA, "allows kms:GenerateDataKey without"},
+		{"grants can be created", policy(enclave(pinned(imageA)), `{"Sid":"Door","Effect":"Allow","Principal":"*","Action":"kms:CreateGrant","Resource":"*"}`), 0, false, goodKey, imageA, "kms:CreateGrant"},
+		{"a grant exists", releasePolicy(imageA), 1, false, goodKey, imageA, "1 grant(s)"},
+		{"more grants than were listed", releasePolicy(imageA), 0, true, goodKey, imageA, "grant(s)"},
+		{"imported key material", releasePolicy(imageA), 0, false, key(func(k *kmspolicy.Key) { k.Origin = "EXTERNAL" }), imageA, `origin "EXTERNAL"`},
+		{"an external key store", releasePolicy(imageA), 0, false, key(func(k *kmspolicy.Key) { k.Origin = "EXTERNAL_KEY_STORE" }), imageA, "outside KMS"},
+		{"a custom key store", releasePolicy(imageA), 0, false, key(func(k *kmspolicy.Key) { k.CustomKeyStore = "cks-1" }), imageA, "outside KMS"},
+		{"a multi-Region key", releasePolicy(imageA), 0, false, key(func(k *kmspolicy.Key) { k.MultiRegion = true }), imageA, "multi-Region"},
+		{"an asymmetric key", releasePolicy(imageA), 0, false, key(func(k *kmspolicy.Key) { k.Spec = "RSA_4096" }), imageA, "not a symmetric encryption key"},
+		{"a signing key", releasePolicy(imageA), 0, false, key(func(k *kmspolicy.Key) { k.Usage = "GENERATE_VERIFY_MAC" }), imageA, "not a symmetric encryption key"},
+		{"a key AWS manages", releasePolicy(imageA), 0, false, key(func(k *kmspolicy.Key) { k.Manager = "AWS" }), imageA, "not a symmetric encryption key"},
+		{"no facts about the key", releasePolicy(imageA), 0, false, kmspolicy.Key{}, imageA, "outside KMS"},
+		{"an image that is not a hash", releasePolicy(imageA), 0, false, goodKey, "abc", "not a SHA-384 hash"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := kmspolicy.Sealed(c.policy, c.grants, c.truncated, c.key, c.image)
+			if !errors.Is(err, kmspolicy.ErrNotSealed) || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want ErrNotSealed containing %q", err, c.want)
+			}
+		})
+	}
+	if _, err := kmspolicy.Sealed([]byte("nope"), 0, false, goodKey, imageA); !errors.Is(err, kmspolicy.ErrMalformed) {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestAnalyzeMalformed(t *testing.T) {
 	for name, p := range map[string]string{
 		"not json":              `nope`,

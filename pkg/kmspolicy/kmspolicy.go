@@ -1,10 +1,12 @@
 // Package kmspolicy reads an AWS KMS key policy and answers one question: which
 // enclave images can use the key, and can anyone use it without proving an image?
 //
-// Permaily's mailbox data keys are wrapped by a KMS key whose policy releases
-// them only to a Nitro Enclave that proves its image (PCR0) with an attestation
-// document. The enclave publishes the live policy over its attested TLS key, so
-// a verifier can run Analyze on it and compare the images with its own build.
+// Each release of Permaily has its own KMS key, which wraps the root secret
+// that everything stored is sealed under. Its policy lets only a Nitro Enclave
+// that proves that release's image (PCR0) decrypt, and gives nobody a way to
+// change that. The enclave checks it before trusting a key (Sealed), and
+// publishes the live policy over its attested TLS key so a verifier can run the
+// same check.
 //
 // The analysis is conservative: a statement it does not fully understand is
 // reported as a problem. Principals are ignored on purpose, because an IAM
@@ -60,6 +62,11 @@ var safeActions = []string{
 
 // Analyze parses a key policy document and reports who can use the key.
 func Analyze(policy []byte) (Report, error) {
+	return analyze(policy, safeActions)
+}
+
+// analyze is Analyze with the list of actions that need no image condition.
+func analyze(policy []byte, safe []string) (Report, error) {
 	var doc struct {
 		Version   string
 		ID        string `json:"Id"`
@@ -106,7 +113,7 @@ func Analyze(policy []byte) (Report, error) {
 		}
 		var unsafe []string
 		for _, a := range s.Action {
-			if !slices.Contains(safeActions, strings.ToLower(a)) {
+			if !slices.Contains(safe, strings.ToLower(a)) {
 				unsafe = append(unsafe, a)
 			}
 		}
@@ -126,6 +133,88 @@ func Analyze(policy []byte) (Report, error) {
 	slices.Sort(r.Images)
 	r.Images = slices.Compact(r.Images)
 	return r, nil
+}
+
+// Key is what KMS says about the key itself (DescribeKey).
+type Key struct {
+	// Origin is where the key material comes from. Only AWS_KMS material was
+	// generated inside KMS and never existed outside it.
+	Origin string `json:"origin"`
+	// Spec and Usage are the key type: SYMMETRIC_DEFAULT and ENCRYPT_DECRYPT.
+	Spec  string `json:"spec"`
+	Usage string `json:"usage"`
+	// Manager is CUSTOMER for a key the account created.
+	Manager string `json:"manager"`
+	// State is Enabled for a usable key, PendingDeletion once it is scheduled
+	// for deletion.
+	State string `json:"state"`
+	// MultiRegion keys have replicas in other regions, each with its own policy.
+	MultiRegion bool `json:"multi_region"`
+	// CustomKeyStore is set when the material lives in a key store the account
+	// operates.
+	CustomKeyStore string `json:"custom_key_store,omitempty"`
+}
+
+// problems lists what makes the key material reachable outside this key's policy.
+func (k Key) problems() []string {
+	var out []string
+	if k.Origin != "AWS_KMS" || k.CustomKeyStore != "" {
+		out = append(out, fmt.Sprintf("the key material has origin %q, so it exists or existed outside KMS", k.Origin))
+	}
+	if k.MultiRegion {
+		out = append(out, "the key is multi-Region: a replica has a policy of its own")
+	}
+	if k.Spec != "SYMMETRIC_DEFAULT" || k.Usage != "ENCRYPT_DECRYPT" || k.Manager != "CUSTOMER" {
+		out = append(out, fmt.Sprintf("the key is %s %s managed by %s, not a symmetric encryption key of the account", k.Spec, k.Usage, k.Manager))
+	}
+	return out
+}
+
+// ErrNotSealed means a key does not belong to one image alone, for good.
+var ErrNotSealed = errors.New("kmspolicy: the key is not sealed to the image")
+
+// Sealed checks that a key can only ever be used by the enclave image whose
+// PCR0 is image (hex): the policy releases it to that image and no other, lets
+// nobody use it without proving an image, gives nobody a way to change the
+// policy, no grant exists, and the key material never left KMS. With no way to
+// change the policy or add a grant, what is true when this is checked stays true.
+//
+// kms:Encrypt needs no image here, unlike in Analyze: the running enclave must
+// encrypt the root secret to the key of the next release, and what the key
+// protects is accepted for the attestation document stored with it, never for
+// opening under the key. A ciphertext planted by the operator is refused.
+//
+// grants and truncated are the number of grants on the key and whether the
+// list was cut.
+func Sealed(policy []byte, grants int, truncated bool, key Key, image string) (Report, error) {
+	rep, err := analyze(policy, append([]string{"kms:encrypt"}, safeActions...))
+	if err != nil {
+		return rep, err
+	}
+	problems := slices.Clone(rep.Problems)
+	if rep.AdminCanChangePolicy {
+		problems = append(problems, "the policy can be replaced (kms:PutKeyPolicy)")
+	}
+	if grants > 0 || truncated {
+		problems = append(problems, fmt.Sprintf("the key has %d grant(s); grants give access outside the policy", grants))
+	}
+	problems = append(problems, key.problems()...)
+	image = strings.ToLower(image)
+	switch {
+	case !isImageHash(image):
+		problems = append(problems, "the image to check is not a SHA-384 hash")
+	case len(rep.Images) == 0:
+		problems = append(problems, "no image can use the key")
+	case !slices.Equal(rep.Images, []string{image}):
+		problems = append(problems, "the key is released to other images: "+strings.Join(slices.DeleteFunc(slices.Clone(rep.Images), func(i string) bool { return i == image }), ", "))
+		if !slices.Contains(rep.Images, image) {
+			problems = append(problems, "the key is not released to this image")
+		}
+	}
+	if len(problems) > 0 {
+		return rep, fmt.Errorf("%w: %s", ErrNotSealed, strings.Join(problems, "; "))
+	}
+	return rep, nil
 }
 
 // pinnedImages returns the image hashes a statement's condition requires, or
