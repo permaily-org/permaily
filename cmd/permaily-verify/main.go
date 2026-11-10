@@ -12,6 +12,11 @@
 // Then it reads /status over that same TLS key and checks the policy of the KMS
 // key that protects stored mail: data keys must be released only to the image
 // being verified, with no grants and no statement that skips the image check.
+//
+// Last, for the default hosts of a domain, it checks how mail gets in: the
+// MTA-STS policy (served with the attested key) must tell senders to require
+// TLS, the DNS must point senders at it, and the MX on port 25 must answer
+// STARTTLS with the attested key.
 package main
 
 import (
@@ -25,6 +30,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"slices"
@@ -71,12 +77,14 @@ func main() {
 	var (
 		pcrsFile = flag.String("pcrs", "", "pcrs.json from your own reproducible build (recommended)")
 		release  = flag.String("release", "", "use pcrs.json published in this GitHub release instead of a local build (weaker: trusts CI)")
-		domain   = flag.String("domain", "permaily.com", "parent domain; checks app., api., mcp. and inbox. when no URLs are given")
+		domain   = flag.String("domain", "permaily.com", "parent domain; checks app., api., mcp., inbox. and mta-sts.inbox., and the mail transport, when no URLs are given")
 		asJSON   = flag.Bool("json", false, "print machine-readable JSON")
 		timeout  = flag.Duration("timeout", 30*time.Second, "per-host timeout")
 		caFile   = flag.String("ca-file", "", "extra PEM root CAs to trust for TLS (e.g. Let's Encrypt staging roots for test deployments)")
 		kmsAllow = flag.String("kms-also-allow", "", "comma-separated PCR0 values of other images you accept in the KMS key policy (e.g. the previous release during an upgrade)")
 		skipKMS  = flag.Bool("skip-kms-policy", false, "do not check the KMS key policy (releases before v0.3.0 do not report it)")
+		skipMail = flag.Bool("skip-mail", false, "do not check how mail gets in (MTA-STS, DNS and SMTP on port 25)")
+		needSMTP = flag.Bool("require-smtp", false, "fail when port 25 cannot be reached from this network, instead of warning")
 	)
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "usage: permaily-verify (-pcrs FILE | -release TAG) [flags] [https://host ...]\n")
@@ -90,13 +98,14 @@ func main() {
 		os.Exit(2)
 	}
 	urls := flag.Args()
-	if len(urls) == 0 {
-		for _, sub := range []string{"app", "api", "mcp", "inbox"} {
+	wholeDomain := len(urls) == 0
+	if wholeDomain {
+		for _, sub := range []string{"app", "api", "mcp", "inbox", "mta-sts.inbox"} {
 			urls = append(urls, "https://"+sub+"."+*domain)
 		}
 	}
 
-	client, err := httpClient(*caFile, *timeout)
+	client, roots, err := httpClient(*caFile, *timeout)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(2)
@@ -111,12 +120,26 @@ func main() {
 		results = append(results, r)
 	}
 
+	// Mail is checked once per domain, with the key attested on the inbox host.
+	var mail *mailResult
+	if wholeDomain && !*skipMail {
+		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		mail = checkMail(ctx, client, "inbox."+*domain, attestedKey(results, "https://inbox."+*domain), mailDeps{
+			lookupTXT: net.DefaultResolver.LookupTXT,
+			lookupMX:  net.DefaultResolver.LookupMX,
+			roots:     roots,
+		}, *needSMTP)
+		cancel()
+		allOK = allOK && mail.OK
+	}
+
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(map[string]any{"ok": allOK, "expected_pcrs_source": source, "expected_pcrs": hexPCRs(expected), "hosts": results})
+		_ = enc.Encode(map[string]any{"ok": allOK, "expected_pcrs_source": source, "expected_pcrs": hexPCRs(expected), "hosts": results, "mail": mail})
 	} else {
 		printHuman(os.Stdout, source, expected, results)
+		printMail(os.Stdout, mail)
 	}
 	if !allOK {
 		os.Exit(1)
@@ -214,24 +237,169 @@ func splitList(s string) []string {
 	return out
 }
 
-func httpClient(caFile string, timeout time.Duration) (*http.Client, error) {
+// httpClient returns the client and the root CAs it trusts (nil means the
+// system roots), which the SMTP check uses too.
+func httpClient(caFile string, timeout time.Duration) (*http.Client, *x509.CertPool, error) {
 	if caFile == "" {
-		return &http.Client{Timeout: timeout}, nil
+		return &http.Client{Timeout: timeout}, nil, nil
 	}
 	pem, err := os.ReadFile(caFile) //nolint:gosec // path given by the user on purpose
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	pool, err := x509.SystemCertPool()
 	if err != nil {
 		pool = x509.NewCertPool()
 	}
 	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("%s: no PEM certificates", caFile)
+		return nil, nil, fmt.Errorf("%s: no PEM certificates", caFile)
 	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig = &tls.Config{RootCAs: pool}
-	return &http.Client{Timeout: timeout, Transport: tr}, nil
+	return &http.Client{Timeout: timeout, Transport: tr}, pool, nil
+}
+
+// minMTASTSMaxAge is the shortest policy lifetime accepted: with less, a sender
+// forgets the policy quickly and whoever controls DNS can switch it off.
+const minMTASTSMaxAge = 86400
+
+// mailResult is the outcome of checking how mail reaches the enclave.
+type mailResult struct {
+	MX      string `json:"mx"`
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`
+	Warning string `json:"warning,omitempty"`
+	// Mode, MaxAge and PolicyID describe the MTA-STS policy senders will apply.
+	Mode     string `json:"mta_sts_mode,omitempty"`
+	MaxAge   int    `json:"mta_sts_max_age,omitempty"`
+	PolicyID string `json:"mta_sts_id,omitempty"`
+	// SMTPChecked is true when port 25 answered STARTTLS with the attested key.
+	SMTPChecked bool `json:"smtp_checked"`
+}
+
+// mailDeps are the network operations of the mail check, replaceable in tests.
+type mailDeps struct {
+	lookupTXT func(ctx context.Context, name string) ([]string, error)
+	lookupMX  func(ctx context.Context, name string) ([]*net.MX, error)
+	dial      func(ctx context.Context, network, addr string) (net.Conn, error)
+	roots     *x509.CertPool
+	policyURL string // default https://mta-sts.<mx>
+	smtpAddr  string // default <mx>:25
+}
+
+// attestedKey returns the TLS key hash attested on url, or nil when that host failed.
+func attestedKey(results []hostResult, url string) []byte {
+	for _, r := range results {
+		if r.URL == url && r.OK {
+			key, _ := hex.DecodeString(r.SPKIHash)
+			return key
+		}
+	}
+	return nil
+}
+
+// checkMail verifies that a sender is told to require TLS to the enclave and
+// gets it: the MTA-STS policy comes from the enclave (attested key spki) and
+// says enforce for this MX only, DNS publishes the policy and the MX, and
+// port 25 answers STARTTLS with the attested key.
+func checkMail(ctx context.Context, client *http.Client, mx string, spki []byte, deps mailDeps, requireSMTP bool) *mailResult {
+	r := &mailResult{MX: mx}
+	fail := func(format string, args ...any) *mailResult {
+		r.Error = fmt.Sprintf(format, args...)
+		return r
+	}
+	if len(spki) == 0 {
+		return fail("https://%s was not verified, so there is no attested key to compare with", mx)
+	}
+	policyURL := deps.policyURL
+	if policyURL == "" {
+		policyURL = "https://mta-sts." + mx
+	}
+	policy, err := attestation.FetchMTASTS(ctx, client, policyURL, spki)
+	if err != nil {
+		return fail("%v", err)
+	}
+	r.Mode, r.MaxAge = policy.Mode, policy.MaxAge
+	if policy.Mode != "enforce" {
+		return fail("MTA-STS mode is %q, not enforce: senders may deliver without TLS", policy.Mode)
+	}
+	if !slices.Equal(policy.MX, []string{mx}) {
+		return fail("MTA-STS policy allows MX %v, expected only %s", policy.MX, mx)
+	}
+	if policy.MaxAge < minMTASTSMaxAge {
+		return fail("MTA-STS max_age is %d seconds, less than %d", policy.MaxAge, minMTASTSMaxAge)
+	}
+
+	txts, err := deps.lookupTXT(ctx, "_mta-sts."+mx)
+	if err != nil {
+		return fail("DNS _mta-sts.%s: %v (without this record senders do not apply the policy)", mx, err)
+	}
+	var ids []string
+	for _, txt := range txts {
+		if id, ok := mtaSTSRecordID(txt); ok {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) != 1 {
+		return fail("DNS _mta-sts.%s has %d MTA-STS records, expected one", mx, len(ids))
+	}
+	r.PolicyID = ids[0]
+
+	mxs, err := deps.lookupMX(ctx, mx)
+	if err != nil || len(mxs) == 0 {
+		return fail("DNS MX of %s: no records (%v)", mx, err)
+	}
+	for _, m := range mxs {
+		if host := strings.ToLower(strings.TrimSuffix(m.Host, ".")); host != mx {
+			return fail("DNS MX of %s points to %s, which the policy does not allow", mx, host)
+		}
+	}
+
+	addr := deps.smtpAddr
+	if addr == "" {
+		addr = net.JoinHostPort(mx, "25")
+	}
+	switch err := attestation.VerifySMTP(ctx, deps.dial, addr, mx, deps.roots, spki); {
+	case err == nil:
+		r.SMTPChecked = true
+	case errors.Is(err, attestation.ErrSMTPUnreachable) && !requireSMTP:
+		r.Warning = "port 25 could not be reached from this network (many providers block it), so the SMTP certificate was not checked; run from a server, or pass -require-smtp to fail instead"
+	default:
+		return fail("SMTP %s: %v", addr, err)
+	}
+	r.OK = true
+	return r
+}
+
+// mtaSTSRecordID returns the id of an MTA-STS TXT record ("v=STSv1; id=...").
+func mtaSTSRecordID(txt string) (string, bool) {
+	fields := strings.Split(txt, ";")
+	if strings.TrimSpace(fields[0]) != "v=STSv1" {
+		return "", false
+	}
+	for _, f := range fields[1:] {
+		if id, ok := strings.CutPrefix(strings.TrimSpace(f), "id="); ok && id != "" {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+func printMail(w io.Writer, m *mailResult) {
+	if m == nil {
+		return
+	}
+	if !m.OK {
+		fmt.Fprintf(w, "FAIL  mail to %s\n      %s\n", m.MX, m.Error)
+		return
+	}
+	fmt.Fprintf(w, "PASS  mail to %s\n", m.MX)
+	fmt.Fprintf(w, "      MTA-STS policy served with the attested key: mode %s, only this MX, max_age %d (DNS record id %s)\n", m.Mode, m.MaxAge, m.PolicyID)
+	if m.SMTPChecked {
+		fmt.Fprintln(w, "      port 25 answers STARTTLS with the attested TLS key")
+	} else {
+		fmt.Fprintf(w, "      warning: %s\n", m.Warning)
+	}
 }
 
 func loadPCRs(file, release string) (map[uint][]byte, string, error) {

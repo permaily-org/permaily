@@ -12,4 +12,5 @@ OpenTofu for AWS (`us-east-2`, profile `permaily`) and Cloudflare DNS, plus the 
 - `tofu destroy` removes everything except the mail table (deletion protection) and the mail bucket (not empty); never destroy mail data by accident.
 - `mail.tf`: `permaily-verify` reads the live key policy and fails on any statement it does not consider safe. Before adding an action or a statement to the key policy, add it to `pkg/kmspolicy` with a test. Never create grants on the key.
 - `mail.tf`: the KMS key policy gives data keys only to allowlisted PCR0s; add a release's PCR0 to `enclave_pcr0_allowlist` before deploying it (docs/operations.md).
+- `permaily-verify` checks the MX and `_mta-sts` records. When the MTA-STS policy changes (`mta_sts_mode` in `../enclave.json`), change the `id` of the `_mta-sts` record in `mail.tf` in the same change.
 - `../enclave.json` is the enclave's runtime configuration, compiled into the image (PCR0). Changing it changes the image.

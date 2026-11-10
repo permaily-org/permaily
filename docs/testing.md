@@ -30,7 +30,7 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 
 | Package | Threshold | Measured 2026-11-10 |
 |---|---|---|
-| `pkg/attestation` | 82 (target 95) | 82.4 |
+| `pkg/attestation` | 85 (target 95) | 85.5 |
 | `pkg/kmspolicy` | 99 | 99.0 |
 | `internal/router` | 100 | 100.0 |
 | `internal/httpapi` | 86 | 86.6 |
@@ -40,7 +40,7 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `internal/keys` | 84 (target 95) | 84.0 |
 | `internal/inbox` | 80 | 80.4 |
 | `internal/msgauth` | 86 | 86.0 |
-| `internal/smtpd` | 91 | 91.7 |
+| `internal/smtpd` | 92 | 92.5 |
 | `internal/store` | 86 (with emulators) | 86.7 |
 
 Mutation testing of `pkg/attestation` (gremlins 0.6.0, 2026-11-09): efficacy 100% (29 killed, 0 lived, 22 timed out), mutator coverage 55.77%. Thresholds: efficacy 90, mutator coverage 55.

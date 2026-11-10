@@ -41,7 +41,8 @@ Each criterion, the evidence that proves it, and its status: **covered** (a test
 | Account administrators cannot obtain data keys from the mail KMS key | `aws kms generate-data-key` with the admin role returns AccessDenied | covered in production (2026-11-09) |
 | A key policy that lets another image, or anyone without an image, use the mail key fails verification | `TestAnalyzeProblems`, `TestCheckKMS`, `TestFetchStatus`; on the production instance a second allowed image and an added `kms:Decrypt` statement both failed `permaily-verify`, and creating a grant was denied | covered in production (2026-11-10, staging image) |
 | The enclave obtains a data key from KMS with its attestation; a non-allowlisted image is denied | v0.2.0 serves the mailbox with only its PCR0 allowlisted; the same image in debug mode gets `AccessDeniedException` on `GenerateDataKey` | covered in production (2026-11-10) |
-| Gmail delivers forwarded mail to the MX over TLS (MTA-STS) | needs the MX, MTA-STS and TLS-RPT records (`mail_dns_enabled`) and a forwarded Gmail account | missing |
+| The MX stores nothing that arrived without TLS, and a verifier can check that senders are told to require TLS and reach the attested key | `TestRefusesMailWithoutTLS`, `TestVerifySMTP`, `TestCheckMail`; on the production instance `MAIL` without TLS answered 530 and `permaily-verify -require-smtp` passed from a server | covered in production (2026-11-10, staging image) |
+| Gmail delivers forwarded mail to the MX over TLS (MTA-STS) | MX, MTA-STS and TLS-RPT records published (2026-11-10); needs a message from Gmail with the release image | missing |
 
 ## Public site
 
@@ -56,6 +57,6 @@ Each criterion, the evidence that proves it, and its status: **covered** (a test
 
 ## Follow-ups
 
-1. Publish the mail DNS (`mail_dns_enabled = true`), forward a Gmail account and record the Gmail row; then switch MTA-STS to `enforce`.
+1. Send and forward mail from a Gmail account with the release image and record the Gmail row.
 2. Pebble-based tests for `internal/tlsacme`.
 3. Run the MITM check against production (a proxy with another certificate in front of the enclave).

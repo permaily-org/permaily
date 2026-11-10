@@ -49,14 +49,14 @@ func TestFetchStatus(t *testing.T) {
 		other.StartTLS()
 		defer other.Close()
 		_, err := attestation.FetchStatus(context.Background(), clientTrusting(cert.Leaf), other.URL, bound)
-		if !errors.Is(err, attestation.ErrStatusNotBound) {
-			t.Fatalf("got %v, want ErrStatusNotBound", err)
+		if !errors.Is(err, attestation.ErrNotBound) {
+			t.Fatalf("got %v, want ErrNotBound", err)
 		}
 	})
 
 	t.Run("no attested key given", func(t *testing.T) {
-		if _, err := attestation.FetchStatus(context.Background(), client, srv.URL, nil); !errors.Is(err, attestation.ErrStatusNotBound) {
-			t.Fatalf("got %v, want ErrStatusNotBound", err)
+		if _, err := attestation.FetchStatus(context.Background(), client, srv.URL, nil); !errors.Is(err, attestation.ErrNotBound) {
+			t.Fatalf("got %v, want ErrNotBound", err)
 		}
 	})
 
@@ -85,7 +85,7 @@ func TestFetchStatus(t *testing.T) {
 			http.Error(w, "KMS key policy unavailable", http.StatusServiceUnavailable)
 		}
 		_, err := attestation.FetchStatus(context.Background(), client, srv.URL, bound)
-		if err == nil || errors.Is(err, attestation.ErrStatusNotBound) {
+		if err == nil || errors.Is(err, attestation.ErrNotBound) {
 			t.Fatalf("got %v, want an HTTP error", err)
 		}
 	})

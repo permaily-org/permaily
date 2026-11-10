@@ -12,7 +12,7 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 | `webui` | embeds the SPA build (`dist/` is copied in at build time) |
 | `hostproxy` | TCP to vsock forwarding and allowlisted CONNECT proxy (host side) |
 | `buildinfo` | commit set via ldflags |
-| `smtpd` | MX on port 25 (vsock), STARTTLS with the enclave certificate (F1) |
+| `smtpd` | MX on port 25 (vsock), STARTTLS with the enclave certificate, refuses mail without TLS (F1) |
 | `inbox` | mailbox: parse, Gmail confirmation codes, seal, store, serve (F1) |
 | `msgauth` | DKIM verification with DNS-over-HTTPS (F1) |
 | `keys` | data keys from KMS with attestation (Recipient, CMS), reader of the key's policy and grants for `/status`, local keys for dev (F1) |

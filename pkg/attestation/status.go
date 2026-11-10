@@ -12,9 +12,9 @@ import (
 	"time"
 )
 
-// ErrStatusNotBound means /status came over a TLS connection whose key is not
-// the one the attestation document vouches for.
-var ErrStatusNotBound = errors.New("attestation: status not served with the attested TLS key")
+// ErrNotBound means an answer came over a TLS connection whose key is not the
+// one the attestation document vouches for, so it may not come from the enclave.
+var ErrNotBound = errors.New("attestation: not served with the attested TLS key")
 
 // Status is the JSON body of GET /status: facts the enclave reports about its
 // own environment. It carries no signature of its own; it is trusted only when
@@ -44,28 +44,41 @@ type KMSStatus struct {
 // attestation (RemoteResult.SPKIHash). The enclave image holds that key, so
 // the body was produced by the attested code.
 func FetchStatus(ctx context.Context, client *http.Client, baseURL string, spkiHash []byte) (*Status, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/status", nil)
+	body, err := fetchBound(ctx, client, strings.TrimRight(baseURL, "/")+"/status", spkiHash)
+	if err != nil {
+		return nil, fmt.Errorf("fetch status: %w", err)
+	}
+	var st Status
+	if err := json.Unmarshal(body, &st); err != nil {
+		return nil, fmt.Errorf("%w: status: %w", ErrMalformed, err)
+	}
+	return &st, nil
+}
+
+// fetchBound gets url and returns the body only when the connection's TLS
+// certificate has the attested key (spkiHash) and the answer is 200.
+func fetchBound(ctx context.Context, client *http.Client, url string, spkiHash []byte) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch status: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.TLS == nil || len(resp.TLS.PeerCertificates) == 0 {
 		return nil, ErrNotTLS
 	}
 	if !bytes.Equal(SPKIHash(resp.TLS.PeerCertificates[0]), spkiHash) {
-		return nil, ErrStatusNotBound
+		return nil, ErrNotBound
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("fetch status: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body[:min(len(body), 512)])))
 	}
-	var st Status
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&st); err != nil {
-		return nil, fmt.Errorf("%w: status: %w", ErrMalformed, err)
-	}
-	return &st, nil
+	return body, nil
 }
