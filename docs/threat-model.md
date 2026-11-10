@@ -77,6 +77,8 @@ Each one has, or must get, a test that tries to break it.
 | Web | Every response carries HSTS, CSP, `nosniff`, `no-referrer` | `TestRouter` |
 | TLS | The TLS and ACME account keys leave the enclave only sealed, survive restarts, and are never replaced when storage fails | `TestSealedKeepsTheIdentity`, `TestSealedRejects`, `TestManagerSurvivesRestart`, `TestManagerWaitsForItsIdentity` |
 | TLS | CAA records that let another account, CA or a wildcard in, or a logged certificate with another key, fail verification | `TestCheckPinned`, `TestCheckNoWildcard`, `TestClassify`, `TestCheckCertificates` |
+| Logs | No log line names an address, a subject, content or a token | `TestMailEndToEnd` (log capture) |
+| Logs | Logging never blocks or fails the enclave when the host does not read | `TestLogSinkNeverBlocks`, `TestLogSinkReconnects` |
 | Mail | The MX stores nothing that arrived without TLS | `TestRefusesMailWithoutTLS` |
 | Mail | An MX or an MTA-STS policy that does not hold the attested key, a policy that is not `enforce` for this MX only, or missing DNS records fail verification | `TestVerifySMTP`, `TestFetchMTASTS`, `TestCheckMail` |
 | Mail | The store never holds plaintext senders, subjects, bodies or attachment names | `TestStoreNeverSeesPlaintext` |
@@ -92,7 +94,7 @@ Each one has, or must get, a test that tries to break it.
 
 ## Logging
 
-Never log email content, email addresses, tokens, cookies, codes, presigned URLs or keys, in the enclave or on the host. Enclave logs leave through the untrusted host, so they are treated as public.
+Never log email content, email addresses, tokens, cookies, codes, presigned URLs or keys, in the enclave or on the host. Enclave logs leave through the untrusted host (vsock port 8003, printed by `permaily-host` into the instance's journal; ADR 0015), so they are public: a log line needs the same care as an API response. `TestMailEndToEnd` fails if a line logged while handling a message names an address, the subject, the body or the token.
 
 ## Review checklist
 

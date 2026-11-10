@@ -21,10 +21,18 @@ Deploy the previous tag with the same steps, with its PCR0 back in `enclave_pcr0
 
 ## Look at enclave logs
 
-A production enclave has no console. To debug, deploy the same image with `--debug` (`scripts/deploy.sh eif host --debug`), then:
+The enclave sends its log lines to the host, which keeps them in the journal with the prefix `enclave:` (since v0.5.0):
 
 ```sh
 aws ssm start-session --target "$(tofu -chdir=deploy/tofu output -raw instance_id)"
+sudo journalctl -u permaily-host --since "1 hour ago" | grep "enclave:"
+```
+
+A line `log lines dropped` means the host was not reading for a while. The journal is lost if the instance is replaced.
+
+For an enclave that does not even start, deploy the same image with `--debug` (`scripts/deploy.sh eif host --debug`) and read its console:
+
+```sh
 sudo nitro-cli console --enclave-name permaily
 ```
 
@@ -44,7 +52,11 @@ The OpenTofu token `permaily-opentofu-dns` (DNS edit and zone read on `permaily.
 scripts/verify.sh "$(gh release view --repo permaily-org/permaily --json tagName -q .tagName)"
 ```
 
-Run it after every deploy and record failures as incidents.
+Run it after every deploy and record failures as incidents. Then check that a proxy in front of the enclave is detected:
+
+```sh
+PERMAILY_RELEASE=<tag> go test -tags production -run TestProductionMITM -v ./cmd/permaily-verify
+```
 
 ## Deploy a release with mail (F1)
 

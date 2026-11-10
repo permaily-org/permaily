@@ -22,6 +22,7 @@
 | Site content | Vitest on the built HTML | `site/tests/` | `bun run test`, Amplify build, CI |
 | Accessibility and CSP | Playwright + axe | `site/e2e/` | `bun run test:e2e`, CI |
 | End to end against production | `permaily-verify` | `scripts/verify.sh` | after each deploy |
+| Interception of production | Go test with a local TLS proxy | `cmd/permaily-verify/production_test.go` (`-tags production`) | after each deploy |
 
 Fuzz runs are bounded by a number of executions (`-fuzztime=<n>x`), not by time: with a time limit Go's fuzzer sometimes fails with `context deadline exceeded` when the limit ends in the middle of an execution, which broke CI without a real finding.
 
@@ -38,7 +39,8 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `internal/router` | 100 | 100.0 |
 | `internal/httpapi` | 87 | 87.3 |
 | `internal/webui` | 75 | 75.0 |
-| `internal/hostproxy` | 69 | 69.6 |
+| `internal/hostproxy` | 73 | 73.7 |
+| `internal/enclave` | 87 | 87.7 |
 | `internal/envelope` | 91 (target 95) | 91.9 |
 | `internal/keys` | 84 (target 95) | 84.0 |
 | `internal/inbox` | 80 | 80.4 |
@@ -51,7 +53,7 @@ Mutation testing of `pkg/attestation` (gremlins 0.6.0, 2026-11-09): efficacy 100
 ## TODO
 
 - [x] `internal/tlsacme`: issuance and renewal tested against a local ACME server (Pebble) in CI. The TLS-ALPN-01 answer itself is only exercised by real deployments, because Pebble runs with every challenge accepted.
-- [ ] `internal/enclave` and `cmd/*`: test the vsock paths with a loopback vsock in CI or a fake listener.
+- [ ] `internal/enclave` and `cmd/*`: test the vsock paths with a loopback vsock in CI or a fake listener (the log sink is tested over TCP).
 - [ ] Raise `pkg/attestation` coverage to 95% (covers the 23 mutants not reached today).
 - [x] A real attestation document captured from the first deployment, committed as a fixture (`pkg/attestation/testdata`), verified in `TestVerifyRealDocument`.
 - [ ] Web app tests (Vitest + Testing Library, axe per component) when it talks to the backend.

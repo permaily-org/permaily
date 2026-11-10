@@ -5,9 +5,11 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/url"
+	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -37,6 +39,15 @@ type platform struct {
 	// kmsStatus reads the policy of the pinned KMS key for /status; nil when
 	// there is no KMS key (no mailbox, or dev mode).
 	kmsStatus func(context.Context) (attestation.KMSStatus, error)
+}
+
+// logOutput writes to the console and, when a log port is set, to the parent
+// instance over vsock.
+func logOutput(cfg config) io.Writer {
+	if cfg.logPort == 0 {
+		return os.Stdout
+	}
+	return io.MultiWriter(os.Stdout, enclave.NewLogSink(context.Background(), cfg.logPort))
 }
 
 func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.Logger) (*platform, error) {

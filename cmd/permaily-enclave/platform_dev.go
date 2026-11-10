@@ -9,9 +9,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	"net"
+	"os"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/inbox"
@@ -38,6 +40,9 @@ type platform struct {
 	// there is no KMS key (no mailbox, or dev mode).
 	kmsStatus func(context.Context) (attestation.KMSStatus, error)
 }
+
+// logOutput is the terminal in dev mode.
+func logOutput(config) io.Writer { return os.Stdout }
 
 // newPlatform listens on TCP (HTTPS on -port, SMTP on -smtp-port, default
 // 2525 in dev), uses a self-signed certificate (valid for every host plus
