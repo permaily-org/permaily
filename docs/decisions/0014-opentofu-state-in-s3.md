@@ -1,6 +1,6 @@
 # 0014 OpenTofu state in S3, encrypted by OpenTofu
 
-Status: Proposed.
+Status: Accepted. Applied on 2026-11-10.
 Date: 2026-11-10
 
 ## Context
@@ -16,7 +16,7 @@ The state is not part of what users verify: the enclave image and the checks of 
 3. **The state file in the repository, encrypted** (OpenTofu encryption or sops). No locking, merge conflicts on every apply, and a public repository full of ciphertext.
 4. **Stay local**, with a backup.
 
-## Proposal
+## Decision
 
 Option 1.
 
@@ -26,18 +26,18 @@ Option 1.
 - The bucket and the key come from a small separate root, `deploy/tofu/bootstrap`, applied once; its own state has no secrets and is committed.
 - Move `enclave_pcr0_allowlist` and `acme_account_uris` from the untracked `terraform.tfvars` into a committed `production.auto.tfvars`, updated in the pull request that follows each release. Both values are public (the verifier reads them from the live service) and the repository should say what production is.
 
-## Plan
+## What was done
 
-1. Write and apply `deploy/tofu/bootstrap` (bucket, key, policies).
-2. Add the backend and encryption blocks; `tofu init -migrate-state`; check `tofu plan` shows no changes; delete the local state files.
-3. Commit `production.auto.tfvars`; remove `terraform.tfvars`.
-4. Give the second operator an IAM user with the same policy and check they can plan.
-5. Later: a scheduled job with a read-only role (GitHub OIDC) that runs `tofu plan` and reports drift.
+1. `deploy/tofu/bootstrap` applied: bucket `permaily-tofu-state-209207235911` and key `alias/permaily-tofu-state`.
+2. Backend and encryption blocks added; state migrated with `tofu init -migrate-state`; `tofu plan` showed no changes; the object in S3 holds only `encrypted_data` and metadata; local state files deleted.
+3. `production.auto.tfvars` committed with the allowed PCR0; `acme_account_uris` is the default in `variables.tf`; `terraform.tfvars` removed.
 
-About half a day.
+Still to do: an IAM user for the second operator, and a scheduled read-only `tofu plan` that reports drift.
 
 ## Consequences
 
 - Any operator can apply, one at a time, and a lost laptop loses nothing.
 - Reading the state needs both S3 and KMS permissions; the webhook URL is no longer in clear anywhere.
-- The state bucket becomes something to protect: deleting it is recoverable only through its versions.
+- The state bucket becomes something to protect: deleting it is recoverable only through its versions. `prevent_destroy` guards the bucket in the bootstrap root.
+- `production.auto.tfvars` overrides a local `terraform.tfvars`, so a test that needs other values edits that file without committing, or passes `-var`.
+- The key provider cannot take a null profile, so the backend and the encryption block read `var.aws_profile` and treat an empty value as "credentials from the environment".

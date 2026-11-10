@@ -112,7 +112,6 @@ For every change that touches the enclave, the host, auth, storage or the build:
 - [ ] Site: move the demos' inline `style` attributes to classes and remove `style-src-attr 'unsafe-inline'` from `site/astro.config.mjs`.
 - [ ] Deny `kms:PutKeyPolicy` in the key policy once a release can be authorized without editing it; until then a verifier sees the policy only at the time it checks.
 - [ ] MTA-STS `mode: enforce` once delivery from Gmail over TLS is confirmed in production.
-- [ ] Move the OpenTofu state to S3 with state encryption: the local state holds sensitive values (the Amplify webhook URL, a revoked GitHub token used once to create the Amplify app).
 
 ## Reporting vulnerabilities
 
