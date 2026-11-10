@@ -33,7 +33,7 @@ func contract(t *testing.T, s interface {
 		t.Fatal(err)
 	}
 	// A second enclave that also found nothing must not overwrite the first one's record.
-	if err := s.PutRecord(ctx, &Record{Name: "tls", Value: []byte("other")}, true); !errors.Is(err, ErrExists) {
+	if err := s.PutRecord(ctx, &Record{Name: "tls", WrappedKey: []byte("wk2"), Value: []byte("other"), UpdatedAt: now}, true); !errors.Is(err, ErrExists) {
 		t.Fatalf("second create: %v, want ErrExists", err)
 	}
 	rec.Value = []byte("v2")
