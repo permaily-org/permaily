@@ -17,6 +17,6 @@ Architecture Decision Records. Each one records the context, the options conside
 | [0010](0010-kms-policy-over-the-attested-tls-key.md) | Publish the KMS key policy over the attested TLS key | Accepted |
 | [0011](0011-mail-only-over-tls.md) | Accept mail only over TLS and tell senders to require it | Accepted |
 | [0012](0012-no-certificate-outside-the-enclave.md) | No certificate valid for the enclave hosts outside the enclave | Accepted |
-| [0013](0013-authorize-releases-without-editing-the-key-policy.md) | Authorize releases without editing the KMS key policy | Proposed, needs a spike |
+| [0013](0013-authorize-releases-without-editing-the-key-policy.md) | Watch the KMS key policy now; authorize releases without editing it later | Detection accepted; handoff proposed, in a spike |
 | [0014](0014-opentofu-state-in-s3.md) | OpenTofu state in S3, encrypted by OpenTofu | Accepted |
 | [0015](0015-enclave-logs-through-the-host.md) | Send the enclave's logs to the parent instance | Accepted |

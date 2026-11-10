@@ -60,16 +60,27 @@ PERMAILY_RELEASE=<tag> go test -tags production -run TestProductionMITM -v ./cmd
 
 ## Deploy a release with mail (F1)
 
-Every release has a new PCR0, and the mail KMS key only serves allowlisted images. Before deploying a release:
+Every release has a new PCR0, and the mail KMS key serves only the image in `enclave_pcr0_allowlist`. The policy changes from the old image to the new one in a single step, so two images are never allowed at once:
 
 ```sh
-pcr0=$(jq -r .PCR0 eif/pcrs.json)
-# deploy/tofu/production.auto.tfvars (commit it in the pull request that follows the release):
-#   enclave_pcr0_allowlist = ["<current PCR0>", "<new PCR0>"]
+jq -r .PCR0 eif/pcrs.json
+# deploy/tofu/production.auto.tfvars: enclave_pcr0_allowlist = ["<new PCR0>"]
 tofu -chdir=deploy/tofu apply
+scripts/deploy.sh eif permaily-host-linux-arm64
+scripts/verify.sh <tag>          # from a server with outbound port 25, add -require-smtp
 ```
 
-While both PCR0s are allowed, `permaily-verify` fails on purpose (another image can read the mail); check the new enclave with `scripts/verify.sh <tag> -kms-also-allow <old PCR0>`. After the new enclave serves mail, remove the old PCR0 and apply again, then run `scripts/verify.sh <tag>` with no extra flags: it must pass. Run it from a server with outbound port 25 (add `-require-smtp`) so the MX is checked too.
+Between the `apply` and the restart the old enclave keeps serving with the keys it already has; it only cannot open a mailbox it had not opened yet. Then open the pull request that commits `production.auto.tfvars`.
+
+If the new enclave does not come up, put the old PCR0 back, apply and deploy the old release. `-kms-also-allow` exists for a setup that must run two images for a while; a single instance never needs it.
+
+The enclave reports every state of the policy it has seen since it started, and the verifier checks them all (docs/verification.md). So do not test by editing the policy of the production key: the change stays in the history until the enclave restarts, and `verify-production` will fail for as long.
+
+## Scheduled verification
+
+The workflow `verify-production` runs `scripts/verify-production.sh` at minutes 7 and 37 of every hour: the latest release's verifier against production, or the previous release's while the latest is not deployed. Its output is in each run's summary, public. A failed run is an incident: read which check failed and since when.
+
+GitHub disables scheduled workflows after 60 days without activity in the repository; re-enable it under Actions if that happens.
 
 ## Read the test mailbox
 

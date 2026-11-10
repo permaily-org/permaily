@@ -22,6 +22,7 @@
 | Site content | Vitest on the built HTML | `site/tests/` | `bun run test`, Amplify build, CI |
 | Accessibility and CSP | Playwright + axe | `site/e2e/` | `bun run test:e2e`, CI |
 | End to end against production | `permaily-verify` | `scripts/verify.sh` | after each deploy |
+| Production, continuously | the latest release's `permaily-verify` | `scripts/verify-production.sh` | workflow `verify-production`, twice an hour |
 | Interception of production | Go test with a local TLS proxy | `cmd/permaily-verify/production_test.go` (`-tags production`) | after each deploy |
 
 Fuzz runs are bounded by a number of executions (`-fuzztime=<n>x`), not by time: with a time limit Go's fuzzer sometimes fails with `context deadline exceeded` when the limit ends in the middle of an execution, which broke CI without a real finding.

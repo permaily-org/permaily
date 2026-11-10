@@ -60,7 +60,7 @@ The host proxy only tunnels to:
 - **Gap: senders without MTA-STS, and DNS.** A sender that does not implement MTA-STS can be made to deliver in clear to whoever answers on port 25. DNS is the operator's: removing the `_mta-sts` record stops new senders from applying the policy (cached policies last a week); the verifier fails when it is missing.
 - **Senders.** Any sender may deliver to the mailbox (decision for F1); DKIM results are recorded with each message. A Gmail forwarding confirmation is only marked verified when it carries a valid `google.com` DKIM signature.
 - **Who can use the key is public.** The enclave reads the key's policy and grants from KMS and serves them on `/status`; `permaily-verify` accepts that only over the attested TLS key and fails if any image other than the verified one can get data keys, if a statement skips the image check, or if a grant exists (ADR 0010, `pkg/kmspolicy`).
-- **Gap: the policy between checks.** An administrator can still replace the key policy (`kms:PutKeyPolicy`), allow another image or themselves, and restore it. A verifier sees the policy at the time it checks, not its history. Planned: deny `PutKeyPolicy` in the policy once releases can be authorized without editing it.
+- **The policy between checks.** An administrator can still replace the key policy (`kms:PutKeyPolicy`), allow another image or themselves, and restore it. The enclave reads the policy every minute and reports every state it has seen since it started; the verifier checks all of them, and a public job runs the verifier twice an hour (ADR 0013). What remains: a change made while the enclave is cut off from KMS shows only as a gap, and restarting the enclave starts the history again (the start time is printed). Planned: a policy nobody can change, once releases can be authorized without editing it.
 
 ## Invariants
 
@@ -87,6 +87,7 @@ Each one has, or must get, a test that tries to break it.
 | Mail | The CMS parser never panics or accepts garbage | `FuzzCMS`, `TestCMSRejectsGarbage` |
 | Mail | The mailbox API rejects missing or wrong tokens | `TestMailboxAuth` |
 | Mail | A key policy that lets anyone use the key without proving the verified image fails verification | `TestAnalyzeProblems`, `TestCheckKMS`, `FuzzAnalyze` |
+| Mail | A policy that was opened and closed again while the enclave ran still fails verification | `TestPolicyReaderHistory`, `TestPolicyReaderGaps`, `TestCheckKMSHistory` |
 | Mail | The status is accepted only over the attested TLS key | `TestFetchStatus` |
 | Mail | Account administrators cannot obtain data keys | manual check (2026-11-09), `docs/acceptance.md` |
 | Mail | KMS gives the data key to the allowlisted image and denies it in debug mode | production check (2026-11-10), `docs/acceptance.md` |
@@ -110,7 +111,7 @@ For every change that touches the enclave, the host, auth, storage or the build:
 ## TODO
 
 - [ ] Site: move the demos' inline `style` attributes to classes and remove `style-src-attr 'unsafe-inline'` from `site/astro.config.mjs`.
-- [ ] Deny `kms:PutKeyPolicy` in the key policy once a release can be authorized without editing it; until then a verifier sees the policy only at the time it checks.
+- [ ] Deny `kms:PutKeyPolicy` in the key policy once a release can be authorized without editing it (ADR 0013, option 3); until then changes are detected, not prevented.
 - [ ] MTA-STS `mode: enforce` once delivery from Gmail over TLS is confirmed in production.
 
 ## Reporting vulnerabilities

@@ -15,7 +15,7 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 | `smtpd` | MX on port 25 (vsock), STARTTLS with the enclave certificate, refuses mail without TLS (F1) |
 | `inbox` | mailbox: parse, Gmail confirmation codes, seal, store, serve (F1) |
 | `msgauth` | DKIM verification with DNS-over-HTTPS (F1) |
-| `keys` | data keys from KMS with attestation (Recipient, CMS), reader of the key's policy and grants for `/status`, local keys for dev (F1) |
+| `keys` | data keys from KMS with attestation (Recipient, CMS), reader of the key's policy and grants for `/status`, with the history of states seen since the enclave started, local keys for dev (F1) |
 | `envelope` | AES-256-GCM with key commitment and context binding (F1) |
 | `store` | DynamoDB and S3 store for mailboxes, messages and the enclave's own sealed records; in-memory store for dev and tests (F1) |
 
