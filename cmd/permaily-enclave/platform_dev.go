@@ -48,7 +48,7 @@ func newPlatform(_ context.Context, cfg config, hosts router.Hosts, log *slog.Lo
 	if err != nil {
 		return nil, err
 	}
-	certs, err := tlsacme.New(hosts.All(), cfg.acmeDirectory, nil, log)
+	certs, err := tlsacme.New(hosts.All(), cfg.acmeDirectory, nil, nil, log)
 	if err != nil {
 		return nil, err
 	}

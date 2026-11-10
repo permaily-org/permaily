@@ -15,6 +15,7 @@
 | Unit and local end to end (Go) | `go test`, `httptest` | `*_test.go` | `make check`, CI |
 | Fuzzing | Go native fuzzing | `pkg/attestation`, `pkg/kmspolicy`, `internal/keys` (CMS), `internal/inbox` (mail parser) | `make fuzz`, CI |
 | Storage contract | DynamoDB Local and S3Mock | `internal/store/store_test.go` | CI services; locally with `PERMAILY_TEST_DYNAMODB` and `PERMAILY_TEST_S3` |
+| ACME issuance and renewal | Pebble 2.6.0 (test CA that accepts every challenge) | `internal/tlsacme` (`TestObtainAgainstACME`) | CI service; locally with `PERMAILY_TEST_ACME` |
 | Whole service, dev mode | SMTP client and HTTPS | `cmd/permaily-enclave/main_dev_test.go` | `go test -tags dev ./cmd/permaily-enclave`, CI |
 | Mutation | gremlins | `pkg/attestation` | manual (`mutation` workflow) |
 | Reproducibility | Nix | CI `eif` + `reproducible` jobs | every PR |
@@ -32,8 +33,10 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 |---|---|---|
 | `pkg/attestation` | 85 (target 95) | 85.5 |
 | `pkg/kmspolicy` | 99 | 99.0 |
+| `pkg/certwatch` | 99 | 99.0 |
+| `internal/tlsacme` | 90 (with Pebble) | 90.3 |
 | `internal/router` | 100 | 100.0 |
-| `internal/httpapi` | 86 | 86.6 |
+| `internal/httpapi` | 87 | 87.3 |
 | `internal/webui` | 75 | 75.0 |
 | `internal/hostproxy` | 69 | 69.6 |
 | `internal/envelope` | 91 (target 95) | 91.9 |
@@ -41,13 +44,13 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `internal/inbox` | 80 | 80.4 |
 | `internal/msgauth` | 86 | 86.0 |
 | `internal/smtpd` | 92 | 92.5 |
-| `internal/store` | 86 (with emulators) | 86.7 |
+| `internal/store` | 88 (with emulators) | 88.1 |
 
 Mutation testing of `pkg/attestation` (gremlins 0.6.0, 2026-11-09): efficacy 100% (29 killed, 0 lived, 22 timed out), mutator coverage 55.77%. Thresholds: efficacy 90, mutator coverage 55.
 
 ## TODO
 
-- [ ] `internal/tlsacme`: test issuance and renewal against a local ACME server (Pebble) in CI. Today it has no tests.
+- [x] `internal/tlsacme`: issuance and renewal tested against a local ACME server (Pebble) in CI. The TLS-ALPN-01 answer itself is only exercised by real deployments, because Pebble runs with every challenge accepted.
 - [ ] `internal/enclave` and `cmd/*`: test the vsock paths with a loopback vsock in CI or a fake listener.
 - [ ] Raise `pkg/attestation` coverage to 95% (covers the 23 mutants not reached today).
 - [x] A real attestation document captured from the first deployment, committed as a fixture (`pkg/attestation/testdata`), verified in `TestVerifyRealDocument`.

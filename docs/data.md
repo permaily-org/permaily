@@ -15,6 +15,7 @@ One test mailbox, compiled into the image (`deploy/enclave.json`), read with a b
 | Raw message (with attachments) | S3 `permaily-mail-<account>`, key `raw/<mailbox>/<message id>`, tagged `retention-days=<n>` | AES-256-GCM with the mailbox data key and key commitment (AAD: purpose, mailbox, message id); SSE-S3 underneath | 7, 30, 90 (default), 180 or 365 days, set per mailbox; applies to mail received after the change | Lifecycle rule for its tag (period + 1 day), or `DELETE /v1/mailbox/messages/{id}` |
 | Message metadata (envelope, From/To/Cc, subject, date, List-Id, snippet, attachment names and sizes, DKIM results) | DynamoDB `permaily-mail`, `pk=mailbox#<id>`, `sk=msg#<message id>` | Sealed like the raw message | Same as the raw message (DynamoDB TTL on `expires_at`, also filtered on read) | Same |
 | Mailbox state (Gmail forwarding confirmation codes) | DynamoDB, `sk=mailbox` | Sealed | Mailbox lifetime (last 10 codes) | With the mailbox |
+| TLS identity (certificate key, ACME account key, last certificate chain) | DynamoDB, `pk=system`, `sk=record#tls-<CA host>` | Sealed with its own data key from the same KMS key (since v0.4.0) | Until replaced | Deleting it makes the next enclave create a new key |
 | Mailbox data key | DynamoDB, `sk=mailbox`, wrapped | KMS key `alias/permaily-mail`, released only to an attested enclave | Mailbox lifetime | Destroying it makes every message unreadable (crypto-shredding) |
 
 Plaintext outside the enclave: ids, sizes, timestamps, retention period. Message ids are time-ordered.

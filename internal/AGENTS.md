@@ -5,7 +5,7 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 | Package | Role |
 |---|---|
 | `enclave` | vsock listener and egress HTTP client through the host's CONNECT proxy (the parent instance is vsock CID 3) |
-| `tlsacme` | one multi-SAN certificate via ACME TLS-ALPN-01; key lives only in enclave memory |
+| `tlsacme` | one multi-SAN certificate via ACME TLS-ALPN-01; the certificate key and the ACME account key are kept sealed with KMS (`Sealed`) and reused across restarts |
 | `nsm`, `nsm/fakensm` | real NSM attester; fake attester for dev mode and tests |
 | `httpapi` | `/attestation`, `/status` (KMS key policy), `/version`, mailbox API |
 | `router` | dispatch by Host (app, api, mcp, inbox) and security headers |
@@ -17,14 +17,14 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 | `msgauth` | DKIM verification with DNS-over-HTTPS (F1) |
 | `keys` | data keys from KMS with attestation (Recipient, CMS), reader of the key's policy and grants for `/status`, local keys for dev (F1) |
 | `envelope` | AES-256-GCM with key commitment and context binding (F1) |
-| `store` | DynamoDB and S3 store, in-memory store for dev and tests (F1) |
+| `store` | DynamoDB and S3 store for mailboxes, messages and the enclave's own sealed records; in-memory store for dev and tests (F1) |
 
 ## Rules
 
 - `cmd/permaily-enclave` with `-tags dev` runs locally over TCP with a self-signed certificate and `fakensm`; never import `fakensm` from non-dev enclave code.
 - No CGO, no files read at runtime inside the enclave; CA roots come from `x509roots/fallback`.
 - New outbound destinations must be added to the host allowlist (`cmd/permaily-host`) and documented in [../docs/threat-model.md](../docs/threat-model.md).
-- The TLS key must stay constant for the enclave lifetime; `/attestation` binds `sha256(SPKI)` as user data.
+- The TLS key is created once and reused across restarts and upgrades; `/attestation` binds `sha256(SPKI)` as user data. It leaves the enclave only sealed. When the sealed record cannot be loaded the enclave waits: never fall back to a fresh key, which would break the CAA records and the certificate history that verifiers check.
 - Nothing outside the enclave sees plaintext mail: seal with `envelope` under the mailbox data key before calling `store`; never log addresses, subjects or content.
 - Every KMS response is checked against the pinned key ARN (`keys.ErrKeyMismatch`); never use KMS without the Recipient parameter.
 

@@ -47,7 +47,13 @@ func Attestation(att nsm.Attester, userData func() []byte) http.Handler {
 			http.Error(w, "nonce must be 16-512 bytes, hex encoded", http.StatusBadRequest)
 			return
 		}
-		doc, err := att.Attest(nonce, userData())
+		data := userData()
+		if len(data) == 0 {
+			// Without the TLS key there is nothing to bind the document to.
+			http.Error(w, "TLS key not ready", http.StatusServiceUnavailable)
+			return
+		}
+		doc, err := att.Attest(nonce, data)
 		if err != nil {
 			http.Error(w, "attestation failed", http.StatusInternalServerError)
 			return

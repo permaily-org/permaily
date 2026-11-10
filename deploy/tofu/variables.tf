@@ -21,6 +21,12 @@ variable "enclave_subdomains" {
   default     = ["app", "api", "mcp", "inbox", "mta-sts.inbox"]
 }
 
+variable "acme_account_uris" {
+  description = "ACME accounts allowed to issue certificates for the enclave hosts: the URL the enclave reports in /status (tls.acme_account). The key of that account exists only sealed for the enclave. Empty allows any Let's Encrypt account, which is only for the first deployment, before the account exists."
+  type        = list(string)
+  default     = []
+}
+
 variable "instance_type" {
   description = "Graviton instance with Nitro Enclaves support. c7g.large = 2 vCPU / 4 GiB."
   type        = string

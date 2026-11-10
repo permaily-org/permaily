@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"net/url"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -44,16 +45,14 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 		return nil, err
 	}
 	egress := enclave.EgressClient(cfg.egressPort)
-	certs, err := tlsacme.New(hosts.All(), cfg.acmeDirectory, egress, log)
-	if err != nil {
-		return nil, err
-	}
 	ln, err := enclave.Listen(cfg.port)
 	if err != nil {
 		return nil, err
 	}
-	p := &platform{mode: "enclave", listener: ln, attester: att, certs: certs}
+	p := &platform{mode: "enclave", listener: ln, attester: att}
 
+	// Without storage (no mailbox) the TLS key lives only in memory.
+	var identity tlsacme.Persistence
 	if cfg.mailboxID != "" {
 		if cfg.kmsKeyARN == "" || cfg.dynamoTable == "" || cfg.s3Bucket == "" || cfg.mailboxTokenSHA256 == "" {
 			return nil, errors.New("mailbox enabled but -kms-key-arn, -dynamodb-table, -s3-bucket or -mailbox-token-sha256 is missing")
@@ -71,15 +70,27 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			return nil, err
 		}
 		p.kmsStatus = keys.NewPolicyReader(kmsClient, cfg.kmsKeyARN).Status
-		p.store = &store.AWS{
+		awsStore := &store.AWS{
 			DB: dynamodb.NewFromConfig(awsCfg),
 			// Path-style keeps every request on s3.<region>.amazonaws.com (one allowlist entry).
 			S3:     s3.NewFromConfig(awsCfg, func(o *s3.Options) { o.UsePathStyle = true }),
 			Table:  cfg.dynamoTable,
 			Bucket: cfg.s3Bucket,
 		}
+		p.store = awsStore
 		p.auth = msgauth.DKIM(msgauth.DoH{Client: egress, Endpoint: cfg.dohEndpoint}.LookupTXT)
+
+		// One identity per CA: a production and a staging image never share
+		// an ACME account.
+		directory, err := url.Parse(cfg.acmeDirectory)
+		if err != nil {
+			return nil, err
+		}
+		identity = &tlsacme.Sealed{Records: awsStore, Keys: p.keys, Name: "tls-" + directory.Host}
 	}
-	go certs.Run(ctx)
+	if p.certs, err = tlsacme.New(hosts.All(), cfg.acmeDirectory, egress, identity, log); err != nil {
+		return nil, err
+	}
+	go p.certs.Run(ctx)
 	return p, nil
 }

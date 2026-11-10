@@ -26,13 +26,13 @@ That the service answering on the Permaily hosts runs an enclave image built fro
 | Debug mode (console access, PCRs zero) | the verifier rejects all-zero PCRs |
 | Replay of an old attestation | random 32-byte nonce per verification, 5-minute freshness window |
 | TLS terminated outside the enclave (MITM, parent, CDN) | attestation `user_data = sha256(SPKI)` of the certificate on the same connection |
-| Certificate for the hosts issued to someone else | detected per connection by the binding above; CAA restricts issuance to Let's Encrypt; F1 adds CAA `accounturi` with an ACME account key sealed by KMS, and CT monitoring |
+| Certificate for the hosts issued to someone else | detected per connection by the binding above, so only for people who verify: a browser accepts any valid certificate. CAA restricts the hosts to Let's Encrypt and forbids wildcards for the domain; Cloudflare Universal SSL is off and the site has an exact-name certificate (ADR 0012). CAA names the enclave's ACME account, whose key is sealed, and `permaily-verify` reads Certificate Transparency and fails on a certificate for the hosts with another key issued since the enclave's key exists (`pkg/certwatch`). Four wildcards issued before 2026-11-10 with keys at Cloudflare and AWS stay valid until 2027-05-26 at the latest. DNS is the operator's, so CAA can change between checks; Certificate Transparency shows it afterwards |
 | Build tampering in CI | anyone can rebuild; CI builds on x86_64 and arm64 and compares; releases carry Sigstore provenance |
 | Supply chain of dependencies | all inputs pinned by hash; review dependency changes |
 
 ## Known limits (F0)
 
-- The TLS key and ACME account are created at each enclave boot, so each restart issues a new certificate (visible in CT). F1 seals them with KMS.
+- The TLS key and the ACME account key are created once inside an enclave and stored sealed with KMS (ADR 0012), so restarts and upgrades keep the same key, certificate and account. Whoever the KMS key policy lets in can open them, like stored mail.
 - The enclave has no persistent state yet.
 - Availability is not protected: the operator can always take the service down.
 - Metadata visible to the operator: connection timing, sizes, destination hostnames of egress.
@@ -75,6 +75,8 @@ Each one has, or must get, a test that tries to break it.
 | Enclave | No configuration is read from the parent at runtime | review (entry point arguments are baked into the image) |
 | Production code | Fake attesters and test chains are never linked | `depguard` |
 | Web | Every response carries HSTS, CSP, `nosniff`, `no-referrer` | `TestRouter` |
+| TLS | The TLS and ACME account keys leave the enclave only sealed, survive restarts, and are never replaced when storage fails | `TestSealedKeepsTheIdentity`, `TestSealedRejects`, `TestManagerSurvivesRestart`, `TestManagerWaitsForItsIdentity` |
+| TLS | CAA records that let another account, CA or a wildcard in, or a logged certificate with another key, fail verification | `TestCheckPinned`, `TestCheckNoWildcard`, `TestClassify`, `TestCheckCertificates` |
 | Mail | The MX stores nothing that arrived without TLS | `TestRefusesMailWithoutTLS` |
 | Mail | An MX or an MTA-STS policy that does not hold the attested key, a policy that is not `enforce` for this MX only, or missing DNS records fail verification | `TestVerifySMTP`, `TestFetchMTASTS`, `TestCheckMail` |
 | Mail | The store never holds plaintext senders, subjects, bodies or attachment names | `TestStoreNeverSeesPlaintext` |
@@ -106,8 +108,6 @@ For every change that touches the enclave, the host, auth, storage or the build:
 ## TODO
 
 - [ ] Site: move the demos' inline `style` attributes to classes and remove `style-src-attr 'unsafe-inline'` from `site/astro.config.mjs`.
-- [ ] CT monitoring for certificates of the enclave names not bound to an attested key (F4).
-- [ ] CAA `accounturi` once the ACME account key is sealed with KMS (F1).
 - [ ] Deny `kms:PutKeyPolicy` in the key policy once a release can be authorized without editing it; until then a verifier sees the policy only at the time it checks.
 - [ ] MTA-STS `mode: enforce` once delivery from Gmail over TLS is confirmed in production.
 - [ ] Move the OpenTofu state to S3 with state encryption: the local state holds sensitive values (the Amplify webhook URL, a revoked GitHub token used once to create the Amplify app).

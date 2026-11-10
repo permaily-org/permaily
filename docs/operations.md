@@ -28,11 +28,11 @@ aws ssm start-session --target "$(tofu -chdir=deploy/tofu output -raw instance_i
 sudo nitro-cli console --enclave-name permaily
 ```
 
-Debug mode zeroes the PCRs, so verification fails on purpose. Redeploy without `--debug` right after.
+Debug mode zeroes the PCRs, so verification fails on purpose and KMS refuses the keys: a debug enclave has no TLS key and no mailbox, and its console shows the refusals. Use it to read why an enclave does not start, not to test features. Redeploy without `--debug` right after.
 
 ## Let's Encrypt rate limits
 
-At most 5 certificates per week for the same set of names. If issuance fails with `rateLimited`, stop restarting the enclave, use `.#eif-staging` for tests, and wait for the window. F1 removes this by sealing the certificate key with KMS.
+At most 5 certificates per week for the same set of names. Since v0.4.0 the enclave keeps its key and certificate sealed, so a restart or an upgrade issues nothing; only a renewal (every 60 days) or a new TLS key does. If issuance fails with `rateLimited`, wait for the window, and use `.#eif-staging` for tests.
 
 ## Rotate the Cloudflare token
 
@@ -72,6 +72,23 @@ curl -s -X PATCH -H "Authorization: Bearer $token" -d '{"retention_days":30}' ht
 To send a test message, connect to `inbox.permaily.com:25` with STARTTLS from a server: home connections usually block outbound port 25.
 
 To forward a Gmail account: in Gmail, Settings > Forwarding > Add a forwarding address (the mailbox address), read the confirmation code from `/v1/mailbox`, enter it in Gmail, then enable forwarding.
+
+## Certificates and the ACME account
+
+`permaily-verify` checks the CAA records and Certificate Transparency (docs/verification.md). A failure of "certificates outside the enclave" is an incident: find who asked for the certificate it lists.
+
+The CAA records of the enclave hosts name the ACME account the enclave reports:
+
+```sh
+curl -s https://api.permaily.com/status | jq -r .tls.acme_account
+# deploy/tofu/variables.tf: acme_account_uris = ["<that URL>"]
+tofu -chdir=deploy/tofu apply
+```
+
+- **First deployment, or a new TLS key:** the account does not exist yet, and a CAA record that names another account makes Let's Encrypt refuse. Set `acme_account_uris = []` (any Let's Encrypt account), deploy, read the account from `/status`, set it and apply.
+- **Staging images** (`.#eif-staging`) use another CA and so another sealed record and another account. To test one on the production names, add its account to `acme_account_uris` in `terraform.tfvars` for the duration of the test.
+- **Replace the TLS key** (suspected leak): delete the item `pk=system`, `sk=record#tls-acme-v02.api.letsencrypt.org` from the mail table, set `acme_account_uris = []`, restart the enclave, then pin the new account. The verifier will show the new creation time, and certificates of the old key as older until they expire.
+- **A partial `tofu apply`** can leave a host without its CAA record; then the apex record applies, which allows only Amazon, and Let's Encrypt refuses every certificate. Run `tofu plan` after each apply: it must show no changes.
 
 ## Planned (F1+)
 
