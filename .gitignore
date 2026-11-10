@@ -20,3 +20,7 @@ internal/webui/dist/*
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+# What production runs is public and reviewed: deploy/tofu/production.auto.tfvars.
+!deploy/tofu/production.auto.tfvars
+# The bootstrap root (state bucket and its key) holds no secrets; its state is committed.
+!deploy/tofu/bootstrap/terraform.tfstate

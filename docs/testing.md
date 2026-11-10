@@ -22,6 +22,7 @@
 | Site content | Vitest on the built HTML | `site/tests/` | `bun run test`, Amplify build, CI |
 | Accessibility and CSP | Playwright + axe | `site/e2e/` | `bun run test:e2e`, CI |
 | End to end against production | `permaily-verify` | `scripts/verify.sh` | after each deploy |
+| Production, continuously | the latest release's `permaily-verify` | `scripts/verify-production.sh` | workflow `verify-production`, twice an hour |
 | Interception of production | Go test with a local TLS proxy | `cmd/permaily-verify/production_test.go` (`-tags production`) | after each deploy |
 
 Fuzz runs are bounded by a number of executions (`-fuzztime=<n>x`), not by time: with a time limit Go's fuzzer sometimes fails with `context deadline exceeded` when the limit ends in the middle of an execution, which broke CI without a real finding.
@@ -42,7 +43,7 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `internal/hostproxy` | 73 | 73.7 |
 | `internal/enclave` | 87 | 87.7 |
 | `internal/envelope` | 91 (target 95) | 91.9 |
-| `internal/keys` | 84 (target 95) | 84.0 |
+| `internal/keys` | 86 (target 95) | 86.7 |
 | `internal/inbox` | 80 | 80.4 |
 | `internal/msgauth` | 86 | 86.0 |
 | `internal/smtpd` | 92 | 92.5 |

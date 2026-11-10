@@ -18,6 +18,10 @@ tofu init
 tofu apply
 ```
 
+The state is in S3 (`permaily-tofu-state-<account>`, versioned, with a lock file so two applies cannot run at once) and OpenTofu encrypts it with the KMS key `alias/permaily-tofu-state` before uploading, so the bucket holds only ciphertext (ADR 0014). Operators need S3 access to that bucket and `kms:GenerateDataKey` and `kms:Decrypt` on that key. The bucket and the key come from `deploy/tofu/bootstrap`, applied once; its small state has no secrets and is committed.
+
+What production runs is in `deploy/tofu/production.auto.tfvars` (the PCR0 allowed in KMS) and in the defaults of `variables.tf` (the ACME account in the CAA records). Both are public values. That file overrides a local `terraform.tfvars`; for a test, edit it without committing or pass `-var`.
+
 Creates a VPC with one public subnet, a security group with only 443 and 25 open, an Elastic IP, a `c7g.large` with Nitro Enclaves enabled (Amazon Linux 2023 arm64, SSM access, no SSH), an S3 bucket for deploy artifacts, and in Cloudflare the A and CAA records for `app`, `api`, `mcp`, `inbox` and `mta-sts.inbox`, always DNS only (grey cloud), plus the MX, MTA-STS and TLS-RPT records of `inbox`.
 
 Approximate cost: 53 USD/month for the instance plus 3.6 USD/month for the public IPv4.

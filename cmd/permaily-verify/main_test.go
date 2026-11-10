@@ -470,3 +470,109 @@ func TestReportedTLS(t *testing.T) {
 		t.Fatalf("hosts %v", got)
 	}
 }
+
+func TestCheckKMSHistory(t *testing.T) {
+	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	at := func(h, m int) time.Time { return time.Date(2026, 11, 10, h, m, 0, 0, time.UTC) }
+	backdoor := `{"Statement":[` + admin + `,{"Sid":"Backdoor","Effect":"Allow","Principal":"*","Action":"kms:Decrypt","Resource":"*"}]}`
+	// status builds what an enclave reports: the states it saw, oldest first;
+	// the last one is the current policy.
+	status := func(states ...attestation.KMSObservation) *attestation.KMSStatus {
+		for i := range states {
+			states[i].FirstSeen, states[i].LastSeen = at(5, i*10), at(5, i*10+9)
+		}
+		last := states[len(states)-1]
+		return &attestation.KMSStatus{
+			KeyARN: "arn:k", Policy: last.Policy, Grants: last.Grants, GrantsTruncated: last.GrantsTruncated,
+			FetchedAt: now.Add(-time.Minute), WatchedSince: at(5, 0), History: states,
+		}
+	}
+	state := func(policy string) attestation.KMSObservation { return attestation.KMSObservation{Policy: policy} }
+
+	t.Run("unchanged since the enclave started", func(t *testing.T) {
+		got, err := checkKMS(status(state(keyPolicy(imageA))), imageA, nil, now)
+		if err != nil || got.Changes != 0 || !got.WatchedSince.Equal(at(5, 0)) || len(got.Gaps) != 0 {
+			t.Fatalf("got %+v, %v", got, err)
+		}
+	})
+	t.Run("changed between states that all pass", func(t *testing.T) {
+		k := status(state(keyPolicy(imageA)), state(keyPolicy()), state(keyPolicy(imageA)))
+		k.Gaps = []attestation.KMSGap{{From: at(6, 0), To: at(6, 5)}}
+		got, err := checkKMS(k, imageA, nil, now)
+		if err != nil || got.Changes != 2 || len(got.Gaps) != 1 {
+			t.Fatalf("got %+v, %v", got, err)
+		}
+	})
+	t.Run("an upgrade seen by the new enclave, with the old release accepted", func(t *testing.T) {
+		k := status(state(keyPolicy(imageB, imageA)), state(keyPolicy(imageA)))
+		if _, err := checkKMS(k, imageA, []string{imageB}, now); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	// The current policy is clean in every one of these; only the history gives it away.
+	fails := []struct {
+		name string
+		k    *attestation.KMSStatus
+		want []string
+	}{
+		{"opened to another image for a while", status(state(keyPolicy(imageA)), state(keyPolicy(imageA, imageB)), state(keyPolicy(imageA))),
+			[]string{"from 2026-11-10T05:10:00Z to 2026-11-10T05:19:00Z", imageB}},
+		{"a statement without the image check for a while", status(state(keyPolicy(imageA)), state(backdoor), state(keyPolicy(imageA))),
+			[]string{"from 2026-11-10T05:10:00Z", "Backdoor", "without requiring an enclave image"}},
+		{"a grant that was later revoked", status(state(keyPolicy(imageA)), attestation.KMSObservation{Policy: keyPolicy(imageA), Grants: 1}, state(keyPolicy(imageA))),
+			[]string{"from 2026-11-10T05:10:00Z", "1 grant"}},
+		{"a past policy that is not a policy", status(state("nope"), state(keyPolicy(imageA))), []string{"from 2026-11-10T05:00:00Z", "malformed"}},
+		{"more changes than the enclave remembers", func() *attestation.KMSStatus {
+			k := status(state(keyPolicy(imageA)))
+			k.HistoryTruncated = true
+			return k
+		}(), []string{"history is incomplete"}},
+		{"a history that does not end in the current policy", func() *attestation.KMSStatus {
+			k := status(state(keyPolicy(imageA)), state(keyPolicy()))
+			k.Policy = keyPolicy(imageA)
+			return k
+		}(), []string{"does not end in the current policy"}},
+	}
+	for _, c := range fails {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := checkKMS(c.k, imageA, nil, now)
+			if err == nil || got != nil {
+				t.Fatalf("got %+v, %v; want an error", got, err)
+			}
+			for _, w := range c.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Fatalf("error %q lacks %q", err, w)
+				}
+			}
+		})
+	}
+}
+
+func TestPrintKMSHistory(t *testing.T) {
+	at := time.Date(2026, 11, 10, 4, 0, 0, 0, time.UTC)
+	out := func(k *kmsResult) string {
+		var b bytes.Buffer
+		printKMS(&b, hostResult{KMS: k}, imageA)
+		return b.String()
+	}
+	s := out(&kmsResult{Images: []string{imageA}, ReadAt: at, WatchedSince: at.Add(-time.Hour), AdministratorsCanChangePolicy: true})
+	for _, want := range []string{"every minute since 2026-11-10T03:00:00Z: unchanged", "before the enclave started, or after a restart"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("output %q lacks %q", s, want)
+		}
+	}
+	if strings.Contains(s, "warning") || strings.Contains(s, "state at that time") {
+		t.Fatal(s)
+	}
+	s = out(&kmsResult{Images: []string{imageA}, ReadAt: at, WatchedSince: at.Add(-time.Hour), Changes: 2,
+		Gaps: []attestation.KMSGap{{From: at.Add(-30 * time.Minute), To: at.Add(-25 * time.Minute)}}})
+	for _, want := range []string{"2 other state(s)", "warning: the enclave could not read the policy from 2026-11-10T03:30:00Z to 2026-11-10T03:35:00Z"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("output %q lacks %q", s, want)
+		}
+	}
+	if strings.Contains(s, "note:") {
+		t.Fatal("a locked policy needs no note about administrators: " + s)
+	}
+}

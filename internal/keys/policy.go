@@ -3,6 +3,7 @@ package keys
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -18,17 +19,26 @@ type PolicyAPI interface {
 	ListGrants(ctx context.Context, in *kms.ListGrantsInput, opts ...func(*kms.Options)) (*kms.ListGrantsOutput, error)
 }
 
-// How long a reading is served before KMS is asked again, and how long a
-// failure is remembered. /status is public, so this bounds the calls to KMS.
+// How long a reading is served before KMS is asked again, how long a failure
+// is remembered, and how often Run reads on its own. /status is public, so the
+// first two bound the calls to KMS.
 const (
 	policyTTL      = 30 * time.Second
 	policyErrorTTL = 5 * time.Second
+	policyInterval = time.Minute
+	// maxHistory and maxGaps bound what /status carries.
+	maxHistory = 32
+	maxGaps    = 32
 )
 
 // PolicyReader reads the policy and grants of the pinned KMS key, so the
 // enclave can publish them over its attested TLS key. KMS is reached with TLS
 // from inside the enclave, so the host cannot alter the answer, and the key ARN
 // (account and key id) is compiled into the image.
+//
+// It also remembers every different state it has read and the periods in which
+// it could not read, so a policy that was changed and changed back while
+// nobody was verifying still shows.
 type PolicyReader struct {
 	api    PolicyAPI
 	keyARN string
@@ -39,6 +49,14 @@ type PolicyReader struct {
 	err     error
 	readAt  time.Time
 	hasRead bool
+
+	started       time.Time // first attempt
+	lastOK        time.Time // last successful reading
+	failing       bool      // the last attempt failed
+	history       []attestation.KMSObservation
+	historyCut    bool
+	gaps          []attestation.KMSGap
+	gapsTruncated bool
 }
 
 // NewPolicyReader creates a reader for the key pinned in the image.
@@ -46,7 +64,23 @@ func NewPolicyReader(api PolicyAPI, keyARN string) *PolicyReader {
 	return &PolicyReader{api: api, keyARN: keyARN, now: time.Now}
 }
 
-// Status returns the key policy and grant count, at most policyTTL old.
+// Run reads the policy every policyInterval until ctx is done, so the history
+// does not depend on anybody asking for /status.
+func (p *PolicyReader) Run(ctx context.Context) {
+	t := time.NewTicker(policyInterval)
+	defer t.Stop()
+	for {
+		_, _ = p.Status(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// Status returns the key policy and grant count, at most policyTTL old, with
+// the history since this enclave started.
 func (p *PolicyReader) Status(ctx context.Context) (attestation.KMSStatus, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -56,12 +90,61 @@ func (p *PolicyReader) Status(ctx context.Context) (attestation.KMSStatus, error
 			ttl = policyErrorTTL
 		}
 		if p.now().Sub(p.readAt) < ttl {
-			return p.status, p.err
+			return p.snapshot(), p.err
 		}
 	}
-	p.status, p.err = p.read(ctx)
+	st, err := p.read(ctx)
+	p.observe(err == nil, st)
+	p.status, p.err = st, err
 	p.readAt, p.hasRead = p.now(), true
-	return p.status, p.err
+	return p.snapshot(), p.err
+}
+
+// snapshot returns the last reading with the history so far. The slices are
+// copies, so a caller cannot change what the reader remembers.
+func (p *PolicyReader) snapshot() attestation.KMSStatus {
+	st := p.status
+	if p.err != nil {
+		return st
+	}
+	st.WatchedSince = p.started
+	st.History = slices.Clone(p.history)
+	st.HistoryTruncated = p.historyCut
+	st.Gaps = slices.Clone(p.gaps)
+	st.GapsTruncated = p.gapsTruncated
+	return st
+}
+
+// observe records one attempt, successful or not, in the history.
+func (p *PolicyReader) observe(ok bool, st attestation.KMSStatus) {
+	at := p.now().UTC().Truncate(time.Second)
+	if p.started.IsZero() {
+		p.started = at
+	}
+	if !ok {
+		p.failing = true
+		return
+	}
+	if p.failing {
+		from := p.lastOK
+		if from.IsZero() {
+			from = p.started
+		}
+		p.gaps = append(p.gaps, attestation.KMSGap{From: from, To: at})
+		if len(p.gaps) > maxGaps {
+			p.gaps, p.gapsTruncated = p.gaps[len(p.gaps)-maxGaps:], true
+		}
+		p.failing = false
+	}
+	p.lastOK = at
+	if n := len(p.history); n > 0 && p.history[n-1].Policy == st.Policy && p.history[n-1].Grants == st.Grants && p.history[n-1].GrantsTruncated == st.GrantsTruncated {
+		p.history[n-1].LastSeen = at
+	} else {
+		p.history = append(p.history, attestation.KMSObservation{Policy: st.Policy, Grants: st.Grants, GrantsTruncated: st.GrantsTruncated, FirstSeen: at, LastSeen: at})
+		if len(p.history) > maxHistory {
+			p.history, p.historyCut = p.history[len(p.history)-maxHistory:], true
+		}
+	}
 }
 
 func (p *PolicyReader) read(ctx context.Context) (attestation.KMSStatus, error) {

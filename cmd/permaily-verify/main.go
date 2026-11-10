@@ -79,8 +79,16 @@ type kmsResult struct {
 	Images       []string  `json:"images"`
 	ReadAt       time.Time `json:"read_at"`
 	// AdministratorsCanChangePolicy means the result describes the policy only
-	// at ReadAt: account administrators may replace it later.
+	// as far as the enclave watched it: account administrators may replace it.
 	AdministratorsCanChangePolicy bool `json:"administrators_can_change_policy"`
+	// WatchedSince is when the enclave started reading the policy about once a
+	// minute; zero for an image that keeps no history. Changes counts the
+	// other states it saw since then, all of which passed the same checks.
+	WatchedSince time.Time `json:"watched_since,omitzero"`
+	Changes      int       `json:"changes_since"`
+	// Gaps are periods in which the enclave could not read the policy: a change
+	// made and undone inside one would not be seen.
+	Gaps []attestation.KMSGap `json:"gaps,omitempty"`
 }
 
 func main() {
@@ -244,15 +252,52 @@ func checkKMS(k *attestation.KMSStatus, pcr0 string, alsoAllow []string, now tim
 	if age := now.Sub(k.FetchedAt); age > maxPolicyAge || age < -maxPolicyAge {
 		return nil, fmt.Errorf("read by the enclave at %s, not within %s of now", k.FetchedAt.UTC().Format(time.RFC3339), maxPolicyAge)
 	}
-	rep, err := kmspolicy.Analyze([]byte(k.Policy))
+	current := attestation.KMSObservation{Policy: k.Policy, Grants: k.Grants, GrantsTruncated: k.GrantsTruncated}
+	rep, err := checkPolicy(current, pcr0, alsoAllow)
 	if err != nil {
 		return nil, err
 	}
-	if len(rep.Problems) > 0 {
-		return nil, errors.New(strings.Join(rep.Problems, "; "))
+	sum := sha256.Sum256([]byte(k.Policy))
+	res := &kmsResult{
+		KeyARN:                        k.KeyARN,
+		PolicySHA256:                  hex.EncodeToString(sum[:]),
+		Images:                        rep.Images,
+		ReadAt:                        k.FetchedAt.UTC(),
+		AdministratorsCanChangePolicy: rep.AdminCanChangePolicy,
 	}
-	if k.Grants > 0 || k.GrantsTruncated {
-		return nil, fmt.Errorf("the key has %d grant(s); grants give access outside the policy", k.Grants)
+	if len(k.History) == 0 {
+		return res, nil // an image that keeps no history
+	}
+
+	// Every state the enclave saw since it started must pass the same checks:
+	// a policy opened for a moment and closed again is still a way in.
+	if k.HistoryTruncated {
+		return nil, errors.New("changed more times than the enclave remembers since it started; its history is incomplete")
+	}
+	last := k.History[len(k.History)-1]
+	if last.Policy != k.Policy || last.Grants != k.Grants || last.GrantsTruncated != k.GrantsTruncated {
+		return nil, errors.New("the history the enclave reports does not end in the current policy")
+	}
+	for _, past := range k.History[:len(k.History)-1] {
+		if _, err := checkPolicy(past, pcr0, alsoAllow); err != nil {
+			return nil, fmt.Errorf("from %s to %s: %w", past.FirstSeen.UTC().Format(time.RFC3339), past.LastSeen.UTC().Format(time.RFC3339), err)
+		}
+	}
+	res.WatchedSince, res.Changes, res.Gaps = k.WatchedSince.UTC(), len(k.History)-1, k.Gaps
+	return res, nil
+}
+
+// checkPolicy applies the checks to one state of the policy and grants.
+func checkPolicy(o attestation.KMSObservation, pcr0 string, alsoAllow []string) (kmspolicy.Report, error) {
+	rep, err := kmspolicy.Analyze([]byte(o.Policy))
+	if err != nil {
+		return rep, err
+	}
+	if len(rep.Problems) > 0 {
+		return rep, errors.New(strings.Join(rep.Problems, "; "))
+	}
+	if o.Grants > 0 || o.GrantsTruncated {
+		return rep, fmt.Errorf("the key has %d grant(s); grants give access outside the policy", o.Grants)
 	}
 	var others []string
 	for _, img := range rep.Images {
@@ -261,16 +306,9 @@ func checkKMS(k *attestation.KMSStatus, pcr0 string, alsoAllow []string, now tim
 		}
 	}
 	if len(others) > 0 {
-		return nil, fmt.Errorf("also releases data keys to image(s) you did not verify: %s (accept them with -kms-also-allow)", strings.Join(others, ", "))
+		return rep, fmt.Errorf("also releases data keys to image(s) you did not verify: %s (accept them with -kms-also-allow)", strings.Join(others, ", "))
 	}
-	sum := sha256.Sum256([]byte(k.Policy))
-	return &kmsResult{
-		KeyARN:                        k.KeyARN,
-		PolicySHA256:                  hex.EncodeToString(sum[:]),
-		Images:                        rep.Images,
-		ReadAt:                        k.FetchedAt.UTC(),
-		AdministratorsCanChangePolicy: rep.AdminCanChangePolicy,
-	}, nil
+	return rep, nil
 }
 
 func splitList(s string) []string {
@@ -668,7 +706,21 @@ func printKMS(w io.Writer, r hostResult, pcr0 string) {
 	}
 	fmt.Fprintf(w, "      KMS key %s releases data keys %s; no grants\n", r.KMS.KeyARN, who)
 	fmt.Fprintf(w, "      KMS key policy sha256 %s, read by the enclave at %s\n", r.KMS.PolicySHA256, r.KMS.ReadAt.Format(time.RFC3339))
-	if r.KMS.AdministratorsCanChangePolicy {
+	watched := !r.KMS.WatchedSince.IsZero()
+	if watched {
+		what := "unchanged"
+		if r.KMS.Changes > 0 {
+			what = fmt.Sprintf("%d other state(s), each limited to images you accepted and without grants", r.KMS.Changes)
+		}
+		fmt.Fprintf(w, "      KMS key policy read by the enclave every minute since %s: %s\n", r.KMS.WatchedSince.Format(time.RFC3339), what)
+		for _, g := range r.KMS.Gaps {
+			fmt.Fprintf(w, "      warning: the enclave could not read the policy from %s to %s; a change made and undone in that time would not be seen\n", g.From.UTC().Format(time.RFC3339), g.To.UTC().Format(time.RFC3339))
+		}
+	}
+	switch {
+	case r.KMS.AdministratorsCanChangePolicy && watched:
+		fmt.Fprintln(w, "      note: account administrators can replace that policy; before the enclave started, or after a restart, nothing here shows it")
+	case r.KMS.AdministratorsCanChangePolicy:
 		fmt.Fprintln(w, "      note: account administrators can replace that policy; this is its state at that time")
 	}
 }

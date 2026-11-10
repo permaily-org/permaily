@@ -57,6 +57,36 @@ type KMSStatus struct {
 	GrantsTruncated bool `json:"grants_truncated"`
 	// FetchedAt is when the enclave read the policy and the grants.
 	FetchedAt time.Time `json:"fetched_at"`
+
+	// WatchedSince is when this enclave started reading the policy, about
+	// once a minute. Zero in images that do not keep a history.
+	WatchedSince time.Time `json:"watched_since,omitzero"`
+	// History is every different state of the policy and the grants the
+	// enclave has read since then, oldest first; the last one is the current
+	// state. A policy that was changed and changed back shows up here.
+	History []KMSObservation `json:"history,omitempty"`
+	// HistoryTruncated means older states were dropped to bound the answer.
+	HistoryTruncated bool `json:"history_truncated,omitempty"`
+	// Gaps are the periods in which the enclave could not read from KMS. A
+	// change made and undone inside a gap is not in History.
+	Gaps          []KMSGap `json:"gaps,omitempty"`
+	GapsTruncated bool     `json:"gaps_truncated,omitempty"`
+}
+
+// KMSObservation is one state of the key policy and grants, and the first and
+// last time the enclave read it without reading a different one in between.
+type KMSObservation struct {
+	Policy          string    `json:"policy"`
+	Grants          int       `json:"grants"`
+	GrantsTruncated bool      `json:"grants_truncated,omitempty"`
+	FirstSeen       time.Time `json:"first_seen"`
+	LastSeen        time.Time `json:"last_seen"`
+}
+
+// KMSGap is a period between two successful readings with failed ones in between.
+type KMSGap struct {
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
 }
 
 // FetchStatus gets baseURL/status and checks that the TLS certificate of that

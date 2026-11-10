@@ -30,10 +30,13 @@ Stored mail is encrypted with keys that AWS KMS releases only to an enclave that
 - Every statement of the policy that allows more than administration must require the enclave image (`kms:RecipientAttestation:ImageSha384`). A statement that does not, or that the verifier does not understand, fails the check.
 - The only image allowed must be the one you verified. Another image fails the check, because it could decrypt the mail and you have not verified it.
 - The key must have no grants, and the enclave's reading must be at most 5 minutes old.
+- The same holds for every state of the policy the enclave has seen since it started. It reads the policy once a minute and reports each different state with the times it saw it; one that let another image in, skipped the image check or had a grant fails the check even if the policy was put back, and the error says from when to when.
 
 During an upgrade the old and the new release are both allowed for a short time. Then verification fails unless you accept the other release by its PCR0: `permaily-verify -pcrs pcrs.json -kms-also-allow <PCR0 of the other release>`. Releases before v0.3.0 do not report the policy; verify them with `-skip-kms-policy`.
 
-What this does not prove: the account's administrators can replace the policy later, and the verifier sees it only at the time of the check (it prints a note saying so). The policy's SHA-256 is printed so two checks can be compared.
+What this does not prove: the account's administrators can still replace the policy. A change made while the enclave could not reach KMS shows only as a warning with the period, and the history starts again when the enclave restarts: the verifier prints since when the enclave has been watching, so a restart is visible to anyone comparing two checks. The policy's SHA-256 is printed for the same reason.
+
+The workflow `verify-production` of the repository runs the latest release's verifier against the live service twice an hour; its runs and their output are public under Actions. `scripts/verify-production.sh` runs the same check from your machine.
 
 ## How mail gets in
 
@@ -104,7 +107,10 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
     "policy": "<the key policy document, as KMS returned it>",
     "grants": 0,
     "grants_truncated": false,
-    "fetched_at": "<when the enclave read it, RFC 3339>"
+    "fetched_at": "<when the enclave read it, RFC 3339>",
+    "watched_since": "<when this enclave started reading the policy>",
+    "history": [{"policy": "...", "grants": 0, "first_seen": "...", "last_seen": "..."}],
+    "gaps": [{"from": "...", "to": "..."}]
   },
   "tls": {
     "spki_sha256": "<hex SHA-256 of the certificate key, as in the attestation>",
