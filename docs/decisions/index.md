@@ -5,12 +5,13 @@ Architecture Decision Records. Each one records the context, the options conside
 | ADR | Decision | Status |
 |---|---|---|
 | [0001](0001-reproducible-image-with-nix.md) | Build the enclave image reproducibly with Nix and monzo/aws-nitro-util | Accepted |
-| [0002](0002-tls-inside-the-enclave.md) | Terminate TLS inside the enclave with ACME TLS-ALPN-01 | Accepted, to verify in production |
+| [0002](0002-tls-inside-the-enclave.md) | Terminate TLS inside the enclave with ACME TLS-ALPN-01 | Accepted |
 | [0003](0003-official-go-toolchain.md) | Build Go with the official toolchain, not nixpkgs' Go | Accepted |
 | [0004](0004-opentofu-and-region.md) | OpenTofu for infrastructure, AWS us-east-2, Cloudflare DNS | Accepted |
 | [0005](0005-monorepo-with-the-site.md) | One repository for the service, the web app and the public site | Accepted |
 | [0006](0006-personal-use-license.md) | Source-available personal use license with a CLA | Accepted, pending legal review |
 | [0007](0007-oauth-server.md) | OAuth authorization server for apps and MCP clients | Proposed, needs a spike |
-| [0008](0008-mailbox-keys-with-kms-attestation.md) | Mailbox data keys from KMS with attestation | Accepted, to verify in production |
+| [0008](0008-mailbox-keys-with-kms-attestation.md) | Mailbox data keys from KMS with attestation | Accepted |
 | [0009](0009-f1-test-mailbox.md) | One test mailbox in F1 | Accepted |
 | [0008](0008-org-community-health-files.md) | Community health files live in the organization's .github repository | Accepted |
+| [0010](0010-kms-policy-over-the-attested-tls-key.md) | Publish the KMS key policy over the attested TLS key | Accepted |

@@ -7,7 +7,7 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 | `enclave` | vsock listener and egress HTTP client through the host's CONNECT proxy (the parent instance is vsock CID 3) |
 | `tlsacme` | one multi-SAN certificate via ACME TLS-ALPN-01; key lives only in enclave memory |
 | `nsm`, `nsm/fakensm` | real NSM attester; fake attester for dev mode and tests |
-| `httpapi` | `/attestation`, `/version` |
+| `httpapi` | `/attestation`, `/status` (KMS key policy), `/version`, mailbox API |
 | `router` | dispatch by Host (app, api, mcp, inbox) and security headers |
 | `webui` | embeds the SPA build (`dist/` is copied in at build time) |
 | `hostproxy` | TCP to vsock forwarding and allowlisted CONNECT proxy (host side) |
@@ -15,7 +15,7 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 | `smtpd` | MX on port 25 (vsock), STARTTLS with the enclave certificate (F1) |
 | `inbox` | mailbox: parse, Gmail confirmation codes, seal, store, serve (F1) |
 | `msgauth` | DKIM verification with DNS-over-HTTPS (F1) |
-| `keys` | data keys from KMS with attestation (Recipient, CMS), local keys for dev (F1) |
+| `keys` | data keys from KMS with attestation (Recipient, CMS), reader of the key's policy and grants for `/status`, local keys for dev (F1) |
 | `envelope` | AES-256-GCM with key commitment and context binding (F1) |
 | `store` | DynamoDB and S3 store, in-memory store for dev and tests (F1) |
 
