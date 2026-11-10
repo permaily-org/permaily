@@ -179,15 +179,17 @@ var ErrNotSealed = errors.New("kmspolicy: the key is not sealed to the image")
 // policy, no grant exists, and the key material never left KMS. With no way to
 // change the policy or add a grant, what is true when this is checked stays true.
 //
-// kms:Encrypt needs no image here, unlike in Analyze: the running enclave must
-// encrypt the root secret to the key of the next release, and what the key
-// protects is accepted for the attestation document stored with it, never for
-// opening under the key. A ciphertext planted by the operator is refused.
+// Creating ciphertexts (kms:GenerateDataKey, kms:Encrypt) needs no image
+// here, unlike in Analyze: the running enclave must put the root secret under
+// the key of the next release, whose image is not its own. What the key
+// protects is accepted for the attestation document stored with it, never
+// because it opens under the key, so a ciphertext made by the operator is
+// refused. Only decrypting needs the image.
 //
 // grants and truncated are the number of grants on the key and whether the
 // list was cut.
 func Sealed(policy []byte, grants int, truncated bool, key Key, image string) (Report, error) {
-	rep, err := analyze(policy, append([]string{"kms:encrypt"}, safeActions...))
+	rep, err := analyze(policy, append([]string{"kms:generatedatakey", "kms:encrypt"}, safeActions...))
 	if err != nil {
 		return rep, err
 	}

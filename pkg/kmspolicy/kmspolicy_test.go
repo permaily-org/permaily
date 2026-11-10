@@ -148,8 +148,8 @@ func TestAnalyzePolicyLock(t *testing.T) {
 func releasePolicy(image string) []byte {
 	return policy(
 		`{"Sid":"Read","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::111122223333:root"},"Action":["kms:DescribeKey","kms:GetKeyPolicy","kms:GetKeyRotationStatus","kms:ListGrants","kms:ListResourceTags","kms:ListKeyPolicies","kms:ScheduleKeyDeletion","kms:CancelKeyDeletion"],"Resource":"*"}`,
-		`{"Sid":"AnyoneEncrypts","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::111122223333:role/host"},"Action":"kms:Encrypt","Resource":"*"}`,
-		`{"Sid":"OnlyThisImageDecrypts","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::111122223333:role/host"},"Action":"kms:Decrypt","Resource":"*","Condition":`+pinned(image)+`}`,
+		`{"Sid":"AnyoneLocks","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::111122223333:root"},"Action":"kms:GenerateDataKey","Resource":"*"}`,
+		`{"Sid":"OnlyThisImageOpens","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::111122223333:root"},"Action":"kms:Decrypt","Resource":"*","Condition":`+pinned(image)+`}`,
 	)
 }
 
@@ -189,7 +189,8 @@ func TestSealed(t *testing.T) {
 		{"two images", policy(enclave(pinned(imageA, imageB))), 0, false, goodKey, imageA, "released to other images: " + imageB},
 		{"no image at all", policy(`{"Effect":"Allow","Principal":"*","Action":"kms:DescribeKey","Resource":"*"}`), 0, false, goodKey, imageA, "no image can use the key"},
 		{"someone decrypts without an image", policy(enclave(pinned(imageA)), `{"Sid":"Door","Effect":"Allow","Principal":"*","Action":"kms:Decrypt","Resource":"*"}`), 0, false, goodKey, imageA, "statement Door"},
-		{"data keys without an image", policy(enclave(pinned(imageA)), `{"Sid":"Door","Effect":"Allow","Principal":"*","Action":["kms:Encrypt","kms:GenerateDataKey"],"Resource":"*"}`), 0, false, goodKey, imageA, "allows kms:GenerateDataKey without"},
+		{"re-encryption without an image", policy(enclave(pinned(imageA)), `{"Sid":"Door","Effect":"Allow","Principal":"*","Action":["kms:Encrypt","kms:ReEncryptFrom"],"Resource":"*"}`), 0, false, goodKey, imageA, "allows kms:ReEncryptFrom without"},
+		{"data key pairs without an image", policy(enclave(pinned(imageA)), `{"Sid":"Door","Effect":"Allow","Principal":"*","Action":"kms:GenerateDataKeyPair","Resource":"*"}`), 0, false, goodKey, imageA, "kms:GenerateDataKeyPair"},
 		{"grants can be created", policy(enclave(pinned(imageA)), `{"Sid":"Door","Effect":"Allow","Principal":"*","Action":"kms:CreateGrant","Resource":"*"}`), 0, false, goodKey, imageA, "kms:CreateGrant"},
 		{"a grant exists", releasePolicy(imageA), 1, false, goodKey, imageA, "1 grant(s)"},
 		{"more grants than were listed", releasePolicy(imageA), 0, true, goodKey, imageA, "grant(s)"},

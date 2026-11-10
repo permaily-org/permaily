@@ -57,7 +57,7 @@ type Build struct {
 	IssuedAt time.Time
 }
 
-// New creates an authority and a log, valid from an hour ago for ten years.
+// New creates an authority and a log, valid from thirty days ago for ten years.
 func New() (*Authority, error) {
 	now := time.Now()
 	rootKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
@@ -96,7 +96,7 @@ func issueCA(parent *x509.Certificate, parentKey, key *ecdsa.PrivateKey, cn stri
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: cn},
-		NotBefore:             now.Add(-time.Hour),
+		NotBefore:             now.AddDate(0, 0, -30),
 		NotAfter:              now.AddDate(10, 0, 0),
 		BasicConstraintsValid: true,
 		IsCA:                  true,
