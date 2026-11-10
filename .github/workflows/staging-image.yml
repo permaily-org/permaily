@@ -1,0 +1,53 @@
+name: staging-image
+
+# Builds the staging enclave image (nix build .#eif-staging) of a branch named
+# staging/<anything> and attests its build provenance, the way release.yml does
+# for releases.
+#
+# A staging image is a deployment of its own, for tests: its root secret can
+# only be handed to images this workflow built on a staging/ branch, and a
+# production image never accepts one (deploy/enclave.json, ADR 0013). So
+# whoever can push a staging/ branch can run code against the staging
+# deployment, which holds no real mail, and nothing else.
+
+on:
+  push:
+    branches: ["staging/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - run: |
+          nix build .#eif-staging --out-link eif -L
+          nix build .#permaily-host --out-link host
+          nix build .#permaily-verify --out-link verify
+          mkdir dist
+          cp eif/permaily.eif eif/pcrs.json dist/
+          cp host/bin/permaily-host dist/permaily-host-linux-arm64
+          cp verify/bin/permaily-verify dist/permaily-verify-linux-arm64
+          (cd dist && sha256sum * > SHA256SUMS)
+          cat dist/pcrs.json
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: staging-image
+          path: dist/
+          retention-days: 7

@@ -9,13 +9,20 @@
 #   - entrypoint and environment: below, one argument per line (AWS init splits
 #     /cmd and /env on newlines).
 { lib, runCommand, fetchFromGitHub, jq, nitro, enclaveBin, acmeDirectory
+, staging ? false
 , gomemlimit ? "1536MiB"
 }:
 
 let
   # Runtime configuration compiled into the image (and therefore into PCR0).
   # Edit deploy/enclave.json, never pass configuration from the parent instance.
-  config = builtins.fromJSON (builtins.readFile ../deploy/enclave.json);
+  # A staging image is a deployment of its own: the "staging" object replaces
+  # the values that keep it apart from production (its storage, and which
+  # builds may receive its root secret).
+  base = builtins.fromJSON (builtins.readFile ../deploy/enclave.json);
+  config = base // lib.optionalAttrs staging base.staging;
+  # An empty value is left out: AWS's init splits the entry point on newlines.
+  flag = name: value: lib.optionals (value != "") [ name value ];
 
   awsNitroCli = fetchFromGitHub {
     owner = "aws";
@@ -41,7 +48,7 @@ let
     nsmKo = "${blobs}/nsm.ko";
     copyToRoot = rootfs;
     copyToRootWithClosure = false;
-    entrypoint = lib.concatStringsSep "\n" [
+    entrypoint = lib.concatStringsSep "\n" ([
       "/permaily-enclave"
       "-domain" config.domain
       "-acme-directory" acmeDirectory
@@ -50,10 +57,18 @@ let
       "-mailbox-token-sha256" config.mailbox_token_sha256
       "-mta-sts-mode" config.mta_sts_mode
       "-aws-region" config.aws_region
-      "-kms-key-arn" config.kms_key_arn
+      "-aws-account" config.aws_account_id
       "-dynamodb-table" config.dynamodb_table
       "-s3-bucket" config.s3_bucket
-    ];
+      "-admin-token-sha256" config.admin_token_sha256
+      "-release-repository" config.release_repository
+      "-release-repository-id" config.release_repository_id
+      "-release-owner-id" config.release_owner_id
+      "-release-workflow" config.release_workflow
+    ]
+    ++ flag "-release-ref" config.release_ref
+    ++ flag "-release-ref-prefix" config.release_ref_prefix
+    ++ flag "-kms-key-arn" config.kms_key_arn);
     env = "GOMEMLIMIT=${gomemlimit}";
   };
 in

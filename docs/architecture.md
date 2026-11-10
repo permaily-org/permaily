@@ -28,12 +28,13 @@ sending MTA ─STARTTLS───▶ EIP:25  ─▶ permaily-host ─────
   | `inbox.permaily.com` | MX (SMTP on port 25 with STARTTLS) for forwarded mail (F1) |
   | `mta-sts.inbox.permaily.com` | MTA-STS policy for the MX (F1) |
 
-  Every host serves `/attestation?nonce=<hex>`, `/status` (the live KMS key policy and the TLS identity) and `/version`.
-- **Mail (F1)**: `internal/smtpd` (MX), `internal/inbox` (parse, Gmail confirmation codes, seal, serve), `internal/msgauth` (DKIM over DoH), `internal/keys` (KMS Recipient and CMS), `internal/envelope` (AES-256-GCM with key commitment), `internal/store` (DynamoDB and S3). Design: [plan.md](plan.md), ADR 0008 and 0009; data: [data.md](data.md).
+  Every host serves `/attestation?nonce=<hex>`, `/status` (the KMS key that locks the root secret, and the TLS identity) and `/version`.
+- **Mail (F1)**: `internal/smtpd` (MX), `internal/inbox` (parse, Gmail confirmation codes, seal, serve), `internal/msgauth` (DKIM over DoH), `internal/keys` (the root secret that every data key is wrapped under, its handoff to the next release, KMS Recipient and CMS), `internal/envelope` (AES-256-GCM with key commitment), `internal/store` (DynamoDB and S3). Design: [plan.md](plan.md), ADR 0008 and 0009; data: [data.md](data.md).
 - **permaily-host** (`cmd/permaily-host`): forwards TCP 443 and 25 to vsock, exposes an allowlisted HTTP CONNECT proxy on vsock 8000 for the enclave's outbound TLS, and serves the instance role credentials on vsock 8002.
-- **permaily-verify** (`cmd/permaily-verify`, `pkg/attestation`, `pkg/kmspolicy`, `pkg/certwatch`): verifier CLI and libraries. It checks the image, the TLS key, the policy of the KMS key that protects stored mail, how mail gets in, and whether a certificate for the hosts exists outside the enclave.
+- **permaily-verify** (`cmd/permaily-verify`, `pkg/attestation`, `pkg/kmspolicy`, `pkg/certwatch`): verifier CLI and libraries. It checks the image, the TLS key, that the KMS key locking the root secret belongs to that image alone for good, how mail gets in, and whether a certificate for the hosts exists outside the enclave.
+- **Releases and the root secret** (`pkg/provenance`, ADR 0013): the running enclave hands the root secret only to an image whose measurements were published by the release workflow, which it checks offline from the release's Sigstore bundle. Nothing in AWS is edited to let a release in.
 - **Build** (`flake.nix`, `nix/`): Nix with [monzo/aws-nitro-util](https://github.com/monzo/aws-nitro-util) and AWS's prebuilt kernel/init blobs; PCR0 is identical from x86_64 and arm64 builders.
-- **Infrastructure** (`deploy/`): OpenTofu; one Graviton `c7g.large` in `us-east-2` (enclave: 1 vCPU, 2 GiB), Cloudflare DNS (DNS only), S3 for deploy artifacts, SSM for administration; for mail, a KMS key, a DynamoDB table and an S3 bucket (`mail.tf`). The image's runtime configuration is `deploy/enclave.json`.
+- **Infrastructure** (`deploy/`): OpenTofu; one Graviton `c7g.large` in `us-east-2` (enclave: 1 vCPU, 2 GiB), Cloudflare DNS (DNS only), S3 for deploy artifacts, SSM for administration; for mail, a DynamoDB table and an S3 bucket (`mail.tf`), one KMS key per release (`releases.tf`) and the storage of the staging deployment (`staging.tf`). The image's runtime configuration is `deploy/enclave.json`.
 
 The landing page at `permaily.com` (apex) is a separate project hosted on Amplify and is not part of the verifiable surface. Rule for F2: session cookies on `app.` use the `__Host-` prefix (no `Domain` attribute) so the apex cannot read or overwrite them.
 

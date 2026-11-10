@@ -1,11 +1,20 @@
-# F1: mail storage and keys. The enclave stores only sealed data here; the
-# mailbox data key is wrapped by this KMS key, which releases it only to an
-# attested enclave whose PCR0 is in var.enclave_pcr0_allowlist.
+# F1: mail storage. The enclave stores only sealed data here.
+#
+# The KMS key below is the one releases up to v0.6.0 wrapped data keys with
+# directly. Since the root secret (ADR 0013, releases.tf) it is only read once,
+# by the first release that has a root secret, to move those data keys under
+# it. After that it is retired for good with var.mail_key_retired.
 
 variable "enclave_pcr0_allowlist" {
-  description = "PCR0 values (hex) of released enclave images allowed to use the mail key. Add a release's PCR0 before deploying it."
+  description = "PCR0 values (hex) of enclave images allowed to use the old mail key: the release that moves the data keys under the root secret, until it has. Ignored once the key is retired."
   type        = list(string)
   default     = []
+}
+
+variable "mail_key_retired" {
+  description = "Retire the old mail key: replace its policy with one that lets nobody use the key and nobody change the policy, ever. Set it once every data key has moved under the root secret (docs/operations.md). It cannot be undone."
+  type        = bool
+  default     = false
 }
 
 variable "mail_dns_enabled" {
@@ -25,8 +34,31 @@ resource "aws_kms_key" "mail" {
   key_usage               = "ENCRYPT_DECRYPT"
   deletion_window_in_days = 30
   enable_key_rotation     = true
+  # Needed to write a policy that nobody can change (the retired one).
+  bypass_policy_lockout_safety_check = var.mail_key_retired
 
-  policy = jsonencode({
+  policy = var.mail_key_retired ? jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      # Nobody can use the key and nobody can change this policy: copies of
+      # data keys it once wrapped can never be opened again. The account can
+      # still read the key and delete it.
+      Sid       = "RetiredReadAndDelete"
+      Effect    = "Allow"
+      Principal = { AWS = "arn:aws:iam::${local.account_id}:root" }
+      Action = [
+        "kms:Describe*", "kms:Get*", "kms:List*",
+        "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion", "kms:DeleteAlias",
+      ]
+      Resource = "*"
+      }, {
+      Sid       = "EnclaveReadsPolicy"
+      Effect    = "Allow"
+      Principal = { AWS = aws_iam_role.enclave_host.arn }
+      Action    = ["kms:GetKeyPolicy", "kms:ListGrants"]
+      Resource  = "*"
+    }]
+    }) : jsonencode({
     Version = "2012-10-17"
     Statement = concat(
       [{

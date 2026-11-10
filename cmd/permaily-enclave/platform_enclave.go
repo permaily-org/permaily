@@ -25,6 +25,7 @@ import (
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
 	"github.com/permaily-org/permaily/pkg/attestation"
+	"github.com/permaily-org/permaily/pkg/provenance"
 )
 
 type platform struct {
@@ -36,9 +37,13 @@ type platform struct {
 	keys         keys.Service
 	store        store.Store
 	auth         inbox.Authenticator
-	// kmsStatus reads the policy of the pinned KMS key for /status; nil when
-	// there is no KMS key (no mailbox, or dev mode).
+	// kmsStatus reads the policy of the KMS key that older images wrapped data
+	// keys with, for /status; nil when there is none (no mailbox, or dev mode).
 	kmsStatus func(context.Context) (attestation.KMSStatus, error)
+	// rootStatus describes the key that holds the root secret, and handoff
+	// gives the root secret to the next release; nil without a root secret.
+	rootStatus func(context.Context) (*attestation.RootStatus, error)
+	handoff    func(context.Context, keys.Handoff) (*keys.HandoffResult, error)
 }
 
 // logOutput writes to the console and, when a log port is set, to the parent
@@ -65,8 +70,8 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	// Without storage (no mailbox) the TLS key lives only in memory.
 	var identity tlsacme.Persistence
 	if cfg.mailboxID != "" {
-		if cfg.kmsKeyARN == "" || cfg.dynamoTable == "" || cfg.s3Bucket == "" || cfg.mailboxTokenSHA256 == "" {
-			return nil, errors.New("mailbox enabled but -kms-key-arn, -dynamodb-table, -s3-bucket or -mailbox-token-sha256 is missing")
+		if cfg.awsAccount == "" || cfg.dynamoTable == "" || cfg.s3Bucket == "" || cfg.mailboxTokenSHA256 == "" {
+			return nil, errors.New("mailbox enabled but -aws-account, -dynamodb-table, -s3-bucket or -mailbox-token-sha256 is missing")
 		}
 		if p.smtpListener, err = enclave.Listen(cfg.smtpPort); err != nil {
 			return nil, err
@@ -77,12 +82,17 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			HTTPClient:  egress,
 		}
 		kmsClient := kms.NewFromConfig(awsCfg)
-		if p.keys, err = keys.NewKMS(kmsClient, cfg.kmsKeyARN, att); err != nil {
-			return nil, err
+		// Data keys that images before the root secret wrapped directly with
+		// KMS: this image still opens them, to move them under the root secret.
+		var legacy keys.Service
+		if cfg.kmsKeyARN != "" {
+			if legacy, err = keys.NewKMS(kmsClient, cfg.kmsKeyARN, att); err != nil {
+				return nil, err
+			}
+			policy := keys.NewPolicyReader(kmsClient, cfg.kmsKeyARN)
+			p.kmsStatus = policy.Status
+			go policy.Run(ctx)
 		}
-		policy := keys.NewPolicyReader(kmsClient, cfg.kmsKeyARN)
-		p.kmsStatus = policy.Status
-		go policy.Run(ctx)
 		awsStore := &store.AWS{
 			DB: dynamodb.NewFromConfig(awsCfg),
 			// Path-style keeps every request on s3.<region>.amazonaws.com (one allowlist entry).
@@ -91,6 +101,21 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			Bucket: cfg.s3Bucket,
 		}
 		p.store = awsStore
+		// Sigstore's trust root is compiled into the image, like the policy
+		// that says which builds are releases.
+		trust, err := provenance.PublicGood()
+		if err != nil {
+			return nil, err
+		}
+		root, err := keys.NewRoot(keys.RootConfig{
+			API: kmsClient, Attester: att, Records: awsStore, Account: cfg.awsAccount, Region: cfg.awsRegion,
+			Releases: cfg.releases, Trust: trust, Legacy: legacy, Log: log,
+		})
+		if err != nil {
+			return nil, err
+		}
+		p.keys, p.rootStatus, p.handoff = root, root.Status, root.HandOff
+		go root.Run(ctx)
 		p.auth = msgauth.DKIM(msgauth.DoH{Client: egress, Endpoint: cfg.dohEndpoint}.LookupTXT)
 
 		// One identity per CA: a production and a staging image never share

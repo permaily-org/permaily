@@ -4,20 +4,87 @@ Runbooks for production. Setup from scratch is in [deploy.md](deploy.md). Every 
 
 ## Deploy a release
 
+The running enclave hands the root secret to the next release, then the next release is started (ADR 0013). Nothing in AWS is edited to let a release in: each release has a KMS key of its own that only its image can use.
+
 ```sh
-tag=v0.1.0
-mkdir -p /tmp/permaily-$tag && cd /tmp/permaily-$tag
-gh release download $tag --repo permaily-org/permaily
+old=v0.7.0 new=v0.8.0
+mkdir -p /tmp/permaily-$new && cd /tmp/permaily-$new
+gh release download $new --repo permaily-org/permaily
 gh attestation verify permaily.eif --repo permaily-org/permaily
 sha256sum -c SHA256SUMS --ignore-missing
 mkdir eif && mv permaily.eif pcrs.json eif/
+
+# 1. The key of the new image. deploy/tofu/production.auto.tfvars:
+#      release_keys = { "v0.7.0" = "<its PCR0>", "v0.8.0" = "<jq -r .PCR0 eif/pcrs.json>" }
+tofu -chdir=deploy/tofu apply          # creates one KMS key and its alias; then `tofu plan` must show no changes
+
+# 2. The running enclave gives the root secret to the new release.
+scripts/handoff.sh $old $new
+
+# 3. Start the new image and verify.
 scripts/deploy.sh eif permaily-host-linux-arm64
-scripts/verify.sh $tag
+scripts/verify.sh $new                 # from a server with outbound port 25, add -require-smtp
 ```
+
+Then open the pull request that commits `production.auto.tfvars`.
+
+- **The handoff is refused** (HTTP 422): the answer says why. Nothing was written and the running enclave keeps serving. The usual causes are a key that was not created yet, or files of the wrong release.
+- **The new image was started first**: it logs `waiting for the running release to hand over the root secret` and serves nothing. Start the old image again, run the handoff, start the new one.
+- **Step 2 can be repeated**; the second time it answers `"created": false`.
+- **Verify before step 2** when in doubt about what is answering on `api.permaily.com`: the admin token only lets someone ask for a handoff, which the enclave decides alone, but there is no reason to give it to an impostor.
 
 ## Roll back
 
-Deploy the previous tag with the same steps, with its PCR0 back in `enclave_pcr0_allowlist` (see below); otherwise KMS denies it the mailbox keys. Mail lives in DynamoDB and S3, not in the enclave, so a rollback keeps it. Each restart issues a new certificate (see Let's Encrypt below).
+Deploy the previous release again with `scripts/deploy.sh`. Its record and its key are still there, and everything stored since is sealed under the same root secret, so it reads it. A handoff back to an older release is refused on purpose: a rollback only works while the old release's key exists.
+
+## Delete the key of an old release
+
+An old image can open the root secret for as long as its key exists. Once the new release has run long enough that no rollback is planned, remove the old release from `release_keys` and apply: its key is scheduled for deletion and gone after seven days. Never remove the release that is running.
+
+## Retire the old mail key
+
+Releases up to v0.6.0 wrapped data keys directly with `alias/permaily-mail`, whose policy named the allowed image. They cannot hand anything over, so the first release with a root secret is deployed the old way, and needs that key once, to move those data keys under the root secret it creates:
+
+```sh
+# deploy/tofu/production.auto.tfvars, before deploying that release:
+#   enclave_pcr0_allowlist = ["<its PCR0>"]            # in place of v0.6.0's, in one step
+#   release_keys           = { "<tag>" = "<its PCR0>" }
+tofu -chdir=deploy/tofu apply
+scripts/deploy.sh eif permaily-host-linux-arm64
+```
+
+Read the mailbox once (`/v1/mailbox`), and check in the journal `inbox: mailbox key moved under the root secret` and that the TLS key did not change. Then retire the key for good:
+
+```sh
+# deploy/tofu/production.auto.tfvars:
+#   enclave_pcr0_allowlist = []
+#   mail_key_retired       = true
+tofu -chdir=deploy/tofu apply
+```
+
+From then on nobody can use that key or change its policy, and `permaily-verify` shows it: `releases data keys to no image`, without the note about administrators. It cannot be undone, so run it only after the release has restarted once and still serves mail and the same certificate.
+
+## A new deployment, or losing everything
+
+An image creates a root secret only when the table has neither a record `root-<its PCR0>` nor the record `deployment` (`pk=system`, `sk=record#deployment`). To start over on purpose, delete those items, the TLS identity (`sk=record#tls-<CA host>`) and the mailbox items; the next image creates a new root secret, a new TLS key and a new ACME account (see Certificates below), and everything stored before is unreadable. There is no way back.
+
+If the instance is lost, nothing is: create it again with OpenTofu and deploy the same release. The root secret is in DynamoDB, locked by the release's KMS key.
+
+## Test with staging images
+
+A staging image (`.#eif-staging`) is a deployment of its own on the same instance and names: Let's Encrypt staging, the table `permaily-mail-staging`, and a root secret that only staging images can receive. Production is down while a staging image runs.
+
+```sh
+git push origin HEAD:refs/heads/staging/<name>     # the staging-image workflow builds and attests it
+gh run download <run id> --name staging-image --dir /tmp/stg-a
+# release_keys: add "staging-a" = "<its PCR0>", without committing; acme_account_uris: see Certificates below
+tofu -chdir=deploy/tofu apply
+scripts/deploy.sh /tmp/stg-a /tmp/stg-a/permaily-host-linux-arm64
+go run ./cmd/permaily-verify -pcrs /tmp/stg-a/pcrs.json -ca-file letsencrypt-stg-root-x1.pem -skip-certificates
+PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem scripts/handoff.sh /tmp/stg-a /tmp/stg-b    # to a second image, built later
+```
+
+Two staging images built at the same time may be logged in either order, and a handoff only goes forward in that order. Afterwards deploy the production release again, remove the staging keys from `release_keys`, restore the CAA records and delete the `staging/` branches.
 
 ## Look at enclave logs
 
@@ -36,7 +103,7 @@ For an enclave that does not even start, deploy the same image with `--debug` (`
 sudo nitro-cli console --enclave-name permaily
 ```
 
-Debug mode zeroes the PCRs, so verification fails on purpose and KMS refuses the keys: a debug enclave has no TLS key and no mailbox, and its console shows the refusals. Use it to read why an enclave does not start, not to test features. Redeploy without `--debug` right after.
+Debug mode zeroes the PCRs, so verification fails on purpose and the enclave does not even ask KMS for keys: a debug enclave has no root secret, so no TLS key and no mailbox, and its console says so. Use it to read why an enclave does not start, not to test features. Redeploy without `--debug` right after.
 
 ## Let's Encrypt rate limits
 
@@ -57,24 +124,6 @@ Run it after every deploy and record failures as incidents. Then check that a pr
 ```sh
 PERMAILY_RELEASE=<tag> go test -tags production -run TestProductionMITM -v ./cmd/permaily-verify
 ```
-
-## Deploy a release with mail (F1)
-
-Every release has a new PCR0, and the mail KMS key serves only the image in `enclave_pcr0_allowlist`. The policy changes from the old image to the new one in a single step, so two images are never allowed at once:
-
-```sh
-jq -r .PCR0 eif/pcrs.json
-# deploy/tofu/production.auto.tfvars: enclave_pcr0_allowlist = ["<new PCR0>"]
-tofu -chdir=deploy/tofu apply
-scripts/deploy.sh eif permaily-host-linux-arm64
-scripts/verify.sh <tag>          # from a server with outbound port 25, add -require-smtp
-```
-
-Between the `apply` and the restart the old enclave keeps serving with the keys it already has; it only cannot open a mailbox it had not opened yet. Then open the pull request that commits `production.auto.tfvars`.
-
-If the new enclave does not come up, put the old PCR0 back, apply and deploy the old release. `-kms-also-allow` exists for a setup that must run two images for a while; a single instance never needs it.
-
-The enclave reports every state of the policy it has seen since it started, and the verifier checks them all (docs/verification.md). So do not test by editing the policy of the production key: the change stays in the history until the enclave restarts, and `verify-production` will fail for as long.
 
 ## Scheduled verification
 
@@ -109,8 +158,8 @@ tofu -chdir=deploy/tofu apply
 ```
 
 - **First deployment, or a new TLS key:** the account does not exist yet, and a CAA record that names another account makes Let's Encrypt refuse. Set `acme_account_uris = []` (any Let's Encrypt account), deploy, read the account from `/status`, set it and apply.
-- **Staging images** (`.#eif-staging`) use another CA and so another sealed record and another account. To test one on the production names, add its account with `-var 'acme_account_uris=[...]'`, or in `production.auto.tfvars` without committing, for the duration of the test.
-- **Replace the TLS key** (suspected leak): delete the item `pk=system`, `sk=record#tls-acme-v02.api.letsencrypt.org` from the mail table, set `acme_account_uris = []`, restart the enclave, then pin the new account. The verifier will show the new creation time, and certificates of the old key as older until they expire.
+- **Staging images** (`.#eif-staging`) use another CA and another account, kept in the staging table. To test one on the production names, set `acme_account_uris = []` in `production.auto.tfvars` without committing for the first start, then its account next to production's for the rest of the test, and restore the file afterwards.
+- **Replace the TLS key** (suspected leak): delete the item `pk=system`, `sk=record#tls-acme-v02.api.letsencrypt.org` from the mail table, set `acme_account_uris = []`, restart the enclave, then pin the new account. The root secret is not affected. The verifier will show the new creation time, and certificates of the old key as older until they expire.
 - **A partial `tofu apply`** can leave a host without its CAA record; then the apex record applies, which allows only Amazon, and Let's Encrypt refuses every certificate. Run `tofu plan` after each apply: it must show no changes.
 
 ## Planned (F1+)

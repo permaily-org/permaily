@@ -147,6 +147,84 @@ func TestSealedKeepsTheIdentity(t *testing.T) {
 	}
 }
 
+// migrating is a key service that wraps keys a new way and still opens the
+// ones the old service wrapped, like keys.Root with a legacy service.
+type migrating struct {
+	old  keys.Service
+	fail error
+}
+
+func (m migrating) NewDataKey(context.Context, map[string]string) (keys.DataKey, error) {
+	dk := bytes.Repeat([]byte{9}, 32)
+	return keys.DataKey{Plaintext: dk, Wrapped: append([]byte("NEW:"), dk...)}, nil
+}
+
+func (m migrating) Unwrap(ctx context.Context, wrapped []byte, c map[string]string) ([]byte, error) {
+	if dk, ok := bytes.CutPrefix(wrapped, []byte("NEW:")); ok {
+		return dk, nil
+	}
+	return m.old.Unwrap(ctx, wrapped, c)
+}
+
+func (m migrating) Rewrap(ctx context.Context, wrapped []byte, c map[string]string) ([]byte, bool, error) {
+	if m.fail != nil {
+		return nil, false, m.fail
+	}
+	if bytes.HasPrefix(wrapped, []byte("NEW:")) {
+		return wrapped, false, nil
+	}
+	dk, err := m.old.Unwrap(ctx, wrapped, c)
+	return append([]byte("NEW:"), dk...), err == nil, err
+}
+
+// The release that introduces the root secret finds an identity whose key an
+// older image wrapped with KMS, and moves it: same TLS key, same account.
+func TestSealedMovesUnderTheRootSecret(t *testing.T) {
+	ctx := context.Background()
+	mem, old := store.NewMemory(), localKeys(t)
+	id, err := newSealed(t, mem, old).Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := mem.GetRecord(ctx, "tls-ca.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A failure to move keeps the old record, and gives no identity.
+	if _, err := newSealed(t, mem, migrating{old: old, fail: errors.New("root secret unavailable")}).Load(ctx); err == nil {
+		t.Fatal("loaded without moving the key")
+	}
+	if rec, _ := mem.GetRecord(ctx, "tls-ca.test"); !bytes.Equal(rec.WrappedKey, before.WrappedKey) {
+		t.Fatal("the record changed after a failed move")
+	}
+
+	moved := newSealed(t, mem, migrating{old: old})
+	got, err := moved.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Key.Equal(id.Key) || !got.AccountKey.Equal(id.AccountKey) {
+		t.Fatal("the identity changed in the move")
+	}
+	after, err := mem.GetRecord(ctx, "tls-ca.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(after.WrappedKey, []byte("NEW:")) {
+		t.Fatalf("wrapped key after the move: %q", after.WrappedKey)
+	}
+	// Later saves keep the new wrapping, and the old service is not needed again.
+	got.AccountURI = "https://ca.test/acct/1"
+	if err := moved.Save(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	again, err := newSealed(t, mem, migrating{}).Load(ctx)
+	if err != nil || !again.Key.Equal(id.Key) || again.AccountURI != "https://ca.test/acct/1" {
+		t.Fatalf("after the move, without the old service: %v", err)
+	}
+}
+
 func TestSealedRejects(t *testing.T) {
 	ctx := context.Background()
 	fresh := func(t *testing.T) (*store.Memory, keys.Service, *store.Record) {
