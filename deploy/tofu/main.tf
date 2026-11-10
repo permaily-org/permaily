@@ -1,5 +1,36 @@
 terraform {
-  required_version = ">= 1.8"
+  required_version = ">= 1.10"
+
+  # The state lives in S3 (bucket and key from ./bootstrap), with the backend's
+  # own lock file. OpenTofu encrypts state and plans with the KMS key before
+  # they leave this machine, so the bucket only holds ciphertext (ADR 0014).
+  backend "s3" {
+    bucket       = "permaily-tofu-state-209207235911"
+    key          = "permaily/terraform.tfstate"
+    region       = "us-east-2"
+    profile      = var.aws_profile != "" ? var.aws_profile : null
+    use_lockfile = true
+  }
+
+  encryption {
+    key_provider "aws_kms" "state" {
+      kms_key_id = "alias/permaily-tofu-state"
+      region     = "us-east-2"
+      profile    = var.aws_profile # empty: credentials from the environment
+      key_spec   = "AES_256"
+    }
+    method "aes_gcm" "state" {
+      keys = key_provider.aws_kms.state
+    }
+    state {
+      method   = method.aes_gcm.state
+      enforced = true
+    }
+    plan {
+      method   = method.aes_gcm.state
+      enforced = true
+    }
+  }
   required_providers {
     aws = {
       source  = "hashicorp/aws"

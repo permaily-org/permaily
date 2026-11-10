@@ -64,7 +64,7 @@ Every release has a new PCR0, and the mail KMS key only serves allowlisted image
 
 ```sh
 pcr0=$(jq -r .PCR0 eif/pcrs.json)
-# deploy/tofu/terraform.tfvars (not committed):
+# deploy/tofu/production.auto.tfvars (commit it in the pull request that follows the release):
 #   enclave_pcr0_allowlist = ["<current PCR0>", "<new PCR0>"]
 tofu -chdir=deploy/tofu apply
 ```
@@ -98,7 +98,7 @@ tofu -chdir=deploy/tofu apply
 ```
 
 - **First deployment, or a new TLS key:** the account does not exist yet, and a CAA record that names another account makes Let's Encrypt refuse. Set `acme_account_uris = []` (any Let's Encrypt account), deploy, read the account from `/status`, set it and apply.
-- **Staging images** (`.#eif-staging`) use another CA and so another sealed record and another account. To test one on the production names, add its account to `acme_account_uris` in `terraform.tfvars` for the duration of the test.
+- **Staging images** (`.#eif-staging`) use another CA and so another sealed record and another account. To test one on the production names, add its account with `-var 'acme_account_uris=[...]'`, or in `production.auto.tfvars` without committing, for the duration of the test.
 - **Replace the TLS key** (suspected leak): delete the item `pk=system`, `sk=record#tls-acme-v02.api.letsencrypt.org` from the mail table, set `acme_account_uris = []`, restart the enclave, then pin the new account. The verifier will show the new creation time, and certificates of the old key as older until they expire.
 - **A partial `tofu apply`** can leave a host without its CAA record; then the apex record applies, which allows only Amazon, and Let's Encrypt refuses every certificate. Run `tofu plan` after each apply: it must show no changes.
 
