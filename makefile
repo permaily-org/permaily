@@ -31,11 +31,11 @@ check-repo:
 
 # Short fuzzing run of the attestation parser (CI runs it too).
 fuzz:
-	go test -run='^$$' -fuzz=FuzzVerify -fuzztime=30s ./pkg/attestation
-	go test -run='^$$' -fuzz=FuzzParsePCRFile -fuzztime=15s ./pkg/attestation
-	go test -run='^$$' -fuzz=FuzzAnalyze -fuzztime=15s ./pkg/kmspolicy
-	go test -run='^$$' -fuzz=FuzzCMS -fuzztime=20s ./internal/keys
-	go test -run='^$$' -fuzz=FuzzParse -fuzztime=20s ./internal/inbox
+	go test -run='^$$' -fuzz=FuzzVerify -fuzztime=500000x ./pkg/attestation
+	go test -run='^$$' -fuzz=FuzzParsePCRFile -fuzztime=400000x ./pkg/attestation
+	go test -run='^$$' -fuzz=FuzzAnalyze -fuzztime=1000000x ./pkg/kmspolicy
+	go test -run='^$$' -fuzz=FuzzCMS -fuzztime=500000x ./internal/keys
+	go test -run='^$$' -fuzz=FuzzParse -fuzztime=150000x ./internal/inbox
 
 notices:
 	bun scripts/third-party-notices.ts
