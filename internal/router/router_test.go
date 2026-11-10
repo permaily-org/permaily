@@ -14,7 +14,13 @@ func TestRouter(t *testing.T) {
 	common := map[string]http.Handler{
 		"/version": http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "v") }),
 	}
-	h := New(hosts, common, app)
+	h := New(common, map[string]http.Handler{
+		hosts.App:    app,
+		hosts.API:    Hello("api"),
+		hosts.MCP:    Hello("mcp"),
+		hosts.Inbox:  Hello("inbox"),
+		hosts.MTASTS: MTASTSPolicy(hosts.Inbox, "testing", 604800),
+	})
 
 	cases := []struct {
 		host, path string
@@ -28,6 +34,8 @@ func TestRouter(t *testing.T) {
 		{"inbox.permaily.test", "/", 200, "hello from permaily inbox"},
 		{"api.permaily.test", "/missing", 404, ""},
 		{"inbox.permaily.test", "/version", 200, "v"},
+		{"mta-sts.inbox.permaily.test", "/.well-known/mta-sts.txt", 200, "version: STSv1\nmode: testing\nmx: inbox.permaily.test\nmax_age: 604800\n"},
+		{"mta-sts.inbox.permaily.test", "/", 404, ""},
 		{"evil.example", "/", http.StatusMisdirectedRequest, "unknown host"},
 	}
 	for _, c := range cases {
@@ -42,5 +50,8 @@ func TestRouter(t *testing.T) {
 				t.Errorf("%s%s: missing %s", c.host, c.path, header)
 			}
 		}
+	}
+	if got := hosts.All(); len(got) != 5 || got[4] != "mta-sts.inbox.permaily.test" {
+		t.Fatalf("hosts: %v", got)
 	}
 }

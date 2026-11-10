@@ -5,7 +5,7 @@ Wants=network-online.target
 ConditionPathExists=/opt/permaily/permaily-host
 
 [Service]
-ExecStart=/opt/permaily/permaily-host -enclave-cid 16 -forward :443=443 -egress-port 8000
+ExecStart=/opt/permaily/permaily-host -enclave-cid 16 -forward :443=443,:25=25 -egress-port 8000 -credentials-port 8002
 Restart=always
 RestartSec=2
 DynamicUser=yes

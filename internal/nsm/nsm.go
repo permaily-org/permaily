@@ -50,5 +50,23 @@ func (d *Device) Attest(nonce, userData []byte) ([]byte, error) {
 	return res.Attestation.Document, nil
 }
 
+// AttestPublicKey returns an attestation document carrying publicKey, which
+// KMS uses as the recipient of data keys (Recipient parameter).
+func (d *Device) AttestPublicKey(publicKey []byte) ([]byte, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	res, err := d.sess.Send(&request.Attestation{PublicKey: publicKey})
+	if err != nil {
+		return nil, fmt.Errorf("nsm: attestation: %w", err)
+	}
+	if res.Error != "" {
+		return nil, fmt.Errorf("nsm: attestation: %s", res.Error)
+	}
+	if res.Attestation == nil || len(res.Attestation.Document) == 0 {
+		return nil, errors.New("nsm: attestation: empty document")
+	}
+	return res.Attestation.Document, nil
+}
+
 // Close releases the device.
 func (d *Device) Close() error { return d.sess.Close() }
