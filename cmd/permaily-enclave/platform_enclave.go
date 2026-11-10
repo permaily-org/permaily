@@ -80,7 +80,9 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 		if p.keys, err = keys.NewKMS(kmsClient, cfg.kmsKeyARN, att); err != nil {
 			return nil, err
 		}
-		p.kmsStatus = keys.NewPolicyReader(kmsClient, cfg.kmsKeyARN).Status
+		policy := keys.NewPolicyReader(kmsClient, cfg.kmsKeyARN)
+		p.kmsStatus = policy.Status
+		go policy.Run(ctx)
 		awsStore := &store.AWS{
 			DB: dynamodb.NewFromConfig(awsCfg),
 			// Path-style keeps every request on s3.<region>.amazonaws.com (one allowlist entry).

@@ -1,6 +1,6 @@
 # 0013 Authorize releases without editing the KMS key policy
 
-Status: Proposed. Needs a spike before it is accepted.
+Status: Option 1 accepted and implemented (2026-11-10). Option 3 proposed; its spike is in `spikes/release-handoff/`.
 Date: 2026-11-10
 
 ## Context
@@ -21,9 +21,18 @@ The policy must change today for a legitimate reason: every release has a new PC
    - Result: an image can receive the keys only if a public log says the repository's release workflow built it from a commit on `main`. A private image cannot be let in by anybody, the two owners together included.
 4. **Keys shared between enclaves in different accounts or clouds.** Removes the single account as a point of trust, at several times the complexity. Not for now.
 
-## Proposal
+## Decision
 
 Option 1 now, because it is small and makes changes visible. Option 3 as the real fix, after a spike. Option 2 in addition, if the organization's owner agrees: it costs one policy.
+
+## Option 1 as built
+
+- The enclave reads the policy and the grants once a minute (`keys.PolicyReader.Run`) and keeps every different state it has read since it started, with the first and last time it saw each, and every period in which it could not read (`history` and `gaps` in the `kms` section of `/status`; both bounded to 32 entries).
+- `permaily-verify` applies its checks to every state in that history, not only to the current one: a policy that let another image in, skipped the image check or had a grant fails verification even after it was put back, and the error says from when to when. A truncated history fails. Gaps are printed as warnings.
+- The workflow `verify-production` runs the latest release's verifier against production twice an hour and keeps the output in its public run summary; a failed run is an incident. `scripts/verify-production.sh` is the same check by hand.
+- An upgrade no longer allows two images at once: the policy goes from the old PCR0 to the new one in one change, then the new image is started. The old enclave keeps the keys it already has in memory, and the new enclave starts with a history that only ever names itself.
+
+What it still does not catch: a change made while the enclave cannot reach KMS (it shows as a gap, not as a change), a change followed by a restart of the enclave (the history starts again; the start time is printed and the scheduled runs show it moved), and anything before the enclave started.
 
 ## Plan for option 3
 

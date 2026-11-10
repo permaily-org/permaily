@@ -25,7 +25,7 @@ Option 1:
 
 ## Consequences
 
-- Every release changes PCR0, so its PCR0 is added to the allowlist before it is deployed, and the previous one is removed afterwards. Both must coexist during an upgrade.
+- Every release changes PCR0, so the allowlist changes with each upgrade. Since ADR 0013 it goes from the old PCR0 to the new one in one step, before the new image starts; the old enclave keeps serving with the keys it holds in memory.
 - Administrators can still rewrite the key policy. Since ADR 0010 the enclave publishes the live policy and `permaily-verify` checks it; what remains is in `docs/threat-model.md`.
 - KMS costs one request per enclave start per mailbox plus one per new mailbox.
 
