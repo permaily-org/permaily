@@ -94,10 +94,50 @@ resource "aws_amplify_branch" "develop" {
   }
 }
 
+# The site's own certificate, for exactly its three names. Amplify's managed
+# certificate also covers *.permaily.com, which is valid for app., api., mcp.
+# and inbox.: a key outside the enclave that browsers would accept for them.
+locals {
+  site_names = [var.domain, "www.${var.domain}", "beta.${var.domain}"]
+}
+
+resource "aws_acm_certificate" "site" {
+  provider                  = aws.us_east_1
+  domain_name               = local.site_names[0]
+  subject_alternative_names = slice(local.site_names, 1, length(local.site_names))
+  validation_method         = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "cloudflare_dns_record" "site_acm_validation" {
+  for_each = toset(local.site_names)
+  zone_id  = data.cloudflare_zone.main.zone_id
+  name     = trimsuffix(one([for o in aws_acm_certificate.site.domain_validation_options : o.resource_record_name if o.domain_name == each.key]), ".")
+  type     = "CNAME"
+  content  = trimsuffix(one([for o in aws_acm_certificate.site.domain_validation_options : o.resource_record_value if o.domain_name == each.key]), ".")
+  proxied  = false
+  ttl      = 300
+  comment  = "ACM validation of the public site's certificate (managed by OpenTofu)"
+}
+
+resource "aws_acm_certificate_validation" "site" {
+  provider                = aws.us_east_1
+  certificate_arn         = aws_acm_certificate.site.arn
+  validation_record_fqdns = [for r in cloudflare_dns_record.site_acm_validation : r.name]
+}
+
 resource "aws_amplify_domain_association" "site" {
   app_id                = aws_amplify_app.site.id
   domain_name           = var.domain
   wait_for_verification = false
+
+  certificate_settings {
+    type                   = "CUSTOM"
+    custom_certificate_arn = aws_acm_certificate_validation.site.certificate_arn
+  }
 
   sub_domain {
     branch_name = aws_amplify_branch.main.branch_name
@@ -116,23 +156,11 @@ resource "aws_amplify_domain_association" "site" {
 }
 
 locals {
-  # "_abc.permaily.com. CNAME _xyz.acm-validations.aws."
-  site_cert_record = split(" ", aws_amplify_domain_association.site.certificate_verification_dns_record)
   # " CNAME d123.cloudfront.net" for the apex, "www CNAME d123.cloudfront.net" for www.
   site_targets = {
     for s in aws_amplify_domain_association.site.sub_domain :
     s.prefix => trimsuffix(reverse(split(" ", trimspace(s.dns_record)))[0], ".")
   }
-}
-
-resource "cloudflare_dns_record" "site_cert_validation" {
-  zone_id = data.cloudflare_zone.main.zone_id
-  name    = trimsuffix(local.site_cert_record[0], ".")
-  type    = "CNAME"
-  content = trimsuffix(local.site_cert_record[2], ".")
-  proxied = false
-  ttl     = 300
-  comment = "Amplify (ACM) certificate validation for the public site (managed by OpenTofu)"
 }
 
 # Cloudflare flattens the apex CNAME, so it can live next to the MX records.
@@ -147,8 +175,8 @@ resource "cloudflare_dns_record" "site" {
   comment  = "Public site on Amplify (managed by OpenTofu)"
 }
 
-# Amplify certificates come from Amazon. The enclave subdomains keep their own
-# CAA records (letsencrypt.org only), which take precedence over this one.
+# The site's certificate comes from Amazon (ACM). The enclave subdomains keep
+# their own CAA records (letsencrypt.org only), which take precedence over this one.
 resource "cloudflare_dns_record" "apex_caa" {
   for_each = toset(["amazon.com", "amazontrust.com", "awstrust.com", "amazonaws.com"])
   zone_id  = data.cloudflare_zone.main.zone_id
@@ -160,7 +188,7 @@ resource "cloudflare_dns_record" "apex_caa" {
     tag   = "issue"
     value = each.value
   }
-  comment = "Amplify (ACM) certificates for the public site (managed by OpenTofu)"
+  comment = "ACM certificate for the public site (managed by OpenTofu)"
 }
 
 output "site_app_id" {
@@ -171,20 +199,21 @@ output "site_default_domain" {
   value = aws_amplify_app.site.default_domain
 }
 
-# Amplify's certificate also covers *.permaily.com, and Cloudflare publishes its
-# own issuewild records at the apex, so Amazon must be allowed for wildcards too.
+# Nobody may issue a wildcard for the domain: *.permaily.com would be valid for
+# the enclave hosts, and their own CAA records do not stop a wildcard issued at
+# the apex. Cloudflare's Universal SSL is disabled for the zone for the same
+# reason (it issued wildcards and added its own issuewild records here).
 resource "cloudflare_dns_record" "apex_caa_wild" {
-  for_each = toset(["amazon.com", "amazontrust.com", "awstrust.com", "amazonaws.com"])
-  zone_id  = data.cloudflare_zone.main.zone_id
-  name     = var.domain
-  type     = "CAA"
-  ttl      = 300
+  zone_id = data.cloudflare_zone.main.zone_id
+  name    = var.domain
+  type    = "CAA"
+  ttl     = 300
   data = {
     flags = 0
     tag   = "issuewild"
-    value = each.value
+    value = ";"
   }
-  comment = "Amplify (ACM) wildcard certificate for the public site (managed by OpenTofu)"
+  comment = "No wildcard certificates for permaily.com (managed by OpenTofu)"
 }
 
 # The footer shows the latest release's PCR0, read at build time. A release is

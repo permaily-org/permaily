@@ -26,7 +26,7 @@ That the service answering on the Permaily hosts runs an enclave image built fro
 | Debug mode (console access, PCRs zero) | the verifier rejects all-zero PCRs |
 | Replay of an old attestation | random 32-byte nonce per verification, 5-minute freshness window |
 | TLS terminated outside the enclave (MITM, parent, CDN) | attestation `user_data = sha256(SPKI)` of the certificate on the same connection |
-| Certificate for the hosts issued to someone else | detected per connection by the binding above; CAA restricts issuance to Let's Encrypt; F1 adds CAA `accounturi` with an ACME account key sealed by KMS, and CT monitoring |
+| Certificate for the hosts issued to someone else | detected per connection by the binding above, so only for people who verify: a browser accepts any valid certificate. CAA restricts the hosts to Let's Encrypt and forbids wildcards for the domain; Cloudflare Universal SSL is off and the site has an exact-name certificate (ADR 0012). Four wildcards issued before 2026-11-10 with keys at Cloudflare and AWS stay valid until 2027-05-26 at the latest. Planned: CAA `accounturi` with an ACME account key sealed by KMS, and a Certificate Transparency check in the verifier |
 | Build tampering in CI | anyone can rebuild; CI builds on x86_64 and arm64 and compares; releases carry Sigstore provenance |
 | Supply chain of dependencies | all inputs pinned by hash; review dependency changes |
 
@@ -106,8 +106,8 @@ For every change that touches the enclave, the host, auth, storage or the build:
 ## TODO
 
 - [ ] Site: move the demos' inline `style` attributes to classes and remove `style-src-attr 'unsafe-inline'` from `site/astro.config.mjs`.
-- [ ] CT monitoring for certificates of the enclave names not bound to an attested key (F4).
-- [ ] CAA `accounturi` once the ACME account key is sealed with KMS (F1).
+- [ ] Certificate Transparency check in `permaily-verify` for certificates of the enclave names not bound to the attested key (ADR 0012).
+- [ ] Seal the TLS key and the ACME account key with KMS, then CAA `accounturi` on the enclave hosts (ADR 0012).
 - [ ] Deny `kms:PutKeyPolicy` in the key policy once a release can be authorized without editing it; until then a verifier sees the policy only at the time it checks.
 - [ ] MTA-STS `mode: enforce` once delivery from Gmail over TLS is confirmed in production.
 - [ ] Move the OpenTofu state to S3 with state encryption: the local state holds sensitive values (the Amplify webhook URL, a revoked GitHub token used once to create the Amplify app).

@@ -16,3 +16,4 @@ Architecture Decision Records. Each one records the context, the options conside
 | [0008](0008-org-community-health-files.md) | Community health files live in the organization's .github repository | Accepted |
 | [0010](0010-kms-policy-over-the-attested-tls-key.md) | Publish the KMS key policy over the attested TLS key | Accepted |
 | [0011](0011-mail-only-over-tls.md) | Accept mail only over TLS and tell senders to require it | Accepted |
+| [0012](0012-no-certificate-outside-the-enclave.md) | No certificate valid for the enclave hosts outside the enclave | Accepted, partly applied |

@@ -20,7 +20,8 @@ Implemented in `internal/smtpd`, `internal/inbox`, `internal/msgauth`, `internal
 
 ### Still to do in F1
 
-- [ ] Seal the ACME account key and the TLS key with KMS, so restarts reuse the certificate; then publish CAA `accounturi`.
+- [x] No more wildcard certificates for the domain: Cloudflare Universal SSL off, exact-name certificate for the site, CAA `issuewild ";"` (ADR 0012).
+- [ ] Seal the ACME account key and the TLS key with KMS, so restarts reuse the certificate; then publish CAA `accounturi` and add the Certificate Transparency check to `permaily-verify` (ADR 0012).
 - [x] `/status` with the live KMS key policy, checked by `permaily-verify` (ADR 0010).
 - [x] MTA-STS `enforce`, an MX that refuses clear text, and the mail transport checked by `permaily-verify` (ADR 0011).
 - [x] Verify the KMS flow against production (2026-11-10, [acceptance.md](acceptance.md)).

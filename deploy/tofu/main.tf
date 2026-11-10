@@ -22,6 +22,17 @@ provider "aws" {
   }
 }
 
+# Only for the public site's certificate: Amplify serves through CloudFront,
+# which takes certificates from us-east-1 and nowhere else.
+provider "aws" {
+  alias   = "us_east_1"
+  profile = var.aws_profile != "" ? var.aws_profile : null
+  region  = "us-east-1"
+  default_tags {
+    tags = { Project = "permaily", ManagedBy = "opentofu" }
+  }
+}
+
 # Reads the API token from CLOUDFLARE_API_TOKEN. Scope it to DNS edit on the zone.
 provider "cloudflare" {}
 
