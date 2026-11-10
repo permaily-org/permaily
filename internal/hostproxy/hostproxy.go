@@ -6,6 +6,7 @@
 package hostproxy
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -48,6 +49,47 @@ func Forward(ctx context.Context, ln net.Listener, dial func(context.Context) (n
 			}
 			defer out.Close()
 			pipe(in, out)
+		}()
+	}
+}
+
+// logLineLimit bounds one line from the enclave; longer ones are cut.
+const logLineLimit = 16 << 10
+
+// Logs accepts connections on ln (the enclave's log sink) and copies each line
+// to out with the prefix "enclave: ", until ctx is done. The enclave has no
+// console in production, so this is the only way to see why it fails. Lines
+// are data from the enclave and are never interpreted.
+func Logs(ctx context.Context, ln net.Listener, out io.Writer) error {
+	go func() {
+		<-ctx.Done()
+		ln.Close()
+	}()
+	var mu sync.Mutex
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		go func() {
+			defer conn.Close()
+			r := bufio.NewReaderSize(conn, logLineLimit)
+			for {
+				line, isPrefix, err := r.ReadLine()
+				if err != nil {
+					return
+				}
+				mu.Lock()
+				_, _ = out.Write(append(append([]byte("enclave: "), line...), '\n'))
+				mu.Unlock()
+				// Skip the rest of a line longer than the limit.
+				for isPrefix && err == nil {
+					_, isPrefix, err = r.ReadLine()
+				}
+			}
 		}()
 	}
 }

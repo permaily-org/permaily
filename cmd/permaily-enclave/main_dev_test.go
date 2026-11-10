@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -15,6 +16,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -40,7 +42,11 @@ func TestMailEndToEnd(t *testing.T) {
 		mailboxID: "e2e", mailboxAddress: "u-e2e@inbox.permaily.test",
 		mailboxTokenSHA256: hex.EncodeToString(sum[:]), mtaSTSMode: "testing",
 	}
-	go func() { _ = run(cfg, slog.New(slog.DiscardHandler)) }()
+	// Everything the service logs is kept, to check at the end that it holds no mail data.
+	var logs lockedBuffer
+	go func() {
+		_ = run(cfg, slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	}()
 
 	insecure := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // dev mode self-signed certificate
 	smtpAddr := fmt.Sprintf("127.0.0.1:%d", cfg.smtpPort)
@@ -117,4 +123,38 @@ func TestMailEndToEnd(t *testing.T) {
 	if code, body := get("https://api.permaily.test/attestation?nonce="+strings.Repeat("ab", 32), ""); code != 200 || !strings.Contains(body, `"document"`) {
 		t.Fatalf("attestation: %d", code)
 	}
+
+	// Logs leave the enclave through the untrusted parent instance. After
+	// receiving, listing and reading a message they must name no address, no
+	// subject, no content and no token.
+	if code, _ := get("https://api.permaily.test/v1/mailbox", token); code != 200 {
+		t.Fatalf("mailbox: %d", code)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "inbox: message stored") {
+		t.Fatalf("the log does not record the delivery:\n%s", out)
+	}
+	for _, secret := range []string{"alice", "example.org", "u-e2e", "Booking", "Friday", token, cfg.mailboxTokenSHA256} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("the log contains %q:\n%s", secret, out)
+		}
+	}
+}
+
+// lockedBuffer is a bytes.Buffer safe for concurrent log writes.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }

@@ -1,6 +1,8 @@
 // Command permaily-host runs on the parent EC2 instance. It is untrusted by
 // design: it forwards public TCP ports to the enclave over vsock and exposes
-// an allowlisted CONNECT proxy on vsock for the enclave's outbound traffic.
+// an allowlisted CONNECT proxy on vsock for the enclave's outbound traffic. It
+// also prints the enclave's log lines, which is the only output a production
+// enclave has.
 package main
 
 import (
@@ -51,7 +53,9 @@ func main() {
 		allow      = flag.String("egress-allow", strings.Join(defaultEgress, ","), "comma-separated host:port targets the enclave may reach")
 		credsPort  = uint32(8002)
 		imds       = flag.String("imds", "http://169.254.169.254", "instance metadata endpoint")
+		logPort    = uint32(8003)
 	)
+	flag.Func("log-port", "vsock port that receives the enclave's log lines; 0 disables (default 8003)", uint32Flag(&logPort))
 	flag.Func("credentials-port", "vsock port serving the instance role credentials to the enclave (default 8002)", uint32Flag(&credsPort))
 	flag.Func("enclave-cid", "vsock context ID of the enclave (default 16)", uint32Flag(&cid))
 	flag.Func("egress-port", "vsock port for the enclave's CONNECT proxy (default 8000)", uint32Flag(&egressPort))
@@ -103,6 +107,16 @@ func main() {
 	log.Info("credentials endpoint", "vsock_port", credsPort)
 	credSrv := &http.Server{Handler: &hostproxy.Credentials{IMDS: *imds}, ReadHeaderTimeout: 10 * time.Second}
 	go func() { errc <- credSrv.Serve(cl) }()
+
+	if logPort != 0 {
+		ll, err := vsock.Listen(logPort, nil)
+		if err != nil {
+			log.Error("log listen", "err", err)
+			os.Exit(1)
+		}
+		log.Info("enclave logs", "vsock_port", logPort)
+		go func() { errc <- hostproxy.Logs(ctx, ll, os.Stdout) }()
+	}
 
 	select {
 	case <-ctx.Done():
