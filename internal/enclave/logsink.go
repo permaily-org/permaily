@@ -63,23 +63,26 @@ func (s *LogSink) run(ctx context.Context) {
 		dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		conn, err := s.dial(dctx)
 		cancel()
-		if err != nil {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(wait):
+		if err == nil {
+			if s.drain(ctx, conn) {
+				wait = s.backoff // it worked for a while: retry soon
 			}
-			wait = min(wait*2, 30*time.Second)
-			continue
+			_ = conn.Close()
 		}
-		wait = s.backoff
-		s.drain(ctx, conn)
-		_ = conn.Close()
+		// Always pause before reconnecting, also when the parent accepts and
+		// then closes: otherwise a misbehaving parent could keep a core busy.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		wait = min(wait*2, 30*time.Second)
 	}
 }
 
-// drain writes queued lines to conn until it fails or ctx is done.
-func (s *LogSink) drain(ctx context.Context, conn net.Conn) {
+// drain writes queued lines to conn until it fails or ctx is done. It reports
+// whether at least one write succeeded.
+func (s *LogSink) drain(ctx context.Context, conn net.Conn) (wrote bool) {
 	write := func(b []byte) bool {
 		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		_, err := conn.Write(b)
@@ -89,17 +92,19 @@ func (s *LogSink) drain(ctx context.Context, conn net.Conn) {
 		if n := s.dropped.Swap(0); n > 0 {
 			if !write(fmt.Appendf(nil, `{"level":"WARN","msg":"log lines dropped","count":%d}`+"\n", n)) {
 				s.dropped.Add(n)
-				return
+				return wrote
 			}
+			wrote = true
 		}
 		select {
 		case <-ctx.Done():
-			return
+			return wrote
 		case line := <-s.lines:
 			if !write(line) {
 				s.dropped.Add(1)
-				return
+				return wrote
 			}
+			wrote = true
 		}
 	}
 }

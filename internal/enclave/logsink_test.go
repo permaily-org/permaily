@@ -151,3 +151,39 @@ func TestLogSinkStops(t *testing.T) {
 		t.Fatal("NewLogSink")
 	}
 }
+
+// A host that accepts the connection and closes it at once (its log reader
+// crashed): the line being written is lost and counted, the others wait in the
+// queue, and the sink pauses between attempts instead of spinning.
+func TestLogSinkCountsFailedWrites(t *testing.T) {
+	var healthy atomic.Bool
+	var attempts atomic.Int32
+	dial, lines, _ := reader(t)
+	s := newLogSink(t.Context(), func(ctx context.Context) (net.Conn, error) {
+		if healthy.Load() {
+			return dial(ctx)
+		}
+		attempts.Add(1)
+		a, b := net.Pipe()
+		_ = b.Close()
+		return a, nil
+	}, 20*time.Millisecond)
+
+	for range 3 {
+		_, _ = s.Write([]byte("queued\n"))
+	}
+	time.Sleep(300 * time.Millisecond)
+	if n := attempts.Load(); n < 2 || n > 6 {
+		t.Fatalf("%d connection attempts in 300 ms with a 20 ms backoff that doubles: want a few, not a busy loop", n)
+	}
+	if got := s.dropped.Load(); got != 1 {
+		t.Fatalf("dropped = %d, want 1 (only the line that was being written)", got)
+	}
+	healthy.Store(true)
+	if got := next(t, lines); got != `{"level":"WARN","msg":"log lines dropped","count":1}` {
+		t.Fatalf("first line once the host reads again: %q", got)
+	}
+	if a, b := next(t, lines), next(t, lines); a != "queued" || b != "queued" {
+		t.Fatalf("queued lines: %q, %q", a, b)
+	}
+}
