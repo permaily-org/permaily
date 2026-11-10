@@ -40,13 +40,13 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `pkg/provenance` | 97 | 97.3 |
 | `internal/tlsacme` | 90 (with Pebble) | 90.3 |
 | `internal/router` | 100 | 100.0 |
-| `internal/httpapi` | 87 | 87.3 |
+| `internal/httpapi` | 89 | 89.7 |
 | `internal/webui` | 75 | 75.0 |
 | `internal/hostproxy` | 73 | 73.7 |
 | `internal/enclave` | 87 | 87.7 |
 | `internal/envelope` | 91 (target 95) | 91.9 |
-| `internal/keys` | 86 (target 95) | 86.7 |
-| `internal/inbox` | 80 | 80.4 |
+| `internal/keys` | 87 (target 95) | 87.4 |
+| `internal/inbox` | 81 | 81.2 |
 | `internal/msgauth` | 86 | 86.0 |
 | `internal/smtpd` | 92 | 92.5 |
 | `internal/store` | 88 (with emulators) | 88.1 |

@@ -6,5 +6,6 @@ Builds the SPA (`web.nix`), the Go binaries (`go.nix`) and the enclave image wit
 
 - PCR0 must not depend on the build machine. Keep: the official Go toolchain (nixpkgs' Go embeds platform-specific store paths), Go cross-compilation through `GOARCH` (not a Nix cross toolchain), AWS prebuilt kernel/init/nsm.ko blobs, a flat rootfs without `/nix/store` paths.
 - Every input is pinned: `flake.lock`, `vendorHash`, the `node_modules` output hashes, the AWS blobs hash. When one changes, update the hash and say why in the commit.
-- Entry point arguments and environment are part of the image; AWS init reads one item per line.
+- Entry point arguments and environment are part of the image; AWS init reads one item per line, so an empty value is left out with its flag.
+- `.#eif-staging` is the same code with the `staging` object of `deploy/enclave.json` applied: its own storage and a release policy that only accepts images built by the `staging-image` workflow. Keep everything that separates it from production in that object.
 - Verify locally with `nix build .#eif --rebuild`; CI checks x86_64 against arm64.

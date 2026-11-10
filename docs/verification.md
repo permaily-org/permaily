@@ -20,21 +20,23 @@ For each host, `permaily-verify`:
 5. Rejects all-zero PCR0-2 (debug mode).
 6. Compares PCR0, PCR1 and PCR2 with your reproduced build.
 7. Checks that the document's `user_data` equals `sha256(SubjectPublicKeyInfo)` of the TLS certificate presented on the same connection. This proves the TLS session ends inside the attested enclave.
-8. Reads `GET /status` over a connection with that same TLS key and checks the policy of the KMS key that protects stored mail (below).
+8. Reads `GET /status` over a connection with that same TLS key and checks the KMS key that locks the root secret everything stored is sealed under (below).
 
 ## Who can read stored mail
 
-Stored mail is encrypted with keys that AWS KMS releases only to an enclave that proves its image. Which images are allowed is written in the key's policy, so the verifier checks that too:
+Stored mail is sealed under a root secret that only enclaves hold, locked for each image by a KMS key of its own. The verifier checks that key ([The root secret](#the-root-secret)): only the image you verified can use it, and nobody can change that. So there is no list of allowed images to watch, and an upgrade does not open anything: the running enclave hands the root secret to the next release itself, after checking that it is a public one.
 
-- The enclave reads its key's policy and grants from KMS and serves them on `/status`. The verifier accepts the answer only when the connection uses the attested TLS key, so it comes from the verified image.
+Releases up to v0.6.0 worked differently: KMS released data keys to the images named in one key's policy, which administrators could replace. For those releases, and for that key until it is retired, the verifier checks the policy the enclave reports:
+
+- The enclave reads the key's policy and grants from KMS and serves them on `/status`. The verifier accepts the answer only when the connection uses the attested TLS key, so it comes from the verified image.
 - Every statement of the policy that allows more than administration must require the enclave image (`kms:RecipientAttestation:ImageSha384`). A statement that does not, or that the verifier does not understand, fails the check.
-- The only image allowed must be the one you verified. Another image fails the check, because it could decrypt the mail and you have not verified it.
+- The only image allowed must be the one you verified, or none. Another image fails the check, unless you accept it by its PCR0 with `-kms-also-allow`.
 - The key must have no grants, and the enclave's reading must be at most 5 minutes old.
-- The same holds for every state of the policy the enclave has seen since it started. It reads the policy once a minute and reports each different state with the times it saw it; one that let another image in, skipped the image check or had a grant fails the check even if the policy was put back, and the error says from when to when.
+- The same holds for every state of the policy the enclave has seen since it started (once a minute); the error says from when to when.
 
-During an upgrade the old and the new release are both allowed for a short time. Then verification fails unless you accept the other release by its PCR0: `permaily-verify -pcrs pcrs.json -kms-also-allow <PCR0 of the other release>`. Releases before v0.3.0 do not report the policy; verify them with `-skip-kms-policy`.
+Releases before v0.3.0 do not report the policy; verify them with `-skip-kms-policy`.
 
-What this does not prove: the account's administrators can still replace the policy. A change made while the enclave could not reach KMS shows only as a warning with the period, and the history starts again when the enclave restarts: the verifier prints since when the enclave has been watching, so a restart is visible to anyone comparing two checks. The policy's SHA-256 is printed for the same reason.
+What this does not prove for that old key: the account's administrators can replace its policy until it is retired, after which the verifier prints that it releases data keys to no image and no longer prints the note about administrators. A change made while the enclave could not reach KMS shows only as a warning with the period, and the history starts again when the enclave restarts.
 
 The workflow `verify-production` of the repository runs the latest release's verifier against the live service twice an hour; its runs and their output are public under Actions. `scripts/verify-production.sh` runs the same check from your machine.
 
@@ -54,7 +56,7 @@ What this does not prove: a sender that does not implement MTA-STS may still del
 
 Everything above proves the connection the verifier makes. A browser cannot do that: it accepts any valid certificate for `app.permaily.com`. So the verifier also looks for certificates the enclave does not hold. When no URLs are given it checks:
 
-1. What the enclave reports in `/status`: the hash of its TLS key (it must be the attested one), when the key was created, that it is kept sealed with KMS, and the URL of its ACME account.
+1. What the enclave reports in `/status`: the hash of its TLS key (it must be the attested one), when the key was created, that it is kept sealed (under the root secret), and the URL of its ACME account.
 2. CAA records, read through a DNS-over-HTTPS resolver: every enclave host must allow only Let's Encrypt, only that account and only `tls-alpn-01` validation, which is answered from inside the enclave; and the domain must forbid wildcards (`issuewild ";"`), because `*.permaily.com` would be valid for the hosts.
 3. Certificate Transparency, read through Cert Spotter's API: every unexpired certificate valid for an enclave host and issued since the enclave's key was created must carry that key. One with another key is a failure and is listed.
 
@@ -102,8 +104,19 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
 ```json
 {
   "commit": "<git commit, informational>",
+  "root": {
+    "image": "<PCR0 the enclave measured itself as>",
+    "key_arn": "<the KMS key of this image, which locks the root secret>",
+    "policy": "<the key policy document, as KMS returned it>",
+    "grants": 0,
+    "key": {"origin": "AWS_KMS", "spec": "SYMMETRIC_DEFAULT", "usage": "ENCRYPT_DECRYPT", "manager": "CUSTOMER", "state": "Enabled", "multi_region": false},
+    "checked_at": "<when the enclave read them, RFC 3339>",
+    "origin": "created | handed_over",
+    "written_at": "<when the record for this image was written>",
+    "from": {"image": "<PCR0>", "commit": "<git commit>", "published_at": "<when the public log recorded that release>"}
+  },
   "kms": {
-    "key_arn": "<the key compiled into the image>",
+    "key_arn": "<the key releases up to v0.6.0 wrapped data keys with, compiled into the image>",
     "policy": "<the key policy document, as KMS returned it>",
     "grants": 0,
     "grants_truncated": false,
@@ -121,7 +134,20 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
 }
 ```
 
-`kms` is `null` in an image that stores no mail. If KMS cannot be reached the endpoint answers 503.
+`root` and `kms` are absent in an image that stores no mail, and `kms` in an image that has no data keys left from before the root secret. `from` is present when another release's enclave handed the root secret over. If KMS cannot be reached, or the image has no root secret yet, the endpoint answers 503.
+
+## The root secret
+
+Everything the enclave stores is sealed under one root secret, which only enclaves ever hold (ADR 0013). `permaily-verify` checks the key that locks it for the verified image, with the same function the enclave uses (`kmspolicy.Sealed`):
+
+- the policy lets this image, and no other, decrypt;
+- no statement lets anyone use the key without proving an image, except creating data keys under it, which opens nothing;
+- nobody may replace the policy (`kms:PutKeyPolicy`) and no grant exists, so none of this can change later;
+- the key material was generated inside KMS, in one region.
+
+It then prints where the root secret came from: created inside an enclave of this image, or handed over by the enclave of another release, which this image accepted only after checking that release's build provenance in the public transparency log. You can make the same check on any release with `gh attestation verify pcrs.json --repo permaily-org/permaily`.
+
+What this does not prove: that the code of every earlier release in the chain was good (each was public), and what AWS itself can do with a KMS key.
 
 ## Test deployments
 
