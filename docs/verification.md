@@ -20,6 +20,20 @@ For each host, `permaily-verify`:
 5. Rejects all-zero PCR0-2 (debug mode).
 6. Compares PCR0, PCR1 and PCR2 with your reproduced build.
 7. Checks that the document's `user_data` equals `sha256(SubjectPublicKeyInfo)` of the TLS certificate presented on the same connection. This proves the TLS session ends inside the attested enclave.
+8. Reads `GET /status` over a connection with that same TLS key and checks the policy of the KMS key that protects stored mail (below).
+
+## Who can read stored mail
+
+Stored mail is encrypted with keys that AWS KMS releases only to an enclave that proves its image. Which images are allowed is written in the key's policy, so the verifier checks that too:
+
+- The enclave reads its key's policy and grants from KMS and serves them on `/status`. The verifier accepts the answer only when the connection uses the attested TLS key, so it comes from the verified image.
+- Every statement of the policy that allows more than administration must require the enclave image (`kms:RecipientAttestation:ImageSha384`). A statement that does not, or that the verifier does not understand, fails the check.
+- The only image allowed must be the one you verified. Another image fails the check, because it could decrypt the mail and you have not verified it.
+- The key must have no grants, and the enclave's reading must be at most 5 minutes old.
+
+During an upgrade the old and the new release are both allowed for a short time. Then verification fails unless you accept the other release by its PCR0: `permaily-verify -pcrs pcrs.json -kms-also-allow <PCR0 of the other release>`. Releases before v0.3.0 do not report the policy; verify them with `-skip-kms-policy`.
+
+What this does not prove: the account's administrators can replace the policy later, and the verifier sees it only at the time of the check (it prints a note saying so). The policy's SHA-256 is printed so two checks can be compared.
 
 ## Reproducing the measurements yourself
 
@@ -44,6 +58,25 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
 }
 ```
 
+## Status endpoint
+
+`GET /status` returns what the enclave read about its own environment. It is not signed; trust it only over the attested TLS key (`attestation.FetchStatus`).
+
+```json
+{
+  "commit": "<git commit, informational>",
+  "kms": {
+    "key_arn": "<the key compiled into the image>",
+    "policy": "<the key policy document, as KMS returned it>",
+    "grants": 0,
+    "grants_truncated": false,
+    "fetched_at": "<when the enclave read it, RFC 3339>"
+  }
+}
+```
+
+`kms` is `null` in an image that stores no mail. If KMS cannot be reached the endpoint answers 503.
+
 ## Test deployments
 
 Images built with `.#eif-staging` use Let's Encrypt staging. Their PCRs differ from the production image and their certificates are not publicly trusted:
@@ -56,4 +89,4 @@ go run ./cmd/permaily-verify -pcrs result-staging/pcrs.json -ca-file letsencrypt
 
 ## Planned
 
-`scripts/verify.sh` also compares the reproduced PCRs with the ones published in the release and checks their Sigstore build provenance with `gh attestation verify` when `gh` is installed. Still planned: Certificate Transparency monitoring for certificates not bound to an attested key, and KMS key policy verification (F1).
+`scripts/verify.sh` also compares the reproduced PCRs with the ones published in the release and checks their Sigstore build provenance with `gh attestation verify` when `gh` is installed. Still planned: Certificate Transparency monitoring for certificates not bound to an attested key.

@@ -106,6 +106,10 @@ func TestMailEndToEnd(t *testing.T) {
 	if code != 200 || json.Unmarshal([]byte(body), &page) != nil || len(page.Messages) != 1 || page.Messages[0].Subject != "Booking confirmed" {
 		t.Fatalf("messages: %d %s", code, body)
 	}
+	// Dev mode has no KMS key, and says so instead of inventing a policy.
+	if code, body := get("https://api.permaily.test/status", ""); code != 200 || !strings.Contains(body, `"kms":null`) {
+		t.Fatalf("status: %d %s", code, body)
+	}
 	if code, body := get("https://mta-sts.inbox.permaily.test/.well-known/mta-sts.txt", ""); code != 200 || !strings.Contains(body, "mx: inbox.permaily.test") {
 		t.Fatalf("mta-sts: %d %s", code, body)
 	}

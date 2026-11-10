@@ -21,7 +21,7 @@ Implemented in `internal/smtpd`, `internal/inbox`, `internal/msgauth`, `internal
 ### Still to do in F1
 
 - [ ] Seal the ACME account key and the TLS key with KMS, so restarts reuse the certificate; then publish CAA `accounturi`.
-- [ ] Attested `/status` with the hash of the live KMS key policy, checked by `permaily-verify`.
+- [x] `/status` with the live KMS key policy, checked by `permaily-verify` (ADR 0010).
 - [ ] MTA-STS `enforce` after the first deliveries.
 - [x] Verify the KMS flow against production (2026-11-10, [acceptance.md](acceptance.md)).
 - [ ] Publish the MX, MTA-STS and TLS-RPT records (`mail_dns_enabled`) and forward a Gmail account.

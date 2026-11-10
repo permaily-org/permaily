@@ -26,7 +26,7 @@ Option 1:
 ## Consequences
 
 - Every release changes PCR0, so its PCR0 is added to the allowlist before it is deployed, and the previous one is removed afterwards. Both must coexist during an upgrade.
-- Administrators can still rewrite the key policy; see the gap and planned mitigations in `docs/threat-model.md`.
+- Administrators can still rewrite the key policy. Since ADR 0010 the enclave publishes the live policy and `permaily-verify` checks it; what remains is in `docs/threat-model.md`.
 - KMS costs one request per enclave start per mailbox plus one per new mailbox.
 
 ## To verify

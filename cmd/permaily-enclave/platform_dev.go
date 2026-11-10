@@ -22,6 +22,7 @@ import (
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
+	"github.com/permaily-org/permaily/pkg/attestation"
 )
 
 type platform struct {
@@ -33,6 +34,9 @@ type platform struct {
 	keys         keys.Service
 	store        store.Store
 	auth         inbox.Authenticator
+	// kmsStatus reads the policy of the pinned KMS key for /status; nil when
+	// there is no KMS key (no mailbox, or dev mode).
+	kmsStatus func(context.Context) (attestation.KMSStatus, error)
 }
 
 // newPlatform listens on TCP (HTTPS on -port, SMTP on -smtp-port, default

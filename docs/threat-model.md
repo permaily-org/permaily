@@ -58,7 +58,8 @@ The host proxy only tunnels to:
 - **What the operator sees.** Message sizes and arrival times, retention period, the number of messages, and (until accounts exist) the single test mailbox. Not senders, subjects, bodies or attachments.
 - **Transport.** SMTP STARTTLS terminates in the enclave with the attested certificate. MTA-STS (`mode: testing` at first, `enforce` once delivery is confirmed) tells senders to require TLS to `inbox.permaily.com`; TLS-RPT reports go to the test mailbox.
 - **Senders.** Any sender may deliver to the mailbox (decision for F1); DKIM results are recorded with each message. A Gmail forwarding confirmation is only marked verified when it carries a valid `google.com` DKIM signature.
-- **Gap: key policy changes.** An administrator can rewrite the key policy (`kms:PutKeyPolicy`) to grant themselves data keys. Planned mitigations: the enclave publishes the hash of the live key policy in an attested `/status`, the verifier compares it with the repository, and the policy gets a deny on `PutKeyPolicy` once releases are stable.
+- **Who can use the key is public.** The enclave reads the key's policy and grants from KMS and serves them on `/status`; `permaily-verify` accepts that only over the attested TLS key and fails if any image other than the verified one can get data keys, if a statement skips the image check, or if a grant exists (ADR 0010, `pkg/kmspolicy`).
+- **Gap: the policy between checks.** An administrator can still replace the key policy (`kms:PutKeyPolicy`), allow another image or themselves, and restore it. A verifier sees the policy at the time it checks, not its history. Planned: deny `PutKeyPolicy` in the policy once releases can be authorized without editing it.
 
 ## Invariants
 
@@ -78,6 +79,8 @@ Each one has, or must get, a test that tries to break it.
 | Mail | KMS answers for any key other than the pinned one are rejected | `TestKMSRejectsOtherKey` |
 | Mail | The CMS parser never panics or accepts garbage | `FuzzCMS`, `TestCMSRejectsGarbage` |
 | Mail | The mailbox API rejects missing or wrong tokens | `TestMailboxAuth` |
+| Mail | A key policy that lets anyone use the key without proving the verified image fails verification | `TestAnalyzeProblems`, `TestCheckKMS`, `FuzzAnalyze` |
+| Mail | The status is accepted only over the attested TLS key | `TestFetchStatus` |
 | Mail | Account administrators cannot obtain data keys | manual check (2026-11-09), `docs/acceptance.md` |
 | Mail | KMS gives the data key to the allowlisted image and denies it in debug mode | production check (2026-11-10), `docs/acceptance.md` |
 | Site | No CSP violations and a strict script policy on every page | `site/e2e/a11y.spec.ts` |
@@ -102,8 +105,7 @@ For every change that touches the enclave, the host, auth, storage or the build:
 - [ ] Site: move the demos' inline `style` attributes to classes and remove `style-src-attr 'unsafe-inline'` from `site/astro.config.mjs`.
 - [ ] CT monitoring for certificates of the enclave names not bound to an attested key (F4).
 - [ ] CAA `accounturi` once the ACME account key is sealed with KMS (F1).
-- [ ] Attested `/status` with the SHA-256 of the live KMS key policy, compared by `permaily-verify` with `deploy/tofu/mail.tf` (F1).
-- [ ] Deny `kms:PutKeyPolicy` in the key policy once releases are stable (after a dual-PCR0 upgrade has been exercised).
+- [ ] Deny `kms:PutKeyPolicy` in the key policy once a release can be authorized without editing it; until then a verifier sees the policy only at the time it checks.
 - [ ] MTA-STS `mode: enforce` once delivery from Gmail over TLS is confirmed in production.
 - [ ] Move the OpenTofu state to S3 with state encryption: the local state holds sensitive values (the Amplify webhook URL, a revoked GitHub token used once to create the Amplify app).
 
