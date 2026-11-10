@@ -1,21 +1,9 @@
-# F1: mail storage. The enclave stores only sealed data here.
+# F1: mail storage. The enclave stores only sealed data here, under a root
+# secret that only enclaves hold (ADR 0013, releases.tf).
 #
-# The KMS key below is the one releases up to v0.6.0 wrapped data keys with
-# directly. Since the root secret (ADR 0013, releases.tf) it is only read once,
-# by the first release that has a root secret, to move those data keys under
-# it. After that it is retired for good with var.mail_key_retired.
-
-variable "enclave_pcr0_allowlist" {
-  description = "PCR0 values (hex) of enclave images allowed to use the old mail key: the release that moves the data keys under the root secret, until it has. Ignored once the key is retired."
-  type        = list(string)
-  default     = []
-}
-
-variable "mail_key_retired" {
-  description = "Retire the old mail key: replace its policy with one that lets nobody use the key and nobody change the policy, ever. Set it once every data key has moved under the root secret (docs/operations.md). It cannot be undone."
-  type        = bool
-  default     = false
-}
+# Releases up to v0.6.0 wrapped data keys directly with a KMS key that lived
+# here (alias/permaily-mail). v0.7.0 moved them under the root secret, the key
+# was retired, and it was scheduled for deletion on 2026-11-10.
 
 variable "mail_dns_enabled" {
   description = "Publish the MX, MTA-STS and TLS-RPT records. Set false only for a deployment that must not receive mail."
@@ -27,87 +15,6 @@ locals {
   account_id = data.aws_caller_identity.current.account_id
   # One S3 lifecycle rule per supported retention period (internal/store.RetentionDays).
   retention_days = [7, 30, 90, 180, 365]
-}
-
-resource "aws_kms_key" "mail" {
-  description             = "Permaily mailbox data keys (released only to attested enclaves)"
-  key_usage               = "ENCRYPT_DECRYPT"
-  deletion_window_in_days = 30
-  enable_key_rotation     = true
-  # Needed to write a policy that nobody can change (the retired one).
-  bypass_policy_lockout_safety_check = var.mail_key_retired
-
-  policy = var.mail_key_retired ? jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      # Nobody can use the key and nobody can change this policy: copies of
-      # data keys it once wrapped can never be opened again. The account can
-      # still read the key and delete it.
-      Sid       = "RetiredReadAndDelete"
-      Effect    = "Allow"
-      Principal = { AWS = "arn:aws:iam::${local.account_id}:root" }
-      Action = [
-        "kms:Describe*", "kms:Get*", "kms:List*",
-        "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion", "kms:DeleteAlias",
-      ]
-      Resource = "*"
-      }, {
-      Sid       = "EnclaveReadsPolicy"
-      Effect    = "Allow"
-      Principal = { AWS = aws_iam_role.enclave_host.arn }
-      Action    = ["kms:GetKeyPolicy", "kms:ListGrants"]
-      Resource  = "*"
-    }]
-    }) : jsonencode({
-    Version = "2012-10-17"
-    Statement = concat(
-      [{
-        # Administration only: no principal in the account can use the key to
-        # decrypt or generate data keys. Changing this policy is visible in
-        # CloudTrail and in the enclave's /status, which permaily-verify checks
-        # (pkg/kmspolicy). Keep every action here in that package's safe list.
-        Sid       = "KeyAdministration"
-        Effect    = "Allow"
-        Principal = { AWS = "arn:aws:iam::${local.account_id}:root" }
-        Action = [
-          "kms:Describe*", "kms:Get*", "kms:List*", "kms:PutKeyPolicy",
-          "kms:EnableKeyRotation", "kms:DisableKeyRotation", "kms:TagResource", "kms:UntagResource",
-          "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion", "kms:UpdateKeyDescription",
-          "kms:CreateAlias", "kms:DeleteAlias", "kms:UpdateAlias",
-        ]
-        Resource = "*"
-        }, {
-        # The enclave reads this policy and the grants on the key and serves
-        # them on /status over its attested TLS key, so anyone can check which
-        # images may use the key. Neither action reveals key material.
-        Sid       = "EnclaveReadsPolicy"
-        Effect    = "Allow"
-        Principal = { AWS = aws_iam_role.enclave_host.arn }
-        Action    = ["kms:GetKeyPolicy", "kms:ListGrants"]
-        Resource  = "*"
-      }],
-      length(var.enclave_pcr0_allowlist) == 0 ? [] : [{
-        # Only the enclave, proving its image (PCR0) with an attestation
-        # document in the Recipient parameter, gets data keys. A request
-        # without Recipient has no attestation and is denied.
-        Sid       = "EnclaveDataKeys"
-        Effect    = "Allow"
-        Principal = { AWS = aws_iam_role.enclave_host.arn }
-        Action    = ["kms:GenerateDataKey", "kms:Decrypt"]
-        Resource  = "*"
-        Condition = {
-          StringEqualsIgnoreCase = {
-            "kms:RecipientAttestation:ImageSha384" = var.enclave_pcr0_allowlist
-          }
-        }
-      }]
-    )
-  })
-}
-
-resource "aws_kms_alias" "mail" {
-  name          = "alias/permaily-mail"
-  target_key_id = aws_kms_key.mail.key_id
 }
 
 resource "aws_dynamodb_table" "mail" {
@@ -190,7 +97,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "mail" {
 }
 
 # The parent instance's role: the enclave uses these credentials (through the
-# host) for storage. They cannot decrypt anything without an attested enclave.
+# host) for storage. Everything stored is sealed; the keys are in releases.tf.
 resource "aws_iam_role_policy" "mail" {
   name = "mail-storage"
   role = aws_iam_role.enclave_host.id
@@ -206,11 +113,6 @@ resource "aws_iam_role_policy" "mail" {
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject", "s3:PutObjectTagging", "s3:DeleteObject"]
         Resource = "${aws_s3_bucket.mail.arn}/raw/*"
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["kms:GenerateDataKey", "kms:Decrypt"]
-        Resource = aws_kms_key.mail.arn
       },
     ]
   })
@@ -248,10 +150,6 @@ resource "cloudflare_dns_record" "tls_rpt" {
   content = "\"v=TLSRPTv1; rua=mailto:${jsondecode(file("${path.module}/../enclave.json")).mailbox_address}\""
   ttl     = 300
   comment = "SMTP TLS reports, delivered to the test mailbox (managed by OpenTofu)"
-}
-
-output "mail_kms_key_arn" {
-  value = aws_kms_key.mail.arn
 }
 
 output "mail_table" {

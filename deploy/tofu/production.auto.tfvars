@@ -8,12 +8,5 @@
 # rollback to it is planned. Never remove the release that is running.
 release_keys = {
   "v0.7.0" = "4845932fd56ce95b357a5dc910d2456904c5bb4de1a386c3984d273dd5ef38c9d0efb4d57d392f224fe325e1768adbc0"
+  "v0.8.0" = "194ff02da909ccc1df0147b197255ee76e1b36aca40a0796dcce228de76a880d5feeb34a129cdc15c40b0ed06818cf28"
 }
-
-# The old mail key: v0.7.0 used it once, to move the data keys of earlier
-# releases under the root secret. No image may use it any more.
-enclave_pcr0_allowlist = []
-
-# Retired on 2026-11-10: nobody can use the old mail key or change its policy
-# again. It cannot be undone.
-mail_key_retired = true

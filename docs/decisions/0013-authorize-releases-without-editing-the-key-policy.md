@@ -71,7 +71,7 @@ The spike's code was `spikes/release-handoff/`. Its verifier is now [`pkg/proven
 
 **Starting.** An image without a record waits (`waiting for the running release to hand over the root secret`) when the deployment already has a root secret, and creates one only in an empty deployment. So starting the new image before the handoff is harmless. A store that fails is never taken for an empty one.
 
-**Moving from the old key.** v0.7.0, the first release with a root secret, still opened the data keys that `alias/permaily-mail` had wrapped and rewrapped them under the root secret when it loaded them. The old key was then retired with a policy that lets nobody use it or change it from the account, and v0.8.0 dropped the code that read it; the key itself is scheduled for deletion. Copies of the old wrapped data keys are useless once it is gone.
+**Moving from the old key.** v0.7.0, the first release with a root secret, still opened the data keys that `alias/permaily-mail` had wrapped and rewrapped them under the root secret when it loaded them. The old key was then retired with a policy that lets nobody use it or change it from the account, and v0.8.0 dropped the code that read it; the key itself is scheduled for deletion on 2026-12-10. Copies of the old wrapped data keys are useless once it is gone.
 
 **Staging.** `.#eif-staging` is a deployment of its own: its own table and bucket, and a release policy that accepts only images built by `.github/workflows/staging-image.yml` on a `staging/` branch. A production image refuses to hand over to a staging image and the reverse, so tests never touch production's root secret.
 
