@@ -48,6 +48,15 @@ What it still does not catch: a change made while the enclave cannot reach KMS (
 
 About two weeks of work after the spike.
 
+## Spike results (2026-11-10)
+
+[`spikes/release-handoff/`](../../spikes/release-handoff/readme.md):
+
+- An enclave can verify offline that a `pcrs.json` comes from this repository's release workflow on `main`, with the bundle `release.yml` already publishes. Checked against the real release v0.5.0 and 23 forged variants.
+- `sigstore-go` is too heavy for the image (556 packages, gRPC, Go 1.27). A verifier of our own with the standard library is 323 lines, adds no package to the enclave, and agrees with `sigstore-go` on every case.
+- A KMS key policy can be made unchangeable: with the lockout check bypassed at creation, an account administrator was refused `PutKeyPolicy`, `CreateGrant` and every use of the key.
+- Open: what AWS Support can do with such a key, the move of the public log to Rekor v2, how the trust root is updated, and the handoff protocol itself.
+
 ## Risks
 
 - A bug in the handoff can lose the root secret. Mail in Permaily is a copy of what the user's mailbox still holds, and the old image and its key stay available until the new one has served mail.

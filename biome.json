@@ -14,6 +14,7 @@
       "!third-party-notices.md",
       "!**/bun.lock",
       "!deploy/tofu",
+      "!spikes/**/testdata",
       "!**/*.md",
       "!**/*.mdx",
       "!**/*.svg"
