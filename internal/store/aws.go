@@ -128,6 +128,52 @@ func (s *AWS) PutMailbox(ctx context.Context, m *Mailbox) error {
 	return nil
 }
 
+// Records live under their own partition, apart from every mailbox.
+func recordKey(name string) map[string]ddb.AttributeValue {
+	return map[string]ddb.AttributeValue{"pk": str("system"), "sk": str("record#" + name)}
+}
+
+// GetRecord implements Records.
+func (s *AWS) GetRecord(ctx context.Context, name string) (*Record, error) {
+	out, err := s.DB.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName:      aws.String(s.Table),
+		Key:            recordKey(name),
+		ConsistentRead: aws.Bool(true),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: get record: %w", err)
+	}
+	if len(out.Item) == 0 {
+		return nil, ErrNotFound
+	}
+	return &Record{
+		Name:       name,
+		WrappedKey: getB(out.Item, "wrapped_key"),
+		Value:      getB(out.Item, "value"),
+		UpdatedAt:  time.Unix(getN(out.Item, "updated_at"), 0).UTC(),
+	}, nil
+}
+
+// PutRecord implements Records.
+func (s *AWS) PutRecord(ctx context.Context, r *Record, create bool) error {
+	item := recordKey(r.Name)
+	item["wrapped_key"] = bin(r.WrappedKey)
+	item["value"] = bin(r.Value)
+	item["updated_at"] = num(r.UpdatedAt.Unix())
+	in := &dynamodb.PutItemInput{TableName: aws.String(s.Table), Item: item}
+	if create {
+		in.ConditionExpression = aws.String("attribute_not_exists(pk)")
+	}
+	if _, err := s.DB.PutItem(ctx, in); err != nil {
+		var exists *ddb.ConditionalCheckFailedException
+		if errors.As(err, &exists) {
+			return ErrExists
+		}
+		return fmt.Errorf("store: put record: %w", err)
+	}
+	return nil
+}
+
 // PutMessage implements Store. The raw message is written first, so a record
 // never points at a missing object.
 func (s *AWS) PutMessage(ctx context.Context, m *Message, raw []byte) error {

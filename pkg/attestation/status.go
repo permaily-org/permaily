@@ -24,6 +24,26 @@ type Status struct {
 	// KMS describes the key that wraps mailbox data keys; nil when the image
 	// stores no mail.
 	KMS *KMSStatus `json:"kms"`
+	// TLS describes the certificate key and the ACME account; nil in images
+	// older than this field.
+	TLS *TLSStatus `json:"tls,omitempty"`
+}
+
+// TLSStatus is what the enclave reports about its own TLS identity.
+type TLSStatus struct {
+	// SPKISHA256 is the hex SHA-256 of the certificate key, the same value
+	// bound in attestation documents.
+	SPKISHA256 string `json:"spki_sha256"`
+	// KeyCreatedAt is when the key was generated. A certificate for the
+	// enclave's names issued after this time with another key was not issued
+	// to the enclave.
+	KeyCreatedAt time.Time `json:"key_created_at"`
+	// Sealed is true when the key is stored sealed with KMS and so survives
+	// restarts; false means it lives only in this enclave's memory.
+	Sealed bool `json:"sealed"`
+	// ACMEAccount is the URL of the ACME account that asks for certificates,
+	// empty until the first one is issued. CAA records should name it.
+	ACMEAccount string `json:"acme_account,omitempty"`
 }
 
 // KMSStatus is what the enclave read from AWS KMS about its pinned key.

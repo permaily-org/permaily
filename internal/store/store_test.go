@@ -17,10 +17,35 @@ import (
 )
 
 // contract checks the behavior every Store must have.
-func contract(t *testing.T, s Store, setNow func(time.Time)) {
+func contract(t *testing.T, s interface {
+	Store
+	Records
+}, setNow func(time.Time)) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 	setNow(now)
+
+	if _, err := s.GetRecord(ctx, "tls"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing record: %v", err)
+	}
+	rec := &Record{Name: "tls", WrappedKey: []byte("wk"), Value: []byte("v1"), UpdatedAt: now}
+	if err := s.PutRecord(ctx, rec, true); err != nil {
+		t.Fatal(err)
+	}
+	// A second enclave that also found nothing must not overwrite the first one's record.
+	if err := s.PutRecord(ctx, &Record{Name: "tls", Value: []byte("other")}, true); !errors.Is(err, ErrExists) {
+		t.Fatalf("second create: %v, want ErrExists", err)
+	}
+	rec.Value = []byte("v2")
+	if err := s.PutRecord(ctx, rec, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.GetRecord(ctx, "tls"); err != nil || !bytes.Equal(got.Value, []byte("v2")) || !bytes.Equal(got.WrappedKey, []byte("wk")) || !got.UpdatedAt.Equal(now) {
+		t.Fatalf("record round trip: %+v %v", got, err)
+	}
+	if _, err := s.GetRecord(ctx, "other"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("another record: %v", err)
+	}
 
 	if _, err := s.GetMailbox(ctx, "mb"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing mailbox: %v", err)

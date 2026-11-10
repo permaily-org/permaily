@@ -10,8 +10,11 @@ import (
 	"time"
 )
 
-// ErrNotFound is returned when a mailbox or message does not exist (or has expired).
+// ErrNotFound is returned when a mailbox, message or record does not exist (or has expired).
 var ErrNotFound = errors.New("store: not found")
+
+// ErrExists is returned by PutRecord when the record must be new and is not.
+var ErrExists = errors.New("store: already exists")
 
 // RetentionDays are the supported retention periods. S3 has one lifecycle rule
 // per value, so a message is deleted after its mailbox's period at the time it
@@ -44,6 +47,24 @@ type Message struct {
 	Size          int
 	RetentionDays int
 	Meta          []byte
+}
+
+// Record is a small sealed value that belongs to the enclave itself rather
+// than to a mailbox (its TLS identity). WrappedKey is the record's data key
+// wrapped by KMS; Value is sealed with that key.
+type Record struct {
+	Name       string
+	WrappedKey []byte
+	Value      []byte
+	UpdatedAt  time.Time
+}
+
+// Records persists the enclave's own records.
+type Records interface {
+	GetRecord(ctx context.Context, name string) (*Record, error)
+	// PutRecord stores r. With create it fails with ErrExists when the record
+	// is already there, so two enclaves starting together cannot both create it.
+	PutRecord(ctx context.Context, r *Record, create bool) error
 }
 
 // Store is the persistence interface used by the inbox.
