@@ -4,13 +4,13 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 
 | Package | Role |
 |---|---|
-| `enclave` | vsock listener and egress HTTP client through the host's CONNECT proxy (the parent instance is vsock CID 3) |
+| `enclave` | vsock listener, egress HTTP client through the host's CONNECT proxy (the parent instance is vsock CID 3), and the log sink that sends log lines to the host |
 | `tlsacme` | one multi-SAN certificate via ACME TLS-ALPN-01; the certificate key and the ACME account key are kept sealed with KMS (`Sealed`) and reused across restarts |
 | `nsm`, `nsm/fakensm` | real NSM attester; fake attester for dev mode and tests |
 | `httpapi` | `/attestation`, `/status` (KMS key policy), `/version`, mailbox API |
 | `router` | dispatch by Host (app, api, mcp, inbox) and security headers |
 | `webui` | embeds the SPA build (`dist/` is copied in at build time) |
-| `hostproxy` | TCP to vsock forwarding and allowlisted CONNECT proxy (host side) |
+| `hostproxy` | TCP to vsock forwarding, allowlisted CONNECT proxy and printing of the enclave's log lines (host side) |
 | `buildinfo` | commit set via ldflags |
 | `smtpd` | MX on port 25 (vsock), STARTTLS with the enclave certificate, refuses mail without TLS (F1) |
 | `inbox` | mailbox: parse, Gmail confirmation codes, seal, store, serve (F1) |
@@ -25,6 +25,7 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 - No CGO, no files read at runtime inside the enclave; CA roots come from `x509roots/fallback`.
 - New outbound destinations must be added to the host allowlist (`cmd/permaily-host`) and documented in [../docs/threat-model.md](../docs/threat-model.md).
 - The TLS key is created once and reused across restarts and upgrades; `/attestation` binds `sha256(SPKI)` as user data. It leaves the enclave only sealed. When the sealed record cannot be loaded the enclave waits: never fall back to a fresh key, which would break the CAA records and the certificate history that verifiers check.
+- Log lines leave the enclave (ADR 0015). Before adding one, read it as if it were public; never put an address, a subject, content, a token or a key in it, and keep `TestMailEndToEnd`'s log check passing.
 - Nothing outside the enclave sees plaintext mail: seal with `envelope` under the mailbox data key before calling `store`; never log addresses, subjects or content.
 - Every KMS response is checked against the pinned key ARN (`keys.ErrKeyMismatch`); never use KMS without the Recipient parameter.
 

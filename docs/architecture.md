@@ -14,6 +14,7 @@ sending MTA ─STARTTLS───▶ EIP:25  ─▶ permaily-host ─────
                                                                                             ├─ SMTP → inbox: parse, DKIM, seal, store
                          permaily-host vsock 8000 (CONNECT allowlist) ◀─────────────────────┤  egress: Let's Encrypt, KMS, DynamoDB, S3, DoH
                          permaily-host vsock 8002 (instance role credentials) ◀─────────────┤  AWS credentials (useless without attestation)
+                         permaily-host vsock 8003 (log lines, one way) ◀──────────────────────┤  logs (public by rule)
                                                                                             └─ /dev/nsm → attestation(nonce, sha256(SPKI)); KMS Recipient
 ```
 

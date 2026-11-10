@@ -52,13 +52,15 @@ type config struct {
 	s3Bucket           string
 	credentialsPort    uint32
 	dohEndpoint        string
+	logPort            uint32
 }
 
 func main() {
 	var cfg config
 	flag.StringVar(&cfg.domain, "domain", "permaily.com", "parent domain; serves app., api., mcp., inbox. and mta-sts.inbox. under it")
 	flag.StringVar(&cfg.acmeDirectory, "acme-directory", "https://acme-v02.api.letsencrypt.org/directory", "ACME directory URL")
-	cfg.port, cfg.egressPort, cfg.smtpPort, cfg.credentialsPort = 443, 8000, 25, 8002
+	cfg.port, cfg.egressPort, cfg.smtpPort, cfg.credentialsPort, cfg.logPort = 443, 8000, 25, 8002, 8003
+	flag.Func("log-port", "vsock port of the host that receives the log lines; 0 disables (default 8003)", uint32Flag(&cfg.logPort))
 	flag.Func("port", "HTTPS listen port (vsock in the enclave, TCP in dev mode) (default 443)", uint32Flag(&cfg.port))
 	flag.Func("egress-port", "vsock port of the host's CONNECT proxy (default 8000)", uint32Flag(&cfg.egressPort))
 	flag.Func("smtp-port", "SMTP listen port (vsock in the enclave, TCP in dev mode) (default 25)", uint32Flag(&cfg.smtpPort))
@@ -74,7 +76,9 @@ func main() {
 	flag.StringVar(&cfg.dohEndpoint, "doh-endpoint", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS endpoint for DKIM lookups")
 	flag.Parse()
 
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	// Logs go to the console (visible only in debug mode) and to the parent
+	// instance. Both are outside the enclave: nothing sensitive may be logged.
+	log := slog.New(slog.NewJSONHandler(logOutput(cfg), nil))
 	if err := run(cfg, log); err != nil {
 		log.Error("fatal", "err", err)
 		os.Exit(1)

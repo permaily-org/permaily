@@ -59,6 +59,16 @@ Certificates with other keys issued before the enclave's key existed are counted
 
 What this does not prove: it trusts Cert Spotter's view of the logs, the DNS records can change after the check, and a certificate issued before the key's creation time is not judged. That time is printed; if it changes between two checks, the key was replaced. `-skip-certificates` skips these checks (releases before v0.4.0 do not report their TLS key); `-doh-resolver` and `-ct-api` choose the services.
 
+## Checking that an interceptor is detected
+
+`TestProductionMITM` puts a TLS-terminating proxy between the verifier and the live service, as the parent instance or a CDN could, and requires verification to fail. The proxy relays everything untouched, so the attestation document is genuine and fresh; it fails because the document vouches for the enclave's TLS key and the connection uses the proxy's.
+
+```sh
+PERMAILY_PCRS=result/pcrs.json go test -tags production -run TestProductionMITM -v ./cmd/permaily-verify
+```
+
+It first verifies the service directly, so a pass means the proxy was the only difference.
+
 ## Reproducing the measurements yourself
 
 ```sh

@@ -24,7 +24,8 @@ variable "enclave_subdomains" {
 variable "acme_account_uris" {
   description = "ACME accounts allowed to issue certificates for the enclave hosts: the URL the enclave reports in /status (tls.acme_account). The key of that account exists only sealed for the enclave. Empty allows any Let's Encrypt account, which is only for the first deployment, before the account exists."
   type        = list(string)
-  default     = []
+  # The production enclave's account, created by release v0.4.0 on 2026-11-10.
+  default = ["https://acme-v02.api.letsencrypt.org/acme/acct/3979188812"]
 }
 
 variable "instance_type" {

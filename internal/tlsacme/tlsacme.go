@@ -188,12 +188,12 @@ func (m *Manager) Run(ctx context.Context) {
 		wait := backoff
 		renewAt, err := m.ensure(ctx)
 		if err != nil {
-			m.log.Error("acme: obtain certificate", "err", err, "retry_in", backoff)
+			m.log.Error("acme: obtain certificate", "err", err, "retry_in", backoff.String())
 			backoff = min(backoff*2, time.Hour)
 		} else {
 			backoff = time.Minute
 			wait = max(renewAt.Sub(m.now()), time.Minute)
-			m.log.Info("acme: certificate installed", "renew_in", wait.Round(time.Minute))
+			m.log.Info("acme: certificate installed", "renew_in", wait.Round(time.Minute).String())
 		}
 		select {
 		case <-ctx.Done():
@@ -218,7 +218,7 @@ func (m *Manager) load(ctx context.Context) bool {
 				return true
 			}
 		}
-		m.log.Error("acme: load identity", "err", err, "retry_in", backoff)
+		m.log.Error("acme: load identity", "err", err, "retry_in", backoff.String())
 		select {
 		case <-ctx.Done():
 			return false
