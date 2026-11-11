@@ -10,15 +10,15 @@
 { lib, stdenvNoCC, buildGoModule, fetchurl, rev, subPackage, goarch, web ? null }:
 
 let
-  goVersion = "1.26.10";
+  goVersion = "1.26.11";
   goToolchain = {
     x86_64-linux = fetchurl {
       url = "https://go.dev/dl/go${goVersion}.linux-amd64.tar.gz";
-      hash = "sha256-zP566CLSwvQfT+fJVhmZZ6Tawi0O4NKyv9tECqs7IMU=";
+      hash = "sha256-mEn04E7jUwNxTjT7w6yKtE6j5EipWqGC+R47m3nHEOw=";
     };
     aarch64-linux = fetchurl {
       url = "https://go.dev/dl/go${goVersion}.linux-arm64.tar.gz";
-      hash = "sha256-P0InznsgalE+eU8Tk620c6B7RulNGL0V0caEu7cxl5c=";
+      hash = "sha256-bC8ptFi1rdCDXxi3dvaciIGm2IQo8UhKbaVXVeYgdX4=";
     };
   }.${stdenvNoCC.buildPlatform.system};
 
