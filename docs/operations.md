@@ -39,7 +39,7 @@ Deploy the previous release again with `scripts/deploy.sh`. Its record and its k
 
 ## Delete the key of an old release
 
-An old image can open the root secret for as long as its key exists. Once the new release has run long enough that no rollback is planned, remove the old release from `release_keys` and apply: its key is scheduled for deletion and gone after seven days. Never remove the release that is running.
+An old image can open the root secret for as long as its key exists. Once the new release has run long enough that no rollback is planned, remove the old release from `release_keys` and apply: its key is scheduled for deletion and gone after seven days. This cannot be undone, from the moment it is applied: cancelling the deletion leaves the key disabled, and its policy lets nobody enable it again. Never remove the release that is running.
 
 ## A new deployment, or losing everything
 
@@ -106,7 +106,7 @@ PERMAILY_RELEASE=<tag> go test -tags production -run TestProductionMITM -v ./cmd
 
 The workflow `verify-production` runs `scripts/verify-production.sh` at minutes 7 and 37 of every hour: the latest release's verifier against production, or the previous release's while the latest is not deployed. Its output is in each run's summary, public. A failed run is an incident: read which check failed and since when.
 
-GitHub disables scheduled workflows after 60 days without activity in the repository; re-enable it under Actions if that happens.
+GitHub does not keep that schedule: in the first day it started two runs instead of about forty, hours apart, and each ran as soon as it was started. Treat the runs as an occasional public record, not as a check every half hour; `gh workflow run verify-production` starts one by hand. GitHub also disables scheduled workflows after 60 days without activity in the repository; re-enable it under Actions if that happens.
 
 ## Read the test mailbox
 
