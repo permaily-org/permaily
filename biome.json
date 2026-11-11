@@ -16,7 +16,7 @@
       "!deploy/tofu",
       "!spikes/**/testdata",
       "!pkg/provenance/testdata",
-      "!pkg/provenance/sigstore_trusted_root.json",
+      "!pkg/provenance/sigstore_*.json",
       "!**/*.md",
       "!**/*.mdx",
       "!**/*.svg"
