@@ -83,6 +83,15 @@ The web app's API for this, all under `/api/v1/`, JSON, binary values as base64u
 | `POST account/passkey-only` `{on}` | a session | `{passkey_only, recovery_codes}`: the codes when it was turned on |
 | `POST account/recovery-codes` | a session, "passkey only" on | `{recovery_codes}`: ten new ones |
 
+### Settings, deleting an account and the operator's tool
+
+- **The name** is changed by the person (`PATCH account {name}`), one printable line of at most eighty characters. The contact address cannot be changed yet: it is how the account is found and recovered, and changing it needs the new one verified first.
+- **Deleting an account takes seven days.** Asking for it (`POST account/delete`) sets the account's state to `closing` with the day it ends, in the anchored record, and closes every other session. Until that day the person can still sign in, sees only that the account is closing, and can cancel (`POST account/delete/cancel`); every other change is refused (`account_closing`). Connections, when they exist, are revoked the moment it is asked.
+- **What deleting removes.** When the day comes the enclave removes the sessions, the pointer from the address, the entry in the list of accounts and the record itself, and commits that the record is gone, so an earlier copy put back in the table does not bring the account back, and the address can sign up again with an invitation. An account that is due is also removed the moment anyone tries to use it, so taking its entry out of the list of what is closing does not keep it alive.
+- **Only the newest version of an account's record is kept.** `store.Anchored` writes each version under its own name; for accounts the one before is deleted once the new one is committed, so a name or a passkey that was removed does not stay in the table. A version that failed to be deleted is harmless (it is not the committed one) and is removed with the account.
+- **Lists are entries that prove nothing.** The list of accounts (for the operator's tool) and the list of accounts that are closing (for the enclave to find the ones that are due) are entries written next to the record. What is shown or acted on is always the signed, anchored record they point to: an entry written by hand lists nothing and deletes nothing.
+- **The operator's tool only looks** (`GET /v1/admin/accounts`, `GET /v1/admin/accounts/{id}`, with the admin token; `scripts/accounts.sh`): the identifier, the address, the name, the state, dates, how many passkeys and sessions, whether "passkey only" is on. It is what the enclave vouches for, where the table is only what is stored. It changes nothing: a person deletes their own account.
+
 Accepted: sessions are signed and not anchored. A session that was closed and is put back in the table by whoever runs the storage works again for whoever still holds its cookie, until its thirty days end. Anchoring each session would write a locked commit for every sign-in.
 
 ## What it rests on, and what is left
