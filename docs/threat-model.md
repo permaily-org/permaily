@@ -50,6 +50,7 @@ The host proxy only tunnels to:
 | `dynamodb.us-east-2.amazonaws.com:443` | sealed mailbox and message records |
 | `s3.us-east-2.amazonaws.com:443` | sealed raw messages (path-style requests) |
 | `cloudflare-dns.com:443` | DNS-over-HTTPS for DKIM lookups, so the host cannot forge DNS answers |
+| `email.us-east-2.amazonaws.com:443` | SES: the service's own mail (sign-in messages), and reading who else could get a copy of it |
 
 ## Mail (F1)
 
@@ -67,6 +68,21 @@ The host proxy only tunnels to:
 - **The policy between checks.** AWS documents that its Support can restore the account owner's access to a key that nobody can manage. So the enclave reads the policy and the grants of its key once a minute and reports every state it has seen since it started; the verifier requires a reading made just now and checks every state, and a public job runs the verifier every half hour (ADR 0013). That job is started from the operator's AWS account, with a GitHub token that can start, cancel and delete workflow runs of this repository and nothing else; so the operator chooses when it runs, and GitHub's own schedule, which the operator does not time, starts it a few times a day as well. What remains: a change made while the enclave is cut off from KMS shows only as a gap, and restarting the enclave starts the history again (the start time is printed).
 - **What remains.** An older release can still open its own record until its key is deleted, so a flaw in an old image stays a way in for that long (docs/operations.md). Whoever controls Sigstore's signing or GitHub's runners for this repository can publish an image that is accepted; it would be public in the transparency log and in the repository. The account's owner, with AWS Support, could regain control of a key and then open the root secret; it takes a support case and shows in the enclave's report from then on. The operator can still delete keys or records, which destroys data and reads nothing.
 - **The old mail key.** Releases up to v0.6.0 wrapped data keys with `alias/permaily-mail`, whose policy administrators could replace. v0.7.0 moved those data keys under the root secret, the key was retired on 2026-11-10 with a policy that lets nobody use it, and it is scheduled for deletion.
+
+## Accounts (F2)
+
+- **The storage is not a way into an account.** An account's record is readable and signed with a key that comes from the root secret, and read through `store.Anchored`; sessions and invitations are signed with where they are stored and kept by the hash of their secret; a sign-in that was started, with its count of wrong codes, lives only in the enclave's memory (ADR 0017). So whoever runs DynamoDB and S3 can read who has an account, and can delete accounts, and cannot add a way to sign in, bring a removed one back, or make a session.
+- **What the operator sees.** Contact addresses, names, dates, which ways each account signs in with, how many sessions it has and when each was used. That is the promise: account data is seen, mail is not.
+- **Sign-in by mail trusts three parties.** The person's own mail provider, which can read the message; AWS, which carries it (SES); and, in part, whoever administers the AWS account, as the next point says. An account in "passkey only" mode (not built yet) trusts none of them.
+- **A copy of the mail the enclave sends.** The message with the code and the link goes from the enclave to SES over TLS, so the host does not see it. An administrator of the AWS account can make SES keep a copy of everything sent: a configuration set tied to an archive, set as the default of the identity. With the copy of a sign-in message they would enter the account. The enclave never names a configuration set, so it reads from SES whether one applies to the domain it sends from, or to the address (whose settings would win over the domain's): before a message unless it read within the last five seconds, after each message, and once a minute. It sends only while the answer is that none applies and the answer can be had. Every state it saw since it started is on `/status`, and `permaily-verify`, which runs every half hour, fails on one that was ever not clean (ADR 0021).
+- **What that leaves.** It is noticed, not prevented: nothing in AWS stops an administrator from changing those settings. A configuration set put in place and taken away between two readings, in the moment a message leaves, is not seen; the readings around each message leave about a second for it, up to six when many messages leave at once, where a watch once a minute would leave a minute. Restarting the enclave starts the history again (the start time is printed). A way to copy outgoing mail that AWS adds later, or one this does not read, is not covered. AWS itself reads the message in any case.
+- **Other settings of SES are not read.** A notification topic on the identity can carry the headers of a message, so the subject of a sign-in message is fixed text and never holds the code or the link. A message that bounces is sent back to the sender's address, whose mail the operator could receive by adding an MX record: that copy exists only for a message that did not reach the person. Sending authorization lets others send, not read.
+- **A link signs in whoever opens it.** Someone can start a sign-in for their own account and send its link to another person, who then acts inside an account that is not theirs. Open: the link should ask before it signs in, naming the account (TODO below).
+- **Mail in Permaily's name proves nothing.** The parent instance holds the role the enclave sends with, so the operator can send mail from the same address without the enclave; DNS is the operator's too. A message from Permaily is not proof that the enclave wrote it. What a sign-in message leads to is: the link opens `app.permaily.com`, where the verifier's check applies, and the code is only good in the browser that asked for it.
+- **Guessing.** A code takes five tries and an address ten wrong codes a day; an address gets five messages an hour (ADR 0017). The counts are in memory: a restart sets them back, and ends the sign-ins that were waiting.
+- **Telling who has an account.** Starting a sign-in answers the same, and as fast, for every address; the lookup and the message come after the answer.
+- **Sessions.** The cookie is `__Host-permaily-session`, `Secure`, `HttpOnly`, `SameSite=Strict`, and a request that changes something must come from the app's own origin. Accepted: a session that was closed and is put back in the table works again, for whoever still holds its cookie, until its thirty days end (ADR 0017).
+- **Invitations** are made with the operator's token, of which the image holds only the hash. Whoever holds it decides who may sign up, and nothing else of an account.
 
 ## Invariants
 
@@ -102,6 +118,12 @@ Each one has, or must get, a test that tries to break it.
 | Mail | The status is accepted only over the attested TLS key | `TestFetchStatus` |
 | Mail | Account administrators cannot obtain data keys | manual check (2026-11-09), `docs/acceptance.md` |
 | Mail | KMS gives the data key to the allowlisted image and denies it in debug mode | production check (2026-11-10), `docs/acceptance.md` |
+| Accounts | Whoever writes to the storage cannot add a way to sign in, a session or an invitation, nor bring an earlier account back | `TestStorageWrittenByHand`, `TestAnotherDeployment`, `TestSignUpRace` |
+| Accounts | Starting a sign-in answers the same for every address, and codes cannot be guessed without limit | `TestStartLimits`, `TestWrongCodes`, `TestSignInEnds` |
+| Accounts | A request that changes something is refused unless it comes from the app's own origin | `TestAccountsAPIRefusals` |
+| Accounts | No log line, and no error passed on, names an address, a code, an account or a session | `TestAccountsAPIInternalErrors`, `TestMailSystemDown`, `TestRefused`, `TestUnreachable` |
+| Accounts | No message leaves while SES says a configuration set applies to what the enclave sends, or does not answer | `TestSendWithWatch`, `TestWatchFailsClosed`, `TestWatchStates`, `TestWatchAddressOfTheDomain`; staging check (2026-11-11), `docs/acceptance.md` |
+| Accounts | A configuration set seen at any time since the enclave started, or a reading that is not recent, fails verification | `TestWatchHistory`, `TestCheckSentMail`, `TestCheckStatusSentMail`, `TestMailStateClean` |
 | Site | No CSP violations and a strict script policy on every page | `site/e2e/a11y.spec.ts` |
 
 ## Logging
@@ -121,6 +143,7 @@ For every change that touches the enclave, the host, auth, storage or the build:
 
 ## TODO
 
+- [ ] Accounts: a sign-in link opened by someone other than who asked for it signs them into the asker's account. Show which account it is and ask before signing in, or tie the link to the browser that started it.
 - [ ] Site: move the demos' inline `style` attributes to classes and remove `style-src-attr 'unsafe-inline'` from `site/astro.config.mjs`.
 
 ## Reporting vulnerabilities

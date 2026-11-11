@@ -20,7 +20,7 @@ For each host, `permaily-verify`:
 5. Rejects all-zero PCR0-2 (debug mode).
 6. Compares PCR0, PCR1 and PCR2 with your reproduced build.
 7. Checks that the document's `user_data` equals `sha256(SubjectPublicKeyInfo)` of the TLS certificate presented on the same connection. This proves the TLS session ends inside the attested enclave.
-8. Reads `GET /status` over a connection with that same TLS key and checks the KMS key that locks the root secret everything stored is sealed under (below).
+8. Reads `GET /status` over a connection with that same TLS key and checks the KMS key that locks the root secret everything stored is sealed under (below). When the enclave sends mail of its own, it also checks who else SES would give a copy to (below).
 
 ## Who can read stored mail
 
@@ -41,6 +41,19 @@ What this does not prove for that old key: the account's administrators could re
 The workflow `verify-production` of the repository runs the latest release's verifier against the live service every half hour; its runs and their output are public under Actions. `scripts/verify-production.sh` runs the same check from your machine.
 
 `permaily-verify -provenance bundle.json -pcrs pcrs.json` checks no deployment: it answers, offline, whether those measurements are a release, the way a running enclave decides before it hands the root secret to the next one (`pkg/provenance`, with the trust root compiled into the binary). It reads releases recorded in the first Rekor log and in Rekor v2, where the time comes from Sigstore's timestamp authority. `scripts/provenance-bundle.sh` fetches the bundle of a `pcrs.json`. `permaily-verify -trust-update DIR` answers the other question an enclave decides offline: whether the files in a directory are a trust root that Sigstore published after the one compiled in.
+
+## Who else gets a copy of the mail Permaily sends
+
+Signing in by mail sends one message with a code and a link, through Amazon SES. Whoever administers the AWS account could make SES keep a copy of every message (a configuration set tied to an archive, set as the default of the identity mail is sent from), and with the copy of a sign-in message enter the account. The enclave names no configuration set when it sends, so it reads from SES whether one applies, sends only while none does, and reports every state it read since it started (ADR 0021). When `/status` has `mail`, the verifier requires:
+
+- the domain and the address the enclave says it sends from;
+- a reading of SES no older than five minutes;
+- the whole history, ending in the current state;
+- the current state and every earlier one clean: the domain's identity is there, can send, and has no configuration set; the address has no identity of its own, or one without a configuration set.
+
+A state that was not clean prints with the times it was first and last seen. A reading that fails right now, within the five minutes, is a warning: the enclave sends nothing while it cannot read.
+
+What this does not show: a configuration set put in place and removed between two readings in the moment a message leaves (the enclave reads before a message, unless it read within five seconds, and after each one, so the moment is about a second, up to six when many messages leave at once); anything from before the enclave started; and other settings of SES, which are not read. AWS and the person's mail provider read the message in any case.
 
 ## How mail gets in
 
@@ -132,6 +145,15 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
     "tuf_targets_version": 14,
     "updated_at": "<when the enclave was given it; absent while it uses the one compiled into the image>"
   },
+  "mail": {
+    "domain": "<the domain the enclave's own mail is from>",
+    "address": "<the address it is from>",
+    "checked_at": "<when the enclave last read both identities from SES>",
+    "state": {"domain_identity": "no_configuration_set", "address_identity": "absent"},
+    "failing": false,
+    "watched_since": "<when this enclave first tried to read them>",
+    "history": [{"domain_identity": "no_configuration_set", "address_identity": "absent", "first_seen": "...", "last_seen": "..."}]
+  },
   "anchors": {
     "bucket": "<S3 bucket with Object Lock that holds the commits>",
     "retention_days": 3650,
@@ -144,6 +166,8 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
 `sigstore` says which of the trust roots Sigstore published the enclave uses to decide what is a release: the file is `https://tuf-repo-cdn.sigstore.dev/targets/<hash>.trusted_root.json`. The verifier requires the one compiled into the release while there was no update, and a later one after an update; the enclave takes a later one only with the signatures of Sigstore's TUF keyholders, and only for the logs and the timestamp authorities (ADR 0013).
 
 `anchors` lists the records the enclave refuses an earlier copy of (ADR 0016), as far as it read or wrote them since it started: the version of each, and until when S3 keeps its newest commit whatever anyone asks. The verifier fails when a commit is not locked, and when `regressions` is not empty: a commit the enclave had seen that the store stopped answering with. It warns when a lock ends within thirty days.
+
+`mail` says what SES would do with a message of the enclave besides delivering it, as the enclave read it: each identity is `no_configuration_set`, `configuration_set`, `not_verified` or `absent`. `failing` is true when the newest attempt got no answer to go by, and `state` and `checked_at` then describe the last one that did; `history_truncated` appears after more than 32 states. It is absent in an image that sends no mail. A regression of the record of an account is listed in `anchors.regressions` without the account's name.
 
 `root` is absent in an image that stores no mail. `from` is present when another release's enclave handed the root secret over. `history` and `gaps` are every state of the key's policy and grants the enclave has read since it started, and the periods in which it could not read. Releases up to v0.7.0 also report `kms`, the key they wrapped data keys with directly, with the same `history` and `gaps`. If KMS cannot be reached, or the image has no root secret yet, the endpoint answers 503.
 

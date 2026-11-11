@@ -21,7 +21,8 @@ Architecture Decision Records. Each one records the context, the options conside
 | [0014](0014-opentofu-state-in-s3.md) | OpenTofu state in S3, encrypted by OpenTofu | Accepted |
 | [0015](0015-enclave-logs-through-the-host.md) | Send the enclave's logs to the parent instance | Accepted |
 | [0016](0016-refuse-earlier-copies-of-stored-records.md) | Refuse earlier copies of stored records | Accepted |
-| [0017](0017-accounts-and-sign-in.md) | Accounts, sign-in and how account data is kept | Accepted, not built |
+| [0017](0017-accounts-and-sign-in.md) | Accounts, sign-in and how account data is kept | Accepted, built in part |
 | [0018](0018-mailboxes-by-forwarding.md) | Mailboxes: forwarding only, several per account | Accepted, not built |
 | [0019](0019-connections-queries-rules-and-receipts.md) | Connections, queries, rules and receipts | Accepted, not built |
 | [0020](0020-openai-models-for-meaning.md) | OpenAI's models for what depends on meaning | Accepted, not built |
+| [0021](0021-watch-the-copies-of-outgoing-mail.md) | Watch who else gets a copy of the mail the enclave sends | Accepted |

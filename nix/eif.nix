@@ -69,7 +69,8 @@ let
     ++ flag "-release-ref" config.release_ref
     ++ flag "-release-ref-prefix" config.release_ref_prefix
     ++ flag "-anchor-bucket" config.anchor_bucket
-    ++ flag "-anchor-retention-days" (toString config.anchor_retention_days));
+    ++ flag "-anchor-retention-days" (toString config.anchor_retention_days)
+    ++ flag "-mail-from" (config.mail_from or ""));
     env = "GOMEMLIMIT=${gomemlimit}";
   };
 in

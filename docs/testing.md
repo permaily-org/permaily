@@ -58,6 +58,7 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `internal/contracts` | 100 | 100.0 (2026-11-11) |
 | `internal/domain` | 100 | 100.0 (2026-11-11) |
 | `internal/services/accounts` | 96 | 96.1 (2026-11-11) |
+| `internal/sesmail` | 98 | 98.6 (2026-11-11) |
 
 Mutation testing of `pkg/attestation` (gremlins 0.6.0, 2026-11-09): efficacy 100% (29 killed, 0 lived, 22 timed out), mutator coverage 55.77%. Thresholds: efficacy 90, mutator coverage 55.
 

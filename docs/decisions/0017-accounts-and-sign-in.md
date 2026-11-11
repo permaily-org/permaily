@@ -1,6 +1,6 @@
 # 0017 Accounts, sign-in and how account data is kept
 
-Status: Accepted. Sign-up by invitation, sign-in by email and sessions are built (`internal/services/accounts`), and not on in production until the image can send mail. The rest is not built.
+Status: Accepted. Sign-up by invitation, sign-in by email, sessions and outgoing mail are built (`internal/services/accounts`, `internal/sesmail`). The rest is not built.
 Date: 2026-11-11 (decided on 2026-11-09)
 
 ## Context
@@ -49,6 +49,8 @@ Decided while building the first piece, each to keep whoever runs the storage ou
 - **Sessions and invitations are entries, signed with where they are stored** and kept by the hash of their secret, so one cannot be written by hand or copied into another account. How long one lasts is read from what was signed.
 - **The cookie** is `__Host-permaily-session`, `Secure`, `HttpOnly`, `SameSite=Strict`. A request that changes something must also come from the app's own origin (`Origin`, `Sec-Fetch-Site`).
 
+- **Outgoing mail** is from `no-reply@mail.permaily.com` (`mail_from` in `deploy/enclave.json`): a domain used for nothing else, signed with DKIM by SES, with DMARC set to refuse what fails. Nothing is received there. An image without `mail_from` has no accounts. The administrator of the AWS account could make SES keep a copy of what is sent, so the enclave reads those settings and tells (ADR 0021).
+
 Accepted: sessions are signed and not anchored. A session that was closed and is put back in the table by whoever runs the storage works again for whoever still holds its cookie, until its thirty days end. Anchoring each session would write a locked commit for every sign-in.
 
 ## What it rests on, and what is left
@@ -56,4 +58,5 @@ Accepted: sessions are signed and not anchored. A session that was closed and is
 - The records whose going back would matter here (ways to sign in, the "passkey only" switch, account state) go through `store.Anchored` (ADR 0016), so an earlier copy of them is refused.
 - A provider that lies about a verified address can take over the account with that address. The "passkey only" mode is the way out for whoever does not accept that.
 - SES starts in a sandbox: production access has to be asked of AWS.
+- Sign-in by mail rests on the person's mail provider, on AWS and, as far as ADR 0021 does not close it, on whoever administers the AWS account. "Passkey only" rests on none of them.
 - To design while building: the operator's tool, rate limits on sign-in and codes, and the exact wording of each message.

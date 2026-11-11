@@ -40,6 +40,86 @@ type Status struct {
 	// Anchors describes the records the enclave refuses an earlier copy of;
 	// nil in images older than this field or without such records.
 	Anchors *AnchorStatus `json:"anchors,omitempty"`
+	// Mail describes the mail the enclave sends through Amazon SES (sign-in
+	// messages) and what SES would do with it besides delivering it; nil in
+	// images older than this field or that send no mail.
+	Mail *MailStatus `json:"mail,omitempty"`
+}
+
+// What SES says about an identity, a domain or an address mail is sent from
+// (MailState).
+const (
+	// MailNoConfigurationSet: the identity may send and has no configuration set.
+	MailNoConfigurationSet = "no_configuration_set"
+	// MailConfigurationSet: the identity has a default configuration set, which
+	// SES applies to what is sent from it even when the sender names none.
+	MailConfigurationSet = "configuration_set"
+	// MailNotVerified: the identity has no configuration set and SES does not
+	// let it send, so mail would go out under another identity if any.
+	MailNotVerified = "not_verified"
+	// MailAbsent: SES has no such identity.
+	MailAbsent = "absent"
+)
+
+// MailStatus is what the enclave reports about the mail it sends. A
+// configuration set can make SES keep a copy of every message (it can be tied
+// to an archive), and whoever administers the account can give an identity
+// one by default. The enclave names none when it sends, reads from SES
+// whether one applies anyway, and sends nothing unless a reading of the last
+// few seconds says none does.
+type MailStatus struct {
+	// Domain is the SES identity mail is sent from, and Address the address:
+	// an identity for the address alone, if there is one, replaces the
+	// domain's settings, so both are read.
+	Domain  string `json:"domain"`
+	Address string `json:"address"`
+	// CheckedAt is when the enclave last read both identities from SES; zero
+	// until it has. Failing means its latest attempt did not get an answer:
+	// until one does it sends nothing.
+	CheckedAt time.Time `json:"checked_at,omitzero"`
+	Failing   bool      `json:"failing,omitempty"`
+	// State is what that reading said; nil until there is one.
+	State *MailState `json:"state,omitempty"`
+	// WatchedSince is when this enclave started reading, about once a minute
+	// and around each message it sends, and History every different state it
+	// has read since then, oldest first; the last one is the current state. A
+	// configuration set that was set and removed again shows up here.
+	WatchedSince time.Time         `json:"watched_since,omitzero"`
+	History      []MailObservation `json:"history,omitempty"`
+	// HistoryTruncated means older states were dropped to bound the answer.
+	HistoryTruncated bool `json:"history_truncated,omitempty"`
+}
+
+// MailState is what SES says about the two identities: each is
+// MailNoConfigurationSet, MailConfigurationSet, MailNotVerified or MailAbsent.
+// The name of a configuration set is not reported: whoever sets one chooses it.
+type MailState struct {
+	DomainIdentity  string `json:"domain_identity"`
+	AddressIdentity string `json:"address_identity"`
+}
+
+// Clean reports whether no configuration set applies to mail sent from the
+// address without naming one. The domain must be an identity that may send:
+// without it SES would send under another identity (a parent domain), which
+// nobody reads here. The address need not be an identity, and one that may
+// not send changes nothing. A value this code does not know is not clean.
+func (s MailState) Clean() bool {
+	if s.DomainIdentity != MailNoConfigurationSet {
+		return false
+	}
+	switch s.AddressIdentity {
+	case MailNoConfigurationSet, MailNotVerified, MailAbsent:
+		return true
+	}
+	return false
+}
+
+// MailObservation is one state of the identities, and the first and last time
+// the enclave read it without reading a different one in between.
+type MailObservation struct {
+	MailState
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
 }
 
 // AnchorStatus describes the records that cannot be put back to an earlier
