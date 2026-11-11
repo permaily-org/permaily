@@ -166,7 +166,4 @@ jobs:
           URGENT: ${{ needs.trust-root.outputs.urgent }}
           PULL_REQUEST: ${{ needs.trust-root.outputs.pull_request }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          # Optional second channel: a Telegram chat. Without the secrets nothing is sent.
-          TELEGRAM_BOT_TOKEN: ${{ secrets.SIGSTORE_ALERT_TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.SIGSTORE_ALERT_TELEGRAM_CHAT }}
         run: scripts/sigstore-alarm.sh

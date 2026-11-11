@@ -14,7 +14,6 @@
 #   URGENT        "true" when the newer trust root changes who issues certificates
 #   PULL_REQUEST  URL of the pull request that compiles in the newer trust root
 #   RUN_URL       URL of the workflow run
-#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID   optional: also post to a Telegram chat
 #
 # Needs gh (with GH_TOKEN) and jq.
 set -euo pipefail
@@ -29,17 +28,9 @@ failed=()
 [[ ${CANARY:-} == success ]] || failed+=(canary)
 [[ ${CANARY_REKOR2:-} == success ]] || failed+=(canary-rekor2)
 
-telegram() {
-  [[ -n ${TELEGRAM_BOT_TOKEN:-} && -n ${TELEGRAM_CHAT_ID:-} ]] || return 0
-  curl -sS --retry 3 -o /dev/null -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-    --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=$1" --data-urlencode "disable_web_page_preview=true" ||
-    echo "::warning::could not post to Telegram"
-}
-
 if [[ ${#failed[@]} -eq 0 ]]; then
   if [[ -n $open ]]; then
     gh issue close "$open" --repo "$GITHUB_REPOSITORY" --comment "Every check of sigstore-watch passes again: $RUN_URL"
-    telegram "Permaily: the Sigstore checks pass again. Issue #$open closed."
   fi
   exit 0
 fi
@@ -86,4 +77,3 @@ else
   [[ ${URGENT:-} != true ]] || gh issue edit "$open" --repo "$GITHUB_REPOSITORY" --title "$title" >/dev/null
 fi
 echo "Told the maintainers: $url"
-telegram "Permaily: sigstore-watch failed (${failed[*]})$([[ ${URGENT:-} != true ]] || echo ', URGENT: a release must be deployed in time'). $url"
