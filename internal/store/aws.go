@@ -22,6 +22,8 @@ import (
 //
 //	pk = "mailbox#<id>", sk = "mailbox"        mailbox: wrapped_key, retention_days, state
 //	pk = "mailbox#<id>", sk = "msg#<msg id>"   message: received_at, size, retention_days, meta
+//	pk = "system",       sk = "record#<name>"  record: wrapped_key, and value (sealed) or text (readable)
+//	pk = <partition>,    sk = <key>            entry: text, version, expires_at
 //
 // Bucket: raw/<mailbox id>/<msg id>, tagged retention-days=<n> so the
 // lifecycle rule for that period deletes it.
@@ -146,19 +148,31 @@ func (s *AWS) GetRecord(ctx context.Context, name string) (*Record, error) {
 	if len(out.Item) == 0 {
 		return nil, ErrNotFound
 	}
-	return &Record{
+	rec := &Record{
 		Name:       name,
 		WrappedKey: getB(out.Item, "wrapped_key"),
 		Value:      getB(out.Item, "value"),
 		UpdatedAt:  time.Unix(getN(out.Item, "updated_at"), 0).UTC(),
-	}, nil
+	}
+	// A readable record is stored as text, so that it can be read in the table.
+	if text, ok := out.Item["text"].(*ddb.AttributeValueMemberS); ok {
+		rec.Value, rec.Plain = []byte(text.Value), true
+	}
+	return rec, nil
 }
 
 // PutRecord implements Records.
 func (s *AWS) PutRecord(ctx context.Context, r *Record, create bool) error {
 	item := recordKey(r.Name)
-	item["wrapped_key"] = bin(r.WrappedKey)
-	item["value"] = bin(r.Value)
+	// A readable record has no data key.
+	if len(r.WrappedKey) > 0 {
+		item["wrapped_key"] = bin(r.WrappedKey)
+	}
+	if r.Plain {
+		item["text"] = str(string(r.Value))
+	} else {
+		item["value"] = bin(r.Value)
+	}
 	item["updated_at"] = num(r.UpdatedAt.Unix())
 	in := &dynamodb.PutItemInput{TableName: aws.String(s.Table), Item: item}
 	if create {
@@ -308,4 +322,130 @@ func (s *AWS) DeleteMessage(ctx context.Context, mailboxID, id string) error {
 		return fmt.Errorf("store: delete raw message: %w", err)
 	}
 	return nil
+}
+
+func entryKey(partition, key string) map[string]ddb.AttributeValue {
+	return map[string]ddb.AttributeValue{"pk": str(partition), "sk": str(key)}
+}
+
+func (s *AWS) entry(item map[string]ddb.AttributeValue) Entry {
+	e := Entry{
+		Partition: getS(item, "pk"),
+		Key:       getS(item, "sk"),
+		Value:     []byte(getS(item, "text")),
+		Version:   uint64(getN(item, "version")), //nolint:gosec // written by PutEntry, never negative
+		UpdatedAt: time.Unix(getN(item, "updated_at"), 0).UTC(),
+	}
+	if exp := getN(item, "expires_at"); exp != 0 {
+		e.ExpiresAt = time.Unix(exp, 0).UTC()
+	}
+	return e
+}
+
+func (s *AWS) expired(e *Entry) bool {
+	return !e.ExpiresAt.IsZero() && !e.ExpiresAt.After(s.now())
+}
+
+// GetEntry implements Entries. DynamoDB deletes expired items lazily, so they
+// are hidden here too.
+func (s *AWS) GetEntry(ctx context.Context, partition, key string) (*Entry, error) {
+	out, err := s.DB.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName:      aws.String(s.Table),
+		Key:            entryKey(partition, key),
+		ConsistentRead: aws.Bool(true),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: get entry: %w", err)
+	}
+	if len(out.Item) == 0 {
+		return nil, ErrNotFound
+	}
+	e := s.entry(out.Item)
+	if s.expired(&e) {
+		return nil, ErrNotFound
+	}
+	return &e, nil
+}
+
+// PutEntry implements Entries.
+func (s *AWS) PutEntry(ctx context.Context, e *Entry) error {
+	item := entryKey(e.Partition, e.Key)
+	item["text"] = str(string(e.Value))
+	item["version"] = num(int64(e.Version + 1)) //nolint:gosec // a count of writes
+	item["updated_at"] = num(e.UpdatedAt.Unix())
+	if !e.ExpiresAt.IsZero() {
+		item["expires_at"] = num(e.ExpiresAt.Unix())
+	}
+	in := &dynamodb.PutItemInput{TableName: aws.String(s.Table), Item: item}
+	if e.Version == 0 {
+		// New, or in the place of one that expired and was not removed yet.
+		in.ConditionExpression = aws.String("attribute_not_exists(pk) OR (attribute_exists(expires_at) AND expires_at <= :now)")
+		in.ExpressionAttributeValues = map[string]ddb.AttributeValue{":now": num(s.now().Unix())}
+	} else {
+		in.ConditionExpression = aws.String("version = :version")
+		in.ExpressionAttributeValues = map[string]ddb.AttributeValue{":version": num(int64(e.Version))} //nolint:gosec // a count of writes
+	}
+	if _, err := s.DB.PutItem(ctx, in); err != nil {
+		var failed *ddb.ConditionalCheckFailedException
+		if errors.As(err, &failed) {
+			if e.Version == 0 {
+				return ErrExists
+			}
+			return ErrConflict
+		}
+		return fmt.Errorf("store: put entry: %w", err)
+	}
+	e.Version++
+	return nil
+}
+
+// DeleteEntry implements Entries.
+func (s *AWS) DeleteEntry(ctx context.Context, partition, key string) error {
+	out, err := s.DB.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName:    aws.String(s.Table),
+		Key:          entryKey(partition, key),
+		ReturnValues: ddb.ReturnValueAllOld,
+	})
+	if err != nil {
+		return fmt.Errorf("store: delete entry: %w", err)
+	}
+	if len(out.Attributes) == 0 {
+		return ErrNotFound
+	}
+	if e := s.entry(out.Attributes); s.expired(&e) {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListEntries implements Entries.
+func (s *AWS) ListEntries(ctx context.Context, partition, prefix string, limit int) ([]Entry, error) {
+	var out []Entry
+	var start map[string]ddb.AttributeValue
+	for len(out) < limit {
+		res, err := s.DB.Query(ctx, &dynamodb.QueryInput{
+			TableName:                 aws.String(s.Table),
+			KeyConditionExpression:    aws.String("pk = :pk AND begins_with(sk, :prefix)"),
+			ExpressionAttributeValues: map[string]ddb.AttributeValue{":pk": str(partition), ":prefix": str(prefix)},
+			ConsistentRead:            aws.Bool(true),
+			Limit:                     aws.Int32(int32(min(limit, 100))), //nolint:gosec // bounded by min
+			ExclusiveStartKey:         start,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("store: list entries: %w", err)
+		}
+		for _, item := range res.Items {
+			if e := s.entry(item); !s.expired(&e) {
+				out = append(out, e)
+			}
+		}
+		if len(res.LastEvaluatedKey) == 0 {
+			break
+		}
+		start = res.LastEvaluatedKey
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }

@@ -20,6 +20,7 @@ import (
 func contract(t *testing.T, s interface {
 	Store
 	Records
+	Entries
 }, setNow func(time.Time)) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
@@ -46,6 +47,19 @@ func contract(t *testing.T, s interface {
 	if _, err := s.GetRecord(ctx, "other"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("another record: %v", err)
 	}
+
+	// A readable record comes back as it was written, and marked as such.
+	plain := &Record{Name: "account-1", Value: []byte(`{"doc":{"state":"active"},"mac":"AA=="}`), Plain: true, UpdatedAt: now}
+	if err := s.PutRecord(ctx, plain, true); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.GetRecord(ctx, "account-1"); err != nil || !got.Plain || !bytes.Equal(got.Value, plain.Value) || len(got.WrappedKey) != 0 {
+		t.Fatalf("readable record: %+v %v", got, err)
+	}
+	if got, err := s.GetRecord(ctx, "tls"); err != nil || got.Plain {
+		t.Fatalf("a sealed record came back as readable: %v", err)
+	}
+	entries(t, s, setNow, now)
 
 	if _, err := s.GetMailbox(ctx, "mb"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing mailbox: %v", err)
@@ -100,6 +114,92 @@ func contract(t *testing.T, s interface {
 	}
 	if err := s.DeleteMessage(ctx, "mb", "00000001"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete: %v", err)
+	}
+}
+
+// entries checks the behavior every Entries must have.
+func entries(t *testing.T, s Entries, setNow func(time.Time), now time.Time) {
+	ctx := context.Background()
+	if _, err := s.GetEntry(ctx, "account#1", "session#a"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing entry: %v", err)
+	}
+	a := &Entry{Partition: "account#1", Key: "session#a", Value: []byte(`{"n":1}`), UpdatedAt: now}
+	if err := s.PutEntry(ctx, a); err != nil || a.Version != 1 {
+		t.Fatalf("create: version %d, %v", a.Version, err)
+	}
+	if err := s.PutEntry(ctx, &Entry{Partition: "account#1", Key: "session#a", Value: []byte(`{}`), UpdatedAt: now}); !errors.Is(err, ErrExists) {
+		t.Fatalf("second create: %v, want ErrExists", err)
+	}
+	// Two readers of the same version: the second write is refused.
+	first, _ := s.GetEntry(ctx, "account#1", "session#a")
+	second, _ := s.GetEntry(ctx, "account#1", "session#a")
+	first.Value = []byte(`{"n":2}`)
+	if err := s.PutEntry(ctx, first); err != nil || first.Version != 2 {
+		t.Fatalf("replace: version %d, %v", first.Version, err)
+	}
+	second.Value = []byte(`{"n":3}`)
+	if err := s.PutEntry(ctx, second); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale replace: %v, want ErrConflict", err)
+	}
+	if err := s.PutEntry(ctx, &Entry{Partition: "account#1", Key: "session#none", Version: 4, UpdatedAt: now}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("replace of nothing: %v, want ErrConflict", err)
+	}
+	if got, err := s.GetEntry(ctx, "account#1", "session#a"); err != nil || string(got.Value) != `{"n":2}` || got.Version != 2 || !got.ExpiresAt.IsZero() || !got.UpdatedAt.Equal(now) {
+		t.Fatalf("entry round trip: %+v %v", got, err)
+	}
+
+	// Listed by partition and prefix, in order; an expired one is not there.
+	for _, e := range []*Entry{
+		{Partition: "account#1", Key: "session#c", Value: []byte(`{}`), ExpiresAt: now.Add(time.Hour), UpdatedAt: now},
+		{Partition: "account#1", Key: "session#b", Value: []byte(`{}`), ExpiresAt: now.Add(time.Minute), UpdatedAt: now},
+		{Partition: "account#1", Key: "other", Value: []byte(`{}`), UpdatedAt: now},
+		{Partition: "account#2", Key: "session#z", Value: []byte(`{}`), UpdatedAt: now},
+	} {
+		if err := s.PutEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keys := func(list []Entry) (out []string) {
+		for _, e := range list {
+			out = append(out, e.Key)
+		}
+		return out
+	}
+	if list, err := s.ListEntries(ctx, "account#1", "session#", 10); err != nil || fmt.Sprint(keys(list)) != "[session#a session#b session#c]" {
+		t.Fatalf("list: %v %v", keys(list), err)
+	}
+	if list, err := s.ListEntries(ctx, "account#1", "session#", 2); err != nil || len(list) != 2 {
+		t.Fatalf("limited list: %v %v", keys(list), err)
+	}
+	if got, err := s.GetEntry(ctx, "account#1", "session#c"); err != nil || !got.ExpiresAt.Equal(now.Add(time.Hour)) {
+		t.Fatalf("expiry round trip: %+v %v", got, err)
+	}
+	setNow(now.Add(2 * time.Minute))
+	if _, err := s.GetEntry(ctx, "account#1", "session#b"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired entry: %v", err)
+	}
+	if list, err := s.ListEntries(ctx, "account#1", "session#", 10); err != nil || fmt.Sprint(keys(list)) != "[session#a session#c]" {
+		t.Fatalf("list after expiry: %v %v", keys(list), err)
+	}
+	// An expired entry can be made again, and deleting it deletes nothing.
+	if err := s.DeleteEntry(ctx, "account#1", "session#b"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete of an expired entry: %v", err)
+	}
+	again := &Entry{Partition: "account#1", Key: "session#b", Value: []byte(`{}`), UpdatedAt: now}
+	if err := s.PutEntry(ctx, again); err != nil {
+		t.Fatalf("create over nothing: %v", err)
+	}
+	setNow(now)
+
+	// Of two deletes, one succeeds.
+	if err := s.DeleteEntry(ctx, "account#1", "session#a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteEntry(ctx, "account#1", "session#a"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete: %v", err)
+	}
+	if _, err := s.GetEntry(ctx, "account#1", "session#a"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted entry still there: %v", err)
 	}
 }
 

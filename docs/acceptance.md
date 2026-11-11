@@ -56,6 +56,23 @@ Each criterion, the evidence that proves it, and its status: **covered** (a test
 | No unexpired certificate valid for an enclave host has a key outside the enclave | The verifier reports the older ones: four `*.permaily.com` certificates held by Cloudflare and AWS and the certificates of earlier releases, the last expiring 2027-05-26 (ADR 0012) | partial until 2027-05-26 |
 | Gmail delivers forwarded mail to the MX over TLS (MTA-STS) | MX, MTA-STS and TLS-RPT records published; a message sent from Gmail arrived at v0.3.0 with the policy in `enforce`, and the MX refuses mail without TLS | covered in production (2026-11-10) |
 
+## F2: accounts
+
+Built in `internal/services/accounts`; not on in production until the image can send mail.
+
+| Criterion | Evidence | Status |
+|---|---|---|
+| A person signs up with a single-use invitation and the code or the link of one message, and signs in again without an invitation | `TestSignUpAndSignIn`, `TestInvitations`, `TestAccountsAPI`; `TestAccountsEndToEnd` (dev mode, whole service) | covered |
+| Starting a sign-in says the same for an address with an account and one without, and sends nothing to an address without an account or an invitation | `TestSignUpAndSignIn`, `TestStartLimits` | covered |
+| A six-digit code cannot be guessed: five tries a sign-in, ten wrong codes a day an address, ten minutes, once, and nothing of a sign-in outlives the enclave that started it | `TestWrongCodes`, `TestSignInEnds` | covered |
+| Whoever runs the storage cannot get into an account: a session copied to another account or written by hand, a pointer from another address, an account's record changed or deleted, an entry made to never expire | `TestStorageWrittenByHand`, `TestAnotherDeployment`, `TestSigned` | covered |
+| The storage holds the contact address in plain text and no secret: sessions and invitations by their hash | `TestWhatIsStored` | covered |
+| A session ends after seven days without use and after thirty in any case, is listed per device and closed from another | `TestSessions`, `TestSessionExpiry`, `TestSessionsAreBounded` | covered |
+| The session cookie is for the app's host alone, and a page of another site cannot make the app's API act | `TestAccountsAPI`, `TestAccountsAPIRefusals` | covered |
+| Storage or keys that fail never let someone in or make an account again | `TestFailures`, `TestSignUpRace` | covered |
+| Logs name no address, code, invitation, cookie or account | `TestAccountsEndToEnd`, `TestSignUpAndSignIn`, `TestMailSystemDown`, `TestAccountsAPIInternalErrors` | covered |
+| DynamoDB keeps entries and readable records as the in-memory store does | `TestAWS` against DynamoDB Local (CI service) | covered |
+
 ## Public site
 
 | Criterion | Evidence | Status |

@@ -22,7 +22,7 @@ sending MTA ─STARTTLS───▶ EIP:25  ─▶ permaily-host ─────
 
   | Host | Serves |
   |---|---|
-  | `app.permaily.com` | web app (see [web.md](web.md)), embedded with `go:embed` |
+  | `app.permaily.com` | web app (see [web.md](web.md)), embedded with `go:embed`, and its own API under `/api/v1/` (sign-in, account, sessions), which answers only to the app: session cookie, same origin (F2, not on in production yet) |
   | `api.permaily.com` | `/v1/mailbox` for the F1 test mailbox (token); API for integrated apps in F2 |
   | `mcp.permaily.com` | remote MCP server for ChatGPT and Claude (F2) |
   | `inbox.permaily.com` | MX (SMTP on port 25 with STARTTLS) for forwarded mail (F1) |
@@ -36,6 +36,19 @@ sending MTA ─STARTTLS───▶ EIP:25  ─▶ permaily-host ─────
 - **Releases and the root secret** (`pkg/provenance`, ADR 0013): the running enclave hands the root secret only to an image whose measurements were published by the release workflow, which it checks offline from the release's Sigstore bundle. Nothing in AWS is edited to let a release in.
 - **Build** (`flake.nix`, `nix/`): Nix with [monzo/aws-nitro-util](https://github.com/monzo/aws-nitro-util) and AWS's prebuilt kernel/init blobs; PCR0 is identical from x86_64 and arm64 builders.
 - **Infrastructure** (`deploy/`): OpenTofu; one Graviton `c7g.large` in `us-east-2` (enclave: 1 vCPU, 2 GiB), Cloudflare DNS (DNS only), S3 for deploy artifacts, SSM for administration; for mail, a DynamoDB table and an S3 bucket (`mail.tf`), one KMS key per release (`releases.tf`) and the storage of the staging deployment (`staging.tf`). The image's runtime configuration is `deploy/enclave.json`.
+
+## Layers (F2)
+
+What F2 adds is written in four layers, each importing only the ones before it. `depguard` enforces it.
+
+| Layer | Package | Holds |
+|---|---|---|
+| Contracts | `internal/contracts` | The types and error codes that cross the boundary, defined once for the API, MCP, the command line and the web app. Imports nothing of the service |
+| Domain | `internal/domain` | Rules that need nothing but their arguments: how long a session lasts, what an address or an invitation looks like. Imports only contracts |
+| Services | `internal/services/...` | The use cases: `accounts` (invitations, sign-in by email, sessions, ADR 0017). They reach storage and keys through `internal/store` and `internal/keys`, and know nothing of HTTP |
+| Adapters | `internal/httpapi`, later MCP and the command line | One thin translation each, so they all behave the same |
+
+The code of F0 and F1 (`inbox`, `smtpd`, `keys`, `store`) stays where it is: it moves into these layers when F2 touches it.
 
 The landing page at `permaily.com` (apex) is a separate project hosted on Amplify and is not part of the verifiable surface. Rule for F2: session cookies on `app.` use the `__Host-` prefix (no `Domain` attribute) so the apex cannot read or overwrite them.
 

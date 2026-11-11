@@ -25,8 +25,11 @@ Plaintext outside the enclave: ids, sizes, timestamps, retention period. Message
 
 | Data | Where | Protection | Retention | Deletion |
 |---|---|---|---|---|
-| Account: contact address, name, language, state, ways to sign in (ADR 0017) | DynamoDB | Readable by the operator and signed by the enclave, so it cannot be changed by hand; an earlier copy is refused (ADR 0016) | Account lifetime | Seven days after the account is deleted |
-| Sessions, invitations, email and recovery codes | DynamoDB | Only their hash | Until they end | When they end |
+| Account: contact address, name, language, state, ways to sign in (ADR 0017). Built, not on in production | DynamoDB, `pk=system`, `sk=record#account-<id>@<version>-<hash>`, as text; the pointer from the address at `pk=login#email#<address>`; its commits (the hash of the name, a version, the hash of the item) in the anchors bucket, which keeps them ten years | Readable by the operator and signed by the enclave, so it cannot be changed by hand; an earlier copy is refused (ADR 0016) | Account lifetime | Seven days after the account is deleted |
+| Sessions (device as the browser describes itself, times of creation and last use). Built, not on in production | DynamoDB, `pk=account#<id>`, `sk=session#<id>` | Signed; the secret only by its hash | Seven days without use, thirty at most (DynamoDB TTL) | When closed, or when they end |
+| Invitations. Built, not on in production | DynamoDB, `pk=invitation#<hash of the code>` | Signed; the code only by its hash | Thirty days, or until used | When used |
+| A sign-in by email that was started: the address, the hashes of its code and link | The enclave's memory only | Never stored | Ten minutes | When used, when it ends, or when the enclave stops |
+| Email and recovery codes of the ways to sign in not built yet | DynamoDB | Only their hash | Until they end | When they end |
 | Connections: vendor, state, dates and schedule readable and signed; the approved query, tokens and webhook secrets sealed (ADR 0019) | DynamoDB | As said; an earlier copy is refused, so a revoked connection does not come back | Until the connection ends or is revoked | With the connection |
 | The person's rules, with their text (ADR 0019) | DynamoDB | Sealed | Account lifetime | With the account |
 | What the model said of a message and a topic (ADR 0020) | DynamoDB | Sealed | As long as the message | With the message |

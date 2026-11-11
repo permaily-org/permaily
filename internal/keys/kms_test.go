@@ -126,4 +126,10 @@ func TestLocal(t *testing.T) {
 	if err != nil || !bytes.Equal(got, dk.Plaintext) {
 		t.Fatal("round trip failed")
 	}
+	a, err := l.Derive(context.Background(), "one")
+	b, _ := l.Derive(context.Background(), "two")
+	again, _ := l.Derive(context.Background(), "one")
+	if err != nil || len(a) != 32 || bytes.Equal(a, b) || !bytes.Equal(a, again) {
+		t.Fatalf("derived keys: %v", err)
+	}
 }

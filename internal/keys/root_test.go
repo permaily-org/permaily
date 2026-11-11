@@ -1020,6 +1020,10 @@ func TestRootCommitKey(t *testing.T) {
 	if again, err := w.boot(a).CommitKey(ctx); err != nil || !bytes.Equal(again, key) {
 		t.Fatalf("after a restart: %v", err)
 	}
+	// Another purpose gives another key.
+	if signing, err := old.Derive(ctx, "permaily signed values v1"); err != nil || len(signing) != 32 || bytes.Equal(signing, key) {
+		t.Fatalf("a key for another purpose: %v", err)
+	}
 	// It is not the key that wraps data keys.
 	dk, err := old.NewDataKey(ctx, keyCtx)
 	if err != nil || bytes.Equal(dk.Plaintext, key) {

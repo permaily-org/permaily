@@ -31,6 +31,38 @@ linters:
               desc: TLS keys live only in the enclave
             - pkg: github.com/permaily-org/permaily/internal/webui
               desc: the web app ships only inside the enclave
+        contracts-are-leaves:
+          # What crosses the boundary is defined once and depends on nothing of the service.
+          files: ["**/internal/contracts/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/permaily-org/permaily/internal/contracts
+        domain-is-pure:
+          # Rules that need nothing but their arguments: no storage, no keys, no network.
+          files: ["**/internal/domain/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/permaily-org/permaily/internal/contracts
+            - github.com/permaily-org/permaily/internal/domain
+        services-know-no-adapter:
+          # A service is used by the API, MCP and the command line alike: it knows none of them, and no cloud.
+          files: ["**/internal/services/**", "!$test"]
+          list-mode: lax
+          deny:
+            - pkg: net/http
+              desc: a service does not know it is behind HTTP
+            - pkg: github.com/permaily-org/permaily/internal/httpapi
+              desc: a service does not depend on an adapter
+            - pkg: github.com/permaily-org/permaily/internal/router
+              desc: a service does not depend on an adapter
+            - pkg: github.com/permaily-org/permaily/internal/smtpd
+              desc: a service does not depend on an adapter
+            - pkg: github.com/permaily-org/permaily/internal/webui
+              desc: a service does not depend on an adapter
+            - pkg: github.com/aws/aws-sdk-go-v2
+              desc: a service reaches the cloud through internal/store and internal/keys
         no-fakes-in-production:
           files:
             [

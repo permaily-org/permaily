@@ -8,11 +8,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"time"
 
@@ -22,6 +24,7 @@ import (
 	"github.com/permaily-org/permaily/internal/nsm"
 	"github.com/permaily-org/permaily/internal/nsm/fakensm"
 	"github.com/permaily-org/permaily/internal/router"
+	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
 	"github.com/permaily-org/permaily/pkg/attestation"
@@ -47,6 +50,10 @@ type platform struct {
 	updateTrust func(provenance.Update) (*attestation.SigstoreStatus, error)
 	// anchors describes the records that cannot be put back to an earlier copy.
 	anchors func() *attestation.AnchorStatus
+	// accounts is sign-in and accounts (ADR 0017); nil until the image can
+	// send mail. devRoutes are served by the app's host in dev mode only.
+	accounts  *accounts.Service
+	devRoutes map[string]http.Handler
 }
 
 // logOutput is the terminal in dev mode.
@@ -55,7 +62,7 @@ func logOutput(config) io.Writer { return os.Stdout }
 // newPlatform listens on TCP (HTTPS on -port, SMTP on -smtp-port, default
 // 2525 in dev), uses a self-signed certificate (valid for every host plus
 // localhost), a fake attester, local keys and an in-memory store. DKIM uses
-// the system resolver.
+// the system resolver. Accounts are on, and mail to people is kept in memory.
 func newPlatform(_ context.Context, cfg config, hosts router.Hosts, log *slog.Logger) (*platform, error) {
 	att, err := fakensm.New()
 	if err != nil {
@@ -85,7 +92,29 @@ func newPlatform(_ context.Context, cfg config, hosts router.Hosts, log *slog.Lo
 	if err != nil {
 		return nil, err
 	}
-	p := &platform{mode: "dev", listener: ln, attester: att, certs: certs, store: store.NewMemory()}
+	mem := store.NewMemory()
+	p := &platform{mode: "dev", listener: ln, attester: att, certs: certs, store: mem}
+	local, err := keys.NewLocal()
+	if err != nil {
+		return nil, err
+	}
+	// Accounts, with the messages kept instead of sent: GET /dev/outbox on
+	// the app's host shows them, sign-in codes included.
+	appURL := "https://" + hosts.App
+	if cfg.port != 443 {
+		appURL = fmt.Sprintf("%s:%d", appURL, cfg.port)
+	}
+	outbox := &accounts.Outbox{}
+	if p.accounts, err = accounts.New(accounts.Config{
+		Records: &store.Anchored{Records: mem, Commits: store.NewMemoryCommits()}, Entries: mem,
+		Keys: local, Mailer: outbox, AppURL: appURL, Log: log,
+	}); err != nil {
+		return nil, err
+	}
+	p.devRoutes = map[string]http.Handler{"/dev/outbox": http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(outbox.Sent())
+	})}
 	if cfg.mailboxID != "" {
 		port := cfg.smtpPort
 		if port == 25 {
@@ -94,9 +123,7 @@ func newPlatform(_ context.Context, cfg config, hosts router.Hosts, log *slog.Lo
 		if p.smtpListener, err = net.Listen("tcp", fmt.Sprintf(":%d", port)); err != nil {
 			return nil, err
 		}
-		if p.keys, err = keys.NewLocal(); err != nil {
-			return nil, err
-		}
+		p.keys = local
 		p.auth = msgauth.DKIM(net.DefaultResolver.LookupTXT)
 	}
 	return p, nil
