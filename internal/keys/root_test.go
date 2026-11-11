@@ -1005,3 +1005,41 @@ func TestRootFollowsSigstore(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// The key that authenticates the commits of anchored records comes from the
+// root secret: the same for every image of a deployment, another one for
+// another deployment, and none while there is no root secret.
+func TestRootCommitKey(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	a, b := w.release(0xa1, 2*time.Hour), w.release(0xb2, time.Hour)
+	old := w.boot(a)
+	key, err := old.CommitKey(ctx)
+	if err != nil || len(key) != 32 {
+		t.Fatalf("key of %d bytes, %v", len(key), err)
+	}
+	if again, err := w.boot(a).CommitKey(ctx); err != nil || !bytes.Equal(again, key) {
+		t.Fatalf("after a restart: %v", err)
+	}
+	// It is not the key that wraps data keys.
+	dk, err := old.NewDataKey(ctx, keyCtx)
+	if err != nil || bytes.Equal(dk.Plaintext, key) {
+		t.Fatalf("data key: %v", err)
+	}
+
+	next := w.boot(b)
+	if _, err := next.CommitKey(ctx); !errors.Is(err, ErrAwaitingHandoff) {
+		t.Fatalf("before the handoff: %v", err)
+	}
+	if _, err := w.handoff(old, a, b); err != nil {
+		t.Fatal(err)
+	}
+	w.now = w.now.Add(rootRetry)
+	if handed, err := next.CommitKey(ctx); err != nil || !bytes.Equal(handed, key) {
+		t.Fatalf("the next release: %v", err)
+	}
+
+	other := newWorld(t)
+	if theirs, err := other.boot(other.release(0xa1, time.Hour)).CommitKey(ctx); err != nil || bytes.Equal(theirs, key) {
+		t.Fatalf("another deployment: %v", err)
+	}
+}
