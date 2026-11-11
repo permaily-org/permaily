@@ -1,48 +1,82 @@
 import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router'
+import { Navigate, useLocation, useNavigate } from 'react-router'
 import { Button, Headline, InfoTip, TextAction, TextLink } from '../../components/ui/index.ts'
 import { errorCode, finishEmail, startEmail } from '../../lib/api.ts'
-import { arrivedInvitation, dropInvitation } from '../../lib/arrival.ts'
+import {
+  arrivedInvitation,
+  dropInvitation,
+  dropProviderArrival,
+  useProviderArrival,
+} from '../../lib/arrival.ts'
+import { destination } from '../../lib/destination.ts'
 import {
   caretAfter,
   charactersBefore,
   formatInvitation,
   normalizeInvitation,
 } from '../../lib/invitation.ts'
+import { useProvidersOn } from '../../lib/providers.ts'
 import { useSession } from '../../lib/session.tsx'
 import { passkeysSupported } from '../../lib/webauthn.ts'
 import { AuthLayout } from './AuthLayout.tsx'
+import { CodeStep, type Sent, sentTo } from './CodeStep.tsx'
 import { Field } from './Field.tsx'
-import { linkHeadlines, messageFor } from './messages.ts'
+import { Address } from './LinkConfirmation.tsx'
+import { linkHeadlines, messageFor, needsInvitation, providerProblems } from './messages.ts'
 import { PasskeySignIn } from './PasskeySignIn.tsx'
+import { type ConfirmState, ProviderConfirm } from './ProviderConfirm.tsx'
+import { ProviderSignIn } from './ProviderSignIn.tsx'
 import { RecoveryStep } from './RecoveryStep.tsx'
 
 type Mode = 'sign-in' | 'sign-up'
 
-/** A sign-in the server has started: the code is entered against `attempt`. */
-type Started = {
-  attempt: string
-  address: string
-  /** The invitation it was started with, kept in memory to ask for another message. */
-  invitation: string | null
-  /** When the code and the link stop working, in the browser's clock. */
-  expiresAt: number
-  minutes: number
-}
+/** A sign-in by mail the server has started, with the invitation it was started with, to ask for another message. */
+type Started = Sent & { invitation: string | null }
 
-const codeDigits = 6
+const badInvitation = 'An invitation has 12 letters and digits. Check it against the one you got.'
 
 /**
  * Signing in and signing up are one flow: give an address (and, to sign up, an invitation), then end it with
  * the code of the message, or by opening its link and saying yes to what it asks (LinkConfirmation.tsx).
  * Signing in also takes a passkey, which needs no address (PasskeySignIn.tsx), and for someone who lost
- * theirs, a recovery code (RecoveryStep.tsx). Nothing typed here is kept beyond this page's memory.
+ * theirs, a recovery code (RecoveryStep.tsx). Both screens offer the providers that are on
+ * (ProviderSignIn.tsx), and this is where a sign-in with one comes back to when it did not sign anyone in:
+ * with a reason, or to confirm an address first (ProviderConfirm.tsx). Nothing typed here is kept beyond
+ * this page's memory.
  */
 export function SignInPage({ mode }: { mode: Mode }) {
   const [started, setStarted] = useState<Started | null>(null)
   const [address, setAddress] = useState('')
   const [invitationError, setInvitationError] = useState<string | null>(null)
   const [recovering, setRecovering] = useState(false)
+  const arrived = useProviderArrival()
+  const location = useLocation()
+  const navigate = useNavigate()
+
+  // A sign-in with a provider that waits for its address. The address bar said so once and was cleaned: from
+  // then on the router's state does, which a reload finds again. What waits is always asked of the server.
+  const toConfirm =
+    mode === 'sign-in' && arrived?.screen === 'sign-in' && arrived.kind === 'confirm'
+  const confirming = (location.state as Partial<ConfirmState> | null)?.providerConfirm === true
+  useEffect(() => {
+    if (!toConfirm) return
+    if (confirming) dropProviderArrival('sign-in')
+    else {
+      const state: ConfirmState = { providerConfirm: true }
+      navigate('/sign-in', { replace: true, state })
+    }
+  }, [toConfirm, confirming, navigate])
+
+  if (mode === 'sign-in' && (toConfirm || confirming)) return <ProviderConfirm />
+  // What is about an invitation is said where one is typed.
+  if (
+    mode === 'sign-in' &&
+    arrived?.screen === 'sign-in' &&
+    arrived.kind === 'failed' &&
+    needsInvitation(arrived.reason)
+  ) {
+    return <Navigate to="/sign-up" replace state={location.state} />
+  }
 
   if (recovering && mode === 'sign-in') {
     return (
@@ -51,7 +85,7 @@ export function SignInPage({ mode }: { mode: Mode }) {
   }
   if (started) {
     return (
-      <CodeStep
+      <MailCodeStep
         mode={mode}
         started={started}
         onReplaced={setStarted}
@@ -79,14 +113,7 @@ export function SignInPage({ mode }: { mode: Mode }) {
 }
 
 async function start(address: string, invitation: string | null): Promise<Started> {
-  const answer = await startEmail(address, invitation ?? undefined)
-  return {
-    attempt: answer.attempt,
-    address,
-    invitation,
-    expiresAt: Date.now() + answer.expires_in * 1000,
-    minutes: Math.max(1, Math.round(answer.expires_in / 60)),
-  }
+  return { ...sentTo(address, await startEmail(address, invitation ?? undefined)), invitation }
 }
 
 function AddressStep({
@@ -107,6 +134,15 @@ function AddressStep({
   const { linkProblem, clearLinkProblem } = useSession()
   const { state } = useLocation()
   const signUp = mode === 'sign-up'
+  // Why a sign-in with a provider came back without signing anyone in, until the person tries something else.
+  const arrived = useProviderArrival()
+  const reason =
+    arrived?.screen === 'sign-in' &&
+    arrived.kind === 'failed' &&
+    needsInvitation(arrived.reason) === signUp
+      ? arrived.reason
+      : null
+  const [providers, askProviders] = useProvidersOn()
   const [invitation, setInvitation] = useState(() =>
     signUp ? formatInvitation(arrivedInvitation() ?? '') : '',
   )
@@ -121,12 +157,16 @@ function AddressStep({
   // Where the caret goes once the invitation is written in groups again.
   const caret = useRef<number | null>(null)
 
-  // The first thing to fill in takes focus: the invitation when it was refused, the address otherwise.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only when the step opens
+  // The first thing to fill in takes focus: the invitation when it was refused or is what is missing, the
+  // address otherwise.
+  const opened = useRef(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: when the step opens, and when a provider's answer arrives
   useEffect(() => {
-    if (invitationError) invitationRef.current?.focus()
+    if (opened.current && !reason) return
+    opened.current = true
+    if (invitationError || (signUp && reason)) invitationRef.current?.focus()
     else addressRef.current?.focus()
-  }, [])
+  }, [reason])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs after each change of the invitation
   useLayoutEffect(() => {
@@ -135,9 +175,25 @@ function AddressStep({
     caret.current = null
   }, [invitation])
 
+  /** The invitation to start a provider with: none typed still starts, since the account may exist already. */
+  function invitationTyped(): string | null | undefined {
+    if (!signUp || !invitation.trim()) return undefined
+    const code = normalizeInvitation(invitation)
+    if (!code) {
+      dropProviderArrival('sign-in')
+      setErrors({ invitation: badInvitation })
+      invitationRef.current?.focus()
+      return null
+    }
+    setErrors({})
+    return code
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (pending) return
+    // What a provider's answer said is of no use once the person tries something else.
+    dropProviderArrival('sign-in')
     const typed = address.trim()
     if (!typed.includes('@')) {
       setErrors({ address: 'Enter your email address.' })
@@ -146,9 +202,7 @@ function AddressStep({
     }
     const code = signUp ? normalizeInvitation(invitation) : null
     if (signUp && !code) {
-      setErrors({
-        invitation: 'An invitation has 12 letters and digits. Check it against the one you got.',
-      })
+      setErrors({ invitation: badInvitation })
       invitationRef.current?.focus()
       return
     }
@@ -173,12 +227,27 @@ function AddressStep({
     }
   }
 
-  const problem = signUp ? null : linkProblem
-  const title = problem ? linkHeadlines[problem] : signUp ? 'Create your account' : 'Sign in'
+  // The newest news comes first: a provider's answer, then a link that did not work.
+  const problem = signUp || reason ? null : linkProblem
+  // An invitation the server refused is said in its field, like one refused before the browser left.
+  const refused = reason === 'invalid_invitation' ? providerProblems[reason].text : undefined
+  const told = reason && !refused ? providerProblems[reason] : null
+  const title = reason
+    ? providerProblems[reason].title
+    : problem
+      ? linkHeadlines[problem]
+      : signUp
+        ? 'Create your account'
+        : 'Sign in'
 
   return (
     <AuthLayout title={title}>
       <Headline size="display-s">{title}</Headline>
+      {told && (
+        <p id="provider-problem" className="mt-3 text-body text-ink-2">
+          {told.text}
+        </p>
+      )}
       {problem && (
         <p id="link-problem" className="mt-3 text-body text-ink-2">
           {problem === 'expired'
@@ -203,7 +272,7 @@ function AddressStep({
           value={address}
           onChange={(event) => onAddress(event.target.value)}
           error={errors.address}
-          describedBy={problem ? 'link-problem' : undefined}
+          describedBy={problem ? 'link-problem' : told && !signUp ? 'provider-problem' : undefined}
         />
         {signUp && (
           <Field
@@ -232,7 +301,8 @@ function AddressStep({
               caret.current = caretAfter(formatted, charactersBefore(typed, position))
               setInvitation(formatted)
             }}
-            error={errors.invitation}
+            error={errors.invitation ?? refused}
+            describedBy={told ? 'provider-problem' : undefined}
           />
         )}
         <p role="alert" className="text-small text-danger empty:hidden">
@@ -242,21 +312,31 @@ function AddressStep({
           Continue
         </Button>
       </form>
-      {!signUp && passkeys && <PasskeySignIn />}
+      <ProviderSignIn
+        first={!signUp && passkeys ? <PasskeySignIn /> : undefined}
+        on={providers}
+        askAgain={askProviders}
+        invitation={signUp ? invitationTyped : undefined}
+        onInvitationRefused={(message) => {
+          setErrors({ invitation: message })
+          invitationRef.current?.focus()
+        }}
+        returnTo={destination(state)}
+      />
 
       <div className="mt-8 flex flex-col gap-2 border-t border-rule pt-4 text-small text-ink-2">
         <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           {signUp ? (
             <>
               Already have an account?
-              <TextLink to="/sign-in" state={state}>
+              <TextLink to="/sign-in" state={state} onClick={() => dropProviderArrival('sign-in')}>
                 Sign in
               </TextLink>
             </>
           ) : (
             <>
               Have an invitation?
-              <TextLink to="/sign-up" state={state}>
+              <TextLink to="/sign-up" state={state} onClick={() => dropProviderArrival('sign-in')}>
                 Create an account
               </TextLink>
             </>
@@ -273,7 +353,8 @@ function AddressStep({
   )
 }
 
-function CodeStep({
+/** The code of a sign-in or a sign-up by mail. */
+function MailCodeStep({
   mode,
   started,
   onReplaced,
@@ -288,133 +369,35 @@ function CodeStep({
 }) {
   const session = useSession()
   const signUp = mode === 'sign-up'
-  const [code, setCode] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [formError, setFormError] = useState<string | null>(null)
-  const [note, setNote] = useState<string | null>(null)
-  const [pending, setPending] = useState(false)
-  const [expired, setExpired] = useState(() => started.expiresAt <= Date.now())
-  const codeRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    codeRef.current?.focus()
-  }, [])
-
-  // The message says how long it works for. When that passes, the page says so instead of failing later.
-  useEffect(() => {
-    const left = started.expiresAt - Date.now()
-    setExpired(left <= 0)
-    if (left <= 0) return
-    const timer = window.setTimeout(() => setExpired(true), left)
-    return () => window.clearTimeout(timer)
-  }, [started.expiresAt])
-
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    if (pending) return
-    if (code.length !== codeDigits) {
-      setError(`Enter the ${codeDigits} digits of the code.`)
-      codeRef.current?.focus()
-      return
-    }
-    setError(null)
-    setFormError(null)
-    setNote(null)
-    setPending(true)
-    try {
-      const who = await finishEmail(started.attempt, { code })
-      dropInvitation()
-      session.signedIn(who)
-    } catch (failure) {
-      setPending(false)
-      const failed = errorCode(failure)
-      if (failed === 'invalid_invitation') {
-        onInvitationRefused(messageFor(failed))
-      } else if (failed === 'invalid_code') {
-        setError(messageFor(failed))
-        codeRef.current?.focus()
-        codeRef.current?.select()
-      } else {
-        setFormError(messageFor(failed))
+  return (
+    <CodeStep
+      sent={started}
+      intro={
+        <>
+          {signUp ? 'A message is on its way to ' : 'If '}
+          <Address>{started.address}</Address>
+          {signUp ? '.' : ' can sign in, a message is on its way.'}
+        </>
       }
-    }
-  }
-
-  async function sendAnother() {
-    if (pending) return
-    setError(null)
-    setFormError(null)
-    setNote(null)
-    setPending(true)
-    try {
-      onReplaced(await start(started.address, started.invitation))
-      setCode('')
-      setNote('Asked for another message. Use the code or the link of the newest one.')
-    } catch (failure) {
-      const failed = errorCode(failure)
-      setFormError(
+      hint="No code in the message? Open its link on this device instead."
+      submitLabel={signUp ? 'Create account' : 'Sign in'}
+      finish={async (code) => {
+        const who = await finishEmail(started.attempt, { code })
+        dropInvitation()
+        session.signedIn(who)
+      }}
+      ended={(failed) => {
+        if (failed !== 'invalid_invitation') return false
+        onInvitationRefused(messageFor(failed))
+        return true
+      }}
+      sendAnother={async () => onReplaced(await start(started.address, started.invitation))}
+      notSent={(failed) =>
         failed === 'invalid_invitation'
           ? "Another message can't be sent with that invitation right now. Use the one you have, or try again in an hour."
-          : messageFor(failed),
-      )
-    } finally {
-      setPending(false)
-      codeRef.current?.focus()
-    }
-  }
-
-  return (
-    <AuthLayout title="Check your mail">
-      <Headline size="display-s">Check your mail</Headline>
-      <p id="code-intro" className="mt-3 text-body text-ink-2">
-        {signUp ? 'A message is on its way to ' : 'If '}
-        <span className="wrap-anywhere font-mono text-small text-ink">{started.address}</span>
-        {signUp ? '.' : ' can sign in, a message is on its way.'}{' '}
-        {expired
-          ? 'It has expired by now.'
-          : `It works for ${started.minutes} ${started.minutes === 1 ? 'minute' : 'minutes'}.`}
-      </p>
-
-      <form noValidate onSubmit={submit} className="mt-8 flex flex-col gap-5">
-        <Field
-          id="code"
-          label="Code from the message"
-          type="text"
-          name="code"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          autoComplete="one-time-code"
-          autoCorrect="off"
-          spellCheck={false}
-          required
-          className="font-mono text-title tracking-widest"
-          inputRef={codeRef}
-          value={code}
-          // A pasted code may come with spaces or a dash: only its digits are kept.
-          onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, codeDigits))}
-          hint="No code in the message? Open its link on this device instead."
-          error={error}
-          describedBy="code-intro"
-        />
-        <p role="alert" className="text-small text-danger empty:hidden">
-          {formError}
-        </p>
-        <Button type="submit" disabled={pending}>
-          {signUp ? 'Create account' : 'Sign in'}
-        </Button>
-      </form>
-
-      <p role="status" className="mt-4 text-small text-ink-2 empty:hidden">
-        {note}
-      </p>
-      <div className="mt-8 flex flex-wrap gap-x-5 gap-y-2 border-t border-rule pt-4">
-        <TextAction onClick={sendAnother} disabled={pending}>
-          Send another message
-        </TextAction>
-        <TextAction onClick={onBack} disabled={pending}>
-          Use another address
-        </TextAction>
-      </div>
-    </AuthLayout>
+          : undefined
+      }
+      onBack={onBack}
+    />
   )
 }

@@ -1,0 +1,25 @@
+{
+  "name": "microsoft-docs-sample-v2-id-token",
+  "source": {
+    "url": "https://learn.microsoft.com/en-us/entra/identity-platform/id-tokens#sample-v20-id-token",
+    "file": "https://github.com/MicrosoftDocs/entra-docs/blob/main/docs/identity-platform/id-tokens.md",
+    "retrieved": "2026-11-11",
+    "license": "CC-BY-4.0 (the documentation of MicrosoftDocs/entra-docs)"
+  },
+  "provider": "microsoft",
+  "kind": "id-token",
+  "note": "The sample v2.0 ID token of Microsoft's documentation, a made-up person. It is kept as the text of its header and of its claims and its signature, which put together again are the token byte for byte (sha256 below): written whole, a secret scanner takes it for a live token. Its key is long gone from the keys Microsoft publishes, so its signature cannot be checked; what is checked is that it is read, and refused for that and nothing before it, and what its claims say. Its tenant is not the one of personal accounts (9122..., not 9188...), and it has no address.",
+  "header": "{\"typ\":\"JWT\",\"alg\":\"RS256\",\"kid\":\"1LTMzakihiRla_8z2BEJVXeWMqo\"}",
+  "claims": "{\"ver\":\"2.0\",\"iss\":\"https://login.microsoftonline.com/9122040d-6c67-4c5b-b112-36a304b66dad/v2.0\",\"sub\":\"AAAAAAAAAAAAAAAAAAAAAIkzqFVrSaSaFHy782bbtaQ\",\"aud\":\"6cb04018-a3f5-46a7-b995-940c78f5aef3\",\"exp\":1536361411,\"iat\":1536274711,\"nbf\":1536274711,\"name\":\"Abe Lincoln\",\"preferred_username\":\"AbeLi@microsoft.com\",\"oid\":\"00000000-0000-0000-66f3-3332eca7ea81\",\"tid\":\"9122040d-6c67-4c5b-b112-36a304b66dad\",\"nonce\":\"123523\",\"aio\":\"Df2UVXL1ix!lMCWMSOJBcFatzcGfvFGhjKv8q5g0x732dR5MB5BisvGQO7YWByjd8iQDLq!eGbIDakyp5mnOrcdqHeYSnltepQmRp6AIZ8jY\"}",
+  "signature": "1AFWW-Ck5nROwSlltm7GzZvDwUkqvhSQpm55TQsmVo9Y59cLhRXpvB8n-55HCr9Z6G_31_UbeUkoz612I2j_Sm9FFShSDDjoaLQr54CreGIJvjtmS3EkK9a7SJBbcpL1MpUtlfygow39tFjY7EVNW9plWUvRrTgVk7lYLprvfzw-CIqw3gHC-T7IK_m_xkr08INERBtaecwhTeN4chPC4W3jdmw_lIxzC48YoQ0dB1L9-ImX98Egypfrlbm0IBL5spFzL6JDZIRRJOu8vecJvj1mq-IUhGt0MacxX8jdxYLP-KUu2d9MbNKpCKJuZ7p8gwTL5B7NlUdh_dmSviPWrw",
+  "sha256": "1314a52039d7ab429e5068ec6079d295536e600085fd7d35b781f12838a4239c",
+  "application": "6cb04018-a3f5-46a7-b995-940c78f5aef3",
+  "nonce": "123523",
+  "now": 1536274711,
+  "expect": {
+    "subject": "9122040d-6c67-4c5b-b112-36a304b66dad.00000000-0000-0000-66f3-3332eca7ea81",
+    "address": "",
+    "verified": false,
+    "name": "Abe Lincoln"
+  }
+}

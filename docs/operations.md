@@ -194,6 +194,23 @@ It asks the enclave (`GET /v1/admin/accounts`, with the admin token from `~/.con
 
 A person deletes their own account, from Settings; it is removed seven days later, within ten minutes of the moment it is due, or as soon as it is next used. Until then they can sign in and cancel. There is no way to delete an account for someone, and none to bring one back.
 
+## Sign-in with Google, GitHub, Meta and Microsoft
+
+A provider is on once the enclave has been given the application registered there:
+
+```sh
+scripts/verify.sh                                          # first: the secret goes to whoever answers
+scripts/provider.sh                                        # which are set, with their client ids
+scripts/provider.sh set google <client id>                 # asks for the secret without showing it
+pass show permaily/github | scripts/provider.sh set github <client id>
+scripts/provider.sh remove meta                            # off from then; the links are kept
+```
+
+At each provider's console the application is a web application whose only redirect address is `https://app.permaily.com/api/v1/auth/provider/callback`. The secret is kept by the enclave, sealed, and is never answered back: keep your own copy where you keep secrets, never in the repository. It survives upgrades with everything else under the root secret; after starting over (a new deployment) every provider has to be set again.
+
+- **A provider's sign-in fails for everyone.** The enclave's log says `provider` and a fixed reason: the secret or the redirect address is wrong at the provider (`invalid_provider_app`), or the provider cannot be reached (an old `permaily-host` without its hosts in the allowlist). Rotating a secret at the provider means setting it again here.
+- **Meta and Microsoft work accounts** always ask the person to confirm an address by mail the first time: neither vouches for the address (ADR 0017).
+
 ## Outgoing mail
 
 The enclave sends its own mail (sign-in messages) through SES in `us-east-2`, from the address in `mail_from` of `deploy/enclave.json`, on a domain of its own (`deploy/tofu/ses.tf`: the identity, DKIM, the bounce domain with SPF, DMARC).

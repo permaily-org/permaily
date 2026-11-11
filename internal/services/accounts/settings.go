@@ -174,9 +174,9 @@ func (s *Service) remove(ctx context.Context, id string) error {
 }
 
 // removeLocked removes an account that is due, with changing held. It goes
-// in this order: the pointer from its address, its entry in the list of
-// accounts, its sessions, its record, its entry in the list of closing
-// accounts.
+// in this order: the pointers from its address and from its provider
+// accounts, its entry in the list of accounts, its sessions, its record, its
+// entry in the list of closing accounts.
 //
 // The record goes after everything that is found through it: it says the
 // address and the times the other entries are stored under, and while it is
@@ -192,13 +192,13 @@ func (s *Service) removeLocked(ctx context.Context, doc *accountDoc) error {
 		return err
 	}
 	// The pointer is deleted only if it still leads here: the address may
-	// have signed up again after an earlier try got this far.
-	pointer, err := s.cfg.Entries.GetEntry(ctx, loginPartition(doc.Address), loginKey)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
+	// have signed up again after an earlier try got this far. The pointers
+	// from the provider accounts go the same way.
+	if err := s.unpoint(ctx, key, loginPartition(doc.Address), doc.ID); err != nil {
 		return err
 	}
-	if err == nil && pointed(key, pointer) == doc.ID {
-		if err := s.forget(ctx, pointer.Partition, pointer.Key); err != nil {
+	for _, p := range doc.Providers {
+		if err := s.unpoint(ctx, key, providerPartition(p.Provider, p.Subject), doc.ID); err != nil {
 			return err
 		}
 	}
@@ -210,6 +210,19 @@ func (s *Service) removeLocked(ctx context.Context, doc *accountDoc) error {
 	}
 	s.cfg.Log.Info("accounts: account removed")
 	return nil
+}
+
+// unpoint deletes the pointer of a partition if it leads to the account. One
+// that leads elsewhere is another account's now, or nobody's.
+func (s *Service) unpoint(ctx context.Context, key []byte, partition, accountID string) error {
+	pointer, err := s.cfg.Entries.GetEntry(ctx, partition, loginKey)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil || pointed(key, pointer) != accountID {
+		return err
+	}
+	return s.forget(ctx, pointer.Partition, pointer.Key)
 }
 
 // clear removes what is stored under an account's identifier: its sessions

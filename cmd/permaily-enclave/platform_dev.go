@@ -19,6 +19,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/idp"
+	"github.com/permaily-org/permaily/internal/idp/idptest"
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/keys"
 	"github.com/permaily-org/permaily/internal/msgauth"
@@ -67,6 +70,11 @@ var devAhead atomic.Int64
 
 func devClock() time.Time { return time.Now().Add(time.Duration(devAhead.Load())) }
 
+// devProviders plays Google, GitHub, Meta and Microsoft in dev mode: a local
+// server that signs anybody in, as idptest.Default says or as the test of the
+// whole service tells it.
+var devProviders atomic.Pointer[idptest.Server]
+
 // devRemoveEvery is how often dev mode looks for accounts that are due: its
 // storage is in memory, so looking costs nothing.
 const devRemoveEvery = time.Second
@@ -77,7 +85,8 @@ func logOutput(config) io.Writer { return os.Stdout }
 // newPlatform listens on TCP (HTTPS on -port, SMTP on -smtp-port, default
 // 2525 in dev), uses a self-signed certificate (valid for every host plus
 // localhost), a fake attester, local keys and an in-memory store. DKIM uses
-// the system resolver. Accounts are on, and mail to people is kept in memory.
+// the system resolver. Accounts are on, mail to people is kept in memory, and
+// the four providers are a local server that asks nobody for a password.
 func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.Logger) (*platform, error) {
 	att, err := fakensm.New()
 	if err != nil {
@@ -121,12 +130,28 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 		appURL = fmt.Sprintf("%s:%d", appURL, cfg.port)
 	}
 	outbox := &accounts.Outbox{}
+	providers := idptest.New()
+	providers.Now = devClock
+	devProviders.Store(providers)
+	go func() {
+		<-ctx.Done()
+		providers.Close()
+	}()
 	if p.accounts, err = accounts.New(accounts.Config{
 		// As in the enclave: only the newest version of an account's record is kept.
 		Records: &store.Anchored{Records: mem, Commits: store.NewMemoryCommits(), OnlyNewest: true, Now: devClock}, Entries: mem,
 		Keys: local, Mailer: outbox, AppURL: appURL, Log: log, Now: devClock,
+		Providers: &idp.Client{HTTP: &http.Client{}, RedirectURL: appURL + providerCallback, Now: devClock, Endpoints: providers.Endpoints()},
 	}); err != nil {
 		return nil, err
+	}
+	// Every provider is on from the start, with the application the local
+	// server knows: in the enclave the operator gives each (scripts/provider.sh).
+	for _, provider := range idp.Providers {
+		app := providers.App(provider)
+		if _, err := p.accounts.SetProviderApp(ctx, string(provider), contracts.ProviderAppSet{ClientID: app.ClientID, ClientSecret: app.ClientSecret}); err != nil {
+			return nil, err
+		}
 	}
 	go p.accounts.Run(ctx, devRemoveEvery)
 	p.devRoutes = map[string]http.Handler{"/dev/outbox": http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

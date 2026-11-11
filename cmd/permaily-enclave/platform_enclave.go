@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/permaily-org/permaily/internal/enclave"
+	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/keys"
 	"github.com/permaily-org/permaily/internal/msgauth"
@@ -191,7 +192,10 @@ func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, a
 			HTTP: egress, Credentials: awsCfg.Credentials, Region: cfg.awsRegion,
 			Name: "Permaily", Address: cfg.mailFrom, Watch: watch, Log: log,
 		},
-		AppURL: "https://" + hosts.App, Log: log,
+		// The providers are asked who signed in over TLS that ends here, through
+		// the host's proxy, and send the browser back to the app's own host.
+		Providers: &idp.Client{HTTP: egress, RedirectURL: "https://" + hosts.App + providerCallback},
+		AppURL:    "https://" + hosts.App, Log: log,
 	})
 	if err != nil {
 		return err

@@ -1,17 +1,11 @@
 import { useRef, useState } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router'
+import { destination } from '../lib/destination.ts'
 import { isClosing, useSession } from '../lib/session.tsx'
 import { AccountClosing } from '../pages/auth/AccountClosing.tsx'
 import { AuthLayout } from '../pages/auth/AuthLayout.tsx'
 import { LinkConfirmation, LinkEnded } from '../pages/auth/LinkConfirmation.tsx'
 import { Button, Headline } from './ui/index.ts'
-
-/** Where a person was going when they were sent to sign in. Only a path inside the app counts. */
-function destination(state: unknown): string {
-  const from = (state as { from?: unknown } | null)?.from
-  if (typeof from !== 'string' || !from.startsWith('/') || from.startsWith('//')) return '/'
-  return /^\/sign-(in|up)(?![^/?#])/.test(from) ? '/' : from
-}
 
 /** While the server is asked who this is, and when it does not answer. */
 function Waiting() {
