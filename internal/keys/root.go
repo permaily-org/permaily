@@ -658,6 +658,19 @@ func (r *Root) wrappingKey(ctx context.Context) ([]byte, error) {
 	return r.kek, nil
 }
 
+// CommitKey returns the key that authenticates the commits of the records
+// that must not be put back to an earlier copy (store.S3Commits). It is
+// derived from the root secret, so every image of the deployment has the same
+// one and nothing outside an enclave has it.
+func (r *Root) CommitKey(ctx context.Context) ([]byte, error) {
+	if err := r.ready(ctx); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return hkdf.Key(sha256.New, r.secret, nil, "permaily record commits v1", sha256.Size)
+}
+
 func (r *Root) wrap(kek, dk []byte, c map[string]string) ([]byte, error) {
 	sealed, err := envelope.Seal(kek, dk, contextAAD(c))
 	if err != nil {
