@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -45,6 +46,8 @@ type platform struct {
 	// updateTrust takes a newer one that Sigstore published.
 	sigstore    func() *attestation.SigstoreStatus
 	updateTrust func(provenance.Update) (*attestation.SigstoreStatus, error)
+	// anchors describes the records that cannot be put back to an earlier copy.
+	anchors func() *attestation.AnchorStatus
 }
 
 // logOutput writes to the console and, when a log port is set, to the parent
@@ -83,10 +86,11 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			HTTPClient:  egress,
 		}
 		kmsClient := kms.NewFromConfig(awsCfg)
+		// Path-style keeps every request on s3.<region>.amazonaws.com (one allowlist entry).
+		s3Client := s3.NewFromConfig(awsCfg, func(o *s3.Options) { o.UsePathStyle = true })
 		awsStore := &store.AWS{
-			DB: dynamodb.NewFromConfig(awsCfg),
-			// Path-style keeps every request on s3.<region>.amazonaws.com (one allowlist entry).
-			S3:     s3.NewFromConfig(awsCfg, func(o *s3.Options) { o.UsePathStyle = true }),
+			DB:     dynamodb.NewFromConfig(awsCfg),
+			S3:     s3Client,
 			Table:  cfg.dynamoTable,
 			Bucket: cfg.s3Bucket,
 		}
@@ -115,11 +119,40 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 		if err != nil {
 			return nil, err
 		}
-		identity = &tlsacme.Sealed{Records: awsStore, Keys: p.keys, Name: "tls-" + directory.Host}
+		// The TLS identity must not be put back to an earlier copy: a key that
+		// was replaced because it may have leaked would come back (ADR 0016).
+		var records store.Records = awsStore
+		if cfg.anchorBucket != "" {
+			if cfg.anchorRetentionDays < 1 {
+				return nil, errors.New("-anchor-bucket needs -anchor-retention-days")
+			}
+			anchored := &store.Anchored{Records: awsStore, Commits: &store.S3Commits{
+				S3: s3Client, Bucket: cfg.anchorBucket, Key: root.CommitKey,
+				Retention: time.Duration(cfg.anchorRetentionDays) * 24 * time.Hour,
+			}}
+			records = anchored
+			p.anchors = func() *attestation.AnchorStatus {
+				return anchorStatus(anchored, cfg.anchorBucket, cfg.anchorRetentionDays)
+			}
+		}
+		identity = &tlsacme.Sealed{Records: records, Keys: p.keys, Name: "tls-" + directory.Host}
 	}
 	if p.certs, err = tlsacme.New(hosts.All(), cfg.acmeDirectory, egress, identity, log); err != nil {
 		return nil, err
 	}
 	go p.certs.Run(ctx)
 	return p, nil
+}
+
+// anchorStatus reports the records an enclave refuses an earlier copy of, as
+// far as it read or wrote them since it started.
+func anchorStatus(a *store.Anchored, bucket string, retentionDays int) *attestation.AnchorStatus {
+	st := &attestation.AnchorStatus{Bucket: bucket, RetentionDays: retentionDays, Records: []attestation.AnchoredRecord{}}
+	for _, c := range a.Seen() {
+		st.Records = append(st.Records, attestation.AnchoredRecord{Name: c.Name, Version: c.Version, CommittedAt: c.At, LockedUntil: c.LockedUntil})
+	}
+	for _, r := range a.Regressions() {
+		st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: r.Name, Had: r.Had, Found: r.Found, At: r.At})
+	}
+	return st
 }

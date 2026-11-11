@@ -1,0 +1,46 @@
+# 0016 Refuse earlier copies of stored records
+
+Status: Accepted.
+Date: 2026-11-11
+
+## Context
+
+Everything the enclave stores is sealed, so whoever runs the storage (the operator, or anyone with the account) cannot read or forge it. They can still put back an earlier copy: a sealed value from last month is as authentic as today's, and an enclave keeps nothing across a restart to tell them apart. Found while reviewing what "the operator cannot alter content" really covered (docs/threat-model.md).
+
+Where it hurts today is the TLS identity: a key replaced because it may have leaked comes back if its old record is restored. Where it will hurt most is the data model that comes next: a permission the user revoked must not reappear.
+
+## Options
+
+1. **Remember in memory.** The enclave keeps the newest version of each record it has seen and refuses older ones. Costs nothing and protects nothing across a restart, which the operator can cause.
+2. **Anchor in a store nobody can remove from.** Each change leaves a small commit (name, version, hash) in an S3 bucket with Object Lock in compliance mode; a record is read by its newest commit. Rests on AWS, like the KMS keys already do.
+3. **Anchor in the public transparency log.** Anyone could audit the commits. But Rekor v2 has no way to ask for "the newest entry of this kind", so after a restart the operator would be the one to say which is the newest, and each change would wait for a third party.
+
+## Decision
+
+1 and 2 together. 3 is left for the audit log, where being public is the point.
+
+**Commits.** `store.Anchored` wraps the records that must not go back. On a change it stores the new value under a name of its own (`<name>@<version>-<hash>`), then appends a commit `{name, version, hash of the stored value}` to the store of commits. A read takes the newest commit and the value it names. If that value is gone, or is not what was committed, the record is lost (`store.ErrLost`): never the version before. A record that may be made again, like the TLS identity, is made again as a later version; one whose loss must not be forgiven checks for `ErrLost` and fails closed. The value goes in before the commit, so a failure in between leaves a value nobody refers to and the record as it was.
+
+**The store of commits** (`store.S3Commits`) is a bucket created with Object Lock. The enclave writes each commit with the lock in the same request (compliance mode, until a date `anchor_retention_days` from then), so S3 refuses the write on a bucket without Object Lock and the enclave cannot be handed another kind of bucket. Tried on 2026-11-11 as an administrator of the account: deleting a locked version, shortening its retention, switching it to governance mode, suspending versioning, removing the lock configuration and deleting the bucket are all refused.
+
+**What can still be added.** An administrator, or the parent instance with the enclave's credentials, can add: another version of an object, an object at a version not used yet, and a delete marker, which hides an object from a plain listing and a plain GET without removing it. So the enclave lists every version of every object, reads each by its version id, and counts only those with an authentication code under a key derived from the root secret (`keys.Root.CommitKey`). Nothing that is added can move the newest commit back; enough junk can stop a record from being read, which is the operator's to do anyway.
+
+**In memory.** While it runs, an enclave remembers the newest commit of each record it read or wrote. If the store ever answers with less, it refuses the record (`store.ErrRolledBack`) and reports it in `/status`, where `permaily-verify` fails on it. It should never happen; if it does, the guarantee above failed or the bucket was replaced, and this is how anyone would know.
+
+**A record from before.** The first time, a record written by an earlier release is under its plain name, without a commit. It is taken as it is, once, and committed as version 1. It stays where it was, so that release still finds it if it has to run again.
+
+## What it covers, and what it does not
+
+- **Now: the TLS identity** (certificate key, ACME account key, certificate chain), compiled into the image as `anchor_bucket` and `anchor_retention_days` in `deploy/enclave.json`.
+- **With the data model:** the records it adds whose going back matters (permissions and their revocation first). They go through `store.Anchored` from the start.
+- **Not the mailbox yet.** Its state is overwritten in place, and anchoring needs each version stored apart; that format is about to be redesigned with the data model, and what could go back today is a retention period and the confirmation codes of a test mailbox.
+- **Not messages.** A deleted message put back, or a message removed, needs an audit log rather than a commit per message.
+- **Not the root secret's records.** They carry an attestation document and are locked by KMS; putting one back gives the same secret.
+
+## What it rests on
+
+- **AWS.** S3 enforces the lock, and answers the enclave over a connection the enclave authenticates. Like the key policies, the owners of the account cannot undo it on their own.
+- **The lock has an end.** Production keeps each commit ten years. A record that does not change for that long loses its protection the day the lock of its newest commit ends; the verifier warns from thirty days before. The TLS identity changes with every certificate. Extending locks before they end is not built.
+- **A new deployment starts over.** A new root secret gives a new key, so the commits of the deployment before are no longer commits; versions go on from where they were.
+- **Two enclaves of one deployment** that write the same record at once each store their value, and one commit per version counts, the same one for every reader.
+- **The bucket cannot be deleted** while it holds a locked commit, so `tofu destroy` leaves it. Staging images lock theirs for a day.

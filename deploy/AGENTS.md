@@ -14,7 +14,8 @@ OpenTofu for AWS (`us-east-2`, profile `permaily`; `us-east-1` only for the site
 - The parent instance is untrusted: no user data, secrets or business logic there. Only nitro-cli, `permaily-host` and SSM.
 - Do not open ports beyond what the enclave serves (443 and 25). Declare them inline in `aws_security_group.enclave_host`: a separate rule resource is removed on the next apply.
 - Never deploy with `--debug` to a deployment meant to be verified.
-- `tofu destroy` removes everything except the mail table (deletion protection) and the mail bucket (not empty); never destroy mail data by accident.
+- `tofu destroy` removes everything except the mail table (deletion protection), the mail bucket (not empty) and the anchors bucket (its objects are locked for ten years); never destroy mail data by accident.
+- `anchors.tf`: buckets with Object Lock for the commits of the records that cannot go back (ADR 0016). They must be created with Object Lock; the enclave sets each commit's retention itself, so do not add a default one, and never give the enclave's role a delete permission there.
 - `releases.tf`: one KMS key per enclave image (`release_keys`), with a policy that only that image can use and nobody can change (ADR 0013). The enclave and `permaily-verify` both refuse a key that `kmspolicy.Sealed` does not accept: before changing the policy of new keys, change that function with a test. A key cannot be edited after it is created, and deleting the key of the running image loses everything stored.
 - Upgrades edit nothing in AWS except creating the new release's key: the running enclave hands the root secret over (`scripts/handoff.sh`, docs/operations.md). Never remove the running release from `release_keys`.
 - Never create grants on any key, and never try to change a release key's policy: the enclave remembers every state it saw and the verifier fails on a bad one until the enclave restarts.

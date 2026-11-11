@@ -131,11 +131,19 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
     "tuf_root_version": 16,
     "tuf_targets_version": 14,
     "updated_at": "<when the enclave was given it; absent while it uses the one compiled into the image>"
+  },
+  "anchors": {
+    "bucket": "<S3 bucket with Object Lock that holds the commits>",
+    "retention_days": 3650,
+    "records": [{"name": "tls-<CA host>", "version": 4, "committed_at": "...", "locked_until": "..."}],
+    "regressions": []
   }
 }
 ```
 
 `sigstore` says which of the trust roots Sigstore published the enclave uses to decide what is a release: the file is `https://tuf-repo-cdn.sigstore.dev/targets/<hash>.trusted_root.json`. The verifier requires the one compiled into the release while there was no update, and a later one after an update; the enclave takes a later one only with the signatures of Sigstore's TUF keyholders, and only for the logs and the timestamp authorities (ADR 0013).
+
+`anchors` lists the records the enclave refuses an earlier copy of (ADR 0016), as far as it read or wrote them since it started: the version of each, and until when S3 keeps its newest commit whatever anyone asks. The verifier fails when a commit is not locked, and when `regressions` is not empty: a commit the enclave had seen that the store stopped answering with. It warns when a lock ends within thirty days.
 
 `root` is absent in an image that stores no mail. `from` is present when another release's enclave handed the root secret over. `history` and `gaps` are every state of the key's policy and grants the enclave has read since it started, and the periods in which it could not read. Releases up to v0.7.0 also report `kms`, the key they wrapped data keys with directly, with the same `history` and `gaps`. If KMS cannot be reached, or the image has no root secret yet, the endpoint answers 503.
 

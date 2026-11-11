@@ -44,7 +44,7 @@ An old image can open the root secret for as long as its key exists. Once the ne
 
 ## A new deployment, or losing everything
 
-An image creates a root secret only when the table has neither a record `root-<its PCR0>` nor the record `deployment` (`pk=system`, `sk=record#deployment`). To start over on purpose, delete those items, the TLS identity (`sk=record#tls-<CA host>`) and the mailbox items; the next image creates a new root secret, a new TLS key and a new ACME account (see Certificates below), and everything stored before is unreadable. There is no way back.
+An image creates a root secret only when the table has neither a record `root-<its PCR0>` nor the record `deployment` (`pk=system`, `sk=record#deployment`). To start over on purpose, delete those items, the TLS identity (every `sk` that starts with `record#tls-<CA host>`) and the mailbox items; the next image creates a new root secret, a new TLS key and a new ACME account (see Certificates below), and everything stored before is unreadable. There is no way back. The commits in the anchors bucket cannot be deleted and need not be: they belong to the root secret that is gone, and the new deployment's versions go on after them.
 
 If the instance is lost, nothing is: create it again with OpenTofu and deploy the same release. The root secret is in DynamoDB, locked by the release's KMS key.
 
@@ -63,6 +63,15 @@ PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem scripts/handoff.sh /tmp/stg-a /tmp/
 ```
 
 Two staging images built at the same time may be logged in either order, and a handoff only goes forward in that order. Afterwards deploy the production release again, remove the staging keys from `release_keys`, restore the CAA records and delete the `staging/` branches.
+
+## Records that cannot go back
+
+The TLS identity is read by its newest commit in the bucket `permaily-anchors-<account>` (ADR 0016); `/status` and the verifier show its version and until when the commit is locked.
+
+- **`the committed version of the record is gone`** in the enclave's log, for the TLS identity: its item was deleted or replaced. The enclave makes a new identity (see "Replace the TLS key" for the CAA records).
+- **The verifier fails with `the store of commits went back`**: the enclave had seen a commit that the bucket no longer answers with. Nobody in the account can remove one, so treat it as an incident: find out what happened to the bucket (CloudTrail, `aws s3api list-object-versions`) before restarting the enclave, which forgets what it saw.
+- **The verifier warns that a lock ends within 30 days**: the newest commit of a record is ten years old. Make the record change (for the TLS identity, a renewal does) so that it gets a new commit.
+- The enclave's role can list, read and write in that bucket and cannot delete. Nothing needs to be cleaned there: a commit is a few hundred bytes.
 
 ## Look at enclave logs
 
@@ -178,7 +187,7 @@ tofu -chdir=deploy/tofu apply
 
 - **First deployment, or a new TLS key:** the account does not exist yet, and a CAA record that names another account makes Let's Encrypt refuse. Set `acme_account_uris = []` (any Let's Encrypt account), deploy, read the account from `/status`, set it and apply.
 - **Staging images** (`.#eif-staging`) use another CA and another account, kept in the staging table. To test one on the production names, set `acme_account_uris = []` in `production.auto.tfvars` without committing for the first start, then its account next to production's for the rest of the test, and restore the file afterwards.
-- **Replace the TLS key** (suspected leak): delete the item `pk=system`, `sk=record#tls-acme-v02.api.letsencrypt.org` from the mail table, set `acme_account_uris = []`, restart the enclave, then pin the new account. The root secret is not affected. The verifier will show the new creation time, and certificates of the old key as older until they expire.
+- **Replace the TLS key** (suspected leak): delete from the mail table every item of `pk=system` whose `sk` starts with `record#tls-acme-v02.api.letsencrypt.org` (the newest version and the earlier ones), set `acme_account_uris = []`, restart the enclave, then pin the new account. The enclave finds that the version it committed is gone and makes a new identity, as a later version; it never takes an earlier one, so putting the old item back afterwards does nothing (ADR 0016). The root secret is not affected. The verifier will show the new creation time and the new version, and certificates of the old key as older until they expire.
 - **A partial `tofu apply`** can leave a host without its CAA record; then the apex record applies, which allows only Amazon, and Let's Encrypt refuses every certificate. Run `tofu plan` after each apply: it must show no changes.
 
 ## Planned (F1+)

@@ -37,6 +37,45 @@ type Status struct {
 	// release against before it hands the root secret over; nil in images
 	// older than this field.
 	Sigstore *SigstoreStatus `json:"sigstore,omitempty"`
+	// Anchors describes the records the enclave refuses an earlier copy of;
+	// nil in images older than this field or without such records.
+	Anchors *AnchorStatus `json:"anchors,omitempty"`
+}
+
+// AnchorStatus describes the records that cannot be put back to an earlier
+// copy (ADR 0016). Each change of one leaves a commit, with its version, in
+// an S3 bucket with Object Lock in compliance mode, where nobody in the
+// account can remove it until a date; the enclave reads a record by its
+// newest commit.
+type AnchorStatus struct {
+	// Bucket is where the commits are, and RetentionDays for how long each is
+	// kept from when it is written.
+	Bucket        string `json:"bucket"`
+	RetentionDays int    `json:"retention_days"`
+	// Records are the ones this enclave read or wrote since it started.
+	Records []AnchoredRecord `json:"records"`
+	// Regressions are commits this enclave had seen and the store stopped
+	// answering with. There should be none, ever.
+	Regressions []AnchorRegression `json:"regressions,omitempty"`
+}
+
+// AnchoredRecord is the newest commit of a record.
+type AnchoredRecord struct {
+	Name        string    `json:"name"`
+	Version     uint64    `json:"version"`
+	CommittedAt time.Time `json:"committed_at"`
+	// LockedUntil is until when S3 keeps that commit whatever anyone asks.
+	LockedUntil time.Time `json:"locked_until,omitzero"`
+}
+
+// AnchorRegression is a commit that was there and then was not.
+type AnchorRegression struct {
+	Name string `json:"name"`
+	// Had is the version the enclave knew, and Found the newest one the
+	// store answered with afterwards (0 for none).
+	Had   uint64    `json:"had"`
+	Found uint64    `json:"found"`
+	At    time.Time `json:"at"`
 }
 
 // SigstoreStatus identifies a trust root that Sigstore published through its
