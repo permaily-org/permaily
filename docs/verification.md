@@ -40,6 +40,8 @@ What this does not prove for that old key: the account's administrators could re
 
 The workflow `verify-production` of the repository runs the latest release's verifier against the live service every half hour; its runs and their output are public under Actions. `scripts/verify-production.sh` runs the same check from your machine.
 
+`permaily-verify -provenance bundle.json -pcrs pcrs.json` checks no deployment: it answers, offline, whether those measurements are a release, the way a running enclave decides before it hands the root secret to the next one (`pkg/provenance`, with the trust root compiled into the binary). `scripts/provenance-bundle.sh` fetches the bundle of a `pcrs.json`.
+
 ## How mail gets in
 
 Mail arrives over SMTP on port 25, which the HTTPS checks above do not cover. When no URLs are given, `permaily-verify` also checks:

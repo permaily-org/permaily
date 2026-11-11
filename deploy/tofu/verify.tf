@@ -1,10 +1,11 @@
-# Starts the verify-production workflow every half hour. GitHub's own schedule
-# starts it a few times a day at most (docs/operations.md), so EventBridge calls
-# GitHub's API instead; the workflow keeps its schedule as a second trigger that
-# the operator of this account does not time.
+# Starts two workflows on time, because GitHub's own schedule starts them a few
+# times a day at most (docs/operations.md): verify-production every half hour,
+# and sigstore-watch once a day. EventBridge calls GitHub's API; each workflow
+# keeps its schedule as a second trigger that the operator of this account does
+# not time.
 #
-# This only says "run now": the check itself runs on GitHub, with the code of
-# the repository, and its result is public there. Nothing here is inside the
+# This only says "run now": the checks run on GitHub, with the code of the
+# repository, and their results are public there. Nothing here is inside the
 # enclave or on the instance.
 
 variable "github_dispatch_token" {
@@ -15,7 +16,11 @@ variable "github_dispatch_token" {
 }
 
 locals {
-  verify_workflow_dispatch = "https://api.github.com/repos/permaily-org/permaily/actions/workflows/verify-production.yml/dispatches"
+  # Workflow file => when EventBridge starts it (UTC).
+  dispatched_workflows = {
+    "verify-production" = "cron(7,37 * * * ? *)"
+    "sigstore-watch"    = "cron(53 6 * * ? *)"
+  }
 }
 
 resource "aws_cloudwatch_event_connection" "github" {
@@ -37,24 +42,30 @@ resource "aws_cloudwatch_event_connection" "github" {
   }
 }
 
-resource "aws_cloudwatch_event_api_destination" "verify" {
-  name                             = "permaily-verify-production"
-  description                      = "Starts the verify-production workflow"
+resource "aws_cloudwatch_event_api_destination" "dispatch" {
+  for_each = local.dispatched_workflows
+
+  name                             = "permaily-${each.key}"
+  description                      = "Starts the ${each.key} workflow"
   connection_arn                   = aws_cloudwatch_event_connection.github.arn
-  invocation_endpoint              = local.verify_workflow_dispatch
+  invocation_endpoint              = "https://api.github.com/repos/permaily-org/permaily/actions/workflows/${each.key}.yml/dispatches"
   http_method                      = "POST"
   invocation_rate_limit_per_second = 1
 }
 
-resource "aws_cloudwatch_event_rule" "verify" {
-  name                = "permaily-verify-production"
-  description         = "Every half hour, at the minutes the workflow's own schedule names"
-  schedule_expression = "cron(7,37 * * * ? *)"
+resource "aws_cloudwatch_event_rule" "dispatch" {
+  for_each = local.dispatched_workflows
+
+  name                = "permaily-${each.key}"
+  description         = "Starts the ${each.key} workflow, at the minutes its own schedule names"
+  schedule_expression = each.value
 }
 
-resource "aws_cloudwatch_event_target" "verify" {
-  rule     = aws_cloudwatch_event_rule.verify.name
-  arn      = aws_cloudwatch_event_api_destination.verify.arn
+resource "aws_cloudwatch_event_target" "dispatch" {
+  for_each = local.dispatched_workflows
+
+  rule     = aws_cloudwatch_event_rule.dispatch[each.key].name
+  arn      = aws_cloudwatch_event_api_destination.dispatch[each.key].arn
   role_arn = aws_iam_role.verify_dispatch.arn
 
   # The workflow runs from the default branch, as its schedule does.
@@ -71,6 +82,21 @@ resource "aws_cloudwatch_event_target" "verify" {
     maximum_event_age_in_seconds = 300
     maximum_retry_attempts       = 2
   }
+}
+
+moved {
+  from = aws_cloudwatch_event_api_destination.verify
+  to   = aws_cloudwatch_event_api_destination.dispatch["verify-production"]
+}
+
+moved {
+  from = aws_cloudwatch_event_rule.verify
+  to   = aws_cloudwatch_event_rule.dispatch["verify-production"]
+}
+
+moved {
+  from = aws_cloudwatch_event_target.verify
+  to   = aws_cloudwatch_event_target.dispatch["verify-production"]
 }
 
 resource "aws_iam_role" "verify_dispatch" {
@@ -96,7 +122,7 @@ resource "aws_iam_role_policy" "verify_dispatch" {
     Statement = [{
       Effect   = "Allow"
       Action   = "events:InvokeApiDestination"
-      Resource = aws_cloudwatch_event_api_destination.verify.arn
+      Resource = [for d in aws_cloudwatch_event_api_destination.dispatch : d.arn]
     }]
   })
 }

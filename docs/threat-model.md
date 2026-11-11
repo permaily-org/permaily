@@ -121,7 +121,7 @@ For every change that touches the enclave, the host, auth, storage or the build:
 ## TODO
 
 - [ ] Site: move the demos' inline `style` attributes to classes and remove `style-src-attr 'unsafe-inline'` from `site/astro.config.mjs`.
-- [ ] `pkg/provenance`: a way to accept a new Sigstore trust root, and Rekor v2 entries, before GitHub's attestations move to it; until then a rotation needs a release signed under the old root first (ADR 0013).
+- [ ] `pkg/provenance`: a way to accept a new Sigstore trust root, and Rekor v2 entries, before GitHub's attestations move to it; until then a rotation needs a release signed under the old root first (ADR 0013). The workflow `sigstore-watch` and a step of `release.yml` warn when either changes.
 
 ## Reporting vulnerabilities
 

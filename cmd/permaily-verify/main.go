@@ -23,6 +23,12 @@
 // wildcards for the domain, and Certificate Transparency must show no
 // certificate for those hosts, issued since the enclave's key exists, with
 // another key.
+//
+// With -provenance it checks no deployment. It answers, offline, the question
+// a running enclave asks before it hands the root secret to a release: do
+// these measurements come from the release workflow, in the public log?
+//
+//	permaily-verify -provenance bundle.json -pcrs pcrs.json
 package main
 
 import (
@@ -187,11 +193,19 @@ func main() {
 		resolver = flag.String("doh-resolver", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS resolver (JSON API) for CAA records")
 		ctAPI    = flag.String("ct-api", "https://api.certspotter.com/v1/issuances", "Certificate Transparency search API (Cert Spotter compatible)")
 	)
+	prov := provenanceFlags(flag.CommandLine)
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "usage: permaily-verify (-pcrs FILE | -release TAG) [flags] [https://host ...]\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "usage: permaily-verify (-pcrs FILE | -release TAG) [flags] [https://host ...]\n       permaily-verify -provenance BUNDLE -pcrs FILE [-release-... flags]\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if prov.bundle != "" {
+		if !checkProvenance(os.Stdout, prov, *pcrsFile, *asJSON) {
+			os.Exit(1)
+		}
+		return
+	}
 
 	expected, source, err := loadPCRs(*pcrsFile, *release)
 	if err != nil {

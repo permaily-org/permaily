@@ -27,8 +27,10 @@ check() {
   local dir=$work/$tag verifier=permaily-verify-linux-$arch
   mkdir -p "$dir"
   gh release download "$tag" --repo "$repo" --dir "$dir" --pattern pcrs.json --pattern "$verifier"
-  gh attestation verify "$dir/pcrs.json" --repo "$repo" >/dev/null
-  gh attestation verify "$dir/$verifier" --repo "$repo" >/dev/null
+  for f in pcrs.json "$verifier"; do
+    gh attestation verify "$dir/$f" --repo "$repo" \
+      --signer-workflow "$repo/.github/workflows/release.yml" --source-ref refs/heads/main >/dev/null
+  done
   chmod +x "$dir/$verifier"
   echo "== permaily-verify $tag =="
   "$dir/$verifier" -pcrs "$dir/pcrs.json" "$@"
