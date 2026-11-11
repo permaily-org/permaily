@@ -8,6 +8,7 @@ The Cloudflare zone must keep **Universal SSL disabled** (SSL/TLS > Edge Certifi
 
 - AWS CLI with the `permaily` profile (`export AWS_PROFILE=permaily`; there is no default profile).
 - `CLOUDFLARE_API_TOKEN` with DNS edit permission on the `permaily.com` zone only.
+- For the first apply only, `TF_VAR_github_dispatch_token`: a fine-grained GitHub token for this repository with Actions read and write, which EventBridge uses to start the scheduled verification (docs/operations.md).
 - OpenTofu, Nix (or Docker), jq.
 
 ## Infrastructure
@@ -22,7 +23,7 @@ The state is in S3 (`permaily-tofu-state-<account>`, versioned, with a lock file
 
 What production runs is in `deploy/tofu/production.auto.tfvars` (the releases that have a KMS key, by PCR0) and in the defaults of `variables.tf` (the ACME account in the CAA records). Both are public values. That file overrides a local `terraform.tfvars`; for a test, edit it without committing or pass `-var`.
 
-Creates a VPC with one public subnet, a security group with only 443 and 25 open, an Elastic IP, a `c7g.large` with Nitro Enclaves enabled (Amazon Linux 2023 arm64, SSM access, no SSH), an S3 bucket for deploy artifacts, and in Cloudflare the A and CAA records for `app`, `api`, `mcp`, `inbox` and `mta-sts.inbox`, always DNS only (grey cloud), plus the MX, MTA-STS and TLS-RPT records of `inbox`.
+Creates a VPC with one public subnet, a security group with only 443 and 25 open, an Elastic IP, a `c7g.large` with Nitro Enclaves enabled (Amazon Linux 2023 arm64, SSM access, no SSH), an S3 bucket for deploy artifacts, and in Cloudflare the A and CAA records for `app`, `api`, `mcp`, `inbox` and `mta-sts.inbox`, always DNS only (grey cloud), plus the MX, MTA-STS and TLS-RPT records of `inbox`. It also creates the EventBridge rule that starts the `verify-production` workflow every half hour.
 
 Approximate cost: 53 USD/month for the instance plus 3.6 USD/month for the public IPv4.
 
