@@ -88,6 +88,9 @@ type hostResult struct {
 	// Sigstore is the trust root the enclave checks releases against, after it
 	// passed checkSigstore; nil when the image is older or holds no root secret.
 	Sigstore *attestation.SigstoreStatus `json:"sigstore,omitempty"`
+	// Anchors are the records the enclave refuses an earlier copy of, after
+	// they passed checkAnchors; nil when the image is older or has none.
+	Anchors *attestation.AnchorStatus `json:"anchors,omitempty"`
 }
 
 // rootResult is what the verified enclave reported about the KMS key that
@@ -356,6 +359,13 @@ func verify(ctx context.Context, client *http.Client, url string, expected map[u
 			return r
 		}
 		r.Sigstore = st.Sigstore
+	}
+	if st.Anchors != nil {
+		if err := checkAnchors(st.Anchors, kms.now); err != nil {
+			r.Error = "records that must not go back: " + err.Error()
+			return r
+		}
+		r.Anchors = st.Anchors
 	}
 	pcr0 := hex.EncodeToString(expected[0])
 	if st.Root != nil {
@@ -821,6 +831,7 @@ func printHuman(w io.Writer, source string, expected map[uint][]byte, results []
 		fmt.Fprintln(w, "      AWS Nitro signature and chain OK, nonce OK, not debug mode, PCR0-2 match")
 		printKMS(w, r, hex.EncodeToString(expected[0]))
 		printSigstore(w, r.Sigstore)
+		printAnchors(w, r.Anchors, time.Now())
 		if r.TLS != nil && r.TLS.Sealed {
 			fmt.Fprintf(w, "      TLS key created %s, kept sealed with KMS across restarts\n", r.TLS.KeyCreatedAt.UTC().Format(time.RFC3339))
 		}
