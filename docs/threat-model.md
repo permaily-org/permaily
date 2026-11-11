@@ -34,7 +34,7 @@ That the service answering on the Permaily hosts runs an enclave image built fro
 ## Known limits (F0)
 
 - The TLS key and the ACME account key are created once inside an enclave and stored sealed under the root secret (ADR 0012, ADR 0013), so restarts and upgrades keep the same key, certificate and account. Only what can get the root secret can open them, like stored mail.
-- The enclave has no persistent state yet.
+- The enclave keeps nothing itself: what it stores is sealed and lives in DynamoDB and S3, which the operator can delete or roll back to an earlier copy, not read.
 - Availability is not protected: the operator can always take the service down.
 - Metadata visible to the operator: connection timing, sizes, destination hostnames of egress.
 
@@ -120,8 +120,8 @@ For every change that touches the enclave, the host, auth, storage or the build:
 ## TODO
 
 - [ ] Site: move the demos' inline `style` attributes to classes and remove `style-src-attr 'unsafe-inline'` from `site/astro.config.mjs`.
-- [ ] Deny `kms:PutKeyPolicy` in the key policy once a release can be authorized without editing it (ADR 0013, option 3); until then changes are detected, not prevented.
-- [ ] MTA-STS `mode: enforce` once delivery from Gmail over TLS is confirmed in production.
+- [ ] `pkg/provenance`: a way to accept a new Sigstore trust root, and Rekor v2 entries, before GitHub's attestations move to it; until then a rotation needs a release signed under the old root first (ADR 0013).
+- [ ] Check the SMTP certificate on port 25 on a schedule: GitHub's runners block the port, so today it is only checked by hand from a server.
 
 ## Reporting vulnerabilities
 

@@ -155,4 +155,4 @@ go run ./cmd/permaily-verify -pcrs result-staging/pcrs.json -ca-file letsencrypt
 
 ## Planned
 
-`scripts/verify.sh` also compares the reproduced PCRs with the ones published in the release and checks their Sigstore build provenance with `gh attestation verify` when `gh` is installed. Certificate Transparency is checked at verification time; nothing watches it continuously yet.
+`scripts/verify.sh` also compares the reproduced PCRs with the ones published in the release and checks their Sigstore build provenance with `gh attestation verify` when `gh` is installed. Certificate Transparency is checked at verification time, so every half hour by the scheduled job; nothing follows the logs between two checks.
