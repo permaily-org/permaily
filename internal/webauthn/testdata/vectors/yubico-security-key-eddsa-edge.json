@@ -1,0 +1,32 @@
+{
+  "name": "yubico-security-key-eddsa-edge",
+  "source": {
+    "project": "Yubico/java-webauthn-server",
+    "url": "https://github.com/Yubico/java-webauthn-server/blob/3a7edfb2609696808e8daad2508115bd43d88d3f/webauthn-server-core/src/test/scala/com/yubico/webauthn/RelyingPartyV2AssertionSpec.scala#L2943",
+    "license": "BSD-2-Clause",
+    "copyright": "Copyright (c) 2014-2018, Yubico AB",
+    "notice": "licenses/yubico-java-webauthn-server.txt"
+  },
+  "made": "captured",
+  "authenticator": "Security Key by Yubico, an Ed25519 key",
+  "aaguid": "f8a011f38c0a4d15800617111f9edc7d",
+  "client": "Edge before Chromium (EdgeHTML): spaces, tabs and CRLF between the members; judged by the members of the client data and their order: type, challenge, origin, tokenBinding",
+  "algorithm": "EdDSA",
+  "relyingParty": "demo3.yubico.test",
+  "origin": "https://demo3.yubico.test:8443",
+  "creation": {
+    "format": "packed",
+    "challenge": "FFDZDypegliApKZXF8XCHCn2SlMy4BVupeOFXDSr1uE",
+    "clientDataJSON": "ew0KCSJ0eXBlIiA6ICJ3ZWJhdXRobi5jcmVhdGUiLA0KCSJjaGFsbGVuZ2UiIDogIkZGRFpEeXBlZ2xpQXBLWlhGOFhDSENuMlNsTXk0QlZ1cGVPRlhEU3IxdUUiLA0KCSJvcmlnaW4iIDogImh0dHBzOi8vZGVtbzMueXViaWNvLnRlc3Q6ODQ0MyIsDQoJInRva2VuQmluZGluZyIgOiANCgl7DQoJCSJzdGF0dXMiIDogInN1cHBvcnRlZCINCgl9DQp9",
+    "attestationObject": "o2NmbXRmcGFja2VkaGF1dGhEYXRhWOEBTgCL_3WEuaR_abGPGP9ImsDepMg6Ovq3DWuW6pKn_kUAAAAC-KAR84wKTRWABhcRH57cfQCAPMEuc5FHylmDzH9BgG0lf_YqsOKKspino-b5ybq8CD0mpwU3Q4S4oUMQd_CgQsJOR3qyv3HirclQM2lNIiyi3dytZ6p-zbfBxDCH637qWTTZTZfKPxKBsdEOVPMBPopU_9uNXKh9dTxqe4mpSuznjxV-cEMF3BU3CSnJDU1BOCOkAQEDJyAGIVggSRLgxGS7m40dHlC9RGF4pzIj4V03KEVLj1iZ8-4zpgFnYXR0U3RtdKNjYWxnJmNzaWdYRzBFAiA6fyJf8gJc5N0fUJtpKckvc6jg0SJitLYVbzA3bl5uBgIhAI11DQDK7c0nhJGh5ElJzhTOcvvTovCAd31CZ_6ZsdrJY3g1Y4FZAmgwggJkMIIBTKADAgECAgQHL7bPMA0GCSqGSIb3DQEBCwUAMA8xDTALBgNVBAMMBHRlc3QwHhcNMTkwNDI0MTExMDAyWhcNMjAwNDIzMTExMDAyWjBuMQswCQYDVQQGEwJTRTESMBAGA1UECgwJWXViaWNvIEFCMSIwIAYDVQQLDBlBdXRoZW50aWNhdG9yIEF0dGVzdGF0aW9uMScwJQYDVQQDDB5ZdWJpY28gVTJGIEVFIFNlcmlhbCAxMjA1Njc1MDMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATFcdVF_m2S3VTnMBABD0ZO8b4dvbqdr7a9zxLi9VBkR5YPakd2coJoFiuEcEuRhNJwSXlJlDX8q3Y-dY_Qp1XYozQwMjAiBgkrBgEEAYLECgIEFTEuMy42LjEuNC4xLjQxNDgyLjEuMjAMBgNVHRMBAf8EAjAAMA0GCSqGSIb3DQEBCwUAA4IBAQBm6U8jEfxKn5WqNe1r7LNlq80RVYQraj1V90Z-a1BFKEEDtRzmoNEGlaUVbmYrdv5u4lWd1abiSq7hWc4H7uTklC8wUt9F1qnSjDWkK45cYjwMpTtRavAQtX00R-8g1orIdSMAVsJ1RG-gqlvJhQWvlWQk8fHRBQ74MzVgUhutu74CgL8_-QjH1_2yEkAndj6slsTyNOCv2n60jJNzT9dk6oYE9HyvOuhYTc0IBAR5XsWQj1XXOof9CnARaC7C0P2Tn1yW0wjeP5St4i2aKuoL5tsaaSVk11hZ6XF2kjKjjqjow9uTyVIrn1NH-kwHf0cZSkPExkHLIl1JDtpMCE5R",
+    "expect": "accepted"
+  },
+  "use": {
+    "challenge": "YK17iD3fpOQKPSU6bxIU-TFBj1HNVSrX5bX5Pzj-SHQ",
+    "clientDataJSON": "ew0KCSJ0eXBlIiA6ICJ3ZWJhdXRobi5nZXQiLA0KCSJjaGFsbGVuZ2UiIDogIllLMTdpRDNmcE9RS1BTVTZieElVLVRGQmoxSE5WU3JYNWJYNVB6ai1TSFEiLA0KCSJvcmlnaW4iIDogImh0dHBzOi8vZGVtbzMueXViaWNvLnRlc3Q6ODQ0MyIsDQoJInRva2VuQmluZGluZyIgOiANCgl7DQoJCSJzdGF0dXMiIDogInN1cHBvcnRlZCINCgl9DQp9",
+    "authenticatorData": "AU4Ai_91hLmkf2mxjxj_SJrA3qTIOjr6tw1rluqSp_4FAAAACA",
+    "signature": "YWVfTS-0-j6mRFG_fYBN9ApkhgjH89hyOVGaOuqxazXv1jA3YBQjoTurN43PebHPXDC6gNxjATUGxMvCq2t5Dg",
+    "expect": "accepted",
+    "client": "Edge before Chromium (EdgeHTML): spaces, tabs and CRLF between the members; judged by the members of the client data and their order: type, challenge, origin, tokenBinding"
+  }
+}

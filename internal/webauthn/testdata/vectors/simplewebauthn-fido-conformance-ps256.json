@@ -1,0 +1,26 @@
+{
+  "name": "simplewebauthn-fido-conformance-ps256",
+  "source": {
+    "project": "MasterKale/SimpleWebAuthn",
+    "url": "https://github.com/MasterKale/SimpleWebAuthn/blob/01d1a640d5ded4fced0b45a9d806fd0ff44ad244/packages/server/src/registration/verifyRegistrationResponse.test.ts#L1121",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2020 Matthew Miller",
+    "notice": "licenses/simplewebauthn.txt"
+  },
+  "made": "tool",
+  "authenticator": "the FIDO Alliance conformance tools, RSA-PSS",
+  "aaguid": "a96c49707d5f4d6a81f77632b7ae0240",
+  "client": "the FIDO Alliance conformance tools; judged by the members of the client data and their order: origin, challenge, type",
+  "algorithm": "PS256",
+  "relyingParty": "localhost",
+  "origin": "http://localhost:8000",
+  "creation": {
+    "format": "packed",
+    "challenge": "wJ6mrZnkb69GD5d9_fUz9-NgRHE0z10quXUBSa9xK5o",
+    "clientDataJSON": "eyJvcmlnaW4iOiJodHRwOi8vbG9jYWxob3N0OjgwMDAiLCJjaGFsbGVuZ2UiOiJ3SjZtclpua2I2OUdENWQ5X2ZVejktTmdSSEUwejEwcXVYVUJTYTl4SzVvIiwidHlwZSI6IndlYmF1dGhuLmNyZWF0ZSJ9",
+    "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzgkY3NpZ1kBAEaJQ9f_DWVWGJMJrHymDCRP7v2cOzeEA8Z1IUsd4GTq65qqg2khO05tKe6QK_NvpWbiLCRJ2E9QiMUu3xGTl7RIrIRp4T2WCjk5tLbLNwsHuFAPyjcuvIlcX2ZsKNL27tTroIz_zbzDk07vf0jhghoS3ec-qKrSZQ-B0ULgyDJf0omzgDRlH6uon7mErtunes9hVDUTn9pG9UJSL-jDptoJyu87NnBFGnlpu-Iur1lMKIEW27m5E7wYxF7IqIF2lylZGqXxh7ji93Bs7Hhik6y1T9KiGmn58rrYMxmBXzprxNQMF7rJxXbSZ9ZfjaZYamMDaoKDyKEhfAiOHXCm8AVoYXV0aERhdGFZAWZJlg3liA6MaHQ0Fw9kdmBbj-SuuaKGMseZXPO6gx2XY0EAAAB1qWxJcH1fTWqB93Yyt64CQAAgn_dmFmW9UL7678vS4A3XSQLXvxWjefEkYVzEB5cNc_SkAQMDOCQgWQEArEwu_kUDitzDgKOTthwbNnBGfGeUEwv8ksLGvqyRbTNClHnrR9fpaffqQeNor3ndNSReFnZ_3i468d677NMJC4-qoLKu7JP2FIDpt2reDCxg7-XvsaCcDIOucvKR-KIKg9CGiNpkHMhq2auXc4aqYrRjRyuoNYkzpWGENn34govaQQqC5Gdc0yHSeFJLrc9rbQoxMiZY1Ujpe3p9me0VXL4QdNmH_NlnzRclt38Rl8HqQOhrLo6rJOuRc_Ws-BjT0xh8HL8STgTxwb9aKquFkPxylztEy4TAgmOsFv-ukfGwbGO4fszqQKtpsf5-ulO8mfszgY1VrCLmuDzBzdGsdSFDAQAB",
+    "expect": "refused",
+    "refusal": "public key of a type or an algorithm not accepted",
+    "why": "The service offers EdDSA, ES256 and RS256 and nothing else (webauthn.Algorithms). An authenticator answers with one of the algorithms it was offered, so this is not an answer to what the service asks."
+  }
+}

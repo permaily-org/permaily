@@ -1,0 +1,24 @@
+{
+  "name": "webauthn-ruby-packed-self-chrome-2018",
+  "source": {
+    "project": "cedarcode/webauthn-ruby",
+    "url": "https://github.com/cedarcode/webauthn-ruby/blob/3e44a002b80cc89427ed98d9fb72c69b78b6571d/spec/support/seeds.rb#L29",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2018 Gonzalo",
+    "notice": "licenses/webauthn-ruby.txt"
+  },
+  "made": "captured",
+  "authenticator": "not named by the source; self attestation",
+  "aaguid": "00000000000000000000000000000000",
+  "client": "Chrome of 2018, or a browser of that time; judged by the members of the client data and their order: challenge, new_keys_may_be_added_here, origin, type",
+  "algorithm": "ES256",
+  "relyingParty": "localhost",
+  "origin": "https://localhost:13010",
+  "creation": {
+    "format": "packed",
+    "challenge": "11CzaFXezx7YszNaYE3pag",
+    "clientDataJSON": "eyJjaGFsbGVuZ2UiOiIxMUN6YUZYZXp4N1lzek5hWUUzcGFnIiwibmV3X2tleXNfbWF5X2JlX2FkZGVkX2hlcmUiOiJkbyBub3QgY29tcGFyZSBjbGllbnREYXRhSlNPTiBhZ2FpbnN0IGEgdGVtcGxhdGUuIFNlZSBodHRwczovL2dvby5nbC95YWJQZXgiLCJvcmlnaW4iOiJodHRwczovL2xvY2FsaG9zdDoxMzAxMCIsInR5cGUiOiJ3ZWJhdXRobi5jcmVhdGUifQ",
+    "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZyZjc2lnWEcwRQIhAJc6Qi6mOud2D0e9T3tQpboLxE2siYhIbVeVLshPiKzeAiAsdfEJjga0O2L5VhbqLg6kQEoHvLbq8_ko4MRdUi6bcGhhdXRoRGF0YVj6SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2NFW7bk1wAAAAAAAAAAAAAAAAAAAAAAdgAezFgAiz7YPD6hRcRNhQ9uY_dLBawkl3mVweop75ZgTOoLy0o4mvXkp_ONBc2KHcV3n8vXr8SXEiWm0a4_xnX-oqE6jlbpSAxxwAAOS2_KwQDDhieLe9lYYvnflU1HBXO9M7eNFewdKNyAn2_fcuUJ2m_e9eOlAQIDJiABIVggHODJJzEPq1BsCkbguTwIOfP_VdYf-7j3SjP2h0mjbEciWCBQLw970904u-6tLdjzE8ppuXz0Kdn93cpKjo8gXCgv8A",
+    "expect": "accepted"
+  }
+}

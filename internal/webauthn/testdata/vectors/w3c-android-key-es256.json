@@ -1,0 +1,33 @@
+{
+  "name": "w3c-android-key-es256",
+  "source": {
+    "project": "W3C Web Authentication Level 3, section 16 (Test Vectors)",
+    "url": "https://www.w3.org/TR/2026/REC-webauthn-3-20260825/#sctn-test-vectors-android-key-es256",
+    "license": "W3C Software and Document License, 2023 version",
+    "copyright": "Copyright © 2026 World Wide Web Consortium. https://www.w3.org/copyright/software-license-2023/",
+    "notice": "licenses/w3c.txt"
+  },
+  "made": "specification",
+  "authenticator": "the specification's generator",
+  "aaguid": "ade9705e1ce7085b899a540d02199bf8",
+  "client": "the specification's generator; judged by the members of the client data and their order: type, challenge, origin, crossOrigin, extraData",
+  "algorithm": "ES256",
+  "relyingParty": "example.org",
+  "origin": "https://example.org",
+  "creation": {
+    "format": "android-key",
+    "challenge": "PeHwtzZdzN4_8MvyXib_p7r_h-8QbID8hl3EAtmWAFA",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiUGVId3R6WmR6TjRfOE12eVhpYl9wN3JfaC04UWJJRDhobDNFQXRtV0FGQSIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5vcmciLCJjcm9zc09yaWdpbiI6ZmFsc2UsImV4dHJhRGF0YSI6ImNsaWVudERhdGFKU09OIG1heSBiZSBleHRlbmRlZCB3aXRoIGFkZGl0aW9uYWwgZmllbGRzIGluIHRoZSBmdXR1cmUsIHN1Y2ggYXMgdGhpczogVlYxY1F1UjJxTE1fYW1QZm9IekwwZyJ9",
+    "attestationObject": "o2NmbXRrYW5kcm9pZC1rZXlnYXR0U3RtdKNjYWxnJmNzaWdYSDBGAiEA6VUSmCqj8hbP8uh8jsVwV7hSn2dOqr7Mqif9A9h3nxkCIQCvtr9FnaSoJvANAfxrYHEv8x3E6zMWGcj4dLsX5DFOlGN4NWOBWQJ8MIICeDCCAh6gAwIBAgIQH_kfdrY_RIEvmYslCwKGvzAKBggqhkjOPQQDAjBiMR4wHAYDVQQDDBVXZWJBdXRobiB0ZXN0IHZlY3RvcnMxDDAKBgNVBAoMA1czQzElMCMGA1UECwwcQXV0aGVudGljYXRvciBBdHRlc3RhdGlvbiBDQTELMAkGA1UEBhMCQUEwIBcNMjQwMTAxMDAwMDAwWhgPMzAyNDAxMDEwMDAwMDBaMF8xHjAcBgNVBAMMFVdlYkF1dGhuIHRlc3QgdmVjdG9yczEMMAoGA1UECgwDVzNDMSIwIAYDVQQLDBlBdXRoZW50aWNhdG9yIEF0dGVzdGF0aW9uMQswCQYDVQQGEwJBQTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJkWllcDbQiaKpghp9AGPTQfGkYTOJNZY276tfPL8azP3ZHFVUMXbqmbZEQG3R3WN3S2r2WsdZ4G_0CxyKsC32ujgbYwgbMwDAYDVR0TAQH_BAIwADAOBgNVHQ8BAf8EBAMCB4AwHQYDVR0OBBYEFBrIHlBkHo0TOauffrJfDNWqwFSwMB8GA1UdIwQYMBaAFEWv9xWw3XhnQf7pluvBZUejkxseMFMGCisGAQQB1nkCAREERTBDAgIBLAoBAAIBAAoBAAQgtDUCjXtqj4O7Rh1BwZsFOp082zA1Gk83TNTN6NvvtgYEADAAMA6hBTEDAgECv4U-AwIBADAKBggqhkjOPQQDAgNIADBFAiATVPkUmZb24YMIUtpim4bTfBDaD_4XRxxn1Idl7YP2OwIhAIbbV0aUTOzfzgcdngQQcs6sPRxQQ4LyBWdumh8C12MlaGF1dGhEYXRhWKS_q8N0MpWLBjNg061kYcnEc1rn-O3UZZKl4PAUUrLktV0AAAAArelwXhznCFuJmlQNAhmb-AAgCkcpUZeItu2KLXcrSU4YYkTYx5jAUpYNvIwQyRUXZ5WlAQIDJiABIVggmRaWVwNtCJoqmCGn0AY9NB8aRhM4k1ljbvq188vxrM8iWCDdkcVVQxduqZtkRAbdHdY3dLavZax1ngb_QLHIqwLfaw",
+    "expect": "accepted",
+    "synced": true
+  },
+  "use": {
+    "challenge": "5O4Fyp287XQRZUDyTtmtxiquhQdWBSKET_p-6hT3r4Y",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiNU80RnlwMjg3WFFSWlVEeVR0bXR4aXF1aFFkV0JTS0VUX3AtNmhUM3I0WSIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5vcmciLCJjcm9zc09yaWdpbiI6ZmFsc2UsImV4dHJhRGF0YSI6ImNsaWVudERhdGFKU09OIG1heSBiZSBleHRlbmRlZCB3aXRoIGFkZGl0aW9uYWwgZmllbGRzIGluIHRoZSBmdXR1cmUsIHN1Y2ggYXMgdGhpczogcXhKeEItX3hncnd5TUw2MThkclNuQSJ9",
+    "authenticatorData": "v6vDdDKViwYzYNOtZGHJxHNa5_jt1GWSpeDwFFKy5LUJAAAAAA",
+    "signature": "MEUCIQCiteN9pDzrY1ZvbigXxsvvJhBz0Mrf0hP_Yim9M93qbAIgPXfrMgL8krm1u4Q-8ILHdm-MfyMZTJJwj_Lz0d52Wo8",
+    "expect": "no user verification",
+    "client": "the specification's generator; judged by the members of the client data and their order: type, challenge, origin, crossOrigin, extraData"
+  }
+}

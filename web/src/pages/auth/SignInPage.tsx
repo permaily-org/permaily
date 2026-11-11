@@ -10,9 +10,12 @@ import {
   normalizeInvitation,
 } from '../../lib/invitation.ts'
 import { useSession } from '../../lib/session.tsx'
+import { passkeysSupported } from '../../lib/webauthn.ts'
 import { AuthLayout } from './AuthLayout.tsx'
 import { Field } from './Field.tsx'
 import { linkHeadlines, messageFor } from './messages.ts'
+import { PasskeySignIn } from './PasskeySignIn.tsx'
+import { RecoveryStep } from './RecoveryStep.tsx'
 
 type Mode = 'sign-in' | 'sign-up'
 
@@ -32,13 +35,20 @@ const codeDigits = 6
 /**
  * Signing in and signing up are one flow: give an address (and, to sign up, an invitation), then end it with
  * the code of the message, or by opening its link and saying yes to what it asks (LinkConfirmation.tsx).
- * Nothing typed here is kept beyond this page's memory.
+ * Signing in also takes a passkey, which needs no address (PasskeySignIn.tsx), and for someone who lost
+ * theirs, a recovery code (RecoveryStep.tsx). Nothing typed here is kept beyond this page's memory.
  */
 export function SignInPage({ mode }: { mode: Mode }) {
   const [started, setStarted] = useState<Started | null>(null)
   const [address, setAddress] = useState('')
   const [invitationError, setInvitationError] = useState<string | null>(null)
+  const [recovering, setRecovering] = useState(false)
 
+  if (recovering && mode === 'sign-in') {
+    return (
+      <RecoveryStep address={address} onAddress={setAddress} onBack={() => setRecovering(false)} />
+    )
+  }
   if (started) {
     return (
       <CodeStep
@@ -63,6 +73,7 @@ export function SignInPage({ mode }: { mode: Mode }) {
         setInvitationError(null)
         setStarted(next)
       }}
+      onRecover={() => setRecovering(true)}
     />
   )
 }
@@ -84,12 +95,14 @@ function AddressStep({
   onAddress,
   invitationError,
   onStarted,
+  onRecover,
 }: {
   mode: Mode
   address: string
   onAddress: (address: string) => void
   invitationError: string | null
   onStarted: (started: Started) => void
+  onRecover: () => void
 }) {
   const { linkProblem, clearLinkProblem } = useSession()
   const { state } = useLocation()
@@ -101,6 +114,8 @@ function AddressStep({
     () => (invitationError ? { invitation: invitationError } : {}),
   )
   const [pending, setPending] = useState(false)
+  // A browser without passkeys is not offered one.
+  const [passkeys] = useState(passkeysSupported)
   const addressRef = useRef<HTMLInputElement>(null)
   const invitationRef = useRef<HTMLInputElement>(null)
   // Where the caret goes once the invitation is written in groups again.
@@ -227,24 +242,33 @@ function AddressStep({
           Continue
         </Button>
       </form>
+      {!signUp && passkeys && <PasskeySignIn />}
 
-      <p className="mt-8 flex flex-wrap items-baseline gap-x-2 gap-y-1 border-t border-rule pt-4 text-small text-ink-2">
-        {signUp ? (
-          <>
-            Already have an account?
-            <TextLink to="/sign-in" state={state}>
-              Sign in
-            </TextLink>
-          </>
-        ) : (
-          <>
-            Have an invitation?
-            <TextLink to="/sign-up" state={state}>
-              Create an account
-            </TextLink>
-          </>
+      <div className="mt-8 flex flex-col gap-2 border-t border-rule pt-4 text-small text-ink-2">
+        <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          {signUp ? (
+            <>
+              Already have an account?
+              <TextLink to="/sign-in" state={state}>
+                Sign in
+              </TextLink>
+            </>
+          ) : (
+            <>
+              Have an invitation?
+              <TextLink to="/sign-up" state={state}>
+                Create an account
+              </TextLink>
+            </>
+          )}
+        </p>
+        {!signUp && (
+          <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            Lost your passkeys?
+            <TextAction onClick={onRecover}>Use a recovery code</TextAction>
+          </p>
         )}
-      </p>
+      </div>
     </AuthLayout>
   )
 }

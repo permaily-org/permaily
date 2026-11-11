@@ -1,0 +1,24 @@
+{
+  "name": "simplewebauthn-android-none",
+  "source": {
+    "project": "MasterKale/SimpleWebAuthn",
+    "url": "https://github.com/MasterKale/SimpleWebAuthn/blob/01d1a640d5ded4fced0b45a9d806fd0ff44ad244/packages/server/src/registration/verifyRegistrationResponse.test.ts#L1517",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2020 Matthew Miller",
+    "notice": "licenses/simplewebauthn.txt"
+  },
+  "made": "captured",
+  "authenticator": "Android platform authenticator",
+  "aaguid": "00000000000000000000000000000000",
+  "client": "Chrome on Android; judged by the members of the client data and their order: type, challenge, origin, androidPackageName",
+  "algorithm": "ES256",
+  "relyingParty": "dev.dontneeda.pw",
+  "origin": "https://dev.dontneeda.pw",
+  "creation": {
+    "format": "none",
+    "challenge": "aEVjY1BXdXppUDAwSDBwNWd4aDJfdTVfUEM0TmVZZ2Q",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiYUVWalkxQlhkWHBwVURBd1NEQndOV2Q0YURKZmRUVmZVRU0wVG1WWloyUSIsIm9yaWdpbiI6Imh0dHBzOlwvXC9kZXYuZG9udG5lZWRhLnB3IiwiYW5kcm9pZFBhY2thZ2VOYW1lIjoib3JnLm1vemlsbGEuZmlyZWZveCJ9",
+    "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjFPdxHEOnAiLIp26idVjIguzn3Ipr_RlsKZWsa-5qK-KBFAAAAAAAAAAAAAAAAAAAAAAAAAAAAQQHSlyRHIdWleVqO24-6ix7JFWODqDWo_arvEz3Se5EgIFHkcVjZ4F5XDSBreIHsWRilRnKmaaqlqK3V2_4XtYs2pQECAyYgASFYID5PQTZQQg6haZFQWFzqfAOyQ_ENsMH8xxQ4GRiNPsqrIlggU8IVUOV8qpgk_Jh-OTaLuZL52KdX1fTht07X4DiQPow",
+    "expect": "accepted"
+  }
+}

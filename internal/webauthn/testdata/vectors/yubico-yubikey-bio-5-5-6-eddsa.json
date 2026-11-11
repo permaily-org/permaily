@@ -1,0 +1,32 @@
+{
+  "name": "yubico-yubikey-bio-5-5-6-eddsa",
+  "source": {
+    "project": "Yubico/java-webauthn-server",
+    "url": "https://github.com/Yubico/java-webauthn-server/blob/3a7edfb2609696808e8daad2508115bd43d88d3f/webauthn-server-core/src/test/scala/com/yubico/webauthn/test/RealExamples.scala#L608",
+    "license": "BSD-2-Clause",
+    "copyright": "Copyright (c) 2014-2018, Yubico AB",
+    "notice": "licenses/yubico-java-webauthn-server.txt"
+  },
+  "made": "captured",
+  "authenticator": "YubiKey Bio (firmware 5.5.6), fingerprint, with the credProtect extension",
+  "aaguid": "d8522d9f575b486688a9ba99fa02f35b",
+  "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin",
+  "algorithm": "EdDSA",
+  "relyingParty": "demo.yubico.com",
+  "origin": "https://demo.yubico.com",
+  "creation": {
+    "format": "packed",
+    "challenge": "BxhY68dg3xsMVaQidjimAw",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiQnhoWTY4ZGczeHNNVmFRaWRqaW1BdyIsIm9yaWdpbiI6Imh0dHBzOi8vZGVtby55dWJpY28uY29tIiwiY3Jvc3NPcmlnaW4iOmZhbHNlfQ",
+    "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSjY2FsZyZjc2lnWEgwRgIhAMSgpu1ru29YJex9vN8Zmt7RJkvOj_DmD2Cnfz8nhVmLAiEA8qnz6llKsjWfZ1OYrR4AIS3JTIXsQgbmeK61pzuesYJjeDVjgVkC3DCCAtgwggHAoAMCAQICCQD_h2wtr3N5yDANBgkqhkiG9w0BAQsFADAuMSwwKgYDVQQDEyNZdWJpY28gVTJGIFJvb3QgQ0EgU2VyaWFsIDQ1NzIwMDYzMTAgFw0xNDA4MDEwMDAwMDBaGA8yMDUwMDkwNDAwMDAwMFowbjELMAkGA1UEBhMCU0UxEjAQBgNVBAoMCVl1YmljbyBBQjEiMCAGA1UECwwZQXV0aGVudGljYXRvciBBdHRlc3RhdGlvbjEnMCUGA1UEAwweWXViaWNvIFUyRiBFRSBTZXJpYWwgNzYyMDg3NDIzMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEJfEjoEgoP8V5bM-IfZlIn9k1wkGYxLXY1bLCv9fdXRWv5FtwcHdlZ9W1sLI-BFYLW-p3tIOx9kkeU6PyvuajmqOBgTB_MBMGCisGAQQBgsQKDQEEBQQDBQUGMCIGCSsGAQQBgsQKAgQVMS4zLjYuMS40LjEuNDE0ODIuMS45MBMGCysGAQQBguUcAgEBBAQDAgUgMCEGCysGAQQBguUcAQEEBBIEENhSLZ9XW0hmiKm6mfoC81swDAYDVR0TAQH_BAIwADANBgkqhkiG9w0BAQsFAAOCAQEAUrBpSduq0aZMG6nrwZizF-wx-aNzY7pRYbNC46ScrVBPNOdCi7iW6c_SjQOtEM4yWgaDjptsTssXrUDQkKFsnnw0SYMy_4U7YnR-j83wDa5idW5XvUCxbWd5B6g1wENaLrzpsLkGnKEiv52WSnMgavdP88ABROv_PefHdY0xR8jC-f6HwS8qlnWiBGsBB2NhqZchhx-nj7DeKUW1efkWbEitL9UMPOVsgiGnUIP2VhGTlDaP8X0skgxjoJ8B7SUBFGt98as5cKKjKTj6mlF69HEIXhYLPKeXZCMXRrpqu6aODRPOJZeWvNKgOtg8dOFTMTKOq0OOakGXyxLsb9HjiGhhdXRoRGF0YVifxGzvgq0bVGR3WR0Aiwh1nsPm0uy085R0v-ppaZJdA7fFAAAABNhSLZ9XW0hmiKm6mfoC81sAMIg_92bCZgLh2oUu6QF2XrSYZKh-qP1J3wf1SgOOkcMnF499E7JiLPi5YhY_308TfKQBAQMnIAYhWCCIP_dmwmYC4dqFLukBggD0oYvvkNUWXNzokKlsiK0_vaFrY3JlZFByb3RlY3QC",
+    "expect": "accepted"
+  },
+  "use": {
+    "challenge": "_thbenuz7jfAqbLeLXVQVA",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiX3RoYmVudXo3amZBcWJMZUxYVlFWQSIsIm9yaWdpbiI6Imh0dHBzOi8vZGVtby55dWJpY28uY29tIiwiY3Jvc3NPcmlnaW4iOmZhbHNlfQ",
+    "authenticatorData": "xGzvgq0bVGR3WR0Aiwh1nsPm0uy085R0v-ppaZJdA7cFAAAACA",
+    "signature": "ZeXxnNYjBwh5Irn-W6VzRna_3XQrsvYhKVa-T8tv2eEw_UuALFoLHlBRkFQr73wgmLZ4ma2gEXocOnuUjVBZAw",
+    "expect": "accepted",
+    "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin"
+  }
+}

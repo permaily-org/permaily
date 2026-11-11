@@ -1,0 +1,24 @@
+{
+  "name": "go-passkeys-windows-hello",
+  "source": {
+    "project": "go-passkeys/go-passkeys",
+    "url": "https://github.com/go-passkeys/go-passkeys/blob/c3a36161734a7a87d923eab584a7d08df29287a5/webauthn/webauthn_test.go#L75",
+    "license": "Apache-2.0",
+    "copyright": "The go-passkeys authors (the repository carries the Apache-2.0 licence and no copyright line)",
+    "notice": "licenses/go-passkeys.txt"
+  },
+  "made": "captured",
+  "authenticator": "Windows Hello without a TPM (software), an RSA key, self attestation",
+  "aaguid": "6028b017b1d44c02b4b3afcdafc96bb2",
+  "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin, other_keys_can_be_added_here",
+  "algorithm": "RS256",
+  "relyingParty": "localhost",
+  "origin": "http://localhost:8080",
+  "creation": {
+    "format": "packed",
+    "challenge": "eGEQa0gDgC1kZkok4C3iLg",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiZUdFUWEwZ0RnQzFrWmtvazRDM2lMZyIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6ODA4MCIsImNyb3NzT3JpZ2luIjpmYWxzZSwib3RoZXJfa2V5c19jYW5fYmVfYWRkZWRfaGVyZSI6ImRvIG5vdCBjb21wYXJlIGNsaWVudERhdGFKU09OIGFnYWluc3QgYSB0ZW1wbGF0ZS4gU2VlIGh0dHBzOi8vZ29vLmdsL3lhYlBleCJ9",
+    "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzkBAGNzaWdZAQAaCqFz8ek8XbD8lBu8js7_kfKisOeBG0Dp0_4D-bJlFl8mofb4K5TAlA8QB6S0CRsIikInzmo4dVf-6P-gx08UQPTU-N2pNY6RNxYBz5rwjnCXvdBKNzyP-6jWK8H7nQJWJeITKWbbTWOXdTEmt0-czJ04pPRXYb_8WI5cX65nQk3VfQXnNWGGzvQcnPDV-Vj3obvJZ2aywlSG8AMTYVbBCNQGRjsF3Il5B1QmwxCRLpvsvnmyHlka2MM-_dFN5r3ONkD0T2L6FGks_bZk1TH6yrr8VI7jNIJAuonYVioDW3DmBp99Yn1EJIjbVpjmIXaAgSiUYV9b1o6VLlym0EW6aGF1dGhEYXRhWQFnSZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2NFAAAAAGAosBex1EwCtLOvza_Ja7IAIHPIhKxhmUbiZ-76TWfCemrQU1bsWR_RvYfj09xWezIzpAEDAzkBACBZAQDSGOSMe_AilnIgiUOFnSKwoT9lSi_REdIVxW6XuGv-2su0XKVrw5oNwChwb5ES04EASAtqp6jHMVFBfhPiWMBPEBRGggpDEkHIbZoMXvrvgmrxerrO0UpTppbEQq6-S_lice1Veq81SucvQ-MhINF3JyXPtmbQuPQmRSmifkQVwIt7RVivEiH7RlJfZ_racZYewo1h01DeNIzfEaEyJFV0hFSMskrbHR8wn6zFT4dTSSm2KZ0YFVqNgIygloig5n7IlQTvVshpHXWAmY89Z9GaXUiw3Ctu6ILrrH9HHc8SCEP7LkaJLgbiH16qLnReWtAAw56emHAZt8D0YrxB9wAtIUMBAAE",
+    "expect": "accepted"
+  }
+}

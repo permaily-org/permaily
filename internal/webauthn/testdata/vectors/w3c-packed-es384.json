@@ -1,0 +1,27 @@
+{
+  "name": "w3c-packed-es384",
+  "source": {
+    "project": "W3C Web Authentication Level 3, section 16 (Test Vectors)",
+    "url": "https://www.w3.org/TR/2026/REC-webauthn-3-20260825/#sctn-test-vectors-packed-es384",
+    "license": "W3C Software and Document License, 2023 version",
+    "copyright": "Copyright © 2026 World Wide Web Consortium. https://www.w3.org/copyright/software-license-2023/",
+    "notice": "licenses/w3c.txt"
+  },
+  "made": "specification",
+  "authenticator": "the specification's generator",
+  "aaguid": "e950dcda3bdae1d087cda380a897848b",
+  "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin",
+  "algorithm": "ES384",
+  "relyingParty": "example.org",
+  "origin": "https://example.org",
+  "creation": {
+    "format": "packed",
+    "challenge": "VnsDCz4Ya8HRad1Ft5-eDYbx_WNHTaPq3lvbjbN5oMM",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVm5zREN6NFlhOEhSYWQxRnQ1LWVEWWJ4X1dOSFRhUHEzbHZiamJONW9NTSIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5vcmciLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSjY2FsZyZjc2lnWEcwRQIhAMVuzJcLeEODPg9GH94mIz9h6zlRYdSBVYwIucbtYWdbAiAp9eBQM3Bc0PmwoH4UlGjsMIpPhJBkCe_c6x2iCnUY1mN4NWOBWQIlMIICITCCAcegAwIBAgIQPQpViLuH67HUzuShgHwbfDAKBggqhkjOPQQDAjBiMR4wHAYDVQQDDBVXZWJBdXRobiB0ZXN0IHZlY3RvcnMxDDAKBgNVBAoMA1czQzElMCMGA1UECwwcQXV0aGVudGljYXRvciBBdHRlc3RhdGlvbiBDQTELMAkGA1UEBhMCQUEwIBcNMjQwMTAxMDAwMDAwWhgPMzAyNDAxMDEwMDAwMDBaMF8xHjAcBgNVBAMMFVdlYkF1dGhuIHRlc3QgdmVjdG9yczEMMAoGA1UECgwDVzNDMSIwIAYDVQQLDBlBdXRoZW50aWNhdG9yIEF0dGVzdGF0aW9uMQswCQYDVQQGEwJBQTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABBflzJHWdtNw42qn3kDCWqy0WjhF8T0pMgiOziJwubQxJBwhnCLQwlbJQ4reAPLAXmL475Brm5l66fPEYMLbZvWjYDBeMAwGA1UdEwEB_wQCMAAwDgYDVR0PAQH_BAQDAgeAMB0GA1UdDgQWBBTHyN2VOCoiMOTA3TZkM4-pCBaanDAfBgNVHSMEGDAWgBRFr_cVsN14Z0H-6ZbrwWVHo5MbHjAKBggqhkjOPQQDAgNIADBFAiBUBozJrgOJN7fEaMMH7bnGkn_962ogBwxIPrQDMPmfEAIhAM9BlTkZw8BGk9ax9CphN1PyBOcOhfxumxcDYXC4NZbgaGF1dGhEYXRhWMW_q8N0MpWLBjNg061kYcnEc1rn-O3UZZKl4PAUUrLktVkAAAAA6VDc2jva4dCHzaOAqJeEiwAglTri3Z8osaHVgCyD4fZYM7uXaaCN6C2BK8J8E_xvBqmlAQIDOCIgAiFYMEhmvYsB2nienrgG5eqwWuWmOFQilqsFei8bvOm1j4oIuRcTkLWKN6x__8LF9FhX2iJYMCoLAkx_S3IHKh-WvTCnJhqulXHdOYcOsp5VwJQcawjolimh6hIWqmTOV8KAe_OQGg",
+    "expect": "refused",
+    "refusal": "public key of a type or an algorithm not accepted",
+    "why": "The service offers EdDSA, ES256 and RS256 and nothing else (webauthn.Algorithms). An authenticator answers with one of the algorithms it was offered, so this is not an answer to what the service asks.",
+    "synced": true
+  }
+}

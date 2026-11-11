@@ -42,11 +42,11 @@ Design tokens, typography and the design language are in [design.md](design.md).
 
 ## Screens
 
-Signing in, signing up and the session talk to the server. Every other screen still runs on sample data in `web/src/data/sample.ts`, behind the session. States that need special data are reached with a `?state=` parameter.
+Signing in, signing up, the session and the Sign-in section of Settings talk to the server. Every other screen, and the rest of Settings, still runs on sample data in `web/src/data/sample.ts`, behind the session. States that need special data are reached with a `?state=` parameter.
 
 | Route | Screen | States |
 | --- | --- | --- |
-| `/sign-in` | Sign in: the address, then the code of the message. Also where the link of the message arrives | `#attempt=<id>&token=<token>` asks whether to sign in with the link |
+| `/sign-in` | Sign in: the address, then the code of the message, or a passkey, which asks for no address. Also where the link of the message arrives, and where a recovery code is used | `#attempt=<id>&token=<token>` asks whether to sign in with the link |
 | `/sign-up` | Create an account: the address and an invitation, then the code of the message | `?invitation=<code>` fills the invitation in |
 | `/` | Overview: your rules, what connections ask for, and what needs a decision | `?state=first-use` |
 | `/connections` | Every vendor and its connections, with search | `?state=empty` |
@@ -59,7 +59,7 @@ Signing in, signing up and the session talk to the server. Every other screen st
 | `/accounts` | Connected mailboxes | `?state=filter-behind`, `?state=mailbox-error` |
 | `/accounts/new` | Connect a mailbox | |
 | `/accounts/new/forwarding` | Forwarding setup | |
-| `/settings` | Profile, sign-in, notifications, appearance and data | |
+| `/settings` | Profile, sign-in, notifications, appearance and data. Sign-in is the server's: passkeys, "passkey only", recovery codes and sessions | |
 | `/consent/trip-app` | An app asks for access. The mailbox picker switches to the forwarding preview | `?state=loading`, `?state=error` |
 | `/consent/claude` | An agent asks to connect and starts with nothing | `?state=loading`, `?state=error` |
 | `/consent/ledgerly` | A connection asks for more | `?state=loading`, `?state=error` |
@@ -82,6 +82,31 @@ The screens talk to the accounts API of [ADR 0017](decisions/0017-accounts-and-s
 - **Every failure has words a person can act on** (`web/src/pages/auth/messages.ts`): an address the server cannot use, an invitation that is not valid or was used, a code that is wrong or has ended, too many attempts, no network, and anything else.
 - **Who is signed in and the way out** are in the account menu at the foot of the sidebar, and of the drawer on a phone: the address, and Sign out.
 
+## Passkeys, recovery codes and sessions
+
+The API is the one of [ADR 0017](decisions/0017-accounts-and-sign-in.md), under `/api/v1/` (`web/src/lib/api.ts`): `auth/passkey/start` and `finish`, `auth/recovery`, `passkeys` (with `start`, `finish` and `{id}`), `account/passkey-only`, `account/recovery-codes`, and `sessions`.
+
+- **The browser's part** is in `web/src/lib/webauthn.ts`. The server's options go through `PublicKeyCredential.parseCreationOptionsFromJSON` or `parseRequestOptionsFromJSON`, and the answer comes from `toJSON()`, when the browser has them; when it has not, the same shapes are made by hand, with binary values as base64url without padding. A browser without WebAuthn, or a page that is not a secure context, is offered no passkey anywhere.
+- **Signing in with a passkey** is one action on the sign-in screen and asks for no address: the browser shows the passkeys it has, and the passkey says which account it is for (`web/src/pages/auth/PasskeySignIn.tsx`). The prompt opens only when the person asks. A prompt the person closed is said calmly ("No passkey was used"), as a status and not as an error: a browser does not say whether it was closed, ran out of time or found no passkey. A refusal by the server says what may be so (the passkey was removed from its account, or the wait was too long) and what to do. Leaving the screen closes a prompt that is still open.
+- **A recovery code** is for someone who lost every passkey of an account that signs in with passkeys only: "Use a recovery code" on the sign-in screen asks for the address and one code (`web/src/pages/auth/RecoveryStep.tsx`). The code is typed with or without dashes, in any case, and is written in groups of four as it is typed (`web/src/lib/codes.ts`, shared with invitations). Every refusal by the server is one message, whether the code is wrong or used, the address has no account, the account takes no codes or too many were tried: it never says whether an address has an account. Only what cannot be a code at all (not 16 letters and digits) and no network read differently.
+- **Settings, Sign-in** (`web/src/pages/settings/signin/`) reads `GET passkeys` and `GET sessions` when it opens and again after every change. When it cannot be read it says so and offers to try again; a session that ended leads to the sign-in screen.
+  - **Passkeys**: each with its name, the day it was made and whether it is synced. "Add a passkey" asks for a name first, suggesting the browser and system ("Firefox on Mac", with a number when that is taken), then opens the browser's prompt. Should the server refuse the name, or not answer, the browser's answer is kept in the form's memory and sent again, so no second passkey is made. Rename is done in place. Remove asks first, and says that the passkey may stay listed on the device or in the password manager; for the last one it says that mail signs in afterwards. The last passkey of an account that signs in with passkeys only has no Remove: the row says why.
+  - **"Passkey only"**: On or Off, with what it means behind the info icon and in the question that turning it on asks: a message to the address no longer signs in, recovery codes are the only other way in, and Permaily cannot let anyone in either. Without a passkey it is not offered, and the row says to add one. Turning it off asks too: mail signs in again and the codes stop working.
+  - **Recovery codes** are shown once, when the server gives them, in a dialog that Escape and a click outside do not close (`RecoveryCodes.tsx`): ten numbered codes in monospace, "Copy all" (one a line), that they will not be shown again, and a box to tick ("I've kept these codes") before Done takes them away. Closing or reloading the tab meanwhile makes the browser ask first. The row shows how many are left. "Make new codes" asks first, saying how many codes stop working.
+  - **Sessions**: how many devices are signed in, and under Review each one as a browser and a system read from what it said of itself (`web/src/lib/device.ts`), "This browser" for the current one and when the others were last used, to the hour at best, which is all the server keeps. Another device is signed out from here; this one from the account menu.
+- **Focus** follows what changed: a form's field when it opens and the action that opened it when it closes; the heading of a question or of the codes, never the action that answers it, so Enter answers nothing unread; the action that opened a dialog when it closes; the section when the row that had focus is gone. What changed without moving focus is said in a status for screen readers.
+- **Nothing of this is stored.** A recovery code, a browser's answer and the server's name for a ceremony never go to `localStorage`, `sessionStorage`, the address or a log. Recovery codes are in the page's memory only while they are on screen, and "Copy all" puts them on the clipboard because the person asked.
+
+`Dialog` (`web/src/components/ui/Dialog.tsx`) takes `dismissable={false}` for a dialog that must be answered, and gives focus to the element marked `data-dialog-focus` when it opens.
+
+To try passkeys by hand, the page's host must be the relying party and its certificate must be one the browser accepts, which the dev server on `localhost` is not. Serve the built app from the dev enclave on its own name (`-domain permaily.test -port 18443`, with `web/dist` copied to `internal/webui/dist` before building) and start Chromium with `--host-resolver-rules="MAP *.permaily.test 127.0.0.1"` and `--ignore-certificate-errors-spki-list=<base64 of the SHA-256 of the certificate's public key>`: Chromium refuses WebAuthn on a page with a certificate error, and with that flag the certificate counts as valid. A virtual authenticator from the DevTools protocol (`WebAuthn.enable`, `WebAuthn.addVirtualAuthenticator` with resident keys and user verification) stands in for a device.
+
 The build keeps every asset as a file of its own (`assetsInlineLimit: 0` in `web/vite.config.ts`): a font put in the stylesheet as a `data:` URL is refused by the enclave's `Content-Security-Policy`.
 
-Not built yet: passkeys, signing in with Google, GitHub, Meta or Microsoft, the list of sessions, and the account's settings. The Settings page still shows sample data.
+Not built yet: signing in with Google, GitHub, Meta or Microsoft, changing the name or the contact address, and deleting the account. Outside its Sign-in section the Settings page still shows sample data.
+
+## TODO
+
+- [ ] After a sign-in with a recovery code the app opens where the person was going. Leading them to Settings to add a passkey would save a step.
+- [ ] A passkey the server refused when it was made stays in the authenticator, and so does one that was removed here. `PublicKeyCredential.signalUnknownCredential` could tell the authenticator, where the browser has it.
+- [ ] Try passkeys on real authenticators and in Safari and Firefox: the flows were run in Chromium with a virtual authenticator. Safari may want the prompt opened straight from the click, before the request for the options.

@@ -40,6 +40,8 @@ fuzz:
 	go test -run='^$$' -fuzz='^FuzzTrustUpdate$$' -fuzztime=200000x ./pkg/provenance
 	go test -run='^$$' -fuzz=FuzzCMS -fuzztime=500000x ./internal/keys
 	go test -run='^$$' -fuzz=FuzzParse -fuzztime=150000x ./internal/inbox
+	go test -run='^$$' -fuzz='^FuzzRegistered$$' -fuzztime=400000x ./internal/webauthn
+	go test -run='^$$' -fuzz='^FuzzAsserted$$' -fuzztime=400000x ./internal/webauthn
 
 notices:
 	bun scripts/third-party-notices.ts

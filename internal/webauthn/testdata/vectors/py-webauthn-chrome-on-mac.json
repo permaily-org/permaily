@@ -1,0 +1,32 @@
+{
+  "name": "py-webauthn-chrome-on-mac",
+  "source": {
+    "project": "duo-labs/py_webauthn",
+    "url": "https://github.com/duo-labs/py_webauthn/blob/c9ba2b7dad6b76bec89e44c76c8ed81fc43287bb/tests/test_parse_registration_credential_json.py#L90",
+    "license": "BSD-3-Clause",
+    "copyright": "Copyright (c) 2017-2021 Duo Security, Inc. All rights reserved.",
+    "notice": "licenses/py_webauthn.txt"
+  },
+  "made": "captured",
+  "authenticator": "Chrome on Mac (its own Touch ID authenticator)",
+  "aaguid": "adce000235bcc60a648b0b25f1f05503",
+  "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin, other_keys_can_be_added_here",
+  "algorithm": "ES256",
+  "relyingParty": "webauthn.io",
+  "origin": "https://webauthn.io",
+  "creation": {
+    "format": "none",
+    "challenge": "PCXqDS01InDSxP0l8B2uCqlhGPlxL8TrRx7ilzcs204zeNIo2RtStdlUR1h_inVC5ObCc8IMORRb_cYcI03MxQ",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiUENYcURTMDFJbkRTeFAwbDhCMnVDcWxoR1BseEw4VHJSeDdpbHpjczIwNHplTklvMlJ0U3RkbFVSMWhfaW5WQzVPYkNjOElNT1JSYl9jWWNJMDNNeFEiLCJvcmlnaW4iOiJodHRwczovL3dlYmF1dGhuLmlvIiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvdGhlcl9rZXlzX2Nhbl9iZV9hZGRlZF9oZXJlIjoiZG8gbm90IGNvbXBhcmUgY2xpZW50RGF0YUpTT04gYWdhaW5zdCBhIHRlbXBsYXRlLiBTZWUgaHR0cHM6Ly9nb28uZ2wveWFiUGV4In0",
+    "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVikdKbqkhPJnC90siSSsyDPQCYqlMGpUKA5fyklC2CEHvBBAAAAAK3OAAI1vMYKZIsLJfHwVQMAIFH-jHEbNNz948Ezg2yqJF5T6_kME1M0b-NZf85uvdvwpQECAyYgASFYIOmR1v1KhciLZLM_DDxy67MDa3J1vsiQWyzl20P0sy6fIlggita-HvZVinRVURaWCr-GJDm9iQ-Z1f5WfRhOA3CwZcU",
+    "expect": "no user verification"
+  },
+  "use": {
+    "challenge": "J9rPZVZqV89TInwo5wqMuGwef7DOJYF-NTyLBxGWjcf-zjas8TSQ9Lmr7zn0Jjd1421MlWB-KbXtK9Enl7_I3w",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiSjlyUFpWWnFWODlUSW53bzV3cU11R3dlZjdET0pZRi1OVHlMQnhHV2pjZi16amFzOFRTUTlMbXI3em4wSmpkMTQyMU1sV0ItS2JYdEs5RW5sN19JM3ciLCJvcmlnaW4iOiJodHRwczovL3dlYmF1dGhuLmlvIiwiY3Jvc3NPcmlnaW4iOmZhbHNlfQ",
+    "authenticatorData": "dKbqkhPJnC90siSSsyDPQCYqlMGpUKA5fyklC2CEHvABAAAAAA",
+    "signature": "MEQCIBYTvMC-3pw88hoiYwdmPCHmPdz__tuhkFrfq-E03NvSAiBzelRNe6FCgsYL6_x6xmUlWM_ULmxRi6cX5iPZPiDrxA",
+    "expect": "no user verification",
+    "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin"
+  }
+}

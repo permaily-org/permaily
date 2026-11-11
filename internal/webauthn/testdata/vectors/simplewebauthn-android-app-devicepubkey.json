@@ -1,0 +1,24 @@
+{
+  "name": "simplewebauthn-android-app-devicepubkey",
+  "source": {
+    "project": "MasterKale/SimpleWebAuthn",
+    "url": "https://github.com/MasterKale/SimpleWebAuthn/blob/01d1a640d5ded4fced0b45a9d806fd0ff44ad244/packages/server/src/registration/verifyRegistrationResponse.test.ts#L1056",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2020 Matthew Miller",
+    "notice": "licenses/simplewebauthn.txt"
+  },
+  "made": "captured",
+  "authenticator": "Android platform authenticator, asked by an Android app, with the devicePubKey extension",
+  "aaguid": "00000000000000000000000000000000",
+  "client": "an Android app through the Fido2 API; judged by the members of the client data and their order: type, challenge, origin, androidPackageName",
+  "algorithm": "ES256",
+  "relyingParty": "try-webauthn.appspot.com",
+  "origin": "android:apk-key-hash:gx7sq_pxhxhrIQdLyfG0pxKwiJ7hOk2DJQ4xvKd438Q",
+  "creation": {
+    "format": "none",
+    "challenge": "Arkrl_Fx_MvcJ_eIqCTQ7-tbESISR14-pyPRh0K-1A8",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiQXJrcmxfRnhfTXZjSl9lSXFDVFE3LXRiRVNJU1IxNC1weVBSaDBLLTFBOCIsIm9yaWdpbiI6ImFuZHJvaWQ6YXBrLWtleS1oYXNoOmd4N3NxX3B4aHhocklRZEx5ZkcwcHhLd2lKN2hPazJESlE0eHZLZDQzOFEiLCJhbmRyb2lkUGFja2FnZU5hbWUiOiJjb20uZmlkby5leGFtcGxlLmZpZG8yYXBpZXhhbXBsZSJ9",
+    "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkBag11_MVj_ad52y40PupImIh1i3hUnUk6T9vqHNlqoxzExQAAAAAAAAAAAAAAAAAAAAAAAAAAABAT8-SjjA3UFcTbdLR-03d5pQECAyYgASFYIJIkX8fs9wjKUv5HWBUop--6ig4Szsxj8gBgJJmaX-_5IlggJ5XVdjUfCMlVlUZuHJRxCLFLzZCeK8Fg3l6OLfAIHnKhbGRldmljZVB1YktleaVjZHBrWE2lAQIDJiABIVggmRqr7Z3kJxqe3q2IBvncltbczQxHYlOlUQSJ7IN5vlsiWCCglzz97bt54n_vTudIFnP7MxJQTdylQ0z9I0MdatKe2mNzaWdYRzBFAiEA77OAdL0VuMgs8J-H-8b7PHFp6k8YBrfpCTc3QwI0W3oCICtxEwQHMaDnJ9M41IVChjzmWICqeeXqdArIzNlDR5iOZW5vbmNlQGVzY29wZUEAZmFhZ3VpZFAAAAAAAAAAAAAAAAAAAAAA",
+    "expect": "accepted"
+  }
+}

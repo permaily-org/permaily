@@ -25,6 +25,17 @@ type AccountsService interface {
 	Sessions(ctx context.Context, who *accounts.Authenticated) (*contracts.SessionList, error)
 	CloseSession(ctx context.Context, who *accounts.Authenticated, id string) error
 	CreateInvitations(ctx context.Context, count int) (*contracts.Invitations, error)
+
+	StartPasskeySignIn(ctx context.Context) (*contracts.PasskeyRequest, error)
+	FinishPasskeySignIn(ctx context.Context, in contracts.PasskeySignIn, userAgent string) (*contracts.Me, string, error)
+	Recover(ctx context.Context, in contracts.Recovery, userAgent string) (*contracts.Me, string, error)
+	Passkeys(ctx context.Context, who *accounts.Authenticated) (*contracts.PasskeyList, error)
+	StartPasskey(ctx context.Context, who *accounts.Authenticated) (*contracts.PasskeyCreation, error)
+	FinishPasskey(ctx context.Context, who *accounts.Authenticated, in contracts.PasskeyFinish) (*contracts.Passkey, error)
+	RenamePasskey(ctx context.Context, who *accounts.Authenticated, id string, in contracts.PasskeyRename) (*contracts.Passkey, error)
+	RemovePasskey(ctx context.Context, who *accounts.Authenticated, id string) error
+	SetPasskeyOnly(ctx context.Context, who *accounts.Authenticated, in contracts.PasskeyOnly) (*contracts.PasskeyOnlyState, error)
+	NewRecoveryCodes(ctx context.Context, who *accounts.Authenticated) (*contracts.RecoveryCodes, error)
 }
 
 // SessionCookie is the cookie of a signed-in browser. The __Host- prefix
@@ -34,7 +45,7 @@ const SessionCookie = "__Host-permaily-session"
 
 // identifiers are taken out of what is logged: logs leave the enclave, and
 // would say which account did what, and when.
-var identifiers = regexp.MustCompile(`\b(acc|ses|att)_[a-z2-7]{26}`)
+var identifiers = regexp.MustCompile(`\b(acc|ses|att|cer)_[a-z2-7]{26}`)
 
 // failed answers a request with the error of a service. An error a caller
 // can act on goes out with its code; anything else is logged and answered
@@ -54,15 +65,28 @@ func failed(w http.ResponseWriter, log *slog.Logger, err error) {
 		status = http.StatusNotFound
 	case contracts.ErrTooManyRequests.Code:
 		status = http.StatusTooManyRequests
+	case contracts.ErrLastPasskey.Code, contracts.ErrPasskeyNeeded.Code, contracts.ErrPasskeyOnlyOff.Code, contracts.ErrTooManyPasskeys.Code:
+		// Well asked, and refused for how the account is now.
+		status = http.StatusConflict
 	}
 	writeError(w, status, known.Code, known.Message)
 }
 
-// maxAccountsBody bounds every request of the accounts API.
-const maxAccountsBody = 4 << 10
+// maxAccountsBody bounds every request of the accounts API but the two that
+// carry a browser's answer about a passkey, which maxPasskeyBody bounds: a
+// credential's identifier may be a kilobyte, twice in the answer, next to a
+// key and what the authenticator says of itself.
+const (
+	maxAccountsBody = 4 << 10
+	maxPasskeyBody  = 32 << 10
+)
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAccountsBody))
+	return decodeUpTo(w, r, v, maxAccountsBody)
+}
+
+func decodeUpTo(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", "the request is not the JSON this endpoint takes")
@@ -101,7 +125,7 @@ func setSession(w http.ResponseWriter, value string, maxAge int) {
 }
 
 // AccountsAPI returns the routes of the web app's own API, under /api/v1/:
-// signing in, the account and its sessions. It is served on the app's host
+// signing in, the account, its sessions and its passkeys. It is served on the app's host
 // only, and answers only to the app (cookies, same origin).
 func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
@@ -195,6 +219,87 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 			setSession(w, "", -1)
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}))
+	// signedInWith answers a way of signing in that worked: the account, and
+	// the session in its cookie.
+	signedInWith := func(w http.ResponseWriter, me *contracts.Me, cookie string, err error) {
+		if err != nil {
+			failed(w, log, err)
+			return
+		}
+		setSession(w, cookie, int(domain.SessionMax/time.Second))
+		writeJSON(w, me)
+	}
+	// answer writes what a service gave, or its error.
+	answer := func(w http.ResponseWriter, out any, err error) {
+		if err != nil {
+			failed(w, log, err)
+			return
+		}
+		writeJSON(w, out)
+	}
+	mux.HandleFunc("POST /api/v1/auth/passkey/start", func(w http.ResponseWriter, r *http.Request) {
+		out, err := svc.StartPasskeySignIn(r.Context())
+		answer(w, out, err)
+	})
+	mux.HandleFunc("POST /api/v1/auth/passkey/finish", func(w http.ResponseWriter, r *http.Request) {
+		var in contracts.PasskeySignIn
+		if !decodeUpTo(w, r, &in, maxPasskeyBody) {
+			return
+		}
+		me, cookie, err := svc.FinishPasskeySignIn(r.Context(), in, r.UserAgent())
+		signedInWith(w, me, cookie, err)
+	})
+	mux.HandleFunc("POST /api/v1/auth/recovery", func(w http.ResponseWriter, r *http.Request) {
+		var in contracts.Recovery
+		if !decode(w, r, &in) {
+			return
+		}
+		me, cookie, err := svc.Recover(r.Context(), in, r.UserAgent())
+		signedInWith(w, me, cookie, err)
+	})
+	mux.HandleFunc("GET /api/v1/passkeys", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		out, err := svc.Passkeys(r.Context(), who)
+		answer(w, out, err)
+	}))
+	mux.HandleFunc("POST /api/v1/passkeys/start", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		out, err := svc.StartPasskey(r.Context(), who)
+		answer(w, out, err)
+	}))
+	mux.HandleFunc("POST /api/v1/passkeys/finish", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		var in contracts.PasskeyFinish
+		if !decodeUpTo(w, r, &in, maxPasskeyBody) {
+			return
+		}
+		out, err := svc.FinishPasskey(r.Context(), who, in)
+		answer(w, out, err)
+	}))
+	mux.HandleFunc("PATCH /api/v1/passkeys/{id}", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		var in contracts.PasskeyRename
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := svc.RenamePasskey(r.Context(), who, r.PathValue("id"), in)
+		answer(w, out, err)
+	}))
+	mux.HandleFunc("DELETE /api/v1/passkeys/{id}", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		if err := svc.RemovePasskey(r.Context(), who, r.PathValue("id")); err != nil {
+			failed(w, log, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	mux.HandleFunc("POST /api/v1/account/passkey-only", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		var in contracts.PasskeyOnly
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := svc.SetPasskeyOnly(r.Context(), who, in)
+		answer(w, out, err)
+	}))
+	mux.HandleFunc("POST /api/v1/account/recovery-codes", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		out, err := svc.NewRecoveryCodes(r.Context(), who)
+		answer(w, out, err)
 	}))
 	// Anything else under /api/ is not the web app's to answer with a page.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {

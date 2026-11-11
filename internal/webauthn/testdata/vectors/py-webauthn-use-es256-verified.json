@@ -1,0 +1,24 @@
+{
+  "name": "py-webauthn-use-es256-verified",
+  "source": {
+    "project": "duo-labs/py_webauthn",
+    "url": "https://github.com/duo-labs/py_webauthn/blob/c9ba2b7dad6b76bec89e44c76c8ed81fc43287bb/tests/test_verify_authentication_response.py#L200",
+    "license": "BSD-3-Clause",
+    "copyright": "Copyright (c) 2017-2021 Duo Security, Inc. All rights reserved.",
+    "notice": "licenses/py_webauthn.txt"
+  },
+  "made": "captured",
+  "authenticator": "not named by the source",
+  "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin",
+  "algorithm": "ES256",
+  "relyingParty": "localhost",
+  "origin": "http://localhost:5000",
+  "use": {
+    "publicKey": "pQECAyYgASFYIFm1Py-FzzFOuwXbRbTr95SiDxuB1BkZsEEJxFhquzqkIlggL1U1T713Jo_2muzhXvpbwRNdoAs8CYK6PflvY1MBdCI",
+    "challenge": "6zrSRX8CxwPSXEArXyXL2tpb6rB7Star0rLVIj5rvf74mZKF5ir715Xmgz5tA_GyHexN4oXfrQ889ArVCLaRdA",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiNnpyU1JYOEN4d1BTWEVBclh5WEwydHBiNnJCN1N0YXIwckxWSWo1cnZmNzRtWktGNWlyNzE1WG1nejV0QV9HeUhleE40b1hmclE4ODlBclZDTGFSZEEiLCJvcmlnaW4iOiJodHRwOi8vbG9jYWxob3N0OjUwMDAiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFYN-Mog",
+    "signature": "MEUCIQDBqeI274exaKWGQz37g7yo1--TVcZSCcYVftZ1AnEJkQIgNw-nlx-_U9rVfFfER8oX6BlYZTuPFyGaL_wCDY23s0E",
+    "expect": "accepted"
+  }
+}

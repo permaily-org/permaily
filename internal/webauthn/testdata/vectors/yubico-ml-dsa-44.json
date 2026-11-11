@@ -1,0 +1,26 @@
+{
+  "name": "yubico-ml-dsa-44",
+  "source": {
+    "project": "Yubico/java-webauthn-server",
+    "url": "https://github.com/Yubico/java-webauthn-server/blob/3a7edfb2609696808e8daad2508115bd43d88d3f/webauthn-server-core/src/test/scala/com/yubico/webauthn/test/RealExamples.scala#L638",
+    "license": "BSD-2-Clause",
+    "copyright": "Copyright (c) 2014-2018, Yubico AB",
+    "notice": "licenses/yubico-java-webauthn-server.txt"
+  },
+  "made": "captured",
+  "authenticator": "a YubiKey with an ML-DSA-44 key (post-quantum)",
+  "aaguid": "f8a011f38c0a4d15800617111f9edc7d",
+  "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin",
+  "algorithm": "ML-DSA-44",
+  "relyingParty": "demo.yubico.com",
+  "origin": "https://demo.yubico.com",
+  "creation": {
+    "format": "packed",
+    "challenge": "8YDgNZWo7HlsqZEAFSQX-w",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiOFlEZ05aV283SGxzcVpFQUZTUVgtdyIsIm9yaWdpbiI6Imh0dHBzOi8vZGVtby55dWJpY28uY29tIiwiY3Jvc3NPcmlnaW4iOmZhbHNlfQ",
+    "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSjY2FsZyZjc2lnWEcwRQIgT7KGR0E9JY8sx2YoboQWgjDkAYkx_FR-3YGw3KKiO04CIQDeHPRsUbTs_d2Duml0Ry2bRo3Bfwd0MBtJv4D0GkepuWN4NWOBWQLVMIIC0TCCAbmgAwIBAgIJAINejK-2js-UMA0GCSqGSIb3DQEBCwUAMCYxJDAiBgNVBAMMG1l1YmljbyAyMDI2IEZJRE8gUHJldmlldyBDQTAeFw0yNjA0MDgyMDAyMDlaFw0yNzEyMzEyMDAyMDlaMG8xCzAJBgNVBAYTAlNFMRIwEAYDVQQKDAlZdWJpY28gQUIxIjAgBgNVBAsMGUF1dGhlbnRpY2F0b3IgQXR0ZXN0YXRpb24xKDAmBgNVBAMMH1l1YmljbyBGSURPIEVFIFNlcmlhbCA3OTc3MjgzODcwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAR09SE74bdHuG4PG50exQy-heNo7c2WFj-kKqYI2DpYbp5IXI6UKEFrI7jS_DFg3XFQd_85XcwIzw-pNalqOvwWo4GDMIGAMBMGCisGAQQBgsQKDQEEBQQDBgAAMCMGCSsGAQQBgsQKAgQWMS4zLjYuMS40LjEuNDE0ODIuMS4xMDATBgsrBgEEAYLlHAIBAQQEAwIEMDAhBgsrBgEEAYLlHAEBBAQSBBD4oBHzjApNFYAGFxEfntx9MAwGA1UdEwEB_wQCMAAwDQYJKoZIhvcNAQELBQADggEBAIeI5EqkyQkIXj5vQJei49ZcBXJ0nYE-bEFtTqprHP-lwyuj8gDKWZUQhWKLQTLCC4cpXe67hgj06Qdw65Cm9nF9wRBL2QDRgO8J7qs1ozGUvuutKxyQa5izIfOpAVtmuc3SKqhvOwcWlFJ7SqOKV0bwz_ZCXJBtGxnV-IM4KUF7Jv5gO31Sid4DAtnpJwjh9-R9BFElefNJLIIYPoP2hHAxGNcpRPnCfyAX7o26sHQ9qQdLTMs_mUdVO3MLKQ0QDrBrBD7-RBrk0mveT7SNdEIlyJtVwUQfyeqR71cyX4r0xrmsER-jHrHkYIMYWTg4_kb7nrKdVdxrg7HbgAjm8fFoYXV0aERhdGFZBaLEbO-CrRtUZHdZHQCLCHWew-bS7LTzlHS_6mlpkl0Dt0EAAAAC-KAR84wKTRWABhcRH57cfQBBV1R8dplu0bP5y7EXN6O2n-DB4xL8d1cVdU5mXbrtvaTZKAA0uA5Knk0QXJmSmH4zbKwEIyyYZfYEuuHYoyAfOvmjAQcDOC8gWQUg8Cgnq3RgUPaYOHMmnNlmSgMCMB-3dFrXlZGjYKHl7EKGVFiNkEMfSOxAbEso8JIwVa4U2wpsvnpbkOsMMAJK4bKjNtZ75DsKT9FmvQw-_wyG1khLSinJFN64RW7zOi2QC7-Lf_NSOkd03KuwbWKIgwRiNkZ8rwHD_HlFXDR8MSPl4lBlNSscwZG1ItXq164Lac6Gh_ZuPQn7HGqG05B5itsWMUwfFKdWSzKUks64RK_cNUf3ukjfIJ2rmzTbrKWdrjp5KOXxsoXewcrF5yD4L7Creuy5S9LcME2K2BYRWaCfmPgcfxQ3hufNMbEf9wqNQQCEHoYzm98ouNkM_GFD7IPc62LmI0HwBGVA_V8XUR1GngC0t_0lsrbcnLFGJU9hnZ2Q93Kcopv1Mn0F-UtFNKOUSBZbvY5dAhJ_HvDLJ56WOpTTUSH9OytcYS8bXBPRU3MO8BAthtNER9Q6Phx6ixYKylWwsR1i2tRvNgKwJWLG0koxSJBSPC9D43BupK8AtR5-UvRIvKwsXLqYRmBAW4DN5z2GkH0n9g4bQ5iZmmMkR_RKQ4zcNaSqjvaclwPui6RM3a797TAwk_fuXu7CiqUnezl5-C-jDH2-9lNxBKh4Zr2-4Q5EN76OrQBX0S037mzJTqi2U4iC-0h19f3CyObaSkPT6rWPHo3BRsC4_F5BqUdevfYrt8tusgGsvug1OWB3dbjyHN4F1LNh-JhIvPLiCbh9-SeP564kWAGrYlTS-MgMrDydQ7BWyQlXCtNiAGO52PzSuTMXI9KgSJBzgQ3pFK6MqYF976yta7RuBXJlqK3RkvyooK88Gc1n84yH9MAV7Tnfydchv3uIQ0kLgfsOsfGIzMFb4uulOWVO9WM-x7hqqYkR-CSXKeJi2IOhVV7sgIvNDn1zkf5d2fGcdctsgClCElVHo_Gz3rFUJwY8O-y0D0euqR21Av-R6qpz8ONVPQ2VUeEzhYyDa2vr5wi7srDqiqNNjaj5dNQIUz6wcmuuKTs9G6w_LnR5TzXqt-BWSggW8Mq_IQHwyu7BsHwA11MWsWcET21Ms6-Odzn-mqDt2RGGWE_4ZEWSWSxQd56i4giQt80UK4yg21QN-l_u_Yg0_wzZ6TFJUopGXsMgdy99XWA7O9fmtKcMfkmO1WAtphabDDWRmU56CG2phMAjHKGMtD_VjaRBydvxVJF4ZVyvm9drS4Ker4l9RUrILGAU2KwhYVFTn3RrnB49DIKVu6NIWlQntHtR4OF7pLecP8VyLB6Q2mxQYTLupEQ2uC6uiEt-kJd1kZZdPgkeXp07XWk9EZ-jLCYXTFAdgPk3vGj3R7dj3U5L9TbW06WRsFhXEAZ7qvv0eoxgmHk5nLqHf5dyijccUPO4YSm1x4IMnOCxpSzCvn3gbFFQncOSb3cDUZqYRytJenfA1lI620cuSVZmImeGX_50qKzNm_UST3l1t8klFJMFKElUH4bRXwNYoKj36sGNN6PYJeZ5sjEcL5Qdncogd2eMLuLImoflBpwmLOFzZu83Blp2jQ012WE1YTnp-A3MS3u_HMPC7-4NmadvgdttxRm911xcTGfCVD2dJVhAYjz-CyqdSO-SeMh0l38y_lUAIRqs4sXuihjkFr9NoPXqh2HKdBHYNqHlUVYw9__lhgp27xcBmmxoWOi6eSkjbK83qTSZj5yHlEIT6qnqs7S1bRlvGpx06bsO2hq_OVBhpsCdvGSznswGgHgtjYag8HjO-IIlQSVmGw",
+    "expect": "refused",
+    "refusal": "public key too long",
+    "why": "The service offers EdDSA, ES256 and RS256 and nothing else (webauthn.Algorithms). An authenticator answers with one of the algorithms it was offered, so this is not an answer to what the service asks. An ML-DSA key is also longer than any key of the three."
+  }
+}

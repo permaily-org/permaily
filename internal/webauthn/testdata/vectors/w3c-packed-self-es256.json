@@ -1,0 +1,33 @@
+{
+  "name": "w3c-packed-self-es256",
+  "source": {
+    "project": "W3C Web Authentication Level 3, section 16 (Test Vectors)",
+    "url": "https://www.w3.org/TR/2026/REC-webauthn-3-20260825/#sctn-test-vectors-packed-self-es256",
+    "license": "W3C Software and Document License, 2023 version",
+    "copyright": "Copyright © 2026 World Wide Web Consortium. https://www.w3.org/copyright/software-license-2023/",
+    "notice": "licenses/w3c.txt"
+  },
+  "made": "specification",
+  "authenticator": "the specification's generator",
+  "aaguid": "df850e09db6afbdfab51697791506cfc",
+  "client": "the specification's generator; judged by the members of the client data and their order: type, challenge, origin, crossOrigin, extraData",
+  "algorithm": "ES256",
+  "relyingParty": "example.org",
+  "origin": "https://example.org",
+  "creation": {
+    "format": "packed",
+    "challenge": "eGnCt3LUtY66k3jPjynibPk1qnffDaifqZwL3Ap29-U",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiZUduQ3QzTFV0WTY2azNqUGp5bmliUGsxcW5mZkRhaWZxWndMM0FwMjktVSIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5vcmciLCJjcm9zc09yaWdpbiI6ZmFsc2UsImV4dHJhRGF0YSI6ImNsaWVudERhdGFKU09OIG1heSBiZSBleHRlbmRlZCB3aXRoIGFkZGl0aW9uYWwgZmllbGRzIGluIHRoZSBmdXR1cmUsIHN1Y2ggYXMgdGhpczogVTloVFh2S0UyVVJrTW5iXzB4WUhWZyJ9",
+    "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZyZjc2lnWEYwRAIgBnogdUq5JQBdvzeAl8khIAMVgccyKNH7T1uIG819qYMCIH_HsUdVjHwOujrxi9nRIfo9OibRf-PyICchePRztgBtaGF1dGhEYXRhWKS_q8N0MpWLBjNg061kYcnEc1rn-O3UZZKl4PAUUrLktV0AAAAA34UOCdtq-9-rUWl3kVBs_AAgRV7zTiBDqH2z1K_rObvLbMMt-TR8eJqGXs3KEpy-9YylAQIDJiABIVgg6xUcgXayJcxlFVn-zwevRQ_YWAIEZlazTBj2zxk4Q8UiWCCSe4qkJ6K-G4g00jOi009h8Tv9RBGcMl1YluGD_uSE8g",
+    "expect": "accepted",
+    "synced": true
+  },
+  "use": {
+    "challenge": "RHihCxNSNI3RYME1Ow1Gm12xnrkcJ_ffpv7Tn-Jq8gs",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiUkhpaEN4TlNOSTNSWU1FMU93MUdtMTJ4bnJrY0pfZmZwdjdUbi1KcThncyIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5vcmciLCJjcm9zc09yaWdpbiI6ZmFsc2UsImV4dHJhRGF0YSI6ImNsaWVudERhdGFKU09OIG1heSBiZSBleHRlbmRlZCB3aXRoIGFkZGl0aW9uYWwgZmllbGRzIGluIHRoZSBmdXR1cmUsIHN1Y2ggYXMgdGhpczogZ1RiNTNyejZFaFNXb21YR3ppbUMxUSJ9",
+    "authenticatorData": "v6vDdDKViwYzYNOtZGHJxHNa5_jt1GWSpeDwFFKy5LUJAAAAAA",
+    "signature": "MEQCIDMQuUMZA8QB8b4r3I0jpAB2gtu93PhGmUlHt_Rl2vhAAiBOlN0ABHsxYGGzuZdyt-_ZWZSoPvWEs7a4Jeo1UCUbZg",
+    "expect": "no user verification",
+    "client": "the specification's generator; judged by the members of the client data and their order: type, challenge, origin, crossOrigin, extraData"
+  }
+}

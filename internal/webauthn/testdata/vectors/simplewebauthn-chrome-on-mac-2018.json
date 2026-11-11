@@ -1,0 +1,24 @@
+{
+  "name": "simplewebauthn-chrome-on-mac-2018",
+  "source": {
+    "project": "MasterKale/SimpleWebAuthn",
+    "url": "https://github.com/MasterKale/SimpleWebAuthn/blob/01d1a640d5ded4fced0b45a9d806fd0ff44ad244/packages/server/src/registration/verifyRegistrationResponse.test.ts#L1463",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2020 Matthew Miller",
+    "notice": "licenses/simplewebauthn.txt"
+  },
+  "made": "captured",
+  "authenticator": "Chrome on Mac (its own Touch ID authenticator), self attestation",
+  "aaguid": "adce000235bcc60a648b0b25f1f05503",
+  "client": "Chrome of 2018, or a browser of that time; judged by the members of the client data and their order: challenge, origin, type",
+  "algorithm": "ES256",
+  "relyingParty": "dev.dontneeda.pw",
+  "origin": "https://dev.dontneeda.pw",
+  "creation": {
+    "format": "packed",
+    "challenge": "czZQSWJCblBQbnJHTlNCeE5kdERyVDdVclZZSks5SE0",
+    "clientDataJSON": "eyJjaGFsbGVuZ2UiOiJjelpRU1dKQ2JsQlFibkpIVGxOQ2VFNWtkRVJ5VkRkVmNsWlpTa3M1U0UwIiwib3JpZ2luIjoiaHR0cHM6Ly9kZXYuZG9udG5lZWRhLnB3IiwidHlwZSI6IndlYmF1dGhuLmNyZWF0ZSJ9",
+    "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZyZjc2lnWEcwRQIhANvrPZMUFrl_rvlgRqz6lCPlF6B4y885FYUCCrhrzAYXAiAb4dQKXbP3IimsTTadkwXQlrRVdxzlbmPXt847-Oh6r2hhdXRoRGF0YVjhPdxHEOnAiLIp26idVjIguzn3Ipr_RlsKZWsa-5qK-KBFXsOO-a3OAAI1vMYKZIsLJfHwVQMAXQGE4WNXLCDWOCa2x8hpqk5dZy_xdc4wBd4UgCJ4M_JAHI7oJgDDVb8WUcKqRB_mzRxwCL9vdTl-ZKPXg3_-Zrt1Adgb7EnK9ivqaTOKMDqRrKsIObWYJaqpsSJtUKUBAgMmIAEhWCBKMVVaivqCBpqqAxMjuCo5jMeUdh3jDOC0EF4fLBNNTyJYILc7rqDDeX1pwCLrl3ZX7IThrtZNwKQVLQyfHiorqP-n",
+    "expect": "accepted"
+  }
+}

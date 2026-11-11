@@ -1,0 +1,24 @@
+{
+  "name": "go-webauthn-solo-2-eddsa",
+  "source": {
+    "project": "go-webauthn/webauthn",
+    "url": "https://github.com/go-webauthn/webauthn/blob/v0.18.2/webauthn/credential_test.go#L1062",
+    "license": "BSD-3-Clause",
+    "copyright": "Copyright (c) 2025 github.com/go-webauthn/webauthn authors.",
+    "notice": "licenses/go-webauthn.txt"
+  },
+  "made": "captured",
+  "authenticator": "Solo 2 NFC+USB-C, an Ed25519 key",
+  "aaguid": "2369d4d013ce48cb9f26f7ed8c9a6068",
+  "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin",
+  "algorithm": "EdDSA",
+  "relyingParty": "webauthn.firstyear.id.au",
+  "origin": "https://webauthn.firstyear.id.au",
+  "creation": {
+    "format": "packed",
+    "challenge": "CWbxCT0G4L2yORpBL6SWVigwe2kQEXBho5L6wE47-Es",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiQ1dieENUMEc0TDJ5T1JwQkw2U1dWaWd3ZTJrUUVYQmhvNUw2d0U0Ny1FcyIsIm9yaWdpbiI6Imh0dHBzOi8vd2ViYXV0aG4uZmlyc3R5ZWFyLmlkLmF1IiwiY3Jvc3NPcmlnaW4iOmZhbHNlfQ",
+    "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSjY2FsZyZjc2lnWEgwRgIhAIXRMqmC2_bHTkKUwOvLvmAikuQPCk__9clILwjhOz3VAiEApJXTrN4WMiPwFXqTIh0oI8AZBm3vs-y_UotbQFSnX99jeDVjgVkCqzCCAqcwggJMoAMCAQICFGqj6W3EVhRWQJPun0qqCMyTlnqKMAoGCCqGSM49BAMCMC0xETAPBgNVBAoMCFNvbG9LZXlzMQswCQYDVQQGEwJDSDELMAkGA1UEAwwCRjEwIBcNMjEwNTIzMDA1MjA2WhgPMjA3MTA1MTEwMDUyMDZaMIGDMQswCQYDVQQGEwJVUzERMA8GA1UECgwIU29sb0tleXMxIjAgBgNVBAsMGUF1dGhlbnRpY2F0b3IgQXR0ZXN0YXRpb24xPTA7BgNVBAMMNFNvbG8gMiBORkMrVVNCLUMgMjM2OUQ0RDAxM0NFNDhDQjlGMjZGN0VEOEM5QTYwNjggQjIwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAS6N5V2fT-agh34bRiW--Wl6CQPSsnLqqSEID0t5RRKjjl1NDI__mzuyYuOrWyb5yzGZRHgnHq65cm2ROpxo6AOo4HwMIHtMB0GA1UdDgQWBBQ6CEDC5W8_zAMOhVgV8wHJI8n3bzAfBgNVHSMEGDAWgBRBa7ZL76IZDeRiX_0pBJa5gim0-DAJBgNVHRMEAjAAMAsGA1UdDwQEAwIE8DAyBggrBgEFBQcBAQQmMCQwIgYIKwYBBQUHMAKGFmh0dHA6Ly9pLnMycGtpLm5ldC9mMS8wJwYDVR0fBCAwHjAcoBqgGIYWaHR0cDovL2MuczJwa2kubmV0L3IxLzAhBgsrBgEEAYLlHAEBBAQSBBAjadTQE85Iy58m9-2MmmBoMBMGCysGAQQBguUcAgEBBAQDAgQwMAoGCCqGSM49BAMCA0kAMEYCIQCP82Rolr0U2FvOJq53AZYcA6xfC4-cNDczvf0FtU1SQAIhAIvb21Z3D8RCvwk2-Ryn4wpsGnn2vma6Bw3E1f48hyVwaGF1dGhEYXRhWQFtarm78N-aFvkduzO7sTL6-dF8eCxIJsbscOzuWNl-9SpBAAAAJyNp1NATzkjLnyb37YyaYGgBDKMAWOhefOe7XWvT4OYhTQoOpLB6RjmIazaiJ-OqZL4RDCiIDRnCkvrwxgFBK6KtPlR55dS4c0JD0UJmAUx4xnKSymSki2tptgDSPvdR4186CXf8xTohJ7uwg8EE33_Smerj5ce5FCviSTh2q_iMkSnDYXP5Didns4JZo9SWLiCS6AxMl5SpJL4hXcJNb21i5zt6f6FkTlHiIB_0uAi1SzyCV5D3tGLzIKdxErPQrKzepLzE8rFUSLf4eSlKqWaNEygi_es8BZNV_9j8AiylpjsVS9-ZSX1Cjhxva3N25ipamUemjoGY3q2OgaVPAUyZAKnzr3VZahXhHMsCUIL3kexTr51baKs3eaGhMIykAQEDJyAGIVggjz9UkJ7cKooE3blSuzlqxkdLppMuFl3CIiST8odWS6k",
+    "expect": "no user verification"
+  }
+}
