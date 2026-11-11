@@ -44,6 +44,14 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      # A Sigstore deadline that needs a release deployed makes everything
+      # else wait (scripts/sigstore-alarm.sh opens and closes it).
+      - name: No Sigstore deadline is waiting for a deployment
+        if: github.event_name == 'pull_request' && github.base_ref == 'develop'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD: ${{ github.head_ref }}
+        run: scripts/check-sigstore-deadline.sh "$HEAD"
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       # The TUF root compiled in is the anchor of every later update: a change

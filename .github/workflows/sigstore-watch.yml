@@ -10,7 +10,8 @@ name: sigstore-watch
 #   trust-root     the compiled-in trust root is the one Sigstore publishes today
 #   canary         what GitHub attests today is accepted by pkg/provenance
 #   canary-rekor2  so is a signature recorded today in Rekor v2
-#   notify         a failure opens an issue assigned to the maintainers
+#   notify         a failure opens an issue assigned to the maintainers and
+#                  sends them mail, every day until it is solved
 #
 # A failed run is not an incident in production; it is a deadline. What to do
 # is in docs/operations.md, "Sigstore changed".
@@ -166,4 +167,10 @@ jobs:
           URGENT: ${{ needs.trust-root.outputs.urgent }}
           PULL_REQUEST: ${{ needs.trust-root.outputs.pull_request }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Mail to the subscribers of an SNS topic (deploy/tofu/alarms.tf).
+          # The key can publish to that topic and do nothing else.
+          SIGSTORE_ALARM_TOPIC_ARN: ${{ vars.SIGSTORE_ALARM_TOPIC_ARN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.SIGSTORE_ALARM_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SIGSTORE_ALARM_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-2
         run: scripts/sigstore-alarm.sh
