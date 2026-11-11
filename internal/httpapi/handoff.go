@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/permaily-org/permaily/internal/keys"
+	"github.com/permaily-org/permaily/pkg/attestation"
 	"github.com/permaily-org/permaily/pkg/kmspolicy"
 	"github.com/permaily-org/permaily/pkg/provenance"
 )
@@ -63,5 +64,51 @@ func Handoff(hand func(context.Context, keys.Handoff) (*keys.HandoffResult, erro
 			log.Error("handoff failed", "err", err)
 			writeError(w, http.StatusBadGateway, "failed", "the handoff failed; see the enclave log")
 		}
+	})
+}
+
+// maxTrustBody bounds the request: a trust root and its TUF metadata are a
+// few KiB each, in base64.
+const maxTrustBody = 4 << 20
+
+// TrustRequest is the body of POST /v1/admin/trust-root: a trust root that
+// Sigstore published after the one the enclave uses, and the TUF metadata
+// that proves it, each file as Sigstore's TUF repository serves it, in base64.
+type TrustRequest struct {
+	// Roots are the TUF root metadata after the one in use, in order.
+	Roots       [][]byte `json:"roots"`
+	Targets     []byte   `json:"targets"`
+	TrustedRoot []byte   `json:"trusted_root"`
+}
+
+// TrustRoot returns the handler for POST /v1/admin/trust-root, which gives
+// the running enclave a newer trust root of Sigstore's to check releases
+// against. Put it behind TokenAuth, like Handoff: the token limits who can
+// make the enclave work. The enclave decides from the request alone, and
+// refuses what Sigstore's keyholders did not sign (keys.Root.UpdateTrust).
+func TrustRoot(update func(provenance.Update) (*attestation.SigstoreStatus, error)) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "use POST")
+			return
+		}
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxTrustBody))
+		if err != nil {
+			writeError(w, http.StatusRequestEntityTooLarge, "too_large", "the request is too large")
+			return
+		}
+		var req TrustRequest
+		if err := json.Unmarshal(body, &req); err != nil || len(req.Targets) == 0 || len(req.TrustedRoot) == 0 {
+			writeError(w, http.StatusBadRequest, "bad_request", "targets and trusted_root are required, and roots when there are newer ones, each in base64")
+			return
+		}
+		st, err := update(provenance.Update{Roots: req.Roots, Targets: req.Targets, TrustedRoot: req.TrustedRoot})
+		if err != nil {
+			// A refusal: its reason names only public things (versions of public metadata).
+			writeError(w, http.StatusUnprocessableEntity, "refused", err.Error())
+			return
+		}
+		writeJSON(w, st)
 	})
 }

@@ -112,6 +112,9 @@ type Release struct {
 // (Fulcio), and the period in which its certificates count.
 type Authority struct {
 	Roots, Intermediates *x509.CertPool
+	// id is the hash of the authority's certificates, to tell which authority
+	// of another trust root is this one.
+	id [sha256.Size]byte
 	// NotBefore and NotAfter bound the log time of a signature. A zero
 	// NotAfter means the authority is still in use.
 	NotBefore, NotAfter time.Time
@@ -146,6 +149,12 @@ type TrustRoot struct {
 	Authorities  []Authority
 	Logs         []Log
 	Timestampers []Timestamper
+	// Publication says which trust root of Sigstore's this is, when it came
+	// from TUF metadata (FromTUF, Update); nil otherwise.
+	Publication *Publication
+	// tuf is the TUF root that vouches for it, and that the next one must
+	// follow.
+	tuf *tufRoot
 }
 
 func (tr *TrustRoot) log(id []byte) (Log, bool) {
@@ -165,15 +174,24 @@ const (
 	hostedRunner   = "github-hosted"
 )
 
-//go:embed sigstore_trusted_root.json
-var publicGoodJSON []byte
+// Sigstore's public trust root and the TUF metadata that vouches for it, as
+// Sigstore's TUF repository serves them (scripts/sigstore-trust-root.sh).
+var (
+	//go:embed sigstore_trusted_root.json
+	publicGoodJSON []byte
+	//go:embed sigstore_tuf_root.json
+	publicGoodTUFRoot []byte
+	//go:embed sigstore_tuf_targets.json
+	publicGoodTUFTargets []byte
+)
 
 // PublicGood returns Sigstore's public trust root as compiled into this
 // package: Fulcio's certificates, the keys of the Rekor logs and the
-// timestamp authority. It changes only with the code, so inside an enclave
-// image it is part of the measured image.
+// timestamp authority, checked against the TUF metadata compiled in with them.
+// It changes only with the code, so inside an enclave image it is part of the
+// measured image; Update gives the one that follows it.
 var PublicGood = sync.OnceValues(func() (*TrustRoot, error) {
-	return ParseTrustRoot(publicGoodJSON)
+	return FromTUF(publicGoodTUFRoot, publicGoodTUFTargets, publicGoodJSON)
 })
 
 // Fulcio certificate extensions (https://github.com/sigstore/fulcio/blob/main/docs/oid-info.md).
@@ -226,11 +244,13 @@ func ParseTrustRoot(trustedRootJSON []byte) (*TrustRoot, error) {
 	for _, ca := range doc.CertificateAuthorities {
 		a := Authority{Roots: x509.NewCertPool(), Intermediates: x509.NewCertPool(), NotBefore: ca.ValidFor.Start, NotAfter: ca.ValidFor.End}
 		roots := 0
+		chain := sha256.New()
 		for _, c := range ca.CertChain.Certificates {
 			cert, err := x509.ParseCertificate(c.RawBytes)
 			if err != nil {
 				return nil, fmt.Errorf("%w: trusted root: %w", ErrMalformed, err)
 			}
+			chain.Write(cert.Raw)
 			if bytes.Equal(cert.RawIssuer, cert.RawSubject) {
 				a.Roots.AddCert(cert)
 				roots++
@@ -241,6 +261,7 @@ func ParseTrustRoot(trustedRootJSON []byte) (*TrustRoot, error) {
 		if roots == 0 {
 			return nil, fmt.Errorf("%w: trusted root: a certificate authority without a root", ErrMalformed)
 		}
+		copy(a.id[:], chain.Sum(nil))
 		tr.Authorities = append(tr.Authorities, a)
 	}
 	for _, l := range doc.Tlogs {

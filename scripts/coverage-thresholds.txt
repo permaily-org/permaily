@@ -7,11 +7,11 @@ github.com/permaily-org/permaily/pkg/kmspolicy 99
 github.com/permaily-org/permaily/pkg/certwatch 99
 github.com/permaily-org/permaily/pkg/provenance 99
 github.com/permaily-org/permaily/internal/router 100
-github.com/permaily-org/permaily/internal/httpapi 89
+github.com/permaily-org/permaily/internal/httpapi 90
 github.com/permaily-org/permaily/internal/webui 75
 github.com/permaily-org/permaily/internal/hostproxy 73
 github.com/permaily-org/permaily/internal/envelope 91
-github.com/permaily-org/permaily/internal/keys 88
+github.com/permaily-org/permaily/internal/keys 89
 github.com/permaily-org/permaily/internal/inbox 84
 github.com/permaily-org/permaily/internal/msgauth 86
 github.com/permaily-org/permaily/internal/smtpd 92

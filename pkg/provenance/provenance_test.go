@@ -171,10 +171,7 @@ func TestVerifyARealRelease(t *testing.T) {
 }
 
 func TestParseTrustRoot(t *testing.T) {
-	good, err := os.ReadFile("sigstore_trusted_root.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	good := read(t, "tuf/trusted_root.14.json")
 	for name, doc := range map[string]string{
 		"not JSON":                      "nope",
 		"empty":                         "{}",

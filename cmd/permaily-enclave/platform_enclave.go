@@ -41,6 +41,10 @@ type platform struct {
 	// gives the root secret to the next release; nil without a root secret.
 	rootStatus func(context.Context) (*attestation.RootStatus, error)
 	handoff    func(context.Context, keys.Handoff) (*keys.HandoffResult, error)
+	// sigstore says which trust root releases are checked against, and
+	// updateTrust takes a newer one that Sigstore published.
+	sigstore    func() *attestation.SigstoreStatus
+	updateTrust func(provenance.Update) (*attestation.SigstoreStatus, error)
 }
 
 // logOutput writes to the console and, when a log port is set, to the parent
@@ -101,6 +105,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			return nil, err
 		}
 		p.keys, p.rootStatus, p.handoff = root, root.Status, root.HandOff
+		p.sigstore, p.updateTrust = root.Trust, root.UpdateTrust
 		go root.Run(ctx)
 		p.auth = msgauth.DKIM(msgauth.DoH{Client: egress, Endpoint: cfg.dohEndpoint}.LookupTXT)
 

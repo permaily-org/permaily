@@ -23,8 +23,6 @@ import (
 	"net/url"
 	"slices"
 	"time"
-
-	"github.com/permaily-org/permaily/pkg/provenance"
 )
 
 // Authority is a certificate authority (root and intermediate), a log of each
@@ -48,6 +46,15 @@ type Authority struct {
 	// signature, so inclusion proofs are not trivial.
 	Before, After int
 	index         int64
+
+	// The TUF repository that publishes the trust root (tuf.go): its
+	// keyholders, the root metadata in force and the versions published last.
+	keyholders                  []keyholder
+	tufRoot                     []byte
+	RootVersion, TargetsVersion int
+	// Earlier instances of the second log, which stopped taking entries.
+	oldLogs        []map[string]any
+	log2Generation int
 }
 
 // Build describes the workflow run a bundle claims to come from.
@@ -102,15 +109,9 @@ func New() (*Authority, error) {
 	id := sha256.Sum256(der)
 	a := &Authority{Root: root, Intermediate: inter, interKey: interKey, logKey: logKey, LogID: id[:], Origin: "rekor.test", Before: 4, After: 2, index: 1000}
 
-	// The second log. Its id is the key id of its checkpoint signatures
-	// (c2sp.org/signed-note), not truncated.
-	a.Origin2 = "log2099-1.rekor.test"
-	log2Pub, log2Key, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
+	if err := a.newLog2("log2099-1.rekor.test"); err != nil {
 		return nil, err
 	}
-	id2 := sha256.Sum256(slices.Concat([]byte(a.Origin2+"\n"), []byte{1}, log2Pub))
-	a.log2Key, a.Log2ID = log2Key, id2[:]
 
 	// The timestamp authority: a root and the certificate it signs with.
 	tsaRootKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
@@ -136,7 +137,42 @@ func New() (*Authority, error) {
 	}, now); err != nil {
 		return nil, err
 	}
-	return a, nil
+	return a, a.initTUF()
+}
+
+// newLog2 gives the authority a new log shaped like Rekor v2. Its id is the
+// key id of its checkpoint signatures (c2sp.org/signed-note), not truncated.
+// The log it had, if any, stops taking entries now.
+func (a *Authority) newLog2(origin string) error {
+	if a.log2Key != nil {
+		old, err := a.log2JSON()
+		if err != nil {
+			return err
+		}
+		old["publicKey"].(map[string]any)["validFor"].(map[string]string)["end"] = time.Now().UTC().Format(time.RFC3339)
+		a.oldLogs = append(a.oldLogs, old)
+	}
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	id := sha256.Sum256(slices.Concat([]byte(origin+"\n"), []byte{1}, pub))
+	a.Origin2, a.log2Key, a.Log2ID = origin, key, id[:]
+	return nil
+}
+
+func (a *Authority) log2JSON() (map[string]any, error) {
+	der, err := x509.MarshalPKIXPublicKey(a.log2Key.Public())
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"baseUrl":         "https://" + a.Origin2,
+		"hashAlgorithm":   "SHA2_256",
+		"publicKey":       map[string]any{"rawBytes": der, "keyDetails": "PKIX_ED25519", "validFor": map[string]string{"start": a.Root.NotBefore.UTC().Format(time.RFC3339)}},
+		"logId":           map[string]any{"keyId": a.Log2ID},
+		"checkpointKeyId": map[string]any{"keyId": a.Log2ID},
+	}, nil
 }
 
 // issue signs a certificate valid from thirty days ago for ten years; a nil
@@ -189,25 +225,21 @@ func (a *Authority) TrustedRootJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	log2Key, err := x509.MarshalPKIXPublicKey(a.log2Key.Public())
+	log2, err := a.log2JSON()
 	if err != nil {
 		return nil, err
 	}
 	start := map[string]string{"start": a.Root.NotBefore.UTC().Format(time.RFC3339)}
+	logs := []map[string]any{{
+		"baseUrl":       "https://" + a.Origin,
+		"hashAlgorithm": "SHA2_256",
+		"publicKey":     map[string]any{"rawBytes": logKey, "keyDetails": "PKIX_ECDSA_P256_SHA_256", "validFor": start},
+		"logId":         map[string]any{"keyId": a.LogID},
+	}}
+	logs = append(append(logs, a.oldLogs...), log2)
 	return json.Marshal(map[string]any{
 		"mediaType": "application/vnd.dev.sigstore.trustedroot+json;version=0.1",
-		"tlogs": []map[string]any{{
-			"baseUrl":       "https://" + a.Origin,
-			"hashAlgorithm": "SHA2_256",
-			"publicKey":     map[string]any{"rawBytes": logKey, "keyDetails": "PKIX_ECDSA_P256_SHA_256", "validFor": start},
-			"logId":         map[string]any{"keyId": a.LogID},
-		}, {
-			"baseUrl":         "https://" + a.Origin2,
-			"hashAlgorithm":   "SHA2_256",
-			"publicKey":       map[string]any{"rawBytes": log2Key, "keyDetails": "PKIX_ED25519", "validFor": start},
-			"logId":           map[string]any{"keyId": a.Log2ID},
-			"checkpointKeyId": map[string]any{"keyId": a.Log2ID},
-		}},
+		"tlogs":     logs,
 		"timestampAuthorities": []map[string]any{{
 			"subject":   map[string]string{"organization": "test", "commonName": "test-tsa"},
 			"uri":       "https://tsa.test/api/v1/timestamp",
@@ -221,19 +253,6 @@ func (a *Authority) TrustedRootJSON() ([]byte, error) {
 			"validFor":  start,
 		}},
 	})
-}
-
-// TrustRoot returns the trust root that accepts this authority's bundles.
-func (a *Authority) TrustRoot() *provenance.TrustRoot {
-	doc, err := a.TrustedRootJSON()
-	if err != nil {
-		panic(err)
-	}
-	tr, err := provenance.ParseTrustRoot(doc)
-	if err != nil {
-		panic(err)
-	}
-	return tr
 }
 
 func utf8Ext(arc int, value string) (pkix.Extension, error) {

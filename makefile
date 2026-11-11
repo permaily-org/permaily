@@ -37,6 +37,7 @@ fuzz:
 	go test -run='^$$' -fuzz='^FuzzVerify$$' -fuzztime=300000x ./pkg/provenance
 	go test -run='^$$' -fuzz='^FuzzVerifyRekor2$$' -fuzztime=200000x ./pkg/provenance
 	go test -run='^$$' -fuzz='^FuzzTimestamp$$' -fuzztime=300000x ./pkg/provenance
+	go test -run='^$$' -fuzz='^FuzzTrustUpdate$$' -fuzztime=200000x ./pkg/provenance
 	go test -run='^$$' -fuzz=FuzzCMS -fuzztime=500000x ./internal/keys
 	go test -run='^$$' -fuzz=FuzzParse -fuzztime=150000x ./internal/inbox
 

@@ -142,6 +142,9 @@ func run(cfg config, log *slog.Logger) error {
 		if p.handoff != nil {
 			api.Handle("/v1/admin/handoff", httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Handoff(p.handoff, log)))
 		}
+		if p.updateTrust != nil {
+			api.Handle("/v1/admin/trust-root", httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.TrustRoot(p.updateTrust)))
+		}
 
 		smtpSrv := smtpd.New(mailbox, smtpd.Config{Domain: hosts.Inbox, TLS: p.certs.TLSConfig()}, log)
 		go func() {
@@ -157,7 +160,7 @@ func run(cfg config, log *slog.Logger) error {
 
 	common := map[string]http.Handler{
 		"/attestation": httpapi.Attestation(p.attester, p.certs.UserData),
-		"/status":      httpapi.Status(httpapi.StatusSources{Root: p.rootStatus, TLS: p.certs.Status}),
+		"/status":      httpapi.Status(httpapi.StatusSources{Root: p.rootStatus, TLS: p.certs.Status, Sigstore: p.sigstore}),
 		"/version":     httpapi.Version(),
 	}
 	srv := &http.Server{
