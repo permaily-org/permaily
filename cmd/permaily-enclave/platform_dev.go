@@ -25,6 +25,7 @@ import (
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
 	"github.com/permaily-org/permaily/pkg/attestation"
+	"github.com/permaily-org/permaily/pkg/provenance"
 )
 
 type platform struct {
@@ -40,6 +41,10 @@ type platform struct {
 	// gives the root secret to the next release; nil without a root secret.
 	rootStatus func(context.Context) (*attestation.RootStatus, error)
 	handoff    func(context.Context, keys.Handoff) (*keys.HandoffResult, error)
+	// sigstore says which trust root releases are checked against, and
+	// updateTrust takes a newer one that Sigstore published.
+	sigstore    func() *attestation.SigstoreStatus
+	updateTrust func(provenance.Update) (*attestation.SigstoreStatus, error)
 }
 
 // logOutput is the terminal in dev mode.

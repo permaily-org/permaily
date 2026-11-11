@@ -64,6 +64,25 @@ func TestStatus(t *testing.T) {
 		}
 	})
 
+	t.Run("Sigstore's trust root", func(t *testing.T) {
+		sig := &attestation.SigstoreStatus{TrustedRootSHA256: "ab", TUFRootVersion: 16, TUFTargetsVersion: 14, UpdatedAt: at}
+		rec := call(httpapi.Status(httpapi.StatusSources{Sigstore: func() *attestation.SigstoreStatus { return sig }}), http.MethodGet)
+		var got attestation.Status
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || got.Sigstore == nil || *got.Sigstore != *sig {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body)
+		}
+		// The one compiled in has no time of update.
+		sig.UpdatedAt = time.Time{}
+		rec = call(httpapi.Status(httpapi.StatusSources{Sigstore: func() *attestation.SigstoreStatus { return sig }}), http.MethodGet)
+		if !strings.Contains(rec.Body.String(), `"tuf_targets_version":14`) || strings.Contains(rec.Body.String(), "updated_at") {
+			t.Fatalf("body %s", rec.Body)
+		}
+		rec = call(httpapi.Status(httpapi.StatusSources{Sigstore: func() *attestation.SigstoreStatus { return nil }}), http.MethodGet)
+		if strings.Contains(rec.Body.String(), `"sigstore"`) {
+			t.Fatalf("body %s", rec.Body)
+		}
+	})
+
 	t.Run("other methods", func(t *testing.T) {
 		if rec := call(httpapi.Status(httpapi.StatusSources{}), http.MethodPost); rec.Code != http.StatusMethodNotAllowed {
 			t.Fatalf("status %d", rec.Code)

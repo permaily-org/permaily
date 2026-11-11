@@ -33,6 +33,28 @@ type Status struct {
 	// Root describes the key that holds the root secret for this image; nil in
 	// images that wrap every data key directly with KMS.
 	Root *RootStatus `json:"root,omitempty"`
+	// Sigstore says which of Sigstore's trust roots the enclave checks a
+	// release against before it hands the root secret over; nil in images
+	// older than this field.
+	Sigstore *SigstoreStatus `json:"sigstore,omitempty"`
+}
+
+// SigstoreStatus identifies a trust root that Sigstore published through its
+// TUF repository (https://tuf-repo-cdn.sigstore.dev). The enclave starts with
+// the one compiled into its image, and takes a later one only with the
+// signatures of Sigstore's root keyholders; even then who issues signing
+// certificates stays as compiled in (ADR 0013).
+type SigstoreStatus struct {
+	// TrustedRootSHA256 is the hash of trusted_root.json, in hex: the file is
+	// at /targets/<hash>.trusted_root.json of the repository.
+	TrustedRootSHA256 string `json:"trusted_root_sha256"`
+	// TUFRootVersion and TUFTargetsVersion are the versions of the TUF
+	// metadata that vouch for it.
+	TUFRootVersion    int `json:"tuf_root_version"`
+	TUFTargetsVersion int `json:"tuf_targets_version"`
+	// UpdatedAt is when the enclave was given this trust root; zero while it
+	// uses the one compiled in.
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
 }
 
 // How an image got the root secret (RootStatus.Origin).
