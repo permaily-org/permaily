@@ -12,6 +12,8 @@
 // Then it reads /status over that same TLS key and checks the policy of the KMS
 // key that protects stored mail: data keys must be released only to the image
 // being verified, with no grants and no statement that skips the image check.
+// When the enclave sends mail, it also checks that Amazon SES was not told to
+// keep a copy of it, now or at any time the enclave has watched.
 //
 // Last, for the default hosts of a domain, it checks how mail gets in: the
 // MTA-STS policy (served with the attested key) must tell senders to require
@@ -91,6 +93,10 @@ type hostResult struct {
 	// Anchors are the records the enclave refuses an earlier copy of, after
 	// they passed checkAnchors; nil when the image is older or has none.
 	Anchors *attestation.AnchorStatus `json:"anchors,omitempty"`
+	// SentMail is what the enclave reports about the mail it sends through
+	// Amazon SES, after it passed checkSentMail; nil when the image is older
+	// or sends no mail.
+	SentMail *attestation.MailStatus `json:"sent_mail,omitempty"`
 }
 
 // rootResult is what the verified enclave reported about the KMS key that
@@ -341,6 +347,14 @@ func verify(ctx context.Context, client *http.Client, url string, expected map[u
 		}
 		return r
 	}
+	return checkStatus(st, r, hex.EncodeToString(expected[0]), kms)
+}
+
+// checkStatus applies the checks to what a verified enclave reports about
+// itself on /status, and returns r with what passed. pcr0 is the verified
+// image, in hex.
+func checkStatus(st *attestation.Status, r hostResult, pcr0 string, kms kmsOptions) hostResult {
+	var err error
 	if st.TLS != nil {
 		// The enclave must describe the key it is being verified with.
 		if st.TLS.SPKISHA256 != r.SPKIHash {
@@ -367,7 +381,13 @@ func verify(ctx context.Context, client *http.Client, url string, expected map[u
 		}
 		r.Anchors = st.Anchors
 	}
-	pcr0 := hex.EncodeToString(expected[0])
+	if st.Mail != nil {
+		if err := checkSentMail(st.Mail, kms.now); err != nil {
+			r.Error = "mail the enclave sends: " + err.Error()
+			return r
+		}
+		r.SentMail = st.Mail
+	}
 	if st.Root != nil {
 		if r.Root, err = checkRoot(st.Root, pcr0, kms.now); err != nil {
 			r.Root = nil
@@ -832,6 +852,7 @@ func printHuman(w io.Writer, source string, expected map[uint][]byte, results []
 		printKMS(w, r, hex.EncodeToString(expected[0]))
 		printSigstore(w, r.Sigstore)
 		printAnchors(w, r.Anchors, time.Now())
+		printSentMail(w, r.SentMail)
 		if r.TLS != nil && r.TLS.Sealed {
 			fmt.Fprintf(w, "      TLS key created %s, kept sealed with KMS across restarts\n", r.TLS.KeyCreatedAt.UTC().Format(time.RFC3339))
 		}

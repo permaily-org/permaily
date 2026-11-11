@@ -1,0 +1,26 @@
+{
+  "name": "go-passkeys-icloud-keychain-use",
+  "source": {
+    "project": "go-passkeys/go-passkeys",
+    "url": "https://github.com/go-passkeys/go-passkeys/blob/c3a36161734a7a87d923eab584a7d08df29287a5/webauthn/webauthn_test.go#L240",
+    "license": "Apache-2.0",
+    "copyright": "The go-passkeys authors (the repository carries the Apache-2.0 licence and no copyright line)",
+    "notice": "licenses/go-passkeys.txt"
+  },
+  "made": "captured",
+  "authenticator": "iCloud Keychain (Apple Passwords), a synced passkey",
+  "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin",
+  "algorithm": "ES256",
+  "relyingParty": "localhost",
+  "origin": "http://localhost:8080",
+  "note": "The source gives the public key as a SubjectPublicKeyInfo. It is written here as the COSE_Key of the same point, the way an authenticator writes one.",
+  "use": {
+    "publicKey": "pQECAyYgASFYIDcrwdmrAHUZ45TkYdIvqkVmhq8sBQBgxKSPtgHrKwRsIlggoeSkelTHO143xC56qahlQFbrqMPoYu8gx_V0d2veymE",
+    "challenge": "Dq_hvK3bJiDKSuOSSrHFKg",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiRHFfaHZLM2JKaURLU3VPU1NySEZLZyIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6ODA4MCIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
+    "authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MdAAAAAA",
+    "signature": "MEUCIQDMI_66BWmFKXyP4jia1s01Bzm5XuaNeH-_NmvX8KaLtwIgeOCSpBTsgxKIBNQpwmgLTGX1tlaEA-npDkyUkTvUceI",
+    "expect": "accepted",
+    "synced": true
+  }
+}

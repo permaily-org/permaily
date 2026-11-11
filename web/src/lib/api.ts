@@ -1,0 +1,457 @@
+/**
+ * The web app's own API, under /api/v1/ on the app's host. The session is a cookie only the server can read,
+ * so nothing here holds one. Requests are same origin and JSON, which is what the server lets through.
+ */
+
+export type Account = {
+  id: string
+  /** `closing` once the person asked to delete the account, until its day comes or they cancel. */
+  state: 'active' | 'closing'
+  address: string
+  /** Empty when the person gave none. */
+  name: string
+  language: string
+  created_at: string
+  /** When a closing account is removed. There only while it is closing. */
+  closes_at?: string
+}
+
+export type Session = {
+  id: string
+  created_at: string
+  last_used_at: string
+  expires_at: string
+  device: string
+  current: boolean
+}
+
+export type Me = { account: Account; session: Session }
+
+export type Passkey = {
+  /** The credential's identifier, as the browser names it: base64url without padding. */
+  id: string
+  name: string
+  created_at: string
+  /** Kept by a provider that copies it to the person's other devices. */
+  synced: boolean
+}
+
+export type PasskeyList = {
+  passkeys: Passkey[]
+  /** Mail no longer signs in to the account: passkeys do, and recovery codes. */
+  passkey_only: boolean
+  recovery_codes_left: number
+}
+
+/**
+ * A passkey being made or used, between the options the browser takes and its answer. `ceremony` names it
+ * on the server, which keeps it for a few minutes and takes one answer. Neither is ever stored here.
+ */
+export type PasskeyCeremony<Options> = { ceremony: string; options: Options }
+
+export type EmailStarted = {
+  /** Names the sign-in that was started. The code is entered against it. */
+  attempt: string
+  /** Seconds the code and the link work for. */
+  expires_in: number
+}
+
+/** The providers a person can sign in with, in the order they are always offered in. */
+export const providers = ['google', 'github', 'meta', 'microsoft'] as const
+
+export type Provider = (typeof providers)[number]
+
+/** Where to send the browser to sign in at a provider, and for how many seconds its answer is taken. */
+export type ProviderStarted = { url: string; expires_in: number }
+
+/**
+ * A sign-in with a provider that waits in this browser: the provider said who the person is there, and not
+ * that an address is theirs. `address` is what the provider gave, if anything: it proves nothing.
+ */
+export type ProviderPending = {
+  provider: Provider
+  address: string
+  /** The path of the app the person was going to. */
+  return_to: string
+  /** Seconds left to confirm an address. */
+  expires_in: number
+}
+
+/** A provider account that signs in to the account. Nothing else of it is kept, so nothing else is shown. */
+export type LinkedProvider = { provider: Provider; linked_at: string }
+
+/** The codes the server answers with, plus `network` for a request that got no answer. */
+export type ApiErrorCode =
+  | 'invalid_address'
+  | 'invalid_invitation'
+  | 'invalid_code'
+  | 'too_many_requests'
+  | 'unauthorized'
+  | 'not_found'
+  | 'invalid_passkey'
+  | 'invalid_name'
+  | 'too_many_passkeys'
+  | 'last_passkey'
+  | 'passkey_needed'
+  | 'passkey_only_off'
+  | 'account_closing'
+  | 'provider_off'
+  | 'provider_failed'
+  | 'provider_unavailable'
+  | 'provider_in_use'
+  | 'provider_linked'
+  | 'invitation_needed'
+  | 'last_way_in'
+  | 'network'
+  | 'other'
+
+const known: ReadonlySet<string> = new Set([
+  'invalid_address',
+  'invalid_invitation',
+  'invalid_code',
+  'too_many_requests',
+  'unauthorized',
+  'not_found',
+  'invalid_passkey',
+  'invalid_name',
+  'too_many_passkeys',
+  'last_passkey',
+  'passkey_needed',
+  'passkey_only_off',
+  'account_closing',
+  'provider_off',
+  'provider_failed',
+  'provider_unavailable',
+  'provider_in_use',
+  'provider_linked',
+  'invitation_needed',
+  'last_way_in',
+])
+
+export class ApiError extends Error {
+  readonly code: ApiErrorCode
+  constructor(code: ApiErrorCode) {
+    super(code)
+    this.name = 'ApiError'
+    this.code = code
+  }
+}
+
+/** The code of a failure, whatever was thrown. */
+export function errorCode(error: unknown): ApiErrorCode {
+  return error instanceof ApiError ? error.code : 'other'
+}
+
+let closingHeard: (() => void) | null = null
+
+/**
+ * Whom to tell that a request was refused because the account is being deleted: the session, which then shows
+ * that and nothing else. Any request can be the one that finds out, such as a change made in a tab that was
+ * open before the deletion was asked for in another.
+ */
+export function onAccountClosing(listener: (() => void) | null) {
+  closingHeard = listener
+}
+
+/** How long a request may take before it counts as no answer. */
+const timeout = 20_000
+
+async function request<T>(
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  let response: Response
+  try {
+    response = await fetch(path, {
+      method,
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers:
+        body === undefined
+          ? { Accept: 'application/json' }
+          : { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(timeout),
+    })
+  } catch {
+    throw new ApiError('network')
+  }
+  if (response.ok) {
+    if (response.status === 204) return undefined as T
+    try {
+      return (await response.json()) as T
+    } catch {
+      throw new ApiError('other')
+    }
+  }
+  let code: unknown
+  try {
+    code = (await response.json())?.error?.code
+  } catch {
+    // An answer that is not the API's own, such as a proxy's error page.
+  }
+  if (code === 'account_closing') closingHeard?.()
+  if (typeof code === 'string' && known.has(code)) throw new ApiError(code as ApiErrorCode)
+  if (response.status === 401) throw new ApiError('unauthorized')
+  if (response.status === 404) throw new ApiError('not_found')
+  if (response.status === 429) throw new ApiError('too_many_requests')
+  throw new ApiError('other')
+}
+
+/** Asks for the sign-in message. The answer is the same whether the address has an account or not. */
+export function startEmail(address: string, invitation?: string): Promise<EmailStarted> {
+  return request(
+    'POST',
+    '/api/v1/auth/email/start',
+    invitation ? { address, invitation } : { address },
+  )
+}
+
+/**
+ * Asks whose sign-in the link of a message would end. It ends nothing: the link still works afterwards, once.
+ * The address shown to the person is this answer, never anything read from the link.
+ */
+export async function lookEmail(attempt: string, token: string): Promise<{ address: string }> {
+  const answer = await request<{ address?: unknown }>('POST', '/api/v1/auth/email/look', {
+    attempt,
+    token,
+  })
+  if (typeof answer?.address !== 'string' || answer.address === '') throw new ApiError('other')
+  return { address: answer.address }
+}
+
+/** Ends a sign-in with the code of the message or the token of its link. The server sets the session cookie. */
+export function finishEmail(
+  attempt: string,
+  proof: { code: string } | { token: string },
+): Promise<Me> {
+  return request('POST', '/api/v1/auth/email/finish', { attempt, ...proof })
+}
+
+export function me(): Promise<Me> {
+  return request('GET', '/api/v1/me')
+}
+
+export function signOut(): Promise<void> {
+  return request('POST', '/api/v1/auth/sign-out')
+}
+
+/** An account as the server answered it, or a failure: a change is never taken from an answer that is not one. */
+async function account(answer: Promise<Partial<Account> | null>): Promise<Account> {
+  const got = await answer
+  if (typeof got?.id !== 'string' || typeof got.address !== 'string') throw new ApiError('other')
+  return { ...(got as Account), name: typeof got.name === 'string' ? got.name : '' }
+}
+
+/** Changes the account's name. An empty one takes the name away. */
+export function renameAccount(name: string): Promise<Account> {
+  return account(request('PATCH', '/api/v1/account', { name }))
+}
+
+/**
+ * Asks to delete the account. It is closing from now, every other device is signed out, and it is removed
+ * when `closes_at` comes. Asking again changes nothing: the day stays.
+ */
+export function deleteAccount(): Promise<Account> {
+  return account(request('POST', '/api/v1/account/delete'))
+}
+
+/** Keeps an account that was closing: it is active again, as it was. */
+export function cancelDeletion(): Promise<Account> {
+  return account(request('POST', '/api/v1/account/delete/cancel'))
+}
+
+/** Starts a sign-in with a passkey. Nothing is asked: the passkey says which account it is for. */
+export function startPasskeySignIn(): Promise<
+  PasskeyCeremony<PublicKeyCredentialRequestOptionsJSON>
+> {
+  return request('POST', '/api/v1/auth/passkey/start')
+}
+
+/** Ends a sign-in with the browser's answer. The server sets the session cookie. */
+export function finishPasskeySignIn(ceremony: string, credential: unknown): Promise<Me> {
+  return request('POST', '/api/v1/auth/passkey/finish', { ceremony, credential })
+}
+
+/**
+ * Signs in with the account's address and one recovery code, which works once. Every refusal is the same
+ * answer, whether the address has an account or not.
+ */
+export function recover(address: string, code: string): Promise<Me> {
+  return request('POST', '/api/v1/auth/recovery', { address, code })
+}
+
+/** The account's passkeys, whether it signs in with passkeys only, and how many recovery codes are left. */
+export async function passkeys(): Promise<PasskeyList> {
+  const answer = await request<Partial<PasskeyList> | null>('GET', '/api/v1/passkeys')
+  if (!Array.isArray(answer?.passkeys)) throw new ApiError('other')
+  return {
+    passkeys: answer.passkeys,
+    passkey_only: answer.passkey_only === true,
+    recovery_codes_left:
+      typeof answer.recovery_codes_left === 'number' ? answer.recovery_codes_left : 0,
+  }
+}
+
+/** Starts making a passkey for the account that is signed in. */
+export function startPasskey(): Promise<PasskeyCeremony<PublicKeyCredentialCreationOptionsJSON>> {
+  return request('POST', '/api/v1/passkeys/start')
+}
+
+/** Ends making a passkey with the browser's answer and the name the person gave it. */
+export function finishPasskey(
+  ceremony: string,
+  name: string,
+  credential: unknown,
+): Promise<Passkey> {
+  return request('POST', '/api/v1/passkeys/finish', { ceremony, name, credential })
+}
+
+export function renamePasskey(id: string, name: string): Promise<Passkey> {
+  return request('PATCH', `/api/v1/passkeys/${encodeURIComponent(id)}`, { name })
+}
+
+/** Takes a passkey out of the account. The server refuses the last one while "passkey only" is on. */
+export function removePasskey(id: string): Promise<void> {
+  return request('DELETE', `/api/v1/passkeys/${encodeURIComponent(id)}`)
+}
+
+/**
+ * Turns "passkey only" on or off. Turning it on answers with the recovery codes, this once:
+ * the server keeps only their hash.
+ */
+export async function setPasskeyOnly(
+  on: boolean,
+): Promise<{ passkey_only: boolean; recovery_codes: string[] }> {
+  const answer = await request<{ passkey_only?: unknown; recovery_codes?: unknown } | null>(
+    'POST',
+    '/api/v1/account/passkey-only',
+    { on },
+  )
+  return { passkey_only: answer?.passkey_only === true, recovery_codes: codes(answer) }
+}
+
+/** Makes new recovery codes, shown this once. The ones before them stop working. */
+export async function newRecoveryCodes(): Promise<string[]> {
+  const made = codes(
+    await request<{ recovery_codes?: unknown } | null>('POST', '/api/v1/account/recovery-codes'),
+  )
+  if (made.length === 0) throw new ApiError('other')
+  return made
+}
+
+function codes(answer: { recovery_codes?: unknown } | null): string[] {
+  const list = answer?.recovery_codes
+  return Array.isArray(list) ? list.filter((code): code is string => typeof code === 'string') : []
+}
+
+/** Every device signed in to the account. */
+export async function sessions(): Promise<Session[]> {
+  const answer = await request<{ sessions?: unknown } | null>('GET', '/api/v1/sessions')
+  if (!Array.isArray(answer?.sessions)) throw new ApiError('other')
+  return answer.sessions as Session[]
+}
+
+/** Signs one device out. */
+export function closeSession(id: string): Promise<void> {
+  return request('DELETE', `/api/v1/sessions/${encodeURIComponent(id)}`)
+}
+
+function isProvider(name: unknown): name is Provider {
+  return (providers as readonly unknown[]).includes(name)
+}
+
+/** The providers that are on, in the order they are offered in. One this app does not know is left out. */
+export async function providersOn(): Promise<Provider[]> {
+  const answer = await request<{ providers?: unknown } | null>('GET', '/api/v1/auth/providers')
+  if (!Array.isArray(answer?.providers)) throw new ApiError('other')
+  const on: unknown[] = answer.providers
+  return providers.filter((provider) => on.includes(provider))
+}
+
+function started(answer: Partial<ProviderStarted> | null): ProviderStarted {
+  if (typeof answer?.url !== 'string' || answer.url === '') throw new ApiError('other')
+  return {
+    url: answer.url,
+    expires_in: typeof answer.expires_in === 'number' ? answer.expires_in : 0,
+  }
+}
+
+/**
+ * Starts a sign-in with a provider. The answer is where to send the browser; the server gives this browser a
+ * cookie, and takes the provider's answer only where that cookie is. `invitation` is for whoever has no account
+ * yet, and `returnTo` is the path of the app to come back to.
+ */
+export async function startProvider(
+  provider: Provider,
+  how: { invitation?: string; returnTo?: string } = {},
+): Promise<ProviderStarted> {
+  return started(
+    await request('POST', '/api/v1/auth/provider/start', {
+      provider,
+      ...(how.invitation ? { invitation: how.invitation } : {}),
+      ...(how.returnTo ? { return_to: how.returnTo } : {}),
+    }),
+  )
+}
+
+/** What waits in this browser for an address to be confirmed. `provider_failed` when nothing does. */
+export async function pendingProvider(): Promise<ProviderPending> {
+  const answer = await request<Partial<ProviderPending> | null>(
+    'GET',
+    '/api/v1/auth/provider/pending',
+  )
+  if (!isProvider(answer?.provider)) throw new ApiError('other')
+  return {
+    provider: answer.provider,
+    address: typeof answer.address === 'string' ? answer.address : '',
+    return_to: typeof answer.return_to === 'string' ? answer.return_to : '/',
+    expires_in: typeof answer.expires_in === 'number' ? answer.expires_in : 0,
+  }
+}
+
+/**
+ * Asks for the message that confirms an address for the sign-in that waits in this browser. It is a sign-in
+ * by mail: the answer is the same whether the address has an account or not.
+ */
+export function startProviderConfirm(address: string): Promise<EmailStarted> {
+  return request('POST', '/api/v1/auth/provider/confirm/start', { address })
+}
+
+/**
+ * Ends the sign-in that waits in this browser with the code of that message: the provider account is linked
+ * to the account of the address, and the server sets the session cookie.
+ */
+export function finishProviderConfirm(attempt: string, code: string): Promise<Me> {
+  return request('POST', '/api/v1/auth/provider/confirm/finish', { attempt, code })
+}
+
+/** The provider accounts that sign in to the account, the oldest first. */
+export async function linkedProviders(): Promise<LinkedProvider[]> {
+  const answer = await request<{ providers?: unknown } | null>('GET', '/api/v1/providers')
+  if (!Array.isArray(answer?.providers)) throw new ApiError('other')
+  return (answer.providers as Array<Partial<LinkedProvider> | null>).filter(
+    (linked): linked is LinkedProvider =>
+      isProvider(linked?.provider) && typeof linked.linked_at === 'string',
+  )
+}
+
+/** Starts linking a provider account to the account that is signed in. The browser comes back to `returnTo`. */
+export async function linkProvider(
+  provider: Provider,
+  returnTo?: string,
+): Promise<ProviderStarted> {
+  return started(
+    await request(
+      'POST',
+      '/api/v1/providers/start',
+      returnTo ? { provider, return_to: returnTo } : { provider },
+    ),
+  )
+}
+
+/** Takes a provider account out of the account. The server refuses the only way left to sign in. */
+export function unlinkProvider(provider: Provider): Promise<void> {
+  return request('DELETE', `/api/v1/providers/${encodeURIComponent(provider)}`)
+}

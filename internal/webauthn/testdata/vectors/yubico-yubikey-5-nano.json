@@ -1,0 +1,32 @@
+{
+  "name": "yubico-yubikey-5-nano",
+  "source": {
+    "project": "Yubico/java-webauthn-server",
+    "url": "https://github.com/Yubico/java-webauthn-server/blob/3a7edfb2609696808e8daad2508115bd43d88d3f/webauthn-server-core/src/test/scala/com/yubico/webauthn/test/RealExamples.scala#L319",
+    "license": "BSD-2-Clause",
+    "copyright": "Copyright (c) 2014-2018, Yubico AB",
+    "notice": "licenses/yubico-java-webauthn-server.txt"
+  },
+  "made": "captured",
+  "authenticator": "YubiKey 5 Nano",
+  "aaguid": "cb69481e8ff7403993ec0a2729a154a8",
+  "client": "Yubico's Python client, not a browser; judged by the members of the client data and their order: type, clientExtensions, challenge, origin",
+  "algorithm": "ES256",
+  "relyingParty": "example.com",
+  "origin": "https://example.com",
+  "creation": {
+    "format": "packed",
+    "challenge": "Y2hhbGxlbmdl",
+    "clientDataJSON": "eyJ0eXBlIjogIndlYmF1dGhuLmNyZWF0ZSIsICJjbGllbnRFeHRlbnNpb25zIjoge30sICJjaGFsbGVuZ2UiOiAiWTJoaGJHeGxibWRsIiwgIm9yaWdpbiI6ICJodHRwczovL2V4YW1wbGUuY29tIn0",
+    "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSjY2FsZyZjc2lnWEgwRgIhAMw3heLnLh7oOq4gwxQRviDPT0_VDxys8Kq2MFOfTZBzAiEAtL3D6ZqtiupoAMqntqi07OrEl5RJGJkoZ7bLwepVJQBjeDVjgVkCwTCCAr0wggGloAMCAQICBBisRsAwDQYJKoZIhvcNAQELBQAwLjEsMCoGA1UEAxMjWXViaWNvIFUyRiBSb290IENBIFNlcmlhbCA0NTcyMDA2MzEwIBcNMTQwODAxMDAwMDAwWhgPMjA1MDA5MDQwMDAwMDBaMG4xCzAJBgNVBAYTAlNFMRIwEAYDVQQKDAlZdWJpY28gQUIxIjAgBgNVBAsMGUF1dGhlbnRpY2F0b3IgQXR0ZXN0YXRpb24xJzAlBgNVBAMMHll1YmljbyBVMkYgRUUgU2VyaWFsIDQxMzk0MzQ4ODBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABHnqOyx8SXAQYiMM0j_rYOUpMXHUg_EAvoWdaw-DlwMBtUbN1G7PyuPj8w-B6e1ivSaNTB69N7O8vpKowq7rTjqjbDBqMCIGCSsGAQQBgsQKAgQVMS4zLjYuMS40LjEuNDE0ODIuMS43MBMGCysGAQQBguUcAgEBBAQDAgUgMCEGCysGAQQBguUcAQEEBBIEEMtpSB6P90A5k-wKJymhVKgwDAYDVR0TAQH_BAIwADANBgkqhkiG9w0BAQsFAAOCAQEAl50Dl9hg-C7hXTEceW66-yL6p-CE2bq0xhu7V_PmtMGKSDe4XDxO2-SDQ_TWpdmxztqK4f7UkSkhcwWOXuHL3WvawHVXxqDo02gluhWef7WtjNr4BIaM-Q6PH4rqF8AWtVwqetSXyJT7cddT15uaSEtsN21yO5mNLh1DBr8QM7Wu-Myly7JWi2kkIm0io1irfYfkrF8uCRqnFXnzpWkJSX1y9U4GusHDtEE7ul6vlMO2TzT566Qay2rig3dtNkZTeEj-6IS93fWxuleYVM_9zrrDRAWVJ-Vt1Zj49WZxWr5DAd0ZETDmufDGQDkSU-IpgD867ydL7b_eP8u9QurWeWhhdXRoRGF0YVjEo3mm9u6vuaVeN4wRgDTidR5oL6ufLTCrE9ISVYbOGUdFAAAAyMtpSB6P90A5k-wKJymhVKgAQApDelLpYd9AP-NbX7v8lJelMv5xVvJq1u4va8qaLTf2e4Tf7QL7F4nkZZnfTVBv74xF0i8794sPbpK--e0N8-SlAQIDJiABIVggXaCve37FWbdyNEXiSmuDUdsc0K-UDHnYEQ-Sc3PHxcAiWCD7VMEBw6F_IOsfg7DISuN8aT70W14W1NQCX0xjQSUnsw",
+    "expect": "short challenge"
+  },
+  "use": {
+    "challenge": "Q0hBTExFTkdF",
+    "clientDataJSON": "eyJ0eXBlIjogIndlYmF1dGhuLmdldCIsICJjbGllbnRFeHRlbnNpb25zIjoge30sICJjaGFsbGVuZ2UiOiAiUTBoQlRFeEZUa2RGIiwgIm9yaWdpbiI6ICJodHRwczovL2V4YW1wbGUuY29tIn0",
+    "authenticatorData": "o3mm9u6vuaVeN4wRgDTidR5oL6ufLTCrE9ISVYbOGUcFAAAAyQ",
+    "signature": "MEYCIQCUeExQH6ZbZxoyiYEqFdmMyIeu-klCkyREiB1ekfBItgIhAKcsV2cK-PXubj96AYk5DWU_qE-M6ZmH8AQBYW9RF56P",
+    "expect": "short challenge",
+    "client": "Yubico's Python client, not a browser; judged by the members of the client data and their order: type, clientExtensions, challenge, origin"
+  }
+}

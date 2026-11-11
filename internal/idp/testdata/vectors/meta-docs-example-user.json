@@ -1,0 +1,13 @@
+{
+  "name": "meta-docs-example-user",
+  "source": {
+    "url": "https://developers.facebook.com/docs/graph-api/overview#fields",
+    "retrieved": "2026-11-11",
+    "license": "Meta's documentation; a few lines quoted, with placeholders and nobody's data"
+  },
+  "provider": "meta",
+  "kind": "meta-user",
+  "note": "The example answer to reading a user with fields=id,name,email,picture in Meta's Graph API overview. Meta writes placeholders, not values: \"USER-ID\" is not a numeric identifier, so the answer is refused as it stands, for that reason. No public capture of a real answer of /me with an address was found.",
+  "body": "{\n  \"id\": \"USER-ID\",\n  \"name\": \"EXAMPLE NAME\",\n  \"email\": \"EXAMPLE@EMAIL.COM\",\n  \"picture\": {\n    \"data\": {\n      \"height\": 50,\n      \"is_silhouette\": false,\n      \"url\": \"URL-FOR-USER-PROFILE-PICTURE\",\n      \"width\": 50\n    }\n  }\n}",
+  "refused": "user without a numeric identifier"
+}

@@ -40,6 +40,15 @@ fuzz:
 	go test -run='^$$' -fuzz='^FuzzTrustUpdate$$' -fuzztime=200000x ./pkg/provenance
 	go test -run='^$$' -fuzz=FuzzCMS -fuzztime=500000x ./internal/keys
 	go test -run='^$$' -fuzz=FuzzParse -fuzztime=150000x ./internal/inbox
+	go test -run='^$$' -fuzz='^FuzzRegistered$$' -fuzztime=400000x ./internal/webauthn
+	go test -run='^$$' -fuzz='^FuzzAsserted$$' -fuzztime=400000x ./internal/webauthn
+	go test -run='^$$' -fuzz='^FuzzIDToken$$' -fuzztime=400000x ./internal/idp
+	go test -run='^$$' -fuzz='^FuzzClaims$$' -fuzztime=300000x ./internal/idp
+	go test -run='^$$' -fuzz='^FuzzKeys$$' -fuzztime=400000x ./internal/idp
+	go test -run='^$$' -fuzz='^FuzzTokenAnswer$$' -fuzztime=200000x ./internal/idp
+	go test -run='^$$' -fuzz='^FuzzGitHubUser$$' -fuzztime=100000x ./internal/idp
+	go test -run='^$$' -fuzz='^FuzzGitHubEmails$$' -fuzztime=300000x ./internal/idp
+	go test -run='^$$' -fuzz='^FuzzMetaUser$$' -fuzztime=300000x ./internal/idp
 
 notices:
 	bun scripts/third-party-notices.ts

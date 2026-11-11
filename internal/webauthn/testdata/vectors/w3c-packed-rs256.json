@@ -1,0 +1,34 @@
+{
+  "name": "w3c-packed-rs256",
+  "source": {
+    "project": "W3C Web Authentication Level 3, section 16 (Test Vectors)",
+    "url": "https://www.w3.org/TR/2026/REC-webauthn-3-20260825/#sctn-test-vectors-packed-rs256",
+    "license": "W3C Software and Document License, 2023 version",
+    "copyright": "Copyright © 2026 World Wide Web Consortium. https://www.w3.org/copyright/software-license-2023/",
+    "notice": "licenses/w3c.txt"
+  },
+  "made": "specification",
+  "authenticator": "the specification's generator, an RSA key of 3482 bits",
+  "aaguid": "428f8878298b9862a36ad8c7527bfef2",
+  "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin",
+  "algorithm": "RS256",
+  "relyingParty": "example.org",
+  "origin": "https://example.org",
+  "creation": {
+    "format": "packed",
+    "challenge": "vqjwdwAJvVfywN9v6p90Oifkthu-kjyGLHqtep_I5KY",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoidnFqd2R3QUp2VmZ5d045djZwOTBPaWZrdGh1LWtqeUdMSHF0ZXBfSTVLWSIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5vcmciLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSjY2FsZyZjc2lnWEcwRQIhAIuMXG6owULAMuC-aeE1PURGHFyRCZQc3alRuXbrlbazAiBNUvQGwZ4lSz_5WJvRgHD7BVrI2xL90KZzS-qdcWjpAGN4NWOBWQImMIICIjCCAcegAwIBAgIQH2-3pezoG0WJa5g6mV2l8zAKBggqhkjOPQQDAjBiMR4wHAYDVQQDDBVXZWJBdXRobiB0ZXN0IHZlY3RvcnMxDDAKBgNVBAoMA1czQzElMCMGA1UECwwcQXV0aGVudGljYXRvciBBdHRlc3RhdGlvbiBDQTELMAkGA1UEBhMCQUEwIBcNMjQwMTAxMDAwMDAwWhgPMzAyNDAxMDEwMDAwMDBaMF8xHjAcBgNVBAMMFVdlYkF1dGhuIHRlc3QgdmVjdG9yczEMMAoGA1UECgwDVzNDMSIwIAYDVQQLDBlBdXRoZW50aWNhdG9yIEF0dGVzdGF0aW9uMQswCQYDVQQGEwJBQTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLeza3VCoREgtEPHlNDJn9wloGt2WGQT2B4IYWPvb-FHpVevw04oYdkFfW1GXUcFoDEFUL3utfNe41uUJauFmYGjYDBeMAwGA1UdEwEB_wQCMAAwDgYDVR0PAQH_BAQDAgeAMB0GA1UdDgQWBBT7N7ZHvM-55U2YnqqswWM4aHA_szAfBgNVHSMEGDAWgBRFr_cVsN14Z0H-6ZbrwWVHo5MbHjAKBggqhkjOPQQDAgNJADBGAiEAuGvBKdkq_KfZhpo59w8TmjBbQHOjnrZU2BQkvtV1fZECIQDPn3xgyrfEp9Pn8AIPKBqT1P0Kn5USG5ifVpMqaIhfumhhdXRoRGF0YVkCG7-rw3QylYsGM2DTrWRhycRzWuf47dRlkqXg8BRSsuS1XQAAAABCj4h4KYuYYqNq2MdSe_7yACCZKhisyD9nUzYAwROKS0xL0jbeE2Kc8CXtF8sAsAt036QBAwM5AQAgWQG0A_____________________________________________________________________________________________________________________________________________________________________________________________________________________f_________________________________________________________________________________________________________________________________________________________gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASFDAQAB",
+    "expect": "accepted",
+    "synced": true
+  },
+  "use": {
+    "challenge": "KV9Z9fqP5ixayp4nYmx4yNo3aubYzS3SmuutYB4bxMU",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiS1Y5WjlmcVA1aXhheXA0bllteDR5Tm8zYXViWXpTM1NtdXV0WUI0YnhNVSIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5vcmciLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "authenticatorData": "v6vDdDKViwYzYNOtZGHJxHNa5_jt1GWSpeDwFFKy5LUZAAAAAA",
+    "signature": "AQY9UtfDm01DL8cGPF2T5YK9yxaInNcfiI1n2IDqcwpChJjTvI4e4R8rHsvmwpKxGMVf-q3e-oytClTdE3xR8e7Gc_G7bE0XidaCaiIrItD1hfyQH9yTMhLledGZuJ1nKqRIkTM-ahNVU2Al6CslWQJWw1OCKbVXNwg7L2uTd-SeJHLxGVL3n90NoYC1_9kBtASajwgbtAcRvvdsYq7ZQ1cfLQV1MEy1SdaNiJL5UIajD5Nxau6Bj43AbpbA1eDtTPqf2Hc9kEZLaM8UD3mGZm_5yeMwKs0FNdYNdp9GXiq1fviqvIn8z-97oypkFUqLPSa-Ipj0cLjMU3fb49_UsLRfjwHmO95s_Ha2J3H5twqifPQBUsrZOqWs14T9S5D2duLqgo0L8kAK67quQVPlg49Tf4i2IoNGeCqTqJm-Zux33kWz788xHaYyHJLmsM0Rv-ZTvz6YzujjQfAtZ9u2-cmNnoF4CQz7W3D7xtVBWZrHlK4vHU3hKG7I3owtr3sdFchDjpDZJN9cGQRSIKTIQ4wbl5u-AWzz0O7sI8OZnUiCzGRbd23pMHVmEs3G3TmBYP8Cpg",
+    "expect": "no user verification",
+    "synced": true,
+    "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin"
+  }
+}

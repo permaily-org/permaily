@@ -1,7 +1,8 @@
 import { ChevronsUpDown, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { NavLink } from 'react-router'
-import { user } from '../data/sample.ts'
+import { errorCode } from '../lib/api.ts'
+import { useSession } from '../lib/session.tsx'
 import { cx, focusRing } from '../lib/styles.ts'
 import { sections } from '../sections.ts'
 
@@ -110,17 +111,22 @@ export function Sidebar(props: SidebarProps) {
   )
 }
 
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
+/** Two letters for the collapsed sidebar: from the name, or from the address when the account has none. */
+function initials(name: string, address: string): string {
+  const words = name.split(/\s+/).filter(Boolean)
+  if (words.length === 0) return address.slice(0, 2).toUpperCase()
+  return words
     .slice(0, 2)
     .map((part) => part[0].toUpperCase())
     .join('')
 }
 
+/** Who is signed in, and the way out. */
 function AccountMenu({ compact }: { compact: boolean }) {
+  const { state, signOut } = useSession()
   const [open, setOpen] = useState(false)
+  const [leaving, setLeaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -141,20 +147,52 @@ function AccountMenu({ compact }: { compact: boolean }) {
     }
   }, [open])
 
+  if (state.status !== 'signedIn') return null
+  const { name, address } = state.me.account
+  const label = name || address
+
+  async function leave() {
+    if (leaving) return
+    setLeaving(true)
+    setError(null)
+    try {
+      await signOut()
+    } catch (failure) {
+      setLeaving(false)
+      setError(
+        errorCode(failure) === 'network'
+          ? "Couldn't sign out: Permaily can't be reached. Check your connection, then try again."
+          : "Couldn't sign out. Try again in a moment.",
+      )
+    }
+  }
+
   return (
     <div ref={ref} className="relative border-t border-rule pt-3">
       {open && (
         <div
           role="menu"
-          className="absolute bottom-full left-0 mb-2 flex w-full min-w-32 flex-col border border-rule bg-raised py-1"
+          className={cx(
+            'absolute bottom-full left-0 mb-2 flex min-w-32 flex-col border border-rule bg-raised py-1',
+            compact ? 'w-56' : 'w-full',
+          )}
         >
+          {/* The whole address: the sidebar cuts a long one short, and shows only initials when collapsed. */}
+          <p className="wrap-anywhere border-b border-rule px-3 pt-1 pb-2 font-mono text-mono text-ink-2">
+            {address}
+          </p>
           <button
             type="button"
             role="menuitem"
+            onClick={leave}
+            aria-disabled={leaving}
             className={cx('px-3 py-2 text-left text-body hover:bg-sunken', focusRing)}
           >
             Sign out
           </button>
+          <p role="alert" className="px-3 pb-2 text-small text-danger empty:hidden">
+            {error}
+          </p>
         </div>
       )}
       <button
@@ -162,27 +200,27 @@ function AccountMenu({ compact }: { compact: boolean }) {
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        title={compact ? user.name : undefined}
+        title={compact ? label : undefined}
         className={cx(
           'flex w-full items-center rounded-sm text-left',
-          compact ? 'justify-center py-1.5' : 'gap-2 px-2.5',
+          compact ? 'justify-center py-1.5' : cx('gap-2 px-2.5', !name && 'py-1.5'),
           focusRing,
         )}
       >
         {compact ? (
           <span aria-hidden className="font-mono text-mono font-medium">
-            {initials(user.name)}
+            {initials(name, address)}
           </span>
         ) : (
           <>
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="text-small font-medium">{user.name}</span>
-              <span className="truncate font-mono text-mono text-ink-2">{user.email}</span>
+              {name && <span className="truncate text-small font-medium">{name}</span>}
+              <span className="truncate font-mono text-mono text-ink-2">{address}</span>
             </span>
-            <ChevronsUpDown aria-hidden size={14} className="text-ink-2" />
+            <ChevronsUpDown aria-hidden size={14} className="shrink-0 text-ink-2" />
           </>
         )}
-        <span className="sr-only">Account menu</span>
+        <span className="sr-only">Account menu{compact ? `, ${label}` : ''}</span>
       </button>
     </div>
   )

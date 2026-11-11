@@ -1,0 +1,21 @@
+{
+  "name": "google-docs-example-id-token-claims",
+  "source": {
+    "url": "https://developers.google.com/identity/openid-connect/openid-connect#an-id-tokens-payload",
+    "retrieved": "2026-11-11",
+    "license": "CC-BY-4.0 (the content of developers.google.com)"
+  },
+  "provider": "google",
+  "kind": "id-token-claims",
+  "note": "The example payload of an ID token in Google's guide, a made-up person; the guide shows no header and no signature. It says \"email_verified\" as the text \"true\", not as a boolean.",
+  "claims": "{\"iss\": \"https://accounts.google.com\", \"azp\": \"1234987819200.apps.googleusercontent.com\", \"aud\": \"1234987819200.apps.googleusercontent.com\", \"sub\": \"10769150350006150715113082367\", \"at_hash\": \"HK6E_P6Dh8Y93mRNtsDB1Q\", \"hd\": \"example.com\", \"email\": \"jsmith@example.com\", \"email_verified\": \"true\", \"iat\": 1353601026, \"exp\": 1353604926, \"nonce\": \"0394852-3190485-2490358\"}",
+  "application": "1234987819200.apps.googleusercontent.com",
+  "nonce": "0394852-3190485-2490358",
+  "now": 1353601026,
+  "expect": {
+    "subject": "10769150350006150715113082367",
+    "address": "jsmith@example.com",
+    "verified": true,
+    "name": ""
+  }
+}

@@ -1,0 +1,119 @@
+# 0017 Accounts, sign-in and how account data is kept
+
+Status: Accepted. Sign-up by invitation, sign-in by email, sessions, outgoing mail, passkeys, "passkey only" and recovery codes are built (`internal/services/accounts`, `internal/sesmail`, `internal/webauthn`). Settings, deleting an account, the operator's tool and signing in with Google, GitHub, Meta and Microsoft too; the providers have not been tried against the real ones yet, which needs an application registered at each.
+Date: 2026-11-11 (decided on 2026-11-09)
+
+## Context
+
+F1 has one test mailbox behind a token. F2 needs people: accounts, ways to sign in, sessions, and a rule for what the operator may see of them. The operator must be able to help a user (see who is registered and their contact address), and must not be able to take an account over by writing to the table.
+
+## Decision
+
+**Ways to sign in.** Passkeys (relying party `app.permaily.com`), email (one message with a link and a six-digit code), Google, GitHub, Meta and Microsoft. A provider account is linked to an existing account on its own when the provider says the address is verified and it is the account's. Signing in with ChatGPT is left out for now.
+
+**Contact address.** Every account has one, verified. Recovery goes through it. An account can switch to "passkey only": email and every provider are turned off for sign-in, and recovery codes are issued instead.
+
+**Sign-up by invitation.** Single-use codes, made by an operator with a command-line tool and the admin token, of which the image holds only the hash.
+
+**Sessions.** Seven days without use, thirty days at most, listed and closed per device. Cookies carry the `__Host-` prefix, so the public site at the apex cannot read or overwrite them.
+
+**No second check for sensitive actions.** Changing how one signs in, approving a connection or deleting the account asks for nothing beyond the session. Accepted risk: a stolen session can do all of it until it ends.
+
+**Deleting an account.** Its connections are revoked at once and the account is locked; after seven days in which it can be cancelled, its keys are destroyed.
+
+**Four ways to keep a piece of data.**
+
+| Treatment | What | Why |
+|---|---|---|
+| Sealed (encrypted, only an enclave of the deployment reads it) | Bodies, attachments, raw mail, sender, recipients, subject, snippet, attachment names, Gmail confirmation codes, the text of the user's rules, the approved query of each connection, receipts, connection tokens, webhook and provider secrets | The operator must never see it |
+| Readable and signed (plain text with a code only the enclave can make) | Contact address, name, language, account state, dates, ways to sign in (kind, passkey public key, provider and subject), mailbox (forwarding address, state, retention), connection (vendor, state, dates, schedule) | The operator sees it to give support, and cannot change it: an address written into the table by hand would be a way into the account |
+| Hash only | Sessions, invitations, email codes, recovery codes | Whoever reads the table cannot use them |
+| Plain | Identifiers, sizes, expiry times, counters | Needed to index and expire |
+
+The public promise becomes: we see your account data, never your mail.
+
+**Changes to account data go through the enclave** (the operator's tool), never by hand in the table: what is signed would stop verifying.
+
+**Outgoing mail** (sign-in links and codes, verification, notices) goes through Amazon SES from a subdomain of its own, with the role the enclave already has. Sign-in codes pass through AWS, which is trusted already. By email the user is told only of security and access: a sign-in from a new device, a connection approved, a connection about to end, a change in how the account is signed into. Everything else is shown in the app.
+
+**English only** in the first version, for the app and for the mail it sends.
+
+## How it is built
+
+Decided while building the first piece, each to keep whoever runs the storage out of accounts.
+
+- **The account's record** is one document, readable and signed, read through `store.Anchored`. An address leads to its account through a pointer, and the pointer proves nothing: the record says which address is its own. A record that does not verify, or whose committed version is gone, is an error and never "no account", so a sign-up cannot take the address over.
+- **A sign-in that was started lives only in the enclave's memory.** Its count of wrong codes could otherwise be set back by putting an earlier copy of it in the table, and a six-digit code falls to whoever can guess without limit. A restart ends the sign-ins that were waiting; the person asks for another message.
+- **A code takes five tries, and an address ten wrong codes a day.** After that the address's messages carry only the link, which cannot be guessed, until a day passes: guessing stops and the person still signs in.
+- **Starting a sign-in answers the same, and as fast, for every address.** The lookup and the message happen after the answer. An address without an account gets a message only with an invitation; an address is sent five messages an hour at most, and an invitation starts five sign-ups an hour at most.
+- **Sessions and invitations are entries, signed with where they are stored** and kept by the hash of their secret, so one cannot be written by hand or copied into another account. How long one lasts is read from what was signed.
+- **The cookie** is `__Host-permaily-session`, `Secure`, `HttpOnly`, `SameSite=Strict`. A request that changes something must also come from the app's own origin (`Origin`, `Sec-Fetch-Site`).
+
+- **The link asks before it signs in.** A link can be sent on by whoever asked for it, to sign another person into the asker's account. The page that opens it asks whose sign-in it is (`POST /api/v1/auth/email/look`, which ends nothing and is answered only with the link's token), shows the address and waits for the person. The code needs none of this: it is typed in the browser that asked.
+- **Outgoing mail** is from `no-reply@mail.permaily.com` (`mail_from` in `deploy/enclave.json`): a domain used for nothing else, signed with DKIM by SES, with DMARC set to refuse what fails. Nothing is received there. An image without `mail_from` has no accounts. The administrator of the AWS account could make SES keep a copy of what is sent, so the enclave reads those settings and tells (ADR 0021).
+
+### Passkeys, "passkey only" and recovery codes
+
+- **WebAuthn is checked by this repository's own code** (`internal/webauthn`): what a browser answers when a passkey is made and when it is used, for ES256, EdDSA and RS256 keys. No attestation is asked for (`attestation: "none"`) and none is trusted: which device holds the key does not matter here. A library would bring TPM, JWT and metadata code into the image; the checks are compared with a known library in `tests/webauthn-differential`, the way `pkg/provenance` is.
+- **Checked against what real devices answer.** The checks are strict (a key holds exactly the fields of its algorithm, no CBOR tags, client data with no member twice), so they are run on 96 public captures of real authenticators and browsers (`internal/webauthn/testdata/vectors`): none is refused for a reason other than the ones meant (no user verification, an algorithm not offered, a use that carries a credential). No public capture was found for several password managers, for a sign-in from another device, or for current Safari and Firefox as such: the first sign that one of them is refused would come from a person.
+- **The relying party** is the app's host (`app.permaily.com`) and the only origin accepted is the app's. Passkeys are discoverable (`residentKey: required`) and need the person (`userVerification: required`). The user handle is the account's identifier, so the answer to a sign-in says which account it is for and no address is asked: signing in with a passkey tells nobody who has an account.
+- **A ceremony lives only in the enclave's memory**, like a sign-in by mail: a challenge of 32 random bytes, five minutes, once, a bounded number at a time. A restart ends the ones that were waiting.
+- **Passkeys are part of the account's record** (signed, anchored): the credential's identifier, its public key as the authenticator gave it, a name, when it was made and whether it is synced. So one written into the table by hand is not a way in, and one that was removed does not come back. Twenty at most.
+- **The signature counter is not kept.** Synced passkeys always say zero, and keeping it would write a locked commit for every sign-in. Accepted: a copied authenticator is not noticed by its counter.
+- **"Passkey only"** needs a passkey, and from then on a sign-in by mail for that address sends nothing (the answer stays the same) and one that was already started is refused when it ends. Turning it on makes ten recovery codes, shown once and kept by their hash in the account's record; each works once, with the account's address, and is taken out of the record when used, so it does not come back either. Five wrong recovery codes an hour for an address, counted in memory. Turning the mode off, or asking for new codes, drops the old ones.
+- **Removing a passkey** is refused for the last one while "passkey only" is on: the account would have no way in but recovery codes.
+- **Every failure of a passkey ceremony is the same error** (`invalid_passkey`), and of a recovery the same as a wrong code (`invalid_code`): none says which part was wrong.
+- **A recovery code** is sixteen characters of the invitation alphabet, shown in four groups; its hash is taken with the account's identifier. Wrong ones are counted only for an address whose account has "passkey only" on, so made-up addresses do not fill the memory, and past the limit the right code is refused too with the same error, never with one that would say such an account exists. An address without an account costs the storage the same reads as one with.
+- **When too many ceremonies wait** (ten thousand), the oldest is dropped and the new one is kept: anyone can start a sign-in, so refusing new ones would let anyone keep everybody out.
+- **Changes to an account's record are made one at a time** inside an enclave (`change`). `store.Records` has no conditional write, so two enclaves running at once could undo each other's change to one account; one enclave runs today, and this has to be closed in `internal/store` before there are two.
+- **Not done on purpose:** the synced flag of a passkey is not read again at each sign-in, turning "passkey only" on closes no session, a recovery leaves the mode on, and no message is sent yet when the ways to sign in change (the notices by mail come with step 9 of the plan).
+
+The web app's API for this, all under `/api/v1/`, JSON, binary values as base64url without padding in the shapes of `PublicKeyCredential.toJSON()`:
+
+| Request | Needs | Answers |
+|---|---|---|
+| `POST auth/passkey/start` | nothing | `{ceremony, options}`: the options of `navigator.credentials.get` |
+| `POST auth/passkey/finish` `{ceremony, credential}` | nothing | the account and its session, with the cookie, as signing in by mail does |
+| `POST auth/recovery` `{address, code}` | nothing | the same |
+| `GET passkeys` | a session | `{passkeys: [{id, name, created_at, synced}], passkey_only, recovery_codes_left}` |
+| `POST passkeys/start` | a session | `{ceremony, options}`: the options of `navigator.credentials.create` |
+| `POST passkeys/finish` `{ceremony, name, credential}` | a session | the passkey made |
+| `PATCH passkeys/{id}` `{name}` | a session | the passkey |
+| `DELETE passkeys/{id}` | a session | nothing (204) |
+| `POST account/passkey-only` `{on}` | a session | `{passkey_only, recovery_codes}`: the codes when it was turned on |
+| `POST account/recovery-codes` | a session, "passkey only" on | `{recovery_codes}`: ten new ones |
+
+### Settings, deleting an account and the operator's tool
+
+- **The name** is changed by the person (`PATCH account {name}`), one printable line of at most eighty characters. The contact address cannot be changed yet: it is how the account is found and recovered, and changing it needs the new one verified first.
+- **Deleting an account takes seven days.** Asking for it (`POST account/delete`) sets the account's state to `closing` with the day it ends, in the anchored record, and closes every other session. Until that day the person can still sign in, sees only that the account is closing, and can cancel (`POST account/delete/cancel`); every other change is refused (`account_closing`). Connections, when they exist, are revoked the moment it is asked.
+- **What deleting removes.** When the day comes the enclave removes the sessions, the pointer from the address, the entry in the list of accounts and the record itself, and commits that the record is gone, so an earlier copy put back in the table does not bring the account back, and the address can sign up again with an invitation. An account that is due is also removed the moment anyone tries to use it, so taking its entry out of the list of what is closing does not keep it alive.
+- **Only the newest version of an account's record is kept.** `store.Anchored` writes each version under its own name; for accounts the one before is deleted once the new one is committed, so a name or a passkey that was removed does not stay in the table. A version that failed to be deleted is harmless (it is not the committed one) and is removed with the account.
+- **Lists are entries that prove nothing.** The list of accounts (for the operator's tool) and the list of accounts that are closing (for the enclave to find the ones that are due) are entries written next to the record. What is shown or acted on is always the signed, anchored record they point to: an entry written by hand lists nothing and deletes nothing.
+- **The order of a removal**: the pointer from the address (only if it still leads to this account), the entry in the list of accounts, the sessions, the record (the commit that it is gone, then every stored version), and last the entry in the list of what is closing. The record goes after everything that is found through it, and while it stands it says the account is due, so nothing uses it and every use or pass of the loop starts again from the first step. A failure in the middle leaves an account nobody can use, never one half usable.
+- **Details.** The day is seven times twenty-four hours from the request, to the second. Asking again keeps the day. A recovery code works while closing: it may be the only way in to cancel. An empty name is allowed. The loop runs every ten minutes. Every request with a session reads the account's record, so a session of an account that is due, or one put back after the account was removed, does nothing; it costs one anchored read a request, which a short memory of records would save if it ever matters.
+- **The operator's tool only looks** (`GET /v1/admin/accounts`, `GET /v1/admin/accounts/{id}`, with the admin token; `scripts/accounts.sh`): the identifier, the address, the name, the state, dates, how many passkeys and sessions, whether "passkey only" is on. It is what the enclave vouches for, where the table is only what is stored. It changes nothing: a person deletes their own account.
+
+### Google, GitHub, Meta and Microsoft
+
+- **The flow** is OAuth's authorization code with PKCE (S256), a state and, where the provider signs who the person is, a nonce. Starting (`POST auth/provider/start {provider, invitation}`) answers the provider's address to go to and sets a cookie for this browser alone (`__Host-permaily-provider`, `HttpOnly`, `Secure`, `SameSite=Lax`, ten minutes); what was started lives in the enclave's memory, once, for ten minutes, bounded. The provider sends the browser back to `GET /api/v1/auth/provider/callback`, which ends it only for the browser that started it (the cookie): an answer of the provider carried to another person's browser signs nobody in, which is the same hole the sign-in link had.
+- **Who the person is** comes from the provider over TLS that ends in the enclave. Google and Microsoft sign it (an ID token, RS256, checked by this repository's own code against the keys the provider publishes: issuer, audience, expiry, nonce); GitHub and Meta are asked with the access token just received (`/user` and `/user/emails`; `/me`). The access token is used for that and thrown away: nothing of the provider is kept but which provider and which subject.
+- **A provider account leads to an account by its subject**, never by its address: the pointer `login#<provider>#<subject>` proves nothing, and the account's record lists the provider and the subject.
+- **The first time**, the provider's address decides. If it is verified and an account has it, the provider is linked to that account (decided on 2026-11-09). If it is verified and no account has it, an account is made, with an invitation as for any sign-up. If it is not verified, the provider proved who the person is there and not that the address is theirs: the address is confirmed by a message with a code, as signing in by mail does, before anything is linked or made.
+- **What counts as verified.** Google: `email_verified`. GitHub: the primary address, when GitHub says it is verified. Microsoft: only when the token says the owner of the address's domain was verified (`xms_edov`) or the account is a personal one; a work or school account's `email` is whatever its administrator typed, and trusting it has let people take over accounts elsewhere. Meta: never, since it says nothing of whether an address is verified; a Meta sign-in always confirms the address by mail the first time.
+- **"Passkey only" turns providers off** for signing in, as it does mail. A provider can be unlinked in Settings unless it is the only way left to sign in.
+- **The providers' secrets** (each application's client secret) are given to the enclave by the operator over the attested TLS connection (`PUT /v1/admin/providers/{provider}`, with the admin token) and kept sealed under the root secret, like the TLS key. They are not in the image, where they would be public. A provider with no secret given is off, and the app does not offer it (`GET auth/providers`).
+- **Details.** One account of each provider for an account. Linking from Settings is a request of its own that remembers the session's account, since the session cookie is `Strict` and does not travel with the provider's answer; a provider account whose vouched address is another account's is refused there. Confirming an address takes the code only: the link of that message signs in by mail and links nothing. An account that is closing is not signed in by a provider's first time. Removing an application's secret turns the provider off and keeps the links. After the answer the browser is sent only to a path of the app. A failure reaches the app as one of seven fixed reasons, of which the one a stranger can cause (`provider_failed`) covers every cause they could learn from.
+- **Not confirmed until tried against the real providers** (it needs an application registered at each): that Meta takes PKCE together with the client secret, a POST to its token address, and the proof of the secret together with a bearer token; the real shape of Microsoft's `xms_edov`; that GitHub takes the verifier alongside the secret. Meta's Graph API version is part of the address (`v27.0`) and has to be raised before Meta retires it.
+- **Accepted.** Whoever writes to the storage can put back an old pointer from a subject to an account, which a signature made valid once. It lets nobody into an account they could not enter already: the record no longer lists the provider, so that provider account is asked to confirm again; and if its former owner links it again, it stays listed by two records.
+- **What it rests on.** Each provider is trusted for the accounts linked to it: one that lies about who signed in, or (Google, GitHub, Microsoft) about an address being verified, takes those accounts. "Passkey only" is the way out. The operator, who registered the applications, knows the client secrets; with them nobody can make a signed token or an answer of the provider, which reach the enclave over TLS that the host cannot open.
+
+Accepted: sessions are signed and not anchored. A session that was closed and is put back in the table by whoever runs the storage works again for whoever still holds its cookie, until its thirty days end. Anchoring each session would write a locked commit for every sign-in.
+
+## What it rests on, and what is left
+
+- The records whose going back would matter here (ways to sign in, the "passkey only" switch, account state) go through `store.Anchored` (ADR 0016), so an earlier copy of them is refused.
+- A provider that lies about a verified address can take over the account with that address. The "passkey only" mode is the way out for whoever does not accept that.
+- SES starts in a sandbox: production access has to be asked of AWS.
+- Sign-in by mail rests on the person's mail provider, on AWS and, as far as ADR 0021 does not close it, on whoever administers the AWS account. "Passkey only" rests on none of them.
+- To design while building: the operator's tool, rate limits on sign-in and codes, and the exact wording of each message.

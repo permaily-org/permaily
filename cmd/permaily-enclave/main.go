@@ -54,8 +54,11 @@ type config struct {
 	anchorBucket        string
 	anchorRetentionDays int
 	credentialsPort     uint32
-	dohEndpoint         string
-	logPort             uint32
+	// mailFrom is the address the service's own mail is sent from, through
+	// SES. Empty leaves accounts off: nobody could sign in.
+	mailFrom    string
+	dohEndpoint string
+	logPort     uint32
 
 	// The root secret (ADR 0013). awsAccount is where release keys must live,
 	// and releases says which builds may receive the root secret.
@@ -91,6 +94,7 @@ func main() {
 	flag.StringVar(&cfg.s3Bucket, "s3-bucket", "", "S3 bucket for raw messages")
 	flag.StringVar(&cfg.anchorBucket, "anchor-bucket", "", "S3 bucket with Object Lock for the commits of the records that must not be put back to an earlier copy")
 	flag.IntVar(&cfg.anchorRetentionDays, "anchor-retention-days", 0, "days S3 keeps each commit, whatever anyone asks")
+	flag.StringVar(&cfg.mailFrom, "mail-from", "", "address the service's own mail is sent from, through SES; empty leaves accounts off")
 	flag.StringVar(&cfg.dohEndpoint, "doh-endpoint", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS endpoint for DKIM lookups")
 	flag.Parse()
 
@@ -102,6 +106,10 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// providerCallback is where a provider sends the browser back, on the app's
+// host. It is registered with each provider, to the letter.
+const providerCallback = "/api/v1/auth/provider/callback"
 
 func uint32Flag(dst *uint32) func(string) error {
 	return func(s string) error {
@@ -135,6 +143,28 @@ func run(cfg config, log *slog.Logger) error {
 		hosts.MTASTS: router.MTASTSPolicy(hosts.Inbox, cfg.mtaSTSMode, 604800),
 	}
 
+	if p.accounts != nil {
+		// The web app and its own API share a host, so the session cookie
+		// never leaves it. Invitations are the operator's, on the API host.
+		app := http.NewServeMux()
+		app.Handle("/api/", httpapi.AccountsAPI(p.accounts, log))
+		for path, h := range p.devRoutes {
+			app.Handle(path, h)
+		}
+		app.Handle("/", webui.Handler())
+		byHost[hosts.App] = app
+		api.Handle("/v1/admin/invitations", httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Invitations(p.accounts, log)))
+		// The operator's tool looks at accounts and changes none.
+		operator := httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Accounts(p.accounts, log))
+		api.Handle("/v1/admin/accounts", operator)
+		api.Handle("/v1/admin/accounts/", operator)
+		// The applications registered at Google, GitHub, Meta and Microsoft:
+		// their secrets come in here, over the attested connection.
+		providers := httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.ProviderApps(p.accounts, log))
+		api.Handle("/v1/admin/providers", providers)
+		api.Handle("/v1/admin/providers/", providers)
+	}
+
 	if cfg.mailboxID != "" {
 		mailbox := inbox.New(inbox.Config{MailboxID: cfg.mailboxID, Address: cfg.mailboxAddress}, p.store, p.keys, p.auth, log)
 		go func() {
@@ -165,7 +195,7 @@ func run(cfg config, log *slog.Logger) error {
 
 	common := map[string]http.Handler{
 		"/attestation": httpapi.Attestation(p.attester, p.certs.UserData),
-		"/status":      httpapi.Status(httpapi.StatusSources{Root: p.rootStatus, TLS: p.certs.Status, Sigstore: p.sigstore, Anchors: p.anchors}),
+		"/status":      httpapi.Status(httpapi.StatusSources{Root: p.rootStatus, TLS: p.certs.Status, Sigstore: p.sigstore, Anchors: p.anchors, Mail: p.mail}),
 		"/version":     httpapi.Version(),
 	}
 	srv := &http.Server{

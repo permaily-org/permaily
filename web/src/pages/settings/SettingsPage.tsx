@@ -1,19 +1,12 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router'
-import {
-  Button,
-  Dialog,
-  InfoTip,
-  SectionHeading,
-  TextAction,
-  ViewSwitch,
-} from '../../components/ui/index.ts'
-import { connections, user } from '../../data/sample.ts'
+import { InfoTip, SectionHeading, TextAction, ViewSwitch } from '../../components/ui/index.ts'
 import { pagePadding } from '../../lib/styles.ts'
 import { applyTheme, readTheme, saveTheme, type Theme } from '../../lib/theme.ts'
-import { solidDanger } from '../accounts/styles.ts'
+import { DeleteAccount } from './account/DeleteAccount.tsx'
+import { Profile } from './account/Profile.tsx'
 import { ExportReady } from './ExportReady.tsx'
 import { EditableRow, NotificationRow, SettingRow } from './rows.tsx'
+import { SignIn } from './signin/SignIn.tsx'
 
 const notificationOptions = [
   { id: 'requests', title: 'New connection requests', on: true },
@@ -30,8 +23,6 @@ const themeOptions: Array<{ value: Theme; label: string }> = [
 ]
 
 export function SettingsPage() {
-  const [deleting, setDeleting] = useState(false)
-
   return (
     <div className={pagePadding}>
       <h1 className="text-display font-medium">Settings</h1>
@@ -48,119 +39,8 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <section
-        aria-labelledby="delete-account"
-        className="mt-8 flex flex-col items-start gap-3 border border-danger px-4 py-4 sm:flex-row sm:items-center sm:gap-6 sm:px-5"
-      >
-        <h2 id="delete-account" className="min-w-0 flex-1 font-medium">
-          Delete your account
-        </h2>
-        <Button variant="danger" onClick={() => setDeleting(true)}>
-          Delete my account
-        </Button>
-      </section>
-
-      <DeleteAccountDialog open={deleting} onClose={() => setDeleting(false)} />
+      <DeleteAccount />
     </div>
-  )
-}
-
-function Profile() {
-  const [name, setName] = useState(user.name)
-  const [email, setEmail] = useState(user.email)
-  const [language, setLanguage] = useState('English')
-
-  return (
-    <section aria-labelledby="profile">
-      <SectionHeading id="profile" title="Profile" />
-      <EditableRow label="Name" value={name} onSave={setName} actionLabel="Edit" />
-      <EditableRow label="Contact email" value={email} onSave={setEmail} type="email" mono />
-      <EditableRow
-        label="Language"
-        value={language}
-        onSave={setLanguage}
-        options={['English', 'Español', 'Català', 'Français', 'Deutsch']}
-      />
-    </section>
-  )
-}
-
-const otherSession = { id: 'iphone', device: 'iPhone, Safari', seen: '2 days ago' }
-
-function SignIn() {
-  const [passkeys, setPasskeys] = useState(['MacBook, added 6 March'])
-  const [sessions, setSessions] = useState([
-    { id: 'this', device: 'MacBook, Firefox', seen: 'This device' },
-    otherSession,
-  ])
-  const [reviewing, setReviewing] = useState(false)
-  const newPasskey = 'This browser, added today'
-
-  return (
-    <section aria-labelledby="sign-in">
-      <SectionHeading id="sign-in" title="Sign-in" />
-      {passkeys.length === 0 ? (
-        <SettingRow label="Passkey">
-          <span className="text-ink-2">
-            None. You sign in with a link sent to your contact email.
-          </span>
-        </SettingRow>
-      ) : (
-        passkeys.map((passkey) => (
-          <SettingRow
-            key={passkey}
-            label="Passkey"
-            action={
-              <TextAction
-                onClick={() => setPasskeys((list) => list.filter((p) => p !== passkey))}
-                aria-label={`Remove passkey ${passkey}`}
-              >
-                Remove
-              </TextAction>
-            }
-          >
-            {passkey}
-          </SettingRow>
-        ))
-      )}
-      <SettingRow
-        label="Sessions"
-        action={
-          <TextAction aria-expanded={reviewing} onClick={() => setReviewing((v) => !v)}>
-            {reviewing ? 'Done' : 'Review'}
-          </TextAction>
-        }
-      >
-        {sessions.length === 1 ? '1 device signed in' : `${sessions.length} devices signed in`}
-      </SettingRow>
-      {reviewing && (
-        <ul className="border-b border-rule py-1.5 sm:pl-[132px]">
-          {sessions.map((session) => (
-            <li
-              key={session.id}
-              className="flex items-center justify-between gap-3 py-1.5 text-small"
-            >
-              <span>
-                {session.device} <span className="text-ink-2">· {session.seen}</span>
-              </span>
-              {session.id !== 'this' && (
-                <TextAction
-                  size="sm"
-                  onClick={() => setSessions((list) => list.filter((s) => s.id !== session.id))}
-                >
-                  Sign out
-                </TextAction>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      {!passkeys.includes(newPasskey) && (
-        <TextAction className="mt-2.5" onClick={() => setPasskeys((list) => [...list, newPasskey])}>
-          Add a passkey
-        </TextAction>
-      )}
-    </section>
   )
 }
 
@@ -246,35 +126,5 @@ function YourData() {
       </SettingRow>
       {exported && <ExportReady />}
     </section>
-  )
-}
-
-function DeleteAccountDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const navigate = useNavigate()
-
-  return (
-    <Dialog open={open} onClose={onClose} label="Delete your account">
-      <h2 className="text-heading font-medium">Delete your account?</h2>
-      <p className="mt-3 text-body text-ink-2">
-        All {connections.length} connections lose access now, and your rules and receipts are
-        deleted. This can't be undone, and Permaily can't recall mail connections have already
-        received.
-      </p>
-      <div className="mt-6 flex flex-wrap gap-3">
-        <button
-          type="button"
-          className={solidDanger}
-          onClick={() => {
-            onClose()
-            navigate('/')
-          }}
-        >
-          Delete everything
-        </button>
-        <Button variant="secondary" onClick={onClose}>
-          Keep my account
-        </Button>
-      </div>
-    </Dialog>
   )
 }

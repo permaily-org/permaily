@@ -2,7 +2,9 @@ package keys
 
 import (
 	"context"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"maps"
 	"slices"
 
@@ -48,4 +50,10 @@ func (l *Local) NewDataKey(_ context.Context, c map[string]string) (DataKey, err
 // Unwrap implements Service.
 func (l *Local) Unwrap(_ context.Context, wrapped []byte, c map[string]string) ([]byte, error) {
 	return envelope.Open(l.master, wrapped, contextAAD(c))
+}
+
+// Derive returns a key for one purpose, as Root.Derive does from the root
+// secret.
+func (l *Local) Derive(_ context.Context, purpose string) ([]byte, error) {
+	return hkdf.Key(sha256.New, l.master, nil, purpose, sha256.Size)
 }

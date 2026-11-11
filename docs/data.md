@@ -25,8 +25,22 @@ Plaintext outside the enclave: ids, sizes, timestamps, retention period. Message
 
 | Data | Where | Protection | Retention | Deletion |
 |---|---|---|---|---|
-| Grants and audit log | DynamoDB | Encrypted per user; audit log hash-chained | Account lifetime (audit: to decide) | With the account |
-| Account (passkeys, Google ID) | DynamoDB | Encrypted per user | Account lifetime | With the account |
+| Account: contact address, name, language, state, ways to sign in (ADR 0017). Built; on in production from the release that sends mail | DynamoDB, `pk=system`, `sk=record#account-<id>@<version>-<hash>`, as text; the pointer from the address at `pk=login#email#<address>`; its commits (the hash of the name, a version, the hash of the item) in the anchors bucket, which keeps them ten years | Readable by the operator and signed by the enclave, so it cannot be changed by hand; an earlier copy is refused (ADR 0016) | Account lifetime | Seven days after the account is deleted |
+| The list of accounts and the list of accounts that are closing: one entry each, with the account's identifier and a time | DynamoDB, `pk=accounts` and `pk=closing` | Signed; they prove nothing by themselves, the record does | With the account | With the account |
+| Sessions (device as the browser describes itself, times of creation and last use). Built; on in production from the release that sends mail | DynamoDB, `pk=account#<id>`, `sk=session#<id>` | Signed; the secret only by its hash | Seven days without use, thirty at most (DynamoDB TTL) | When closed, or when they end |
+| Invitations. Built; on in production from the release that sends mail | DynamoDB, `pk=invitation#<hash of the code>` | Signed; the code only by its hash | Thirty days, or until used | When used |
+| A sign-in by email that was started: the address, the hashes of its code and link | The enclave's memory only | Never stored | Ten minutes | When used, when it ends, or when the enclave stops |
+| The sign-in message itself: the address, a six-digit code and a link | In transit through Amazon SES, to the person's mail provider | TLS from the enclave to SES. AWS reads it; the enclave sends only while SES says nobody else is given a copy (ADR 0021) | Not kept by Permaily. SES keeps the addresses that bounced or complained (its suppression list) | By hand, from the suppression list |
+| Passkeys: the credential's identifier, its public key, a name, when it was made, whether it is synced. Never the private key, which stays with the person's authenticator | In the account's record | Readable and signed, an earlier copy refused: a passkey written by hand is not a way in, and a removed one does not come back | Until removed, or account lifetime | When removed, or with the account |
+| Linked providers: which provider, the provider's identifier of the person's account there, and when it was linked. Not the address or the name the provider gave, and no token | In the account's record; a pointer from the provider's identifier at `pk=login#<provider>#<identifier>` | Readable and signed, an earlier copy refused | Until unlinked, or account lifetime | When unlinked, or with the account |
+| The applications registered at the providers: client id and client secret | DynamoDB, the record `provider-apps` | Sealed under the root secret, an earlier copy refused | Until replaced or removed by the operator | By the operator |
+| A sign-in with a provider that was started, or that waits for an address to be confirmed | The enclave's memory only | Never stored | Ten minutes; twenty while an address is confirmed | When used, when it ends, or when the enclave stops |
+| Recovery codes, and the "passkey only" switch | In the account's record | The switch readable and signed; the codes only by their hash | Until used, replaced, or the switch is turned off | When used: a used code does not come back |
+| A passkey ceremony that was started: its challenge, and for making a passkey the account | The enclave's memory only | Never stored | Five minutes | When used, when it ends, or when the enclave stops |
+| Connections: vendor, state, dates and schedule readable and signed; the approved query, tokens and webhook secrets sealed (ADR 0019) | DynamoDB | As said; an earlier copy is refused, so a revoked connection does not come back | Until the connection ends or is revoked | With the connection |
+| The person's rules, with their text (ADR 0019) | DynamoDB | Sealed | Account lifetime | With the account |
+| What the model said of a message and a topic (ADR 0020) | DynamoDB | Sealed | As long as the message | With the message |
+| Receipts of what left, and of what was refused (ADR 0019) | DynamoDB | Sealed, chained by hash, the head anchored | Account lifetime: they outlive the mail | With the account |
 
 ## Subprocessors (planned)
 
@@ -35,10 +49,12 @@ Plaintext outside the enclave: ids, sizes, timestamps, retention period. Message
 | Amazon Web Services | Compute (Nitro Enclaves), storage (S3, DynamoDB), keys (KMS), outgoing mail (SES) | Encrypted content and metadata |
 | Cloudflare | DNS for permaily.com; DNS-over-HTTPS resolver for DKIM checks (`cloudflare-dns.com`) | Hostnames; the domains and DKIM selectors of incoming mail senders |
 | Let's Encrypt | TLS certificates | Hostnames |
-| LLM provider (F3, to decide) | Classification | Message content needed for the user's rules, under the provider's no-training terms |
+| Google, GitHub, Meta, Microsoft (only for a person who chooses to sign in with one) | Saying who signed in | That the person signed in to Permaily, and when. Nothing of their mail |
+| OpenAI (ADR 0020) | Deciding `about` conditions and removals by meaning; turning a rule written in plain words into a formula | The subject or the body text of the messages where exact conditions did not settle the matter; the text of a rule. Until zero data retention is approved for the organization, under OpenAI's ordinary retention |
 
 ## TODO
 
 - [x] Default retention: 90 days, configurable to 7, 30, 180 or 365.
-- [ ] Decide audit log retention (F2).
-- [ ] Choose the F3 LLM provider and document its data terms before enabling classification.
+- [x] Receipts are kept for as long as the account (ADR 0019).
+- [x] The model provider is OpenAI (ADR 0020).
+- [ ] Zero data retention approved by OpenAI, before real users.

@@ -23,6 +23,10 @@ import (
 // nothing can be removed or replaced by anyone in the account (Commits). A
 // record is read by its newest commit: the value that was stored then, or
 // nothing. Never an earlier one.
+//
+// A record is removed for good the same way: a commit says it is gone
+// (Commit.Gone), and from then on it is not there, whatever is put back in
+// the storage, until it is stored again as a later version.
 
 // ErrLost means the newest version of a record that was committed is not in
 // the storage any more, or is not what was committed. It is an ErrNotFound: a
@@ -39,13 +43,21 @@ var ErrRolledBack = errors.New("store: the commits of a record went back")
 type Commit struct {
 	Name    string
 	Version uint64
-	// Digest is the hash of the record as stored (Record.digest).
+	// Digest is the hash of the record as stored (Record.digest), or all
+	// zeros when the commit says the record is gone.
 	Digest [sha256.Size]byte
 	At     time.Time
 	// LockedUntil is until when the store keeps the commit whatever anyone
 	// asks; zero when it does not say.
 	LockedUntil time.Time
 }
+
+// Gone reports whether the commit says the record was removed. It says so
+// with a digest of zeros, which no stored value has: the commit is written
+// and authenticated like any other, so nobody can turn one kind into the
+// other, and an image from before records could be removed takes it for the
+// commit of a value that is not there (ErrLost), never for an earlier one.
+func (c *Commit) Gone() bool { return c.Digest == [sha256.Size]byte{} }
 
 // Commits is a store that only grows.
 type Commits interface {
@@ -72,9 +84,14 @@ type Regression struct {
 // zero value is not usable: set Records and Commits.
 type Anchored struct {
 	// Records holds the values, each version under a name of its own.
-	Records Records
+	Records RecordTable
 	Commits Commits
-	Now     func() time.Time
+	// OnlyNewest deletes the stored value of a version once the one after it
+	// is committed, for records whose earlier values must not stay in the
+	// storage (an account: a name or a passkey that was removed). Without it
+	// every version stays, as the TLS identity's do (ADR 0016).
+	OnlyNewest bool
+	Now        func() time.Time
 
 	mu sync.Mutex
 	// seen is the newest commit of each record this enclave read or made: what
@@ -163,19 +180,46 @@ func (a *Anchored) committed(ctx context.Context, c *Commit) (*Record, error) {
 	return rec, nil
 }
 
+// maxChanges is how many times a read or a write starts over because the
+// commits of its record changed under it.
+const maxChanges = 3
+
 // GetRecord implements Records: the value of the newest commit, ErrLost when
-// that value is gone, ErrNotFound when the record was never stored.
+// that value is gone, ErrNotFound when the record was never stored or was
+// removed.
 func (a *Anchored) GetRecord(ctx context.Context, name string) (*Record, error) {
-	head, next, err := a.head(ctx, name)
-	if err != nil {
-		return nil, err
+	var missing *Commit
+	for range maxChanges {
+		head, next, err := a.head(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		if head == nil {
+			return a.adopt(ctx, name, next)
+		}
+		if head.Gone() {
+			return nil, ErrNotFound
+		}
+		if missing != nil && head.Version == missing.Version && head.Digest == missing.Digest {
+			return nil, ErrLost
+		}
+		rec, err := a.committed(ctx, head)
+		if !errors.Is(err, ErrLost) {
+			return rec, err
+		}
+		// A write or a removal that came between the two reads deletes the
+		// value this commit names. The record is lost only if that commit is
+		// still the newest.
+		missing = head
 	}
-	if head != nil {
-		return a.committed(ctx, head)
-	}
-	// No commit yet. A record written before commits existed is under its
-	// plain name: take it as it is, once, and commit it. It stays there for
-	// the release that wrote it, should that one have to run again.
+	return nil, fmt.Errorf("store: the commits of %s keep changing", name)
+}
+
+// adopt reads a record that has no commit yet. One written before commits
+// existed is under its plain name: it is taken as it is, once, and committed.
+// It stays there for the release that wrote it, should that one have to run
+// again.
+func (a *Anchored) adopt(ctx context.Context, name string, next uint64) (*Record, error) {
 	rec, err := a.Records.GetRecord(ctx, name)
 	if err != nil {
 		return nil, err
@@ -212,19 +256,22 @@ func (a *Anchored) commit(ctx context.Context, r *Record, version uint64) error 
 
 // PutRecord implements Records: r becomes the newest version. With create it
 // fails with ErrExists when the record has a committed value that is still
-// there; a record that was lost can be created again, as a later version.
+// there; a record that was lost or removed can be created again, as a later
+// version.
 func (a *Anchored) PutRecord(ctx context.Context, r *Record, create bool) error {
-	for range 3 {
+	for range maxChanges {
 		head, next, err := a.head(ctx, r.Name)
 		if err != nil {
 			return err
 		}
 		if create {
 			if head != nil {
-				if _, err := a.committed(ctx, head); err == nil {
-					return ErrExists
-				} else if !errors.Is(err, ErrLost) {
-					return err
+				if !head.Gone() {
+					if _, err := a.committed(ctx, head); err == nil {
+						return ErrExists
+					} else if !errors.Is(err, ErrLost) {
+						return err
+					}
 				}
 			} else if _, err := a.Records.GetRecord(ctx, r.Name); err == nil {
 				return ErrExists
@@ -233,6 +280,11 @@ func (a *Anchored) PutRecord(ctx context.Context, r *Record, create bool) error 
 			}
 		}
 		err = a.commit(ctx, r, next)
+		if err == nil && a.OnlyNewest && head != nil && !head.Gone() {
+			// The write is done whatever happens here: a value that stays is
+			// not the committed one, and goes when the record is removed.
+			_ = a.Records.DeleteRecord(ctx, versioned(head))
+		}
 		if !errors.Is(err, ErrExists) {
 			return err
 		}
@@ -242,6 +294,61 @@ func (a *Anchored) PutRecord(ctx context.Context, r *Record, create bool) error 
 		// Another enclave took that version: write after it.
 	}
 	return fmt.Errorf("store: the commits of %s keep changing", r.Name)
+}
+
+// maxVersionPages bounds how many pages of stored versions one removal
+// deletes: whoever writes to the table can add them faster than they go.
+const maxVersionPages = 100
+
+// RemoveRecord removes a record for good. A commit says it is gone, and then
+// every version of it that is stored is deleted: its name, an earlier copy
+// put back in the table and a commit hidden from a plain request all lead to
+// a record that is not there (ErrNotFound, not ErrLost). The commit goes
+// first, so a failure in between leaves values nobody reads; calling it again
+// deletes them. Removing what is not there removes nothing and succeeds.
+func (a *Anchored) RemoveRecord(ctx context.Context, name string) error {
+	for range maxChanges {
+		head, next, err := a.head(ctx, name)
+		if err != nil {
+			return err
+		}
+		if head != nil && head.Gone() {
+			return a.deleteVersions(ctx, name)
+		}
+		stored, err := a.Commits.Append(ctx, Commit{Name: name, Version: next, At: a.now().UTC().Truncate(time.Second)})
+		if errors.Is(err, ErrExists) {
+			continue // another enclave wrote meanwhile: what it wrote goes too
+		}
+		if err != nil {
+			return err
+		}
+		a.mu.Lock()
+		a.remember(*stored)
+		a.mu.Unlock()
+		return a.deleteVersions(ctx, name)
+	}
+	return fmt.Errorf("store: the commits of %s keep changing", name)
+}
+
+// deleteVersions deletes everything stored of a record that was removed.
+func (a *Anchored) deleteVersions(ctx context.Context, name string) error {
+	// The versions are under the name and an @, which no record's name holds.
+	for range maxVersionPages {
+		names, err := a.Records.ListRecords(ctx, name+"@", 100)
+		if err != nil {
+			return err
+		}
+		if len(names) == 0 {
+			// What a release from before commits existed left under the name.
+			return a.Records.DeleteRecord(ctx, name)
+		}
+		for _, n := range names {
+			if err := a.Records.DeleteRecord(ctx, n); err != nil {
+				return err
+			}
+		}
+	}
+	return fmt.Errorf("store: the stored versions of %s keep coming back", name)
 }
 
 // Regressions returns the commits that were there and then were not, as far as

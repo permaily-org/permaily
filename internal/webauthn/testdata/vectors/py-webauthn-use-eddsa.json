@@ -1,0 +1,24 @@
+{
+  "name": "py-webauthn-use-eddsa",
+  "source": {
+    "project": "duo-labs/py_webauthn",
+    "url": "https://github.com/duo-labs/py_webauthn/blob/c9ba2b7dad6b76bec89e44c76c8ed81fc43287bb/tests/test_verify_authentication_response.py#L167",
+    "license": "BSD-3-Clause",
+    "copyright": "Copyright (c) 2017-2021 Duo Security, Inc. All rights reserved.",
+    "notice": "licenses/py_webauthn.txt"
+  },
+  "made": "captured",
+  "authenticator": "not named by the source; an Ed25519 key",
+  "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin",
+  "algorithm": "EdDSA",
+  "relyingParty": "localhost",
+  "origin": "http://localhost:5000",
+  "use": {
+    "publicKey": "pAEBAycgBiFYIMz6_SUFLiDid2Yhlq0YboyJ-CDrIrNpkPUGmJp4D3Dp",
+    "challenge": "eZ4eeA3O4jy5FIzqDaSJ6JDNGu0bBc5zI1DjQ_kLso1WNqkG6k5mCYf1dtQhVUiBWZWlZkzR5MFeeWCpJRUNXw",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiZVo0ZWVBM080ank1Rkl6cURhU0o2SkROR3UwYkJjNXpJMURqUV9rTHNvMVdOcWtHNms1bUNZZjFkdFFoVlVpQldaV2xaa3pSNU1GZWVXQ3BKUlVOWHciLCJvcmlnaW4iOiJodHRwOi8vbG9jYWxob3N0OjUwMDAiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MBAAAABw",
+    "signature": "RRWV8mYDRvK7YdQgdtZD4pJ2dh1D_IWZ_D6jsZo6FHJBoenbj0CVT5nA20vUzlRhN4R6dOEUHmUwP1F8eRBhBg",
+    "expect": "no user verification"
+  }
+}

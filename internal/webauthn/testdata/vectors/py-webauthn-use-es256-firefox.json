@@ -1,0 +1,24 @@
+{
+  "name": "py-webauthn-use-es256-firefox",
+  "source": {
+    "project": "duo-labs/py_webauthn",
+    "url": "https://github.com/duo-labs/py_webauthn/blob/c9ba2b7dad6b76bec89e44c76c8ed81fc43287bb/tests/test_verify_authentication_response.py#L20",
+    "license": "BSD-3-Clause",
+    "copyright": "Copyright (c) 2017-2021 Duo Security, Inc. All rights reserved.",
+    "notice": "licenses/py_webauthn.txt"
+  },
+  "made": "captured",
+  "authenticator": "not named by the source",
+  "client": "Firefox before 2023; judged by the members of the client data and their order: challenge, clientExtensions, hashAlgorithm, origin, type",
+  "algorithm": "ES256",
+  "relyingParty": "localhost",
+  "origin": "http://localhost:5000",
+  "use": {
+    "publicKey": "pQECAyYgASFYIIeDTe-gN8A-zQclHoRnGFWN8ehM1b7yAsa8I8KIvmplIlgg4nFGT5px8o6gpPZZhO01wdy9crDSA_Ngtkx0vGpvPHI",
+    "challenge": "xi30GPGAFYRxVDpY1sM10DaLzVQG66nv-_7RUazH0vI2YvG8LYgDEnvN5fZZNVuvEDuMi9te3VLqb42N0fkLGA",
+    "clientDataJSON": "eyJjaGFsbGVuZ2UiOiJ4aTMwR1BHQUZZUnhWRHBZMXNNMTBEYUx6VlFHNjZudi1fN1JVYXpIMHZJMll2RzhMWWdERW52TjVmWlpOVnV2RUR1TWk5dGUzVkxxYjQyTjBma0xHQSIsImNsaWVudEV4dGVuc2lvbnMiOnt9LCJoYXNoQWxnb3JpdGhtIjoiU0hBLTI1NiIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6NTAwMCIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ",
+    "authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MBAAAATg",
+    "signature": "MEUCIGisVZOBapCWbnJJvjelIzwpixxIwkjCCb5aCHafQu68AiEA88v-2pJNNApPFwAKFiNuf82-2hBxYW5kGwVweeoxCwo",
+    "expect": "no user verification"
+  }
+}

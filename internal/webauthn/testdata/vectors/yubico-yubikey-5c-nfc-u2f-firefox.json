@@ -1,0 +1,32 @@
+{
+  "name": "yubico-yubikey-5c-nfc-u2f-firefox",
+  "source": {
+    "project": "Yubico/java-webauthn-server",
+    "url": "https://github.com/Yubico/java-webauthn-server/blob/3a7edfb2609696808e8daad2508115bd43d88d3f/webauthn-server-core/src/test/scala/com/yubico/webauthn/test/RealExamples.scala#L295",
+    "license": "BSD-2-Clause",
+    "copyright": "Copyright (c) 2014-2018, Yubico AB",
+    "notice": "licenses/yubico-java-webauthn-server.txt"
+  },
+  "made": "captured",
+  "authenticator": "YubiKey 5C NFC, over U2F",
+  "aaguid": "00000000000000000000000000000000",
+  "client": "Firefox before 2023; judged by the members of the client data and their order: challenge, clientExtensions, hashAlgorithm, origin, type",
+  "algorithm": "ES256",
+  "relyingParty": "demo.yubico.com",
+  "origin": "https://demo.yubico.com",
+  "creation": {
+    "format": "fido-u2f",
+    "challenge": "TYD4p7LaPJjcQRlvZmXaEryYznCbS8farrjvBTPIaMc",
+    "clientDataJSON": "eyJjaGFsbGVuZ2UiOiJUWUQ0cDdMYVBKamNRUmx2Wm1YYUVyeVl6bkNiUzhmYXJyanZCVFBJYU1jIiwiY2xpZW50RXh0ZW5zaW9ucyI6e30sImhhc2hBbGdvcml0aG0iOiJTSEEtMjU2Iiwib3JpZ2luIjoiaHR0cHM6Ly9kZW1vLnl1Ymljby5jb20iLCJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIn0",
+    "attestationObject": "o2NmbXRoZmlkby11MmZnYXR0U3RtdKJjc2lnWEcwRQIhALIMxk1lmndZxLUHPct8ggYZGAXKiYEzsj5SECYGa6WbAiBt4a_4vDP-lYjvm344LxoXfEAyjEiqPIBsYsSuzidPrGN4NWOBWQLBMIICvTCCAaWgAwIBAgIEHo-HNDANBgkqhkiG9w0BAQsFADAuMSwwKgYDVQQDEyNZdWJpY28gVTJGIFJvb3QgQ0EgU2VyaWFsIDQ1NzIwMDYzMTAgFw0xNDA4MDEwMDAwMDBaGA8yMDUwMDkwNDAwMDAwMFowbjELMAkGA1UEBhMCU0UxEjAQBgNVBAoMCVl1YmljbyBBQjEiMCAGA1UECwwZQXV0aGVudGljYXRvciBBdHRlc3RhdGlvbjEnMCUGA1UEAwweWXViaWNvIFUyRiBFRSBTZXJpYWwgNTEyNzIyNzQwMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEqHn4IzjtFJS6wHBLzH_GY9GycXFZdiQxAcdgURXXwVKeKBwcZzItOEtc1V3T6YGNX9hcIq8ybgxk_CCv4z8jZqNsMGowIgYJKwYBBAGCxAoCBBUxLjMuNi4xLjQuMS40MTQ4Mi4xLjcwEwYLKwYBBAGC5RwCAQEEBAMCBDAwIQYLKwYBBAGC5RwBAQQEEgQQL8BXn4ETR-qxFrtajbkgKjAMBgNVHRMBAf8EAjAAMA0GCSqGSIb3DQEBCwUAA4IBAQCGk_9i3w1XedR0jX_I0QInMYqOWA5qOlfBCOlOA8OFaLNmiU_OViS-Sj79fzQRiz2ZN0P3kqGYkWDI_JrgsE49-e4V4-iMBPyCqNy_WBjhCNzCloV3rnn_ZiuUc0497EWXMF1z5uVe4r65zZZ4ygk15TPrY4-OJvq7gXzaRB--mDGDKuX24q2ZL56720xiI4uPjXq0gdbTJjvNv55KV1UDcJiK1YE0QPoDLK22cjyt2PjXuoCfdbQ8_6Clua3RQjLvnZ4UgSY4IzxMpKhzufismOMroZFnYG4VkJ_N20ot_72uRiAkn5pmRqyB5IMtERn-v6pzGogtolp3gn1G0ZAXaGF1dGhEYXRhWMTEbO-CrRtUZHdZHQCLCHWew-bS7LTzlHS_6mlpkl0Dt0EAAAAAAAAAAAAAAAAAAAAAAAAAAABAwNqAJZnNrdJI3M00vcUGRnsJ8jaIdmw6h0vN-otjgHKMcL4ymacqevxbk2Rb6gBAl7Zun9MwzYXBVrs5aZMPq6UBAgMmIAEhWCBJr3rb8dowo8mLlcq6vqIntuJG8KO7C4idTE1NzvUkgyJYIE7fArHgQIuZQt__H-5ujH6ZH515OqgQKSTZD9PfzXpp",
+    "expect": "no user verification"
+  },
+  "use": {
+    "challenge": "uF0u0XJg7NyFuvBVHrtBPKYBC5h-1_P9Dn9lmerQCBQ",
+    "clientDataJSON": "eyJjaGFsbGVuZ2UiOiJ1RjB1MFhKZzdOeUZ1dkJWSHJ0QlBLWUJDNWgtMV9QOURuOWxtZXJRQ0JRIiwiY2xpZW50RXh0ZW5zaW9ucyI6e30sImhhc2hBbGdvcml0aG0iOiJTSEEtMjU2Iiwib3JpZ2luIjoiaHR0cHM6Ly9kZW1vLnl1Ymljby5jb20iLCJ0eXBlIjoid2ViYXV0aG4uZ2V0In0",
+    "authenticatorData": "xGzvgq0bVGR3WR0Aiwh1nsPm0uy085R0v-ppaZJdA7cBAAAAAQ",
+    "signature": "MEYCIQCVio9swx3DxzBUr4eexfpKP2wmoeEQR0nYp_QxB_rFowIhAOIRFy-7-CP41Q65l5eJIZH49wnj-rrdPklWlBkHcoHG",
+    "expect": "no user verification",
+    "client": "Firefox before 2023; judged by the members of the client data and their order: challenge, clientExtensions, hashAlgorithm, origin, type"
+  }
+}

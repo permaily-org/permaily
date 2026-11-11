@@ -18,13 +18,16 @@ type StatusSources struct {
 	Sigstore func() *attestation.SigstoreStatus
 	// Anchors describes the records that cannot be put back to an earlier copy.
 	Anchors func() *attestation.AnchorStatus
+	// Mail describes the mail the enclave sends and whether SES would keep a
+	// copy of it; nil when the image sends no mail.
+	Mail func() *attestation.MailStatus
 }
 
 // Status returns a handler for GET /status. The response has no signature: a
 // verifier trusts it because it arrives over the TLS key bound in the
 // attestation document (attestation.FetchStatus).
 func Status(src StatusSources) http.Handler {
-	tls, root, sigstore, anchors := src.TLS, src.Root, src.Sigstore, src.Anchors
+	tls, root, sigstore, anchors, mail := src.TLS, src.Root, src.Sigstore, src.Anchors, src.Mail
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -48,6 +51,9 @@ func Status(src StatusSources) http.Handler {
 		}
 		if anchors != nil {
 			st.Anchors = anchors()
+		}
+		if mail != nil {
+			st.Mail = mail()
 		}
 		writeJSON(w, st)
 	})

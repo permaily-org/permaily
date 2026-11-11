@@ -246,6 +246,22 @@ data "cloudflare_zone" "main" {
   filter = { name = var.domain }
 }
 
+# DNSSEC: resolvers that validate refuse answers for the zone that Cloudflare
+# did not sign, so the A, CAA, MX and MTA-STS records cannot be forged on the
+# way. The domain is registered at Cloudflare too, which puts the DS record in
+# the .com registry itself. It does not replace the verifier: whoever controls
+# the Cloudflare account still controls the zone.
+resource "cloudflare_zone_dnssec" "main" {
+  zone_id = data.cloudflare_zone.main.zone_id
+  status  = "active"
+
+  lifecycle {
+    # Cloudflare answers "pending" until the DS record is in the registry,
+    # which takes from minutes to a day; that is not a change to make again.
+    ignore_changes = [status]
+  }
+}
+
 resource "cloudflare_dns_record" "enclave_a" {
   for_each = toset(var.enclave_subdomains)
   zone_id  = data.cloudflare_zone.main.zone_id

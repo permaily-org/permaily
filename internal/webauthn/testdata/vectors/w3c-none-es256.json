@@ -1,0 +1,34 @@
+{
+  "name": "w3c-none-es256",
+  "source": {
+    "project": "W3C Web Authentication Level 3, section 16 (Test Vectors)",
+    "url": "https://www.w3.org/TR/2026/REC-webauthn-3-20260825/#sctn-test-vectors-none-es256",
+    "license": "W3C Software and Document License, 2023 version",
+    "copyright": "Copyright © 2026 World Wide Web Consortium. https://www.w3.org/copyright/software-license-2023/",
+    "notice": "licenses/w3c.txt"
+  },
+  "made": "specification",
+  "authenticator": "the specification's generator",
+  "aaguid": "8446ccb9ab1db374750b2367ff6f3a1f",
+  "client": "the specification's generator; judged by the members of the client data and their order: type, challenge, origin, crossOrigin, extraData",
+  "algorithm": "ES256",
+  "relyingParty": "example.org",
+  "origin": "https://example.org",
+  "creation": {
+    "format": "none",
+    "challenge": "AMMPt4UxxGTStncdq417YDwBFi8vpIa-pw8oOuVW4TA",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiQU1NUHQ0VXh4R1RTdG5jZHE0MTdZRHdCRmk4dnBJYS1wdzhvT3VWVzRUQSIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5vcmciLCJjcm9zc09yaWdpbiI6ZmFsc2UsImV4dHJhRGF0YSI6ImNsaWVudERhdGFKU09OIG1heSBiZSBleHRlbmRlZCB3aXRoIGFkZGl0aW9uYWwgZmllbGRzIGluIHRoZSBmdXR1cmUsIHN1Y2ggYXMgdGhpczogQmtRZURqZGNUQnJYQmlBd0pUTEU1USJ9",
+    "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVikv6vDdDKViwYzYNOtZGHJxHNa5_jt1GWSpeDwFFKy5LVZAAAAAIRGzLmrHbN0dQsjZ_9vOh8AIPkfOR20ybL94OpwGJy6P7Y_V5umEiszrZT_PsMwCEvkpQECAyYgASFYIK_voW-XypstI-uGzLZAmNINuQhWBi6yScM6m2cvJt9hIlggkwpWuHovymYzSwNFir-HlxfBLMaO1zKQry4mZHlrkiA",
+    "expect": "no user verification",
+    "synced": true
+  },
+  "use": {
+    "challenge": "OcDnUhQXulTUPo3JUXT0I97pvzzYBP9tZchXyav01Ag",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiT2NEblVoUVh1bFRVUG8zSlVYVDBJOTdwdnp6WUJQOXRaY2hYeWF2MDFBZyIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5vcmciLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "authenticatorData": "v6vDdDKViwYzYNOtZGHJxHNa5_jt1GWSpeDwFFKy5LUZAAAAAA",
+    "signature": "MEYCIQD1Ck4uRAkknEqFO6NhKC8JhB303UVHoTqHeAIY3v_NOAIhAISArA8Lk1OBdPV1vxGh3V14xuSGAT-TcpXqE2U-Mx6H",
+    "expect": "no user verification",
+    "synced": true,
+    "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin"
+  }
+}

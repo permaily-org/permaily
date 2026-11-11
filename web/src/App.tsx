@@ -1,9 +1,11 @@
 import { Navigate, Route, Routes } from 'react-router'
 import { AppShell } from './components/AppShell.tsx'
+import { GuestOnly, RequireSession } from './components/SessionGate.tsx'
 import { AccountsPage } from './pages/accounts/AccountsPage.tsx'
 import { ConnectMailboxPage } from './pages/accounts/ConnectMailboxPage.tsx'
 import { ForwardingSetupPage } from './pages/accounts/ForwardingSetupPage.tsx'
 import { ActivityPage } from './pages/activity/ActivityPage.tsx'
+import { SignInPage } from './pages/auth/SignInPage.tsx'
 import { ConnectAgentPage } from './pages/connections/ConnectAgentPage.tsx'
 import { ConnectionDetailPage } from './pages/connections/ConnectionDetailPage.tsx'
 import { ConnectionsPage } from './pages/connections/ConnectionsPage.tsx'
@@ -18,29 +20,37 @@ import { SettingsPage } from './pages/settings/SettingsPage.tsx'
 export function App() {
   return (
     <Routes>
-      <Route element={<AppShell />}>
-        <Route index element={<OverviewPage />} />
-        <Route path="connections" element={<ConnectionsPage />} />
-        <Route path="connections/:vendorId" element={<ConnectionDetailPage />} />
-        <Route path="connections/:vendorId/:connectionId" element={<ConnectionDetailPage />} />
-        <Route path="rules" element={<RulesPage />} />
-        <Route path="rules/:id" element={<RuleEditorPage />} />
-        <Route path="activity" element={<ActivityPage />} />
-        <Route path="accounts" element={<AccountsPage />} />
-        <Route path="settings" element={<SettingsPage />} />
+      {/* Signing in and signing up: the only screens without a session */}
+      <Route element={<GuestOnly />}>
+        <Route path="sign-in" element={<SignInPage key="sign-in" mode="sign-in" />} />
+        <Route path="sign-up" element={<SignInPage key="sign-up" mode="sign-up" />} />
       </Route>
 
-      {/* Full-page flows without the sidebar */}
-      <Route path="connections/new" element={<ConnectAgentPage />} />
-      <Route path="accounts/new" element={<ConnectMailboxPage />} />
-      <Route path="accounts/new/forwarding" element={<ForwardingSetupPage />} />
+      <Route element={<RequireSession />}>
+        <Route element={<AppShell />}>
+          <Route index element={<OverviewPage />} />
+          <Route path="connections" element={<ConnectionsPage />} />
+          <Route path="connections/:vendorId" element={<ConnectionDetailPage />} />
+          <Route path="connections/:vendorId/:connectionId" element={<ConnectionDetailPage />} />
+          <Route path="rules" element={<RulesPage />} />
+          <Route path="rules/:id" element={<RuleEditorPage />} />
+          <Route path="activity" element={<ActivityPage />} />
+          <Route path="accounts" element={<AccountsPage />} />
+          <Route path="settings" element={<SettingsPage />} />
+        </Route>
 
-      {/* Consent screens that apps and agents send people to */}
-      <Route path="consent/trip-app" element={<ConsentAppPage />} />
-      <Route path="consent/claude" element={<ConsentAgentPage />} />
-      <Route path="consent/ledgerly" element={<WideningPage />} />
+        {/* Full-page flows without the sidebar */}
+        <Route path="connections/new" element={<ConnectAgentPage />} />
+        <Route path="accounts/new" element={<ConnectMailboxPage />} />
+        <Route path="accounts/new/forwarding" element={<ForwardingSetupPage />} />
 
-      <Route path="*" element={<Navigate to="/" replace />} />
+        {/* Consent screens that apps and agents send people to */}
+        <Route path="consent/trip-app" element={<ConsentAppPage />} />
+        <Route path="consent/claude" element={<ConsentAgentPage />} />
+        <Route path="consent/ledgerly" element={<WideningPage />} />
+
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
     </Routes>
   )
 }

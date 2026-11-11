@@ -7,7 +7,7 @@ Runbooks for production. Setup from scratch is in [deploy.md](deploy.md). Every 
 The running enclave hands the root secret to the next release, then the next release is started (ADR 0013). Nothing in AWS is edited to let a release in: each release has a KMS key of its own that only its image can use.
 
 ```sh
-old=v0.7.0 new=v0.8.0
+old=v0.8.0 new=v0.9.0
 mkdir -p /tmp/permaily-$new && cd /tmp/permaily-$new
 gh release download $new --repo permaily-org/permaily
 gh attestation verify permaily.eif --repo permaily-org/permaily --signer-workflow permaily-org/permaily/.github/workflows/release.yml --source-ref refs/heads/main
@@ -15,7 +15,7 @@ sha256sum -c SHA256SUMS --ignore-missing
 mkdir eif && mv permaily.eif pcrs.json eif/
 
 # 1. The key of the new image. deploy/tofu/production.auto.tfvars:
-#      release_keys = { "v0.7.0" = "<its PCR0>", "v0.8.0" = "<jq -r .PCR0 eif/pcrs.json>" }
+#      release_keys = { "v0.8.0" = "<its PCR0>", "v0.9.0" = "<jq -r .PCR0 eif/pcrs.json>" }
 tofu -chdir=deploy/tofu apply          # creates one KMS key and its alias; then `tofu plan` must show no changes
 
 # 2. The running enclave gives the root secret to the new release. The script
@@ -27,7 +27,7 @@ scripts/deploy.sh eif permaily-host-linux-arm64
 scripts/verify.sh $new                 # from a server with outbound port 25, add -require-smtp
 ```
 
-Then open the pull request that commits `production.auto.tfvars`.
+Then delete the key of the previous release (below), and open the pull request that commits `production.auto.tfvars`.
 
 - **The handoff is refused** (HTTP 422): the answer says why. Nothing was written and the running enclave keeps serving. The usual causes are a key that was not created yet, or files of the wrong release.
 - **The new image was started first**: it logs `waiting for the running release to hand over the root secret` and serves nothing. Start the old image again, run the handoff, start the new one.
@@ -40,7 +40,7 @@ Deploy the previous release again with `scripts/deploy.sh`. Its record and its k
 
 ## Delete the key of an old release
 
-An old image can open the root secret for as long as its key exists. Once the new release has run long enough that no rollback is planned, remove the old release from `release_keys` and apply: its key is scheduled for deletion and gone after seven days. This cannot be undone, from the moment it is applied: cancelling the deletion leaves the key disabled, and its policy lets nobody enable it again. Never remove the release that is running.
+An old image can open the root secret for as long as its key exists: a flaw found in an old release stays a way in, and whoever verifies the service has to trust that release too. So deleting the previous key is the last step of a deployment. While the service has no users, do it once the new release is verified, in the pull request that records the deployment. With users, wait one to three days of normal running that include a restart of the new release, because the old key is also the only way back. Remove the old release from `release_keys` and apply: its key is scheduled for deletion and gone after seven days. This cannot be undone, from the moment it is applied: cancelling the deletion leaves the key disabled, and its policy lets nobody enable it again. Never remove the release that is running.
 
 ## A new deployment, or losing everything
 
@@ -172,6 +172,53 @@ curl -s -X PATCH -H "Authorization: Bearer $token" -d '{"retention_days":30}' ht
 To send a test message, connect to `inbox.permaily.com:25` with STARTTLS from a server: home connections usually block outbound port 25.
 
 To forward a Gmail account: in Gmail, Settings > Forwarding > Add a forwarding address (the mailbox address), read the confirmation code from `/v1/mailbox`, enter it in Gmail, then enable forwarding.
+
+## Invite someone
+
+Signing up needs an invitation: a code that works once, for thirty days, for one new account.
+
+```sh
+scripts/invite.sh        # one; scripts/invite.sh 5 for five, at most 100 at a time
+```
+
+It prints each code once (the enclave keeps only its hash) and reads the admin token from `~/.config/permaily/admin-token`. Give the person the code, or the link `https://app.permaily.com/sign-up?invitation=<code>`. Whoever holds the admin token decides who may sign up, and nothing else of an account. An invitation that was not used cannot be taken back; it ends by itself.
+
+## See the accounts
+
+```sh
+scripts/accounts.sh               # every account: identifier, address, name, state, passkeys, sessions
+scripts/accounts.sh acc_...       # one
+```
+
+It asks the enclave (`GET /v1/admin/accounts`, with the admin token from `~/.config/permaily/admin-token`), which answers from the signed records: the table in DynamoDB shows what is stored, this shows what the enclave accepts. It changes nothing. `unreadable` counts accounts in the list whose record could not be read or does not verify: more than zero means the storage was changed by hand or is failing, and the enclave's log says which kind without naming the account.
+
+A person deletes their own account, from Settings; it is removed seven days later, within ten minutes of the moment it is due, or as soon as it is next used. Until then they can sign in and cancel. There is no way to delete an account for someone, and none to bring one back.
+
+## Sign-in with Google, GitHub, Meta and Microsoft
+
+A provider is on once the enclave has been given the application registered there:
+
+```sh
+scripts/verify.sh                                          # first: the secret goes to whoever answers
+scripts/provider.sh                                        # which are set, with their client ids
+scripts/provider.sh set google <client id>                 # asks for the secret without showing it
+pass show permaily/github | scripts/provider.sh set github <client id>
+scripts/provider.sh remove meta                            # off from then; the links are kept
+```
+
+At each provider's console the application is a web application whose only redirect address is `https://app.permaily.com/api/v1/auth/provider/callback`. The secret is kept by the enclave, sealed, and is never answered back: keep your own copy where you keep secrets, never in the repository. It survives upgrades with everything else under the root secret; after starting over (a new deployment) every provider has to be set again.
+
+- **A provider's sign-in fails for everyone.** The enclave's log says `provider` and a fixed reason: the secret or the redirect address is wrong at the provider (`invalid_provider_app`), or the provider cannot be reached (an old `permaily-host` without its hosts in the allowlist). Rotating a secret at the provider means setting it again here.
+- **Meta and Microsoft work accounts** always ask the person to confirm an address by mail the first time: neither vouches for the address (ADR 0017).
+
+## Outgoing mail
+
+The enclave sends its own mail (sign-in messages) through SES in `us-east-2`, from the address in `mail_from` of `deploy/enclave.json`, on a domain of its own (`deploy/tofu/ses.tf`: the identity, DKIM, the bounce domain with SPF, DMARC).
+
+- **Nobody receives the sign-in message.** Look at the enclave's logs: `sesmail: SES refused a message` carries the kind of error SES gave (`MessageRejected` while the account is in the sandbox and the recipient is not verified; `AccountSuspendedException`, `SendingPausedException` when AWS stopped the account), and `sesmail: SES could not be reached` means the host does not let the enclave reach `email.us-east-2.amazonaws.com:443` (an old `permaily-host`). The address is never logged. `aws sesv2 get-account` says whether the account is out of the sandbox and how much it may send; `aws sesv2 get-email-identity --email-identity <domain>` says whether DKIM and the bounce domain verified.
+- **The sandbox.** The account left it on 2026-11-11 (50,000 messages a day, 14 a second; `aws sesv2 get-account` says what it is now). A new SES account, as after moving to another AWS account or region, sends only to verified addresses, 200 messages a day. Ask AWS for production access once, in the console (SES > Account dashboard > Request production access) or with `aws sesv2 put-account-details`: transactional mail, sign-in messages only, to addresses whose owners asked for them. Until then, verify the address of each person who tests (`aws sesv2 create-email-identity --email-identity <address>`; they get a message from AWS to confirm) and delete it afterwards. In the sandbox SES also asks for the permission to send on the identity of the recipient, which is why the role's policy names every identity, with the sender's address as its condition.
+- **The verifier fails on `mail`.** The enclave saw a configuration set on the domain or on the address it sends from, which could give whoever set it a copy of every message, sign-in codes included (ADR 0021); or it cannot read those settings. Nobody signs in by mail meanwhile. Find out who did it (CloudTrail: `PutEmailIdentityConfigurationSetAttributes`, `CreateEmailIdentity`, `CreateConfigurationSet`, `PutConfigurationSetArchivingOptions`), remove it (`aws sesv2 put-email-identity-configuration-set-attributes --email-identity <domain>` with no set, or delete the address identity), and look in the archive for what was copied: every account that signed in by mail in that time may have been entered. The enclave starts sending again on the next clean reading, within a minute. The verifier keeps failing until the enclave restarts, because the history is the point; restart it only after writing down what happened, and say so in public. Never add a configuration set to that identity, for metrics or for anything else.
+- **Bounces and complaints.** SES stops writing to an address that bounced for good or whose owner marked the mail as spam (the account's suppression list). A person who cannot get the message may be on it: `aws sesv2 get-suppressed-destination --email-address <address>`, and `delete-suppressed-destination` once their mailbox works.
 
 ## Certificates and the ACME account
 

@@ -1,0 +1,32 @@
+{
+  "name": "yubico-security-key-nfc-rs256-edge",
+  "source": {
+    "project": "Yubico/java-webauthn-server",
+    "url": "https://github.com/Yubico/java-webauthn-server/blob/3a7edfb2609696808e8daad2508115bd43d88d3f/webauthn-server-core/src/test/scala/com/yubico/webauthn/RelyingPartyV2RegistrationSpec.scala#L266",
+    "license": "BSD-2-Clause",
+    "copyright": "Copyright (c) 2014-2018, Yubico AB",
+    "notice": "licenses/yubico-java-webauthn-server.txt"
+  },
+  "made": "captured",
+  "authenticator": "Security Key NFC by Yubico, an RSA key",
+  "aaguid": "6d44ba9bf6ec2e49b9300c8fe920cb73",
+  "client": "Edge before Chromium (EdgeHTML): spaces, tabs and CRLF between the members; judged by the members of the client data and their order: type, challenge, origin, tokenBinding",
+  "algorithm": "RS256",
+  "relyingParty": "demo3.yubico.test",
+  "origin": "https://demo3.yubico.test:8443",
+  "creation": {
+    "format": "packed",
+    "challenge": "lZ2YJmFvai-xhX0Imxo_BY5JJUvdDkrWwVFfYfpt-6g",
+    "clientDataJSON": "ew0KCSJ0eXBlIiA6ICJ3ZWJhdXRobi5jcmVhdGUiLA0KCSJjaGFsbGVuZ2UiIDogImxaMllKbUZ2YWkteGhYMElteG9fQlk1SkpVdmREa3JXd1ZGZllmcHQtNmciLA0KCSJvcmlnaW4iIDogImh0dHBzOi8vZGVtbzMueXViaWNvLnRlc3Q6ODQ0MyIsDQoJInRva2VuQmluZGluZyIgOiANCgl7DQoJCSJzdGF0dXMiIDogInN1cHBvcnRlZCINCgl9DQp9",
+    "attestationObject": "o2NmbXRmcGFja2VkaGF1dGhEYXRhWQFXAU4Ai_91hLmkf2mxjxj_SJrA3qTIOjr6tw1rluqSp_5FAAAAAG1Eupv27C5JuTAMj-kgy3MAEApbxn7DR_LpWJ6yjXeHxIGkAQMDOQEAIFkBAPm_XOU-DioXdG6YXFo5gpHPNxJDimlbnXCro2D_hvzBsxoY4oEzNyRDgK_PoDedZ4tJyk12_I8qJ8g5HqbpT6YUekYegcP4ugL1Omr31gGqTwsF45fIITcSWXcoJbqPnwotbaM98Hu15mSIT8NeXDce0MVNYJ6PULRm6xiiWXHk1cxwrHd9xPCjww6CjRKDc06hP--noBbToW3xx43eh7kGlisWPeU1naIMe7CZAjIMhNlu_uxQssaPAhEXNzDENpK99ieUg290Ym4YNAGbWdW4irkeTt7h_yC-ARrJUu4ygwwGaqCTl9QIMrwZGuiQD11LC0uKraIA2YHaGa2UGKshQwEAAWdhdHRTdG10o2NhbGcmY3NpZ1hHMEUCIQDLKMt6O4aKJkl71VhyIcuI6lqyFTHMDuCO5Y4Jdq2_xQIgPm2_1GF0ivkR816opfVQMWq0s-Hx0uJjcX5l5tm9ZgFjeDVjgVkCwTCCAr0wggGloAMCAQICBCrnYmMwDQYJKoZIhvcNAQELBQAwLjEsMCoGA1UEAxMjWXViaWNvIFUyRiBSb290IENBIFNlcmlhbCA0NTcyMDA2MzEwIBcNMTQwODAxMDAwMDAwWhgPMjA1MDA5MDQwMDAwMDBaMG4xCzAJBgNVBAYTAlNFMRIwEAYDVQQKDAlZdWJpY28gQUIxIjAgBgNVBAsMGUF1dGhlbnRpY2F0b3IgQXR0ZXN0YXRpb24xJzAlBgNVBAMMHll1YmljbyBVMkYgRUUgU2VyaWFsIDcxOTgwNzA3NTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABCoDhl5gQ9meEf8QqiVUV4S_Ca-Oax47MhcpIW9VEhqM2RDTmd3HaL3-SnvH49q8YubSRp_1Z1uP-okMynSGnj-jbDBqMCIGCSsGAQQBgsQKAgQVMS4zLjYuMS40LjEuNDE0ODIuMS4xMBMGCysGAQQBguUcAgEBBAQDAgQwMCEGCysGAQQBguUcAQEEBBIEEG1Eupv27C5JuTAMj-kgy3MwDAYDVR0TAQH_BAIwADANBgkqhkiG9w0BAQsFAAOCAQEAclfQPNzD4RVphJDW-A75W1MHI3PZ5kcyYysR3Nx3iuxr1ZJtB-F7nFQweI3jL05HtFh2_4xVIgKb6Th4eVcjMecncBaCinEbOcdP1sEli9Hk2eVm1XB5A0faUjXAPw_-QLFCjgXG6ReZ5HVUcWkB7riLsFeJNYitiKrTDXFPLy-sNtVNutcQnFsCerDKuM81TvEAigkIbKCGlq8M_NvBg5j83wIxbCYiyV7mIr3RwApHieShzLdJo1S6XydgQjC-_64G5r8C-8AVvNFR3zXXCpio5C3KRIj88HEEIYjf6h1fdLfqeIsq-cUUqbq5T-c4nNoZUZCysTB9v5EY4akp-A",
+    "expect": "accepted"
+  },
+  "use": {
+    "challenge": "drdVqKT0T-9PyQfkceSE94Q8ruW2I-w1gsamBisjuMw",
+    "clientDataJSON": "ew0KCSJ0eXBlIiA6ICJ3ZWJhdXRobi5nZXQiLA0KCSJjaGFsbGVuZ2UiIDogImRyZFZxS1QwVC05UHlRZmtjZVNFOTRROHJ1VzJJLXcxZ3NhbUJpc2p1TXciLA0KCSJvcmlnaW4iIDogImh0dHBzOi8vZGVtbzMueXViaWNvLnRlc3Q6ODQ0MyIsDQoJInRva2VuQmluZGluZyIgOiANCgl7DQoJCSJzdGF0dXMiIDogInN1cHBvcnRlZCINCgl9DQp9",
+    "authenticatorData": "AU4Ai_91hLmkf2mxjxj_SJrA3qTIOjr6tw1rluqSp_4FAAAABA",
+    "signature": "1YYgnM1Nau6FQV2YK1qZDaoF6CHkFSxhaWac00dJNQemQueU_a1wE0hYy-g0O-ZwKn_MTtmfnwgjHxTRZx6v51eiuBpy-FlfkMmQHkz26MKKnQOK0Mc4kVjugvM0XlQ7E0hvsrdvVlmrwYc-U2IVfgRUw5rD-SbUctA_ZXc248LjyrgD_vhDWLR6I4nzmH_pe2tgKAQgohmzD4kVpVzS_T_M4Bn0Vcc5oUwNU4m57DiWDWCAR5BohKdajRgt8DUqBp9jvn9mgStIhEq1EIjhGdEE47WxVJaQb5IdHRaCNJ186x_ilsQvGT2Iy4s5C8IOkuffw07GesdpmJ8awtiA4A",
+    "expect": "accepted",
+    "client": "Edge before Chromium (EdgeHTML): spaces, tabs and CRLF between the members; judged by the members of the client data and their order: type, challenge, origin, tokenBinding"
+  }
+}

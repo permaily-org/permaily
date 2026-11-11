@@ -29,6 +29,10 @@ Where it hurts today is the TLS identity: a key replaced because it may have lea
 
 **A record from before.** The first time, a record written by an earlier release is under its plain name, without a commit. It is taken as it is, once, and committed as version 1. It stays where it was, so that release still finds it if it has to run again.
 
+**Removing a record** (added on 2026-11-11, for accounts). A removal is a commit like any other whose hash is all zeros: the stored value is deleted and the newest commit says the record is gone. A read then answers "not there", never an earlier copy, and the name can be stored again as a later version. The commit carries the same authentication code and lock as the rest, so a removal cannot be turned into a record or back, and of two commits at one version the removal wins. An image from before this takes such a commit for a value that cannot exist and answers that the record is lost, which for an account is an error and never "no account" (argued from its code; the upgrade itself, from the release before to this code, was run on staging on 2026-11-11, docs/acceptance.md).
+
+**Only the newest version, where asked** (`OnlyNewest`). Each version is stored under a name of its own. For accounts the one before is deleted once the new one is committed, so what a person took out of their account does not stay in the table; the delete never fails a write that was already committed. The TLS identity does not use it: an earlier release still has to find the copy it wrote. A reader that finds the value of the newest commit gone reads the newest commit again before saying the record is lost, since another writer may have moved on in between.
+
 ## What it covers, and what it does not
 
 - **Now: the TLS identity** (certificate key, ACME account key, certificate chain), compiled into the image as `anchor_bucket` and `anchor_retention_days` in `deploy/enclave.json`.

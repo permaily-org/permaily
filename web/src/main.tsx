@@ -5,9 +5,14 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router'
 import { App } from './App.tsx'
+import { takeArrival } from './lib/arrival.ts'
+import { SessionProvider } from './lib/session.tsx'
 import { applyTheme, readTheme } from './lib/theme.ts'
 
 applyTheme(readTheme())
+// A sign-in link, an invitation or how a sign-in with a provider ended leaves the address bar before anything
+// else looks at it.
+takeArrival()
 
 const root = document.getElementById('root')
 if (!root) throw new Error('Missing #root element')
@@ -15,7 +20,9 @@ if (!root) throw new Error('Missing #root element')
 createRoot(root).render(
   <StrictMode>
     <BrowserRouter>
-      <App />
+      <SessionProvider>
+        <App />
+      </SessionProvider>
     </BrowserRouter>
   </StrictMode>,
 )
