@@ -222,3 +222,56 @@ func Device(userAgent string) string {
 	}
 	return strings.TrimSpace(b.String())
 }
+
+// Signing in with a provider (ADR 0017).
+const (
+	// ProviderLifetime is how long the provider's answer is taken once a trip
+	// to it was started, and how long the cookie that ties it to the browser
+	// lasts.
+	ProviderLifetime = 10 * time.Minute
+	// ProviderConfirmLifetime is how long a sign-in waits for its address to
+	// be confirmed: the time to ask for the message, and the time its code
+	// works for.
+	ProviderConfirmLifetime = 2 * EmailCodeLifetime
+	// maxSubject is the longest name a provider gives an account of its own.
+	maxSubject = 255
+	// maxCredential is the longest client id or secret of an application.
+	maxCredential = 512
+	// maxAppPath is the longest path of the app a sign-in comes back to.
+	maxAppPath = 512
+)
+
+// visible reports whether s is 1 to max characters of ASCII that can be seen:
+// no spaces, no control characters.
+func visible(s string, max int) bool {
+	if s == "" || len(s) > max {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] <= ' ' || s[i] > '~' {
+			return false
+		}
+	}
+	return true
+}
+
+// ProviderSubject reports whether s can be the name a provider gives one of
+// its accounts. It becomes part of where a pointer is stored.
+func ProviderSubject(s string) bool { return visible(s, maxSubject) }
+
+// ProviderCredential reports whether s can be the client id or the secret of
+// an application registered at a provider.
+func ProviderCredential(s string) bool { return visible(s, maxCredential) }
+
+// AppPath returns s when it is a path of the web app, and "" otherwise. A
+// sign-in that leaves the app comes back to it, and a caller says where:
+// that must never be another site. So it is one slash and what follows, with
+// nothing a browser reads as the start of a host (a second slash, or a
+// backslash, which browsers take for one), and not the API, which is no
+// screen.
+func AppPath(s string) string {
+	if !visible(s, maxAppPath) || s[0] != '/' || strings.HasPrefix(s, "//") || strings.Contains(s, `\`) || strings.HasPrefix(s, "/api/") || s == "/api" {
+		return ""
+	}
+	return s
+}

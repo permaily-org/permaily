@@ -43,12 +43,30 @@ type AccountsService interface {
 	CancelDeletion(ctx context.Context, who *accounts.Authenticated) (*contracts.Account, error)
 	AccountRecord(ctx context.Context, id string) (*contracts.AccountRecord, error)
 	AccountRecords(ctx context.Context, after string, limit int) (*contracts.AccountList, error)
+
+	ProvidersOn(ctx context.Context) (*contracts.ProvidersOn, error)
+	StartProvider(ctx context.Context, who *accounts.Authenticated, in contracts.ProviderStart) (*contracts.ProviderStarted, string, error)
+	FinishProvider(ctx context.Context, in accounts.ProviderAnswer) (*accounts.ProviderDone, error)
+	PendingProvider(ctx context.Context, browser string) (*contracts.ProviderPending, error)
+	StartProviderConfirm(ctx context.Context, browser string, in contracts.ProviderConfirmStart) (*contracts.EmailStarted, error)
+	FinishProviderConfirm(ctx context.Context, browser string, in contracts.ProviderConfirm, userAgent string) (*contracts.Me, string, error)
+	LinkedProviders(ctx context.Context, who *accounts.Authenticated) (*contracts.LinkedProviders, error)
+	UnlinkProvider(ctx context.Context, who *accounts.Authenticated, provider string) error
+	ProviderApps(ctx context.Context) (*contracts.ProviderApps, error)
+	SetProviderApp(ctx context.Context, provider string, in contracts.ProviderAppSet) (*contracts.ProviderApp, error)
+	RemoveProviderApp(ctx context.Context, provider string) error
 }
 
 // SessionCookie is the cookie of a signed-in browser. The __Host- prefix
 // makes the browser keep it for this host alone, over TLS, so the public
 // site on the parent domain can neither read it nor put another in its place.
 const SessionCookie = "__Host-permaily-session"
+
+// ProviderCookie ties a trip to a provider, and a sign-in that waits for its
+// address to be confirmed, to the browser that started it. The provider
+// sends the browser back from another site, where a SameSite=Strict cookie
+// would not come along: this one is Lax, and stands for nothing but the trip.
+const ProviderCookie = "__Host-permaily-provider"
 
 // identifiers are taken out of what is logged: logs leave the enclave, and
 // would say which account did what, and when.
@@ -60,7 +78,7 @@ var identifiers = regexp.MustCompile(`\b(acc|ses|att|cer)_[a-z2-7]{26}`)
 func failed(w http.ResponseWriter, log *slog.Logger, err error) {
 	var known *contracts.Error
 	if !errors.As(err, &known) {
-		log.Error("api: internal error", "err", identifiers.ReplaceAllString(err.Error(), "${1}_…"))
+		internal(log, err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
@@ -73,11 +91,18 @@ func failed(w http.ResponseWriter, log *slog.Logger, err error) {
 	case contracts.ErrTooManyRequests.Code:
 		status = http.StatusTooManyRequests
 	case contracts.ErrLastPasskey.Code, contracts.ErrPasskeyNeeded.Code, contracts.ErrPasskeyOnlyOff.Code, contracts.ErrTooManyPasskeys.Code,
-		contracts.ErrAccountClosing.Code:
+		contracts.ErrAccountClosing.Code, contracts.ErrProviderOff.Code, contracts.ErrProviderInUse.Code, contracts.ErrProviderLinked.Code,
+		contracts.ErrLastWayIn.Code:
 		// Well asked, and refused for how the account is now.
 		status = http.StatusConflict
 	}
 	writeError(w, status, known.Code, known.Message)
+}
+
+// internal logs a failure that is the service's own, without the accounts it
+// was about.
+func internal(log *slog.Logger, err error) {
+	log.Error("api: internal error", "err", identifiers.ReplaceAllString(err.Error(), "${1}_…"))
 }
 
 // maxAccountsBody bounds every request of the accounts API but the two that
@@ -130,6 +155,22 @@ func setSession(w http.ResponseWriter, value string, maxAge int) {
 		Name: SessionCookie, Value: value, Path: "/", MaxAge: maxAge,
 		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode,
 	})
+}
+
+func setProvider(w http.ResponseWriter, value string, life time.Duration) {
+	http.SetCookie(w, &http.Cookie{
+		Name: ProviderCookie, Value: value, Path: "/", MaxAge: int(life / time.Second),
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// provider is the value of the browser's provider cookie, "" without one.
+func provider(r *http.Request) string {
+	c, err := r.Cookie(ProviderCookie)
+	if err != nil {
+		return ""
+	}
+	return c.Value
 }
 
 // AccountsAPI returns the routes of the web app's own API, under /api/v1/:
@@ -326,6 +367,89 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		out, err := svc.CancelDeletion(r.Context(), who)
 		answer(w, out, err)
 	}))
+	mux.HandleFunc("GET /api/v1/auth/providers", func(w http.ResponseWriter, r *http.Request) {
+		out, err := svc.ProvidersOn(r.Context())
+		answer(w, out, err)
+	})
+	// startProvider answers where to send the browser, and gives it the
+	// cookie that the provider's answer is taken with.
+	startProvider := func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		var in contracts.ProviderStart
+		if !decode(w, r, &in) {
+			return
+		}
+		out, cookie, err := svc.StartProvider(r.Context(), who, in)
+		if err != nil {
+			failed(w, log, err)
+			return
+		}
+		setProvider(w, cookie, domain.ProviderLifetime)
+		writeJSON(w, out)
+	}
+	mux.HandleFunc("POST /api/v1/auth/provider/start", func(w http.ResponseWriter, r *http.Request) { startProvider(w, r, nil) })
+	// Where the provider sends the browser back. It is a navigation and not
+	// a request of the app, so it answers with where to go: a path of the
+	// app that the service chose, with the reason in the fragment when it
+	// failed. What the provider said went wrong is never read.
+	mux.HandleFunc("GET /api/v1/auth/provider/callback", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		done, err := svc.FinishProvider(r.Context(), accounts.ProviderAnswer{
+			State: q.Get("state"), Code: q.Get("code"), Refused: q.Has("error"),
+			Browser: provider(r), UserAgent: r.UserAgent(),
+		})
+		var known *contracts.Error
+		if err != nil && !errors.As(err, &known) {
+			internal(log, err)
+		}
+		// The trip is over. The cookie goes, unless a sign-in now waits in
+		// this browser for its address.
+		if done.Browser != "" {
+			setProvider(w, done.Browser, domain.ProviderConfirmLifetime)
+		} else {
+			setProvider(w, "", -time.Second)
+		}
+		if done.Session != "" {
+			setSession(w, done.Session, int(domain.SessionMax/time.Second))
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		http.Redirect(w, r, done.Path, http.StatusSeeOther)
+	})
+	mux.HandleFunc("GET /api/v1/auth/provider/pending", func(w http.ResponseWriter, r *http.Request) {
+		out, err := svc.PendingProvider(r.Context(), provider(r))
+		answer(w, out, err)
+	})
+	mux.HandleFunc("POST /api/v1/auth/provider/confirm/start", func(w http.ResponseWriter, r *http.Request) {
+		var in contracts.ProviderConfirmStart
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := svc.StartProviderConfirm(r.Context(), provider(r), in)
+		answer(w, out, err)
+	})
+	mux.HandleFunc("POST /api/v1/auth/provider/confirm/finish", func(w http.ResponseWriter, r *http.Request) {
+		var in contracts.ProviderConfirm
+		if !decode(w, r, &in) {
+			return
+		}
+		me, cookie, err := svc.FinishProviderConfirm(r.Context(), provider(r), in, r.UserAgent())
+		if err == nil {
+			setProvider(w, "", -time.Second) // it waited for this
+		}
+		signedInWith(w, me, cookie, err)
+	})
+	mux.HandleFunc("GET /api/v1/providers", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		out, err := svc.LinkedProviders(r.Context(), who)
+		answer(w, out, err)
+	}))
+	// From Settings: the same trip, which links to the session's account.
+	mux.HandleFunc("POST /api/v1/providers/start", signedIn(startProvider))
+	mux.HandleFunc("DELETE /api/v1/providers/{provider}", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		if err := svc.UnlinkProvider(r.Context(), who, r.PathValue("provider")); err != nil {
+			failed(w, log, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
 	// Anything else under /api/ is not the web app's to answer with a page.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
@@ -396,6 +520,55 @@ func Accounts(svc AccountsService, log *slog.Logger) http.Handler {
 	}
 	mux.HandleFunc("/v1/admin/accounts", onlyLooks)
 	mux.HandleFunc("/v1/admin/accounts/{id}", onlyLooks)
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
+	})
+	return mux
+}
+
+// ProviderApps returns the handler of the applications registered at the
+// providers: PUT /v1/admin/providers/{provider} gives the enclave one's
+// client id and secret, DELETE takes them away, and GET /v1/admin/providers
+// lists which are set, with their client ids and never a secret. Put it
+// behind TokenAuth with the operator's token, on a connection the operator
+// verified: the secret is sent to whoever answers.
+func ProviderApps(svc AccountsService, log *slog.Logger) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/admin/providers", func(w http.ResponseWriter, r *http.Request) {
+		out, err := svc.ProviderApps(r.Context())
+		if err != nil {
+			failed(w, log, err)
+			return
+		}
+		writeJSON(w, out)
+	})
+	mux.HandleFunc("PUT /v1/admin/providers/{provider}", func(w http.ResponseWriter, r *http.Request) {
+		var in contracts.ProviderAppSet
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := svc.SetProviderApp(r.Context(), r.PathValue("provider"), in)
+		if err != nil {
+			failed(w, log, err)
+			return
+		}
+		writeJSON(w, out)
+	})
+	mux.HandleFunc("DELETE /v1/admin/providers/{provider}", func(w http.ResponseWriter, r *http.Request) {
+		if err := svc.RemoveProviderApp(r.Context(), r.PathValue("provider")); err != nil {
+			failed(w, log, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	refuse := func(allow string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Allow", allow)
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "use "+allow)
+		}
+	}
+	mux.HandleFunc("/v1/admin/providers", refuse(http.MethodGet))
+	mux.HandleFunc("/v1/admin/providers/{provider}", refuse("PUT, DELETE"))
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
 	})

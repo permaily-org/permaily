@@ -9,7 +9,14 @@ import {
   useState,
 } from 'react'
 import * as api from './api.ts'
-import { dropLink, hasLink, pendingLink, takeArrival, takeBrokenLink } from './arrival.ts'
+import {
+  dropLink,
+  dropProviderArrival,
+  hasLink,
+  pendingLink,
+  takeArrival,
+  takeBrokenLink,
+} from './arrival.ts'
 
 export type SessionState =
   /** Asking the server who this is. `link` is true while it is also asked whose sign-in a link is. */
@@ -163,6 +170,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setAsk(null)
   }, [settled])
 
+  // How a sign-in with a provider ended is for the screen it came back to. Someone who is signed in has no
+  // use for the news that one signed nobody in, such as a provider's answer opened again with the Back
+  // button: they just see the app. And what Settings would say is not for someone who is signed out.
+  const standing = state.status
+  useEffect(() => {
+    if (standing === 'signedIn') dropProviderArrival('sign-in')
+    if (standing === 'signedOut') dropProviderArrival('settings')
+  }, [standing])
+
   const acceptLink = useCallback(async () => {
     const link = pendingLink()
     const pending = asked.current
@@ -216,6 +232,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const arrived = () => {
       takeArrival()
+      if (status.current === 'signedIn') dropProviderArrival('sign-in')
       if (hasLink()) void load()
     }
     window.addEventListener('hashchange', arrived)

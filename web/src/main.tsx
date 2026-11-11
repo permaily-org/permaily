@@ -10,7 +10,8 @@ import { SessionProvider } from './lib/session.tsx'
 import { applyTheme, readTheme } from './lib/theme.ts'
 
 applyTheme(readTheme())
-// A sign-in link or an invitation leaves the address bar before anything else looks at it.
+// A sign-in link, an invitation or how a sign-in with a provider ended leaves the address bar before anything
+// else looks at it.
 takeArrival()
 
 const root = document.getElementById('root')

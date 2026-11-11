@@ -56,6 +56,35 @@ var (
 	ErrInvalidCursor  = &Error{"invalid_cursor", "after is not a place in the list; use the next of the answer before"}
 )
 
+// The failures of signing in with a provider (Google, GitHub, Meta,
+// Microsoft). The ones the callback can end with are the reason codes the
+// app turns into words; none says whether an address or a provider account
+// has an account here to someone who did not prove it is theirs.
+var (
+	// ErrProviderOff refuses a provider the operator gave no secret for, and
+	// a name that is not a provider.
+	ErrProviderOff = &Error{"provider_off", "signing in with that provider is not available"}
+	// ErrProviderFailed covers a trip to a provider that ended, was started in
+	// another browser or was refused, an answer that does not check, and an
+	// account that does not take providers. None says which.
+	ErrProviderFailed = &Error{"provider_failed", "signing in with that provider did not work; try again, or sign in another way"}
+	// ErrProviderUnavailable is a provider that could not be reached, or the
+	// service's own failure while a trip to one ended: later it may work.
+	ErrProviderUnavailable = &Error{"provider_unavailable", "signing in with that provider is not working right now; try again later, or sign in another way"}
+	// ErrInvitationNeeded is for whoever the provider vouches for: their
+	// address has no account, and no invitation was given to make one.
+	ErrInvitationNeeded = &Error{"invitation_needed", "there is no account for your address yet; an invitation is needed to make one"}
+	// ErrProviderInUse refuses linking a provider account that leads to
+	// another account, or whose verified address is another account's.
+	ErrProviderInUse = &Error{"provider_in_use", "that provider account belongs with another Permaily account"}
+	// ErrProviderLinked refuses a second account of one provider.
+	ErrProviderLinked = &Error{"provider_linked", "this account has an account of that provider linked already; unlink it first"}
+	ErrLastWayIn      = &Error{"last_way_in", "this is the only way left to sign in to the account; add another first"}
+	// ErrInvalidProviderApp refuses what cannot be an application's
+	// credentials. It never repeats them.
+	ErrInvalidProviderApp = &Error{"invalid_provider_app", "client_id and client_secret are each 1 to 512 characters of visible ASCII"}
+)
+
 // AccountState says whether an account can be used.
 type AccountState string
 
@@ -370,4 +399,83 @@ type PasskeyOnlyState struct {
 // stop working.
 type RecoveryCodes struct {
 	RecoveryCodes []string `json:"recovery_codes"`
+}
+
+// ProvidersOn says which providers a person can sign in with: the ones the
+// operator gave a secret for.
+type ProvidersOn struct {
+	Providers []string `json:"providers"`
+}
+
+// ProviderStart starts a trip to a provider. Invitation is needed only by
+// whoever has no account yet, and ReturnTo is the path of the app the person
+// was going to.
+type ProviderStart struct {
+	Provider   string `json:"provider"`
+	Invitation string `json:"invitation,omitempty"`
+	ReturnTo   string `json:"return_to,omitempty"`
+}
+
+// ProviderStarted answers ProviderStart: where the browser goes, and for how
+// many seconds the provider's answer is taken.
+type ProviderStarted struct {
+	URL       string `json:"url"`
+	ExpiresIn int    `json:"expires_in"`
+}
+
+// ProviderPending is a sign-in with a provider that waits for an address to
+// be confirmed: the provider said who the person is there, and not that an
+// address is theirs.
+type ProviderPending struct {
+	Provider string `json:"provider"`
+	// Address is what the provider gave, if anything, to offer in the form.
+	// It proves nothing: the message's code does.
+	Address string `json:"address"`
+	// ReturnTo is where the person was going when the sign-in started.
+	ReturnTo string `json:"return_to"`
+	// ExpiresIn is how many seconds are left to confirm.
+	ExpiresIn int `json:"expires_in"`
+}
+
+// ProviderConfirmStart asks for the message that confirms an address.
+type ProviderConfirmStart struct {
+	Address string `json:"address"`
+}
+
+// ProviderConfirm ends a pending sign-in with the code of that message.
+type ProviderConfirm struct {
+	Attempt string `json:"attempt"`
+	Code    string `json:"code"`
+}
+
+// LinkedProvider is a provider account that signs in to an account. Nothing
+// the provider said of it is kept but which one it is, so nothing else is
+// shown.
+type LinkedProvider struct {
+	Provider string    `json:"provider"`
+	LinkedAt time.Time `json:"linked_at"`
+}
+
+// LinkedProviders is the provider accounts of an account, the oldest first.
+type LinkedProviders struct {
+	Providers []LinkedProvider `json:"providers"`
+}
+
+// ProviderAppSet gives the enclave the application registered at a provider
+// (operator only). The secret is kept sealed and never answered.
+type ProviderAppSet struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+}
+
+// ProviderApp is what is said of a provider's application: never its secret.
+type ProviderApp struct {
+	Provider string    `json:"provider"`
+	ClientID string    `json:"client_id"`
+	SetAt    time.Time `json:"set_at"`
+}
+
+// ProviderApps is the providers that have an application set.
+type ProviderApps struct {
+	Providers []ProviderApp `json:"providers"`
 }

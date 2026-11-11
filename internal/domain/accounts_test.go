@@ -149,3 +149,49 @@ func TestRecoveryCodes(t *testing.T) {
 		t.Errorf("a recovery code is %f bits", bits)
 	}
 }
+
+// Where a sign-in with a provider comes back to is a path of the app, and
+// nothing a browser could take for another site.
+func TestAppPath(t *testing.T) {
+	for _, in := range []string{"/", "/connections", "/settings?tab=sign-in#providers", "/a/b/c", "/apis", "/" + strings.Repeat("a", 511)} {
+		if got := AppPath(in); got != in {
+			t.Errorf("%q: %q", in, got)
+		}
+	}
+	for _, in := range []string{
+		"", "connections", "https://evil.example", "https://evil.example/", "//evil.example", "///evil.example", `/\evil.example`, `\/evil.example`, `\\evil.example`,
+		`/ok\..\evil`, "javascript:alert(1)", " /connections", "/connections ", "/two words", "/line\nbreak", "/line\r\nLocation: https://evil.example",
+		"/tab\there", "/nul\x00", "/ñ", "/api", "/api/", "/api/v1/auth/provider/callback?state=x", "/" + strings.Repeat("a", 512),
+		"http:/evil.example", "evil.example", "@evil.example", ".", "..",
+	} {
+		if got := AppPath(in); got != "" {
+			t.Errorf("%q: accepted as %q", in, got)
+		}
+	}
+}
+
+func TestProviderWords(t *testing.T) {
+	for _, in := range []string{"1", "108204268033311374519", "AAAAAAAAAAAAAAAAAAAAAIkzqFVrSaSaFHy782bbtaQ", "00000000-0000-0000-66f3-3332eca7ea81", strings.Repeat("a", 255)} {
+		if !ProviderSubject(in) {
+			t.Errorf("subject %q refused", in)
+		}
+	}
+	for _, in := range []string{"", " ", "1 2", "1\n", "a#b\x00", "ñ", "\x7f", strings.Repeat("a", 256)} {
+		if ProviderSubject(in) {
+			t.Errorf("subject %q accepted", in)
+		}
+	}
+	for _, in := range []string{"1234-abc.apps.googleusercontent.com", "GOCSPX-a_b-c", "Iv1.0123456789abcdef", "a~b.c_d-e", strings.Repeat("a", 512)} {
+		if !ProviderCredential(in) {
+			t.Errorf("credential %q refused", in)
+		}
+	}
+	for _, in := range []string{"", " secret", "secret\n", "two words", "tab\t", "ñ", strings.Repeat("a", 513)} {
+		if ProviderCredential(in) {
+			t.Errorf("credential %q accepted", in)
+		}
+	}
+	if ProviderLifetime != 10*time.Minute || ProviderConfirmLifetime != 20*time.Minute {
+		t.Errorf("a trip to a provider takes %v, confirming %v", ProviderLifetime, ProviderConfirmLifetime)
+	}
+}

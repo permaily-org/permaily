@@ -18,6 +18,7 @@ import (
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/httpapi"
+	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/keys"
 	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/store"
@@ -34,6 +35,10 @@ type app struct {
 	out    *accounts.Outbox
 	logs   *bytes.Buffer
 	cookie *http.Cookie
+	// trip is the cookie of a trip to a provider, and idp plays the providers
+	// (providers_test.go).
+	trip *http.Cookie
+	idp  *providers
 	// mem is the storage, for a test to write to by hand, and ahead is how
 	// far the service's clock runs ahead of the real one.
 	mem   *store.Memory
@@ -47,12 +52,12 @@ func newApp(t *testing.T) *app {
 		t.Fatal(err)
 	}
 	mem := store.NewMemory()
-	a := &app{t: t, out: &accounts.Outbox{}, logs: &bytes.Buffer{}, mem: mem}
+	a := &app{t: t, out: &accounts.Outbox{}, logs: &bytes.Buffer{}, mem: mem, idp: &providers{who: map[string]idp.Identity{}}}
 	log := slog.New(slog.NewTextHandler(a.logs, nil))
 	a.svc, err = accounts.New(accounts.Config{
 		// As the enclave sets it up: only the newest version of a record is kept.
 		Records: &store.Anchored{Records: mem, Commits: store.NewMemoryCommits(), OnlyNewest: true}, Entries: mem,
-		Keys: k, Mailer: a.out, AppURL: appOrigin, Log: log,
+		Keys: k, Mailer: a.out, Providers: a.idp, AppURL: appOrigin, Log: log,
 		Now: func() time.Time { return time.Now().Add(a.ahead) },
 	})
 	if err != nil {
@@ -76,6 +81,9 @@ func (a *app) call(method, path, body string, edit func(*http.Request)) *httptes
 	if a.cookie != nil {
 		req.AddCookie(a.cookie)
 	}
+	if a.trip != nil {
+		req.AddCookie(a.trip)
+	}
 	if edit != nil {
 		edit(req)
 	}
@@ -85,6 +93,11 @@ func (a *app) call(method, path, body string, edit func(*http.Request)) *httptes
 		if c.Name == httpapi.SessionCookie {
 			if a.cookie = c; c.MaxAge < 0 {
 				a.cookie = nil
+			}
+		}
+		if c.Name == httpapi.ProviderCookie {
+			if a.trip = c; c.MaxAge < 0 {
+				a.trip = nil
 			}
 		}
 	}

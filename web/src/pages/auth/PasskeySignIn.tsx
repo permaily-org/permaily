@@ -71,7 +71,7 @@ export function PasskeySignIn() {
   }
 
   return (
-    <div className="mt-5 flex flex-col gap-3 border-t border-rule pt-5">
+    <>
       <Button ref={buttonRef} variant="secondary" disabled={pending} onClick={signIn}>
         <KeyRound aria-hidden size={16} />
         Sign in with a passkey
@@ -86,6 +86,6 @@ export function PasskeySignIn() {
       >
         {outcome?.text}
       </p>
-    </div>
+    </>
   )
 }
