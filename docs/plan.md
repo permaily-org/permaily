@@ -6,8 +6,8 @@ What is built, what comes next and how the planned parts are designed. Current a
 
 - **F0** (deployed): verifiable hello end to end.
 - **F1 inbox** (current, deployed with v0.2.0 on 2026-11-10): MX inside the enclave, encrypted storage, KMS bound to attestation, one test mailbox (ADR 0009).
-- **F2**: users (passkeys, Google sign-in), grants, API for apps, remote MCP, audit log.
-- **F3**: LLM classification (model and prompts embedded in the image).
+- **F2** (designed, next): accounts, mailboxes per account, connections with queries that a person approves, rules, receipts, the API and remote MCP (ADR 0017 to 0020). Deciding by meaning, which was F3, is part of it.
+- **F3**: what F2 leaves out: reaching mail through a provider's API instead of forwarding, more languages, limits and paid plans.
 - **F4**: per-agent inboxes, a private inbox, scaling (NLB TCP passthrough, ASG), CT and Rekor monitoring in the verifier.
 
 ## F1: inbox
@@ -27,6 +27,35 @@ Implemented in `internal/smtpd`, `internal/inbox`, `internal/msgauth`, `internal
 - [x] Verify the KMS flow against production (2026-11-10, [acceptance.md](acceptance.md)).
 - [x] Publish the MX, MTA-STS and TLS-RPT records (2026-11-10).
 - [ ] Forward a Gmail account to the test mailbox with the release image.
+
+## F2: what it is
+
+Decided in ADR 0017 (accounts and sign-in), 0018 (mailboxes), 0019 (connections, queries, rules and receipts) and 0020 (OpenAI's models for what depends on meaning). In one paragraph: people sign up by invitation and sign in with a passkey, email or a provider; each forwards their mail to a mailbox of their own; an app or an agent asks for a connection, which is a query written as a formula of exact conditions and `about` conditions that a model decides; the person reads a sentence the system writes from the formula and accepts or refuses; the person's own rules hold back or cut down what leaves; and every message that leaves writes a receipt.
+
+### Order of work
+
+Each step ends deployed and verified, like the releases so far. The estimates are for one person and are rough.
+
+| Step | What | Weeks |
+|---|---|---|
+| 1 | Layers (`contracts`, `domain`, `services`, adapters) and accounts: passkeys, email and providers, sessions, invitations with the operator's tool, outgoing mail through SES | 3 |
+| 2 | Mailboxes per account, moving the test mailbox into the first account; the inbox in the app | 1.5 |
+| 3 | The query language: grammar, simplification, whether one formula fits inside another, the sentence, and evaluating exact conditions over stored mail | 2 |
+| 4 | Spike, then the piece that asks OpenAI: `about`, kept decisions, the spending alarm | 1.5 |
+| 5 | Spike of the authorization server (ADR 0007), then connections, the consent screen, the API and MCP | 3.5 |
+| 6 | Delivery on new mail and on a schedule: webhook queue and scheduler | 1.5 |
+| 7 | Rules: written in plain words, holding back, removing details | 1.5 |
+| 8 | Receipts chained and anchored, and the activity screen | 1 |
+| 9 | Notices by mail, the threat model and the public pages brought up to date, a round of tests with staging images | 1 |
+
+About sixteen weeks. Steps 3 and 4 do not depend on 1 and 2, and can go first if seeing `about` work early is worth more than having accounts.
+
+### Before real users
+
+- Zero data retention approved by OpenAI for the organization (ADR 0020).
+- SES out of its sandbox (ADR 0017).
+- The mailbox's state and every record of F2 whose going back matters stored through `store.Anchored` (ADR 0016).
+- Whoever can merge into `main` decides what the enclave accepts: require two-factor sign-in in the GitHub organization and a second person's review (docs/threat-model.md).
 
 ## F2: lessons to apply
 
