@@ -52,6 +52,32 @@ Decided while building the first piece, each to keep whoever runs the storage ou
 - **The link asks before it signs in.** A link can be sent on by whoever asked for it, to sign another person into the asker's account. The page that opens it asks whose sign-in it is (`POST /api/v1/auth/email/look`, which ends nothing and is answered only with the link's token), shows the address and waits for the person. The code needs none of this: it is typed in the browser that asked.
 - **Outgoing mail** is from `no-reply@mail.permaily.com` (`mail_from` in `deploy/enclave.json`): a domain used for nothing else, signed with DKIM by SES, with DMARC set to refuse what fails. Nothing is received there. An image without `mail_from` has no accounts. The administrator of the AWS account could make SES keep a copy of what is sent, so the enclave reads those settings and tells (ADR 0021).
 
+### Passkeys, "passkey only" and recovery codes
+
+- **WebAuthn is checked by this repository's own code** (`internal/webauthn`): what a browser answers when a passkey is made and when it is used, for ES256, EdDSA and RS256 keys. No attestation is asked for (`attestation: "none"`) and none is trusted: which device holds the key does not matter here. A library would bring TPM, JWT and metadata code into the image; the checks are compared with a known library in `tests/webauthn-differential`, the way `pkg/provenance` is.
+- **The relying party** is the app's host (`app.permaily.com`) and the only origin accepted is the app's. Passkeys are discoverable (`residentKey: required`) and need the person (`userVerification: required`). The user handle is the account's identifier, so the answer to a sign-in says which account it is for and no address is asked: signing in with a passkey tells nobody who has an account.
+- **A ceremony lives only in the enclave's memory**, like a sign-in by mail: a challenge of 32 random bytes, five minutes, once, a bounded number at a time. A restart ends the ones that were waiting.
+- **Passkeys are part of the account's record** (signed, anchored): the credential's identifier, its public key as the authenticator gave it, a name, when it was made and whether it is synced. So one written into the table by hand is not a way in, and one that was removed does not come back. Twenty at most.
+- **The signature counter is not kept.** Synced passkeys always say zero, and keeping it would write a locked commit for every sign-in. Accepted: a copied authenticator is not noticed by its counter.
+- **"Passkey only"** needs a passkey, and from then on a sign-in by mail for that address sends nothing (the answer stays the same) and one that was already started is refused when it ends. Turning it on makes ten recovery codes, shown once and kept by their hash in the account's record; each works once, with the account's address, and is taken out of the record when used, so it does not come back either. Five wrong recovery codes an hour for an address, counted in memory. Turning the mode off, or asking for new codes, drops the old ones.
+- **Removing a passkey** is refused for the last one while "passkey only" is on: the account would have no way in but recovery codes.
+- **Every failure of a passkey ceremony is the same error** (`invalid_passkey`), and of a recovery the same as a wrong code (`invalid_code`): none says which part was wrong.
+
+The web app's API for this, all under `/api/v1/`, JSON, binary values as base64url without padding in the shapes of `PublicKeyCredential.toJSON()`:
+
+| Request | Needs | Answers |
+|---|---|---|
+| `POST auth/passkey/start` | nothing | `{ceremony, options}`: the options of `navigator.credentials.get` |
+| `POST auth/passkey/finish` `{ceremony, credential}` | nothing | the account and its session, with the cookie, as signing in by mail does |
+| `POST auth/recovery` `{address, code}` | nothing | the same |
+| `GET passkeys` | a session | `{passkeys: [{id, name, created_at, synced}], passkey_only, recovery_codes_left}` |
+| `POST passkeys/start` | a session | `{ceremony, options}`: the options of `navigator.credentials.create` |
+| `POST passkeys/finish` `{ceremony, name, credential}` | a session | the passkey made |
+| `PATCH passkeys/{id}` `{name}` | a session | the passkey |
+| `DELETE passkeys/{id}` | a session | nothing (204) |
+| `POST account/passkey-only` `{on}` | a session | `{passkey_only, recovery_codes}`: the codes when it was turned on |
+| `POST account/recovery-codes` | a session, "passkey only" on | `{recovery_codes}`: ten new ones |
+
 Accepted: sessions are signed and not anchored. A session that was closed and is put back in the table by whoever runs the storage works again for whoever still holds its cookie, until its thirty days end. Anchoring each session would write a locked commit for every sign-in.
 
 ## What it rests on, and what is left
