@@ -119,7 +119,13 @@ case $mode in
       --data-binary @"$work/request.json" "$api/v1/admin/trust-root")
     jq . "$work/response.json" 2>/dev/null || cat "$work/response.json"
     case $code in
-      200) echo "The enclave at $api checks releases against that trust root now, until it restarts." ;;
+      200)
+        if [[ $(jq -r '.updated_at // empty' "$work/response.json") == "" ]]; then
+          echo "The enclave at $api already uses that trust root: it is the one compiled into it."
+        else
+          echo "The enclave at $api checks releases against that trust root now, until it restarts."
+        fi
+        ;;
       *) echo "the enclave refused the trust root, or the request failed (HTTP $code)" >&2; exit 1 ;;
     esac
     ;;

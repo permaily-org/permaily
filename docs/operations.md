@@ -7,7 +7,7 @@ Runbooks for production. Setup from scratch is in [deploy.md](deploy.md). Every 
 The running enclave hands the root secret to the next release, then the next release is started (ADR 0013). Nothing in AWS is edited to let a release in: each release has a KMS key of its own that only its image can use.
 
 ```sh
-old=v0.7.0 new=v0.8.0
+old=v0.8.0 new=v0.9.0
 mkdir -p /tmp/permaily-$new && cd /tmp/permaily-$new
 gh release download $new --repo permaily-org/permaily
 gh attestation verify permaily.eif --repo permaily-org/permaily --signer-workflow permaily-org/permaily/.github/workflows/release.yml --source-ref refs/heads/main
@@ -15,7 +15,7 @@ sha256sum -c SHA256SUMS --ignore-missing
 mkdir eif && mv permaily.eif pcrs.json eif/
 
 # 1. The key of the new image. deploy/tofu/production.auto.tfvars:
-#      release_keys = { "v0.7.0" = "<its PCR0>", "v0.8.0" = "<jq -r .PCR0 eif/pcrs.json>" }
+#      release_keys = { "v0.8.0" = "<its PCR0>", "v0.9.0" = "<jq -r .PCR0 eif/pcrs.json>" }
 tofu -chdir=deploy/tofu apply          # creates one KMS key and its alias; then `tofu plan` must show no changes
 
 # 2. The running enclave gives the root secret to the new release. The script
@@ -27,7 +27,7 @@ scripts/deploy.sh eif permaily-host-linux-arm64
 scripts/verify.sh $new                 # from a server with outbound port 25, add -require-smtp
 ```
 
-Then open the pull request that commits `production.auto.tfvars`.
+Then delete the key of the previous release (below), and open the pull request that commits `production.auto.tfvars`.
 
 - **The handoff is refused** (HTTP 422): the answer says why. Nothing was written and the running enclave keeps serving. The usual causes are a key that was not created yet, or files of the wrong release.
 - **The new image was started first**: it logs `waiting for the running release to hand over the root secret` and serves nothing. Start the old image again, run the handoff, start the new one.
@@ -40,7 +40,7 @@ Deploy the previous release again with `scripts/deploy.sh`. Its record and its k
 
 ## Delete the key of an old release
 
-An old image can open the root secret for as long as its key exists. Once the new release has run long enough that no rollback is planned, remove the old release from `release_keys` and apply: its key is scheduled for deletion and gone after seven days. This cannot be undone, from the moment it is applied: cancelling the deletion leaves the key disabled, and its policy lets nobody enable it again. Never remove the release that is running.
+An old image can open the root secret for as long as its key exists: a flaw found in an old release stays a way in, and whoever verifies the service has to trust that release too. So deleting the previous key is the last step of a deployment. While the service has no users, do it once the new release is verified, in the pull request that records the deployment. With users, wait one to three days of normal running that include a restart of the new release, because the old key is also the only way back. Remove the old release from `release_keys` and apply: its key is scheduled for deletion and gone after seven days. This cannot be undone, from the moment it is applied: cancelling the deletion leaves the key disabled, and its policy lets nobody enable it again. Never remove the release that is running.
 
 ## A new deployment, or losing everything
 
