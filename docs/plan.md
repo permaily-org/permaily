@@ -48,7 +48,7 @@ Each step ends deployed and verified, like the releases so far. The estimates ar
 | 8 | Receipts chained and anchored, and the activity screen | 1 |
 | 9 | Notices by mail, the threat model and the public pages brought up to date, a round of tests with staging images | 1 |
 
-Step 1, in the order it is built:
+Step 1, in the order it is built (all of it released in v0.10.0 on 2026-11-11):
 
 - [x] The layers, and the core of accounts: invitations made by the operator (`scripts/invite.sh`), signing up and signing in by email with a code or a link, sessions. On in dev mode only (2026-11-11).
 - [x] Outgoing mail through SES, which turns accounts on in the image: the SES identity and its DNS records, the host's allowlist, the watch on who else gets a copy of what is sent (ADR 0021), the threat model, a staging image (2026-11-11). Asking AWS to leave the sandbox is under "Before real users".

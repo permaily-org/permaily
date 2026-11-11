@@ -58,7 +58,7 @@ Each criterion, the evidence that proves it, and its status: **covered** (a test
 
 ## F2: accounts
 
-Built in `internal/services/accounts` and `internal/sesmail`; on in the image from the release that follows v0.9.0.
+Built in `internal/services/accounts`, `internal/sesmail`, `internal/webauthn` and `internal/idp`; on in production since v0.10.0 (2026-11-11), with the four providers off until an application is registered at each.
 
 | Criterion | Evidence | Status |
 |---|---|---|
