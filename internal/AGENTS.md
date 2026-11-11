@@ -9,7 +9,8 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 | `nsm`, `nsm/fakensm` | real NSM attester; fake attester for dev mode and tests |
 | `contracts` | types and error codes that cross the boundary (API, MCP, command line, web app); imports nothing of the service (F2) |
 | `domain` | rules that need only their arguments: session lifetimes, what an address or an invitation looks like; imports only `contracts` (F2) |
-| `services/accounts` | accounts and sign-in (ADR 0017): invitations, sign-in by email, sessions; knows nothing of HTTP (F2) |
+| `services/accounts` | accounts and sign-in (ADR 0017): invitations, sign-in by email, passkeys, "passkey only" and recovery codes, sessions; knows nothing of HTTP (F2) |
+| `webauthn`, `webauthn/webauthntest` | the checks of what a browser answers when a passkey is made and used (ES256, EdDSA, RS256; no attestation trusted), written here so no WebAuthn library is in the image, and compared with one in `tests/webauthn-differential`; a software authenticator for tests and dev mode (F2) |
 | `sesmail` | the service's own mail through SES (`Sender`), and the watch that reads whether SES would give someone else a copy of it and keeps every state seen, for `/status` (ADR 0021) |
 | `httpapi` | `/attestation`, `/status` (the key that locks the root secret, the TLS identity), `/version`, mailbox API, `/v1/admin/handoff`, `/v1/admin/invitations`, and the web app's own API under `/api/v1/` (cookie, same origin) |
 | `router` | dispatch by Host (app, api, mcp, inbox) and security headers |
@@ -37,6 +38,7 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 - Whoever runs the storage must not get into an account by writing to the table. An account's record is signed (`envelope.Sign`) and read through `store.Anchored`; a session or an invitation is an entry signed with its partition and key, kept by the hash of its secret; how long one lasts is read from what was signed, never from the entry's own expiry. What must not be set back at all (the count of wrong sign-in codes) lives only in the enclave's memory.
 - An account that cannot be read (a record that does not verify, or whose committed version is gone) is an error, never "no such account": a sign-up would replace it.
 - The answer to starting a sign-in is the same, and as fast, whether the address has an account or not.
+- Passkeys, the "passkey only" switch and the hashes of recovery codes are part of the account's record, and that record changes only through `change` in `services/accounts`, one change at a time. A passkey ceremony lives in memory, works once, and every way it can fail is the same error. Never trust an attestation, and never accept an origin or a relying party that is not the app's.
 - The link of a sign-in message never signs in by being opened: the page looks first (`LookEmail`) and asks the person. Keep `finish` behind that question in every client.
 - Account, session and sign-in identifiers stay out of logs too: `httpapi` strips them from the errors it logs, and a mail system's errors, which carry addresses, are never logged.
 - Mail the enclave sends goes out only through `sesmail.Sender` with its `Watch` set: no message leaves while SES says a configuration set applies to it, or does not say. Never name a configuration set in a request, and never send through another path. An error from SES is passed on and logged only as its status and its kind, never its text, which names addresses.

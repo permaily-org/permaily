@@ -53,7 +53,7 @@ Step 1, in the order it is built:
 - [x] The layers, and the core of accounts: invitations made by the operator (`scripts/invite.sh`), signing up and signing in by email with a code or a link, sessions. On in dev mode only (2026-11-11).
 - [x] Outgoing mail through SES, which turns accounts on in the image: the SES identity and its DNS records, the host's allowlist, the watch on who else gets a copy of what is sent (ADR 0021), the threat model, a staging image (2026-11-11). Asking AWS to leave the sandbox is under "Before real users".
 - [x] The sign-in and sign-up screens of the web app, and the app behind a session (2026-11-11). Made without a design of their own: layout and copy are for the designer to review.
-- [ ] Passkeys, the "passkey only" switch and recovery codes.
+- [x] Passkeys, the "passkey only" switch and recovery codes, with their screens and the real list of sessions in Settings (2026-11-11). Not yet tried with a real authenticator in a real browser: that needs a certificate browsers trust, so it waits for the release.
 - [ ] Google, GitHub, Meta and Microsoft.
 - [ ] Settings: name, sessions per device, deleting the account. The operator's tool to see accounts.
 

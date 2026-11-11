@@ -1,7 +1,8 @@
 [extend]
 useDefault = true
 
-# Narrow, line-level exceptions only, each with its reason. Never allowlist a path.
+# Narrow, line-level exceptions only, each with its reason. Never allowlist a path by itself: a path may only
+# narrow a line-level exception further.
 
 [[allowlists]]
 description = "deploy/enclave.json carries the public SHA-256 of the test mailbox token (ADR 0009); the token itself is never committed"
@@ -12,3 +13,14 @@ regexes = ['''^\s*"mailbox_token_sha256": "[0-9a-f]{64}",?\s*$''']
 description = "deploy/enclave.json carries the public SHA-256 of the admin token that may ask for a handoff (ADR 0013); the token itself is never committed"
 regexTarget = "line"
 regexes = ['''^\s*"admin_token_sha256": "[0-9a-f]{64}",?\s*$''']
+
+[[allowlists]]
+description = "internal/webauthn/testdata/vectors holds public captures of what authenticators and browsers answered, copied from published test suites to check the parser against real devices; a challenge, client data, authenticator data or an origin there is nobody's secret"
+condition = "AND"
+paths = ['''^internal/webauthn/testdata/vectors/[a-z0-9.-]+\.json$''']
+regexTarget = "line"
+# The second one is the client data once the scanner has decoded it: it holds the challenge again.
+regexes = [
+  '''^\s*"(authenticatorData|clientDataJSON|challenge|origin)": "[A-Za-z0-9+/=_:.-]+",?\s*$''',
+  '''"type"\s*:\s*"webauthn\.(create|get)"''',
+]

@@ -14,6 +14,7 @@ import { applyTheme, readTheme, saveTheme, type Theme } from '../../lib/theme.ts
 import { solidDanger } from '../accounts/styles.ts'
 import { ExportReady } from './ExportReady.tsx'
 import { EditableRow, NotificationRow, SettingRow } from './rows.tsx'
+import { SignIn } from './signin/SignIn.tsx'
 
 const notificationOptions = [
   { id: 'requests', title: 'New connection requests', on: true },
@@ -81,85 +82,6 @@ function Profile() {
         onSave={setLanguage}
         options={['English', 'Español', 'Català', 'Français', 'Deutsch']}
       />
-    </section>
-  )
-}
-
-const otherSession = { id: 'iphone', device: 'iPhone, Safari', seen: '2 days ago' }
-
-function SignIn() {
-  const [passkeys, setPasskeys] = useState(['MacBook, added 6 March'])
-  const [sessions, setSessions] = useState([
-    { id: 'this', device: 'MacBook, Firefox', seen: 'This device' },
-    otherSession,
-  ])
-  const [reviewing, setReviewing] = useState(false)
-  const newPasskey = 'This browser, added today'
-
-  return (
-    <section aria-labelledby="sign-in">
-      <SectionHeading id="sign-in" title="Sign-in" />
-      {passkeys.length === 0 ? (
-        <SettingRow label="Passkey">
-          <span className="text-ink-2">
-            None. You sign in with a link sent to your contact email.
-          </span>
-        </SettingRow>
-      ) : (
-        passkeys.map((passkey) => (
-          <SettingRow
-            key={passkey}
-            label="Passkey"
-            action={
-              <TextAction
-                onClick={() => setPasskeys((list) => list.filter((p) => p !== passkey))}
-                aria-label={`Remove passkey ${passkey}`}
-              >
-                Remove
-              </TextAction>
-            }
-          >
-            {passkey}
-          </SettingRow>
-        ))
-      )}
-      <SettingRow
-        label="Sessions"
-        action={
-          <TextAction aria-expanded={reviewing} onClick={() => setReviewing((v) => !v)}>
-            {reviewing ? 'Done' : 'Review'}
-          </TextAction>
-        }
-      >
-        {sessions.length === 1 ? '1 device signed in' : `${sessions.length} devices signed in`}
-      </SettingRow>
-      {reviewing && (
-        <ul className="border-b border-rule py-1.5 sm:pl-[132px]">
-          {sessions.map((session) => (
-            <li
-              key={session.id}
-              className="flex items-center justify-between gap-3 py-1.5 text-small"
-            >
-              <span>
-                {session.device} <span className="text-ink-2">· {session.seen}</span>
-              </span>
-              {session.id !== 'this' && (
-                <TextAction
-                  size="sm"
-                  onClick={() => setSessions((list) => list.filter((s) => s.id !== session.id))}
-                >
-                  Sign out
-                </TextAction>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      {!passkeys.includes(newPasskey) && (
-        <TextAction className="mt-2.5" onClick={() => setPasskeys((list) => [...list, newPasskey])}>
-          Add a passkey
-        </TextAction>
-      )}
     </section>
   )
 }

@@ -1,0 +1,26 @@
+{
+  "name": "yubico-generated-indefinite-length",
+  "source": {
+    "project": "Yubico/java-webauthn-server",
+    "url": "https://github.com/Yubico/java-webauthn-server/blob/3a7edfb2609696808e8daad2508115bd43d88d3f/webauthn-server-core/src/test/scala/com/yubico/webauthn/RegistrationTestData.scala#L368",
+    "license": "BSD-2-Clause",
+    "copyright": "Copyright (c) 2014-2018, Yubico AB",
+    "notice": "licenses/yubico-java-webauthn-server.txt"
+  },
+  "made": "tool",
+  "authenticator": "the library's own test generator, not an authenticator",
+  "aaguid": "000102030405060708090a0b0c0d0e0f",
+  "client": "Chrome of 2018, or a browser of that time; judged by the members of the client data and their order: challenge, origin, type, tokenBinding",
+  "algorithm": "ES256",
+  "relyingParty": "localhost",
+  "origin": "https://localhost",
+  "creation": {
+    "format": "none",
+    "challenge": "AAEBAgMFCA0VIjdZEGl5Yls",
+    "clientDataJSON": "eyJjaGFsbGVuZ2UiOiJBQUVCQWdNRkNBMFZJamRaRUdsNVlscyIsIm9yaWdpbiI6Imh0dHBzOi8vbG9jYWxob3N0IiwidHlwZSI6IndlYmF1dGhuLmNyZWF0ZSIsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+    "attestationObject": "v2hhdXRoRGF0YVikSZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2NBAAAFOQABAgMEBQYHCAkKCwwNDg8AIFE2RlqwNffMn7bNa6oliPJbZ1Pxu__grqlFOoVPy-ZCpQECAyYgASFYIKZWFvZoxroOsNgZw6Cp5h1E5XR_F6563-McKQ_zscIQIlggtdVJsxZP0AdW2CYKU09U4dK8591LRt-bBSMdjdGfW39jZm10ZG5vbmVnYXR0U3RtdL___w",
+    "expect": "refused",
+    "refusal": "malformed attestation object",
+    "why": "Not a captured answer: the library's test generator wrote it with Jackson, which writes CBOR maps of indefinite length (0xbf ... 0xff). WebAuthn Level 3, section 2.4 (All Conformance Classes), has every encoder use the CTAP2 canonical CBOR encoding form, which has no indefinite lengths, and says decoders should refuse what is not in that form. None of the answers captured from a browser in these fixtures has one."
+  }
+}

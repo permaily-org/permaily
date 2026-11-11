@@ -3,8 +3,10 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +19,7 @@ import (
 	"github.com/permaily-org/permaily/internal/keys"
 	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/store"
+	"github.com/permaily-org/permaily/internal/webauthn/webauthntest"
 )
 
 const appOrigin = "https://app.permaily.test"
@@ -308,12 +311,29 @@ func (b broken) CreateInvitations(context.Context, int) (*contracts.Invitations,
 	return nil, b.err
 }
 
+func (b broken) StartPasskeySignIn(context.Context) (*contracts.PasskeyRequest, error) {
+	return nil, b.err
+}
+
+func (b broken) FinishPasskeySignIn(context.Context, contracts.PasskeySignIn, string) (*contracts.Me, string, error) {
+	return nil, "", b.err
+}
+
+func (b broken) Recover(context.Context, contracts.Recovery, string) (*contracts.Me, string, error) {
+	return nil, "", b.err
+}
+
 func TestAccountsAPIInternalErrors(t *testing.T) {
 	a := newApp(t)
 	a.signIn("ana@example.org")
 	id := "acc_" + strings.Repeat("a", 26)
 	a.h = httpapi.AccountsAPI(broken{err: errors.New("store: commits of account-" + id + ": down")}, slog.New(slog.NewTextHandler(a.logs, nil)))
-	for _, c := range [][3]string{{"POST", "/api/v1/auth/email/start", `{"address":"ana@example.org"}`}, {"GET", "/api/v1/me", ""}} {
+	for _, c := range [][3]string{
+		{"POST", "/api/v1/auth/email/start", `{"address":"ana@example.org"}`}, {"GET", "/api/v1/me", ""},
+		{"POST", "/api/v1/auth/passkey/start", ""}, {"POST", "/api/v1/auth/passkey/finish", `{"ceremony":"cer_x","credential":{}}`},
+		{"POST", "/api/v1/auth/recovery", `{"address":"ana@example.org","code":"x"}`}, {"GET", "/api/v1/passkeys", ""},
+		{"POST", "/api/v1/account/passkey-only", `{"on":false}`},
+	} {
 		rec := a.call(c[0], c[1], c[2], nil)
 		// What failed stays inside: the answer says nothing of it.
 		if rec.Code != 500 || strings.Contains(rec.Body.String(), "store") || !strings.Contains(rec.Body.String(), `"internal"`) {
@@ -330,5 +350,299 @@ func TestAccountsAPIInternalErrors(t *testing.T) {
 	h := httpapi.Invitations(broken{err: contracts.ErrTooManyRequests}, slog.New(slog.DiscardHandler))
 	if rec := do(h, "POST", "/v1/admin/invitations", "", ""); rec.Code != 429 {
 		t.Fatalf("too many: %d", rec.Code)
+	}
+}
+
+func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+
+func unb64(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		t.Fatalf("%q is not base64url without padding: %v", s, err)
+	}
+	return b
+}
+
+// read decodes the body of an answer the way the page does, and fails on
+// anything but the status wanted.
+func read(t *testing.T, rec *httptest.ResponseRecorder, status int, v any) {
+	t.Helper()
+	if rec.Code != status || (v != nil && json.Unmarshal(rec.Body.Bytes(), v) != nil) {
+		t.Fatalf("%d %s, want %d", rec.Code, rec.Body, status)
+	}
+	if status == 200 && rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("an answer about an account may be cached")
+	}
+}
+
+// makePasskey makes a passkey for the signed-in browser, sending what
+// PublicKeyCredential.toJSON() gives, and returns its identifier.
+func (a *app) makePasskey(auth *webauthntest.Authenticator, name string) string {
+	a.t.Helper()
+	var started struct {
+		Ceremony string `json:"ceremony"`
+		Options  struct {
+			RP        struct{ ID, Name string } `json:"rp"`
+			User      struct{ ID string }       `json:"user"`
+			Challenge string                    `json:"challenge"`
+		} `json:"options"`
+	}
+	read(a.t, a.call("POST", "/api/v1/passkeys/start", "", nil), 200, &started)
+	o := started.Options
+	id, clientData, attestation := auth.Create(o.RP.ID, appOrigin, unb64(a.t, o.Challenge), unb64(a.t, o.User.ID))
+	body := fmt.Sprintf(`{"ceremony":%q,"name":%q,"credential":{"id":%q,"rawId":%q,"type":"public-key","authenticatorAttachment":"platform",
+		"response":{"clientDataJSON":%q,"attestationObject":%q,"transports":["internal","hybrid"],"publicKeyAlgorithm":-7},
+		"clientExtensionResults":{"credProps":{"rk":true}}}}`, started.Ceremony, name, b64(id), b64(id), b64(clientData), b64(attestation))
+	var made contracts.Passkey
+	read(a.t, a.call("POST", "/api/v1/passkeys/finish", body, nil), 200, &made)
+	if made.ID.String() != b64(id) || made.Name != name || made.CreatedAt.IsZero() {
+		a.t.Fatalf("the passkey made: %+v", made)
+	}
+	return b64(id)
+}
+
+// passkeySignIn signs the browser in with a passkey and returns the answer.
+func (a *app) passkeySignIn(auth *webauthntest.Authenticator, id string) *httptest.ResponseRecorder {
+	a.t.Helper()
+	var started struct {
+		Ceremony string `json:"ceremony"`
+		Options  struct {
+			Challenge        string          `json:"challenge"`
+			RPID             string          `json:"rpId"`
+			UserVerification string          `json:"userVerification"`
+			AllowCredentials json.RawMessage `json:"allowCredentials"`
+		} `json:"options"`
+	}
+	read(a.t, a.call("POST", "/api/v1/auth/passkey/start", "", nil), 200, &started)
+	o := started.Options
+	if o.RPID != "app.permaily.test" || o.UserVerification != "required" || o.AllowCredentials != nil {
+		a.t.Fatalf("request options: %+v", o)
+	}
+	clientData, authData, signature, handle := auth.Get(o.RPID, appOrigin, unb64(a.t, o.Challenge), unb64(a.t, id))
+	body := fmt.Sprintf(`{"ceremony":%q,"credential":{"id":%q,"rawId":%q,"type":"public-key","authenticatorAttachment":"platform",
+		"response":{"clientDataJSON":%q,"authenticatorData":%q,"signature":%q,"userHandle":%q},"clientExtensionResults":{}}}`,
+		started.Ceremony, id, id, b64(clientData), b64(authData), b64(signature), b64(handle))
+	return a.call("POST", "/api/v1/auth/passkey/finish", body, nil)
+}
+
+// A passkey is made, signs in, becomes the only way in, and a recovery code
+// stands in for it once: all of it as the page asks for it.
+func TestPasskeysAPI(t *testing.T) {
+	a := newApp(t)
+	me := a.signIn("ana@example.org")
+	var list contracts.PasskeyList
+	rec := a.call("GET", "/api/v1/passkeys", "", nil)
+	read(t, rec, 200, &list)
+	if strings.TrimSpace(rec.Body.String()) != `{"passkeys":[],"passkey_only":false,"recovery_codes_left":0}` {
+		t.Fatalf("no passkeys: %s", rec.Body)
+	}
+
+	auth := webauthntest.New(webauthntest.ES256)
+	id := a.makePasskey(auth, "Laptop")
+	read(t, a.call("GET", "/api/v1/passkeys", "", nil), 200, &list)
+	if len(list.Passkeys) != 1 || list.Passkeys[0].ID.String() != id || list.Passkeys[0].Name != "Laptop" || list.Passkeys[0].Synced {
+		t.Fatalf("passkeys: %+v", list)
+	}
+	var renamed contracts.Passkey
+	read(t, a.call("PATCH", "/api/v1/passkeys/"+id, `{"name":"Work laptop"}`, nil), 200, &renamed)
+	if renamed.Name != "Work laptop" || renamed.ID.String() != id {
+		t.Fatalf("renamed: %+v", renamed)
+	}
+
+	// Signed out, the passkey signs in: no address asked, the same cookie.
+	read(t, a.call("POST", "/api/v1/auth/sign-out", "", nil), 204, nil)
+	var signed contracts.Me
+	read(t, a.passkeySignIn(auth, id), 200, &signed)
+	c := a.cookie
+	if signed.Account != me.Account || !signed.Session.Current || signed.Session.ID == me.Session.ID || signed.Session.Device != "test browser" {
+		t.Fatalf("signed in with a passkey: %+v", signed)
+	}
+	if c == nil || c.Name != "__Host-permaily-session" || !c.Secure || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" || c.Domain != "" || c.MaxAge != 30*24*3600 {
+		t.Fatalf("cookie: %+v", c)
+	}
+	read(t, a.call("GET", "/api/v1/me", "", nil), 200, nil)
+
+	// "Passkey only": ten codes, shown this once.
+	var state contracts.PasskeyOnlyState
+	read(t, a.call("POST", "/api/v1/account/passkey-only", `{"on":true}`, nil), 200, &state)
+	if !state.PasskeyOnly || len(state.RecoveryCodes) != 10 {
+		t.Fatalf("passkey only: %+v", state)
+	}
+	read(t, a.call("GET", "/api/v1/passkeys", "", nil), 200, &list)
+	if !list.PasskeyOnly || list.RecoveryCodesLeft != 10 {
+		t.Fatalf("after passkey only: %+v", list)
+	}
+	rec = a.call("POST", "/api/v1/account/passkey-only", `{"on":true}`, nil)
+	if read(t, rec, 200, nil); strings.TrimSpace(rec.Body.String()) != `{"passkey_only":true,"recovery_codes":[]}` {
+		t.Fatalf("turning on what is on: %s", rec.Body)
+	}
+	var e httpapi.APIError
+	if read(t, a.call("DELETE", "/api/v1/passkeys/"+id, "", nil), 409, &e); e.Error.Code != "last_passkey" {
+		t.Fatalf("removing the last passkey: %+v", e)
+	}
+	// Signing in by mail answers as it always does, and sends nothing.
+	sent := len(a.out.Sent())
+	var started contracts.EmailStarted
+	read(t, a.call("POST", "/api/v1/auth/email/start", `{"address":"ana@example.org"}`, nil), 200, &started)
+	a.svc.Wait()
+	if started.Attempt == "" || started.ExpiresIn != 600 || len(a.out.Sent()) != sent {
+		t.Fatalf("a sign-in by mail with passkey only: %+v, %d messages", started, len(a.out.Sent())-sent)
+	}
+	var codes contracts.RecoveryCodes
+	read(t, a.call("POST", "/api/v1/account/recovery-codes", "", nil), 200, &codes)
+	if len(codes.RecoveryCodes) != 10 || codes.RecoveryCodes[0] == state.RecoveryCodes[0] {
+		t.Fatalf("new codes: %+v", codes)
+	}
+
+	// Signed out, a recovery code and the address sign in, once.
+	read(t, a.call("POST", "/api/v1/auth/sign-out", "", nil), 204, nil)
+	body := `{"address":"ana@example.org","code":"` + codes.RecoveryCodes[0] + `"}`
+	if read(t, a.call("POST", "/api/v1/auth/recovery", `{"address":"ana@example.org","code":"`+state.RecoveryCodes[0]+`"}`, nil), 400, &e); e.Error.Code != "invalid_code" || a.cookie != nil {
+		t.Fatalf("a code from before the new ones: %+v", e)
+	}
+	read(t, a.call("POST", "/api/v1/auth/recovery", body, nil), 200, &signed)
+	if signed.Account != me.Account || a.cookie == nil || a.cookie.MaxAge != 30*24*3600 || !a.cookie.HttpOnly {
+		t.Fatalf("recovered: %+v, cookie %+v", signed, a.cookie)
+	}
+	old := a.cookie
+	read(t, a.call("POST", "/api/v1/auth/sign-out", "", nil), 204, nil)
+	rec = a.call("POST", "/api/v1/auth/recovery", body, nil)
+	if read(t, rec, 400, &e); e.Error.Code != "invalid_code" || a.cookie != nil || rec.Header().Get("Set-Cookie") != "" {
+		t.Fatalf("the same code again: %+v", e)
+	}
+	// The answer is the same for an address without an account.
+	nobody := a.call("POST", "/api/v1/auth/recovery", `{"address":"nobody@example.org","code":"`+codes.RecoveryCodes[0]+`"}`, nil)
+	if nobody.Code != rec.Code || nobody.Body.String() != rec.Body.String() {
+		t.Fatalf("an address without an account: %d %s", nobody.Code, nobody.Body)
+	}
+
+	// Turned off again, the passkey can go, and there are no codes to ask for.
+	read(t, a.passkeySignIn(auth, id), 200, nil)
+	if old.Value == a.cookie.Value {
+		t.Fatal("a sign-in gave the cookie of another")
+	}
+	read(t, a.call("POST", "/api/v1/account/passkey-only", `{"on":false}`, nil), 200, &state)
+	if state.PasskeyOnly || len(state.RecoveryCodes) != 0 {
+		t.Fatalf("turned off: %+v", state)
+	}
+	if read(t, a.call("POST", "/api/v1/account/recovery-codes", "", nil), 409, &e); e.Error.Code != "passkey_only_off" {
+		t.Fatalf("codes without passkey only: %+v", e)
+	}
+	read(t, a.call("DELETE", "/api/v1/passkeys/"+id, "", nil), 204, nil)
+	if read(t, a.call("DELETE", "/api/v1/passkeys/"+id, "", nil), 404, &e); e.Error.Code != "not_found" {
+		t.Fatalf("removing it again: %+v", e)
+	}
+	if read(t, a.call("POST", "/api/v1/account/passkey-only", `{"on":true}`, nil), 409, &e); e.Error.Code != "passkey_needed" {
+		t.Fatalf("passkey only without a passkey: %+v", e)
+	}
+	// The passkey that was removed signs nobody in.
+	read(t, a.call("POST", "/api/v1/auth/sign-out", "", nil), 204, nil)
+	if read(t, a.passkeySignIn(auth, id), 400, &e); e.Error.Code != "invalid_passkey" || a.cookie != nil {
+		t.Fatalf("a removed passkey: %+v", e)
+	}
+
+	// Nothing of it is in the logs.
+	secrets := append([]string{"ana@", "example.org", me.Account.ID, id, "Laptop"}, append(state.RecoveryCodes, codes.RecoveryCodes...)...)
+	for _, secret := range secrets {
+		if secret != "" && strings.Contains(a.logs.String(), secret) {
+			t.Fatalf("the logs hold %q:\n%s", secret, a.logs)
+		}
+	}
+}
+
+func TestPasskeysAPIRefusals(t *testing.T) {
+	a := newApp(t)
+	evil := func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") }
+	id := b64([]byte("some passkey"))
+	// Without a session, and from another site's page.
+	for _, c := range [][3]string{
+		{"GET", "/api/v1/passkeys", ""}, {"POST", "/api/v1/passkeys/start", ""},
+		{"POST", "/api/v1/passkeys/finish", `{"ceremony":"cer_x","name":"x","credential":{}}`},
+		{"PATCH", "/api/v1/passkeys/" + id, `{"name":"x"}`}, {"DELETE", "/api/v1/passkeys/" + id, ""},
+		{"POST", "/api/v1/account/passkey-only", `{"on":false}`}, {"POST", "/api/v1/account/recovery-codes", ""},
+	} {
+		var e httpapi.APIError
+		if read(t, a.call(c[0], c[1], c[2], nil), 401, &e); e.Error.Code != "unauthorized" {
+			t.Errorf("%s %s without a session: %+v", c[0], c[1], e)
+		}
+	}
+	a.signIn("ana@example.org")
+	for _, c := range [][3]string{
+		{"POST", "/api/v1/auth/passkey/start", ""}, {"POST", "/api/v1/auth/passkey/finish", `{"ceremony":"cer_x","credential":{}}`},
+		{"POST", "/api/v1/auth/recovery", `{"address":"ana@example.org","code":"x"}`}, {"POST", "/api/v1/passkeys/start", ""},
+		{"POST", "/api/v1/passkeys/finish", `{"ceremony":"cer_x","name":"x","credential":{}}`},
+		{"PATCH", "/api/v1/passkeys/" + id, `{"name":"x"}`}, {"DELETE", "/api/v1/passkeys/" + id, ""},
+		{"POST", "/api/v1/account/passkey-only", `{"on":true}`}, {"POST", "/api/v1/account/recovery-codes", ""},
+	} {
+		var e httpapi.APIError
+		if read(t, a.call(c[0], c[1], c[2], evil), 403, &e); e.Error.Code != "forbidden" {
+			t.Errorf("%s %s from another origin: %+v", c[0], c[1], e)
+		}
+	}
+
+	// A credential fits: an identifier of a kilobyte, twice, and what comes
+	// with it. More than a credential needs does not.
+	fits := `{"ceremony":"cer_x","name":"x","credential":{"id":"` + strings.Repeat("A", 1364) + `","rawId":"` + strings.Repeat("A", 1364) +
+		`","response":{"clientDataJSON":"` + strings.Repeat("A", 1000) + `","attestationObject":"` + strings.Repeat("A", 8000) + `"}}}`
+	large := strings.Replace(fits, `"attestationObject":"`, `"attestationObject":"`+strings.Repeat("A", 32<<10), 1)
+	cases := []struct {
+		name, method, path, body string
+		status                   int
+		code                     string
+	}{
+		{"a ceremony that is not one", "POST", "/api/v1/passkeys/finish", `{"ceremony":"cer_x","name":"x","credential":{}}`, 400, "invalid_passkey"},
+		{"a large credential", "POST", "/api/v1/passkeys/finish", fits, 400, "invalid_passkey"},
+		{"more than a credential", "POST", "/api/v1/passkeys/finish", large, 400, "invalid_body"},
+		{"a name that cannot be kept", "POST", "/api/v1/passkeys/finish", `{"ceremony":"cer_x","name":"","credential":{}}`, 400, "invalid_name"},
+		{"a field nobody asked for", "POST", "/api/v1/passkeys/finish", `{"ceremony":"cer_x","name":"x","credential":{},"account":"acc_x"}`, 400, "invalid_body"},
+		{"a credential that is not one", "POST", "/api/v1/passkeys/finish", `{"ceremony":"cer_x","name":"x","credential":{"rawId":"not base64url!"}}`, 400, "invalid_body"},
+		{"a padded identifier", "POST", "/api/v1/passkeys/finish", `{"ceremony":"cer_x","name":"x","credential":{"rawId":"AQ=="}}`, 400, "invalid_body"},
+		{"not JSON", "POST", "/api/v1/passkeys/finish", `ceremony=cer_x`, 400, "invalid_body"},
+		{"a sign-in that was not started", "POST", "/api/v1/auth/passkey/finish", `{"ceremony":"cer_x","credential":{"rawId":"AQID","response":{"userHandle":"YWNj"}}}`, 400, "invalid_passkey"},
+		{"a large sign-in", "POST", "/api/v1/auth/passkey/finish", strings.Replace(fits, `"name":"x",`, "", 1), 400, "invalid_passkey"},
+		{"more than a sign-in", "POST", "/api/v1/auth/passkey/finish", strings.Replace(large, `"name":"x",`, "", 1), 400, "invalid_body"},
+		{"a sign-in that is not JSON", "POST", "/api/v1/auth/passkey/finish", `[]`, 400, "invalid_body"},
+		{"a wrong recovery code", "POST", "/api/v1/auth/recovery", `{"address":"ana@example.org","code":"2222-2222-2222-2222"}`, 400, "invalid_code"},
+		{"a recovery of nothing", "POST", "/api/v1/auth/recovery", `{}`, 400, "invalid_code"},
+		{"a recovery that is not JSON", "POST", "/api/v1/auth/recovery", `address=ana`, 400, "invalid_body"},
+		{"a recovery with more", "POST", "/api/v1/auth/recovery", `{"address":"ana@example.org","code":"x","on":false}`, 400, "invalid_body"},
+		{"renaming a passkey that is not there", "PATCH", "/api/v1/passkeys/" + id, `{"name":"x"}`, 404, "not_found"},
+		{"renaming to nothing", "PATCH", "/api/v1/passkeys/" + id, `{"name":" "}`, 400, "invalid_name"},
+		{"renaming without a name", "PATCH", "/api/v1/passkeys/" + id, `{"title":"x"}`, 400, "invalid_body"},
+		{"removing a passkey that is not there", "DELETE", "/api/v1/passkeys/" + id, "", 404, "not_found"},
+		{"removing something that is not a passkey", "DELETE", "/api/v1/passkeys/not%20base64url", "", 404, "not_found"},
+		{"passkey only without a passkey", "POST", "/api/v1/account/passkey-only", `{"on":true}`, 409, "passkey_needed"},
+		{"passkey only without saying which", "POST", "/api/v1/account/passkey-only", `{"passkey_only":true}`, 400, "invalid_body"},
+		{"passkey only without a body", "POST", "/api/v1/account/passkey-only", "", 400, "invalid_body"},
+		{"recovery codes without passkey only", "POST", "/api/v1/account/recovery-codes", "", 409, "passkey_only_off"},
+		{"a passkey by GET", "GET", "/api/v1/passkeys/" + id, "", 404, "not_found"},
+		{"starting a sign-in by GET", "GET", "/api/v1/auth/passkey/start", "", 404, "not_found"},
+	}
+	for _, c := range cases {
+		rec := a.call(c.method, c.path, c.body, nil)
+		var e httpapi.APIError
+		if rec.Code != c.status || json.Unmarshal(rec.Body.Bytes(), &e) != nil || e.Error.Code != c.code {
+			t.Errorf("%s: %d %.200s, want %d %s", c.name, rec.Code, rec.Body, c.status, c.code)
+		}
+	}
+	if a.cookie == nil {
+		t.Fatal("a refusal dropped the session's cookie")
+	}
+
+	// An account with as many passkeys as one keeps.
+	who, err := a.svc.Authenticate(context.Background(), a.cookie.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 20 {
+		a.makePasskey(webauthntest.New(webauthntest.EdDSA), fmt.Sprintf("key %d", i))
+	}
+	var e httpapi.APIError
+	if read(t, a.call("POST", "/api/v1/passkeys/start", "", nil), 409, &e); e.Error.Code != "too_many_passkeys" {
+		t.Fatalf("passkey twenty-one: %+v", e)
+	}
+	if list, _ := a.svc.Passkeys(context.Background(), who); len(list.Passkeys) != 20 {
+		t.Fatalf("%d passkeys", len(list.Passkeys))
 	}
 }

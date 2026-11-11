@@ -1,0 +1,37 @@
+{
+  "name": "w3c-none-es256-crossorigin",
+  "source": {
+    "project": "W3C Web Authentication Level 3, section 16 (Test Vectors)",
+    "url": "https://www.w3.org/TR/2026/REC-webauthn-3-20260825/#sctn-test-vectors-none-es256-crossOrigin",
+    "license": "W3C Software and Document License, 2023 version",
+    "copyright": "Copyright © 2026 World Wide Web Consortium. https://www.w3.org/copyright/software-license-2023/",
+    "notice": "licenses/w3c.txt"
+  },
+  "made": "specification",
+  "authenticator": "the specification's generator",
+  "aaguid": "883f4f6014f19c09d87aa38123be48d0",
+  "client": "the specification's generator; judged by the members of the client data and their order: type, challenge, origin, crossOrigin, extraData",
+  "algorithm": "ES256",
+  "relyingParty": "example.org",
+  "origin": "https://example.org",
+  "creation": {
+    "format": "none",
+    "challenge": "O-WqzQNTcUJHI0CrWWnyQPHYdxbiC2gHrCMGVfpLO0k",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiTy1XcXpRTlRjVUpISTBDcldXbnlRUEhZZHhiaUMyZ0hyQ01HVmZwTE8wayIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5vcmciLCJjcm9zc09yaWdpbiI6dHJ1ZSwiZXh0cmFEYXRhIjoiY2xpZW50RGF0YUpTT04gbWF5IGJlIGV4dGVuZGVkIHdpdGggYWRkaXRpb25hbCBmaWVsZHMgaW4gdGhlIGZ1dHVyZSwgc3VjaCBhcyB0aGlzOiB6WnF1RXREUjlEV3FwVzV0QldURnVnIn0",
+    "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVikv6vDdDKViwYzYNOtZGHJxHNa5_jt1GWSpeDwFFKy5LVFAAAAAIg_T2AU8ZwJ2HqjgSO-SNAAIG4QUMDSyi8Hx1XLLGanTGT6QwZcGPk4NU2ZFdsr1c5XpQECAyYgASFYICIgCkc_kLEQeIUVUNA7TkSiJ5-MTsonsxU97f4D5Ol9Ilggy9C-ledGrW9agZG-EXVuTAQg5y9ltGbTm8VrixI6nG4",
+    "expect": "refused",
+    "refusal": "asked from inside another site",
+    "why": "The client data says crossOrigin true: the page that asked was inside a frame of another site. WebAuthn Level 3, sections 7.1 and 7.2: 'If C.crossOrigin is present and set to true, verify that the Relying Party expects' the credential to be created, or used, 'within an iframe that is not same-origin with its ancestors'. The service never asks from inside another site, so it takes only false or no member."
+  },
+  "use": {
+    "publicKey": "pQECAyYgASFYICIgCkc_kLEQeIUVUNA7TkSiJ5-MTsonsxU97f4D5Ol9Ilggy9C-ledGrW9agZG-EXVuTAQg5y9ltGbTm8VrixI6nG4",
+    "challenge": "h2qlF7qD_e5l_P_bykyE7q5dVPgEGh_IXJkeW7snMTc",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiaDJxbEY3cURfZTVsX1BfYnlreUU3cTVkVlBnRUdoX0lYSmtlVzdzbk1UYyIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5vcmciLCJjcm9zc09yaWdpbiI6dHJ1ZSwiZXh0cmFEYXRhIjoiY2xpZW50RGF0YUpTT04gbWF5IGJlIGV4dGVuZGVkIHdpdGggYWRkaXRpb25hbCBmaWVsZHMgaW4gdGhlIGZ1dHVyZSwgc3VjaCBhcyB0aGlzOiA5MnBjVFZEMEFieS1xNGR0bWo2ZWZnIn0",
+    "authenticatorData": "v6vDdDKViwYzYNOtZGHJxHNa5_jt1GWSpeDwFFKy5LUFAAAAAA",
+    "signature": "MEYCIQDrEvzyOxJ2TA8SLiI3H6uS4oOHn9eY847hhByVG25A5wIhAMdiN_-dt3s8VvMIN82moJrPoukVVE5gnAczsRhANtHP",
+    "expect": "refused",
+    "refusal": "asked from inside another site",
+    "why": "The client data says crossOrigin true: the page that asked was inside a frame of another site. WebAuthn Level 3, sections 7.1 and 7.2: 'If C.crossOrigin is present and set to true, verify that the Relying Party expects' the credential to be created, or used, 'within an iframe that is not same-origin with its ancestors'. The service never asks from inside another site, so it takes only false or no member.",
+    "client": "the specification's generator; judged by the members of the client data and their order: type, challenge, origin, crossOrigin, extraData"
+  }
+}

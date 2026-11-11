@@ -6,6 +6,8 @@
 package contracts
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -35,6 +37,15 @@ var (
 	ErrTooManyRequests = &Error{"too_many_requests", "too many attempts; wait a while and try again"}
 	ErrUnauthorized    = &Error{"unauthorized", "sign in to continue"}
 	ErrNotFound        = &Error{"not_found", "not found"}
+	// ErrInvalidPasskey covers every failure of making or using a passkey: a
+	// ceremony that ended, an answer that does not check, a passkey or an
+	// account that is not there. None says which.
+	ErrInvalidPasskey  = &Error{"invalid_passkey", "that passkey could not be used; try again"}
+	ErrInvalidName     = &Error{"invalid_name", "a name is one line of 1 to 64 characters"}
+	ErrTooManyPasskeys = &Error{"too_many_passkeys", "this account has as many passkeys as one can have; remove one first"}
+	ErrLastPasskey     = &Error{"last_passkey", "this is the only passkey of an account that signs in with passkeys only; add another, or turn that off first"}
+	ErrPasskeyNeeded   = &Error{"passkey_needed", "add a passkey before turning on passkey only"}
+	ErrPasskeyOnlyOff  = &Error{"passkey_only_off", "there are recovery codes only while passkey only is on"}
 )
 
 // AccountState says whether an account can be used.
@@ -125,4 +136,189 @@ type InvitationRequest struct {
 type Invitations struct {
 	Invitations []string  `json:"invitations"`
 	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+// Bytes is a binary value, written in JSON the way WebAuthn writes one:
+// base64url without padding.
+type Bytes []byte
+
+func (b Bytes) String() string { return base64.RawURLEncoding.EncodeToString(b) }
+
+// MarshalText implements encoding.TextMarshaler.
+func (b Bytes) MarshalText() ([]byte, error) { return []byte(b.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (b *Bytes) UnmarshalText(text []byte) error {
+	out, err := base64.RawURLEncoding.DecodeString(string(text))
+	if err != nil {
+		return err
+	}
+	*b = out
+	return nil
+}
+
+// Passkey is what a person sees of one of their passkeys.
+type Passkey struct {
+	// ID is the credential's identifier, as the browser names it.
+	ID        Bytes     `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	// Synced says the passkey is kept by a provider that copies it to the
+	// person's other devices.
+	Synced bool `json:"synced"`
+}
+
+// PasskeyList is the passkeys of an account, and how it signs in.
+type PasskeyList struct {
+	Passkeys []Passkey `json:"passkeys"`
+	// PasskeyOnly says email and every provider are turned off for sign-in.
+	PasskeyOnly       bool `json:"passkey_only"`
+	RecoveryCodesLeft int  `json:"recovery_codes_left"`
+}
+
+// PasskeyCreation answers the start of making a passkey. Options is what
+// PublicKeyCredential.parseCreationOptionsFromJSON takes.
+type PasskeyCreation struct {
+	Ceremony string          `json:"ceremony"`
+	Options  CreationOptions `json:"options"`
+}
+
+// CreationOptions are the options of navigator.credentials.create.
+type CreationOptions struct {
+	RP               RelyingParty          `json:"rp"`
+	User             PasskeyUser           `json:"user"`
+	Challenge        Bytes                 `json:"challenge"`
+	PubKeyCredParams []CredentialParameter `json:"pubKeyCredParams"`
+	// Timeout is in milliseconds.
+	Timeout                int                    `json:"timeout"`
+	ExcludeCredentials     []CredentialDescriptor `json:"excludeCredentials"`
+	AuthenticatorSelection AuthenticatorSelection `json:"authenticatorSelection"`
+	Attestation            string                 `json:"attestation"`
+}
+
+type RelyingParty struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// PasskeyUser is the account a passkey is made for. ID is what the passkey
+// answers with when it signs in.
+type PasskeyUser struct {
+	ID          Bytes  `json:"id"`
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+}
+
+type CredentialParameter struct {
+	Type string `json:"type"`
+	// Alg is a COSE algorithm.
+	Alg int `json:"alg"`
+}
+
+type CredentialDescriptor struct {
+	Type string `json:"type"`
+	ID   Bytes  `json:"id"`
+}
+
+type AuthenticatorSelection struct {
+	ResidentKey      string `json:"residentKey"`
+	UserVerification string `json:"userVerification"`
+}
+
+// PasskeyRequest answers the start of signing in with a passkey. Options is
+// what PublicKeyCredential.parseRequestOptionsFromJSON takes.
+type PasskeyRequest struct {
+	Ceremony string         `json:"ceremony"`
+	Options  RequestOptions `json:"options"`
+}
+
+// RequestOptions are the options of navigator.credentials.get. They name no
+// credential: the passkey says which account it is for.
+type RequestOptions struct {
+	Challenge Bytes `json:"challenge"`
+	// Timeout is in milliseconds.
+	Timeout          int    `json:"timeout"`
+	RPID             string `json:"rpId"`
+	UserVerification string `json:"userVerification"`
+}
+
+// CreatedCredential is what PublicKeyCredential.toJSON() gives after
+// navigator.credentials.create, as far as the service reads it.
+type CreatedCredential struct {
+	RawID    Bytes `json:"rawId"`
+	Response struct {
+		ClientDataJSON    Bytes `json:"clientDataJSON"`
+		AttestationObject Bytes `json:"attestationObject"`
+	} `json:"response"`
+}
+
+// UnmarshalJSON takes what is read and leaves the rest: a browser's toJSON()
+// carries more, and what it carries grows, whatever the request around it
+// accepts.
+func (c *CreatedCredential) UnmarshalJSON(b []byte) error {
+	type plain CreatedCredential
+	return json.Unmarshal(b, (*plain)(c))
+}
+
+// AssertedCredential is what PublicKeyCredential.toJSON() gives after
+// navigator.credentials.get, as far as the service reads it.
+type AssertedCredential struct {
+	RawID    Bytes `json:"rawId"`
+	Response struct {
+		ClientDataJSON    Bytes `json:"clientDataJSON"`
+		AuthenticatorData Bytes `json:"authenticatorData"`
+		Signature         Bytes `json:"signature"`
+		// UserHandle is the PasskeyUser.ID the passkey was made with.
+		UserHandle Bytes `json:"userHandle"`
+	} `json:"response"`
+}
+
+// UnmarshalJSON takes what is read and leaves the rest, as CreatedCredential does.
+func (c *AssertedCredential) UnmarshalJSON(b []byte) error {
+	type plain AssertedCredential
+	return json.Unmarshal(b, (*plain)(c))
+}
+
+// PasskeyFinish ends making a passkey, with the browser's answer and the
+// name the person gives it.
+type PasskeyFinish struct {
+	Ceremony   string            `json:"ceremony"`
+	Name       string            `json:"name"`
+	Credential CreatedCredential `json:"credential"`
+}
+
+// PasskeySignIn ends signing in with a passkey, with the browser's answer.
+type PasskeySignIn struct {
+	Ceremony   string             `json:"ceremony"`
+	Credential AssertedCredential `json:"credential"`
+}
+
+// PasskeyRename gives a passkey another name.
+type PasskeyRename struct {
+	Name string `json:"name"`
+}
+
+// Recovery signs in with a recovery code, to an account that signs in with
+// passkeys only.
+type Recovery struct {
+	Address string `json:"address"`
+	Code    string `json:"code"`
+}
+
+// PasskeyOnly turns "passkey only" on or off.
+type PasskeyOnly struct {
+	On bool `json:"on"`
+}
+
+// PasskeyOnlyState answers PasskeyOnly. RecoveryCodes are there when it was
+// just turned on, and are shown once: only their hash is kept.
+type PasskeyOnlyState struct {
+	PasskeyOnly   bool     `json:"passkey_only"`
+	RecoveryCodes []string `json:"recovery_codes"`
+}
+
+// RecoveryCodes are new recovery codes, shown once; the ones before them
+// stop working.
+type RecoveryCodes struct {
+	RecoveryCodes []string `json:"recovery_codes"`
 }

@@ -1,0 +1,32 @@
+{
+  "name": "w3c-fido-u2f-es256",
+  "source": {
+    "project": "W3C Web Authentication Level 3, section 16 (Test Vectors)",
+    "url": "https://www.w3.org/TR/2026/REC-webauthn-3-20260825/#sctn-test-vectors-fido-u2f-es256",
+    "license": "W3C Software and Document License, 2023 version",
+    "copyright": "Copyright © 2026 World Wide Web Consortium. https://www.w3.org/copyright/software-license-2023/",
+    "notice": "licenses/w3c.txt"
+  },
+  "made": "specification",
+  "authenticator": "the specification's generator",
+  "aaguid": "afb3c2efc054df425013d5c88e79c3c1",
+  "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin",
+  "algorithm": "ES256",
+  "relyingParty": "example.org",
+  "origin": "https://example.org",
+  "creation": {
+    "format": "fido-u2f",
+    "challenge": "4HQ3KZC5yqUHoiffxnsAN4DEUyU4DRqQwg-B7X0IDAY",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiNEhRM0taQzV5cVVIb2lmZnhuc0FONERFVXlVNERScVF3Zy1CN1gwSURBWSIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5vcmciLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "attestationObject": "o2NmbXRoZmlkby11MmZnYXR0U3RtdKJjc2lnWEcwRQIhAPQYh6IAY7smhny5dRl4rM6luBeRpo9PTdbqH7alwIbDAiBOXgCqOJV3fmYI8fN1-VRQBF2j2leg5P1FHfNaMdLZimN4NWOBWQIlMIICITCCAcegAwIBAgIQBPZtxlQup3Gd6kFtMlokATAKBggqhkjOPQQDAjBiMR4wHAYDVQQDDBVXZWJBdXRobiB0ZXN0IHZlY3RvcnMxDDAKBgNVBAoMA1czQzElMCMGA1UECwwcQXV0aGVudGljYXRvciBBdHRlc3RhdGlvbiBDQTELMAkGA1UEBhMCQUEwIBcNMjQwMTAxMDAwMDAwWhgPMzAyNDAxMDEwMDAwMDBaMF8xHjAcBgNVBAMMFVdlYkF1dGhuIHRlc3QgdmVjdG9yczEMMAoGA1UECgwDVzNDMSIwIAYDVQQLDBlBdXRoZW50aWNhdG9yIEF0dGVzdGF0aW9uMQswCQYDVQQGEwJBQTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABFb_-nCT3t5Grv7vtuUgx8zHiWdjbi-SWCunFFX2TpOTLf875ODU72jj47c6oIfiagoKMLAtwqojCdtMOi_JNt6jYDBeMAwGA1UdEwEB_wQCMAAwDgYDVR0PAQH_BAQDAgeAMB0GA1UdDgQWBBRCCCLrGQi1zTkRAX-8rUZBwF4FozAfBgNVHSMEGDAWgBRFr_cVsN14Z0H-6ZbrwWVHo5MbHjAKBggqhkjOPQQDAgNIADBFAiANC3d_CgsYGtKDAnWswxUP1gkkMLzQNP13vre9-MLVRgIhANSGTt2V2qOScICFXfGZ8XFymbJKXuzvvQF0Vam5NNj2aGF1dGhEYXRhWKS_q8N0MpWLBjNg061kYcnEc1rn-O3UZZKl4PAUUrLktUEAAAAAr7PC78BU30JQE9XIjnnDwQAgpLpuLSz-xDZI19JcXtVlm8GPK3gVOFJ-vUkt4DJWvfSlAQIDJiABIVggsNYt5rMPhvC6x6kBaVE5HC4xhJ4uZGYcvSsTzX1VCK0iWCBQOwvaKjV6mks0R1oo5ltmC0iYqePpu_CCDUNJQpft0A",
+    "expect": "no user verification"
+  },
+  "use": {
+    "challenge": "-QxhKYHYT1mUON4aUA92km6SzIS--OAsbiNVPwBIVDU",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiLVF4aEtZSFlUMW1VT040YVVBOTJrbTZTeklTLS1PQXNiaU5WUHdCSVZEVSIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5vcmciLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "authenticatorData": "v6vDdDKViwYzYNOtZGHJxHNa5_jt1GWSpeDwFFKy5LUBAAAAAA",
+    "signature": "MEQCIGFyRZlY_qkHtykrkvVVA0v9iEiV8oenYgDBuihyORNwAiBHJ7FmFH4mohu8KSHRkuv-1Wm3lDhTjlwSi14o5pJt1w",
+    "expect": "no user verification",
+    "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin"
+  }
+}

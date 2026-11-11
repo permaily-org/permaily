@@ -1,0 +1,24 @@
+{
+  "name": "webauthn-ruby-feitian-u2f",
+  "source": {
+    "project": "cedarcode/webauthn-ruby",
+    "url": "https://github.com/cedarcode/webauthn-ruby/blob/3e44a002b80cc89427ed98d9fb72c69b78b6571d/spec/support/seeds.rb#L20",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2018 Gonzalo",
+    "notice": "licenses/webauthn-ruby.txt"
+  },
+  "made": "captured",
+  "authenticator": "a Feitian U2F key",
+  "aaguid": "00000000000000000000000000000000",
+  "client": "Chrome of 2018, or a browser of that time; judged by the members of the client data and their order: challenge, origin, type",
+  "algorithm": "ES256",
+  "relyingParty": "localhost",
+  "origin": "http://localhost:3000",
+  "creation": {
+    "format": "fido-u2f",
+    "challenge": "F2jm-R5P_aK-VXJNAs7GhUfd8D4ymIKcgv6mmdvUzuw",
+    "clientDataJSON": "eyJjaGFsbGVuZ2UiOiJGMmptLVI1UF9hSy1WWEpOQXM3R2hVZmQ4RDR5bUlLY2d2Nm1tZHZVenV3Iiwib3JpZ2luIjoiaHR0cDovL2xvY2FsaG9zdDozMDAwIiwidHlwZSI6IndlYmF1dGhuLmNyZWF0ZSJ9",
+    "attestationObject": "o2NmbXRoZmlkby11MmZnYXR0U3RtdKJjc2lnWEcwRQIhAKmahJEF9gQ3EfWCUGIetNOyChxKgfPMcm2t97vg-yQkAiA9-gWsIVvM8UzG4Zx6miqPpOE6va_ikr2s5JkVQ3S0dWN4NWOBWQFqMIIBZjCCAQugAwIBAgIJANeVSb0aZxdPMAoGCCqGSM49BAMCMBcxFTATBgNVBAMMDEZUIEZJRE8gMDIwMDAgFw0xNzA2MjAwMDAwMDBaGA8yMDQwMDUwMTAwMDAwMFowHzEdMBsGA1UEAwwURlQgRklETyAwNDMwMDEzM0M4QTgwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATAzkwrAKYxGoVk3nrr-9vQZMZcfTCF5IqIW5bRGtng6JonnixY3AeTZPfb_Rso1mg2lNVb6p1PbRy37ulJLgUBozYwNDAdBgNVHQ4EFgQU9LZKaMM06QG44jxuZuaGbDGTH10wEwYLKwYBBAGC5RwCAQEEBAMCBDAwCgYIKoZIzj0EAwIDSQAwRgIhAMGUGKbJb2yoaZustVZ3X8BnxgjzncUIImqhASs-nJxnAiEAjdMkQsf7x2mbPasyOJOPoaIC8AMjz7rpXspBRTWkhtloYXV0aERhdGFY5EmWDeWIDoxodDQXD2R2YFuP5K65ooYyx5lc87qDHZdjQQAAAAAAAAAAAAAAAAAAAAAAAAAAAGAnQmgK9fqO6GyjOGVX1nBX85Gk5mI-kqURsbIIllIhmMEe2FH6fyHwulFi_vOygBo7EhRutk__JvwjfToylYKlC8zJPzytWDOR8LS3m-cfJipGkijlwo2yPJHgF0nJvgKlAQIDJiABIVggk-pSofda627UgESjbV7uHFaEiIIicMPWkx7vBR_ErQMiWCC68L6IPQcv6CxYJZnohL1l8O7vydwBWZZeFTudPCRpgg",
+    "expect": "no user verification"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "yubico-yubikey-5-fips-credprops",
+  "source": {
+    "project": "Yubico/java-webauthn-server",
+    "url": "https://github.com/Yubico/java-webauthn-server/blob/3a7edfb2609696808e8daad2508115bd43d88d3f/webauthn-server-core/src/test/scala/com/yubico/webauthn/test/RealExamples.scala#L713",
+    "license": "BSD-2-Clause",
+    "copyright": "Copyright (c) 2014-2018, Yubico AB",
+    "notice": "licenses/yubico-java-webauthn-server.txt"
+  },
+  "made": "captured",
+  "authenticator": "YubiKey 5 FIPS Series with NFC",
+  "aaguid": "c1f9a0bc1dd2404ab27f8e29047a43fd",
+  "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin, other_keys_can_be_added_here",
+  "algorithm": "ES256",
+  "relyingParty": "localhost",
+  "origin": "https://localhost:8443",
+  "creation": {
+    "format": "packed",
+    "challenge": "bVc5locwgWFovRz3dsXi3pW5px1gzF8QHhRf-OtDHnU",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiYlZjNWxvY3dnV0ZvdlJ6M2RzWGkzcFc1cHgxZ3pGOFFIaFJmLU90REhuVSIsIm9yaWdpbiI6Imh0dHBzOi8vbG9jYWxob3N0Ojg0NDMiLCJjcm9zc09yaWdpbiI6ZmFsc2UsIm90aGVyX2tleXNfY2FuX2JlX2FkZGVkX2hlcmUiOiJkbyBub3QgY29tcGFyZSBjbGllbnREYXRhSlNPTiBhZ2FpbnN0IGEgdGVtcGxhdGUuIFNlZSBodHRwczovL2dvby5nbC95YWJQZXgifQ",
+    "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSjY2FsZyZjc2lnWEcwRQIgCTFl9y9YBafBiKkOnj59Cgypvz9hhPwpdsiFAmE8utcCIQC8bsfMEcI5-Di3Xj9CIWZ1PAGMjvxEiD1L2csJcgjoBmN4NWOBWQLwMIIC7DCCAdSgAwIBAgIJAN1TJeaFJ6cVMA0GCSqGSIb3DQEBCwUAMC4xLDAqBgNVBAMTI1l1YmljbyBVMkYgUm9vdCBDQSBTZXJpYWwgNDU3MjAwNjMxMCAXDTE0MDgwMTAwMDAwMFoYDzIwNTAwOTA0MDAwMDAwWjBvMQswCQYDVQQGEwJTRTESMBAGA1UECgwJWXViaWNvIEFCMSIwIAYDVQQLDBlBdXRoZW50aWNhdG9yIEF0dGVzdGF0aW9uMSgwJgYDVQQDDB9ZdWJpY28gVTJGIEVFIFNlcmlhbCAxNzEzNzIyMzMzMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEDeoY3vFmcuLvf1SL2oqIV5WaVs9VGyB4GPmtxdHY84v_-R2wtLKvAfjIH9eTIq3-Ev3-UQLipTY0Bb9Xn9Sp3KOBlDCBkTATBgorBgEEAYLECg0BBAUEAwUEAjAQBgkrBgEEAYLECgwEAwIBBDAiBgkrBgEEAYLECgIEFTEuMy42LjEuNC4xLjQxNDgyLjEuNzATBgsrBgEEAYLlHAIBAQQEAwIEMDAhBgsrBgEEAYLlHAEBBAQSBBDB-aC8HdJASrJ_jikEekP9MAwGA1UdEwEB_wQCMAAwDQYJKoZIhvcNAQELBQADggEBAGl5dmZIe5GOHFOAvVUaWFWyet89UCHWKmLBTXXfuoPwYqatxGhVqIeiV4nAuFF127294SzJcMgzycToui5_g8OUonTvs9xWF9yH23fXjGcBWoGErlF7DqkycOz2NtjPhGwEfBnE--0_KRc_IN6bu7u_XPXNwNmCLcg0reERI23NO_ZftcWebjRBCwY3p6l0ahalKmrgqOi7bhU1AjbHmiEvJgeBcpZphS87eikierMO5PmwvdbV3okNseEoaeoHDDQ7Av6RwCtKCXwYupRs6sULgUwo0fz2znURA-zSuTzK4iZ_hmQvRVJtQBPtfpwBEmNEdwwZ1A-VxfspsYzA7AVoYXV0aERhdGFYxEmWDeWIDoxodDQXD2R2YFuP5K65ooYyx5lc87qDHZdjQQAAAATB-aC8HdJASrJ_jikEekP9AEAJSmR-h-HuKqKK2uvaDSjTQrjbfukR_-71-SoVyEFkfLEc09nidnTryBiqZGARKeDhwvtog3_c3f8C3REXcI4spQECAyYgASFYIDUR5e5GusKylrCRkKq1U3jnp-fJ_l_CeykL_-5tj4juIlgg72ksmbxNptIfwrG1hiwbViIoWIphEt2819hHdziqSsc",
+    "expect": "no user verification"
+  }
+}

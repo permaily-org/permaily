@@ -1,0 +1,32 @@
+{
+  "name": "yubico-apple-macos",
+  "source": {
+    "project": "Yubico/java-webauthn-server",
+    "url": "https://github.com/Yubico/java-webauthn-server/blob/3a7edfb2609696808e8daad2508115bd43d88d3f/webauthn-server-core/src/test/scala/com/yubico/webauthn/test/RealExamples.scala#L473",
+    "license": "BSD-2-Clause",
+    "copyright": "Copyright (c) 2014-2018, Yubico AB",
+    "notice": "licenses/yubico-java-webauthn-server.txt"
+  },
+  "made": "captured",
+  "authenticator": "Apple platform authenticator on macOS (Touch ID), anonymous Apple attestation",
+  "aaguid": "00000000000000000000000000000000",
+  "client": "Safari; judged by the members of the client data and their order: type, challenge, origin",
+  "algorithm": "ES256",
+  "relyingParty": "demo.yubico.com",
+  "origin": "https://demo.yubico.com",
+  "creation": {
+    "format": "apple",
+    "challenge": "qk34MFEP8ulWhui8JgrkteQ9ExHWcJbwIr3CRmeTkjg",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoicWszNE1GRVA4dWxXaHVpOEpncmt0ZVE5RXhIV2NKYndJcjNDUm1lVGtqZyIsIm9yaWdpbiI6Imh0dHBzOi8vZGVtby55dWJpY28uY29tIn0",
+    "attestationObject": "o2NmbXRlYXBwbGVnYXR0U3RtdKFjeDVjglkCRjCCAkIwggHJoAMCAQICBgF4xjGSqDAKBggqhkjOPQQDAjBIMRwwGgYDVQQDDBNBcHBsZSBXZWJBdXRobiBDQSAxMRMwEQYDVQQKDApBcHBsZSBJbmMuMRMwEQYDVQQIDApDYWxpZm9ybmlhMB4XDTIxMDQxMTEzMDcyMFoXDTIxMDQxNDEzMDcyMFowgZExSTBHBgNVBAMMQDYxYmQ5NzY4M2JlMTk0NTVjOGJjOWVhNDZhMjY4NzU0MzVjMmIwNmVlMTI4YzY4ZDFiMGE4NDczODkwNTgzMjYxGjAYBgNVBAsMEUFBQSBDZXJ0aWZpY2F0aW9uMRMwEQYDVQQKDApBcHBsZSBJbmMuMRMwEQYDVQQIDApDYWxpZm9ybmlhMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEdrvYDb-UbAjcbbommtRqw-2Lm1fvHG6ll1dOgeEM25H8ThQ0yj4R3hVbc_ean1I5eqc_RXDFm_jJI_Lmp1uEFqNVMFMwDAYDVR0TAQH_BAIwADAOBgNVHQ8BAf8EBAMCBPAwMwYJKoZIhvdjZAgCBCYwJKEiBCAQ6ifyo7KWlR86ueS0JMAuIi66gYkJsX-VxAcvbtEEcTAKBggqhkjOPQQDAgNnADBkAjAIu8Vx1tdGHSarO63RF7QaUo3_Iuk1CXA2Z0YIbDG4mLS15JQ_AUwctOpePcZoDngCMFMfnXi6jlhNBmppj5_8VQz2Kbz5eNxg-dqALz59ctCqXkdCVLMhUOpHWgMhhOadj1kCODCCAjQwggG6oAMCAQICEFYlU5XHp_tA6-Io2CYIU7YwCgYIKoZIzj0EAwMwSzEfMB0GA1UEAwwWQXBwbGUgV2ViQXV0aG4gUm9vdCBDQTETMBEGA1UECgwKQXBwbGUgSW5jLjETMBEGA1UECAwKQ2FsaWZvcm5pYTAeFw0yMDAzMTgxODM4MDFaFw0zMDAzMTMwMDAwMDBaMEgxHDAaBgNVBAMME0FwcGxlIFdlYkF1dGhuIENBIDExEzARBgNVBAoMCkFwcGxlIEluYy4xEzARBgNVBAgMCkNhbGlmb3JuaWEwdjAQBgcqhkjOPQIBBgUrgQQAIgNiAASDLocvJhSRgQIlufX81rtjeLX1Xz_LBFvHNZk0df1UkETfm_4ZIRdlxpod2gULONRQg0AaQ0-yTREtVsPhz7_LmJH-wGlggb75bLx3yI3dr0alruHdUVta-quTvpwLJpGjZjBkMBIGA1UdEwEB_wQIMAYBAf8CAQAwHwYDVR0jBBgwFoAUJtdk2cV4wlpn0afeaxLQG2PxxtcwHQYDVR0OBBYEFOuugsT_oaxbUdTPJGEFAL5jvXeIMA4GA1UdDwEB_wQEAwIBBjAKBggqhkjOPQQDAwNoADBlAjEA3YsaNIGl-tnbtOdle4QeFEwnt1uHakGGwrFHV1Azcifv5VRFfvZIlQxjLlxIPnDBAjAsimBE3CAfz-Wbw00pMMFIeFHZYO1qdfHrSsq-OM0luJfQyAW-8Mf3iwelccboDgdoYXV0aERhdGFYmMRs74KtG1Rkd1kdAIsIdZ7D5tLstPOUdL_qaWmSXQO3RQAAAAAAAAAAAAAAAAAAAAAAAAAAABRhYCgh40b6Uj1WdjckwPAdCwd4fKUBAgMmIAEhWCB2u9gNv5RsCNxtuiaa1GrD7YubV-8cbqWXV06B4QzbkSJYIPxOFDTKPhHeFVtz95qfUjl6pz9FcMWb-Mkj8uanW4QW",
+    "expect": "accepted"
+  },
+  "use": {
+    "challenge": "UWhnlyU7eW6ALL53UOpCgSSwrA36ovGuiAEzdOu8WSc",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVVdobmx5VTdlVzZBTEw1M1VPcENnU1N3ckEzNm92R3VpQUV6ZE91OFdTYyIsIm9yaWdpbiI6Imh0dHBzOi8vZGVtby55dWJpY28uY29tIn0",
+    "authenticatorData": "xGzvgq0bVGR3WR0Aiwh1nsPm0uy085R0v-ppaZJdA7cFAAAAAA",
+    "signature": "MEUCIQDkspL__pE98spvRtyTAZqPjmpd6_G-KmNsjMUfX7pKkAIgcld-Y3j0yt95CMqKmR99SKuoiitIL8SBElZw_qFEX5s",
+    "expect": "accepted",
+    "client": "Safari; judged by the members of the client data and their order: type, challenge, origin"
+  }
+}

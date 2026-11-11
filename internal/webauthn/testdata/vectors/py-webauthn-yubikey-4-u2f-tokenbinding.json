@@ -1,0 +1,24 @@
+{
+  "name": "py-webauthn-yubikey-4-u2f-tokenbinding",
+  "source": {
+    "project": "duo-labs/py_webauthn",
+    "url": "https://github.com/duo-labs/py_webauthn/blob/c9ba2b7dad6b76bec89e44c76c8ed81fc43287bb/tests/test_verify_registration_response_fido_u2f.py#L75",
+    "license": "BSD-3-Clause",
+    "copyright": "Copyright (c) 2017-2021 Duo Security, Inc. All rights reserved.",
+    "notice": "licenses/py_webauthn.txt"
+  },
+  "made": "captured",
+  "authenticator": "YubiKey 4, over U2F",
+  "aaguid": "00000000000000000000000000000000",
+  "client": "Chrome of 2018, or a browser of that time; judged by the members of the client data and their order: challenge, origin, tokenBinding, type",
+  "algorithm": "ES256",
+  "relyingParty": "duo.test",
+  "origin": "https://api-duo1.duo.test",
+  "creation": {
+    "format": "fido-u2f",
+    "challenge": "aGFGCbL0VkPf1FcCVnSAZp4ZUJTcfF9v",
+    "clientDataJSON": "eyJjaGFsbGVuZ2UiOiJhR0ZHQ2JMMFZrUGYxRmNDVm5TQVpwNFpVSlRjZkY5diIsIm9yaWdpbiI6Imh0dHBzOi8vYXBpLWR1bzEuZHVvLnRlc3QiLCJ0b2tlbkJpbmRpbmciOnsic3RhdHVzIjoibm90LXN1cHBvcnRlZCJ9LCJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIn0",
+    "attestationObject": "o2NmbXRoZmlkby11MmZnYXR0U3RtdKJjc2lnWEgwRgIhAJB-eYnY106PNDhEVM8QLuZnVCxBX0Khp9vzdj-kjw1CAiEA0PlEdDtH4GKG3eY_1YC4sIZR2ZPg-9SsLgODDWUDYnRjeDVjgVkCUzCCAk8wggE3oAMCAQICBDxoKU0wDQYJKoZIhvcNAQELBQAwLjEsMCoGA1UEAxMjWXViaWNvIFUyRiBSb290IENBIFNlcmlhbCA0NTcyMDA2MzEwIBcNMTQwODAxMDAwMDAwWhgPMjA1MDA5MDQwMDAwMDBaMDExLzAtBgNVBAMMJll1YmljbyBVMkYgRUUgU2VyaWFsIDIzOTI1NzM0ODExMTE3OTAxMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEvd9nk9t3lMNQMXHtLE1FStlzZnUaSLql2fm1ajoggXlrTt8rzXuSehSTEPvEaEdv_FeSqX22L6Aoa8ajIAIOY6M7MDkwIgYJKwYBBAGCxAoCBBUxLjMuNi4xLjQuMS40MTQ4Mi4xLjUwEwYLKwYBBAGC5RwCAQEEBAMCBSAwDQYJKoZIhvcNAQELBQADggEBAKrADVEJfuwVpIazebzEg0D4Z9OXLs5qZ_ukcONgxkRZ8K04QtP_CB5x6olTlxsj-SXArQDCRzEYUgbws6kZKfuRt2a1P-EzUiqDWLjRILSr-3_o7yR7ZP_GpiFKwdm-czb94POoGD-TS1IYdfXj94mAr5cKWx4EKjh210uovu_pLdLjc8xkQciUrXzZpPR9rT2k_q9HkZhHU-NaCJzky-PTyDbq0KKnzqVhWtfkSBCGw3ezZkTS-5lrvOKbIa24lfeTgu7FST5OwTPCFn8HcfWZMXMSD_KNU-iBqJdAwTLPPDRoLLvPTl29weCAIh-HUpmBQd0UltcPOrA_LFvAf61oYXV0aERhdGFYxEvYNAXQphWPDADgZiwL4n_m5OggKcxKctshspIdTVKXQQAAAAAAAAAAAAAAAAAAAAAAAAAAAEAl4LeqBCMhXKyrzwbGEZRjIOXihl5byYtZ3uW4lZC-eub7DEZnmbN_ZsEJpQOrsPaqvhpB7O_N-gUgXzzRyICxpQECAyYgASFYIJH525xGEk1oYXXxejoHvYcBrIwDbwcC_Kptwg6m5hArIlggvPFJ43EBPjkPK7aCIkiA3mtk_b6mkmzR8C_Fgjq3-xQ",
+    "expect": "no user verification"
+  }
+}

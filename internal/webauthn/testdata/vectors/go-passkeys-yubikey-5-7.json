@@ -1,0 +1,32 @@
+{
+  "name": "go-passkeys-yubikey-5-7",
+  "source": {
+    "project": "go-passkeys/go-passkeys",
+    "url": "https://github.com/go-passkeys/go-passkeys/blob/c3a36161734a7a87d923eab584a7d08df29287a5/webauthn/webauthn_test.go#L31",
+    "license": "Apache-2.0",
+    "copyright": "The go-passkeys authors (the repository carries the Apache-2.0 licence and no copyright line)",
+    "notice": "licenses/go-passkeys.txt"
+  },
+  "made": "captured",
+  "authenticator": "YubiKey 5 Series (firmware 5.7), with the credProtect extension",
+  "aaguid": "19083c3d83834b18bc038f1c9ab2fd1b",
+  "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin",
+  "algorithm": "ES256",
+  "relyingParty": "localhost",
+  "origin": "http://localhost:8080",
+  "creation": {
+    "format": "packed",
+    "challenge": "-ium4NdjLD6Acqy9p66NtA",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiLWl1bTROZGpMRDZBY3F5OXA2Nk50QSIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6ODA4MCIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
+    "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSjY2FsZyZjc2lnWEgwRgIhAL7ex0WTU1ZpLSRhoTxNxaYbwYcaNEA_h9eJEp0weJEqAiEA1vMTwi4bkvkE_gzQDO1seRyw0SupYth902MWOpZ0TDpjeDVjgVkC3TCCAtkwggHBoAMCAQICCQCkQGRCP4Vr_DANBgkqhkiG9w0BAQsFADAuMSwwKgYDVQQDEyNZdWJpY28gVTJGIFJvb3QgQ0EgU2VyaWFsIDQ1NzIwMDYzMTAgFw0xNDA4MDEwMDAwMDBaGA8yMDUwMDkwNDAwMDAwMFowbzELMAkGA1UEBhMCU0UxEjAQBgNVBAoMCVl1YmljbyBBQjEiMCAGA1UECwwZQXV0aGVudGljYXRvciBBdHRlc3RhdGlvbjEoMCYGA1UEAwwfWXViaWNvIFUyRiBFRSBTZXJpYWwgMTExMzg2NjQwNDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABPkOtta-hbyNLleVf1puWkTqbHzBJz-y42wVbN881zPGfYHty7riyxT4c3fcoXK-bl1_XE7f_2D3I3WT9ILQVYOjgYEwfzATBgorBgEEAYLECg0BBAUEAwUHATAiBgkrBgEEAYLECgIEFTEuMy42LjEuNC4xLjQxNDgyLjEuNzATBgsrBgEEAYLlHAIBAQQEAwIFIDAhBgsrBgEEAYLlHAEBBAQSBBAZCDw9g4NLGLwDjxyasv0bMAwGA1UdEwEB_wQCMAAwDQYJKoZIhvcNAQELBQADggEBAHzCOWZTA-e-ni1-kmfydBAZgdLyWGbYLQxlJtjd00qbh6M41UaYuRm12eKm3uYDgPT1BnVqqGN69k_1-P91O-knuRBfb48El12Up1hfzyON1UKGgBA6IdmghqYbK-X5baMMLGdsZ1nLKEWjVRecjLg79GwHy9HJ25j-Gb7-yNZMJdfgMJvfrecD35Tgmw-3fTCbzpnlW9Sp_LNdkHjdECaicue3MdhtrwaVmNfyVNvU5mqHzQAH2zf4_TsTZKdx2aIDFmqZZAartwD7RskFfQpnN0CWU6uCaBS0ECgDPLLW3q39mfvJ_y2rHPhaSWue85-2lNK-NJPP43ZsNrA7Rw5oYXV0aERhdGFYwkmWDeWIDoxodDQXD2R2YFuP5K65ooYyx5lc87qDHZdjxQAAAAMZCDw9g4NLGLwDjxyasv0bADDC4gNtuVFFZvyU4A2YDTFDSAOHTXQfTVUeXPpK2xTdoFx6LnSx3o2dcheLtBrEj0ylAQIDJiABIVggwuIDbblRRWb8lOANmAK3w9dppoKQXC2rw7yY6c9W_C4iWCBp5XU3NpH55RWYheccEtji_4Yc-zscmwMQN-KrQ_o7_qFrY3JlZFByb3RlY3QD",
+    "expect": "accepted"
+  },
+  "use": {
+    "challenge": "jXTEukbfgfYPd0KUi9AEHA",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoialhURXVrYmZnZllQZDBLVWk5QUVIQSIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6ODA4MCIsImNyb3NzT3JpZ2luIjpmYWxzZSwib3RoZXJfa2V5c19jYW5fYmVfYWRkZWRfaGVyZSI6ImRvIG5vdCBjb21wYXJlIGNsaWVudERhdGFKU09OIGFnYWluc3QgYSB0ZW1wbGF0ZS4gU2VlIGh0dHBzOi8vZ29vLmdsL3lhYlBleCJ9",
+    "authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAACw",
+    "signature": "MEUCIQD-CCL__FsMb88xAbqNHRLFtYAwBhG5Z79EUpA-ykG9AgIgHpDIi7BvdEBxU3uVAbbtrcgxZp9xKx_isqBsVW8p3mU",
+    "expect": "accepted",
+    "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin, other_keys_can_be_added_here"
+  }
+}

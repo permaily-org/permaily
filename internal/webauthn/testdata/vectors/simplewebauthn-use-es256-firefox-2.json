@@ -1,0 +1,24 @@
+{
+  "name": "simplewebauthn-use-es256-firefox-2",
+  "source": {
+    "project": "MasterKale/SimpleWebAuthn",
+    "url": "https://github.com/MasterKale/SimpleWebAuthn/blob/01d1a640d5ded4fced0b45a9d806fd0ff44ad244/packages/server/src/authentication/verifyAuthenticationResponse.test.ts#L1065",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2020 Matthew Miller",
+    "notice": "licenses/simplewebauthn.txt"
+  },
+  "made": "captured",
+  "authenticator": "not named by the source",
+  "client": "Firefox before 2023; judged by the members of the client data and their order: challenge, clientExtensions, hashAlgorithm, origin, type",
+  "algorithm": "ES256",
+  "relyingParty": "dev.dontneeda.pw",
+  "origin": "https://dev.dontneeda.pw",
+  "use": {
+    "publicKey": "pQECAyYgASFYIGmaxR4mBbukc2QhtW2ldhAAd555r-ljlGQN8MbcTnPPIlgg9CyUlE-0AB2fbzZbNgBvJuRa7r6o2jPphOmtyNPR_kY",
+    "challenge": "dG90YWxseVVuaXF1ZVZhbHVlRXZlcnlBc3NlcnRpb24",
+    "clientDataJSON": "eyJjaGFsbGVuZ2UiOiJkRzkwWVd4c2VWVnVhWEYxWlZaaGJIVmxSWFpsY25sQmMzTmxjblJwYjI0IiwiY2xpZW50RXh0ZW5zaW9ucyI6e30sImhhc2hBbGdvcml0aG0iOiJTSEEtMjU2Iiwib3JpZ2luIjoiaHR0cHM6Ly9kZXYuZG9udG5lZWRhLnB3IiwidHlwZSI6IndlYmF1dGhuLmdldCJ9",
+    "authenticatorData": "PdxHEOnAiLIp26idVjIguzn3Ipr_RlsKZWsa-5qK-KABAAAAAA",
+    "signature": "MEQCIBu6M-DGzu1O8iocGHEj0UaAZm0HmxTeRIE6-nS3_CPjAiBDsmIzy5sacYwwzgpXqfwRt_2vl5yiQZ_OAqWJQBGVsQ",
+    "expect": "no user verification"
+  }
+}

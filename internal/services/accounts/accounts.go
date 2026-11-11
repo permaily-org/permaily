@@ -1,15 +1,18 @@
 // Package accounts is the service behind accounts and sign-in (ADR 0017):
-// invitations, signing in by email, and sessions.
+// invitations, signing in by email and with passkeys, "passkey only" with its
+// recovery codes, and sessions.
 //
 // What it stores falls under three of the ADR's treatments. An account's
 // record is readable and signed: whoever runs the storage reads the contact
-// address, and cannot write one, because that would be a way into the
-// account; it is read through a store that refuses an earlier copy. Sessions
-// and invitations are kept by the hash of their secret, in entries that are
-// signed too, so one cannot be made by hand or moved to another account. A
-// sign-in that was started is kept nowhere but in this enclave's memory: its
-// count of wrong codes cannot be set back by whoever runs the storage, and a
-// restart ends it.
+// address and the passkeys' public keys, and cannot write either, because
+// that would be a way into the account; it is read through a store that
+// refuses an earlier copy, so a passkey that was removed or a recovery code
+// that was used does not come back. Sessions and invitations are kept by the
+// hash of their secret, in entries that are signed too, so one cannot be made
+// by hand or moved to another account. A sign-in that was started, by mail or
+// with a passkey, is kept nowhere but in this enclave's memory: its count of
+// wrong codes cannot be set back by whoever runs the storage, and a restart
+// ends it.
 package accounts
 
 import (
@@ -25,6 +28,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -34,6 +38,7 @@ import (
 	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/envelope"
 	"github.com/permaily-org/permaily/internal/store"
+	"github.com/permaily-org/permaily/internal/webauthn"
 )
 
 // Keys gives the key that signs what is stored readable. keys.Root derives
@@ -66,7 +71,9 @@ type Config struct {
 	Entries store.Entries
 	Keys    Keys
 	Mailer  Mailer
-	// AppURL is where the web app is served, without a trailing slash.
+	// AppURL is where the web app is served, without a trailing slash. Its
+	// host is who passkeys are made for, and it is the only page whose
+	// answers about a passkey are taken.
 	AppURL string
 	Log    *slog.Logger
 	Now    func() time.Time
@@ -75,7 +82,9 @@ type Config struct {
 // Limits on what one enclave keeps in memory and starts at once.
 const (
 	maxAttempts = 10000
-	maxSending  = 32
+	// maxCeremonies is how many passkey ceremonies wait for their answer.
+	maxCeremonies = 10000
+	maxSending    = 32
 	// maxSessions is how many devices an account stays signed in on; the one
 	// used longest ago goes when another signs in.
 	maxSessions = 50
@@ -91,14 +100,23 @@ const (
 // Service implements accounts and sign-in.
 type Service struct {
 	cfg Config
+	rp  webauthn.RelyingParty
 
-	mu       sync.Mutex
-	attempts map[string]*attempt
+	mu         sync.Mutex
+	attempts   map[string]*attempt
+	ceremonies map[string]*ceremony
 	// starts and wrong count, per address or invitation, the sign-ins started
-	// in the last hour and the wrong codes of the last day.
-	starts map[string][]time.Time
-	wrong  map[string][]time.Time
-	swept  time.Time
+	// in the last hour and the wrong codes of the last day; recoveries, per
+	// address, the wrong recovery codes of the last hour.
+	starts     map[string][]time.Time
+	wrong      map[string][]time.Time
+	recoveries map[string][]time.Time
+	swept      time.Time
+
+	// changing is held while an account's record is read, changed and
+	// written. The storage takes whichever write comes last, so two changes
+	// at once would undo one another: a recovery code would work twice.
+	changing sync.Mutex
 
 	sending chan struct{}
 	work    sync.WaitGroup
@@ -128,12 +146,20 @@ func New(cfg Config) (*Service, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	app, err := url.Parse(cfg.AppURL)
+	if err != nil || app.Hostname() == "" {
+		return nil, errors.New("accounts: the app's URL has no host")
+	}
 	return &Service{
-		cfg:      cfg,
-		attempts: map[string]*attempt{},
-		starts:   map[string][]time.Time{},
-		wrong:    map[string][]time.Time{},
-		sending:  make(chan struct{}, maxSending),
+		cfg: cfg,
+		// The port is part of the origin and not of who the passkeys are for.
+		rp:         webauthn.RelyingParty{ID: app.Hostname(), Origins: []string{app.Scheme + "://" + app.Host}},
+		attempts:   map[string]*attempt{},
+		ceremonies: map[string]*ceremony{},
+		starts:     map[string][]time.Time{},
+		wrong:      map[string][]time.Time{},
+		recoveries: map[string][]time.Time{},
+		sending:    make(chan struct{}, maxSending),
 	}, nil
 }
 
@@ -142,7 +168,7 @@ func (s *Service) Wait() { s.work.Wait() }
 
 func (s *Service) now() time.Time { return s.cfg.Now().UTC() }
 
-// Identifiers are random and say what they name: acc_…, ses_…, att_….
+// Identifiers are random and say what they name: acc_…, ses_…, att_…, cer_….
 var idEncoding = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPadding(base32.NoPadding)
 
 const idLength = 26 // 16 bytes in base32
@@ -199,6 +225,12 @@ type accountDoc struct {
 	CreatedAt time.Time              `json:"created_at"`
 	// AddressVerifiedAt is when the person last proved the address is theirs.
 	AddressVerifiedAt time.Time `json:"address_verified_at"`
+	// Passkeys sign in to the account. One that is not here signs nobody in.
+	Passkeys []passkeyDoc `json:"passkeys,omitempty"`
+	// PasskeyOnly turns signing in by mail off.
+	PasskeyOnly bool `json:"passkey_only,omitempty"`
+	// RecoveryCodes are the hashes of the recovery codes not used yet.
+	RecoveryCodes [][]byte `json:"recovery_codes,omitempty"`
 }
 
 func (d *accountDoc) view() contracts.Account {
@@ -255,6 +287,37 @@ func (s *Service) putAccount(ctx context.Context, doc *accountDoc, create bool) 
 		return err
 	}
 	return s.cfg.Records.PutRecord(ctx, &store.Record{Name: name, Value: value, Plain: true, UpdatedAt: s.now()}, create)
+}
+
+// own returns the account behind a session.
+func (s *Service) own(ctx context.Context, who *Authenticated) (*accountDoc, error) {
+	doc, err := s.account(ctx, who.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	if doc == nil {
+		return nil, contracts.ErrUnauthorized
+	}
+	return doc, nil
+}
+
+// change reads an account's record, lets edit change it and stores it as the
+// newest version. When edit fails nothing is stored. An account that is not
+// there is ErrUnauthorized: its session stands for nothing.
+func (s *Service) change(ctx context.Context, id string, edit func(*accountDoc) error) (*accountDoc, error) {
+	s.changing.Lock()
+	defer s.changing.Unlock()
+	doc, err := s.own(ctx, &Authenticated{AccountID: id})
+	if err != nil {
+		return nil, err
+	}
+	if err := edit(doc); err != nil {
+		return nil, err
+	}
+	if err := s.putAccount(ctx, doc, false); err != nil {
+		return nil, err
+	}
+	return doc, nil
 }
 
 // Account returns an account by its id.
@@ -445,10 +508,15 @@ func (s *Service) sweep(now time.Time) {
 			delete(s.attempts, id)
 		}
 	}
+	for id, c := range s.ceremonies {
+		if !c.expires.After(now) {
+			delete(s.ceremonies, id)
+		}
+	}
 	for _, counted := range []struct {
 		m      map[string][]time.Time
 		window time.Duration
-	}{{s.starts, time.Hour}, {s.wrong, 24 * time.Hour}} {
+	}{{s.starts, time.Hour}, {s.wrong, 24 * time.Hour}, {s.recoveries, time.Hour}} {
 		for k, list := range counted.m {
 			if list = recent(list, now, counted.window); len(list) == 0 {
 				delete(counted.m, k)
@@ -520,6 +588,9 @@ func (s *Service) deliver(ctx context.Context, id, address, invitation string) {
 	}
 	if doc == nil && invitation == "" {
 		return // no account, and nothing that lets the address make one
+	}
+	if doc != nil && doc.PasskeyOnly {
+		return // the account turned signing in by mail off
 	}
 	now := s.now()
 	if !s.allow(address, now) {
@@ -620,6 +691,10 @@ func (s *Service) FinishEmail(ctx context.Context, in contracts.EmailFinish, use
 	doc, stale, err := s.lookup(ctx, a.address)
 	if err != nil {
 		return nil, "", err
+	}
+	if doc != nil && doc.PasskeyOnly {
+		// "Passkey only" was turned on after the message was sent.
+		return nil, "", contracts.ErrInvalidCode
 	}
 	if doc == nil {
 		// The address proved to be the person's, and has no account. The
@@ -827,12 +902,9 @@ func (s *Service) CloseSession(ctx context.Context, who *Authenticated, id strin
 
 // Me returns the account behind a session.
 func (s *Service) Me(ctx context.Context, who *Authenticated) (*contracts.Me, error) {
-	doc, err := s.account(ctx, who.AccountID)
+	doc, err := s.own(ctx, who)
 	if err != nil {
 		return nil, err
-	}
-	if doc == nil {
-		return nil, contracts.ErrUnauthorized
 	}
 	return &contracts.Me{Account: doc.view(), Session: who.Session}, nil
 }

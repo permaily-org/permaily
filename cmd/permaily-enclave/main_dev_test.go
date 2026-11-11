@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/permaily-org/permaily/internal/webauthn/webauthntest"
 )
 
 func freePort(t *testing.T) uint32 {
@@ -165,7 +168,9 @@ func (l *lockedBuffer) String() string {
 
 // TestAccountsEndToEnd runs the whole service in dev mode: the operator makes
 // an invitation, a person signs up with the code of the message, the browser
-// holds a session, and signing out ends it.
+// holds a session, and signing out ends it. Then a passkey: made, used to
+// sign in, made the only way in, with mail sending nothing and a recovery
+// code working once.
 func TestAccountsEndToEnd(t *testing.T) {
 	const admin = "pma_e2e_token"
 	sum := sha256.Sum256([]byte(admin))
@@ -269,6 +274,39 @@ func TestAccountsEndToEnd(t *testing.T) {
 	if code, _ := call("GET", "https://api.permaily.test/api/v1/me", "", ""); code != 404 {
 		t.Fatalf("the app's API on the API host: %d", code)
 	}
+
+	// A passkey is made with a software authenticator, which answers what
+	// the browser would for the page at the app's origin.
+	b64 := base64.RawURLEncoding
+	unb64 := func(s string) []byte {
+		b, err := b64.DecodeString(s)
+		if err != nil {
+			t.Fatalf("%q is not base64url without padding", s)
+		}
+		return b
+	}
+	auth := webauthntest.New(webauthntest.ES256)
+	code, body = call("POST", app+"/api/v1/passkeys/start", "", "")
+	var creation struct {
+		Ceremony string `json:"ceremony"`
+		Options  struct {
+			RP        struct{ ID string } `json:"rp"`
+			User      struct{ ID string } `json:"user"`
+			Challenge string              `json:"challenge"`
+		} `json:"options"`
+	}
+	if code != 200 || json.Unmarshal([]byte(body), &creation) != nil || creation.Options.RP.ID != "app.permaily.test" {
+		t.Fatalf("starting a passkey: %d %s", code, body)
+	}
+	credential, clientData, attestation := auth.Create(creation.Options.RP.ID, app, unb64(creation.Options.Challenge), unb64(creation.Options.User.ID))
+	passkey := b64.EncodeToString(credential)
+	code, body = call("POST", app+"/api/v1/passkeys/finish", "", fmt.Sprintf(
+		`{"ceremony":%q,"name":"E2E key","credential":{"id":%q,"rawId":%q,"type":"public-key","response":{"clientDataJSON":%q,"attestationObject":%q,"transports":["internal"]},"clientExtensionResults":{}}}`,
+		creation.Ceremony, passkey, passkey, b64.EncodeToString(clientData), b64.EncodeToString(attestation)))
+	if code != 200 || !strings.Contains(body, `"id":"`+passkey+`"`) || !strings.Contains(body, `"name":"E2E key"`) {
+		t.Fatalf("finishing a passkey: %d %s", code, body)
+	}
+
 	if code, _ := call("POST", app+"/api/v1/auth/sign-out", "", ""); code != 204 {
 		t.Fatalf("sign-out: %d", code)
 	}
@@ -276,13 +314,97 @@ func TestAccountsEndToEnd(t *testing.T) {
 		t.Fatalf("me after signing out: %d", code)
 	}
 
-	// Logs leave the enclave: after a sign-up they name no address, no
-	// code, no invitation, no cookie and no account.
-	out := logs.String()
-	if !strings.Contains(out, "accounts: account created") {
-		t.Fatalf("the log does not record the sign-up:\n%s", out)
+	// The passkey signs in: no address is asked.
+	code, body = call("POST", app+"/api/v1/auth/passkey/start", "", "")
+	var request struct {
+		Ceremony string `json:"ceremony"`
+		Options  struct {
+			Challenge string `json:"challenge"`
+			RPID      string `json:"rpId"`
+		} `json:"options"`
 	}
-	for _, secret := range []string{"ana@", "example.org", signInCode, made.Invitations[0], started.Attempt, session, strings.Split(session, ".")[0], admin} {
+	if code != 200 || json.Unmarshal([]byte(body), &request) != nil || request.Options.RPID != "app.permaily.test" {
+		t.Fatalf("starting a sign-in with a passkey: %d %s", code, body)
+	}
+	clientData, authData, signature, handle := auth.Get(request.Options.RPID, app, unb64(request.Options.Challenge), credential)
+	assertion := fmt.Sprintf(
+		`{"ceremony":%q,"credential":{"id":%q,"rawId":%q,"type":"public-key","response":{"clientDataJSON":%q,"authenticatorData":%q,"signature":%q,"userHandle":%q},"clientExtensionResults":{}}}`,
+		request.Ceremony, passkey, passkey, b64.EncodeToString(clientData), b64.EncodeToString(authData), b64.EncodeToString(signature), b64.EncodeToString(handle))
+	code, body = call("POST", app+"/api/v1/auth/passkey/finish", "", assertion)
+	if code != 200 || !strings.Contains(body, `"address":"ana@example.org"`) {
+		t.Fatalf("signing in with a passkey: %d %s", code, body)
+	}
+	if code, body := call("GET", app+"/api/v1/me", "", ""); code != 200 || !strings.Contains(body, `"address":"ana@example.org"`) {
+		t.Fatalf("me after signing in with a passkey: %d %s", code, body)
+	}
+	// The answer worked once.
+	if code, body := call("POST", app+"/api/v1/auth/passkey/finish", "", assertion); code != 400 || !strings.Contains(body, `"invalid_passkey"`) {
+		t.Fatalf("the same answer again: %d %s", code, body)
+	}
+
+	// "Passkey only": from here a sign-in by mail answers as always and
+	// sends nothing.
+	code, body = call("POST", app+"/api/v1/account/passkey-only", "", `{"on":true}`)
+	var only struct {
+		PasskeyOnly   bool     `json:"passkey_only"`
+		RecoveryCodes []string `json:"recovery_codes"`
+	}
+	if code != 200 || json.Unmarshal([]byte(body), &only) != nil || !only.PasskeyOnly || len(only.RecoveryCodes) != 10 {
+		t.Fatalf("passkey only: %d %s", code, body)
+	}
+	if code, _ := call("POST", app+"/api/v1/auth/sign-out", "", ""); code != 204 {
+		t.Fatalf("sign-out: %d", code)
+	}
+	code, body = call("POST", app+"/api/v1/auth/email/start", "", `{"address":"ana@example.org"}`)
+	var silent struct {
+		Attempt   string `json:"attempt"`
+		ExpiresIn int    `json:"expires_in"`
+	}
+	if code != 200 || json.Unmarshal([]byte(body), &silent) != nil || silent.Attempt == "" || silent.ExpiresIn != 600 {
+		t.Fatalf("starting a sign-in by mail with passkey only: %d %s", code, body)
+	}
+	// A message would be sent after the answer: give it the time one takes.
+	for range 10 {
+		time.Sleep(50 * time.Millisecond)
+		if _, outbox := call("GET", app+"/dev/outbox", "", ""); strings.Contains(outbox, silent.Attempt) {
+			t.Fatal("a sign-in message was sent to an account that signs in with passkeys only")
+		}
+	}
+
+	// A recovery code and the address sign in, once.
+	recovery := `{"address":"ana@example.org","code":"` + only.RecoveryCodes[0] + `"}`
+	if code, body := call("POST", app+"/api/v1/auth/recovery", "", recovery); code != 200 || !strings.Contains(body, `"address":"ana@example.org"`) {
+		t.Fatalf("recovery: %d %s", code, body)
+	}
+	if code, body := call("GET", app+"/api/v1/passkeys", "", ""); code != 200 || !strings.Contains(body, `"passkey_only":true,"recovery_codes_left":9`) || !strings.Contains(body, `"name":"E2E key"`) {
+		t.Fatalf("passkeys after a recovery: %d %s", code, body)
+	}
+	if code, _ := call("POST", app+"/api/v1/auth/sign-out", "", ""); code != 204 {
+		t.Fatalf("sign-out: %d", code)
+	}
+	if code, body := call("POST", app+"/api/v1/auth/recovery", "", recovery); code != 400 || !strings.Contains(body, `"invalid_code"`) {
+		t.Fatalf("the same recovery code again: %d %s", code, body)
+	}
+	if code, _ := call("GET", app+"/api/v1/me", "", ""); code != 401 {
+		t.Fatalf("me after a recovery that was refused: %d", code)
+	}
+
+	// Logs leave the enclave: after all of it they name no address, no
+	// code, no invitation, no cookie, no account, no passkey and no ceremony.
+	out := logs.String()
+	for _, line := range []string{"accounts: account created", "accounts: passkey made", "accounts: recovery code used"} {
+		if !strings.Contains(out, line) {
+			t.Fatalf("the log does not record %q:\n%s", line, out)
+		}
+	}
+	secrets := []string{
+		"ana@", "example.org", signInCode, made.Invitations[0], started.Attempt, session, strings.Split(session, ".")[0], admin,
+		passkey, hex.EncodeToString(credential), "E2E key", creation.Ceremony, request.Ceremony, silent.Attempt,
+	}
+	for _, c := range only.RecoveryCodes {
+		secrets = append(secrets, c, strings.ReplaceAll(c, "-", ""), strings.ToLower(strings.ReplaceAll(c, "-", "")))
+	}
+	for _, secret := range secrets {
 		if strings.Contains(out, secret) {
 			t.Fatalf("the log contains %q:\n%s", secret, out)
 		}

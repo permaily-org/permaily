@@ -71,6 +71,7 @@ linters:
               "!**/platform_dev.go",
               "!**/internal/nsm/fakensm/**",
               "!**/provenancetest/**",
+              "!**/internal/webauthn/webauthntest/**",
             ]
           list-mode: lax
           deny:
@@ -80,6 +81,8 @@ linters:
               desc: test chains are only for dev mode and tests
             - pkg: github.com/permaily-org/permaily/pkg/provenance/provenancetest
               desc: the test release authority is only for dev mode and tests
+            - pkg: github.com/permaily-org/permaily/internal/webauthn/webauthntest
+              desc: the software authenticator is only for dev mode and tests
     gosec:
       excludes:
         - G104 # unhandled errors are covered by errcheck

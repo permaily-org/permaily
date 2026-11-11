@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -78,5 +79,46 @@ func TestDevice(t *testing.T) {
 	}
 	if got := Device(strings.Repeat("a", 500)); len(got) != 200 {
 		t.Errorf("a long one is kept at %d", len(got))
+	}
+}
+
+func TestPasskeyName(t *testing.T) {
+	for in, want := range map[string]string{
+		"Laptop":                      "Laptop",
+		"  MacBook de Ana  ":          "MacBook de Ana",
+		"Teléfono 📱":                  "Teléfono 📱",
+		strings.Repeat("ñ", 64):       strings.Repeat("ñ", 64),
+		" " + strings.Repeat("a", 64): strings.Repeat("a", 64),
+	} {
+		if got, err := PasskeyName(in); err != nil || got != want {
+			t.Errorf("%q: %q %v, want %q", in, got, err, want)
+		}
+	}
+	// Nothing, too long, more than one line, and what cannot be shown.
+	for _, in := range []string{"", "   ", strings.Repeat("a", 65), "two\nlines", "tab\there", "nul\x00", "bell\a", "\xff\xfe", "right\u202eto left"} {
+		if got, err := PasskeyName(in); !errors.Is(err, contracts.ErrInvalidName) {
+			t.Errorf("%q: accepted as %q (%v)", in, got, err)
+		}
+	}
+}
+
+func TestRecoveryCodes(t *testing.T) {
+	if got := FormatRecoveryCode("abcd2345wxyz6789"); got != "ABCD-2345-WXYZ-6789" {
+		t.Errorf("format: %q", got)
+	}
+	for _, in := range []string{"abcd2345wxyz6789", "ABCD-2345-WXYZ-6789", " abcd 2345 wxyz 6789 "} {
+		if got, ok := NormalizeRecoveryCode(in); !ok || got != "abcd2345wxyz6789" {
+			t.Errorf("%q: %q %v", in, got, ok)
+		}
+	}
+	// An invitation is not one, nor is a code with a character left out of the alphabet.
+	for _, in := range []string{"", "abcd2345wxyz", "abcd2345wxyz67890", "abcd2345wxyz678o", "abcd2345wxyz678!"} {
+		if got, ok := NormalizeRecoveryCode(in); ok {
+			t.Errorf("%q: accepted as %q", in, got)
+		}
+	}
+	// What a code is worth against whoever reads its hash: more than 2^79 guesses.
+	if bits := float64(RecoveryCodeLength) * math.Log2(float64(len(InvitationAlphabet))); bits < 79 {
+		t.Errorf("a recovery code is %f bits", bits)
 	}
 }

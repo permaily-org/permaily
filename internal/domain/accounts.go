@@ -8,6 +8,8 @@ package domain
 import (
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 )
@@ -98,7 +100,15 @@ const (
 )
 
 // FormatInvitation writes an invitation the way it is shown: XXXX-XXXX-XXXX.
-func FormatInvitation(code string) string {
+func FormatInvitation(code string) string { return formatCode(code) }
+
+// NormalizeInvitation returns the invitation a person typed as it is kept:
+// without spaces and dashes, in lower case. It reports false for anything
+// that cannot be one.
+func NormalizeInvitation(s string) (string, bool) { return normalizeCode(s, InvitationLength) }
+
+// formatCode writes a code of the invitation alphabet in groups of four.
+func formatCode(code string) string {
 	var groups []string
 	for len(code) > 4 {
 		groups, code = append(groups, code[:4]), code[4:]
@@ -106,12 +116,10 @@ func FormatInvitation(code string) string {
 	return strings.ToUpper(strings.Join(append(groups, code), "-"))
 }
 
-// NormalizeInvitation returns the invitation a person typed as it is kept:
-// without spaces and dashes, in lower case. It reports false for anything
-// that cannot be one.
-func NormalizeInvitation(s string) (string, bool) {
+// normalizeCode undoes formatCode and whatever a person adds while typing.
+func normalizeCode(s string, length int) (string, bool) {
 	s = strings.ToLower(strings.NewReplacer("-", "", " ", "").Replace(strings.TrimSpace(s)))
-	if len(s) != InvitationLength {
+	if len(s) != length {
 		return "", false
 	}
 	for _, c := range s {
@@ -121,6 +129,52 @@ func NormalizeInvitation(s string) (string, bool) {
 	}
 	return s, true
 }
+
+// Passkeys (ADR 0017).
+const (
+	// PasskeyCeremonyLifetime is how long the browser has to answer once
+	// making a passkey, or signing in with one, was started.
+	PasskeyCeremonyLifetime = 5 * time.Minute
+	// MaxPasskeys is how many passkeys an account keeps.
+	MaxPasskeys = 20
+	// maxName is the longest name a person gives a passkey, in characters.
+	maxName = 64
+)
+
+// PasskeyName returns the name a person gave a passkey as it is kept:
+// trimmed. It must be one line, with something in it, and short.
+func PasskeyName(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || !utf8.ValidString(s) || utf8.RuneCountInString(s) > maxName {
+		return "", contracts.ErrInvalidName
+	}
+	for _, c := range s {
+		if !unicode.IsPrint(c) {
+			return "", contracts.ErrInvalidName
+		}
+	}
+	return s, nil
+}
+
+// Recovery codes (ADR 0017), for an account that signs in with passkeys
+// only. They are written like invitations and are longer: their hashes are
+// in the account's record, which whoever runs the storage reads, and sixteen
+// characters are past what can be guessed against a hash.
+const (
+	RecoveryCodes      = 10
+	RecoveryCodeLength = 16
+	// RecoveryTriesPerHour is how many wrong recovery codes an address takes
+	// in an hour.
+	RecoveryTriesPerHour = 5
+)
+
+// FormatRecoveryCode writes a recovery code the way it is shown:
+// XXXX-XXXX-XXXX-XXXX.
+func FormatRecoveryCode(code string) string { return formatCode(code) }
+
+// NormalizeRecoveryCode returns the recovery code a person typed as it is
+// hashed. It reports false for anything that cannot be one.
+func NormalizeRecoveryCode(s string) (string, bool) { return normalizeCode(s, RecoveryCodeLength) }
 
 // maxDevice bounds what is kept of how a browser describes itself.
 const maxDevice = 200

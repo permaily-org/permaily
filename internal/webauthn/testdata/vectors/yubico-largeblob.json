@@ -1,0 +1,32 @@
+{
+  "name": "yubico-largeblob",
+  "source": {
+    "project": "Yubico/java-webauthn-server",
+    "url": "https://github.com/Yubico/java-webauthn-server/blob/3a7edfb2609696808e8daad2508115bd43d88d3f/webauthn-server-core/src/test/scala/com/yubico/webauthn/test/RealExamples.scala#L735",
+    "license": "BSD-2-Clause",
+    "copyright": "Copyright (c) 2014-2018, Yubico AB",
+    "notice": "licenses/yubico-java-webauthn-server.txt"
+  },
+  "made": "captured",
+  "authenticator": "a security key with the largeBlob and credProtect extensions (the source does not name it)",
+  "aaguid": "00000000000000000000000000000000",
+  "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin",
+  "algorithm": "ES256",
+  "relyingParty": "localhost",
+  "origin": "https://localhost:8443",
+  "creation": {
+    "format": "none",
+    "challenge": "RJdJkwP_Iz72DqwclakBXGqn_cjg-NlKPT1NHAo04vE",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiUkpkSmt3UF9JejcyRHF3Y2xha0JYR3FuX2NqZy1ObEtQVDFOSEFvMDR2RSIsIm9yaWdpbiI6Imh0dHBzOi8vbG9jYWxob3N0Ojg0NDMiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjCSZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2PFAAAABAAAAAAAAAAAAAAAAAAAAAAAMC22Bw33qBCfiLRvJaun4zVZ4YOpIG3mxo2FhH99macgoYmxr-ICVNThjNJzkEGORqUBAgMmIAEhWCAttgcN96gQn4i0byWrpUb-jQhSjE9J49n5D_krK_f8byJYIFxGgNN7UDpueNRz_FgXoO7Pg5qIFA-LT9y3S7_JdPjboWtjcmVkUHJvdGVjdAI",
+    "expect": "accepted"
+  },
+  "use": {
+    "challenge": "YFUdf9HR7QV9kmzGVbqNlVMIklyArDciHIS4LWlAhmQ",
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiWUZVZGY5SFI3UVY5a216R1ZicU5sVk1Ja2x5QXJEY2lISVM0TFdsQWhtUSIsIm9yaWdpbiI6Imh0dHBzOi8vbG9jYWxob3N0Ojg0NDMiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAACA",
+    "signature": "MEQCIAgTCWKcpQ-kLkKc18UJlwRWx2WYmRWMxvndHXHgWmzzAiAC-my1SfSnO0fr4iRYxMkbw1k7e6HxrFY22nJ7e3Z3jw",
+    "expect": "accepted",
+    "client": "Chromium, or a browser that writes client data as the specification's algorithm does; judged by the members of the client data and their order: type, challenge, origin, crossOrigin"
+  }
+}
