@@ -693,3 +693,53 @@ func FuzzTimestamp(f *testing.F) {
 		}
 	})
 }
+
+// Who signed the fixture below: the canary of the workflow sigstore-watch,
+// run on the branch that added Rekor v2.
+var rekor2Canary = provenance.Policy{
+	Repository: "permaily-org/permaily", RepositoryID: "1448574502", OwnerID: "353453526",
+	Workflow: ".github/workflows/sigstore-watch.yml", Ref: "refs/heads/feat/rekor-v2",
+}
+
+// A signature recorded in Sigstore's public Rekor v2 log on 2026-11-11, with a
+// timestamp from Sigstore's authority and a checkpoint that witnesses signed
+// too, verified with the trust root compiled into the package.
+func TestVerifyARealRekor2Entry(t *testing.T) {
+	tr, err := provenance.PublicGood()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, pcrs := read(t, "rekor2-canary.bundle.json"), read(t, "rekor2-canary-pcrs.json")
+	rel, err := provenance.Verify(rekor2Canary, tr, bundle, pcrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel.PCR0 != "beda37f006daccfd8106527e6e5ea22a691a8ae27b2626eccf0ace7d932622de158894877803e58fb850b30690185fac" || rel.Commit != "28dd4af4f8d7326f4c6197675e1859bae15b6253" || rel.Ref != "refs/heads/feat/rekor-v2" || !rel.LoggedAt.Equal(time.Date(2026, 11, 11, 6, 36, 35, 0, time.UTC)) {
+		t.Fatalf("release %+v", rel)
+	}
+
+	if _, err := provenance.Verify(production, tr, bundle, pcrs); !errors.Is(err, provenance.ErrNotARelease) {
+		t.Fatalf("under the policy of releases: %v", err)
+	}
+	for name, change := range map[string]func(doc map[string]any){
+		"without its timestamp": func(doc map[string]any) { setStamps(doc) },
+		"without the log's signature on the checkpoint, only the witnesses'": func(doc map[string]any) {
+			cp := proof(doc)["checkpoint"].(map[string]any)
+			text, sigs, _ := strings.Cut(cp["envelope"].(string), "\n\n")
+			lines := strings.Split(sigs, "\n")
+			cp["envelope"] = text + "\n\n" + strings.Join(lines[1:], "\n")
+		},
+		"a witness's line renamed as the log's": func(doc map[string]any) {
+			cp := proof(doc)["checkpoint"].(map[string]any)
+			text, sigs, _ := strings.Cut(cp["envelope"].(string), "\n\n")
+			lines := strings.Split(sigs, "\n")
+			_, witness, _ := strings.Cut(strings.TrimPrefix(lines[1], "— "), " ")
+			cp["envelope"] = text + "\n\n— log2025-1.rekor.sigstore.dev " + witness + "\n"
+		},
+		"at another position of the log": func(doc map[string]any) { entry(doc)["logIndex"] = "193611424" },
+	} {
+		if _, err := provenance.Verify(rekor2Canary, tr, edit(t, bundle, change), pcrs); !errors.Is(err, provenance.ErrUntrusted) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}

@@ -420,6 +420,7 @@ func FuzzVerify(f *testing.F) {
 	}
 	f.Add(read(f, "v0.5.0-provenance.bundle.json"), read(f, "v0.5.0-pcrs.json"))
 	f.Add(read(f, "v0.5.0-github-release.bundle.json"), read(f, "v0.5.0-pcrs.json"))
+	f.Add(read(f, "rekor2-canary.bundle.json"), read(f, "rekor2-canary-pcrs.json"))
 	f.Add([]byte(`{}`), []byte(`{}`))
 	real := read(f, "v0.5.0-provenance.bundle.json")
 	f.Fuzz(func(t *testing.T, bundle, pcrs []byte) {

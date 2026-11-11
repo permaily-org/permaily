@@ -130,6 +130,42 @@ func TestRealRelease(t *testing.T) {
 	})
 }
 
+// A signature recorded in Sigstore's public Rekor v2 log by the canary of the
+// workflow sigstore-watch, with Sigstore's timestamp and witnessed checkpoint.
+func TestRealRekor2Entry(t *testing.T) {
+	bundle, pcrs := read(t, "testdata/rekor2-canary.bundle.json"), read(t, "testdata/rekor2-canary-pcrs.json")
+	canary := provenance.Policy{
+		Repository: "permaily-org/permaily", RepositoryID: "1448574502", OwnerID: "353453526",
+		Workflow: ".github/workflows/sigstore-watch.yml", Ref: "refs/heads/feat/rekor-v2",
+	}
+	checkpoint := func(change func(text, sigs string) string) []byte {
+		return edit(t, bundle, func(d map[string]any) {
+			cp := entry(d)["inclusionProof"].(map[string]any)["checkpoint"].(map[string]any)
+			text, sigs, _ := strings.Cut(cp["envelope"].(string), "\n\n")
+			cp["envelope"] = change(text, sigs)
+		})
+	}
+	compare(t, read(t, "sigstore_trusted_root.json"), []testCase{
+		{"the canary", canary, bundle, pcrs, true},
+		{"under the policy of releases", production, bundle, pcrs, false},
+		{"measurements of another image", canary, bundle, bytes.Replace(pcrs, []byte(`"PCR0": "`), []byte(`"PCR0": "00`), 1), false},
+		{"without its timestamp", canary, edit(t, bundle, func(d map[string]any) {
+			delete(d["verificationMaterial"].(map[string]any), "timestampVerificationData")
+		}), pcrs, false},
+		{"only the witnesses signed the checkpoint", canary, checkpoint(func(text, sigs string) string {
+			return text + "\n\n" + strings.Join(strings.Split(sigs, "\n")[1:], "\n")
+		}), pcrs, false},
+		{"only the log signed the checkpoint", canary, checkpoint(func(text, sigs string) string {
+			return text + "\n\n" + strings.Split(sigs, "\n")[0] + "\n"
+		}), pcrs, true},
+		{"at another position of the log", canary, edit(t, bundle, func(d map[string]any) { entry(d)["logIndex"] = "193611424" }), pcrs, false},
+		{"statement signature changed", canary, edit(t, bundle, func(d map[string]any) {
+			sig := d["dsseEnvelope"].(map[string]any)["signatures"].([]any)[0].(map[string]any)
+			sig["sig"] = flip(sig["sig"])
+		}), pcrs, false},
+	})
+}
+
 var pcrsA = []byte(`{"PCR0":"` + strings.Repeat("aa", 48) + `","PCR1":"` + strings.Repeat("bb", 48) + `","PCR2":"` + strings.Repeat("cc", 48) + `"}`)
 
 // Bundles from the test authority that the product's tests use. That
