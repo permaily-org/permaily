@@ -68,7 +68,7 @@ export function matchesSearch(receipt: Receipt, query: string): boolean {
   )
 }
 
-/** "Claude · Chat", or the id if the connection is gone. */
+/** "Claude/Chat", or the id if the connection is gone. */
 function connectionText(id: string): string {
   const connection = connectionById(id)
   return connection ? connectionLabel(connection) : id

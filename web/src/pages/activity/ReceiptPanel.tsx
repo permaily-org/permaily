@@ -8,7 +8,14 @@ import {
   SectionHeading,
   TextLink,
 } from '../../components/ui/index.ts'
-import { connectionById, formatCount, type Receipt, rules, vendorOf } from '../../data/sample.ts'
+import {
+  connectionById,
+  connectionLabel,
+  formatCount,
+  type Receipt,
+  rules,
+  vendorOf,
+} from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import { domainOf, fullTime, previousReceipt, shortHash } from './data.ts'
 
@@ -112,7 +119,7 @@ export function ReceiptPanel({ receipt }: { receipt: Receipt }) {
           </ButtonLink>
         </div>
         <TextLink to={page} tone="danger" className="mt-2.5">
-          Revoke {connection ? `${name} · ${connection.name}` : name}
+          Revoke {connection ? connectionLabel(connection) : name}
         </TextLink>
       </section>
 

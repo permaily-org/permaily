@@ -95,7 +95,7 @@ const hoverAction =
 const hoverRow = 'group relative @container hover:bg-sunken focus-within:bg-sunken'
 
 function PreviewRow({ view, actions }: { view: RowView; actions: RowActions }) {
-  const { row, status, excludedBy } = view
+  const { row, status, excludedBy, excludedBySender } = view
 
   if (status === 'excluded' && excludedBy) {
     return (
@@ -110,11 +110,13 @@ function PreviewRow({ view, actions }: { view: RowView; actions: RowActions }) {
         <TextAction
           size="sm"
           data-include={row.id}
-          aria-label={`Include sender ${excludedBy}`}
+          aria-label={
+            excludedBySender ? `Include sender ${excludedBy}` : `Include ${excludedBy} again`
+          }
           onClick={() => actions.onInclude(row.id, excludedBy)}
           className={hoverAction}
         >
-          Include sender
+          {excludedBySender ? 'Include sender' : 'Include again'}
         </TextAction>
       </div>
     )

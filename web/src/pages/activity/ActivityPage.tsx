@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { useSearchParams } from 'react-router'
 import {
   ButtonLink,
@@ -22,12 +22,34 @@ export function ActivityPage() {
   return params.get('state') === 'empty' ? <EmptyActivity /> : <Ledger />
 }
 
+const xl = '(min-width: 80rem)'
+
+function subscribeToXl(onChange: () => void) {
+  const query = window.matchMedia(xl)
+  query.addEventListener('change', onChange)
+  return () => query.removeEventListener('change', onChange)
+}
+
+/** From xl the receipt has its own column beside the list. Below it, a receipt opens under its row. */
+function useWide(): boolean {
+  return useSyncExternalStore(subscribeToXl, () => window.matchMedia(xl).matches)
+}
+
 function Ledger() {
   const [query, setQuery] = useState('')
-  const [selectedId, setSelectedId] = useState(thisWeek[0]?.id)
+  const wide = useWide()
+  // Nothing is picked until someone taps a row. Until then the side column shows the first receipt.
+  const [pickedId, setPickedId] = useState<string | null>(null)
   const shown = thisWeek.filter((r) => matchesSearch(r, query))
-  const selected = shown.find((r) => r.id === selectedId) ?? shown[0]
+  const picked = shown.find((r) => r.id === pickedId)
+  const selected = wide ? (picked ?? shown[0]) : picked
   const leftThisWeek = dailyCounts.slice(7).reduce((total, n) => total + n, 0)
+
+  // Opening a receipt closes the one before it, which can move the tapped row up and out of view, so keep it on screen.
+  useEffect(() => {
+    if (wide || !pickedId) return
+    document.querySelector(`[data-receipt="${pickedId}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [pickedId, wide])
 
   return (
     <div className="flex min-h-svh flex-col xl:flex-row">
@@ -70,13 +92,11 @@ function Ledger() {
                     key={receipt.id}
                     receipt={receipt}
                     selected={receipt.id === selected?.id}
-                    onSelect={() => {
-                      setSelectedId(receipt.id)
-                      // Below xl the receipt sits after the list, so bring it into view.
-                      if (!window.matchMedia('(min-width: 1280px)').matches) {
-                        document.getElementById('receipt-panel')?.scrollIntoView({ block: 'start' })
-                      }
-                    }}
+                    inline={!wide}
+                    // From xl a click picks the receipt. Below it a tap opens it under the row, and another tap closes it.
+                    onSelect={() =>
+                      setPickedId(wide || receipt.id !== pickedId ? receipt.id : null)
+                    }
                   />
                 ))}
               </ul>
@@ -85,17 +105,18 @@ function Ledger() {
         )}
       </div>
 
-      <aside
-        id="receipt-panel"
-        aria-label="Receipt"
-        className="w-full shrink-0 border-t border-rule bg-raised px-4 pt-6 pb-10 sm:px-8 sm:pt-8 xl:sticky xl:top-0 xl:h-svh xl:w-[420px] xl:overflow-y-auto xl:border-t-0 xl:border-l xl:px-9"
-      >
-        {selected ? (
-          <ReceiptPanel receipt={selected} />
-        ) : (
-          <p className="text-body text-ink-2">Pick an email to see its receipt.</p>
-        )}
-      </aside>
+      {wide && (
+        <aside
+          aria-label="Receipt"
+          className="sticky top-0 h-svh w-[420px] shrink-0 overflow-y-auto border-l border-rule bg-raised px-9 pt-8 pb-10"
+        >
+          {selected ? (
+            <ReceiptPanel receipt={selected} />
+          ) : (
+            <p className="text-body text-ink-2">Pick an email to see its receipt.</p>
+          )}
+        </aside>
+      )}
     </div>
   )
 }
@@ -103,22 +124,29 @@ function Ledger() {
 function ReceiptRow({
   receipt,
   selected,
+  inline,
   onSelect,
 }: {
   receipt: Receipt
   selected: boolean
+  inline: boolean
   onSelect: () => void
 }) {
   const connection = connectionById(receipt.connectionId)
   const vendor = connection && vendorOf(connection)
+  const panelId = `receipt-${receipt.id}`
   return (
     <li className="border-b border-rule">
       <button
         type="button"
-        aria-pressed={selected}
+        data-receipt={receipt.id}
+        // Picked from xl. Below it the row opens and closes its receipt.
+        aria-pressed={inline ? undefined : selected}
+        aria-expanded={inline ? selected : undefined}
+        aria-controls={inline && selected ? panelId : undefined}
         onClick={onSelect}
         className={cx(
-          '-mx-2.5 grid w-[calc(100%+20px)] grid-cols-[auto_1fr_auto] items-center gap-x-2 gap-y-0.5 border-l-2 py-2 pr-2.5 pl-2 text-left sm:flex sm:h-[37px] sm:gap-0 sm:py-0',
+          '-mx-2.5 grid w-[calc(100%+20px)] scroll-mt-16 grid-cols-[auto_1fr_auto] items-center gap-x-2 gap-y-0.5 border-l-2 py-2 pr-2.5 pl-2 text-left sm:flex sm:h-[37px] sm:gap-0 sm:py-0 md:scroll-mt-4',
           selected ? 'border-ink bg-sunken' : 'border-transparent hover:bg-sunken',
           focusRing,
         )}
@@ -140,6 +168,17 @@ function ReceiptRow({
           <PartsChip>{receipt.parts}</PartsChip>
         </span>
       </button>
+      {/* Below xl the receipt opens here, under its row, carrying on the row's rule at the left. */}
+      {inline && selected && (
+        <div
+          id={panelId}
+          role="region"
+          aria-label="Receipt"
+          className="-mx-2.5 border-l-2 border-ink bg-raised px-4 pt-5 pb-6 sm:px-6"
+        >
+          <ReceiptPanel receipt={receipt} />
+        </div>
+      )}
     </li>
   )
 }
