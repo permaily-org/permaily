@@ -23,6 +23,16 @@
 // wildcards for the domain, and Certificate Transparency must show no
 // certificate for those hosts, issued since the enclave's key exists, with
 // another key.
+//
+// With -trust-update it checks no deployment either: it says whether a
+// directory holds a trust root of Sigstore's that an enclave of this code
+// would take in place of the one compiled in.
+//
+// With -provenance it checks no deployment. It answers, offline, the question
+// a running enclave asks before it hands the root secret to a release: do
+// these measurements come from the release workflow, in the public log?
+//
+//	permaily-verify -provenance bundle.json -pcrs pcrs.json
 package main
 
 import (
@@ -46,6 +56,7 @@ import (
 	"github.com/permaily-org/permaily/pkg/attestation"
 	"github.com/permaily-org/permaily/pkg/certwatch"
 	"github.com/permaily-org/permaily/pkg/kmspolicy"
+	"github.com/permaily-org/permaily/pkg/provenance"
 )
 
 // maxPolicyAge bounds how old the enclave's reading of the KMS policy may be.
@@ -74,6 +85,12 @@ type hostResult struct {
 	// TLS is what the enclave reports about its certificate key and ACME
 	// account; nil when /status was not read or the image is older.
 	TLS *attestation.TLSStatus `json:"tls,omitempty"`
+	// Sigstore is the trust root the enclave checks releases against, after it
+	// passed checkSigstore; nil when the image is older or holds no root secret.
+	Sigstore *attestation.SigstoreStatus `json:"sigstore,omitempty"`
+	// Anchors are the records the enclave refuses an earlier copy of, after
+	// they passed checkAnchors; nil when the image is older or has none.
+	Anchors *attestation.AnchorStatus `json:"anchors,omitempty"`
 }
 
 // rootResult is what the verified enclave reported about the KMS key that
@@ -187,11 +204,32 @@ func main() {
 		resolver = flag.String("doh-resolver", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS resolver (JSON API) for CAA records")
 		ctAPI    = flag.String("ct-api", "https://api.certspotter.com/v1/issuances", "Certificate Transparency search API (Cert Spotter compatible)")
 	)
+	prov := provenanceFlags(flag.CommandLine)
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "usage: permaily-verify (-pcrs FILE | -release TAG) [flags] [https://host ...]\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "usage: permaily-verify (-pcrs FILE | -release TAG) [flags] [https://host ...]\n       permaily-verify -provenance BUNDLE -pcrs FILE [-release-... flags]\n       permaily-verify -trust-update DIR\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if prov.bundle != "" {
+		if !checkProvenance(os.Stdout, prov, *pcrsFile, *asJSON) {
+			os.Exit(1)
+		}
+		return
+	}
+	// Sigstore's trust root as compiled into this binary: what an enclave of the
+	// same release starts with.
+	trust, err := provenance.PublicGood()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(2)
+	}
+	if prov.trustUpdate != "" {
+		if !checkTrustUpdate(os.Stdout, trust, prov.trustUpdate, time.Now(), *asJSON) {
+			os.Exit(1)
+		}
+		return
+	}
 
 	expected, source, err := loadPCRs(*pcrsFile, *release)
 	if err != nil {
@@ -215,7 +253,7 @@ func main() {
 	allOK := true
 	for _, u := range urls {
 		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-		r := verify(ctx, client, u, expected, kmsOptions{skip: *skipKMS, noStatus: *skipKMS && *skipCert, alsoAllow: splitList(*kmsAllow), now: time.Now()})
+		r := verify(ctx, client, u, expected, kmsOptions{skip: *skipKMS, noStatus: *skipKMS && *skipCert, alsoAllow: splitList(*kmsAllow), now: time.Now(), trust: trust})
 		cancel()
 		allOK = allOK && r.OK
 		results = append(results, r)
@@ -265,6 +303,9 @@ type kmsOptions struct {
 	noStatus  bool // do not read /status at all
 	alsoAllow []string
 	now       time.Time
+	// trust is Sigstore's trust root compiled into this binary, which the one
+	// the enclave reports is compared with; nil skips that.
+	trust *provenance.TrustRoot
 }
 
 func verify(ctx context.Context, client *http.Client, url string, expected map[uint][]byte, kms kmsOptions) hostResult {
@@ -311,6 +352,20 @@ func verify(ctx context.Context, client *http.Client, url string, expected map[u
 	if kms.skip {
 		r.OK = true
 		return r
+	}
+	if st.Sigstore != nil && kms.trust != nil {
+		if err := checkSigstore(st.Sigstore, kms.trust); err != nil {
+			r.Error = "Sigstore trust root: " + err.Error()
+			return r
+		}
+		r.Sigstore = st.Sigstore
+	}
+	if st.Anchors != nil {
+		if err := checkAnchors(st.Anchors, kms.now); err != nil {
+			r.Error = "records that must not go back: " + err.Error()
+			return r
+		}
+		r.Anchors = st.Anchors
 	}
 	pcr0 := hex.EncodeToString(expected[0])
 	if st.Root != nil {
@@ -775,6 +830,8 @@ func printHuman(w io.Writer, source string, expected map[uint][]byte, results []
 		fmt.Fprintf(w, "      certificate names: %s\n", strings.Join(r.CertNames, ", "))
 		fmt.Fprintln(w, "      AWS Nitro signature and chain OK, nonce OK, not debug mode, PCR0-2 match")
 		printKMS(w, r, hex.EncodeToString(expected[0]))
+		printSigstore(w, r.Sigstore)
+		printAnchors(w, r.Anchors, time.Now())
 		if r.TLS != nil && r.TLS.Sealed {
 			fmt.Fprintf(w, "      TLS key created %s, kept sealed with KMS across restarts\n", r.TLS.KeyCreatedAt.UTC().Format(time.RFC3339))
 		}

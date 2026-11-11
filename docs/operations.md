@@ -10,7 +10,7 @@ The running enclave hands the root secret to the next release, then the next rel
 old=v0.7.0 new=v0.8.0
 mkdir -p /tmp/permaily-$new && cd /tmp/permaily-$new
 gh release download $new --repo permaily-org/permaily
-gh attestation verify permaily.eif --repo permaily-org/permaily
+gh attestation verify permaily.eif --repo permaily-org/permaily --signer-workflow permaily-org/permaily/.github/workflows/release.yml --source-ref refs/heads/main
 sha256sum -c SHA256SUMS --ignore-missing
 mkdir eif && mv permaily.eif pcrs.json eif/
 
@@ -18,7 +18,8 @@ mkdir eif && mv permaily.eif pcrs.json eif/
 #      release_keys = { "v0.7.0" = "<its PCR0>", "v0.8.0" = "<jq -r .PCR0 eif/pcrs.json>" }
 tofu -chdir=deploy/tofu apply          # creates one KMS key and its alias; then `tofu plan` must show no changes
 
-# 2. The running enclave gives the root secret to the new release.
+# 2. The running enclave gives the root secret to the new release. The script
+#    first gives it the trust root Sigstore publishes today, which it checks.
 scripts/handoff.sh $old $new
 
 # 3. Start the new image and verify.
@@ -39,11 +40,11 @@ Deploy the previous release again with `scripts/deploy.sh`. Its record and its k
 
 ## Delete the key of an old release
 
-An old image can open the root secret for as long as its key exists. Once the new release has run long enough that no rollback is planned, remove the old release from `release_keys` and apply: its key is scheduled for deletion and gone after seven days. Never remove the release that is running.
+An old image can open the root secret for as long as its key exists. Once the new release has run long enough that no rollback is planned, remove the old release from `release_keys` and apply: its key is scheduled for deletion and gone after seven days. This cannot be undone, from the moment it is applied: cancelling the deletion leaves the key disabled, and its policy lets nobody enable it again. Never remove the release that is running.
 
 ## A new deployment, or losing everything
 
-An image creates a root secret only when the table has neither a record `root-<its PCR0>` nor the record `deployment` (`pk=system`, `sk=record#deployment`). To start over on purpose, delete those items, the TLS identity (`sk=record#tls-<CA host>`) and the mailbox items; the next image creates a new root secret, a new TLS key and a new ACME account (see Certificates below), and everything stored before is unreadable. There is no way back.
+An image creates a root secret only when the table has neither a record `root-<its PCR0>` nor the record `deployment` (`pk=system`, `sk=record#deployment`). To start over on purpose, delete those items, the TLS identity (every `sk` that starts with `record#tls-<CA host>`) and the mailbox items; the next image creates a new root secret, a new TLS key and a new ACME account (see Certificates below), and everything stored before is unreadable. There is no way back. The commits in the anchors bucket cannot be deleted and need not be: they belong to the root secret that is gone, and the new deployment's versions go on after them.
 
 If the instance is lost, nothing is: create it again with OpenTofu and deploy the same release. The root secret is in DynamoDB, locked by the release's KMS key.
 
@@ -62,6 +63,15 @@ PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem scripts/handoff.sh /tmp/stg-a /tmp/
 ```
 
 Two staging images built at the same time may be logged in either order, and a handoff only goes forward in that order. Afterwards deploy the production release again, remove the staging keys from `release_keys`, restore the CAA records and delete the `staging/` branches.
+
+## Records that cannot go back
+
+The TLS identity is read by its newest commit in the bucket `permaily-anchors-<account>` (ADR 0016); `/status` and the verifier show its version and until when the commit is locked.
+
+- **`the committed version of the record is gone`** in the enclave's log, for the TLS identity: its item was deleted or replaced. The enclave makes a new identity (see "Replace the TLS key" for the CAA records).
+- **The verifier fails with `the store of commits went back`**: the enclave had seen a commit that the bucket no longer answers with. Nobody in the account can remove one, so treat it as an incident: find out what happened to the bucket (CloudTrail, `aws s3api list-object-versions`) before restarting the enclave, which forgets what it saw.
+- **The verifier warns that a lock ends within 30 days**: the newest commit of a record is ten years old. Make the record change (for the TLS identity, a renewal does) so that it gets a new commit.
+- The enclave's role can list, read and write in that bucket and cannot delete. Nothing needs to be cleaned there: a commit is a few hundred bytes.
 
 ## Look at enclave logs
 
@@ -104,9 +114,50 @@ PERMAILY_RELEASE=<tag> go test -tags production -run TestProductionMITM -v ./cmd
 
 ## Scheduled verification
 
-The workflow `verify-production` runs `scripts/verify-production.sh` at minutes 7 and 37 of every hour: the latest release's verifier against production, or the previous release's while the latest is not deployed. Its output is in each run's summary, public. A failed run is an incident: read which check failed and since when.
+The workflow `verify-production` runs `scripts/verify-production.sh` every half hour: the latest release's verifier against production, or the previous release's while the latest is not deployed. Its output is in each run's summary, public. A failed run is an incident: read which check failed and since when.
 
-GitHub disables scheduled workflows after 60 days without activity in the repository; re-enable it under Actions if that happens.
+Two things start it:
+
+- **EventBridge**, at minutes 7 and 37 (`deploy/tofu/verify.tf`, which also starts `sigstore-watch` once a day): a rule in the AWS account calls GitHub's API to start the workflow. It only says "run now"; the check runs on GitHub with the repository's code. These runs show as started by hand (`workflow_dispatch`), by the owner of the token.
+- **GitHub's own schedule**, with the same minutes. GitHub does not keep it: in the first day it started two runs instead of about forty, hours apart. It stays because nobody in the AWS account chooses when those runs happen.
+
+If the runs stop: check the rule (`aws events describe-rule --name permaily-verify-production`) and its failed invocations in CloudWatch (`AWS/Events`, `FailedInvocations`), then the token below. `gh workflow run verify-production` starts one by hand. GitHub disables scheduled workflows after 60 days without activity in the repository; re-enable it under Actions if that happens.
+
+## Sigstore changed
+
+A running enclave hands the root secret to a release only if the release's Sigstore bundle verifies with the trust root the enclave uses (the one compiled in, or a later one it was given), in the format `pkg/provenance` reads. If that stops being true and nobody notices in time, no release can be deployed without losing everything stored. The workflow `sigstore-watch` checks both things every day, for the first Rekor and for Rekor v2, (started by EventBridge at 06:53 UTC, and by GitHub's schedule when it fires), and `release.yml` checks each release before it cuts it. A failed run is a deadline, not an incident in production: the enclave that is running keeps working. So that it is not one more red mark, a failed run opens an issue with the label `sigstore-deadline`, assigned to the logins in `.github/sigstore-maintainers`, and every daily run adds a comment that names them again and sends mail to the subscribers of the SNS topic `permaily-sigstore-deadline`, until everything passes, when the issue is closed (`scripts/sigstore-alarm.sh`). When the change is urgent (a new issuer of signing certificates) the issue also gets the label `sigstore-urgent`: pull requests into `develop` fail their `go` check meanwhile, except the one that compiles in the new trust root (`scripts/check-sigstore-deadline.sh`), and the issue stays open after the checks pass, until production runs a release with the new trust root compiled in. Removing that label from the issue lets pull requests through.
+
+- **`trust-root` fails**: Sigstore published a trust root newer than the one compiled in (`pkg/provenance/sigstore_trusted_root.json`); the run prints what changed, and opens the pull request `build: update sigstore's trust root` that compiles it in (`scripts/sigstore-trust-root-pr.sh`; by hand, `scripts/sigstore-trust-root.sh --update`). CI checks that the pull request holds exactly what Sigstore publishes and that the code of `develop` accepts it (`scripts/check-trust-root-change.sh`); read it and merge it, so the next release carries it. How urgent it is depends on what changed. **A log or a timestamp authority** (the usual case: a new instance of Rekor v2, a renewed certificate): nothing to do in production, because `scripts/handoff.sh` gives the running enclave the newest trust root before each handoff, and the enclave takes it with the signatures of Sigstore's keyholders; `scripts/sigstore-trust-root.sh --send` does that alone. **A certificate authority** (`certificateAuthorities` in the difference): the running enclave will not take a new issuer from an update, so a release with the new file has to be published and deployed while the old issuer still signs. If the run says instead that `pkg/provenance` refuses what Sigstore publishes, the TUF metadata changed in a way the code does not read (a new kind of key, for example): fix that first, against go-tuf in `tests/sigstore-differential`, and release it.
+- **`canary-rekor2` fails**: a signature recorded today in Sigstore's Rekor v2 log, the way GitHub's attestations will be when they move there, is refused by `pkg/provenance` (or could not be made: read which step failed; the log or the timestamp authority being down is not the alarm). GitHub's attestations are not there yet, so there is time: fix `pkg/provenance` against sigstore-go (`tests/sigstore-differential`) and release it before they move.
+- **`canary` fails**: GitHub attested a file today and `pkg/provenance` refuses the bundle. Read the reason in the run. Do not merge into `main` until `pkg/provenance` accepts what GitHub signs and a release with that code is deployed: the fix has to reach production in a release the running enclave still accepts, so it must be signed the old way. If GitHub no longer signs the old way, sign the release from the workflow with a client that still does, while the old log takes entries.
+- **`A running enclave would accept this release` fails in `release.yml`**: no release was cut. Either of the two above happened between the daily runs, or the previous release's verifier refuses what this code accepts; the step says which verifier refused.
+
+`permaily-verify -provenance bundle.json -pcrs pcrs.json` is the same check by hand, offline, with the verifier of any release from the first one that has the flag; `scripts/provenance-bundle.sh pcrs.json bundle.json` fetches the bundle. `permaily-verify -trust-update DIR` says whether an enclave of that release would take the trust root in a directory (`scripts/sigstore-trust-root.sh --fetch DIR` fills it). A trust root given to an enclave lasts until it restarts; `/status` and the verifier say which one it uses.
+
+## Who is told about a Sigstore deadline
+
+- **The issue**: the GitHub logins in `.github/sigstore-maintainers`, one per line.
+- **The mail**: the subscriptions of the SNS topic, kept in AWS so that no address is in the repository. To add one, and the person confirms from the message AWS sends:
+
+```sh
+aws sns subscribe --topic-arn "$(tofu -chdir=deploy/tofu output -raw sigstore_alarm_topic)" --protocol email --notification-endpoint <address>
+aws sns list-subscriptions-by-topic --topic-arn "$(tofu -chdir=deploy/tofu output -raw sigstore_alarm_topic)"    # who is subscribed, and who has not confirmed
+```
+
+The workflow publishes as the IAM user `permaily-sigstore-alarm`, which can publish to that topic and do nothing else. Its access key is in the repository secrets `SIGSTORE_ALARM_AWS_ACCESS_KEY_ID` and `SIGSTORE_ALARM_AWS_SECRET_ACCESS_KEY`, and the topic in the variable `SIGSTORE_ALARM_TOPIC_ARN`. To replace the key: `aws iam create-access-key --user-name permaily-sigstore-alarm`, set both secrets with `gh secret set`, then `aws iam delete-access-key` for the old one. GitHub's keyless sign-in is not used because the organization the AWS account belongs to forbids identity providers in it.
+
+## Rotate the GitHub dispatch token
+
+The token `permaily-verify-dispatch` is a fine-grained token of the repository's owner, limited to this repository, with Actions read and write and nothing else. It expires on 2027-11-10. EventBridge keeps it in Secrets Manager; a copy is in `~/.config/permaily/github-dispatch-token` (mode 0600).
+
+Create a new one with the same permissions (GitHub > Settings > Developer settings > Fine-grained tokens), store it in that file, then:
+
+```sh
+TF_VAR_github_dispatch_token=$(cat ~/.config/permaily/github-dispatch-token) \
+  tofu -chdir=deploy/tofu apply -replace=aws_cloudwatch_event_connection.github
+```
+
+Check that the next run starts, then delete the old token. Other applies run without the variable.
 
 ## Read the test mailbox
 
@@ -136,7 +187,7 @@ tofu -chdir=deploy/tofu apply
 
 - **First deployment, or a new TLS key:** the account does not exist yet, and a CAA record that names another account makes Let's Encrypt refuse. Set `acme_account_uris = []` (any Let's Encrypt account), deploy, read the account from `/status`, set it and apply.
 - **Staging images** (`.#eif-staging`) use another CA and another account, kept in the staging table. To test one on the production names, set `acme_account_uris = []` in `production.auto.tfvars` without committing for the first start, then its account next to production's for the rest of the test, and restore the file afterwards.
-- **Replace the TLS key** (suspected leak): delete the item `pk=system`, `sk=record#tls-acme-v02.api.letsencrypt.org` from the mail table, set `acme_account_uris = []`, restart the enclave, then pin the new account. The root secret is not affected. The verifier will show the new creation time, and certificates of the old key as older until they expire.
+- **Replace the TLS key** (suspected leak): delete from the mail table every item of `pk=system` whose `sk` starts with `record#tls-acme-v02.api.letsencrypt.org` (the newest version and the earlier ones), set `acme_account_uris = []`, restart the enclave, then pin the new account. The enclave finds that the version it committed is gone and makes a new identity, as a later version; it never takes an earlier one, so putting the old item back afterwards does nothing (ADR 0016). The root secret is not affected. The verifier will show the new creation time and the new version, and certificates of the old key as older until they expire.
 - **A partial `tofu apply`** can leave a host without its CAA record; then the apex record applies, which allows only Amazon, and Let's Encrypt refuses every certificate. Run `tofu plan` after each apply: it must show no changes.
 
 ## Planned (F1+)

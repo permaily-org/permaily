@@ -10,7 +10,7 @@ That the service answering on the Permaily hosts runs an enclave image built fro
 - **AWS prebuilt enclave kernel, init and nsm.ko** from aws-nitro-enclaves-cli (pinned by hash in `nix/eif.nix`).
 - **The source code and its pinned dependencies**: Go modules (`go.sum`, `vendorHash`), npm packages (`bun.lock` and the `node_modules` hash), nixpkgs (`flake.lock`).
 - **Let's Encrypt** for issuing certificates to the enclave's key, and the public WebPKI for the verifier's TLS checks and for the enclave's connections to KMS.
-- **Sigstore's public instance** (Fulcio and the Rekor transparency log, pinned in `pkg/provenance`) and **GitHub Actions** (its token issuer, its hosted runners, and the rule that `main` only changes through reviewed merges): together they say which images are public releases, and a running enclave hands the root secret only to those.
+- **Sigstore's public instance** (Fulcio, the Rekor transparency logs and, for entries of Rekor v2, the timestamp authority that says when a signature existed; all pinned in `pkg/provenance`; three of the five keyholders of Sigstore's TUF root can give a running enclave other logs and timestamp authorities, never another issuer of certificates, ADR 0013) and **GitHub Actions** (its token issuer, its hosted runners, and the rule that `main` only changes through reviewed merges): together they say which images are public releases, and a running enclave hands the root secret only to those.
 - In later phases: the LLM provider used for classification (model and prompts are in the image).
 
 ## Not trusted
@@ -34,7 +34,7 @@ That the service answering on the Permaily hosts runs an enclave image built fro
 ## Known limits (F0)
 
 - The TLS key and the ACME account key are created once inside an enclave and stored sealed under the root secret (ADR 0012, ADR 0013), so restarts and upgrades keep the same key, certificate and account. Only what can get the root secret can open them, like stored mail.
-- The enclave has no persistent state yet.
+- The enclave keeps nothing itself: what it stores is sealed and lives in DynamoDB and S3, which the operator can delete, not read. Putting back an earlier copy is refused for the records that go through `store.Anchored` (ADR 0016): today the TLS identity. The mailbox's state and the messages can still be put back to an earlier copy, or removed; they get the same protection, and an audit log, with the data model.
 - Availability is not protected: the operator can always take the service down.
 - Metadata visible to the operator: connection timing, sizes, destination hostnames of egress.
 
@@ -61,9 +61,10 @@ The host proxy only tunnels to:
 - **What the operator sees.** Message sizes and arrival times, retention period, the number of messages, and (until accounts exist) the single test mailbox. Not senders, subjects, bodies or attachments.
 - **Transport.** SMTP STARTTLS terminates in the enclave with the attested certificate, and the MX refuses `MAIL` on a connection without TLS. MTA-STS (`mode: enforce`) tells senders to deliver only to `inbox.permaily.com` with a valid certificate; TLS-RPT reports go to the test mailbox. `permaily-verify` checks the policy (served with the attested key), the `_mta-sts` and MX records, and that port 25 answers with the attested key (ADR 0011).
 - **Gap: senders without MTA-STS, and DNS.** A sender that does not implement MTA-STS can be made to deliver in clear to whoever answers on port 25. DNS is the operator's: removing the `_mta-sts` record stops new senders from applying the policy (cached policies last a week); the verifier fails when it is missing.
+- **Port 25 between manual checks.** The scheduled verification cannot reach port 25 (GitHub's runners block it), so the certificate served there is only checked by hand, from a server, with `-require-smtp`. Decided on 2026-11-11 to leave it so: a certificate for the host with a key outside the enclave shows in the certificate check, which runs every half hour, and what stays unwatched is the gap above, for senders without MTA-STS.
 - **Senders.** Any sender may deliver to the mailbox (decision for F1); DKIM results are recorded with each message. A Gmail forwarding confirmation is only marked verified when it carries a valid `google.com` DKIM signature.
 - **Who can use the key is public.** The enclave reads the policy, the grants and the properties of its image's key from KMS and serves them on `/status`; `permaily-verify` accepts that only over the attested TLS key and applies the same rule the enclave does (`kmspolicy.Sealed`): this image only, no way to change the policy from the account, no grants, key material that never left KMS.
-- **The policy between checks.** AWS documents that its Support can restore the account owner's access to a key that nobody can manage. So the enclave reads the policy and the grants of its key once a minute and reports every state it has seen since it started; the verifier requires a reading made just now and checks every state, and a public job runs the verifier on a schedule (ADR 0013). What remains: a change made while the enclave is cut off from KMS shows only as a gap, and restarting the enclave starts the history again (the start time is printed).
+- **The policy between checks.** AWS documents that its Support can restore the account owner's access to a key that nobody can manage. So the enclave reads the policy and the grants of its key once a minute and reports every state it has seen since it started; the verifier requires a reading made just now and checks every state, and a public job runs the verifier every half hour (ADR 0013). That job is started from the operator's AWS account, with a GitHub token that can start, cancel and delete workflow runs of this repository and nothing else; so the operator chooses when it runs, and GitHub's own schedule, which the operator does not time, starts it a few times a day as well. What remains: a change made while the enclave is cut off from KMS shows only as a gap, and restarting the enclave starts the history again (the start time is printed).
 - **What remains.** An older release can still open its own record until its key is deleted, so a flaw in an old image stays a way in for that long (docs/operations.md). Whoever controls Sigstore's signing or GitHub's runners for this repository can publish an image that is accepted; it would be public in the transparency log and in the repository. The account's owner, with AWS Support, could regain control of a key and then open the root secret; it takes a support case and shows in the enclave's report from then on. The operator can still delete keys or records, which destroys data and reads nothing.
 - **The old mail key.** Releases up to v0.6.0 wrapped data keys with `alias/permaily-mail`, whose policy administrators could replace. v0.7.0 moved those data keys under the root secret, the key was retired on 2026-11-10 with a policy that lets nobody use it, and it is scheduled for deletion.
 
@@ -81,7 +82,8 @@ Each one has, or must get, a test that tries to break it.
 | Production code | Fake attesters and test chains are never linked | `depguard` |
 | Web | Every response carries HSTS, CSP, `nosniff`, `no-referrer` | `TestRouter` |
 | Keys | A key is used only if this image alone can use it and nobody can change that | `TestSealed`, `TestHandoffRefuses`, `TestRootNeedsItsOwnKey` |
-| Keys | The root secret is handed only to a public release newer than the running one | `TestHandoffRefuses`, `TestVerifyIdentity`, `TestVerifyARealRelease`, `FuzzVerify`, `tests/sigstore-differential` |
+| Storage | An earlier copy of an anchored record is never read: lost, not rolled back | `TestAnchoredRefusesEarlierCopies`, `TestS3CommitsWithAnAdversary`, `TestS3CommitsAgainstS3` (a real bucket), `TestAnchoredNoticesCommitsGoingBack`, `TestCheckAnchors` |
+| Keys | The root secret is handed only to a public release newer than the running one | `TestHandoffRefuses`, `TestVerifyIdentity`, `TestVerifyARealRelease`, `TestVerifyRekor2`, `TestTimestamps`, `TestSigstoreHistory`, `TestUpdateKeepsTheAuthorities`, `TestTUFSignatures`, `TestRootFollowsSigstore`, `FuzzVerify`, `FuzzVerifyRekor2`, `FuzzTimestamp`, `FuzzTrustUpdate`, `tests/sigstore-differential` |
 | Keys | A record not written by an enclave of the same image or of a public release is refused | `TestRootRefusesPlantedRecords`, `TestRootChecksWhichKeyAnswered` |
 | Keys | A debug enclave, a failing store or a deployment that already has a root secret never leads to a new one | `TestRootInDebugMode`, `TestRootDoesNotCreateWhenTheStoreFails`, `TestRootHandoff` |
 | TLS | The TLS and ACME account keys leave the enclave only sealed, survive restarts, and are never replaced when storage fails | `TestSealedKeepsTheIdentity`, `TestSealedRejects`, `TestManagerSurvivesRestart`, `TestManagerWaitsForItsIdentity` |
@@ -120,8 +122,6 @@ For every change that touches the enclave, the host, auth, storage or the build:
 ## TODO
 
 - [ ] Site: move the demos' inline `style` attributes to classes and remove `style-src-attr 'unsafe-inline'` from `site/astro.config.mjs`.
-- [ ] Deny `kms:PutKeyPolicy` in the key policy once a release can be authorized without editing it (ADR 0013, option 3); until then changes are detected, not prevented.
-- [ ] MTA-STS `mode: enforce` once delivery from Gmail over TLS is confirmed in production.
 
 ## Reporting vulnerabilities
 

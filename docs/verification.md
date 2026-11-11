@@ -38,7 +38,9 @@ Releases before v0.3.0 do not report the policy; verify them with `-skip-kms-pol
 
 What this does not prove for that old key: the account's administrators could replace its policy until it was retired (2026-11-10), after which the verifier prints that it releases data keys to no image. A change made while the enclave could not reach KMS shows only as a warning with the period, and the history starts again when the enclave restarts.
 
-The workflow `verify-production` of the repository runs the latest release's verifier against the live service twice an hour; its runs and their output are public under Actions. `scripts/verify-production.sh` runs the same check from your machine.
+The workflow `verify-production` of the repository runs the latest release's verifier against the live service every half hour; its runs and their output are public under Actions. `scripts/verify-production.sh` runs the same check from your machine.
+
+`permaily-verify -provenance bundle.json -pcrs pcrs.json` checks no deployment: it answers, offline, whether those measurements are a release, the way a running enclave decides before it hands the root secret to the next one (`pkg/provenance`, with the trust root compiled into the binary). It reads releases recorded in the first Rekor log and in Rekor v2, where the time comes from Sigstore's timestamp authority. `scripts/provenance-bundle.sh` fetches the bundle of a `pcrs.json`. `permaily-verify -trust-update DIR` answers the other question an enclave decides offline: whether the files in a directory are a trust root that Sigstore published after the one compiled in.
 
 ## How mail gets in
 
@@ -123,9 +125,25 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
     "key_created_at": "<when the key was generated, RFC 3339>",
     "sealed": true,
     "acme_account": "<URL of the ACME account that asks for certificates>"
+  },
+  "sigstore": {
+    "trusted_root_sha256": "<hex SHA-256 of Sigstore's trusted_root.json the enclave checks releases against>",
+    "tuf_root_version": 16,
+    "tuf_targets_version": 14,
+    "updated_at": "<when the enclave was given it; absent while it uses the one compiled into the image>"
+  },
+  "anchors": {
+    "bucket": "<S3 bucket with Object Lock that holds the commits>",
+    "retention_days": 3650,
+    "records": [{"name": "tls-<CA host>", "version": 4, "committed_at": "...", "locked_until": "..."}],
+    "regressions": []
   }
 }
 ```
+
+`sigstore` says which of the trust roots Sigstore published the enclave uses to decide what is a release: the file is `https://tuf-repo-cdn.sigstore.dev/targets/<hash>.trusted_root.json`. The verifier requires the one compiled into the release while there was no update, and a later one after an update; the enclave takes a later one only with the signatures of Sigstore's TUF keyholders, and only for the logs and the timestamp authorities (ADR 0013).
+
+`anchors` lists the records the enclave refuses an earlier copy of (ADR 0016), as far as it read or wrote them since it started: the version of each, and until when S3 keeps its newest commit whatever anyone asks. The verifier fails when a commit is not locked, and when `regressions` is not empty: a commit the enclave had seen that the store stopped answering with. It warns when a lock ends within thirty days.
 
 `root` is absent in an image that stores no mail. `from` is present when another release's enclave handed the root secret over. `history` and `gaps` are every state of the key's policy and grants the enclave has read since it started, and the periods in which it could not read. Releases up to v0.7.0 also report `kms`, the key they wrapped data keys with directly, with the same `history` and `gaps`. If KMS cannot be reached, or the image has no root secret yet, the endpoint answers 503.
 
@@ -155,4 +173,4 @@ go run ./cmd/permaily-verify -pcrs result-staging/pcrs.json -ca-file letsencrypt
 
 ## Planned
 
-`scripts/verify.sh` also compares the reproduced PCRs with the ones published in the release and checks their Sigstore build provenance with `gh attestation verify` when `gh` is installed. Certificate Transparency is checked at verification time; nothing watches it continuously yet.
+`scripts/verify.sh` also compares the reproduced PCRs with the ones published in the release and checks their Sigstore build provenance with `gh attestation verify` when `gh` is installed. Certificate Transparency is checked at verification time, so every half hour by the scheduled job; nothing follows the logs between two checks.

@@ -18,8 +18,9 @@ Opening the pull request by hand works too; it just needs auto-merge or a manual
 On every push to `main`, `.github/workflows/release.yml`:
 
 1. Builds the enclave image, `permaily-host` and `permaily-verify` on x86_64 and arm64, and fails if the image or host binary differ.
-2. Writes `SHA256SUMS` and signs every file with GitHub build provenance (Sigstore), verifiable with `gh attestation verify <file> --repo permaily-org/permaily`.
-3. Runs semantic-release: computes the version from the commits since the last tag (`feat` minor, `fix` patch; breaking changes are minor below 1.0), creates the tag and the GitHub release with the notes, `permaily.eif`, `pcrs.json`, the binaries and `SHA256SUMS`.
+2. Writes `SHA256SUMS` and signs every file with GitHub build provenance (Sigstore), verifiable with `gh attestation verify <file> --repo permaily-org/permaily --signer-workflow permaily-org/permaily/.github/workflows/release.yml --source-ref refs/heads/main` (without the last two flags it accepts what any workflow of the repository signed, a staging image included).
+3. Checks that a running enclave would accept the release: the new verifier and the previous release's both run `-provenance` on the fresh bundle. If either refuses, no release is cut (docs/operations.md, "Sigstore changed").
+4. Runs semantic-release: computes the version from the commits since the last tag (`feat` minor, `fix` patch; breaking changes are minor below 1.0), creates the tag and the GitHub release with the notes, `permaily.eif`, `pcrs.json`, the binaries and `SHA256SUMS`.
 
 Versions start from `v0.0.0`, a tag on the repository's first commit, so the first release is 0.1.0 and the project stays below 1.0 until it is declared stable. `scripts/check-release-notes.mjs` (CI) renders sample notes with the configured preset, so an incompatible semantic-release or preset upgrade fails on the pull request.
 

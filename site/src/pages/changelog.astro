@@ -6,7 +6,7 @@ import Base from '../layouts/Base.astro';
 const releases = [
   {
     version: 'v1.4.2',
-    dates: '9 March, logged 2 March',
+    dates: '9 March',
     measurement: '7f3a…c91e',
     commit: 'a41f9c2',
     title: 'Microsoft 365 mailboxes',
@@ -18,7 +18,7 @@ const releases = [
   },
   {
     version: 'v1.4.1',
-    dates: '25 February, logged 18 February',
+    dates: '25 February',
     measurement: '2cb1…04f7',
     commit: '88d02be',
     title: 'Alerts when a rule jumps',
@@ -30,7 +30,7 @@ const releases = [
   },
   {
     version: 'v1.4.0',
-    dates: '10 February, logged 3 February',
+    dates: '10 February',
     measurement: 'e90a…3b12',
     commit: '1e7d6aa',
     title: 'Asking for more needs fresh consent',
@@ -41,7 +41,7 @@ const releases = [
   },
   {
     version: 'v1.3.9',
-    dates: '28 January, logged 28 January',
+    dates: '28 January',
     measurement: '51dd…a820',
     commit: 'c70fa31',
     title: 'Urgent fix for malformed MIME headers',
@@ -49,13 +49,12 @@ const releases = [
       'Hardened the parser against malformed headers',
       'Added fuzz cases for the failure, in the public repository',
     ],
-    skippedWait: true,
   },
 ];
 ---
 
 <Base title="Changelog" description="Every release, with its measurement.">
-  <PageHead intro="A new build is logged publicly before it can receive keys, then goes live after a waiting period. This page says what changed, and the release log proves it.">
+  <PageHead intro="A new build is logged publicly before it can receive keys. This page says what changed, and the release log proves it.">
     Every release, <br />with its measurement
     <Fragment slot="actions">
       <a class="btn lg sec-b" href={LINKS.releaseLog}>Open the release log</a>
@@ -78,12 +77,6 @@ const releases = [
             </div>
             <div>
               <h3>{release.title}</h3>
-              {release.skippedWait && (
-                <p class="notice">
-                  <b>The waiting period was skipped for this release</b>
-                  We logged it publicly first, and the reason is in the release log.
-                </p>
-              )}
               <ul class="checks">
                 {release.changes.map((change) => <li>{change}</li>)}
               </ul>
@@ -126,20 +119,6 @@ const releases = [
     font-weight: 500;
     letter-spacing: var(--tracking-h);
     line-height: var(--leading-snug);
-  }
-
-  .notice {
-    margin-bottom: var(--space-14);
-    padding: var(--space-14) var(--space-16);
-    background: var(--attention-bg);
-    color: var(--attention);
-    font-size: var(--text-body);
-  }
-
-  .notice b {
-    display: block;
-    font-size: var(--text-lead);
-    font-weight: 500;
   }
 
   @media (max-width: 760px) {

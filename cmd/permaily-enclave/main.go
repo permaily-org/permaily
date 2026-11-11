@@ -50,9 +50,12 @@ type config struct {
 	awsRegion          string
 	dynamoTable        string
 	s3Bucket           string
-	credentialsPort    uint32
-	dohEndpoint        string
-	logPort            uint32
+	// Where the commits of the records that must not go back are kept (ADR 0016).
+	anchorBucket        string
+	anchorRetentionDays int
+	credentialsPort     uint32
+	dohEndpoint         string
+	logPort             uint32
 
 	// The root secret (ADR 0013). awsAccount is where release keys must live,
 	// and releases says which builds may receive the root secret.
@@ -86,6 +89,8 @@ func main() {
 	flag.StringVar(&cfg.releases.RefPrefix, "release-ref-prefix", "", "instead of -release-ref: every ref that starts with this (test images)")
 	flag.StringVar(&cfg.dynamoTable, "dynamodb-table", "", "DynamoDB table for mailboxes and messages")
 	flag.StringVar(&cfg.s3Bucket, "s3-bucket", "", "S3 bucket for raw messages")
+	flag.StringVar(&cfg.anchorBucket, "anchor-bucket", "", "S3 bucket with Object Lock for the commits of the records that must not be put back to an earlier copy")
+	flag.IntVar(&cfg.anchorRetentionDays, "anchor-retention-days", 0, "days S3 keeps each commit, whatever anyone asks")
 	flag.StringVar(&cfg.dohEndpoint, "doh-endpoint", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS endpoint for DKIM lookups")
 	flag.Parse()
 
@@ -142,6 +147,9 @@ func run(cfg config, log *slog.Logger) error {
 		if p.handoff != nil {
 			api.Handle("/v1/admin/handoff", httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Handoff(p.handoff, log)))
 		}
+		if p.updateTrust != nil {
+			api.Handle("/v1/admin/trust-root", httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.TrustRoot(p.updateTrust)))
+		}
 
 		smtpSrv := smtpd.New(mailbox, smtpd.Config{Domain: hosts.Inbox, TLS: p.certs.TLSConfig()}, log)
 		go func() {
@@ -157,7 +165,7 @@ func run(cfg config, log *slog.Logger) error {
 
 	common := map[string]http.Handler{
 		"/attestation": httpapi.Attestation(p.attester, p.certs.UserData),
-		"/status":      httpapi.Status(httpapi.StatusSources{Root: p.rootStatus, TLS: p.certs.Status}),
+		"/status":      httpapi.Status(httpapi.StatusSources{Root: p.rootStatus, TLS: p.certs.Status, Sigstore: p.sigstore, Anchors: p.anchors}),
 		"/version":     httpapi.Version(),
 	}
 	srv := &http.Server{

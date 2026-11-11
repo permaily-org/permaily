@@ -13,8 +13,9 @@
 | Layer | Tool | Where | Runs |
 |---|---|---|---|
 | Unit and local end to end (Go) | `go test`, `httptest` | `*_test.go` | `make check`, CI |
-| Fuzzing | Go native fuzzing | `pkg/attestation`, `pkg/kmspolicy`, `pkg/provenance`, `internal/keys` (CMS), `internal/inbox` (mail parser) | `make fuzz`, CI |
-| Differential | `pkg/provenance` against sigstore-go, on the published release v0.5.0 and on bundles from the test authority | `tests/sigstore-differential` (its own Go module, Go 1.27) | CI `sigstore-differential`; locally `cd tests/sigstore-differential && go test ./...` |
+| Fuzzing | Go native fuzzing | `pkg/attestation`, `pkg/kmspolicy`, `pkg/provenance` (bundles of both Rekor logs, timestamps, and trust root updates), `internal/keys` (CMS), `internal/inbox` (mail parser) | `make fuzz`, CI |
+| Differential | `pkg/provenance` against sigstore-go, on the published release v0.5.0, on a signature recorded in the public Rekor v2 log, and on bundles from the test authority shaped like both logs; and its TUF checks against go-tuf, on Sigstore's metadata from TUF root 12 to 16 and on the test authority's | `tests/sigstore-differential` (its own Go module, Go 1.27) | CI `sigstore-differential`; locally `cd tests/sigstore-differential && go test ./...` |
+| Commits against S3 | a real bucket with Object Lock: conditional writes, locks, delete markers, deletion refused | `internal/store` (`TestS3CommitsAgainstS3`) | by hand, with `PERMAILY_TEST_ANCHOR_BUCKET=permaily-anchors-staging-<account>` and credentials; skipped otherwise |
 | Storage contract | DynamoDB Local and S3Mock | `internal/store/store_test.go` | CI services; locally with `PERMAILY_TEST_DYNAMODB` and `PERMAILY_TEST_S3` |
 | ACME issuance and renewal | Pebble 2.6.0 (test CA that accepts every challenge) | `internal/tlsacme` (`TestObtainAgainstACME`) | CI service; locally with `PERMAILY_TEST_ACME` |
 | Whole service, dev mode | SMTP client and HTTPS | `cmd/permaily-enclave/main_dev_test.go` | `go test -tags dev ./cmd/permaily-enclave`, CI |
@@ -23,6 +24,9 @@
 | Site content | Vitest on the built HTML | `site/tests/` | `bun run test`, Amplify build, CI |
 | Accessibility and CSP | Playwright + axe | `site/e2e/` | `bun run test:e2e`, CI |
 | End to end against production | `permaily-verify` | `scripts/verify.sh` | after each deploy |
+| Sigstore, daily | the compiled-in trust root is the newest one Sigstore publishes, and `pkg/provenance` takes what it publishes; `pkg/provenance` accepts what GitHub attests today, and a signature recorded today in Rekor v2 | `scripts/sigstore-trust-root.sh` (`permaily-verify -trust-update`); `permaily-verify -provenance` on a fresh attestation and on a bundle from `tests/sigstore-differential/cmd/rekor2-sign` | workflow `sigstore-watch` |
+| A change to the compiled-in trust root | it is exactly what Sigstore publishes today, and the code of the base branch accepts it as an update | `scripts/check-trust-root-change.sh` | CI `go`, on pull requests into `develop` |
+| Each release, before it is cut | a running enclave would accept it: `-provenance` with the new verifier and the previous release's | step of `release.yml` | `release.yml` |
 | Production, continuously | the latest release's `permaily-verify` | `scripts/verify-production.sh` | workflow `verify-production`, twice an hour |
 | Interception of production | Go test with a local TLS proxy | `cmd/permaily-verify/production_test.go` (`-tags production`) | after each deploy |
 
@@ -37,15 +41,15 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `pkg/attestation` | 85 (target 95) | 85.5 |
 | `pkg/kmspolicy` | 99 | 99.0 |
 | `pkg/certwatch` | 99 | 99.0 |
-| `pkg/provenance` | 97 | 97.3 |
+| `pkg/provenance` | 99 | 99.4 |
 | `internal/tlsacme` | 90 (with Pebble) | 90.3 |
 | `internal/router` | 100 | 100.0 |
-| `internal/httpapi` | 89 | 89.7 |
+| `internal/httpapi` | 90 | 90.6 |
 | `internal/webui` | 75 | 75.0 |
 | `internal/hostproxy` | 73 | 73.7 |
 | `internal/enclave` | 87 | 87.7 |
 | `internal/envelope` | 91 (target 95) | 91.9 |
-| `internal/keys` | 88 (target 95) | 88.8 |
+| `internal/keys` | 89 (target 95) | 89.5 |
 | `internal/inbox` | 84 | 84.7 |
 | `internal/msgauth` | 86 | 86.0 |
 | `internal/smtpd` | 92 | 92.5 |

@@ -915,3 +915,131 @@ func TestNewRootNeedsItsConfiguration(t *testing.T) {
 		t.Fatal("accepted an empty configuration")
 	}
 }
+
+// Sigstore replaces the log its signatures are recorded in. The enclave
+// refuses a release recorded there until it is given the trust root that
+// names the new log, signed by Sigstore's keyholders; then it hands over.
+func TestRootFollowsSigstore(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	a := w.release(0xa1, 2*time.Hour)
+	old := w.boot(a)
+	if _, err := old.NewDataKey(ctx, keyCtx); err != nil {
+		t.Fatal(err)
+	}
+	compiled := old.Trust()
+	if compiled == nil || len(compiled.TrustedRootSHA256) != 64 || compiled.TUFRootVersion != 1 || compiled.TUFTargetsVersion < 1 || !compiled.UpdatedAt.IsZero() {
+		t.Fatalf("the trust root at the start: %+v", compiled)
+	}
+
+	if err := w.releases.NextLog(); err != nil {
+		t.Fatal(err)
+	}
+	b := w.private(0xb2)
+	b.keyARN = w.kms.addKey("key-b2", b.pcr0, sealedPolicy(b.pcr0))
+	b.bundle = w.attest(b, func(build *provenancetest.Build) { build.Rekor2, build.At = true, w.now.Add(-time.Hour) })
+	if _, err := w.handoff(old, a, b); !errors.Is(err, provenance.ErrUntrusted) || !strings.Contains(err.Error(), "another log") {
+		t.Fatalf("before the update: %v", err)
+	}
+
+	targets, trusted, err := w.releases.Publish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What the keyholders did not sign changes nothing.
+	for name, u := range map[string]provenance.Update{
+		"another trust root": {Targets: targets, TrustedRoot: append(bytes.Clone(trusted), ' ')},
+		"nothing":            {},
+	} {
+		if _, err := old.UpdateTrust(u); err == nil {
+			t.Fatalf("%s: accepted", name)
+		}
+	}
+	if got := old.Trust(); *got != *compiled {
+		t.Fatalf("a refused update changed the trust root: %+v", got)
+	}
+
+	st, err := old.UpdateTrust(provenance.Update{Targets: targets, TrustedRoot: trusted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.TrustedRootSHA256 == compiled.TrustedRootSHA256 || st.TUFTargetsVersion <= compiled.TUFTargetsVersion || !st.UpdatedAt.Equal(w.now.UTC().Truncate(time.Second)) || *old.Trust() != *st {
+		t.Fatalf("after the update: %+v, was %+v", st, compiled)
+	}
+	// The same update again is not an update.
+	w.now = w.now.Add(time.Hour)
+	if again, err := old.UpdateTrust(provenance.Update{Targets: targets, TrustedRoot: trusted}); err != nil || *again != *st {
+		t.Fatalf("the same update again: %+v, %v", again, err)
+	}
+
+	res, err := w.handoff(old, a, b)
+	if err != nil || !res.Created || res.Image != b.pcr0 {
+		t.Fatalf("after the update: %+v, %v", res, err)
+	}
+	// The new image opens its record: it checks the release that handed over,
+	// which is in the first log.
+	if _, err := w.boot(b).NewDataKey(ctx, keyCtx); err != nil {
+		t.Fatalf("the next image: %v", err)
+	}
+
+	// A trust root that did not come from Sigstore's TUF metadata has nothing
+	// to report and cannot be updated.
+	doc, err := w.releases.TrustedRootJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := provenance.ParseTrustRoot(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixed, err := NewRoot(RootConfig{
+		API: w.kms, Attester: &fakensm.Fake{CA: w.ca, PCRs: a.pcrs}, Records: w.store,
+		Account: testAccount, Region: testRegion, Releases: w.policy, Trust: plain, AttestationRoot: w.ca.Root,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fixed.Trust() != nil {
+		t.Fatalf("status %+v", fixed.Trust())
+	}
+	if _, err := fixed.UpdateTrust(provenance.Update{Targets: targets, TrustedRoot: trusted}); !errors.Is(err, provenance.ErrMalformed) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// The key that authenticates the commits of anchored records comes from the
+// root secret: the same for every image of a deployment, another one for
+// another deployment, and none while there is no root secret.
+func TestRootCommitKey(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	a, b := w.release(0xa1, 2*time.Hour), w.release(0xb2, time.Hour)
+	old := w.boot(a)
+	key, err := old.CommitKey(ctx)
+	if err != nil || len(key) != 32 {
+		t.Fatalf("key of %d bytes, %v", len(key), err)
+	}
+	if again, err := w.boot(a).CommitKey(ctx); err != nil || !bytes.Equal(again, key) {
+		t.Fatalf("after a restart: %v", err)
+	}
+	// It is not the key that wraps data keys.
+	dk, err := old.NewDataKey(ctx, keyCtx)
+	if err != nil || bytes.Equal(dk.Plaintext, key) {
+		t.Fatalf("data key: %v", err)
+	}
+
+	next := w.boot(b)
+	if _, err := next.CommitKey(ctx); !errors.Is(err, ErrAwaitingHandoff) {
+		t.Fatalf("before the handoff: %v", err)
+	}
+	if _, err := w.handoff(old, a, b); err != nil {
+		t.Fatal(err)
+	}
+	w.now = w.now.Add(rootRetry)
+	if handed, err := next.CommitKey(ctx); err != nil || !bytes.Equal(handed, key) {
+		t.Fatalf("the next release: %v", err)
+	}
+
+	other := newWorld(t)
+	if theirs, err := other.boot(other.release(0xa1, time.Hour)).CommitKey(ctx); err != nil || bytes.Equal(theirs, key) {
+		t.Fatalf("another deployment: %v", err)
+	}
+}

@@ -51,6 +51,26 @@ func (s *Memory) PutRecord(_ context.Context, r *Record, create bool) error {
 	return nil
 }
 
+// RecordNames returns the names of the records stored, in order: what
+// whoever runs the storage sees of them.
+func (s *Memory) RecordNames() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	names := make([]string, 0, len(s.records))
+	for name := range s.records {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// DeleteRecord removes a record, as whoever runs the storage can.
+func (s *Memory) DeleteRecord(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.records, name)
+}
+
 // GetMailbox implements Store.
 func (s *Memory) GetMailbox(_ context.Context, id string) (*Mailbox, error) {
 	s.mu.Lock()

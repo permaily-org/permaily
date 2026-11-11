@@ -15,6 +15,7 @@ import (
 
 	"github.com/permaily-org/permaily/internal/httpapi"
 	"github.com/permaily-org/permaily/internal/keys"
+	"github.com/permaily-org/permaily/pkg/attestation"
 	"github.com/permaily-org/permaily/pkg/kmspolicy"
 	"github.com/permaily-org/permaily/pkg/provenance"
 )
@@ -93,5 +94,61 @@ func TestHandoff(t *testing.T) {
 		if c.code == http.StatusBadGateway && !strings.Contains(logs.String(), "secret detail") {
 			t.Fatalf("the cause is not in the log: %s", logs.String())
 		}
+	}
+}
+
+func TestTrustRoot(t *testing.T) {
+	var got provenance.Update
+	var fail error
+	h := httpapi.TrustRoot(func(u provenance.Update) (*attestation.SigstoreStatus, error) {
+		got = u
+		if fail != nil {
+			return nil, fail
+		}
+		return &attestation.SigstoreStatus{TrustedRootSHA256: "ab", TUFRootVersion: 17, TUFTargetsVersion: 15}, nil
+	})
+	call := func(method, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(method, "/v1/admin/trust-root", strings.NewReader(body)))
+		return rec
+	}
+	// base64 of "root-17", "targets" and "trusted-root".
+	const good = `{"roots":["cm9vdC0xNw=="],"targets":"dGFyZ2V0cw==","trusted_root":"dHJ1c3RlZC1yb290"}`
+
+	rec := call(http.MethodPost, good)
+	var st attestation.SigstoreStatus
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &st) != nil || st.TUFRootVersion != 17 || st.TUFTargetsVersion != 15 || st.TrustedRootSHA256 != "ab" {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if len(got.Roots) != 1 || string(got.Roots[0]) != "root-17" || string(got.Targets) != "targets" || string(got.TrustedRoot) != "trusted-root" {
+		t.Fatalf("request %q", got)
+	}
+	// Roots are only needed when there are newer ones.
+	if rec := call(http.MethodPost, `{"targets":"dGFyZ2V0cw==","trusted_root":"dHJ1c3RlZC1yb290"}`); rec.Code != http.StatusOK || got.Roots != nil {
+		t.Fatalf("without roots: status %d, %q", rec.Code, got.Roots)
+	}
+
+	for name, body := range map[string]string{
+		"not JSON":                  `nope`,
+		"no targets":                `{"trusted_root":"dHJ1c3RlZC1yb290"}`,
+		"no trust root":             `{"targets":"dGFyZ2V0cw=="}`,
+		"not base64":                `{"targets":"***","trusted_root":"dHJ1c3RlZC1yb290"}`,
+		"roots that are not a list": `{"roots":"cm9vdC0xNw==","targets":"dGFyZ2V0cw==","trusted_root":"dHJ1c3RlZC1yb290"}`,
+	} {
+		if rec := call(http.MethodPost, body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status %d", name, rec.Code)
+		}
+	}
+	if rec := call(http.MethodPost, `{"targets":"`+strings.Repeat("A", 5<<20)+`"}`); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("too large: status %d", rec.Code)
+	}
+	if rec := call(http.MethodGet, ""); rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != http.MethodPost {
+		t.Fatalf("GET: status %d", rec.Code)
+	}
+
+	// A refusal says why: the reason names versions of public metadata.
+	fail = fmt.Errorf("%w: TUF targets 12 is not newer than 14, the one in use", provenance.ErrUntrusted)
+	if rec := call(http.MethodPost, good); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "not newer than 14") {
+		t.Fatalf("refusal: status %d: %s", rec.Code, rec.Body)
 	}
 }

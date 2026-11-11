@@ -20,3 +20,4 @@ Architecture Decision Records. Each one records the context, the options conside
 | [0013](0013-authorize-releases-without-editing-the-key-policy.md) | A KMS key per release that nobody can change, and a root secret that only public releases receive | Accepted |
 | [0014](0014-opentofu-state-in-s3.md) | OpenTofu state in S3, encrypted by OpenTofu | Accepted |
 | [0015](0015-enclave-logs-through-the-host.md) | Send the enclave's logs to the parent instance | Accepted |
+| [0016](0016-refuse-earlier-copies-of-stored-records.md) | Refuse earlier copies of stored records | Accepted |

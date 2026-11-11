@@ -137,6 +137,12 @@ type Root struct {
 	watch   *PolicyReader
 	lastTry time.Time
 	lastErr error
+
+	// trust is Sigstore's trust root in use: the one compiled into the image
+	// until UpdateTrust is given one that Sigstore published after it.
+	trustMu   sync.Mutex
+	trust     *provenance.TrustRoot
+	trustedAt time.Time
 }
 
 // NewRoot creates a Root. Nothing is read until the first use or Run.
@@ -161,7 +167,49 @@ func NewRoot(cfg RootConfig) (*Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Root{cfg: cfg, rsa: priv, pub: pub, retry: rootRetry}, nil
+	return &Root{cfg: cfg, rsa: priv, pub: pub, retry: rootRetry, trust: cfg.Trust}, nil
+}
+
+func (r *Root) trustRoot() *provenance.TrustRoot {
+	r.trustMu.Lock()
+	defer r.trustMu.Unlock()
+	return r.trust
+}
+
+// UpdateTrust makes the enclave check releases against a newer trust root of
+// Sigstore's, until it stops: nothing is stored, and a restart goes back to
+// the one compiled into the image. It refuses anything that Sigstore's
+// keyholders did not publish after the trust root in use, and even then only
+// the logs and the timestamp authorities change, never who issues signing
+// certificates (provenance.TrustRoot.Update). Who asks does not matter.
+func (r *Root) UpdateTrust(u provenance.Update) (*attestation.SigstoreStatus, error) {
+	r.trustMu.Lock()
+	defer r.trustMu.Unlock()
+	next, err := r.trust.Update(u, r.cfg.Now())
+	if err != nil {
+		return nil, err
+	}
+	if *next.Publication != *r.trust.Publication {
+		r.trust, r.trustedAt = next, r.cfg.Now().UTC().Truncate(time.Second)
+		r.cfg.Log.Info("sigstore trust root: updated", "sha256", next.Publication.SHA256, "tuf_root", next.Publication.RootVersion, "tuf_targets", next.Publication.TargetsVersion)
+	}
+	return r.sigstoreStatus(), nil
+}
+
+// Trust says which of Sigstore's trust roots releases are checked against;
+// nil for a trust root that did not come from Sigstore's TUF metadata.
+func (r *Root) Trust() *attestation.SigstoreStatus {
+	r.trustMu.Lock()
+	defer r.trustMu.Unlock()
+	return r.sigstoreStatus()
+}
+
+func (r *Root) sigstoreStatus() *attestation.SigstoreStatus {
+	p := r.trust.Publication
+	if p == nil {
+		return nil
+	}
+	return &attestation.SigstoreStatus{TrustedRootSHA256: p.SHA256, TUFRootVersion: p.RootVersion, TUFTargetsVersion: p.TargetsVersion, UpdatedAt: r.trustedAt}
 }
 
 // Run loads the root secret, retrying until it succeeds, and then keeps
@@ -457,7 +505,7 @@ func (r *Root) open(ctx context.Context, me measured, rec *store.Record) ([]byte
 		CheckedAt: key.checked, WrittenAt: doc.Timestamp.UTC().Truncate(time.Second), Origin: attestation.RootCreated,
 	}
 	if !samePCRs(doc.PCRs, me.pcrs) {
-		rel, err := provenance.Verify(r.cfg.Releases, r.cfg.Trust, rr.FromBundle, rr.FromPCRs)
+		rel, err := provenance.Verify(r.cfg.Releases, r.trustRoot(), rr.FromBundle, rr.FromPCRs)
 		if err != nil {
 			return nil, none, fmt.Errorf("%w: %w", ErrRootRecord, err)
 		}
@@ -551,14 +599,16 @@ func (r *Root) HandOff(ctx context.Context, h Handoff) (*HandoffResult, error) {
 		return nil, err
 	}
 	// This image must be able to prove itself to the next one.
-	own, err := provenance.Verify(r.cfg.Releases, r.cfg.Trust, h.FromBundle, h.FromPCRs)
+	// One trust root for the whole decision, even if it is updated meanwhile.
+	trust := r.trustRoot()
+	own, err := provenance.Verify(r.cfg.Releases, trust, h.FromBundle, h.FromPCRs)
 	if err != nil {
 		return nil, fmt.Errorf("the running release: %w", err)
 	}
 	if !samePCRs(own.PCRs, me.pcrs) {
 		return nil, ErrNotThisImage
 	}
-	next, err := provenance.Verify(r.cfg.Releases, r.cfg.Trust, h.ToBundle, h.ToPCRs)
+	next, err := provenance.Verify(r.cfg.Releases, trust, h.ToBundle, h.ToPCRs)
 	if err != nil {
 		return nil, fmt.Errorf("the next release: %w", err)
 	}
@@ -606,6 +656,19 @@ func (r *Root) wrappingKey(ctx context.Context) ([]byte, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.kek, nil
+}
+
+// CommitKey returns the key that authenticates the commits of the records
+// that must not be put back to an earlier copy (store.S3Commits). It is
+// derived from the root secret, so every image of the deployment has the same
+// one and nothing outside an enclave has it.
+func (r *Root) CommitKey(ctx context.Context) ([]byte, error) {
+	if err := r.ready(ctx); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return hkdf.Key(sha256.New, r.secret, nil, "permaily record commits v1", sha256.Size)
 }
 
 func (r *Root) wrap(kek, dk []byte, c map[string]string) ([]byte, error) {
