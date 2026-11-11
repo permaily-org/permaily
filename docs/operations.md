@@ -104,9 +104,27 @@ PERMAILY_RELEASE=<tag> go test -tags production -run TestProductionMITM -v ./cmd
 
 ## Scheduled verification
 
-The workflow `verify-production` runs `scripts/verify-production.sh` at minutes 7 and 37 of every hour: the latest release's verifier against production, or the previous release's while the latest is not deployed. Its output is in each run's summary, public. A failed run is an incident: read which check failed and since when.
+The workflow `verify-production` runs `scripts/verify-production.sh` every half hour: the latest release's verifier against production, or the previous release's while the latest is not deployed. Its output is in each run's summary, public. A failed run is an incident: read which check failed and since when.
 
-GitHub does not keep that schedule: in the first day it started two runs instead of about forty, hours apart, and each ran as soon as it was started. Treat the runs as an occasional public record, not as a check every half hour; `gh workflow run verify-production` starts one by hand. GitHub also disables scheduled workflows after 60 days without activity in the repository; re-enable it under Actions if that happens.
+Two things start it:
+
+- **EventBridge**, at minutes 7 and 37 (`deploy/tofu/verify.tf`): a rule in the AWS account calls GitHub's API to start the workflow. It only says "run now"; the check runs on GitHub with the repository's code. These runs show as started by hand (`workflow_dispatch`), by the owner of the token.
+- **GitHub's own schedule**, with the same minutes. GitHub does not keep it: in the first day it started two runs instead of about forty, hours apart. It stays because nobody in the AWS account chooses when those runs happen.
+
+If the runs stop: check the rule (`aws events describe-rule --name permaily-verify-production`) and its failed invocations in CloudWatch (`AWS/Events`, `FailedInvocations`), then the token below. `gh workflow run verify-production` starts one by hand. GitHub disables scheduled workflows after 60 days without activity in the repository; re-enable it under Actions if that happens.
+
+## Rotate the GitHub dispatch token
+
+The token `permaily-verify-dispatch` is a fine-grained token of the repository's owner, limited to this repository, with Actions read and write and nothing else. It expires on 2027-11-10. EventBridge keeps it in Secrets Manager; a copy is in `~/.config/permaily/github-dispatch-token` (mode 0600).
+
+Create a new one with the same permissions (GitHub > Settings > Developer settings > Fine-grained tokens), store it in that file, then:
+
+```sh
+TF_VAR_github_dispatch_token=$(cat ~/.config/permaily/github-dispatch-token) \
+  tofu -chdir=deploy/tofu apply -replace=aws_cloudwatch_event_connection.github
+```
+
+Check that the next run starts, then delete the old token. Other applies run without the variable.
 
 ## Read the test mailbox
 

@@ -5,6 +5,10 @@ name: verify-production
 # changed and changed back between two manual checks shows up here, or in the
 # history the enclave reports (ADR 0013). A failed run is an incident.
 #
+# GitHub starts scheduled runs only a few times a day, so an EventBridge rule
+# (deploy/tofu/verify.tf) starts this workflow at the same minutes through
+# workflow_dispatch. The schedule stays as a trigger the operator does not time.
+#
 # It uses the verifier and the measurements of the latest release (checked
 # against their Sigstore provenance), not a rebuild: scripts/verify.sh is the
 # full check. GitHub's runners block outbound port 25, so the SMTP certificate
