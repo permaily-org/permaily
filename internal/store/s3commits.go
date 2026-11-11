@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -221,12 +222,15 @@ func (s *S3Commits) Append(ctx context.Context, c Commit) (*Commit, error) {
 	if err != nil {
 		return nil, err
 	}
+	checksum := sha256.Sum256(body)
 	_, err = s.S3.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:                    aws.String(s.Bucket),
-		Key:                       aws.String(commitPrefix(c.Name) + fmt.Sprintf("%020d", c.Version)),
-		Body:                      bytes.NewReader(body),
-		ContentType:               aws.String("application/json"),
-		IfNoneMatch:               aws.String("*"),
+		Bucket:      aws.String(s.Bucket),
+		Key:         aws.String(commitPrefix(c.Name) + fmt.Sprintf("%020d", c.Version)),
+		Body:        bytes.NewReader(body),
+		ContentType: aws.String("application/json"),
+		IfNoneMatch: aws.String("*"),
+		// S3 takes no write with a lock unless it carries a checksum of the body.
+		ChecksumSHA256:            aws.String(base64.StdEncoding.EncodeToString(checksum[:])),
 		ObjectLockMode:            s3types.ObjectLockModeCompliance,
 		ObjectLockRetainUntilDate: aws.Time(c.LockedUntil),
 	})

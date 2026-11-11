@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -122,15 +124,18 @@ func (b *lockedBucket) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...
 	if in.ObjectLockMode != "" && !b.objectLock {
 		return nil, &smithy.GenericAPIError{Code: "InvalidRequest", Message: "Bucket is missing ObjectLockConfiguration"}
 	}
+	body, err := io.ReadAll(in.Body)
+	if err != nil {
+		return nil, err
+	}
+	if sum := sha256.Sum256(body); in.ObjectLockMode != "" && aws.ToString(in.ChecksumSHA256) != base64.StdEncoding.EncodeToString(sum[:]) {
+		return nil, &smithy.GenericAPIError{Code: "InvalidRequest", Message: "Content-MD5 OR x-amz-checksum- HTTP header is required for Put Object requests with Object Lock parameters"}
+	}
 	key := aws.ToString(in.Key)
 	if aws.ToString(in.IfNoneMatch) == "*" {
 		if last := b.latest(key); last != nil && !last.deleteMarker {
 			return nil, &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "At least one of the pre-conditions you specified did not hold"}
 		}
-	}
-	body, err := io.ReadAll(in.Body)
-	if err != nil {
-		return nil, err
 	}
 	id := b.add(bucketVersion{key: key, body: body, mode: in.ObjectLockMode, until: aws.ToTime(in.ObjectLockRetainUntilDate)})
 	return &s3.PutObjectOutput{VersionId: aws.String(id)}, nil
@@ -407,5 +412,97 @@ func TestAnchoredOverS3Commits(t *testing.T) {
 	fresh := &store.Anchored{Records: records, Commits: s3Commits(b, time.Now())}
 	if _, err := fresh.GetRecord(ctx, "tls"); !errors.Is(err, store.ErrLost) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// Against a real bucket with Object Lock, when PERMAILY_TEST_ANCHOR_BUCKET
+// names one (and the environment holds credentials for it): what the fake
+// above assumes of S3 is true. Every object it writes is locked for two
+// minutes; use a bucket whose lifecycle removes what is no longer locked.
+func TestS3CommitsAgainstS3(t *testing.T) {
+	bucket := os.Getenv("PERMAILY_TEST_ANCHOR_BUCKET")
+	if bucket == "" {
+		t.Skip("PERMAILY_TEST_ANCHOR_BUCKET not set")
+	}
+	ctx := context.Background()
+	cfg := aws.Config{Region: os.Getenv("AWS_REGION"), Credentials: aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+		return aws.Credentials{AccessKeyID: os.Getenv("AWS_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"), SessionToken: os.Getenv("AWS_SESSION_TOKEN")}, nil
+	})}
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true })
+	c := &store.S3Commits{S3: client, Bucket: bucket, Retention: 2 * time.Minute, Key: func(context.Context) ([]byte, error) { return commitKey, nil }}
+	name := fmt.Sprintf("test-%d", time.Now().UnixNano())
+
+	if head, next, err := c.Head(ctx, name); err != nil || head != nil || next != 1 {
+		t.Fatalf("an empty record: %+v, %d, %v", head, next, err)
+	}
+	for v := uint64(1); v <= 2; v++ {
+		if _, err := c.Append(ctx, commitOf(name, v, fmt.Sprint("value ", v))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := c.Append(ctx, commitOf(name, 2, "another")); !errors.Is(err, store.ErrExists) {
+		t.Fatalf("a version that is taken: %v", err)
+	}
+	head, next, err := c.Head(ctx, name)
+	if err != nil || head == nil || head.Version != 2 || head.Digest != sha256.Sum256([]byte("value 2")) || next != 3 {
+		t.Fatalf("head %+v, next %d, %v", head, next, err)
+	}
+	if until := time.Until(head.LockedUntil); until < time.Minute || until > 3*time.Minute {
+		t.Fatalf("locked until %s", head.LockedUntil)
+	}
+
+	// What an administrator can do: nothing that removes the newest commit.
+	listed, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{Bucket: aws.String(bucket), Prefix: aws.String("commits/")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var newest s3types.ObjectVersion
+	for _, v := range listed.Versions {
+		if strings.HasSuffix(aws.ToString(v.Key), "00000000000000000002") {
+			out, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: v.Key, VersionId: v.VersionId})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(out.Body)
+			out.Body.Close()
+			if bytes.Contains(body, []byte(name)) {
+				newest = v
+			}
+		}
+	}
+	if newest.Key == nil {
+		t.Fatal("the newest commit is not among the objects listed")
+	}
+	if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: newest.Key, VersionId: newest.VersionId}); err == nil {
+		t.Fatal("a locked commit was deleted")
+	}
+	// A delete marker hides it from plain requests, and is not a removal.
+	if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: newest.Key}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: newest.Key}); err == nil {
+		t.Fatal("a plain GET still finds the object under a delete marker")
+	}
+	// Something that is not a commit, at the next version.
+	junk := strings.TrimSuffix(aws.ToString(newest.Key), "00000000000000000002") + "00000000000000000003"
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(junk), Body: strings.NewReader("junk")}); err != nil {
+		t.Fatal(err)
+	}
+	head, next, err = c.Head(ctx, name)
+	if err != nil || head == nil || head.Version != 2 || next != 4 {
+		t.Fatalf("after a delete marker and junk: %+v, next %d, %v", head, next, err)
+	}
+	// The slot under the delete marker takes a write; the head stays one commit of version 2.
+	if _, err := c.Append(ctx, commitOf(name, 2, "value 2")); err != nil {
+		t.Fatalf("a write over a delete marker: %v", err)
+	}
+	if head, _, err := c.Head(ctx, name); err != nil || head.Version != 2 {
+		t.Fatalf("head %+v, %v", head, err)
+	}
+	if _, err := c.Append(ctx, commitOf(name, 4, "value 4")); err != nil {
+		t.Fatal(err)
+	}
+	if head, next, err := c.Head(ctx, name); err != nil || head.Version != 4 || next != 5 {
+		t.Fatalf("head %+v, next %d, %v", head, next, err)
 	}
 }
