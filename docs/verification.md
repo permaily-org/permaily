@@ -38,7 +38,7 @@ Releases before v0.3.0 do not report the policy; verify them with `-skip-kms-pol
 
 What this does not prove for that old key: the account's administrators could replace its policy until it was retired (2026-11-10), after which the verifier prints that it releases data keys to no image. A change made while the enclave could not reach KMS shows only as a warning with the period, and the history starts again when the enclave restarts.
 
-The workflow `verify-production` of the repository runs the latest release's verifier against the live service twice an hour; its runs and their output are public under Actions. `scripts/verify-production.sh` runs the same check from your machine.
+The workflow `verify-production` of the repository runs the latest release's verifier against the live service on a schedule (twice an hour as written, a few times a day as GitHub runs it); its runs and their output are public under Actions. `scripts/verify-production.sh` runs the same check from your machine.
 
 ## How mail gets in
 
