@@ -67,7 +67,9 @@ let
       "-release-workflow" config.release_workflow
     ]
     ++ flag "-release-ref" config.release_ref
-    ++ flag "-release-ref-prefix" config.release_ref_prefix);
+    ++ flag "-release-ref-prefix" config.release_ref_prefix
+    ++ flag "-anchor-bucket" config.anchor_bucket
+    ++ flag "-anchor-retention-days" (toString config.anchor_retention_days));
     env = "GOMEMLIMIT=${gomemlimit}";
   };
 in

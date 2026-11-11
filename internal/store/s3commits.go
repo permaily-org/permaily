@@ -205,20 +205,21 @@ func (s *S3Commits) read(ctx context.Context, key []byte, name string, version u
 // Append implements Commits. The object is written only if nothing is at its
 // key, and locked in compliance mode in the same request: a bucket without
 // Object Lock refuses it, so a commit is never left where it could be removed.
-func (s *S3Commits) Append(ctx context.Context, c Commit) error {
+func (s *S3Commits) Append(ctx context.Context, c Commit) (*Commit, error) {
 	if c.Version == 0 || s.Retention <= 0 {
-		return errors.New("store: a commit needs a version and a retention period")
+		return nil, errors.New("store: a commit needs a version and a retention period")
 	}
 	key, err := s.Key(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	c.At = c.At.UTC().Truncate(time.Second)
+	c.LockedUntil = s.now().Add(s.Retention).UTC().Truncate(time.Second)
 	body, err := json.Marshal(commitObject{
 		Name: c.Name, Version: c.Version, Digest: hex.EncodeToString(c.Digest[:]), At: c.At.Unix(), MAC: hex.EncodeToString(commitMAC(key, &c)),
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, err = s.S3.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:                    aws.String(s.Bucket),
@@ -227,14 +228,14 @@ func (s *S3Commits) Append(ctx context.Context, c Commit) error {
 		ContentType:               aws.String("application/json"),
 		IfNoneMatch:               aws.String("*"),
 		ObjectLockMode:            s3types.ObjectLockModeCompliance,
-		ObjectLockRetainUntilDate: aws.Time(s.now().Add(s.Retention).UTC()),
+		ObjectLockRetainUntilDate: aws.Time(c.LockedUntil),
 	})
 	if err != nil {
 		var api smithy.APIError
 		if errors.As(err, &api) && (api.ErrorCode() == "PreconditionFailed" || api.ErrorCode() == "ConditionalRequestConflict") {
-			return ErrExists
+			return nil, ErrExists
 		}
-		return fmt.Errorf("store: write commit: %w", err)
+		return nil, fmt.Errorf("store: write commit: %w", err)
 	}
-	return nil
+	return &c, nil
 }

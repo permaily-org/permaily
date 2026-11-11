@@ -16,13 +16,15 @@ type StatusSources struct {
 	TLS func() *attestation.TLSStatus
 	// Sigstore says which trust root releases are checked against.
 	Sigstore func() *attestation.SigstoreStatus
+	// Anchors describes the records that cannot be put back to an earlier copy.
+	Anchors func() *attestation.AnchorStatus
 }
 
 // Status returns a handler for GET /status. The response has no signature: a
 // verifier trusts it because it arrives over the TLS key bound in the
 // attestation document (attestation.FetchStatus).
 func Status(src StatusSources) http.Handler {
-	tls, root, sigstore := src.TLS, src.Root, src.Sigstore
+	tls, root, sigstore, anchors := src.TLS, src.Root, src.Sigstore, src.Anchors
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -43,6 +45,9 @@ func Status(src StatusSources) http.Handler {
 		}
 		if sigstore != nil {
 			st.Sigstore = sigstore()
+		}
+		if anchors != nil {
+			st.Anchors = anchors()
 		}
 		writeJSON(w, st)
 	})

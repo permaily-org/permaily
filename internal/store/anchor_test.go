@@ -255,11 +255,11 @@ type racing struct {
 	value string
 }
 
-func (r *racing) Append(ctx context.Context, c store.Commit) error {
+func (r *racing) Append(ctx context.Context, c store.Commit) (*store.Commit, error) {
 	if r.times > 0 {
 		r.times--
 		if err := r.other.PutRecord(ctx, rec(c.Name, r.value), false); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	return r.Commits.Append(ctx, c)
@@ -326,11 +326,11 @@ type adopting struct {
 	done  bool
 }
 
-func (r *adopting) Append(ctx context.Context, c store.Commit) error {
+func (r *adopting) Append(ctx context.Context, c store.Commit) (*store.Commit, error) {
 	if !r.done {
 		r.done = true
 		if _, err := r.other.GetRecord(ctx, c.Name); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	return r.Commits.Append(ctx, c)
@@ -397,4 +397,6 @@ type failingCommits struct{ err error }
 func (f failingCommits) Head(context.Context, string) (*store.Commit, uint64, error) {
 	return nil, 0, f.err
 }
-func (f failingCommits) Append(context.Context, store.Commit) error { return f.err }
+func (f failingCommits) Append(context.Context, store.Commit) (*store.Commit, error) {
+	return nil, f.err
+}

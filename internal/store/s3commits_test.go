@@ -160,11 +160,11 @@ func TestS3Commits(t *testing.T) {
 		t.Fatalf("an empty store: %+v, %d, %v", head, next, err)
 	}
 	for v := uint64(1); v <= 3; v++ {
-		if err := c.Append(ctx, commitOf("tls", v, fmt.Sprint("value ", v))); err != nil {
+		if _, err := c.Append(ctx, commitOf("tls", v, fmt.Sprint("value ", v))); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := c.Append(ctx, commitOf("mailbox", 1, "m")); err != nil {
+	if _, err := c.Append(ctx, commitOf("mailbox", 1, "m")); err != nil {
 		t.Fatal(err)
 	}
 	head, next, err := c.Head(ctx, "tls")
@@ -180,7 +180,7 @@ func TestS3Commits(t *testing.T) {
 			t.Fatalf("object %+v", v)
 		}
 	}
-	if err := c.Append(ctx, commitOf("tls", 3, "another")); !errors.Is(err, store.ErrExists) {
+	if _, err := c.Append(ctx, commitOf("tls", 3, "another")); !errors.Is(err, store.ErrExists) {
 		t.Fatalf("a version that is taken: %v", err)
 	}
 
@@ -211,7 +211,7 @@ func TestS3CommitsWithAnAdversary(t *testing.T) {
 		b := &lockedBucket{objectLock: true}
 		c := s3Commits(b, now)
 		for v := uint64(1); v <= 3; v++ {
-			if err := c.Append(ctx, commitOf("tls", v, fmt.Sprint("value ", v))); err != nil {
+			if _, err := c.Append(ctx, commitOf("tls", v, fmt.Sprint("value ", v))); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -231,7 +231,7 @@ func TestS3CommitsWithAnAdversary(t *testing.T) {
 		head(t, c, 3, 4)
 		// The slot looks free to a plain request, and a write there adds a
 		// version: the store still answers with one commit for version 3.
-		if err := c.Append(ctx, commitOf("tls", 3, "value 3")); err != nil {
+		if _, err := c.Append(ctx, commitOf("tls", 3, "value 3")); err != nil {
 			t.Fatal(err)
 		}
 		head(t, c, 3, 4)
@@ -248,7 +248,7 @@ func TestS3CommitsWithAnAdversary(t *testing.T) {
 	})
 	t.Run("another record's commit copied here", func(t *testing.T) {
 		b, c, written := setup(t)
-		if err := c.Append(ctx, commitOf("mailbox", 9, "value 9")); err != nil {
+		if _, err := c.Append(ctx, commitOf("mailbox", 9, "value 9")); err != nil {
 			t.Fatal(err)
 		}
 		theirs := b.versions[len(b.versions)-1]
@@ -271,7 +271,7 @@ func TestS3CommitsWithAnAdversary(t *testing.T) {
 		}
 		head(t, c, 3, 8)
 		// The next commit goes after everything that is there.
-		if err := c.Append(ctx, commitOf("tls", 8, "value 8")); err != nil {
+		if _, err := c.Append(ctx, commitOf("tls", 8, "value 8")); err != nil {
 			t.Fatal(err)
 		}
 		head(t, c, 8, 9)
@@ -282,7 +282,7 @@ func TestS3CommitsWithAnAdversary(t *testing.T) {
 		b, c, written := setup(t)
 		twin := commitOf("tls", 3, "the other enclave's")
 		b.add(bucketVersion{key: written[2].key, deleteMarker: true})
-		if err := c.Append(ctx, twin); err != nil {
+		if _, err := c.Append(ctx, twin); err != nil {
 			t.Fatal(err)
 		}
 		first, _, err := c.Head(ctx, "tls")
@@ -321,14 +321,14 @@ func TestS3CommitsFailures(t *testing.T) {
 
 	t.Run("a bucket without Object Lock takes no commit", func(t *testing.T) {
 		c := s3Commits(&lockedBucket{}, now)
-		if err := c.Append(ctx, commitOf("tls", 1, "v")); err == nil || errors.Is(err, store.ErrExists) || !strings.Contains(err.Error(), "ObjectLockConfiguration") {
+		if _, err := c.Append(ctx, commitOf("tls", 1, "v")); err == nil || errors.Is(err, store.ErrExists) || !strings.Contains(err.Error(), "ObjectLockConfiguration") {
 			t.Fatalf("got %v", err)
 		}
 	})
 	t.Run("S3 fails", func(t *testing.T) {
 		b := &lockedBucket{objectLock: true}
 		c := s3Commits(b, now)
-		if err := c.Append(ctx, commitOf("tls", 1, "v")); err != nil {
+		if _, err := c.Append(ctx, commitOf("tls", 1, "v")); err != nil {
 			t.Fatal(err)
 		}
 		b.failList = down
@@ -340,11 +340,11 @@ func TestS3CommitsFailures(t *testing.T) {
 			t.Fatalf("get: %v", err)
 		}
 		b.failGet, b.failPut = nil, down
-		if err := c.Append(ctx, commitOf("tls", 2, "v")); !errors.Is(err, down) || errors.Is(err, store.ErrExists) {
+		if _, err := c.Append(ctx, commitOf("tls", 2, "v")); !errors.Is(err, down) || errors.Is(err, store.ErrExists) {
 			t.Fatalf("put: %v", err)
 		}
 		b.failPut = &smithy.GenericAPIError{Code: "ConditionalRequestConflict"}
-		if err := c.Append(ctx, commitOf("tls", 2, "v")); !errors.Is(err, store.ErrExists) {
+		if _, err := c.Append(ctx, commitOf("tls", 2, "v")); !errors.Is(err, store.ErrExists) {
 			t.Fatalf("a write that lost a race: %v", err)
 		}
 	})
@@ -355,24 +355,24 @@ func TestS3CommitsFailures(t *testing.T) {
 		if _, _, err := c.Head(ctx, "tls"); !errors.Is(err, waiting) {
 			t.Fatalf("head: %v", err)
 		}
-		if err := c.Append(ctx, commitOf("tls", 1, "v")); !errors.Is(err, waiting) {
+		if _, err := c.Append(ctx, commitOf("tls", 1, "v")); !errors.Is(err, waiting) {
 			t.Fatalf("append: %v", err)
 		}
 	})
 	t.Run("a commit without a version, or a store without a retention period", func(t *testing.T) {
 		c := s3Commits(&lockedBucket{objectLock: true}, now)
-		if err := c.Append(ctx, commitOf("tls", 0, "v")); err == nil {
+		if _, err := c.Append(ctx, commitOf("tls", 0, "v")); err == nil {
 			t.Fatal("version 0 accepted")
 		}
 		c.Retention = 0
-		if err := c.Append(ctx, commitOf("tls", 1, "v")); err == nil {
+		if _, err := c.Append(ctx, commitOf("tls", 1, "v")); err == nil {
 			t.Fatal("no retention accepted")
 		}
 	})
 	t.Run("a commit that is not locked reports no date", func(t *testing.T) {
 		b := &lockedBucket{objectLock: true}
 		c := s3Commits(b, now)
-		if err := c.Append(ctx, commitOf("tls", 1, "v")); err != nil {
+		if _, err := c.Append(ctx, commitOf("tls", 1, "v")); err != nil {
 			t.Fatal(err)
 		}
 		b.versions[0].mode = s3types.ObjectLockModeGovernance

@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -51,9 +53,10 @@ type Commits interface {
 	// this enclave's deployment made, nil when there is none, and the lowest
 	// version nothing was appended at yet.
 	Head(ctx context.Context, name string) (latest *Commit, next uint64, err error)
-	// Append adds c. It fails with ErrExists when something is at that
-	// version already.
-	Append(ctx context.Context, c Commit) error
+	// Append adds c and returns it as stored, with the date it is kept
+	// until. It fails with ErrExists when something is at that version
+	// already.
+	Append(ctx context.Context, c Commit) (*Commit, error)
 }
 
 // Regression is a commit that was there and is not any more.
@@ -197,11 +200,12 @@ func (a *Anchored) commit(ctx context.Context, r *Record, version uint64) error 
 	if err := a.Records.PutRecord(ctx, &value, false); err != nil {
 		return err
 	}
-	if err := a.Commits.Append(ctx, c); err != nil {
+	stored, err := a.Commits.Append(ctx, c)
+	if err != nil {
 		return err
 	}
 	a.mu.Lock()
-	a.remember(c)
+	a.remember(*stored)
 	a.mu.Unlock()
 	return nil
 }
@@ -248,7 +252,8 @@ func (a *Anchored) Regressions() []Regression {
 	return append([]Regression(nil), a.regressions...)
 }
 
-// Seen returns the newest commit of every record this enclave read or wrote.
+// Seen returns the newest commit of every record this enclave read or wrote,
+// in the order of their names.
 func (a *Anchored) Seen() []Commit {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -256,6 +261,7 @@ func (a *Anchored) Seen() []Commit {
 	for _, c := range a.seen {
 		out = append(out, c)
 	}
+	slices.SortFunc(out, func(x, y Commit) int { return strings.Compare(x.Name, y.Name) })
 	return out
 }
 
@@ -292,19 +298,19 @@ func (m *MemoryCommits) Head(_ context.Context, name string) (*Commit, uint64, e
 }
 
 // Append implements Commits.
-func (m *MemoryCommits) Append(_ context.Context, c Commit) error {
+func (m *MemoryCommits) Append(_ context.Context, c Commit) (*Commit, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.taken[c.Name][c.Version] {
-		return ErrExists
+		return nil, ErrExists
 	}
 	for _, old := range m.commits[c.Name] {
 		if old.Version == c.Version {
-			return ErrExists
+			return nil, ErrExists
 		}
 	}
 	m.commits[c.Name] = append(m.commits[c.Name], c)
-	return nil
+	return &c, nil
 }
 
 // Take leaves something that is not a commit at a version of name, the way

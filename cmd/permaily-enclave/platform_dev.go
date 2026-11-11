@@ -45,6 +45,8 @@ type platform struct {
 	// updateTrust takes a newer one that Sigstore published.
 	sigstore    func() *attestation.SigstoreStatus
 	updateTrust func(provenance.Update) (*attestation.SigstoreStatus, error)
+	// anchors describes the records that cannot be put back to an earlier copy.
+	anchors func() *attestation.AnchorStatus
 }
 
 // logOutput is the terminal in dev mode.
