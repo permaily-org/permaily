@@ -16,7 +16,7 @@ That the service answering on the Permaily hosts runs an enclave image built fro
 ## Not trusted
 
 - **The parent EC2 instance and its operator.** It sees only ciphertext and destination hostnames. It can drop, delay or replay traffic, and stop the service; it cannot read or alter content without the verifier detecting it.
-- **DNS (Cloudflare) and the network.** A hijacked record points clients elsewhere; the verifier detects it because no other server can present a TLS key bound into a valid attestation.
+- **DNS (Cloudflare) and the network.** A hijacked record points clients elsewhere; the verifier detects it because no other server can present a TLS key bound into a valid attestation. The zone is signed with DNSSEC, so a resolver that validates refuses records forged on the way; whoever controls the Cloudflare account controls the zone all the same.
 - **Anything the parent supplies at runtime.** The enclave takes no configuration from the parent; hosts and the ACME directory are compiled into the image.
 
 ## Mechanisms

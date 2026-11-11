@@ -2,7 +2,7 @@
 
 Everything lives in AWS account profile `permaily`, region `us-east-2` (plus the public site's certificate, in `us-east-1`), and DNS records in the Cloudflare zone `permaily.com`.
 
-The Cloudflare zone must keep **Universal SSL disabled** (SSL/TLS > Edge Certificates) and every record DNS only: with it enabled Cloudflare issues `*.permaily.com` certificates, valid for the enclave hosts, with keys it holds (ADR 0012). It is a dashboard setting; the OpenTofu token cannot change it.
+The zone is signed with DNSSEC (`cloudflare_zone_dnssec` in `deploy/tofu/main.tf`); the domain is registered at Cloudflare, which keeps the DS record in the registry. The Cloudflare zone must keep **Universal SSL disabled** (SSL/TLS > Edge Certificates) and every record DNS only: with it enabled Cloudflare issues `*.permaily.com` certificates, valid for the enclave hosts, with keys it holds (ADR 0012). It is a dashboard setting; the OpenTofu token cannot change it.
 
 ## Prerequisites
 
