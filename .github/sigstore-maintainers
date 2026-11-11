@@ -1,0 +1,4 @@
+# Who is told when the workflow sigstore-watch fails (scripts/sigstore-alarm.sh):
+# the issue it opens is assigned to them and names them. One GitHub login per
+# line; each needs access to the repository.
+leynier

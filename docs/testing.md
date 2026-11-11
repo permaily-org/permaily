@@ -24,6 +24,7 @@
 | Accessibility and CSP | Playwright + axe | `site/e2e/` | `bun run test:e2e`, CI |
 | End to end against production | `permaily-verify` | `scripts/verify.sh` | after each deploy |
 | Sigstore, daily | the compiled-in trust root is the newest one Sigstore publishes, and `pkg/provenance` takes what it publishes; `pkg/provenance` accepts what GitHub attests today, and a signature recorded today in Rekor v2 | `scripts/sigstore-trust-root.sh` (`permaily-verify -trust-update`); `permaily-verify -provenance` on a fresh attestation and on a bundle from `tests/sigstore-differential/cmd/rekor2-sign` | workflow `sigstore-watch` |
+| A change to the compiled-in trust root | it is exactly what Sigstore publishes today, and the code of the base branch accepts it as an update | `scripts/check-trust-root-change.sh` | CI `go`, on pull requests into `develop` |
 | Each release, before it is cut | a running enclave would accept it: `-provenance` with the new verifier and the previous release's | step of `release.yml` | `release.yml` |
 | Production, continuously | the latest release's `permaily-verify` | `scripts/verify-production.sh` | workflow `verify-production`, twice an hour |
 | Interception of production | Go test with a local TLS proxy | `cmd/permaily-verify/production_test.go` (`-tags production`) | after each deploy |

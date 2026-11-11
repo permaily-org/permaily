@@ -44,8 +44,26 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      # A Sigstore deadline that needs a release deployed makes everything
+      # else wait (scripts/sigstore-alarm.sh opens and closes it).
+      - name: No Sigstore deadline is waiting for a deployment
+        if: github.event_name == 'pull_request' && github.base_ref == 'develop'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD: ${{ github.head_ref }}
+        run: scripts/check-sigstore-deadline.sh "$HEAD"
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      # The TUF root compiled in is the anchor of every later update: a change
+      # to it must be exactly what Sigstore publishes and the base accepts.
+      # Changes enter through develop, so that is where they are checked.
+      - name: A change to the compiled-in trust root is one Sigstore published
+        if: github.event_name == 'pull_request' && github.base_ref == 'develop'
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          git fetch -q --depth=1 origin "$BASE"
+          scripts/check-trust-root-change.sh "origin/$BASE"
       - run: go vet ./... && go vet -tags dev ./...
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
