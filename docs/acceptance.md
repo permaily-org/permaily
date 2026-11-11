@@ -58,7 +58,7 @@ Each criterion, the evidence that proves it, and its status: **covered** (a test
 
 ## F2: accounts
 
-Built in `internal/services/accounts`; not on in production until the image can send mail.
+Built in `internal/services/accounts` and `internal/sesmail`; on in the image from the release that follows v0.9.0.
 
 | Criterion | Evidence | Status |
 |---|---|---|
@@ -72,6 +72,11 @@ Built in `internal/services/accounts`; not on in production until the image can 
 | Storage or keys that fail never let someone in or make an account again | `TestFailures`, `TestSignUpRace` | covered |
 | Logs name no address, code, invitation, cookie or account | `TestAccountsEndToEnd`, `TestSignUpAndSignIn`, `TestMailSystemDown`, `TestAccountsAPIInternalErrors` | covered |
 | DynamoDB keeps entries and readable records as the in-memory store does | `TestAWS` against DynamoDB Local (CI service) | covered |
+| The sign-in message goes out through SES from the service's own domain, signed with DKIM, and nothing of it is logged or passed on in an error | `TestSend`, `TestRefused`, `TestUnreachable`, `TestTriesAgain`; staging check below | covered |
+| No message leaves while SES says a configuration set applies to the domain or the address it is sent from, or while SES does not say | `TestSendWithWatch`, `TestWatchFailsClosed`, `TestWatchStates`, `TestWatchAddressOfTheDomain`; staging check below | covered |
+| A configuration set seen at any time since the enclave started, or a reading that is not recent, fails verification | `TestWatchHistory`, `TestCheckSentMail`, `TestCheckStatusSentMail`, `TestMailStateClean`; staging check below | covered |
+| The whole flow in an enclave, with real mail | Staging image of commit `9a3a0db` (PCR0 `8c826bbc…`), 2026-11-11: an invitation made with `scripts/invite.sh`; a sign-up whose message left through SES, arrived at the image's own MX signed with DKIM for `mail.permaily.com`, and was finished with its code; a sign-in finished with the link of a second message; the cookie `HttpOnly` and `Secure`; a sign-out from another origin refused (403); a used code and a used link refused (400); `permaily-verify` passed and printed the reading of SES | covered |
+| An administrator of the account who sets SES to keep a copy is seen, and stops the mail | Same staging image, 2026-11-11: a configuration set made the default of the domain's identity was read within a second (`configuration_set`), the next sign-in sent no message, and `permaily-verify` failed naming it; the same with an identity of the address alone carrying the set; after both were removed the enclave read a clean state again and `permaily-verify` still failed, with the times the set was seen | covered |
 
 ## Public site
 

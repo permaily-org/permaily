@@ -41,6 +41,9 @@ resource "aws_sesv2_account_suppression_attributes" "mail" {
 # The parent instance's role, which the enclave uses through the host: send
 # from that one address, and read the two identities whose settings decide
 # who else gets a copy (the domain, and the address, which need not exist).
+# Sending names every identity because, while the account is in the SES
+# sandbox, SES also asks for the permission on the identity of each
+# recipient; what is allowed is still mail from that address alone.
 resource "aws_iam_role_policy" "account_mail" {
   name = "account-mail"
   role = aws_iam_role.enclave_host.id
@@ -50,7 +53,7 @@ resource "aws_iam_role_policy" "account_mail" {
       {
         Effect    = "Allow"
         Action    = "ses:SendEmail"
-        Resource  = aws_sesv2_email_identity.mail.arn
+        Resource  = "arn:aws:ses:${var.aws_region}:${local.account_id}:identity/*"
         Condition = { StringEquals = { "ses:FromAddress" = local.mail_from } }
       },
       {
