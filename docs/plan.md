@@ -62,7 +62,7 @@ About sixteen weeks. Steps 3 and 4 do not depend on 1 and 2, and can go first if
 ### Before real users
 
 - Zero data retention approved by OpenAI for the organization (ADR 0020).
-- SES out of its sandbox (ADR 0017).
+- ~~SES out of its sandbox (ADR 0017).~~ Done on 2026-11-11: AWS granted production access in `us-east-2`, 50,000 messages a day and 14 a second.
 - The mailbox's state and every record of F2 whose going back matters stored through `store.Anchored` (ADR 0016).
 - Whoever can merge into `main` decides what the enclave accepts: require two-factor sign-in in the GitHub organization and a second person's review (docs/threat-model.md).
 
