@@ -194,15 +194,15 @@ func checkTrustUpdate(w io.Writer, compiled *provenance.TrustRoot, dir string, n
 
 func trustUpdate(compiled *provenance.TrustRoot, dir string, now time.Time) (next *provenance.TrustRoot, err error) {
 	var u provenance.Update
-	if u.TrustedRoot, err = os.ReadFile(filepath.Join(dir, "trusted_root.json")); err != nil {
+	if u.TrustedRoot, err = os.ReadFile(filepath.Join(dir, "trusted_root.json")); err != nil { //nolint:gosec // directory given by the user on purpose
 		return nil, err
 	}
-	if u.Targets, err = os.ReadFile(filepath.Join(dir, "targets.json")); err != nil {
+	if u.Targets, err = os.ReadFile(filepath.Join(dir, "targets.json")); err != nil { //nolint:gosec // directory given by the user on purpose
 		return nil, err
 	}
 	// Every TUF root after the one compiled in, in order, until one is missing.
 	for v := compiled.Publication.RootVersion + 1; ; v++ {
-		root, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("%d.root.json", v)))
+		root, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("%d.root.json", v))) //nolint:gosec // directory given by the user on purpose
 		if errors.Is(err, os.ErrNotExist) {
 			break
 		}
