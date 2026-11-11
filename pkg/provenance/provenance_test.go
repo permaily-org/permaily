@@ -2,6 +2,8 @@ package provenance_test
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -173,31 +175,66 @@ func TestParseTrustRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, c := range map[string]struct {
-		doc []byte
-		url string
-	}{
-		"not JSON":                      {[]byte("nope"), provenance.PublicGoodRekor},
-		"empty":                         {[]byte("{}"), provenance.PublicGoodRekor},
-		"unknown log":                   {good, "https://rekor.example.org"},
-		"a log key of another type":     {good, "https://log2025-1.rekor.sigstore.dev"},
-		"a certificate that is not one": {[]byte(`{"certificateAuthorities":[{"certChain":{"certificates":[{"rawBytes":"AAAA"}]}}]}`), provenance.PublicGoodRekor},
-		"an authority without a root":   {[]byte(`{"certificateAuthorities":[{"certChain":{"certificates":[]}}]}`), provenance.PublicGoodRekor},
-		"a log key that is not one":     {[]byte(`{"tlogs":[{"baseUrl":"https://rekor.sigstore.dev","publicKey":{"rawBytes":"AAAA"}}]}`), provenance.PublicGoodRekor},
+	for name, doc := range map[string]string{
+		"not JSON":                      "nope",
+		"empty":                         "{}",
+		"a certificate that is not one": `{"certificateAuthorities":[{"certChain":{"certificates":[{"rawBytes":"AAAA"}]}}]}`,
+		"an authority without a root":   `{"certificateAuthorities":[{"certChain":{"certificates":[]}}]}`,
+		"a log key that is not one":     `{"tlogs":[{"baseUrl":"https://rekor.sigstore.dev","publicKey":{"rawBytes":"AAAA"}}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := provenance.ParseTrustRoot(c.doc, c.url); !errors.Is(err, provenance.ErrMalformed) {
+			if _, err := provenance.ParseTrustRoot([]byte(doc)); !errors.Is(err, provenance.ErrMalformed) {
 				t.Fatalf("got %v", err)
 			}
 		})
 	}
-	tr, err := provenance.ParseTrustRoot(good, provenance.PublicGoodRekor)
+	tr, err := provenance.ParseTrustRoot(good)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Fulcio's first authority stopped issuing at the end of 2022.
-	if len(tr.Authorities) != 2 || tr.Authorities[0].NotAfter.Year() != 2022 || !tr.Authorities[1].NotAfter.IsZero() || tr.Log.Origin != "rekor.sigstore.dev" {
-		t.Fatalf("trust root %+v", tr)
+	// Fulcio's first authority stopped issuing at the end of 2022. The first
+	// Rekor signs with ECDSA, the first instance of Rekor v2 with Ed25519, and
+	// Sigstore runs one timestamp authority.
+	if len(tr.Authorities) != 2 || tr.Authorities[0].NotAfter.Year() != 2022 || !tr.Authorities[1].NotAfter.IsZero() {
+		t.Fatalf("authorities %+v", tr.Authorities)
+	}
+	if len(tr.Logs) != 2 || tr.Logs[0].Origin != "rekor.sigstore.dev" || tr.Logs[1].Origin != "log2025-1.rekor.sigstore.dev" {
+		t.Fatalf("logs %+v", tr.Logs)
+	}
+	if _, ok := tr.Logs[0].Key.(*ecdsa.PublicKey); !ok {
+		t.Errorf("the first Rekor's key is a %T", tr.Logs[0].Key)
+	}
+	if _, ok := tr.Logs[1].Key.(ed25519.PublicKey); !ok {
+		t.Errorf("the key of Rekor v2 is a %T", tr.Logs[1].Key)
+	}
+	if len(tr.Timestampers) != 1 || tr.Timestampers[0].Leaf.Subject.CommonName != "sigstore-tsa" || tr.Timestampers[0].NotBefore.Year() != 2025 {
+		t.Fatalf("timestamp authorities %+v", tr.Timestampers)
+	}
+
+	// What this package cannot use is left out, not an error: a log with
+	// another kind of key or hash, and an authority without a signing
+	// certificate.
+	var doc map[string]any
+	if err := json.Unmarshal(good, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["timestampAuthorities"] = append(doc["timestampAuthorities"].([]any), map[string]any{"certChain": map[string]any{"certificates": []any{map[string]any{"rawBytes": "AAAA"}}}})
+	if broken, err := json.Marshal(doc); err != nil {
+		t.Fatal(err)
+	} else if _, err := provenance.ParseTrustRoot(broken); !errors.Is(err, provenance.ErrMalformed) {
+		t.Fatalf("a timestamp authority's certificate that is not one: %v", err)
+	}
+	doc["timestampAuthorities"] = doc["timestampAuthorities"].([]any)[:1]
+	logs := doc["tlogs"].([]any)
+	logs[1].(map[string]any)["hashAlgorithm"] = "SHA3_256"
+	tsa := doc["timestampAuthorities"].([]any)[0].(map[string]any)["certChain"].(map[string]any)
+	tsa["certificates"] = tsa["certificates"].([]any)[1:]
+	edited, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr, err = provenance.ParseTrustRoot(edited); err != nil || len(tr.Logs) != 1 || len(tr.Timestampers) != 0 {
+		t.Fatalf("got %+v, %v", tr, err)
 	}
 }
 
@@ -318,7 +355,7 @@ func TestVerifyIdentity(t *testing.T) {
 			t.Fatalf("future authority: %v", err)
 		}
 		oldLog := a.TrustRoot()
-		oldLog.Log.NotAfter = time.Now().Add(-time.Minute)
+		oldLog.Logs[0].NotAfter = time.Now().Add(-time.Minute)
 		if _, err := provenance.Verify(production, oldLog, bundle, pcrsA); !errors.Is(err, provenance.ErrUntrusted) {
 			t.Fatalf("retired log: %v", err)
 		}
@@ -383,6 +420,7 @@ func FuzzVerify(f *testing.F) {
 	}
 	f.Add(read(f, "v0.5.0-provenance.bundle.json"), read(f, "v0.5.0-pcrs.json"))
 	f.Add(read(f, "v0.5.0-github-release.bundle.json"), read(f, "v0.5.0-pcrs.json"))
+	f.Add(read(f, "rekor2-canary.bundle.json"), read(f, "rekor2-canary-pcrs.json"))
 	f.Add([]byte(`{}`), []byte(`{}`))
 	real := read(f, "v0.5.0-provenance.bundle.json")
 	f.Fuzz(func(t *testing.T, bundle, pcrs []byte) {
