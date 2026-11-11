@@ -90,8 +90,7 @@ func commitMAC(key []byte, c *Commit) []byte {
 	binary.BigEndian.PutUint64(n[:], c.Version)
 	m.Write(n[:])
 	m.Write(c.Digest[:])
-	binary.BigEndian.PutUint64(n[:], uint64(c.At.Unix()))
-	m.Write(n[:])
+	_ = binary.Write(m, binary.BigEndian, c.At.Unix())
 	return m.Sum(nil)
 }
 

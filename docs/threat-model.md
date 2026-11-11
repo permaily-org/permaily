@@ -34,7 +34,7 @@ That the service answering on the Permaily hosts runs an enclave image built fro
 ## Known limits (F0)
 
 - The TLS key and the ACME account key are created once inside an enclave and stored sealed under the root secret (ADR 0012, ADR 0013), so restarts and upgrades keep the same key, certificate and account. Only what can get the root secret can open them, like stored mail.
-- The enclave keeps nothing itself: what it stores is sealed and lives in DynamoDB and S3, which the operator can delete or roll back to an earlier copy, not read.
+- The enclave keeps nothing itself: what it stores is sealed and lives in DynamoDB and S3, which the operator can delete, not read. Putting back an earlier copy is refused for the records that go through `store.Anchored` (ADR 0016): today the TLS identity. The mailbox's state and the messages can still be put back to an earlier copy, or removed; they get the same protection, and an audit log, with the data model.
 - Availability is not protected: the operator can always take the service down.
 - Metadata visible to the operator: connection timing, sizes, destination hostnames of egress.
 
@@ -82,6 +82,7 @@ Each one has, or must get, a test that tries to break it.
 | Production code | Fake attesters and test chains are never linked | `depguard` |
 | Web | Every response carries HSTS, CSP, `nosniff`, `no-referrer` | `TestRouter` |
 | Keys | A key is used only if this image alone can use it and nobody can change that | `TestSealed`, `TestHandoffRefuses`, `TestRootNeedsItsOwnKey` |
+| Storage | An earlier copy of an anchored record is never read: lost, not rolled back | `TestAnchoredRefusesEarlierCopies`, `TestS3CommitsWithAnAdversary`, `TestS3CommitsAgainstS3` (a real bucket), `TestAnchoredNoticesCommitsGoingBack`, `TestCheckAnchors` |
 | Keys | The root secret is handed only to a public release newer than the running one | `TestHandoffRefuses`, `TestVerifyIdentity`, `TestVerifyARealRelease`, `TestVerifyRekor2`, `TestTimestamps`, `TestSigstoreHistory`, `TestUpdateKeepsTheAuthorities`, `TestTUFSignatures`, `TestRootFollowsSigstore`, `FuzzVerify`, `FuzzVerifyRekor2`, `FuzzTimestamp`, `FuzzTrustUpdate`, `tests/sigstore-differential` |
 | Keys | A record not written by an enclave of the same image or of a public release is refused | `TestRootRefusesPlantedRecords`, `TestRootChecksWhichKeyAnswered` |
 | Keys | A debug enclave, a failing store or a deployment that already has a root secret never leads to a new one | `TestRootInDebugMode`, `TestRootDoesNotCreateWhenTheStoreFails`, `TestRootHandoff` |

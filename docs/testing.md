@@ -15,6 +15,7 @@
 | Unit and local end to end (Go) | `go test`, `httptest` | `*_test.go` | `make check`, CI |
 | Fuzzing | Go native fuzzing | `pkg/attestation`, `pkg/kmspolicy`, `pkg/provenance` (bundles of both Rekor logs, timestamps, and trust root updates), `internal/keys` (CMS), `internal/inbox` (mail parser) | `make fuzz`, CI |
 | Differential | `pkg/provenance` against sigstore-go, on the published release v0.5.0, on a signature recorded in the public Rekor v2 log, and on bundles from the test authority shaped like both logs; and its TUF checks against go-tuf, on Sigstore's metadata from TUF root 12 to 16 and on the test authority's | `tests/sigstore-differential` (its own Go module, Go 1.27) | CI `sigstore-differential`; locally `cd tests/sigstore-differential && go test ./...` |
+| Commits against S3 | a real bucket with Object Lock: conditional writes, locks, delete markers, deletion refused | `internal/store` (`TestS3CommitsAgainstS3`) | by hand, with `PERMAILY_TEST_ANCHOR_BUCKET=permaily-anchors-staging-<account>` and credentials; skipped otherwise |
 | Storage contract | DynamoDB Local and S3Mock | `internal/store/store_test.go` | CI services; locally with `PERMAILY_TEST_DYNAMODB` and `PERMAILY_TEST_S3` |
 | ACME issuance and renewal | Pebble 2.6.0 (test CA that accepts every challenge) | `internal/tlsacme` (`TestObtainAgainstACME`) | CI service; locally with `PERMAILY_TEST_ACME` |
 | Whole service, dev mode | SMTP client and HTTPS | `cmd/permaily-enclave/main_dev_test.go` | `go test -tags dev ./cmd/permaily-enclave`, CI |
