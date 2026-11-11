@@ -25,8 +25,12 @@ Plaintext outside the enclave: ids, sizes, timestamps, retention period. Message
 
 | Data | Where | Protection | Retention | Deletion |
 |---|---|---|---|---|
-| Grants and audit log | DynamoDB | Encrypted per user; audit log hash-chained | Account lifetime (audit: to decide) | With the account |
-| Account (passkeys, Google ID) | DynamoDB | Encrypted per user | Account lifetime | With the account |
+| Account: contact address, name, language, state, ways to sign in (ADR 0017) | DynamoDB | Readable by the operator and signed by the enclave, so it cannot be changed by hand; an earlier copy is refused (ADR 0016) | Account lifetime | Seven days after the account is deleted |
+| Sessions, invitations, email and recovery codes | DynamoDB | Only their hash | Until they end | When they end |
+| Connections: vendor, state, dates and schedule readable and signed; the approved query, tokens and webhook secrets sealed (ADR 0019) | DynamoDB | As said; an earlier copy is refused, so a revoked connection does not come back | Until the connection ends or is revoked | With the connection |
+| The person's rules, with their text (ADR 0019) | DynamoDB | Sealed | Account lifetime | With the account |
+| What the model said of a message and a topic (ADR 0020) | DynamoDB | Sealed | As long as the message | With the message |
+| Receipts of what left, and of what was refused (ADR 0019) | DynamoDB | Sealed, chained by hash, the head anchored | Account lifetime: they outlive the mail | With the account |
 
 ## Subprocessors (planned)
 
@@ -35,10 +39,11 @@ Plaintext outside the enclave: ids, sizes, timestamps, retention period. Message
 | Amazon Web Services | Compute (Nitro Enclaves), storage (S3, DynamoDB), keys (KMS), outgoing mail (SES) | Encrypted content and metadata |
 | Cloudflare | DNS for permaily.com; DNS-over-HTTPS resolver for DKIM checks (`cloudflare-dns.com`) | Hostnames; the domains and DKIM selectors of incoming mail senders |
 | Let's Encrypt | TLS certificates | Hostnames |
-| LLM provider (F3, to decide) | Classification | Message content needed for the user's rules, under the provider's no-training terms |
+| OpenAI (ADR 0020) | Deciding `about` conditions and removals by meaning; turning a rule written in plain words into a formula | The subject or the body text of the messages where exact conditions did not settle the matter; the text of a rule. Until zero data retention is approved for the organization, under OpenAI's ordinary retention |
 
 ## TODO
 
 - [x] Default retention: 90 days, configurable to 7, 30, 180 or 365.
-- [ ] Decide audit log retention (F2).
-- [ ] Choose the F3 LLM provider and document its data terms before enabling classification.
+- [x] Receipts are kept for as long as the account (ADR 0019).
+- [x] The model provider is OpenAI (ADR 0020).
+- [ ] Zero data retention approved by OpenAI, before real users.
