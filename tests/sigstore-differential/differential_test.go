@@ -68,9 +68,9 @@ type testCase struct {
 
 // compare runs both verifiers. They must give the same answer; where both
 // refuse, the reasons may differ.
-func compare(t *testing.T, trustedJSON []byte, rekorURL string, cases []testCase) {
+func compare(t *testing.T, trustedJSON []byte, cases []testCase) {
 	t.Helper()
-	tr, err := provenance.ParseTrustRoot(trustedJSON, rekorURL)
+	tr, err := provenance.ParseTrustRoot(trustedJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestRealRelease(t *testing.T) {
 		change(&p)
 		return p
 	}
-	compare(t, read(t, "sigstore_trusted_root.json"), provenance.PublicGoodRekor, []testCase{
+	compare(t, read(t, "sigstore_trusted_root.json"), []testCase{
 		{"the release", production, bundle, pcrs, true},
 		{"measurements of another image", production, bundle, bytes.Replace(pcrs, []byte("597b93ef"), []byte("00000000"), 1), false},
 		{"another repository", with(func(p *provenance.Policy) { p.Repository = "someone/permaily" }), bundle, pcrs, false},
@@ -181,5 +181,144 @@ func TestTestAuthority(t *testing.T) {
 		a.Before, a.After = shape[0], shape[1]
 		cases = append(cases, testCase{fmt.Sprintf("entry %d of %d", shape[0], shape[0]+1+shape[1]), production, build(func(*provenancetest.Build) {}), pcrsA, true})
 	}
-	compare(t, trustedJSON, provenancetest.RekorURL, cases)
+	compare(t, trustedJSON, cases)
+}
+
+func proof(doc map[string]any) map[string]any {
+	return entry(doc)["inclusionProof"].(map[string]any)
+}
+
+func setStamps(doc map[string]any, der ...[]byte) {
+	list := []any{}
+	for _, d := range der {
+		list = append(list, map[string]any{"signedTimestamp": base64.StdEncoding.EncodeToString(d)})
+	}
+	doc["verificationMaterial"].(map[string]any)["timestampVerificationData"] = map[string]any{"rfc3161Timestamps": list}
+}
+
+func firstStamp(t *testing.T, bundle []byte) (stamp, sig []byte) {
+	t.Helper()
+	edit(t, bundle, func(doc map[string]any) {
+		list := doc["verificationMaterial"].(map[string]any)["timestampVerificationData"].(map[string]any)["rfc3161Timestamps"].([]any)
+		stamp, _ = base64.StdEncoding.DecodeString(list[0].(map[string]any)["signedTimestamp"].(string))
+		sig, _ = base64.StdEncoding.DecodeString(doc["dsseEnvelope"].(map[string]any)["signatures"].([]any)[0].(map[string]any)["sig"].(string))
+	})
+	return stamp, sig
+}
+
+// Bundles recorded the way Rekor v2 records them: the entry rebuilt from the
+// signature, a checkpoint signed with Ed25519 and the time from a timestamp
+// authority. The two verifiers must agree on what counts.
+func TestRekor2(t *testing.T) {
+	a, err := provenancetest.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	trustedJSON, err := a.TrustedRootJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().Add(-time.Hour)
+	build := func(change func(b *provenancetest.Build)) []byte {
+		b := provenancetest.Build{
+			Repository: "permaily-org/permaily", RepositoryID: "1448574502", OwnerID: "353453526",
+			Workflow: ".github/workflows/release.yml", Ref: "refs/heads/main", Commit: strings.Repeat("12", 20),
+			Rekor2: true, At: at,
+		}
+		change(&b)
+		bundle, err := a.Attest(b, []byte("another file"), pcrsA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bundle
+	}
+	bundle := build(func(*provenancetest.Build) {})
+	second := build(func(*provenancetest.Build) {})
+	own, sig := firstStamp(t, bundle)
+	theirs, _ := firstStamp(t, second)
+	stranger, err := provenancetest.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	strangerStamp, err := stranger.Timestamp(sig, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := func(change func(text string) string) func(d map[string]any) {
+		return func(d map[string]any) {
+			cp := proof(d)["checkpoint"].(map[string]any)
+			cp["envelope"] = change(cp["envelope"].(string))
+		}
+	}
+
+	cases := []testCase{
+		{"the release workflow on main", production, bundle, pcrsA, true},
+		{"a stranger's timestamp before the authority's", production, edit(t, bundle, func(d map[string]any) { setStamps(d, strangerStamp, own) }), pcrsA, true},
+		{"a self-hosted runner", production, build(func(b *provenancetest.Build) { b.Runner = "self-hosted" }), pcrsA, false},
+		{"a pull request", production, build(func(b *provenancetest.Build) { b.Ref = "refs/pull/7/merge" }), pcrsA, false},
+		{"a staging build under the production policy", production, build(func(b *provenancetest.Build) { b.Workflow, b.Ref = staging.Workflow, "refs/heads/staging/a" }), pcrsA, false},
+		{"a staging build under the staging policy", staging, build(func(b *provenancetest.Build) { b.Workflow, b.Ref = staging.Workflow, "refs/heads/staging/a" }), pcrsA, true},
+		{"measurements the statement does not name", production, bundle, bytes.Replace(pcrsA, []byte("aa"), []byte("ab"), 1), false},
+		{"a certificate issued an hour before the timestamp", production, build(func(b *provenancetest.Build) { b.IssuedAt = at.Add(-time.Hour) }), pcrsA, false},
+		{"a certificate issued an hour after the timestamp", production, build(func(b *provenancetest.Build) { b.IssuedAt = at.Add(time.Hour) }), pcrsA, false},
+		{"no timestamp", production, edit(t, bundle, func(d map[string]any) { setStamps(d) }), pcrsA, false},
+		{"only a stranger's timestamp", production, edit(t, bundle, func(d map[string]any) { setStamps(d, strangerStamp) }), pcrsA, false},
+		{"a timestamp for another signature", production, edit(t, bundle, func(d map[string]any) { setStamps(d, theirs) }), pcrsA, false},
+		{"a timestamp with a bit changed", production, edit(t, bundle, func(d map[string]any) {
+			raw := bytes.Clone(own)
+			raw[len(raw)-20] ^= 1
+			setStamps(d, raw)
+		}), pcrsA, false},
+		{"statement changed", production, edit(t, bundle, func(d map[string]any) {
+			env := d["dsseEnvelope"].(map[string]any)
+			raw, _ := base64.StdEncoding.DecodeString(env["payload"].(string))
+			env["payload"] = base64.StdEncoding.EncodeToString(bytes.Replace(raw, []byte("file-0"), []byte("file-9"), 1))
+		}), pcrsA, false},
+		{"statement signature changed", production, edit(t, bundle, func(d map[string]any) {
+			s := d["dsseEnvelope"].(map[string]any)["signatures"].([]any)[0].(map[string]any)
+			s["sig"] = flip(s["sig"])
+		}), pcrsA, false},
+		{"another certificate", production, edit(t, bundle, func(d map[string]any) {
+			edit(t, second, func(o map[string]any) {
+				d["verificationMaterial"].(map[string]any)["certificate"] = o["verificationMaterial"].(map[string]any)["certificate"]
+			})
+		}), pcrsA, false},
+		{"another position in the tree", production, edit(t, bundle, func(d map[string]any) { entry(d)["logIndex"] = "3" }), pcrsA, false},
+		{"a proof with a hash changed", production, edit(t, bundle, func(d map[string]any) {
+			h := proof(d)["hashes"].([]any)
+			h[0] = flip(h[0])
+		}), pcrsA, false},
+		{"a checkpoint with another size", production, edit(t, bundle, checkpoint(func(s string) string { return strings.Replace(s, "\n7\n", "\n8\n", 1) })), pcrsA, false},
+		{"a checkpoint of another log", production, edit(t, bundle, checkpoint(func(s string) string { return strings.ReplaceAll(s, a.Origin2, "log2098-1.rekor.test") })), pcrsA, false},
+		{"a checkpoint shaped like the first Rekor's", production, edit(t, bundle, checkpoint(func(s string) string { return strings.Replace(s, a.Origin2+"\n", a.Origin2+" - 1\n", 1) })), pcrsA, false},
+		{"a checkpoint without signatures", production, edit(t, bundle, checkpoint(func(s string) string {
+			text, _, _ := strings.Cut(s, "\n\n")
+			return text + "\n\n"
+		})), pcrsA, false},
+		{"the entry named as the first Rekor's log", production, edit(t, bundle, func(d map[string]any) {
+			entry(d)["logId"] = map[string]any{"keyId": base64.StdEncoding.EncodeToString(a.LogID)}
+		}), pcrsA, false},
+		{"an unknown log", production, edit(t, bundle, func(d map[string]any) {
+			id := entry(d)["logId"].(map[string]any)
+			id["keyId"] = flip(id["keyId"])
+		}), pcrsA, false},
+		{"the first Rekor's entry named as the second log's", production, edit(t, func() []byte {
+			b := provenancetest.Build{
+				Repository: "permaily-org/permaily", RepositoryID: "1448574502", OwnerID: "353453526",
+				Workflow: ".github/workflows/release.yml", Ref: "refs/heads/main", Commit: strings.Repeat("12", 20),
+			}
+			first, err := a.Attest(b, pcrsA)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return first
+		}(), func(d map[string]any) {
+			entry(d)["logId"] = map[string]any{"keyId": base64.StdEncoding.EncodeToString(a.Log2ID)}
+		}), pcrsA, false},
+	}
+	for _, shape := range [][2]int{{0, 0}, {0, 1}, {1, 0}, {3, 4}, {7, 0}, {8, 0}, {0, 8}, {13, 20}} {
+		a.Before, a.After = shape[0], shape[1]
+		cases = append(cases, testCase{fmt.Sprintf("entry %d of %d", shape[0], shape[0]+1+shape[1]), production, build(func(*provenancetest.Build) {}), pcrsA, true})
+	}
+	compare(t, trustedJSON, cases)
 }

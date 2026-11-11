@@ -9,6 +9,7 @@ package differential
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -42,9 +43,23 @@ func Verify(p provenance.Policy, trustedRootJSON, bundleJSON, pcrs []byte) (*Ref
 	if err := b.UnmarshalJSON(bundleJSON); err != nil {
 		return nil, fmt.Errorf("bundle: %w", err)
 	}
-	// One entry in the public log, with its signed inclusion time. A signature
-	// that only carries a timestamp from a private authority is refused.
-	v, err := verify.NewVerifier(trusted, verify.WithTransparencyLog(1), verify.WithIntegratedTimestamps(1))
+	// One entry in the public log. For the first Rekor, with the time the log
+	// signed: a signature that only carries a timestamp from an authority is
+	// refused. An entry of Rekor v2 has no such time, so there the time is the
+	// timestamp authority's.
+	when := verify.WithIntegratedTimestamps(1)
+	var kind struct {
+		VerificationMaterial struct {
+			TlogEntries []struct {
+				KindVersion struct{ Kind, Version string }
+			}
+		}
+	}
+	if err := json.Unmarshal(bundleJSON, &kind); err == nil && len(kind.VerificationMaterial.TlogEntries) == 1 &&
+		kind.VerificationMaterial.TlogEntries[0].KindVersion.Kind == "hashedrekord" && kind.VerificationMaterial.TlogEntries[0].KindVersion.Version == "0.0.2" {
+		when = verify.WithSignedTimestamps(1)
+	}
+	v, err := verify.NewVerifier(trusted, verify.WithTransparencyLog(1), when)
 	if err != nil {
 		return nil, err
 	}

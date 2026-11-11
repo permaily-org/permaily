@@ -7,8 +7,9 @@ name: sigstore-watch
 # release could be deployed again without losing everything stored. This
 # workflow notices, every day:
 #
-#   trust-root  the compiled-in trust root is the one Sigstore publishes today
-#   canary      what GitHub attests today is accepted by pkg/provenance
+#   trust-root     the compiled-in trust root is the one Sigstore publishes today
+#   canary         what GitHub attests today is accepted by pkg/provenance
+#   canary-rekor2  so is a signature recorded today in Rekor v2
 #
 # A failed run is not an incident in production; it is a deadline. What to do
 # is in docs/operations.md, "Sigstore changed".
@@ -72,3 +73,43 @@ jobs:
           scripts/provenance-bundle.sh canary-pcrs.json canary-bundle.json
           go run ./cmd/permaily-verify -provenance canary-bundle.json -pcrs canary-pcrs.json \
             -release-workflow .github/workflows/sigstore-watch.yml -release-ref "$GITHUB_REF"
+
+  # What Rekor v2 answers today is accepted too. GitHub's attestations are not
+  # recorded there yet; this signs one the way they will be (sigstore-go, with
+  # the log and the timestamp authority the trust root names), so the day
+  # GitHub's client moves, pkg/provenance has been reading that log for a while.
+  canary-rekor2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tests/sigstore-differential/go.mod
+          cache-dependency-path: tests/sigstore-differential/go.sum
+      - name: Measurements nobody runs
+        run: |
+          pcr() { printf 'permaily rekor v2 canary %s %s' "$GITHUB_RUN_ID" "$1" | sha384sum | cut -d' ' -f1; }
+          jq -n --arg a "$(pcr 0)" --arg b "$(pcr 1)" --arg c "$(pcr 2)" '{PCR0: $a, PCR1: $b, PCR2: $c}' > canary-pcrs.json
+      - name: Sign in Rekor v2
+        working-directory: tests/sigstore-differential
+        run: |
+          go run ./cmd/rekor2-sign -trusted-root ../../pkg/provenance/sigstore_trusted_root.json \
+            -file ../../canary-pcrs.json -out ../../canary-bundle.json
+      - name: pkg/provenance accepts what Rekor v2 answered
+        run: |
+          go run ./cmd/permaily-verify -provenance canary-bundle.json -pcrs canary-pcrs.json \
+            -release-workflow .github/workflows/sigstore-watch.yml -release-ref "$GITHUB_REF"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: rekor2-canary
+          path: |
+            canary-pcrs.json
+            canary-bundle.json
+          retention-days: 7
