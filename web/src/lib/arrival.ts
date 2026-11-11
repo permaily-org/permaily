@@ -28,8 +28,9 @@ export function takeArrival(): void {
     const token = fragment.get('token')
     // A fragment on this page is a sign-in link, whole or broken. Neither stays in the address bar.
     if (fragment.has('attempt') || fragment.has('token')) {
-      if (attempt && token) arrival.link = { attempt, token }
-      else arrival.brokenLink = true
+      // The newest one counts: a link that waited for an answer is forgotten either way.
+      if (attempt && token) arrival = { ...arrival, link: { attempt, token }, brokenLink: false }
+      else arrival = { ...arrival, link: null, brokenLink: true }
       cleanHash = ''
     }
   }
@@ -55,12 +56,15 @@ export function hasLink(): boolean {
   return arrival.link !== null || arrival.brokenLink
 }
 
-/** The link the app was opened with, until it is used or dropped. */
+/**
+ * The link the app was opened with, until it is used or dropped. Opening it signs nobody in: the page asks
+ * the server whose sign-in it is, and uses it only when the person says so.
+ */
 export function pendingLink(): SignInLink | null {
   return arrival.link
 }
 
-/** Forgets the link: it worked, or it never will. */
+/** Forgets the link: it worked, it never will, or the person said no. */
 export function dropLink(): void {
   arrival = { ...arrival, link: null }
 }

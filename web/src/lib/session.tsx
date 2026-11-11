@@ -12,7 +12,7 @@ import * as api from './api.ts'
 import { dropLink, hasLink, pendingLink, takeArrival, takeBrokenLink } from './arrival.ts'
 
 export type SessionState =
-  /** Asking the server who this is. `link` is true while a sign-in link is being used. */
+  /** Asking the server who this is. `link` is true while it is also asked whose sign-in a link is. */
   | { status: 'loading'; link: boolean }
   /** The server did not answer, so nobody knows yet. */
   | { status: 'unreachable' }
@@ -23,10 +23,26 @@ export type SessionState =
 /** Why the sign-in link the app was opened with did not sign anyone in. */
 export type LinkProblem = 'expired' | 'failed'
 
+/**
+ * A sign-in link that waits for the person's word. Opening a link signs nobody in: someone may have started
+ * a sign-in for their own account and sent its link, to have this person act inside that account.
+ * `address` is the server's answer, never anything read from the link.
+ */
+export type LinkAsk = { address: string }
+
 type SessionValue = {
   state: SessionState
   linkProblem: LinkProblem | null
   clearLinkProblem: () => void
+  /** The link the app was opened with, while the person has not said whether to sign in with it. */
+  linkAsk: LinkAsk | null
+  /**
+   * Signs in with the link, because the person said so. Throws an ApiError when the server gave no answer:
+   * the link is kept and the question stays. Any other failure ends the question and sets `linkProblem`.
+   */
+  acceptLink: () => Promise<void>
+  /** Forgets the link and signs nobody in. Whoever was signed in stays so. */
+  declineLink: () => void
   /** Asks again after the server could not be reached. */
   retry: () => void
   /** Takes the account the server answered a finished sign-in with. */
@@ -53,27 +69,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     link: pendingLink() !== null,
   }))
   const [linkProblem, setLinkProblem] = useState<LinkProblem | null>(null)
+  const [ask, setAsk] = useState<LinkAsk | null>(null)
   // Counts every change made on purpose, so a slower answer to an earlier question cannot undo it.
   const epoch = useRef(0)
   const status = useRef(state.status)
   status.current = state.status
+  const asked = useRef(ask)
+  asked.current = ask
 
   const load = useCallback(async () => {
     const turn = ++epoch.current
     const link = pendingLink()
+    setAsk(null)
     setState({ status: 'loading', link: link !== null })
+    let pending: LinkAsk | null = null
     if (link) {
-      // The link goes first and alone: an answer to /me could drop the cookie this is about to set.
+      // The link signs nobody in by being opened. The server says whose sign-in it is, and ends nothing.
       try {
-        const who = await api.finishEmail(link.attempt, { token: link.token })
-        dropLink()
-        if (turn === epoch.current) setState({ status: 'signedIn', me: who })
-        return
+        pending = await api.lookEmail(link.attempt, link.token)
+        if (turn !== epoch.current) return
       } catch (error) {
+        if (turn !== epoch.current) return
         const code = api.errorCode(error)
         if (code === 'network') {
-          // The request never arrived, so the link is still good: Try again uses it.
-          if (turn === epoch.current) setState({ status: 'unreachable' })
+          // The question never arrived, so the link is as good as it was: Try again uses it.
+          setState({ status: 'unreachable' })
           return
         }
         dropLink()
@@ -84,16 +104,72 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     try {
       const who = await api.me()
+      if (turn !== epoch.current) return
       // Someone already signed in has no use for the news that a link did not work.
       setLinkProblem(null)
-      if (turn === epoch.current) setState({ status: 'signedIn', me: who })
+      // In the account of the link's address already, there is nothing to ask: see `settled` below.
+      setAsk(pending)
+      setState({ status: 'signedIn', me: who })
     } catch (error) {
       if (turn !== epoch.current) return
-      setState(
-        api.errorCode(error) === 'unauthorized'
-          ? { status: 'signedOut', byChoice: false }
-          : { status: 'unreachable' },
-      )
+      if (api.errorCode(error) === 'unauthorized') {
+        setAsk(pending)
+        setState({ status: 'signedOut', byChoice: false })
+      } else {
+        // The link stays in memory, so Try again asks about it again.
+        setState({ status: 'unreachable' })
+      }
+    }
+  }, [])
+
+  // The browser is in the account of the link's address already, here or since another tab signed in:
+  // the app opens, nobody is signed in again and the link is forgotten unused.
+  const settled =
+    ask !== null && state.status === 'signedIn' && state.me.account.address === ask.address
+  useEffect(() => {
+    if (!settled) return
+    dropLink()
+    setAsk(null)
+  }, [settled])
+
+  const acceptLink = useCallback(async () => {
+    const link = pendingLink()
+    const pending = asked.current
+    if (!link || !pending) return
+    try {
+      const who = await api.finishEmail(link.attempt, { token: link.token })
+      // Another link arrived meanwhile: that one is being asked about, and its answer shows who is signed in.
+      if (pendingLink() !== link) return
+      dropLink()
+      epoch.current++
+      setAsk(null)
+      setLinkProblem(null)
+      setState({ status: 'signedIn', me: who })
+      return
+    } catch (error) {
+      const code = api.errorCode(error)
+      // No answer: the link is kept, and the question stays for another try.
+      if (code === 'network') throw error
+      if (pendingLink() !== link) return
+      dropLink()
+      const problem: LinkProblem = code === 'invalid_code' ? 'expired' : 'failed'
+      const turn = ++epoch.current
+      // An earlier try may have signed in and lost its answer on the way: ask before saying it did not work.
+      try {
+        const who = await api.me()
+        if (turn !== epoch.current) return
+        setAsk(null)
+        setLinkProblem(who.account.address === pending.address ? null : problem)
+        setState({ status: 'signedIn', me: who })
+      } catch (failure) {
+        if (turn !== epoch.current) return
+        setAsk(null)
+        setLinkProblem(problem)
+        // Only the server saying so signs anyone out. No answer changes nothing.
+        if (api.errorCode(failure) === 'unauthorized') {
+          setState({ status: 'signedOut', byChoice: false })
+        }
+      }
     }
   }, [])
 
@@ -105,7 +181,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [load])
 
   // A link pasted over the sign-in screen changes only the fragment, so the page does not load again:
-  // it is taken out of the address bar and used all the same.
+  // it is taken out of the address bar and asked about all the same.
   useEffect(() => {
     const arrived = () => {
       takeArrival()
@@ -126,6 +202,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       try {
         const who = await api.me()
         if (turn !== epoch.current) return
+        // Signed in from another tab: the news that a link did not work here is of no use any more.
+        if (status.current === 'signedOut') setLinkProblem(null)
         setState((now) =>
           now.status === 'signedOut' ||
           (now.status === 'signedIn' && now.me.account.id !== who.account.id)
@@ -155,6 +233,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       state,
       linkProblem,
       clearLinkProblem: () => setLinkProblem(null),
+      linkAsk: settled ? null : ask,
+      acceptLink,
+      declineLink: () => {
+        dropLink()
+        setAsk(null)
+      },
       retry: () => void load(),
       signedIn: (who) => {
         epoch.current++
@@ -169,11 +253,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           if (api.errorCode(error) !== 'unauthorized') throw error
         }
         epoch.current++
+        // A link that waited for an answer is forgotten with the session.
+        dropLink()
+        setAsk(null)
         setLinkProblem(null)
         setState({ status: 'signedOut', byChoice: true })
       },
     }),
-    [state, linkProblem, load],
+    [state, linkProblem, ask, settled, load, acceptLink],
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

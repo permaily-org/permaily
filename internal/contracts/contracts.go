@@ -91,6 +91,20 @@ type EmailFinish struct {
 	Token   string `json:"token,omitempty"`
 }
 
+// EmailLook asks whose sign-in the link of a message would end, without
+// ending it.
+type EmailLook struct {
+	Attempt string `json:"attempt"`
+	Token   string `json:"token"`
+}
+
+// EmailPending is a sign-in that a link would end. The page that opened the
+// link shows the address and asks before it signs in: a link may have been
+// sent by someone else, to sign the person into an account that is not theirs.
+type EmailPending struct {
+	Address string `json:"address"`
+}
+
 // Me is the account behind a session.
 type Me struct {
 	Account Account `json:"account"`

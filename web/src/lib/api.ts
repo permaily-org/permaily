@@ -111,6 +111,19 @@ export function startEmail(address: string, invitation?: string): Promise<EmailS
   )
 }
 
+/**
+ * Asks whose sign-in the link of a message would end. It ends nothing: the link still works afterwards, once.
+ * The address shown to the person is this answer, never anything read from the link.
+ */
+export async function lookEmail(attempt: string, token: string): Promise<{ address: string }> {
+  const answer = await request<{ address?: unknown }>('POST', '/api/v1/auth/email/look', {
+    attempt,
+    token,
+  })
+  if (typeof answer?.address !== 'string' || answer.address === '') throw new ApiError('other')
+  return { address: answer.address }
+}
+
 /** Ends a sign-in with the code of the message or the token of its link. The server sets the session cookie. */
 export function finishEmail(
   attempt: string,

@@ -309,6 +309,61 @@ func TestSignInEnds(t *testing.T) {
 	}
 }
 
+func TestLookAtALink(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	w.signUp("ana@example.org")
+	attempt, mail := w.start("ana@example.org", "")
+	token := linkRE.FindStringSubmatch(mail.Text)[2]
+
+	// The page that opened the link is told whose sign-in it is, as often as
+	// it asks, and the link still works afterwards.
+	for range 3 {
+		got, err := w.svc.LookEmail(ctx, contracts.EmailLook{Attempt: attempt, Token: token})
+		if err != nil || got.Address != "ana@example.org" {
+			t.Fatalf("looking at a link: %+v, %v", got, err)
+		}
+	}
+	// Nobody is told without the link: not with the code, which is typed
+	// where the sign-in was asked for, and not with nothing.
+	for name, in := range map[string]contracts.EmailLook{
+		"the code as a token":  {Attempt: attempt, Token: code(mail)},
+		"no token":             {Attempt: attempt},
+		"another sign-in":      {Attempt: "att_unknown", Token: token},
+		"a token cut short":    {Attempt: attempt, Token: token[:20]},
+		"no sign-in, no token": {},
+	} {
+		if got, err := w.svc.LookEmail(ctx, in); !errors.Is(err, contracts.ErrInvalidCode) || got != nil {
+			t.Errorf("%s: %+v, %v", name, got, err)
+		}
+	}
+	// Two wrong tokens were tried: they count like wrong codes, and three
+	// more end the sign-in for the right one too.
+	me, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Token: token}, "")
+	if err != nil || me.Account.Address != "ana@example.org" {
+		t.Fatalf("the link after looking at it: %v", err)
+	}
+	if _, err := w.svc.LookEmail(ctx, contracts.EmailLook{Attempt: attempt, Token: token}); !errors.Is(err, contracts.ErrInvalidCode) {
+		t.Fatalf("a link that was used: %v", err)
+	}
+
+	attempt, mail = w.start("ana@example.org", "")
+	token = linkRE.FindStringSubmatch(mail.Text)[2]
+	for range domain.EmailCodeTries {
+		_, _ = w.svc.LookEmail(ctx, contracts.EmailLook{Attempt: attempt, Token: "not-the-token"})
+	}
+	if _, err := w.svc.LookEmail(ctx, contracts.EmailLook{Attempt: attempt, Token: token}); !errors.Is(err, contracts.ErrInvalidCode) {
+		t.Fatalf("a link after five wrong tokens: %v", err)
+	}
+
+	// A link that ended by time says nothing either.
+	attempt, mail = w.start("ana@example.org", "")
+	token = linkRE.FindStringSubmatch(mail.Text)[2]
+	w.now = w.now.Add(domain.EmailCodeLifetime)
+	if _, err := w.svc.LookEmail(ctx, contracts.EmailLook{Attempt: attempt, Token: token}); !errors.Is(err, contracts.ErrInvalidCode) {
+		t.Fatalf("a link after ten minutes: %v", err)
+	}
+}
+
 func TestStartLimits(t *testing.T) {
 	w, ctx := newWorld(t), context.Background()
 	w.signUp("ana@example.org") // the first message of the hour

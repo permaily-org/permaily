@@ -18,6 +18,7 @@ import (
 // AccountsService is what the accounts API needs from the service.
 type AccountsService interface {
 	StartEmail(ctx context.Context, in contracts.EmailStart) (*contracts.EmailStarted, error)
+	LookEmail(ctx context.Context, in contracts.EmailLook) (*contracts.EmailPending, error)
 	FinishEmail(ctx context.Context, in contracts.EmailFinish, userAgent string) (*contracts.Me, string, error)
 	Authenticate(ctx context.Context, cookie string) (*accounts.Authenticated, error)
 	Me(ctx context.Context, who *accounts.Authenticated) (*contracts.Me, error)
@@ -129,6 +130,19 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 			return
 		}
 		out, err := svc.StartEmail(r.Context(), in)
+		if err != nil {
+			failed(w, log, err)
+			return
+		}
+		writeJSON(w, out)
+	})
+	// A POST, so the token of the link is never part of an address.
+	mux.HandleFunc("POST /api/v1/auth/email/look", func(w http.ResponseWriter, r *http.Request) {
+		var in contracts.EmailLook
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := svc.LookEmail(r.Context(), in)
 		if err != nil {
 			failed(w, log, err)
 			return
