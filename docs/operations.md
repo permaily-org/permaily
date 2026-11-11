@@ -7,7 +7,7 @@ Runbooks for production. Setup from scratch is in [deploy.md](deploy.md). Every 
 The running enclave hands the root secret to the next release, then the next release is started (ADR 0013). Nothing in AWS is edited to let a release in: each release has a KMS key of its own that only its image can use.
 
 ```sh
-old=v0.7.0 new=v0.8.0
+old=v0.8.0 new=v0.9.0
 mkdir -p /tmp/permaily-$new && cd /tmp/permaily-$new
 gh release download $new --repo permaily-org/permaily
 gh attestation verify permaily.eif --repo permaily-org/permaily --signer-workflow permaily-org/permaily/.github/workflows/release.yml --source-ref refs/heads/main
@@ -15,7 +15,7 @@ sha256sum -c SHA256SUMS --ignore-missing
 mkdir eif && mv permaily.eif pcrs.json eif/
 
 # 1. The key of the new image. deploy/tofu/production.auto.tfvars:
-#      release_keys = { "v0.7.0" = "<its PCR0>", "v0.8.0" = "<jq -r .PCR0 eif/pcrs.json>" }
+#      release_keys = { "v0.8.0" = "<its PCR0>", "v0.9.0" = "<jq -r .PCR0 eif/pcrs.json>" }
 tofu -chdir=deploy/tofu apply          # creates one KMS key and its alias; then `tofu plan` must show no changes
 
 # 2. The running enclave gives the root secret to the new release. The script
