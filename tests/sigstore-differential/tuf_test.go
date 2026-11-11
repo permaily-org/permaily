@@ -47,7 +47,7 @@ func TestSigstoreHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	targets, trusted := read(t, "sigstore_tuf_targets.json"), read(t, "sigstore_trusted_root.json")
+	targets, trusted := read(t, "testdata/tuf/14.targets.json"), read(t, "testdata/tuf/trusted_root.14.json")
 	all := func() [][]byte { return [][]byte{root("13"), root("14"), root("15"), root("16")} }
 	now := time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC)
 	tamper := func(doc []byte, old, new string) []byte {

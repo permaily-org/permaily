@@ -2,7 +2,9 @@ package provenance_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -15,13 +17,26 @@ import (
 	"github.com/permaily-org/permaily/pkg/provenance/provenancetest"
 )
 
-func file(t testing.TB, name string) []byte {
-	t.Helper()
-	b, err := os.ReadFile(name)
+// What is compiled into the package is what Sigstore's keyholders signed: the
+// trust root is the one the targets metadata names, and the keys of the TUF
+// root signed that metadata. It is never older than the fixtures of the
+// history below.
+func TestCompiledInTrustRoot(t *testing.T) {
+	tr, err := provenance.PublicGood()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return b
+	trusted, err := os.ReadFile("sigstore_trusted_root.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(trusted)
+	if p := tr.Publication; p == nil || p.SHA256 != hex.EncodeToString(sum[:]) || p.RootVersion < 16 || p.TargetsVersion < 14 {
+		t.Fatalf("publication %+v", tr.Publication)
+	}
+	if len(tr.Authorities) < 2 || len(tr.Logs) < 2 || len(tr.Timestampers) < 1 {
+		t.Fatalf("%d authorities, %d logs, %d timestamp authorities", len(tr.Authorities), len(tr.Logs), len(tr.Timestampers))
+	}
 }
 
 // What Sigstore really published. In August 2025 its TUF root was version 12
@@ -45,18 +60,14 @@ func TestSigstoreHistory(t *testing.T) {
 		t.Fatalf("with the trust root of 2025: %v", err)
 	}
 
-	targets, trusted := file(t, "sigstore_tuf_targets.json"), file(t, "sigstore_trusted_root.json")
+	targets, trusted := read(t, "tuf/14.targets.json"), read(t, "tuf/trusted_root.14.json")
 	update := provenance.Update{Roots: [][]byte{root("13"), root("14"), root("15"), root("16")}, Targets: targets, TrustedRoot: trusted}
 	updated, err := old.Update(update, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := provenance.PublicGood()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if *updated.Publication != *compiled.Publication || updated.Publication.RootVersion != 16 || updated.Publication.TargetsVersion != 14 || len(updated.Logs) != 2 {
-		t.Fatalf("updated to %+v, compiled in %+v", updated.Publication, compiled.Publication)
+	if p := updated.Publication; p.RootVersion != 16 || p.TargetsVersion != 14 || !strings.HasPrefix(p.SHA256, "6494e21e") || len(updated.Logs) != 2 {
+		t.Fatalf("updated to %+v with %d logs", p, len(updated.Logs))
 	}
 	if _, err := provenance.Verify(rekor2Canary, updated, canary, canaryPCRs); err != nil {
 		t.Fatalf("after the update: %v", err)
@@ -438,4 +449,47 @@ func TestTUFSignatures(t *testing.T) {
 	if _, err := provenance.FromTUF(a.TUFRoot(), empty, []byte(`{}`)); !errors.Is(err, provenance.ErrMalformed) {
 		t.Errorf("a signed file that is not a trust root: %v", err)
 	}
+}
+
+// The fuzzer changes an update. It has no keyholder's key, so the only trust
+// roots it can get accepted are the ones the keyholders signed for.
+func FuzzTrustUpdate(f *testing.F) {
+	a, err := provenancetest.New()
+	if err != nil {
+		f.Fatal(err)
+	}
+	inUse := a.TrustRoot()
+	sameTargets, same, err := a.Publish()
+	if err != nil {
+		f.Fatal(err)
+	}
+	if err := a.NextLog(); err != nil {
+		f.Fatal(err)
+	}
+	root, err := a.Rotate(2)
+	if err != nil {
+		f.Fatal(err)
+	}
+	targets, trusted, err := a.Publish()
+	if err != nil {
+		f.Fatal(err)
+	}
+	signed := bytes.Clone(trusted)
+	f.Add(root, targets, trusted)
+	f.Add([]byte{}, sameTargets, same)
+	f.Add(read(f, "tuf/16.root.json"), read(f, "tuf/14.targets.json"), read(f, "tuf/trusted_root.14.json"))
+	f.Add([]byte(`{}`), []byte(`{"signatures":[],"signed":{}}`), []byte(`{}`))
+	f.Fuzz(func(t *testing.T, root, targets, trusted []byte) {
+		u := provenance.Update{Targets: targets, TrustedRoot: trusted}
+		if len(root) > 0 {
+			u.Roots = [][]byte{root}
+		}
+		next, err := inUse.Update(u, time.Now())
+		if err != nil {
+			return
+		}
+		if !bytes.Equal(trusted, same) && !bytes.Equal(trusted, signed) {
+			t.Fatalf("accepted %+v for a trust root nobody signed for", next.Publication)
+		}
+	})
 }

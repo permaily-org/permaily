@@ -11,7 +11,8 @@
 # <next> was built by the release workflow and published in the public
 # transparency log after <running>, and that its KMS key can only ever be used
 # by that image. This script only fetches the public files it needs for that:
-# each pcrs.json and the Sigstore bundle GitHub holds for it.
+# each pcrs.json and the Sigstore bundle GitHub holds for it, and the trust
+# root Sigstore publishes today (scripts/sigstore-trust-root.sh --send).
 #
 # Environment:
 #   PERMAILY_API          base URL of the enclave (default https://api.permaily.com)
@@ -44,6 +45,12 @@ fetch() {
 
 fetch from "$1"
 fetch to "$2"
+
+# The next release may be signed with something Sigstore added after the
+# running image was built. Give the enclave the trust root Sigstore publishes
+# today: it takes it only with the signatures of Sigstore's keyholders, and it
+# is a no-op when it has it already.
+PERMAILY_API=$api PERMAILY_ADMIN_TOKEN=$token "$(dirname "$0")/sigstore-trust-root.sh" --send
 
 b64() { base64 -w0 "$1" > "$1.b64"; }
 for f in from/pcrs.json from/bundle.json to/pcrs.json to/bundle.json; do b64 "$work/$f"; done

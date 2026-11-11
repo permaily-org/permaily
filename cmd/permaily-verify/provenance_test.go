@@ -197,7 +197,7 @@ func TestTrustUpdate(t *testing.T) {
 	write(current, "trusted_root.json", read("../../pkg/provenance/sigstore_trusted_root.json"))
 	write(current, "targets.json", read("../../pkg/provenance/sigstore_tuf_targets.json"))
 	var out bytes.Buffer
-	if !checkTrustUpdate(&out, compiled, current, now, false) || !strings.Contains(out.String(), "there is nothing newer") {
+	if !checkTrustUpdate(&out, compiled, current, time.Now(), false) || !strings.Contains(out.String(), "there is nothing newer") {
 		t.Fatalf("the trust root compiled in:\n%s", out.String())
 	}
 
@@ -207,6 +207,9 @@ func TestTrustUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	current = t.TempDir()
+	write(current, "trusted_root.json", read(fixtures+"tuf/trusted_root.14.json"))
+	write(current, "targets.json", read(fixtures+"tuf/14.targets.json"))
 	for _, v := range []string{"13", "14", "15", "16"} {
 		write(current, v+".root.json", read(fixtures+"tuf/"+v+".root.json"))
 	}
