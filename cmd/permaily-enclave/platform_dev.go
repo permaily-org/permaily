@@ -50,10 +50,13 @@ type platform struct {
 	updateTrust func(provenance.Update) (*attestation.SigstoreStatus, error)
 	// anchors describes the records that cannot be put back to an earlier copy.
 	anchors func() *attestation.AnchorStatus
-	// accounts is sign-in and accounts (ADR 0017); nil until the image can
-	// send mail. devRoutes are served by the app's host in dev mode only.
+	// accounts is sign-in and accounts (ADR 0017); nil in an image that
+	// sends no mail. devRoutes are served by the app's host in dev mode only.
 	accounts  *accounts.Service
 	devRoutes map[string]http.Handler
+	// mail describes who else could get a copy of the mail the enclave
+	// sends, as SES answers; nil when it sends none.
+	mail func() *attestation.MailStatus
 }
 
 // logOutput is the terminal in dev mode.

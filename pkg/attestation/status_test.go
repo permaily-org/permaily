@@ -101,3 +101,65 @@ func TestFetchStatus(t *testing.T) {
 		}
 	})
 }
+
+// The enclave sends on this and a verifier judges with it: every state but
+// the ones known to be harmless must count as not clean.
+func TestMailStateClean(t *testing.T) {
+	const none, set, unverified, absent = attestation.MailNoConfigurationSet, attestation.MailConfigurationSet, attestation.MailNotVerified, attestation.MailAbsent
+	for _, c := range []struct {
+		domain, address string
+		want            bool
+	}{
+		{none, absent, true},
+		{none, none, true},
+		{none, unverified, true},
+		// A configuration set anywhere applies to what is sent.
+		{set, absent, false},
+		{none, set, false},
+		{set, set, false},
+		{set, none, false},
+		// Without a domain identity that may send, another identity's settings apply.
+		{absent, absent, false},
+		{absent, none, false},
+		{unverified, absent, false},
+		{unverified, none, false},
+		// What this code does not know is not taken for good.
+		{"", "", false},
+		{none, "", false},
+		{"", absent, false},
+		{none, "archived", false},
+		{"NO_CONFIGURATION_SET", absent, false},
+	} {
+		if got := (attestation.MailState{DomainIdentity: c.domain, AddressIdentity: c.address}).Clean(); got != c.want {
+			t.Errorf("domain %q, address %q: clean %v, want %v", c.domain, c.address, got, c.want)
+		}
+	}
+}
+
+// The names in the JSON are what verifiers in other languages read.
+func TestMailStatusJSON(t *testing.T) {
+	at := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	state := attestation.MailState{DomainIdentity: attestation.MailNoConfigurationSet, AddressIdentity: attestation.MailAbsent}
+	got, err := json.Marshal(attestation.Status{Commit: "abc", Mail: &attestation.MailStatus{
+		Domain: "mail.example.org", Address: "no-reply@mail.example.org", CheckedAt: at.Add(time.Minute), State: &state, WatchedSince: at,
+		History: []attestation.MailObservation{{MailState: state, FirstSeen: at, LastSeen: at.Add(time.Minute)}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"commit":"abc","mail":{"domain":"mail.example.org","address":"no-reply@mail.example.org","checked_at":"2026-11-11T12:01:00Z",` +
+		`"state":{"domain_identity":"no_configuration_set","address_identity":"absent"},"watched_since":"2026-11-11T12:00:00Z",` +
+		`"history":[{"domain_identity":"no_configuration_set","address_identity":"absent","first_seen":"2026-11-11T12:00:00Z","last_seen":"2026-11-11T12:01:00Z"}]}}`
+	if string(got) != want {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+	// Before the first reading there is no state, and nothing made up for it.
+	got, _ = json.Marshal(attestation.MailStatus{Domain: "mail.example.org", Address: "no-reply@mail.example.org", Failing: true})
+	if string(got) != `{"domain":"mail.example.org","address":"no-reply@mail.example.org","failing":true}` {
+		t.Fatalf("got %s", got)
+	}
+	// An image that sends no mail has no section.
+	if got, _ = json.Marshal(attestation.Status{Commit: "abc"}); string(got) != `{"commit":"abc"}` {
+		t.Fatalf("got %s", got)
+	}
+}

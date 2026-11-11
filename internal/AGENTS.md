@@ -10,6 +10,7 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 | `contracts` | types and error codes that cross the boundary (API, MCP, command line, web app); imports nothing of the service (F2) |
 | `domain` | rules that need only their arguments: session lifetimes, what an address or an invitation looks like; imports only `contracts` (F2) |
 | `services/accounts` | accounts and sign-in (ADR 0017): invitations, sign-in by email, sessions; knows nothing of HTTP (F2) |
+| `sesmail` | the service's own mail through SES (`Sender`), and the watch that reads whether SES would give someone else a copy of it and keeps every state seen, for `/status` (ADR 0021) |
 | `httpapi` | `/attestation`, `/status` (the key that locks the root secret, the TLS identity), `/version`, mailbox API, `/v1/admin/handoff`, `/v1/admin/invitations`, and the web app's own API under `/api/v1/` (cookie, same origin) |
 | `router` | dispatch by Host (app, api, mcp, inbox) and security headers |
 | `webui` | embeds the SPA build (`dist/` is copied in at build time) |
@@ -37,6 +38,7 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 - An account that cannot be read (a record that does not verify, or whose committed version is gone) is an error, never "no such account": a sign-up would replace it.
 - The answer to starting a sign-in is the same, and as fast, whether the address has an account or not.
 - Account, session and sign-in identifiers stay out of logs too: `httpapi` strips them from the errors it logs, and a mail system's errors, which carry addresses, are never logged.
+- Mail the enclave sends goes out only through `sesmail.Sender` with its `Watch` set: no message leaves while SES says a configuration set applies to it, or does not say. Never name a configuration set in a request, and never send through another path. An error from SES is passed on and logged only as its status and its kind, never its text, which names addresses.
 - The root secret never leaves the enclave in the clear, not even to KMS. Never create one when a record cannot be read or opened: an image without its record waits. Never accept a root record, or hand the secret over, on anything but the checks in `keys.Root`; who asks is not one of them.
 - Which builds are releases (repository, workflow, ref) and Sigstore's trust root are compiled into the image (`deploy/enclave.json`, `pkg/provenance`). A change to either changes who can receive the root secret: it needs an ADR. A running enclave takes a newer trust root only through `provenance.TrustRoot.Update`, which never changes who issues signing certificates; keep it that way, and keep nothing of it across a restart.
 

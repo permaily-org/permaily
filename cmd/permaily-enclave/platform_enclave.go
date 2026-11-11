@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -25,6 +26,7 @@ import (
 	"github.com/permaily-org/permaily/internal/nsm"
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/services/accounts"
+	"github.com/permaily-org/permaily/internal/sesmail"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
 	"github.com/permaily-org/permaily/pkg/attestation"
@@ -50,10 +52,13 @@ type platform struct {
 	updateTrust func(provenance.Update) (*attestation.SigstoreStatus, error)
 	// anchors describes the records that cannot be put back to an earlier copy.
 	anchors func() *attestation.AnchorStatus
-	// accounts is sign-in and accounts (ADR 0017); nil until the image can
-	// send mail. devRoutes are served by the app's host in dev mode only.
+	// accounts is sign-in and accounts (ADR 0017); nil in an image that
+	// sends no mail. devRoutes are served by the app's host in dev mode only.
 	accounts  *accounts.Service
 	devRoutes map[string]http.Handler
+	// mail describes who else could get a copy of the mail the enclave
+	// sends, as SES answers; nil when it sends none.
+	mail func() *attestation.MailStatus
 }
 
 // logOutput writes to the console and, when a log port is set, to the parent
@@ -132,14 +137,27 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			if cfg.anchorRetentionDays < 1 {
 				return nil, errors.New("-anchor-bucket needs -anchor-retention-days")
 			}
-			anchored := &store.Anchored{Records: awsStore, Commits: &store.S3Commits{
+			commits := &store.S3Commits{
 				S3: s3Client, Bucket: cfg.anchorBucket, Key: root.CommitKey,
 				Retention: time.Duration(cfg.anchorRetentionDays) * 24 * time.Hour,
-			}}
-			records = anchored
-			p.anchors = func() *attestation.AnchorStatus {
-				return anchorStatus(anchored, cfg.anchorBucket, cfg.anchorRetentionDays)
 			}
+			anchored := &store.Anchored{Records: awsStore, Commits: commits}
+			records = anchored
+			// Accounts keep their records apart: /status names the records it
+			// lists, and the name of an account's record is its identifier.
+			var accountRecords *store.Anchored
+			if cfg.mailFrom != "" {
+				accountRecords = &store.Anchored{Records: awsStore, Commits: commits}
+				if err := p.signIn(ctx, cfg, hosts, awsCfg, egress, accountRecords, awsStore, root, log); err != nil {
+					return nil, err
+				}
+			}
+			p.anchors = func() *attestation.AnchorStatus {
+				return anchorStatus(anchored, accountRecords, cfg.anchorBucket, cfg.anchorRetentionDays)
+			}
+		} else if cfg.mailFrom != "" {
+			// An account's ways to sign in must not come back (ADR 0017).
+			return nil, errors.New("-mail-from needs -anchor-bucket")
 		}
 		identity = &tlsacme.Sealed{Records: records, Keys: p.keys, Name: "tls-" + directory.Host}
 	}
@@ -150,15 +168,50 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	return p, nil
 }
 
+// signIn turns accounts on: the mail of a sign-in goes out through SES, and
+// only while SES says nobody else gets a copy of it.
+func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, awsCfg aws.Config, egress *http.Client, records store.Records, entries store.Entries, root *keys.Root, log *slog.Logger) error {
+	_, domain, ok := strings.Cut(cfg.mailFrom, "@")
+	if !ok || domain == "" {
+		return errors.New("-mail-from is not an address")
+	}
+	watch := &sesmail.Watch{
+		HTTP: egress, Credentials: awsCfg.Credentials, Region: cfg.awsRegion,
+		Domain: domain, Address: cfg.mailFrom, Log: log,
+	}
+	go watch.Run(ctx)
+	p.mail = watch.Status
+	var err error
+	p.accounts, err = accounts.New(accounts.Config{
+		Records: records, Entries: entries, Keys: root,
+		Mailer: &sesmail.Sender{
+			HTTP: egress, Credentials: awsCfg.Credentials, Region: cfg.awsRegion,
+			Name: "Permaily", Address: cfg.mailFrom, Watch: watch, Log: log,
+		},
+		AppURL: "https://" + hosts.App, Log: log,
+	})
+	return err
+}
+
+// accountRecord stands for the name of an account's record in /status: the
+// name is the account's identifier, and what /status says is public.
+const accountRecord = "the record of an account"
+
 // anchorStatus reports the records an enclave refuses an earlier copy of, as
-// far as it read or wrote them since it started.
-func anchorStatus(a *store.Anchored, bucket string, retentionDays int) *attestation.AnchorStatus {
+// far as it read or wrote them since it started. Of the records of accounts
+// (nil when there are none) it reports only that one went back, never which.
+func anchorStatus(a, ofAccounts *store.Anchored, bucket string, retentionDays int) *attestation.AnchorStatus {
 	st := &attestation.AnchorStatus{Bucket: bucket, RetentionDays: retentionDays, Records: []attestation.AnchoredRecord{}}
 	for _, c := range a.Seen() {
 		st.Records = append(st.Records, attestation.AnchoredRecord{Name: c.Name, Version: c.Version, CommittedAt: c.At, LockedUntil: c.LockedUntil})
 	}
 	for _, r := range a.Regressions() {
 		st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: r.Name, Had: r.Had, Found: r.Found, At: r.At})
+	}
+	if ofAccounts != nil {
+		for _, r := range ofAccounts.Regressions() {
+			st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: accountRecord, Had: r.Had, Found: r.Found, At: r.At})
+		}
 	}
 	return st
 }

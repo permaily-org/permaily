@@ -51,7 +51,7 @@ Each step ends deployed and verified, like the releases so far. The estimates ar
 Step 1, in the order it is built:
 
 - [x] The layers, and the core of accounts: invitations made by the operator (`scripts/invite.sh`), signing up and signing in by email with a code or a link, sessions. On in dev mode only (2026-11-11).
-- [ ] Outgoing mail through SES, which turns accounts on in the image: the SES identity and its DNS records, the host's allowlist, the threat model, asking AWS to leave the sandbox, a staging image.
+- [x] Outgoing mail through SES, which turns accounts on in the image: the SES identity and its DNS records, the host's allowlist, the watch on who else gets a copy of what is sent (ADR 0021), the threat model, a staging image (2026-11-11). Asking AWS to leave the sandbox is under "Before real users".
 - [ ] The sign-in and sign-up screens of the web app.
 - [ ] Passkeys, the "passkey only" switch and recovery codes.
 - [ ] Google, GitHub, Meta and Microsoft.

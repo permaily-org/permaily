@@ -173,6 +173,25 @@ To send a test message, connect to `inbox.permaily.com:25` with STARTTLS from a 
 
 To forward a Gmail account: in Gmail, Settings > Forwarding > Add a forwarding address (the mailbox address), read the confirmation code from `/v1/mailbox`, enter it in Gmail, then enable forwarding.
 
+## Invite someone
+
+Signing up needs an invitation: a code that works once, for thirty days, for one new account.
+
+```sh
+scripts/invite.sh        # one; scripts/invite.sh 5 for five, at most 100 at a time
+```
+
+It prints each code once (the enclave keeps only its hash) and reads the admin token from `~/.config/permaily/admin-token`. Give the person the code, or the link `https://app.permaily.com/sign-up?invitation=<code>`. Whoever holds the admin token decides who may sign up, and nothing else of an account. An invitation that was not used cannot be taken back; it ends by itself.
+
+## Outgoing mail
+
+The enclave sends its own mail (sign-in messages) through SES in `us-east-2`, from the address in `mail_from` of `deploy/enclave.json`, on a domain of its own (`deploy/tofu/ses.tf`: the identity, DKIM, the bounce domain with SPF, DMARC).
+
+- **Nobody receives the sign-in message.** Look at the enclave's logs: `sesmail: SES refused a message` carries the kind of error SES gave (`MessageRejected` while the account is in the sandbox and the recipient is not verified; `AccountSuspendedException`, `SendingPausedException` when AWS stopped the account), and `sesmail: SES could not be reached` means the host does not let the enclave reach `email.us-east-2.amazonaws.com:443` (an old `permaily-host`). The address is never logged. `aws sesv2 get-account` says whether the account is out of the sandbox and how much it may send; `aws sesv2 get-email-identity --email-identity <domain>` says whether DKIM and the bounce domain verified.
+- **The sandbox.** A new SES account sends only to verified addresses, 200 messages a day. Ask AWS for production access once, in the console (SES > Account dashboard > Request production access) or with `aws sesv2 put-account-details`: transactional mail, sign-in messages only, to addresses whose owners asked for them. Until then, verify the address of each person who tests (`aws sesv2 create-email-identity --email-identity <address>`; they get a message from AWS to confirm) and delete it afterwards.
+- **The verifier fails on `mail`.** The enclave saw a configuration set on the domain or on the address it sends from, which could give whoever set it a copy of every message, sign-in codes included (ADR 0021); or it cannot read those settings. Nobody signs in by mail meanwhile. Find out who did it (CloudTrail: `PutEmailIdentityConfigurationSetAttributes`, `CreateEmailIdentity`, `CreateConfigurationSet`, `PutConfigurationSetArchivingOptions`), remove it (`aws sesv2 put-email-identity-configuration-set-attributes --email-identity <domain>` with no set, or delete the address identity), and look in the archive for what was copied: every account that signed in by mail in that time may have been entered. The verifier keeps failing until the enclave restarts, because the history is the point; restart it only after writing down what happened, and say so in public. Never add a configuration set to that identity, for metrics or for anything else.
+- **Bounces and complaints.** SES stops writing to an address that bounced for good or whose owner marked the mail as spam (the account's suppression list). A person who cannot get the message may be on it: `aws sesv2 get-suppressed-destination --email-address <address>`, and `delete-suppressed-destination` once their mailbox works.
+
 ## Certificates and the ACME account
 
 `permaily-verify` checks the CAA records and Certificate Transparency (docs/verification.md). A failure of "certificates outside the enclave" is an incident: find who asked for the certificate it lists.

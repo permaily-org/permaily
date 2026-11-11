@@ -83,6 +83,28 @@ func TestStatus(t *testing.T) {
 		}
 	})
 
+	t.Run("mail the enclave sends", func(t *testing.T) {
+		state := attestation.MailState{DomainIdentity: attestation.MailNoConfigurationSet, AddressIdentity: attestation.MailAbsent}
+		mail := &attestation.MailStatus{
+			Domain: "mail.example.org", Address: "no-reply@mail.example.org", CheckedAt: at, State: &state, WatchedSince: at,
+			History: []attestation.MailObservation{{MailState: state, FirstSeen: at, LastSeen: at}},
+		}
+		rec := call(httpapi.Status(httpapi.StatusSources{Mail: func() *attestation.MailStatus { return mail }}), http.MethodGet)
+		var got attestation.Status
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || !reflect.DeepEqual(got.Mail, mail) {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body)
+		}
+		// An image that sends no mail has no section, not an empty one.
+		for name, src := range map[string]httpapi.StatusSources{
+			"no source":      {},
+			"nothing to say": {Mail: func() *attestation.MailStatus { return nil }},
+		} {
+			if rec := call(httpapi.Status(src), http.MethodGet); rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"mail"`) {
+				t.Fatalf("%s: status %d: %s", name, rec.Code, rec.Body)
+			}
+		}
+	})
+
 	t.Run("other methods", func(t *testing.T) {
 		if rec := call(httpapi.Status(httpapi.StatusSources{}), http.MethodPost); rec.Code != http.StatusMethodNotAllowed {
 			t.Fatalf("status %d", rec.Code)
