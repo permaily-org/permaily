@@ -110,6 +110,10 @@ func (s *Service) StartPasskey(ctx context.Context, who *Authenticated) (*contra
 	if err != nil {
 		return nil, err
 	}
+	if doc.State == contracts.AccountClosing {
+		// Told now, and not after the person made the passkey.
+		return nil, contracts.ErrAccountClosing
+	}
 	if len(doc.Passkeys) >= domain.MaxPasskeys {
 		return nil, contracts.ErrTooManyPasskeys
 	}
@@ -424,8 +428,9 @@ func (s *Service) Recover(ctx context.Context, in contracts.Recovery, userAgent 
 	if !doc.PasskeyOnly || !s.recoveryTry(address, right) || !right {
 		return nil, "", contracts.ErrInvalidCode
 	}
-	// Of two uses of one code at the same time, the second finds it gone.
-	_, err = s.change(ctx, doc.ID, func(doc *accountDoc) error {
+	// Of two uses of one code at the same time, the second finds it gone. A
+	// closing account takes the code too: its person signs in to cancel.
+	_, err = s.rewrite(ctx, doc.ID, func(doc *accountDoc) error {
 		i := doc.recoveryCode(hash)
 		if i < 0 || !doc.PasskeyOnly || doc.Address != address {
 			return contracts.ErrInvalidCode

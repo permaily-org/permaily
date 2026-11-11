@@ -17,6 +17,8 @@ The web app (React, TypeScript, Vite, Tailwind v4, React Router), managed with *
 - Opening a sign-in link never signs anyone in: the link may come from someone else, to get a person into an account that is not theirs. The page asks `auth/email/look` whose sign-in it is, shows the address the server gave and calls `auth/email/finish` only after the person says so (`src/pages/auth/LinkConfirmation.tsx`). Keep both actions of that screen the same weight, and focus off them when it opens.
 - The text after starting a sign-in must not say or imply whether the address has an account, nor promise a code: the message may carry only the link.
 - Every route except `/sign-in` and `/sign-up` sits inside `RequireSession` in `src/App.tsx`. A new route goes there.
+- An account that is being deleted shows `AccountClosing` and nothing else of the app: `RequireSession` does that for every route inside it, so a new route needs nothing more. A request refused with `account_closing` is told to the session by `src/lib/api.ts`; a part of the app that calls the API passes its failures through `failed` of `useSession`, which answers null when the session ended or the account is closing, and then says nothing.
+- Deleting the account never happens by default: the dialog takes focus on its question, Enter deletes nothing, and the person types the account's address first (`src/pages/settings/account/DeleteAccount.tsx`). Dates go through `Intl` (`src/lib/closing.ts`), in the person's own time zone.
 
 ## Commands
 

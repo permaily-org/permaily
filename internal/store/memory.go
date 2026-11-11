@@ -66,11 +66,24 @@ func (s *Memory) RecordNames() []string {
 	return names
 }
 
-// DeleteRecord removes a record, as whoever runs the storage can.
-func (s *Memory) DeleteRecord(name string) {
+// ListRecords implements RecordTable.
+func (s *Memory) ListRecords(_ context.Context, prefix string, limit int) ([]string, error) {
+	var names []string
+	for _, name := range s.RecordNames() {
+		if strings.HasPrefix(name, prefix) && len(names) < limit {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+// DeleteRecord implements RecordTable. Tests also use it to delete a record
+// the way whoever runs the storage can.
+func (s *Memory) DeleteRecord(_ context.Context, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.records, name)
+	return nil
 }
 
 // GetMailbox implements Store.
@@ -196,13 +209,13 @@ func (s *Memory) DeleteEntry(_ context.Context, partition, key string) error {
 }
 
 // ListEntries implements Entries.
-func (s *Memory) ListEntries(_ context.Context, partition, prefix string, limit int) ([]Entry, error) {
+func (s *Memory) ListEntries(_ context.Context, partition, prefix, after string, limit int) ([]Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.Now()
 	var out []Entry
 	for _, e := range s.entries {
-		if e.Partition == partition && strings.HasPrefix(e.Key, prefix) && (e.ExpiresAt.IsZero() || e.ExpiresAt.After(now)) {
+		if e.Partition == partition && strings.HasPrefix(e.Key, prefix) && e.Key > after && (e.ExpiresAt.IsZero() || e.ExpiresAt.After(now)) {
 			e.Value = slices.Clone(e.Value)
 			out = append(out, e)
 		}
@@ -212,6 +225,34 @@ func (s *Memory) ListEntries(_ context.Context, partition, prefix string, limit 
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// DeletePartition implements Entries.
+func (s *Memory) DeletePartition(_ context.Context, partition string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, e := range s.entries {
+		if e.Partition == partition {
+			delete(s.entries, k)
+		}
+	}
+	return nil
+}
+
+// AllEntries returns every entry stored, the expired ones too, in the order
+// of their partitions and keys: what whoever runs the storage sees of them.
+func (s *Memory) AllEntries() []Entry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Entry, 0, len(s.entries))
+	for _, e := range s.entries {
+		e.Value = slices.Clone(e.Value)
+		out = append(out, e)
+	}
+	slices.SortFunc(out, func(a, b Entry) int {
+		return strings.Compare(memoryKey(a.Partition, a.Key), memoryKey(b.Partition, b.Key))
+	})
+	return out
 }
 
 // SetEntry writes an entry as whoever runs the storage can: whatever was

@@ -73,6 +73,17 @@ type Records interface {
 	PutRecord(ctx context.Context, r *Record, create bool) error
 }
 
+// RecordTable is Records that can also be listed and deleted from: where
+// Anchored keeps each version of a record under a name of its own.
+type RecordTable interface {
+	Records
+	// ListRecords returns up to limit names of the records whose name starts
+	// with prefix, in order.
+	ListRecords(ctx context.Context, prefix string, limit int) ([]string, error)
+	// DeleteRecord deletes a record. One that is not there is deleted already.
+	DeleteRecord(ctx context.Context, name string) error
+}
+
 // Entry is a small row that belongs to an account or leads to one: a session,
 // an invitation, the pointer from an address to its account. Value is text
 // (JSON); what must not be made or changed by hand is signed by the caller
@@ -102,8 +113,12 @@ type Entries interface {
 	// two callers, only one deletes.
 	DeleteEntry(ctx context.Context, partition, key string) error
 	// ListEntries returns up to limit entries of a partition whose key starts
-	// with prefix, in the order of their keys, without the expired ones.
-	ListEntries(ctx context.Context, partition, prefix string, limit int) ([]Entry, error)
+	// with prefix and comes after the key after ("" for the first ones), in
+	// the order of their keys, without the expired ones.
+	ListEntries(ctx context.Context, partition, prefix, after string, limit int) ([]Entry, error)
+	// DeletePartition deletes every entry of a partition, the expired ones
+	// too: what is left of an account that was removed.
+	DeletePartition(ctx context.Context, partition string) error
 }
 
 // Store is the persistence interface used by the inbox.

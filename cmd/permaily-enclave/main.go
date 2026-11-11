@@ -150,6 +150,10 @@ func run(cfg config, log *slog.Logger) error {
 		app.Handle("/", webui.Handler())
 		byHost[hosts.App] = app
 		api.Handle("/v1/admin/invitations", httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Invitations(p.accounts, log)))
+		// The operator's tool looks at accounts and changes none.
+		operator := httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Accounts(p.accounts, log))
+		api.Handle("/v1/admin/accounts", operator)
+		api.Handle("/v1/admin/accounts/", operator)
 	}
 
 	if cfg.mailboxID != "" {

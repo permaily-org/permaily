@@ -183,6 +183,17 @@ scripts/invite.sh        # one; scripts/invite.sh 5 for five, at most 100 at a t
 
 It prints each code once (the enclave keeps only its hash) and reads the admin token from `~/.config/permaily/admin-token`. Give the person the code, or the link `https://app.permaily.com/sign-up?invitation=<code>`. Whoever holds the admin token decides who may sign up, and nothing else of an account. An invitation that was not used cannot be taken back; it ends by itself.
 
+## See the accounts
+
+```sh
+scripts/accounts.sh               # every account: identifier, address, name, state, passkeys, sessions
+scripts/accounts.sh acc_...       # one
+```
+
+It asks the enclave (`GET /v1/admin/accounts`, with the admin token from `~/.config/permaily/admin-token`), which answers from the signed records: the table in DynamoDB shows what is stored, this shows what the enclave accepts. It changes nothing. `unreadable` counts accounts in the list whose record could not be read or does not verify: more than zero means the storage was changed by hand or is failing, and the enclave's log says which kind without naming the account.
+
+A person deletes their own account, from Settings; it is removed seven days later, within ten minutes of the moment it is due, or as soon as it is next used. Until then they can sign in and cancel. There is no way to delete an account for someone, and none to bring one back.
+
 ## Outgoing mail
 
 The enclave sends its own mail (sign-in messages) through SES in `us-east-2`, from the address in `mail_from` of `deploy/enclave.json`, on a domain of its own (`deploy/tofu/ses.tf`: the identity, DKIM, the bounce domain with SPF, DMARC).

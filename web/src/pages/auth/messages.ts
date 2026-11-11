@@ -18,6 +18,7 @@ const messages: Record<ApiErrorCode, string> = {
     'That is the only passkey of an account that signs in with passkeys only. Add another, or turn passkey only off first.',
   passkey_needed: 'Add a passkey before turning on passkey only.',
   passkey_only_off: 'There are recovery codes only while passkey only is on.',
+  account_closing: 'This account is being deleted. Cancel the deletion to change anything.',
   other: 'Something went wrong on our side. Try again in a moment.',
 }
 

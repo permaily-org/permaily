@@ -5,11 +5,15 @@
 
 export type Account = {
   id: string
-  state: string
+  /** `closing` once the person asked to delete the account, until its day comes or they cancel. */
+  state: 'active' | 'closing'
   address: string
+  /** Empty when the person gave none. */
   name: string
   language: string
   created_at: string
+  /** When a closing account is removed. There only while it is closing. */
+  closes_at?: string
 }
 
 export type Session = {
@@ -66,6 +70,7 @@ export type ApiErrorCode =
   | 'last_passkey'
   | 'passkey_needed'
   | 'passkey_only_off'
+  | 'account_closing'
   | 'network'
   | 'other'
 
@@ -82,6 +87,7 @@ const known: ReadonlySet<string> = new Set([
   'last_passkey',
   'passkey_needed',
   'passkey_only_off',
+  'account_closing',
 ])
 
 export class ApiError extends Error {
@@ -96,6 +102,17 @@ export class ApiError extends Error {
 /** The code of a failure, whatever was thrown. */
 export function errorCode(error: unknown): ApiErrorCode {
   return error instanceof ApiError ? error.code : 'other'
+}
+
+let closingHeard: (() => void) | null = null
+
+/**
+ * Whom to tell that a request was refused because the account is being deleted: the session, which then shows
+ * that and nothing else. Any request can be the one that finds out, such as a change made in a tab that was
+ * open before the deletion was asked for in another.
+ */
+export function onAccountClosing(listener: (() => void) | null) {
+  closingHeard = listener
 }
 
 /** How long a request may take before it counts as no answer. */
@@ -136,6 +153,7 @@ async function request<T>(
   } catch {
     // An answer that is not the API's own, such as a proxy's error page.
   }
+  if (code === 'account_closing') closingHeard?.()
   if (typeof code === 'string' && known.has(code)) throw new ApiError(code as ApiErrorCode)
   if (response.status === 401) throw new ApiError('unauthorized')
   if (response.status === 404) throw new ApiError('not_found')
@@ -179,6 +197,31 @@ export function me(): Promise<Me> {
 
 export function signOut(): Promise<void> {
   return request('POST', '/api/v1/auth/sign-out')
+}
+
+/** An account as the server answered it, or a failure: a change is never taken from an answer that is not one. */
+async function account(answer: Promise<Partial<Account> | null>): Promise<Account> {
+  const got = await answer
+  if (typeof got?.id !== 'string' || typeof got.address !== 'string') throw new ApiError('other')
+  return { ...(got as Account), name: typeof got.name === 'string' ? got.name : '' }
+}
+
+/** Changes the account's name. An empty one takes the name away. */
+export function renameAccount(name: string): Promise<Account> {
+  return account(request('PATCH', '/api/v1/account', { name }))
+}
+
+/**
+ * Asks to delete the account. It is closing from now, every other device is signed out, and it is removed
+ * when `closes_at` comes. Asking again changes nothing: the day stays.
+ */
+export function deleteAccount(): Promise<Account> {
+  return account(request('POST', '/api/v1/account/delete'))
+}
+
+/** Keeps an account that was closing: it is active again, as it was. */
+export function cancelDeletion(): Promise<Account> {
+  return account(request('POST', '/api/v1/account/delete/cancel'))
 }
 
 /** Starts a sign-in with a passkey. Nothing is asked: the passkey says which account it is for. */

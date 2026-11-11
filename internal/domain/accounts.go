@@ -156,6 +156,36 @@ func PasskeyName(s string) (string, error) {
 	return s, nil
 }
 
+// maxAccountName is the longest name a person gives their account, in characters.
+const maxAccountName = 80
+
+// AccountName returns the name a person gave their account as it is kept:
+// trimmed. It is one line that can be shown, short, and may be empty: a
+// person takes their name away the same way they give one.
+func AccountName(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if !utf8.ValidString(s) || utf8.RuneCountInString(s) > maxAccountName {
+		return "", contracts.ErrInvalidAccountName
+	}
+	for _, c := range s {
+		if !unicode.IsPrint(c) {
+			return "", contracts.ErrInvalidAccountName
+		}
+	}
+	return s, nil
+}
+
+// AccountClosing is how long an account that its person asked to delete can
+// still be kept, by cancelling (ADR 0017).
+const AccountClosing = 7 * 24 * time.Hour
+
+// AccountsPage is how many accounts the operator's tool is shown at a time,
+// at most and when it does not say.
+const (
+	MaxAccountsPage     = 100
+	DefaultAccountsPage = 50
+)
+
 // Recovery codes (ADR 0017), for an account that signs in with passkeys
 // only. They are written like invitations and are longer: their hashes are
 // in the account's record, which whoever runs the storage reads, and sixteen

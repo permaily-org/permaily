@@ -707,7 +707,7 @@ func TestPasskeyOnly(t *testing.T) {
 
 // counting counts what the storage is asked.
 type counting struct {
-	store.Records
+	Records
 	store.Entries
 	mu       sync.Mutex
 	gets     int
@@ -914,7 +914,7 @@ func TestPasskeysWrittenByHand(t *testing.T) {
 	who := w.who(cookie)
 	id := ana.Account.ID
 	sessions := func() int {
-		list, err := w.mem.ListEntries(ctx, accountPartition(id), sessionPrefix, 1000)
+		list, err := w.mem.ListEntries(ctx, accountPartition(id), sessionPrefix, "", 1000)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -966,7 +966,7 @@ func TestPasskeysWrittenByHand(t *testing.T) {
 	if me, got, err = w.signInWith(theirs, credential); !errors.Is(err, contracts.ErrInvalidPasskey) || me != nil || got != "" {
 		t.Fatalf("a later version written beside the record: %v", err)
 	}
-	w.mem.DeleteRecord(later.Name)
+	_ = w.mem.DeleteRecord(ctx, later.Name)
 
 	// A passkey that was removed, brought back with the copy of the record
 	// that had it: an earlier copy that verifies.
@@ -997,7 +997,7 @@ func TestPasskeysWrittenByHand(t *testing.T) {
 		t.Fatalf("an earlier copy of the record named as the account: %v", err)
 	}
 	// With the newest version deleted, the one before it is the last in the table.
-	w.mem.DeleteRecord(without.Name)
+	_ = w.mem.DeleteRecord(ctx, without.Name)
 	me, got, err = w.signInWith(auth, removed.ID)
 	refused("a removed passkey with the newest record deleted", me, got, err, before)
 	if !errors.Is(err, store.ErrLost) {
@@ -1018,7 +1018,7 @@ func TestPasskeysWrittenByHand(t *testing.T) {
 	w.mem.SetRecord(back)
 	me, got, err = w.recover("ana@example.org", codes[0])
 	refused("a used recovery code put back", me, got, err, before)
-	w.mem.DeleteRecord(used.Name)
+	_ = w.mem.DeleteRecord(ctx, used.Name)
 	me, got, err = w.recover("ana@example.org", codes[0])
 	refused("a used recovery code with the newest record deleted", me, got, err, before)
 	w.mem.SetRecord(used)
@@ -1090,7 +1090,7 @@ func TestWhatIsStoredOfPasskeys(t *testing.T) {
 		}
 	}
 	for _, partition := range []string{accountPartition(me.Account.ID), loginPartition("ana@example.org")} {
-		entries, _ := w.mem.ListEntries(ctx, partition, "", 100)
+		entries, _ := w.mem.ListEntries(ctx, partition, "", "", 100)
 		for _, e := range entries {
 			for _, code := range hidden {
 				if bytes.Contains(e.Value, []byte(code)) || strings.Contains(e.Key, code) {
@@ -1161,7 +1161,7 @@ func TestPasskeyFailures(t *testing.T) {
 		return e
 	}
 	sessions := func(e *env) int {
-		list, _ := e.w.mem.ListEntries(ctx, accountPartition(e.who.AccountID), sessionPrefix, 1000)
+		list, _ := e.w.mem.ListEntries(ctx, accountPartition(e.who.AccountID), sessionPrefix, "", 1000)
 		return len(list)
 	}
 
@@ -1279,12 +1279,12 @@ func TestPasskeyFailures(t *testing.T) {
 	// Who the passkeys are for comes from the app's URL: one without a host
 	// is no service.
 	for _, bad := range []string{"app.permaily.test", "https://", "%zz", "/sign-in"} {
-		if _, err := New(Config{Records: w.mem, Entries: w.mem, Keys: w.svc.cfg.Keys, Mailer: w.out, AppURL: bad}); err == nil {
+		if _, err := New(Config{Records: w.svc.cfg.Records, Entries: w.mem, Keys: w.svc.cfg.Keys, Mailer: w.out, AppURL: bad}); err == nil {
 			t.Errorf("a service at %q", bad)
 		}
 	}
 	// The port is part of the page's origin, and not of who they are for.
-	dev, err := New(Config{Records: w.mem, Entries: w.mem, Keys: w.svc.cfg.Keys, Mailer: w.out, AppURL: "https://app.permaily.test:8443"})
+	dev, err := New(Config{Records: w.svc.cfg.Records, Entries: w.mem, Keys: w.svc.cfg.Keys, Mailer: w.out, AppURL: "https://app.permaily.test:8443"})
 	if err != nil || dev.rp.ID != "app.permaily.test" || !slices.Equal(dev.rp.Origins, []string{"https://app.permaily.test:8443"}) {
 		t.Fatalf("relying party of a service on a port: %+v %v", dev, err)
 	}

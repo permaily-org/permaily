@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,12 @@ type AccountsService interface {
 	RemovePasskey(ctx context.Context, who *accounts.Authenticated, id string) error
 	SetPasskeyOnly(ctx context.Context, who *accounts.Authenticated, in contracts.PasskeyOnly) (*contracts.PasskeyOnlyState, error)
 	NewRecoveryCodes(ctx context.Context, who *accounts.Authenticated) (*contracts.RecoveryCodes, error)
+
+	UpdateAccount(ctx context.Context, who *accounts.Authenticated, in contracts.AccountUpdate) (*contracts.Account, error)
+	StartDeletion(ctx context.Context, who *accounts.Authenticated) (*contracts.Account, error)
+	CancelDeletion(ctx context.Context, who *accounts.Authenticated) (*contracts.Account, error)
+	AccountRecord(ctx context.Context, id string) (*contracts.AccountRecord, error)
+	AccountRecords(ctx context.Context, after string, limit int) (*contracts.AccountList, error)
 }
 
 // SessionCookie is the cookie of a signed-in browser. The __Host- prefix
@@ -65,7 +72,8 @@ func failed(w http.ResponseWriter, log *slog.Logger, err error) {
 		status = http.StatusNotFound
 	case contracts.ErrTooManyRequests.Code:
 		status = http.StatusTooManyRequests
-	case contracts.ErrLastPasskey.Code, contracts.ErrPasskeyNeeded.Code, contracts.ErrPasskeyOnlyOff.Code, contracts.ErrTooManyPasskeys.Code:
+	case contracts.ErrLastPasskey.Code, contracts.ErrPasskeyNeeded.Code, contracts.ErrPasskeyOnlyOff.Code, contracts.ErrTooManyPasskeys.Code,
+		contracts.ErrAccountClosing.Code:
 		// Well asked, and refused for how the account is now.
 		status = http.StatusConflict
 	}
@@ -301,6 +309,23 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		out, err := svc.NewRecoveryCodes(r.Context(), who)
 		answer(w, out, err)
 	}))
+	mux.HandleFunc("PATCH /api/v1/account", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		var in contracts.AccountUpdate
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := svc.UpdateAccount(r.Context(), who, in)
+		answer(w, out, err)
+	}))
+	// Deleting takes no body: the session says whose account it is.
+	mux.HandleFunc("POST /api/v1/account/delete", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		out, err := svc.StartDeletion(r.Context(), who)
+		answer(w, out, err)
+	}))
+	mux.HandleFunc("POST /api/v1/account/delete/cancel", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		out, err := svc.CancelDeletion(r.Context(), who)
+		answer(w, out, err)
+	}))
 	// Anything else under /api/ is not the web app's to answer with a page.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
@@ -330,4 +355,49 @@ func Invitations(svc AccountsService, log *slog.Logger) http.Handler {
 		}
 		writeJSON(w, out)
 	})
+}
+
+// Accounts returns the handler of the operator's tool, which only looks:
+// GET /v1/admin/accounts lists the accounts, the oldest first (limit, and
+// after with the next of the page before), and GET /v1/admin/accounts/{id}
+// shows one. What it answers is read from the accounts' signed records, so it
+// is what the enclave vouches for and not what the table says. Put it behind
+// TokenAuth with the operator's token.
+func Accounts(svc AccountsService, log *slog.Logger) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/admin/accounts", func(w http.ResponseWriter, r *http.Request) {
+		limit := domain.DefaultAccountsPage
+		if v := r.URL.Query().Get("limit"); v != "" {
+			var err error
+			if limit, err = strconv.Atoi(v); err != nil {
+				failed(w, log, contracts.ErrInvalidLimit)
+				return
+			}
+		}
+		out, err := svc.AccountRecords(r.Context(), r.URL.Query().Get("after"), limit)
+		if err != nil {
+			failed(w, log, err)
+			return
+		}
+		writeJSON(w, out)
+	})
+	mux.HandleFunc("GET /v1/admin/accounts/{id}", func(w http.ResponseWriter, r *http.Request) {
+		out, err := svc.AccountRecord(r.Context(), r.PathValue("id"))
+		if err != nil {
+			failed(w, log, err)
+			return
+		}
+		writeJSON(w, out)
+	})
+	// The tool changes nothing: a person deletes their own account.
+	onlyLooks := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", http.MethodGet)
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "use GET")
+	}
+	mux.HandleFunc("/v1/admin/accounts", onlyLooks)
+	mux.HandleFunc("/v1/admin/accounts/{id}", onlyLooks)
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
+	})
+	return mux
 }

@@ -6,7 +6,7 @@ import { AuthLayout } from './AuthLayout.tsx'
 import { linkHeadlines, messageFor } from './messages.ts'
 
 /** The headline of a screen that appears by itself: it takes focus, so a screen reader starts there. */
-function FocusedHeadline({
+export function FocusedHeadline({
   headingRef,
   describedBy,
   children,
@@ -28,7 +28,7 @@ function FocusedHeadline({
 }
 
 /** An address, as a machine fact that may be longer than the column. */
-function Address({ children }: { children: string }) {
+export function Address({ children }: { children: string }) {
   return <span className="wrap-anywhere font-mono text-small text-ink">{children}</span>
 }
 

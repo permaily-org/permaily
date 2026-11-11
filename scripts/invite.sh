@@ -25,7 +25,7 @@ code=$(curl -sS ${PERMAILY_CA_FILE:+--cacert "$PERMAILY_CA_FILE"} -o "$work/resp
   -X POST -H "Content-Type: application/json" -H @<(printf 'Authorization: Bearer %s' "$token") \
   --data-binary "{\"count\": $count}" "$api/v1/admin/invitations")
 if [[ $code != 200 ]]; then
-  jq -r '.error.message // .' "$work/response.json" 2>/dev/null >&2 || cat "$work/response.json" >&2
+  jq -r '.error.message // .' "$work/response.json" >&2 2>/dev/null || cat "$work/response.json" >&2
   echo "the enclave at $api made no invitations (HTTP $code)" >&2
   exit 1
 fi

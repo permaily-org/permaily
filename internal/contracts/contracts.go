@@ -46,6 +46,14 @@ var (
 	ErrLastPasskey     = &Error{"last_passkey", "this is the only passkey of an account that signs in with passkeys only; add another, or turn that off first"}
 	ErrPasskeyNeeded   = &Error{"passkey_needed", "add a passkey before turning on passkey only"}
 	ErrPasskeyOnlyOff  = &Error{"passkey_only_off", "there are recovery codes only while passkey only is on"}
+	// ErrInvalidAccountName has the code of ErrInvalidName: a caller does the
+	// same with both, and only the words differ.
+	ErrInvalidAccountName = &Error{"invalid_name", "a name is one line of at most 80 characters"}
+	// ErrAccountClosing refuses every change to an account that is being
+	// deleted but cancelling that.
+	ErrAccountClosing = &Error{"account_closing", "this account is being deleted; cancel that to change anything"}
+	ErrInvalidLimit   = &Error{"invalid_limit", "limit must be 1-100"}
+	ErrInvalidCursor  = &Error{"invalid_cursor", "after is not a place in the list; use the next of the answer before"}
 )
 
 // AccountState says whether an account can be used.
@@ -54,6 +62,9 @@ type AccountState string
 const (
 	// AccountActive is an account in use.
 	AccountActive AccountState = "active"
+	// AccountClosing is an account its person asked to delete: nothing of it
+	// changes until it is removed, or until the person cancels.
+	AccountClosing AccountState = "closing"
 )
 
 // Account is what a person sees of their own account.
@@ -65,6 +76,44 @@ type Account struct {
 	// Language of the app and of the mail it sends (BCP 47).
 	Language  string    `json:"language"`
 	CreatedAt time.Time `json:"created_at"`
+	// ClosesAt is when a closing account is removed; absent otherwise.
+	ClosesAt time.Time `json:"closes_at,omitzero"`
+}
+
+// AccountUpdate changes what a person may change of their account. What is
+// absent stays as it is.
+type AccountUpdate struct {
+	Name *string `json:"name"`
+}
+
+// AccountRecord is what the operator's tool shows of an account: what the
+// enclave vouches for, read from the account's signed record.
+type AccountRecord struct {
+	ID       string       `json:"id"`
+	State    AccountState `json:"state"`
+	Address  string       `json:"address"`
+	Name     string       `json:"name"`
+	Language string       `json:"language"`
+	// CreatedAt is when the account was made, AddressVerifiedAt when its
+	// person last proved the address is theirs, and ClosesAt when a closing
+	// account is removed.
+	CreatedAt         time.Time `json:"created_at"`
+	AddressVerifiedAt time.Time `json:"address_verified_at"`
+	ClosesAt          time.Time `json:"closes_at,omitzero"`
+	Passkeys          int       `json:"passkeys"`
+	PasskeyOnly       bool      `json:"passkey_only"`
+	// Sessions is how many devices are signed in.
+	Sessions int `json:"sessions"`
+}
+
+// AccountList is one page of the accounts, the oldest first.
+type AccountList struct {
+	Accounts []AccountRecord `json:"accounts"`
+	// Unreadable counts the accounts of this page whose record could not be
+	// read or does not verify: they are there, and nothing is said of them.
+	Unreadable int `json:"unreadable"`
+	// Next is what to ask the following page with; absent on the last one.
+	Next string `json:"next,omitempty"`
 }
 
 // Session is one device signed in to an account.

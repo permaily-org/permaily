@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -184,6 +185,45 @@ func (s *AWS) PutRecord(ctx context.Context, r *Record, create bool) error {
 			return ErrExists
 		}
 		return fmt.Errorf("store: put record: %w", err)
+	}
+	return nil
+}
+
+// ListRecords implements RecordTable.
+func (s *AWS) ListRecords(ctx context.Context, prefix string, limit int) ([]string, error) {
+	var names []string
+	var start map[string]ddb.AttributeValue
+	for len(names) < limit {
+		res, err := s.DB.Query(ctx, &dynamodb.QueryInput{
+			TableName:                 aws.String(s.Table),
+			KeyConditionExpression:    aws.String("pk = :pk AND begins_with(sk, :prefix)"),
+			ExpressionAttributeValues: map[string]ddb.AttributeValue{":pk": str("system"), ":prefix": str("record#" + prefix)},
+			ProjectionExpression:      aws.String("sk"),
+			ConsistentRead:            aws.Bool(true),
+			Limit:                     aws.Int32(int32(min(limit, 100))), //nolint:gosec // bounded by min
+			ExclusiveStartKey:         start,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("store: list records: %w", err)
+		}
+		for _, item := range res.Items {
+			names = append(names, strings.TrimPrefix(getS(item, "sk"), "record#"))
+		}
+		if len(res.LastEvaluatedKey) == 0 {
+			break
+		}
+		start = res.LastEvaluatedKey
+	}
+	if len(names) > limit {
+		names = names[:limit]
+	}
+	return names, nil
+}
+
+// DeleteRecord implements RecordTable.
+func (s *AWS) DeleteRecord(ctx context.Context, name string) error {
+	if _, err := s.DB.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(s.Table), Key: recordKey(name)}); err != nil {
+		return fmt.Errorf("store: delete record: %w", err)
 	}
 	return nil
 }
@@ -419,14 +459,27 @@ func (s *AWS) DeleteEntry(ctx context.Context, partition, key string) error {
 }
 
 // ListEntries implements Entries.
-func (s *AWS) ListEntries(ctx context.Context, partition, prefix string, limit int) ([]Entry, error) {
+func (s *AWS) ListEntries(ctx context.Context, partition, prefix, after string, limit int) ([]Entry, error) {
+	cond, values := "pk = :pk", map[string]ddb.AttributeValue{":pk": str(partition)}
+	switch {
+	case after != "" && after >= prefix:
+		// The keys with the prefix are next to one another, so the ones after
+		// a key that has it are the first that follow it, up to one without.
+		if !strings.HasPrefix(after, prefix) {
+			return nil, nil // after is past every key with the prefix
+		}
+		cond, values[":from"] = cond+" AND sk > :from", str(after)
+	case prefix != "":
+		// DynamoDB takes no empty string for a key: no prefix is no condition.
+		cond, values[":from"] = cond+" AND begins_with(sk, :from)", str(prefix)
+	}
 	var out []Entry
 	var start map[string]ddb.AttributeValue
 	for len(out) < limit {
 		res, err := s.DB.Query(ctx, &dynamodb.QueryInput{
 			TableName:                 aws.String(s.Table),
-			KeyConditionExpression:    aws.String("pk = :pk AND begins_with(sk, :prefix)"),
-			ExpressionAttributeValues: map[string]ddb.AttributeValue{":pk": str(partition), ":prefix": str(prefix)},
+			KeyConditionExpression:    aws.String(cond),
+			ExpressionAttributeValues: values,
 			ConsistentRead:            aws.Bool(true),
 			Limit:                     aws.Int32(int32(min(limit, 100))), //nolint:gosec // bounded by min
 			ExclusiveStartKey:         start,
@@ -435,7 +488,11 @@ func (s *AWS) ListEntries(ctx context.Context, partition, prefix string, limit i
 			return nil, fmt.Errorf("store: list entries: %w", err)
 		}
 		for _, item := range res.Items {
-			if e := s.entry(item); !s.expired(&e) {
+			e := s.entry(item)
+			if !strings.HasPrefix(e.Key, prefix) {
+				return out, nil
+			}
+			if !s.expired(&e) {
 				out = append(out, e)
 			}
 		}
@@ -448,4 +505,40 @@ func (s *AWS) ListEntries(ctx context.Context, partition, prefix string, limit i
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// maxPartitionDeletes bounds what one DeletePartition deletes: whoever writes
+// to the table can fill a partition faster than it is emptied.
+const maxPartitionDeletes = 1000
+
+// DeletePartition implements Entries. DynamoDB deletes one item at a time.
+func (s *AWS) DeletePartition(ctx context.Context, partition string) error {
+	deleted := 0
+	var start map[string]ddb.AttributeValue
+	for {
+		res, err := s.DB.Query(ctx, &dynamodb.QueryInput{
+			TableName:                 aws.String(s.Table),
+			KeyConditionExpression:    aws.String("pk = :pk"),
+			ExpressionAttributeValues: map[string]ddb.AttributeValue{":pk": str(partition)},
+			ProjectionExpression:      aws.String("pk, sk"),
+			ConsistentRead:            aws.Bool(true),
+			Limit:                     aws.Int32(100),
+			ExclusiveStartKey:         start,
+		})
+		if err != nil {
+			return fmt.Errorf("store: list a partition: %w", err)
+		}
+		for _, item := range res.Items {
+			if deleted++; deleted > maxPartitionDeletes {
+				return fmt.Errorf("store: more than %d entries in a partition to delete", maxPartitionDeletes)
+			}
+			if _, err := s.DB.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(s.Table), Key: entryKey(getS(item, "pk"), getS(item, "sk"))}); err != nil {
+				return fmt.Errorf("store: delete entry: %w", err)
+			}
+		}
+		if len(res.LastEvaluatedKey) == 0 {
+			return nil
+		}
+		start = res.LastEvaluatedKey
+	}
 }
