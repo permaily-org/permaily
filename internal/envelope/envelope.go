@@ -7,6 +7,9 @@
 // under one mailbox key can never be opened as if it belonged to another.
 //
 // Format: version (1 byte) | key commitment (32) | nonce (12) | ciphertext+tag.
+//
+// Values that must stay readable outside the enclave are signed instead of
+// encrypted: see Sign.
 package envelope
 
 import (

@@ -48,6 +48,15 @@ Each step ends deployed and verified, like the releases so far. The estimates ar
 | 8 | Receipts chained and anchored, and the activity screen | 1 |
 | 9 | Notices by mail, the threat model and the public pages brought up to date, a round of tests with staging images | 1 |
 
+Step 1, in the order it is built:
+
+- [x] The layers, and the core of accounts: invitations made by the operator (`scripts/invite.sh`), signing up and signing in by email with a code or a link, sessions. On in dev mode only (2026-11-11).
+- [ ] Outgoing mail through SES, which turns accounts on in the image: the SES identity and its DNS records, the host's allowlist, the threat model, asking AWS to leave the sandbox, a staging image.
+- [ ] The sign-in and sign-up screens of the web app.
+- [ ] Passkeys, the "passkey only" switch and recovery codes.
+- [ ] Google, GitHub, Meta and Microsoft.
+- [ ] Settings: name, sessions per device, deleting the account. The operator's tool to see accounts.
+
 About sixteen weeks. Steps 3 and 4 do not depend on 1 and 2, and can go first if seeing `about` work early is worth more than having accounts.
 
 ### Before real users

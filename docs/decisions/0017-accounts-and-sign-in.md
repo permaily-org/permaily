@@ -1,6 +1,6 @@
 # 0017 Accounts, sign-in and how account data is kept
 
-Status: Accepted. Not built.
+Status: Accepted. Sign-up by invitation, sign-in by email and sessions are built (`internal/services/accounts`), and not on in production until the image can send mail. The rest is not built.
 Date: 2026-11-11 (decided on 2026-11-09)
 
 ## Context
@@ -37,6 +37,19 @@ The public promise becomes: we see your account data, never your mail.
 **Outgoing mail** (sign-in links and codes, verification, notices) goes through Amazon SES from a subdomain of its own, with the role the enclave already has. Sign-in codes pass through AWS, which is trusted already. By email the user is told only of security and access: a sign-in from a new device, a connection approved, a connection about to end, a change in how the account is signed into. Everything else is shown in the app.
 
 **English only** in the first version, for the app and for the mail it sends.
+
+## How it is built
+
+Decided while building the first piece, each to keep whoever runs the storage out of accounts.
+
+- **The account's record** is one document, readable and signed, read through `store.Anchored`. An address leads to its account through a pointer, and the pointer proves nothing: the record says which address is its own. A record that does not verify, or whose committed version is gone, is an error and never "no account", so a sign-up cannot take the address over.
+- **A sign-in that was started lives only in the enclave's memory.** Its count of wrong codes could otherwise be set back by putting an earlier copy of it in the table, and a six-digit code falls to whoever can guess without limit. A restart ends the sign-ins that were waiting; the person asks for another message.
+- **A code takes five tries, and an address ten wrong codes a day.** After that the address's messages carry only the link, which cannot be guessed, until a day passes: guessing stops and the person still signs in.
+- **Starting a sign-in answers the same, and as fast, for every address.** The lookup and the message happen after the answer. An address without an account gets a message only with an invitation; an address is sent five messages an hour at most, and an invitation starts five sign-ups an hour at most.
+- **Sessions and invitations are entries, signed with where they are stored** and kept by the hash of their secret, so one cannot be written by hand or copied into another account. How long one lasts is read from what was signed.
+- **The cookie** is `__Host-permaily-session`, `Secure`, `HttpOnly`, `SameSite=Strict`. A request that changes something must also come from the app's own origin (`Origin`, `Sec-Fetch-Site`).
+
+Accepted: sessions are signed and not anchored. A session that was closed and is put back in the table by whoever runs the storage works again for whoever still holds its cookie, until its thirty days end. Anchoring each session would write a locked commit for every sign-in.
 
 ## What it rests on, and what is left
 

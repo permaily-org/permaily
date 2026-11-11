@@ -135,6 +135,19 @@ func run(cfg config, log *slog.Logger) error {
 		hosts.MTASTS: router.MTASTSPolicy(hosts.Inbox, cfg.mtaSTSMode, 604800),
 	}
 
+	if p.accounts != nil {
+		// The web app and its own API share a host, so the session cookie
+		// never leaves it. Invitations are the operator's, on the API host.
+		app := http.NewServeMux()
+		app.Handle("/api/", httpapi.AccountsAPI(p.accounts, log))
+		for path, h := range p.devRoutes {
+			app.Handle(path, h)
+		}
+		app.Handle("/", webui.Handler())
+		byHost[hosts.App] = app
+		api.Handle("/v1/admin/invitations", httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Invitations(p.accounts, log)))
+	}
+
 	if cfg.mailboxID != "" {
 		mailbox := inbox.New(inbox.Config{MailboxID: cfg.mailboxID, Address: cfg.mailboxAddress}, p.store, p.keys, p.auth, log)
 		go func() {

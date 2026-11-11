@@ -14,7 +14,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/smtp"
+	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -158,4 +161,139 @@ func (l *lockedBuffer) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.b.String()
+}
+
+// TestAccountsEndToEnd runs the whole service in dev mode: the operator makes
+// an invitation, a person signs up with the code of the message, the browser
+// holds a session, and signing out ends it.
+func TestAccountsEndToEnd(t *testing.T) {
+	const admin = "pma_e2e_token"
+	sum := sha256.Sum256([]byte(admin))
+	cfg := config{
+		domain: "permaily.test", acmeDirectory: "unused", port: freePort(t), mtaSTSMode: "testing",
+		adminTokenSHA256: hex.EncodeToString(sum[:]),
+	}
+	var logs lockedBuffer
+	go func() {
+		_ = run(cfg, slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	}()
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar, Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // dev mode self-signed certificate
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", cfg.port))
+		},
+	}}
+	app := fmt.Sprintf("https://app.permaily.test:%d", cfg.port)
+	call := func(method, url, auth, body string) (int, string) {
+		req, _ := http.NewRequest(method, url, strings.NewReader(body))
+		if auth != "" {
+			req.Header.Set("Authorization", "Bearer "+auth)
+		}
+		if strings.HasPrefix(url, app) && method != http.MethodGet {
+			req.Header.Set("Origin", app)
+			req.Header.Set("Content-Type", "application/json")
+		}
+		var res *http.Response
+		var err error
+		for range 50 {
+			if res, err = client.Do(req); err == nil {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+			req.Body = io.NopCloser(strings.NewReader(body))
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(b)
+	}
+
+	if code, _ := call("POST", "https://api.permaily.test/v1/admin/invitations", "", ""); code != 401 {
+		t.Fatalf("invitations without the operator's token: %d", code)
+	}
+	code, body := call("POST", "https://api.permaily.test/v1/admin/invitations", admin, `{"count":1}`)
+	var made struct {
+		Invitations []string `json:"invitations"`
+	}
+	if code != 200 || json.Unmarshal([]byte(body), &made) != nil || len(made.Invitations) != 1 {
+		t.Fatalf("invitations: %d %s", code, body)
+	}
+
+	if code, _ := call("GET", app+"/api/v1/me", "", ""); code != 401 {
+		t.Fatalf("me before signing in: %d", code)
+	}
+	code, body = call("POST", app+"/api/v1/auth/email/start", "", `{"address":"ana@example.org","invitation":"`+made.Invitations[0]+`"}`)
+	var started struct {
+		Attempt string `json:"attempt"`
+	}
+	if code != 200 || json.Unmarshal([]byte(body), &started) != nil || started.Attempt == "" {
+		t.Fatalf("start: %d %s", code, body)
+	}
+	// The message is sent after the answer: wait for it in the dev outbox.
+	var signInCode string
+	for range 50 {
+		_, outbox := call("GET", app+"/dev/outbox", "", "")
+		if g := regexp.MustCompile(`\\n    (\d{6})\\n`).FindStringSubmatch(outbox); g != nil && strings.Contains(outbox, started.Attempt) {
+			signInCode = g[1]
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if signInCode == "" {
+		t.Fatal("no sign-in message in the outbox")
+	}
+	code, body = call("POST", app+"/api/v1/auth/email/finish", "", `{"attempt":"`+started.Attempt+`","code":"`+signInCode+`"}`)
+	if code != 200 || !strings.Contains(body, `"address":"ana@example.org"`) {
+		t.Fatalf("finish: %d %s", code, body)
+	}
+	if code, body := call("GET", app+"/api/v1/me", "", ""); code != 200 || !strings.Contains(body, `"address":"ana@example.org"`) {
+		t.Fatalf("me: %d %s", code, body)
+	}
+	var session string
+	for _, c := range jar.Cookies(mustURL(t, app)) {
+		if c.Name == "__Host-permaily-session" {
+			session = c.Value
+		}
+	}
+	if session == "" {
+		t.Fatal("the browser holds no session cookie")
+	}
+	// The web app is still served on the same host, and the API host knows
+	// nothing of the app's own API.
+	if code, _ := call("GET", app+"/api/v1/nothing", "", ""); code != 404 {
+		t.Fatalf("unknown endpoint: %d", code)
+	}
+	if code, _ := call("GET", "https://api.permaily.test/api/v1/me", "", ""); code != 404 {
+		t.Fatalf("the app's API on the API host: %d", code)
+	}
+	if code, _ := call("POST", app+"/api/v1/auth/sign-out", "", ""); code != 204 {
+		t.Fatalf("sign-out: %d", code)
+	}
+	if code, _ := call("GET", app+"/api/v1/me", "", ""); code != 401 {
+		t.Fatalf("me after signing out: %d", code)
+	}
+
+	// Logs leave the enclave: after a sign-up they name no address, no
+	// code, no invitation, no cookie and no account.
+	out := logs.String()
+	if !strings.Contains(out, "accounts: account created") {
+		t.Fatalf("the log does not record the sign-up:\n%s", out)
+	}
+	for _, secret := range []string{"ana@", "example.org", signInCode, made.Invitations[0], started.Attempt, session, strings.Split(session, ".")[0], admin} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("the log contains %q:\n%s", secret, out)
+		}
+	}
+}
+
+func mustURL(t *testing.T, s string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
 }

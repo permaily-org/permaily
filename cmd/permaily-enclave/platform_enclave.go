@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/permaily-org/permaily/internal/msgauth"
 	"github.com/permaily-org/permaily/internal/nsm"
 	"github.com/permaily-org/permaily/internal/router"
+	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
 	"github.com/permaily-org/permaily/pkg/attestation"
@@ -48,6 +50,10 @@ type platform struct {
 	updateTrust func(provenance.Update) (*attestation.SigstoreStatus, error)
 	// anchors describes the records that cannot be put back to an earlier copy.
 	anchors func() *attestation.AnchorStatus
+	// accounts is sign-in and accounts (ADR 0017); nil until the image can
+	// send mail. devRoutes are served by the app's host in dev mode only.
+	accounts  *accounts.Service
+	devRoutes map[string]http.Handler
 }
 
 // logOutput writes to the console and, when a log port is set, to the parent
