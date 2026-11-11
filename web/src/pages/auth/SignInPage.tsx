@@ -9,10 +9,10 @@ import {
   formatInvitation,
   normalizeInvitation,
 } from '../../lib/invitation.ts'
-import { type LinkProblem, useSession } from '../../lib/session.tsx'
+import { useSession } from '../../lib/session.tsx'
 import { AuthLayout } from './AuthLayout.tsx'
 import { Field } from './Field.tsx'
-import { messageFor } from './messages.ts'
+import { linkHeadlines, messageFor } from './messages.ts'
 
 type Mode = 'sign-in' | 'sign-up'
 
@@ -31,7 +31,8 @@ const codeDigits = 6
 
 /**
  * Signing in and signing up are one flow: give an address (and, to sign up, an invitation), then end it with
- * the code of the message or by opening its link. Nothing typed here is kept beyond this page's memory.
+ * the code of the message, or by opening its link and saying yes to what it asks (LinkConfirmation.tsx).
+ * Nothing typed here is kept beyond this page's memory.
  */
 export function SignInPage({ mode }: { mode: Mode }) {
   const [started, setStarted] = useState<Started | null>(null)
@@ -75,11 +76,6 @@ async function start(address: string, invitation: string | null): Promise<Starte
     expiresAt: Date.now() + answer.expires_in * 1000,
     minutes: Math.max(1, Math.round(answer.expires_in / 60)),
   }
-}
-
-const linkHeadlines: Record<LinkProblem, string> = {
-  expired: 'That link no longer works',
-  failed: "That link couldn't sign you in",
 }
 
 function AddressStep({

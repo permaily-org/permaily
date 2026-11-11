@@ -569,6 +569,13 @@ func signInMail(to, appURL, attempt, code, token string) Mail {
 // take ends a sign-in with the code or the token of its message, and returns
 // what it was started for. Every failure is the same error.
 func (s *Service) take(in contracts.EmailFinish) (*attempt, error) {
+	return s.match(in, true)
+}
+
+// match finds the sign-in that the code or the token of in belongs to. With
+// use it ends it: a sign-in works once. Without, it is only looked at, and a
+// wrong token counts against it all the same.
+func (s *Service) match(in contracts.EmailFinish, use bool) (*attempt, error) {
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -595,8 +602,11 @@ func (s *Service) take(in contracts.EmailFinish) (*attempt, error) {
 		}
 		return nil, contracts.ErrInvalidCode
 	}
-	delete(s.attempts, in.Attempt) // it works once
-	return a, nil
+	if use {
+		delete(s.attempts, in.Attempt) // it works once
+	}
+	found := *a // a copy: the one kept may change once the lock is let go
+	return &found, nil
 }
 
 // FinishEmail ends a sign-in by email: it signs the device in, to the
@@ -632,6 +642,23 @@ func (s *Service) FinishEmail(ctx context.Context, in contracts.EmailFinish, use
 		return nil, "", err
 	}
 	return &contracts.Me{Account: doc.view(), Session: *session}, cookie, nil
+}
+
+// LookEmail says which address the link of a message would sign in, and ends
+// nothing. Whoever holds the link can sign in with it, so it tells them
+// nothing they could not have. The page asks the person before it signs in:
+// the link may come from someone else, who started a sign-in for their own
+// account to have this person act inside it.
+func (s *Service) LookEmail(_ context.Context, in contracts.EmailLook) (*contracts.EmailPending, error) {
+	if in.Token == "" {
+		// A code is typed where the sign-in was asked for; only a link travels.
+		return nil, contracts.ErrInvalidCode
+	}
+	a, err := s.match(contracts.EmailFinish{Attempt: in.Attempt, Token: in.Token}, false)
+	if err != nil {
+		return nil, err
+	}
+	return &contracts.EmailPending{Address: a.address}, nil
 }
 
 // ---- sessions ----

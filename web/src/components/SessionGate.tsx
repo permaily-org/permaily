@@ -1,6 +1,8 @@
+import { useRef } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router'
 import { useSession } from '../lib/session.tsx'
 import { AuthLayout } from '../pages/auth/AuthLayout.tsx'
+import { LinkConfirmation, LinkEnded } from '../pages/auth/LinkConfirmation.tsx'
 import { Button, Headline } from './ui/index.ts'
 
 /** Where a person was going when they were sent to sign in. Only a path inside the app counts. */
@@ -26,12 +28,12 @@ function Waiting() {
       </AuthLayout>
     )
   }
-  // A sign-in link takes a moment and says so. Asking who is signed in is too quick to name.
+  // Asking whose sign-in a link is takes a moment and says so. Asking who is signed in is too quick to name.
   const link = state.status === 'loading' && state.link
   return (
-    <AuthLayout title={link ? 'Signing you in' : 'Loading'}>
+    <AuthLayout title={link ? 'Checking your link' : 'Loading'}>
       <p role="status" className={link ? 'text-body text-ink-2' : 'sr-only'}>
-        {link ? 'Signing you in' : 'Loading'}
+        {link ? 'Checking your link' : 'Loading'}
       </p>
     </AuthLayout>
   )
@@ -50,11 +52,21 @@ export function RequireSession() {
   return <Waiting />
 }
 
-/** The sign-in and sign-up screens: someone already signed in goes on to the app. */
+/**
+ * The sign-in and sign-up screens: someone already signed in goes on to the app. A sign-in link comes first,
+ * whoever is signed in: it waits here for the person to say whether to sign in with it.
+ */
 export function GuestOnly() {
-  const { state } = useSession()
+  const { state, linkAsk, linkProblem } = useSession()
   const location = useLocation()
-  if (state.status === 'signedIn') return <Navigate to={destination(location.state)} replace />
+  // A link pasted over the sign-in screen makes a new entry in the history, without the router's state:
+  // where the person was going is remembered here for as long as these screens stay open.
+  const going = useRef<unknown>(null)
+  if (location.state) going.current = location.state
+  if (state.status === 'loading' || state.status === 'unreachable') return <Waiting />
+  if (linkAsk) return <LinkConfirmation />
   if (state.status === 'signedOut') return <Outlet />
-  return <Waiting />
+  // Only a link the person said yes to leaves a problem behind while signed in: it is told before the app opens.
+  if (linkProblem) return <LinkEnded />
+  return <Navigate to={destination(location.state ?? going.current)} replace />
 }

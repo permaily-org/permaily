@@ -105,6 +105,49 @@ func (a *app) signIn(address string) contracts.Me {
 	return me
 }
 
+var sentLink = regexp.MustCompile(`#attempt=(att_[a-z2-7]{26})&token=([A-Za-z0-9_-]{43})\n`)
+
+// The page that opens the link of a message asks whose sign-in it is before
+// it signs in, and asking signs nobody in.
+func TestLookAtALinkAPI(t *testing.T) {
+	a := newApp(t)
+	a.signIn("ana@example.org")
+	a.call("POST", "/api/v1/auth/sign-out", "", nil)
+	if rec := a.call("POST", "/api/v1/auth/email/start", `{"address":"ana@example.org"}`, nil); rec.Code != 200 {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	a.svc.Wait()
+	sent := a.out.Sent()
+	link := sentLink.FindStringSubmatch(sent[len(sent)-1].Text)
+	body := `{"attempt":"` + link[1] + `","token":"` + link[2] + `"}`
+
+	rec := a.call("POST", "/api/v1/auth/email/look", body, nil)
+	var pending contracts.EmailPending
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &pending) != nil || pending.Address != "ana@example.org" {
+		t.Fatalf("look: %d %s", rec.Code, rec.Body)
+	}
+	if got := rec.Header().Get("Set-Cookie"); got != "" {
+		t.Errorf("looking set a cookie: %s", got)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("cache control %q", got)
+	}
+	if rec := a.call("GET", "/api/v1/me", "", nil); rec.Code != 401 {
+		t.Errorf("signed in by looking: %d", rec.Code)
+	}
+	// Another site's page cannot ask.
+	if rec := a.call("POST", "/api/v1/auth/email/look", body, func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") }); rec.Code != 403 {
+		t.Errorf("look from another origin: %d %s", rec.Code, rec.Body)
+	}
+	// The link still signs in, once.
+	if rec := a.call("POST", "/api/v1/auth/email/finish", body, nil); rec.Code != 200 {
+		t.Fatalf("finish after looking: %d %s", rec.Code, rec.Body)
+	}
+	if rec := a.call("POST", "/api/v1/auth/email/look", body, nil); rec.Code != 400 || !strings.Contains(rec.Body.String(), `"invalid_code"`) {
+		t.Errorf("look at a used link: %d %s", rec.Code, rec.Body)
+	}
+}
+
 func TestAccountsAPI(t *testing.T) {
 	a := newApp(t)
 	if rec := a.call("GET", "/api/v1/me", "", nil); rec.Code != 401 || !strings.Contains(rec.Body.String(), `"unauthorized"`) {
@@ -182,6 +225,9 @@ func TestAccountsAPIRefusals(t *testing.T) {
 		{"bad address", "POST", "/api/v1/auth/email/start", `{"address":"nope"}`, nil, 400, "invalid_address"},
 		{"bad invitation", "POST", "/api/v1/auth/email/start", `{"address":"ana@example.org","invitation":"abcd-2345-wxyz"}`, nil, 400, "invalid_invitation"},
 		{"wrong code", "POST", "/api/v1/auth/email/finish", `{"attempt":"att_x","code":"123456"}`, nil, 400, "invalid_code"},
+		{"wrong link", "POST", "/api/v1/auth/email/look", `{"attempt":"att_x","token":"nope"}`, nil, 400, "invalid_code"},
+		{"a link that is not JSON", "POST", "/api/v1/auth/email/look", `attempt=att_x`, nil, 400, "invalid_body"},
+		{"a link in the address", "GET", "/api/v1/auth/email/look?attempt=att_x&token=nope", "", nil, 404, "not_found"},
 		{"not JSON", "POST", "/api/v1/auth/email/start", `address=ana`, nil, 400, "invalid_body"},
 		{"unknown field", "POST", "/api/v1/auth/email/start", `{"address":"ana@example.org","admin":true}`, nil, 400, "invalid_body"},
 		{"too large", "POST", "/api/v1/auth/email/start", `{"address":"` + strings.Repeat("a", 5000) + `"}`, nil, 400, "invalid_body"},

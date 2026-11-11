@@ -1,4 +1,5 @@
 import type { ApiErrorCode } from '../../lib/api.ts'
+import type { LinkProblem } from '../../lib/session.tsx'
 
 /** What to tell a person for each way the API can fail, in words they can act on. */
 const messages: Record<ApiErrorCode, string> = {
@@ -14,4 +15,10 @@ const messages: Record<ApiErrorCode, string> = {
 
 export function messageFor(code: ApiErrorCode): string {
   return messages[code]
+}
+
+/** The headline when the link of a message did not sign anyone in. */
+export const linkHeadlines: Record<LinkProblem, string> = {
+  expired: 'That link no longer works',
+  failed: "That link couldn't sign you in",
 }
