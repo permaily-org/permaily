@@ -46,6 +46,6 @@ if command -v gh >/dev/null && gh release download "$ref" --repo permaily-org/pe
   else
     echo "WARNING: release $ref publishes different PCRs than your rebuild." >&2
   fi
-  gh attestation verify "$work/release/pcrs.json" --repo permaily-org/permaily >/dev/null && echo "Release provenance verified (Sigstore)."
+  gh attestation verify "$work/release/pcrs.json" --repo permaily-org/permaily --signer-workflow permaily-org/permaily/.github/workflows/release.yml --source-ref refs/heads/main >/dev/null && echo "Release provenance verified (Sigstore)."
 fi
 $verify -pcrs "$work/pcrs.json" "$@"

@@ -1,0 +1,74 @@
+name: sigstore-watch
+
+# A running enclave hands the root secret to a new release only when the
+# release's Sigstore bundle verifies with the trust root compiled into the
+# enclave, in the format pkg/provenance reads (ADR 0013). If Sigstore changes
+# its keys, or GitHub changes what it signs, and nobody notices in time, no
+# release could be deployed again without losing everything stored. This
+# workflow notices, every day:
+#
+#   trust-root  the compiled-in trust root is the one Sigstore publishes today
+#   canary      what GitHub attests today is accepted by pkg/provenance
+#
+# A failed run is not an incident in production; it is a deadline. What to do
+# is in docs/operations.md, "Sigstore changed".
+#
+# An EventBridge rule starts it (deploy/tofu/verify.tf), because GitHub's own
+# schedule fires late or not at all; the schedule stays as a second trigger.
+
+on:
+  schedule:
+    - cron: "53 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sigstore-watch
+  cancel-in-progress: false
+
+jobs:
+  trust-root:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The compiled-in trust root is the published one
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/sigstore-trust-root.sh
+
+  canary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Measurements of no image: nothing can run them, and the enclave's
+      # release policy names another workflow and another ref anyway.
+      - name: Measurements nobody runs
+        run: |
+          pcr() { printf 'permaily sigstore canary %s %s' "$GITHUB_RUN_ID" "$1" | sha384sum | cut -d' ' -f1; }
+          jq -n --arg a "$(pcr 0)" --arg b "$(pcr 1)" --arg c "$(pcr 2)" '{PCR0: $a, PCR1: $b, PCR2: $c}' > canary-pcrs.json
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: canary-pcrs.json
+      - name: pkg/provenance accepts what GitHub signed today
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PERMAILY_REPO: ${{ github.repository }}
+        run: |
+          scripts/provenance-bundle.sh canary-pcrs.json canary-bundle.json
+          go run ./cmd/permaily-verify -provenance canary-bundle.json -pcrs canary-pcrs.json \
+            -release-workflow .github/workflows/sigstore-watch.yml -release-ref "$GITHUB_REF"

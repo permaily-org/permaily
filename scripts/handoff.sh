@@ -32,18 +32,13 @@ trap 'rm -rf "$work"' EXIT
 # fetch NAME SOURCE: leaves $work/NAME/pcrs.json and $work/NAME/bundle.json.
 fetch() {
   local name=$1 src=$2 dir=$work/$1
-  mkdir -p "$dir/attestations"
+  mkdir -p "$dir"
   if [[ -d $src ]]; then
     cp "$src/pcrs.json" "$dir/pcrs.json"
   else
     gh release download "$src" --repo "$repo" --pattern pcrs.json --dir "$dir"
   fi
-  (cd "$dir/attestations" && gh attestation download ../pcrs.json --repo "$repo" >/dev/null)
-  # GitHub holds more than one attestation for a file. The enclave wants the
-  # build provenance, the one recorded in the public transparency log.
-  jq -c 'select((.dsseEnvelope.payload | @base64d | fromjson | .predicateType) == "https://slsa.dev/provenance/v1"
-               and (.verificationMaterial.tlogEntries | length) == 1)' "$dir"/attestations/*.jsonl | head -n 1 > "$dir/bundle.json"
-  [[ -s $dir/bundle.json ]] || { echo "no build provenance in the public log for $src" >&2; exit 1; }
+  PERMAILY_REPO=$repo "$(dirname "$0")/provenance-bundle.sh" "$dir/pcrs.json" "$dir/bundle.json"
   echo "$name: $src, PCR0 $(jq -r .PCR0 "$dir/pcrs.json")"
 }
 

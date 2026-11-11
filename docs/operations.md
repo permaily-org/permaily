@@ -10,7 +10,7 @@ The running enclave hands the root secret to the next release, then the next rel
 old=v0.7.0 new=v0.8.0
 mkdir -p /tmp/permaily-$new && cd /tmp/permaily-$new
 gh release download $new --repo permaily-org/permaily
-gh attestation verify permaily.eif --repo permaily-org/permaily
+gh attestation verify permaily.eif --repo permaily-org/permaily --signer-workflow permaily-org/permaily/.github/workflows/release.yml --source-ref refs/heads/main
 sha256sum -c SHA256SUMS --ignore-missing
 mkdir eif && mv permaily.eif pcrs.json eif/
 
@@ -108,10 +108,20 @@ The workflow `verify-production` runs `scripts/verify-production.sh` every half 
 
 Two things start it:
 
-- **EventBridge**, at minutes 7 and 37 (`deploy/tofu/verify.tf`): a rule in the AWS account calls GitHub's API to start the workflow. It only says "run now"; the check runs on GitHub with the repository's code. These runs show as started by hand (`workflow_dispatch`), by the owner of the token.
+- **EventBridge**, at minutes 7 and 37 (`deploy/tofu/verify.tf`, which also starts `sigstore-watch` once a day): a rule in the AWS account calls GitHub's API to start the workflow. It only says "run now"; the check runs on GitHub with the repository's code. These runs show as started by hand (`workflow_dispatch`), by the owner of the token.
 - **GitHub's own schedule**, with the same minutes. GitHub does not keep it: in the first day it started two runs instead of about forty, hours apart. It stays because nobody in the AWS account chooses when those runs happen.
 
 If the runs stop: check the rule (`aws events describe-rule --name permaily-verify-production`) and its failed invocations in CloudWatch (`AWS/Events`, `FailedInvocations`), then the token below. `gh workflow run verify-production` starts one by hand. GitHub disables scheduled workflows after 60 days without activity in the repository; re-enable it under Actions if that happens.
+
+## Sigstore changed
+
+A running enclave hands the root secret to a release only if the release's Sigstore bundle verifies with the trust root compiled into the enclave, in the format `pkg/provenance` reads. If that stops being true and nobody notices in time, no release can be deployed without losing everything stored. The workflow `sigstore-watch` checks both things every day (started by EventBridge at 06:53 UTC, and by GitHub's schedule when it fires), and `release.yml` checks each release before it cuts it. A failed run is a deadline, not an incident in production: the enclave that is running keeps working.
+
+- **`trust-root` fails**: Sigstore published a trust root that differs from `pkg/provenance/sigstore_trusted_root.json`; the run prints the difference. Usually a key or a certificate was added, and it will start signing later. Run `scripts/sigstore-trust-root.sh --update`, then the tests, and release and deploy (with the handoff) while the keys the running enclave knows still sign. A release signed only with keys the running enclave does not know is refused by it. If a key was removed or its period closed, read Sigstore's announcement before updating.
+- **`canary` fails**: GitHub attested a file today and `pkg/provenance` refuses the bundle. Read the reason in the run. Do not merge into `main` until `pkg/provenance` accepts what GitHub signs and a release with that code is deployed: the fix has to reach production in a release the running enclave still accepts, so it must be signed the old way. If GitHub no longer signs the old way, sign the release from the workflow with a client that still does, while the old log takes entries.
+- **`A running enclave would accept this release` fails in `release.yml`**: no release was cut. Either of the two above happened between the daily runs, or the previous release's verifier refuses what this code accepts; the step says which verifier refused.
+
+`permaily-verify -provenance bundle.json -pcrs pcrs.json` is the same check by hand, offline, with the verifier of any release from the first one that has the flag; `scripts/provenance-bundle.sh pcrs.json bundle.json` fetches the bundle.
 
 ## Rotate the GitHub dispatch token
 
