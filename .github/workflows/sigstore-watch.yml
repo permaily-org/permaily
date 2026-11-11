@@ -10,6 +10,7 @@ name: sigstore-watch
 #   trust-root     the compiled-in trust root is the one Sigstore publishes today
 #   canary         what GitHub attests today is accepted by pkg/provenance
 #   canary-rekor2  so is a signature recorded today in Rekor v2
+#   notify         a failure opens an issue assigned to the maintainers
 #
 # A failed run is not an incident in production; it is a deadline. What to do
 # is in docs/operations.md, "Sigstore changed".
@@ -32,7 +33,10 @@ concurrency:
 jobs:
   trust-root:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
+    outputs:
+      pull_request: ${{ steps.pr.outputs.pull_request }}
+      urgent: ${{ steps.pr.outputs.urgent }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,7 +48,27 @@ jobs:
       # changed; fails differently when pkg/provenance refuses what Sigstore
       # publishes, which must be fixed before anything else.
       - name: The compiled-in trust root is the published one
+        id: compare
         run: scripts/sigstore-trust-root.sh
+      # There is a newer one: open the pull request that compiles it in, so
+      # what is left for a person is to read it, merge and release. The
+      # permaily-release app opens it: one opened with GITHUB_TOKEN would not
+      # start CI.
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        if: failure() && steps.compare.conclusion == 'failure'
+        id: app-token
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          repositories: permaily
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Open the pull request that compiles in the newer trust root
+        if: failure() && steps.compare.conclusion == 'failure'
+        id: pr
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: scripts/sigstore-trust-root-pr.sh
 
   canary:
     runs-on: ubuntu-24.04
@@ -117,3 +141,32 @@ jobs:
             canary-pcrs.json
             canary-bundle.json
           retention-days: 7
+
+  # A failure above is a deadline: someone must act before the running enclave
+  # stops accepting releases. One open issue, assigned to the maintainers and
+  # naming them again on every daily run, until every check passes.
+  notify:
+    needs: [trust-root, canary, canary-rekor2]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tell the maintainers, or close what was open
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRUST_ROOT: ${{ needs.trust-root.result }}
+          CANARY: ${{ needs.canary.result }}
+          CANARY_REKOR2: ${{ needs.canary-rekor2.result }}
+          URGENT: ${{ needs.trust-root.outputs.urgent }}
+          PULL_REQUEST: ${{ needs.trust-root.outputs.pull_request }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Optional second channel: a Telegram chat. Without the secrets nothing is sent.
+          TELEGRAM_BOT_TOKEN: ${{ secrets.SIGSTORE_ALERT_TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.SIGSTORE_ALERT_TELEGRAM_CHAT }}
+        run: scripts/sigstore-alarm.sh
