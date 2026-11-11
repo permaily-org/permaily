@@ -55,7 +55,7 @@ Step 1, in the order it is built:
 - [x] The sign-in and sign-up screens of the web app, and the app behind a session (2026-11-11). Made without a design of their own: layout and copy are for the designer to review.
 - [x] Passkeys, the "passkey only" switch and recovery codes, with their screens and the real list of sessions in Settings (2026-11-11). Not yet tried with a real authenticator in a real browser: that needs a certificate browsers trust, so it waits for the release.
 - [ ] Google, GitHub, Meta and Microsoft.
-- [ ] Settings: name, sessions per device, deleting the account. The operator's tool to see accounts.
+- [x] Settings: name, sessions per device, deleting the account. The operator's tool to see accounts (`scripts/accounts.sh`) (2026-11-11). The contact address cannot be changed yet.
 
 About sixteen weeks. Steps 3 and 4 do not depend on 1 and 2, and can go first if seeing `about` work early is worth more than having accounts.
 

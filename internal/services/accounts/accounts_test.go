@@ -24,10 +24,13 @@ type world struct {
 	t       *testing.T
 	mem     *store.Memory
 	commits *store.MemoryCommits
-	out     *Outbox
-	logs    *bytes.Buffer
-	svc     *Service
-	now     time.Time
+	// anchored is the store of the accounts' records, as the enclave sets it
+	// up: only the newest version of a record is kept.
+	anchored *store.Anchored
+	out      *Outbox
+	logs     *bytes.Buffer
+	svc      *Service
+	now      time.Time
 }
 
 func newWorld(t *testing.T) *world {
@@ -46,8 +49,9 @@ func newWorld(t *testing.T) *world {
 }
 
 func (w *world) service(k Keys) *Service {
+	w.anchored = &store.Anchored{Records: w.mem, Commits: w.commits, OnlyNewest: true, Now: func() time.Time { return w.now }}
 	svc, err := New(Config{
-		Records: &store.Anchored{Records: w.mem, Commits: w.commits, Now: func() time.Time { return w.now }},
+		Records: w.anchored,
 		Entries: w.mem, Keys: k, Mailer: w.out, AppURL: "https://app.permaily.test",
 		Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: func() time.Time { return w.now },
 	})
@@ -224,7 +228,7 @@ func TestWhatIsStored(t *testing.T) {
 		t.Fatalf("no readable record of the account among %v", w.mem.RecordNames())
 	}
 	// Sessions are kept by the hash of their secret.
-	list, _ := w.mem.ListEntries(context.Background(), accountPartition(me.Account.ID), "", 10)
+	list, _ := w.mem.ListEntries(context.Background(), accountPartition(me.Account.ID), "", "", 10)
 	if len(list) != 1 || bytes.Contains(list[0].Value, []byte(secret)) || !list[0].ExpiresAt.Equal(me.Session.ExpiresAt) {
 		t.Fatalf("session entry: %+v", list)
 	}
@@ -647,7 +651,7 @@ func TestStorageWrittenByHand(t *testing.T) {
 		t.Fatal("an address whose account cannot be read was let to sign up again")
 	}
 	// The same when the record is deleted: its commit says there was one.
-	w.mem.DeleteRecord(name)
+	_ = w.mem.DeleteRecord(ctx, name)
 	if _, err := w.svc.Account(ctx, ana.Account.ID); !errors.Is(err, store.ErrLost) {
 		t.Fatalf("a deleted record: %v", err)
 	}
@@ -679,7 +683,7 @@ func TestMissing(t *testing.T) {
 	if _, err := New(Config{}); err == nil {
 		t.Fatal("a service without anything")
 	}
-	if svc, err := New(Config{Records: w.mem, Entries: w.mem, Keys: w.svc.cfg.Keys, Mailer: w.out, AppURL: "https://app"}); err != nil || svc.now().IsZero() {
+	if svc, err := New(Config{Records: w.svc.cfg.Records, Entries: w.mem, Keys: w.svc.cfg.Keys, Mailer: w.out, AppURL: "https://app"}); err != nil || svc.now().IsZero() {
 		t.Fatalf("defaults: %v", err)
 	}
 	for _, id := range []string{"", "acc_x", "acc_" + strings.Repeat("a", 26), "ses_" + strings.Repeat("a", 26), "acc_" + strings.Repeat("1", 26)} {
@@ -696,7 +700,7 @@ func TestMissing(t *testing.T) {
 
 // failing is storage and keys that fail on demand.
 type failing struct {
-	store.Records
+	Records
 	store.Entries
 	Keys
 	fail map[string]error
@@ -722,6 +726,9 @@ func (f *failing) GetEntry(ctx context.Context, partition, key string) (*store.E
 	if err := f.err("get entry"); err != nil {
 		return nil, err
 	}
+	if err := f.err("get " + partition); err != nil {
+		return nil, err
+	}
 	return f.Entries.GetEntry(ctx, partition, key)
 }
 
@@ -740,14 +747,34 @@ func (f *failing) DeleteEntry(ctx context.Context, partition, key string) error 
 	if err := f.err("delete entry"); err != nil {
 		return err
 	}
+	if err := f.err("delete " + partition); err != nil {
+		return err
+	}
 	return f.Entries.DeleteEntry(ctx, partition, key)
 }
 
-func (f *failing) ListEntries(ctx context.Context, partition, prefix string, limit int) ([]store.Entry, error) {
+func (f *failing) ListEntries(ctx context.Context, partition, prefix, after string, limit int) ([]store.Entry, error) {
 	if err := f.err("list entries"); err != nil {
 		return nil, err
 	}
-	return f.Entries.ListEntries(ctx, partition, prefix, limit)
+	if err := f.err("list " + partition); err != nil {
+		return nil, err
+	}
+	return f.Entries.ListEntries(ctx, partition, prefix, after, limit)
+}
+
+func (f *failing) DeletePartition(ctx context.Context, partition string) error {
+	if err := f.err("delete partition"); err != nil {
+		return err
+	}
+	return f.Entries.DeletePartition(ctx, partition)
+}
+
+func (f *failing) RemoveRecord(ctx context.Context, name string) error {
+	if err := f.err("remove record"); err != nil {
+		return err
+	}
+	return f.Records.RemoveRecord(ctx, name)
 }
 
 func (f *failing) Derive(ctx context.Context, purpose string) ([]byte, error) {

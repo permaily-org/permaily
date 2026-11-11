@@ -10,9 +10,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/httpapi"
@@ -32,6 +34,10 @@ type app struct {
 	out    *accounts.Outbox
 	logs   *bytes.Buffer
 	cookie *http.Cookie
+	// mem is the storage, for a test to write to by hand, and ahead is how
+	// far the service's clock runs ahead of the real one.
+	mem   *store.Memory
+	ahead time.Duration
 }
 
 func newApp(t *testing.T) *app {
@@ -41,11 +47,13 @@ func newApp(t *testing.T) *app {
 		t.Fatal(err)
 	}
 	mem := store.NewMemory()
-	a := &app{t: t, out: &accounts.Outbox{}, logs: &bytes.Buffer{}}
+	a := &app{t: t, out: &accounts.Outbox{}, logs: &bytes.Buffer{}, mem: mem}
 	log := slog.New(slog.NewTextHandler(a.logs, nil))
 	a.svc, err = accounts.New(accounts.Config{
-		Records: &store.Anchored{Records: mem, Commits: store.NewMemoryCommits()}, Entries: mem,
+		// As the enclave sets it up: only the newest version of a record is kept.
+		Records: &store.Anchored{Records: mem, Commits: store.NewMemoryCommits(), OnlyNewest: true}, Entries: mem,
 		Keys: k, Mailer: a.out, AppURL: appOrigin, Log: log,
+		Now: func() time.Time { return time.Now().Add(a.ahead) },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -321,6 +329,14 @@ func (b broken) FinishPasskeySignIn(context.Context, contracts.PasskeySignIn, st
 
 func (b broken) Recover(context.Context, contracts.Recovery, string) (*contracts.Me, string, error) {
 	return nil, "", b.err
+}
+
+func (b broken) AccountRecord(context.Context, string) (*contracts.AccountRecord, error) {
+	return nil, b.err
+}
+
+func (b broken) AccountRecords(context.Context, string, int) (*contracts.AccountList, error) {
+	return nil, b.err
 }
 
 func TestAccountsAPIInternalErrors(t *testing.T) {
@@ -644,5 +660,276 @@ func TestPasskeysAPIRefusals(t *testing.T) {
 	}
 	if list, _ := a.svc.Passkeys(context.Background(), who); len(list.Passkeys) != 20 {
 		t.Fatalf("%d passkeys", len(list.Passkeys))
+	}
+}
+
+// The name, asking to delete the account and cancelling, as the page asks
+// for them.
+func TestSettingsAPI(t *testing.T) {
+	a := newApp(t)
+	// Without a session, and from another site's page.
+	requests := [][3]string{
+		{"PATCH", "/api/v1/account", `{"name":"Ana"}`}, {"POST", "/api/v1/account/delete", ""}, {"POST", "/api/v1/account/delete/cancel", ""},
+	}
+	var e httpapi.APIError
+	for _, c := range requests {
+		if read(t, a.call(c[0], c[1], c[2], nil), 401, &e); e.Error.Code != "unauthorized" {
+			t.Errorf("%s %s without a session: %+v", c[0], c[1], e)
+		}
+	}
+	me := a.signIn("ana@example.org")
+	for _, c := range requests {
+		evil := func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") }
+		if read(t, a.call(c[0], c[1], c[2], evil), 403, &e); e.Error.Code != "forbidden" {
+			t.Errorf("%s %s from another origin: %+v", c[0], c[1], e)
+		}
+	}
+	phone := newApp(t)
+	phone.h, phone.svc, phone.out = a.h, a.svc, a.out
+	phone.signIn("ana@example.org")
+
+	rec := a.call("PATCH", "/api/v1/account", `{"name":"  Ana Pérez "}`, nil)
+	var named contracts.Account
+	read(t, rec, 200, &named)
+	want := me.Account
+	want.Name = "Ana Pérez"
+	if named != want || strings.Contains(rec.Body.String(), "closes_at") || !strings.Contains(rec.Body.String(), `"state":"active"`) {
+		t.Fatalf("named: %s", rec.Body)
+	}
+	var seen contracts.Me
+	if read(t, a.call("GET", "/api/v1/me", "", nil), 200, &seen); seen.Account != want {
+		t.Fatalf("me: %+v", seen)
+	}
+	// What is not said stays as it is.
+	for _, body := range []string{`{}`, `{"name":null}`} {
+		if read(t, a.call("PATCH", "/api/v1/account", body, nil), 200, &named); named != want {
+			t.Fatalf("%s: %+v", body, named)
+		}
+	}
+	for body, code := range map[string]string{
+		`{"name":"two\nlines"}`:                      "invalid_name",
+		`{"name":"` + strings.Repeat("a", 81) + `"}`: "invalid_name",
+		`{"name":7}`: "invalid_body",
+		`{"name":"Ana","address":"eve@example.org"}`: "invalid_body",
+		`name=Ana`: "invalid_body",
+		``:         "invalid_body",
+	} {
+		if read(t, a.call("PATCH", "/api/v1/account", body, nil), 400, &e); e.Error.Code != code {
+			t.Errorf("%q: %+v, want %s", body, e, code)
+		}
+	}
+	if read(t, a.call("GET", "/api/v1/account", "", nil), 404, &e); e.Error.Code != "not_found" {
+		t.Fatalf("the account by GET: %+v", e)
+	}
+
+	// Asking to delete: closing, with its day, and the other device is out.
+	rec = a.call("POST", "/api/v1/account/delete", "", nil)
+	var closing contracts.Account
+	read(t, rec, 200, &closing)
+	if closing.State != contracts.AccountClosing || closing.ID != me.Account.ID || !strings.Contains(rec.Body.String(), `"state":"closing"`) || !strings.Contains(rec.Body.String(), `"closes_at":"`) {
+		t.Fatalf("asked to delete: %s", rec.Body)
+	}
+	if left := time.Until(closing.ClosesAt); left < 7*24*time.Hour-time.Minute || left > 7*24*time.Hour {
+		t.Fatalf("closes at %s", closing.ClosesAt)
+	}
+	if read(t, a.call("GET", "/api/v1/me", "", nil), 200, &seen); seen.Account != closing {
+		t.Fatalf("me while closing: %+v", seen)
+	}
+	if rec := phone.call("GET", "/api/v1/me", "", nil); rec.Code != 401 || phone.cookie != nil {
+		t.Fatalf("the other device of a closing account: %d", rec.Code)
+	}
+	// Nothing changes while it is closing.
+	for _, c := range [][3]string{
+		{"PATCH", "/api/v1/account", `{"name":"Ana"}`}, {"PATCH", "/api/v1/account", `{}`}, {"POST", "/api/v1/passkeys/start", ""},
+		{"POST", "/api/v1/account/passkey-only", `{"on":true}`}, {"POST", "/api/v1/account/recovery-codes", ""},
+		{"DELETE", "/api/v1/passkeys/" + b64([]byte("some passkey")), ""},
+	} {
+		if read(t, a.call(c[0], c[1], c[2], nil), 409, &e); e.Error.Code != "account_closing" {
+			t.Errorf("%s %s while closing: %+v", c[0], c[1], e)
+		}
+	}
+	var again contracts.Account
+	if read(t, a.call("POST", "/api/v1/account/delete", "", nil), 200, &again); again != closing {
+		t.Fatalf("asked again: %+v", again)
+	}
+	// The person signs out and in again, and still sees it closing.
+	read(t, a.call("POST", "/api/v1/auth/sign-out", "", nil), 204, nil)
+	if back := a.signIn("ana@example.org"); back.Account != closing {
+		t.Fatalf("signed in while closing: %+v", back.Account)
+	}
+
+	// Cancelling makes it what it was.
+	rec = a.call("POST", "/api/v1/account/delete/cancel", "", nil)
+	var kept contracts.Account
+	if read(t, rec, 200, &kept); kept != want || strings.Contains(rec.Body.String(), "closes_at") {
+		t.Fatalf("cancelled: %s", rec.Body)
+	}
+	if read(t, a.call("POST", "/api/v1/account/delete/cancel", "", nil), 200, &kept); kept != want {
+		t.Fatalf("cancelled again: %+v", kept)
+	}
+	if read(t, a.call("PATCH", "/api/v1/account", `{"name":""}`, nil), 200, &named); named.Name != "" {
+		t.Fatalf("a change after cancelling: %+v", named)
+	}
+
+	for _, secret := range []string{"ana@", "example.org", me.Account.ID, "Ana", "Pérez"} {
+		if strings.Contains(a.logs.String(), secret) {
+			t.Fatalf("the logs hold %q:\n%s", secret, a.logs)
+		}
+	}
+}
+
+// The operator's tool: only with the operator's token, only to look, and
+// only what the accounts' signed records say.
+func TestAccountsAdminAPI(t *testing.T) {
+	a := newApp(t)
+	log := slog.New(slog.NewTextHandler(a.logs, nil))
+	h := httpapi.TokenAuth(tokenHash(), httpapi.Accounts(a.svc, log))
+	var made []contracts.Me
+	for _, address := range []string{"ana@example.org", "bea@example.org", "cho@example.org"} {
+		made = append(made, a.signIn(address))
+		a.ahead += time.Minute // the list is in the order of when each was made
+	}
+	read(t, a.call("PATCH", "/api/v1/account", `{"name":"Cho"}`, nil), 200, nil)
+	read(t, a.call("POST", "/api/v1/account/delete", "", nil), 200, nil)
+	one := "/v1/admin/accounts/" + made[0].Account.ID
+
+	var e httpapi.APIError
+	for _, path := range []string{"/v1/admin/accounts", one} {
+		for _, auth := range []string{"", "not the token", a.cookie.Value} {
+			rec := do(h, "GET", path, auth, "")
+			if read(t, rec, 401, &e); e.Error.Code != "unauthorized" || strings.Contains(rec.Body.String(), "example.org") {
+				t.Errorf("%s with %q: %s", path, auth, rec.Body)
+			}
+		}
+		// It looks, and changes nothing.
+		for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
+			rec := do(h, method, path, token, `{"name":"x"}`)
+			if read(t, rec, 405, &e); e.Error.Code != "method_not_allowed" || rec.Header().Get("Allow") != "GET" {
+				t.Errorf("%s %s: %d %s", method, path, rec.Code, rec.Body)
+			}
+		}
+	}
+	// The session of an account is not the operator's token, and the app's
+	// own API knows nothing of the tool.
+	if rec := a.call("GET", "/v1/admin/accounts", "", nil); rec.Code != 404 {
+		t.Fatalf("the tool through the app's API: %d", rec.Code)
+	}
+
+	rec := do(h, "GET", "/v1/admin/accounts", token, "")
+	var list contracts.AccountList
+	read(t, rec, 200, &list)
+	if len(list.Accounts) != 3 || list.Unreadable != 0 || list.Next != "" || strings.Contains(rec.Body.String(), `"next"`) || !strings.Contains(rec.Body.String(), `"unreadable":0`) {
+		t.Fatalf("the list: %s", rec.Body)
+	}
+	for i, r := range list.Accounts {
+		if r.ID != made[i].Account.ID || r.Address != made[i].Account.Address || !r.CreatedAt.Equal(made[i].Account.CreatedAt) || !r.AddressVerifiedAt.Equal(r.CreatedAt) || r.Sessions != 1 || r.Language != "en" {
+			t.Fatalf("account %d of the list: %+v", i, r)
+		}
+	}
+	if !strings.Contains(rec.Body.String(), `"passkeys":0,"passkey_only":false,"sessions":1}`) || strings.Count(rec.Body.String(), "closes_at") != 1 {
+		t.Fatalf("the list: %s", rec.Body)
+	}
+	if cho := list.Accounts[2]; cho.State != contracts.AccountClosing || cho.Name != "Cho" || cho.ClosesAt.IsZero() || list.Accounts[0].State != contracts.AccountActive {
+		t.Fatalf("a closing account: %+v", cho)
+	}
+
+	// A page at a time.
+	var page contracts.AccountList
+	read(t, do(h, "GET", "/v1/admin/accounts?limit=2", token, ""), 200, &page)
+	if len(page.Accounts) != 2 || page.Next == "" || page.Accounts[1].ID != made[1].Account.ID {
+		t.Fatalf("the first page: %+v", page)
+	}
+	var last contracts.AccountList
+	read(t, do(h, "GET", "/v1/admin/accounts?limit=2&after="+url.QueryEscape(page.Next), token, ""), 200, &last)
+	if len(last.Accounts) != 1 || last.Next != "" || last.Accounts[0].ID != made[2].Account.ID {
+		t.Fatalf("the second page: %+v", last)
+	}
+	for query, code := range map[string]string{
+		"limit=0": "invalid_limit", "limit=101": "invalid_limit", "limit=many": "invalid_limit", "limit=-1": "invalid_limit",
+		"after=zzz": "invalid_cursor", "after=" + made[0].Account.ID: "invalid_cursor",
+	} {
+		if read(t, do(h, "GET", "/v1/admin/accounts?"+query, token, ""), 400, &e); e.Error.Code != code {
+			t.Errorf("%s: %+v, want %s", query, e, code)
+		}
+	}
+
+	// One account.
+	rec = do(h, "GET", one, token, "")
+	var got contracts.AccountRecord
+	if read(t, rec, 200, &got); got != list.Accounts[0] {
+		t.Fatalf("an account: %s", rec.Body)
+	}
+	for _, path := range []string{"/v1/admin/accounts/acc_" + strings.Repeat("a", 26), "/v1/admin/accounts/x", "/v1/admin/accounts/", "/v1/admin/accounts/" + made[0].Account.ID + "/sessions", "/v1/admin/nothing"} {
+		if read(t, do(h, "GET", path, token, ""), 404, &e); e.Error.Code != "not_found" {
+			t.Errorf("%s: %+v", path, e)
+		}
+	}
+
+	// The storage fails: nothing of it is answered, and what is logged names
+	// no account.
+	id := made[0].Account.ID
+	down := httpapi.TokenAuth(tokenHash(), httpapi.Accounts(broken{err: errors.New("store: commits of account-" + id + ": down")}, log))
+	for _, path := range []string{"/v1/admin/accounts", one} {
+		rec := do(down, "GET", path, token, "")
+		if rec.Code != 500 || strings.Contains(rec.Body.String(), "store") || !strings.Contains(rec.Body.String(), `"internal"`) {
+			t.Fatalf("%s with the storage down: %d %s", path, rec.Code, rec.Body)
+		}
+	}
+	if logs := a.logs.String(); !strings.Contains(logs, "commits of account-acc_…: down") {
+		t.Fatalf("logs:\n%s", logs)
+	}
+	for _, secret := range []string{"ana@", "example.org", made[0].Account.ID, made[2].Account.ID, "Cho", token} {
+		if strings.Contains(a.logs.String(), secret) {
+			t.Fatalf("the logs hold %q:\n%s", secret, a.logs)
+		}
+	}
+}
+
+// What the tool answers is what the enclave signed. An account whose record
+// was changed in the table is not shown as the table says: it is counted as
+// one that cannot be read, and asked for by itself it is an error.
+func TestAccountsAdminAPIShowsTheSignedRecords(t *testing.T) {
+	a := newApp(t)
+	mem, logs := a.mem, a.logs
+	h := httpapi.TokenAuth(tokenHash(), httpapi.Accounts(a.svc, slog.New(slog.NewTextHandler(logs, nil))))
+	ana := a.signIn("ana@example.org")
+	a.ahead += time.Minute
+	eve := a.signIn("eve@example.org")
+
+	// The operator writes a name and "passkey only" into Eve's record.
+	names := mem.RecordNames()
+	var forged *store.Record
+	for _, name := range names {
+		if strings.HasPrefix(name, "account-"+eve.Account.ID+"@") {
+			forged, _ = mem.GetRecord(context.Background(), name)
+		}
+	}
+	if forged == nil {
+		t.Fatalf("no record of the account among %v", names)
+	}
+	forged.Value = bytes.Replace(forged.Value, []byte(`"name":""`), []byte(`"name":"Written by hand","passkey_only":true`), 1)
+	mem.SetRecord(*forged)
+	// And an entry into the list, for an account that is not there.
+	ghost := "acc_" + strings.Repeat("a", 26)
+	mem.SetEntry(store.Entry{Partition: "accounts", Key: "20200101T000000.000000000Z." + ghost, Value: []byte(`{"doc":{"account":"` + ghost + `"},"mac":"AAAA"}`), Version: 1})
+
+	rec := do(h, "GET", "/v1/admin/accounts", token, "")
+	var list contracts.AccountList
+	read(t, rec, 200, &list)
+	if len(list.Accounts) != 1 || list.Accounts[0].ID != ana.Account.ID || list.Unreadable != 1 || strings.Contains(rec.Body.String(), "Written by hand") || strings.Contains(rec.Body.String(), eve.Account.ID) || strings.Contains(rec.Body.String(), ghost) {
+		t.Fatalf("the list with a record changed by hand: %s", rec.Body)
+	}
+	rec = do(h, "GET", "/v1/admin/accounts/"+eve.Account.ID, token, "")
+	if rec.Code != 500 || strings.Contains(rec.Body.String(), "Written by hand") || !strings.Contains(rec.Body.String(), `"internal"`) {
+		t.Fatalf("a record changed by hand: %d %s", rec.Code, rec.Body)
+	}
+	var e httpapi.APIError
+	if read(t, do(h, "GET", "/v1/admin/accounts/"+ghost, token, ""), 404, &e); e.Error.Code != "not_found" {
+		t.Fatalf("an account that is not there: %+v", e)
+	}
+	for _, secret := range []string{"example.org", ana.Account.ID, eve.Account.ID, "Written by hand"} {
+		if strings.Contains(logs.String(), secret) {
+			t.Fatalf("the logs hold %q:\n%s", secret, logs)
+		}
 	}
 }

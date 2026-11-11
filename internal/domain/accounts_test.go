@@ -102,6 +102,33 @@ func TestPasskeyName(t *testing.T) {
 	}
 }
 
+func TestAccountName(t *testing.T) {
+	for in, want := range map[string]string{
+		"Ana":                         "Ana",
+		"  Ana Pérez  ":               "Ana Pérez",
+		"小林 📬":                        "小林 📬",
+		strings.Repeat("ñ", 80):       strings.Repeat("ñ", 80),
+		" " + strings.Repeat("a", 80): strings.Repeat("a", 80),
+		// A person may have no name here.
+		"":   "",
+		" 	": "",
+	} {
+		if got, err := AccountName(in); err != nil || got != want {
+			t.Errorf("%q: %q %v, want %q", in, got, err, want)
+		}
+	}
+	// Too long, more than one line, and what cannot be shown.
+	for _, in := range []string{strings.Repeat("a", 81), "two\nlines", "tab\there", "nul\x00", "bell\a", "\xff\xfe", "right\u202eto left"} {
+		got, err := AccountName(in)
+		if !errors.Is(err, contracts.ErrInvalidAccountName) || !errors.Is(err, contracts.ErrInvalidName) {
+			t.Errorf("%q: accepted as %q (%v)", in, got, err)
+		}
+	}
+	if AccountClosing != 7*24*time.Hour || DefaultAccountsPage > MaxAccountsPage {
+		t.Errorf("closing takes %v, a page is %d of at most %d", AccountClosing, DefaultAccountsPage, MaxAccountsPage)
+	}
+}
+
 func TestRecoveryCodes(t *testing.T) {
 	if got := FormatRecoveryCode("abcd2345wxyz6789"); got != "ABCD-2345-WXYZ-6789" {
 		t.Errorf("format: %q", got)

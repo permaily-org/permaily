@@ -1,6 +1,7 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router'
-import { useSession } from '../lib/session.tsx'
+import { isClosing, useSession } from '../lib/session.tsx'
+import { AccountClosing } from '../pages/auth/AccountClosing.tsx'
 import { AuthLayout } from '../pages/auth/AuthLayout.tsx'
 import { LinkConfirmation, LinkEnded } from '../pages/auth/LinkConfirmation.tsx'
 import { Button, Headline } from './ui/index.ts'
@@ -39,11 +40,35 @@ function Waiting() {
   )
 }
 
-/** Everything of the app sits behind this: without a session, every route leads to the sign-in screen. */
+/**
+ * Everything of the app sits behind this: without a session, every route leads to the sign-in screen. And
+ * with an account that is being deleted every route shows that, and nothing else of the app, until the person
+ * cancels. The address stays where it was, so cancelling goes back to the page they were on.
+ */
 export function RequireSession() {
   const { state } = useSession()
   const { pathname, search, hash } = useLocation()
-  if (state.status === 'signedIn') return <Outlet />
+  // Said to a screen reader when the app comes back after a deletion was cancelled: it is here, and not on
+  // the screen that goes away, so it is still in the page when it is read.
+  const [said, setSaid] = useState('')
+  if (state.status === 'signedIn') {
+    const closing = isClosing(state.me.account)
+    return (
+      <>
+        <p role="status" className="sr-only">
+          {closing ? '' : said}
+        </p>
+        {closing ? (
+          <AccountClosing
+            account={state.me.account}
+            onKept={() => setSaid('Deletion cancelled. Your account works again.')}
+          />
+        ) : (
+          <Outlet />
+        )}
+      </>
+    )
+  }
   if (state.status === 'signedOut') {
     // After signing in the person lands where they were going, unless they just chose to leave.
     const from = state.byChoice ? null : { from: pathname + search + hash }

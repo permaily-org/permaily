@@ -27,16 +27,9 @@ export function SignIn() {
   const addRef = useRef<HTMLButtonElement>(null)
   // Counts the readings, so a slower answer to an earlier one cannot undo a later one.
   const turn = useRef(0)
-  const retry = useRef(session.retry)
-  retry.current = session.retry
-
-  const failed = useCallback((error: unknown) => {
-    const code = api.errorCode(error)
-    if (code !== 'unauthorized') return code
-    // The session ended, here or from another device. The app asks who this is, and leads to the sign-in screen.
-    retry.current()
-    return null
-  }, [])
+  // Null when the session ended or the account is being deleted: the app is on its way to the screen that
+  // says so, and there is nothing left to say here.
+  const { failed } = session
 
   const refresh = useCallback(async () => {
     const mine = ++turn.current

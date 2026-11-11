@@ -47,11 +47,42 @@ type SessionValue = {
   retry: () => void
   /** Takes the account the server answered a finished sign-in with. */
   signedIn: (me: api.Me) => void
+  /**
+   * Takes the account as the server answered a change to it: a new name, a deletion asked for or cancelled.
+   * Everything that shows the account follows without a reload.
+   */
+  accountChanged: (account: api.Account) => void
+  /**
+   * Asks the server again who this is, without a word on screen: what changed elsewhere shows here, and a
+   * session that ended leads to the sign-in screen. No answer changes nothing.
+   */
+  refresh: () => Promise<void>
+  /**
+   * The code of a failed request, or null when there is nothing to say where it failed: the session ended, or
+   * the account is being deleted, and the app is already on its way to the screen that says so.
+   */
+  failed: (error: unknown) => api.ApiErrorCode | null
   /** Ends the session on the server. Throws an ApiError when it could not. */
   signOut: () => Promise<void>
 }
 
 const SessionContext = createContext<SessionValue | null>(null)
+
+/** Whether what shows of an account is the same in both answers. */
+function sameAccount(a: api.Account, b: api.Account): boolean {
+  return (
+    a.id === b.id &&
+    a.state === b.state &&
+    a.closes_at === b.closes_at &&
+    a.name === b.name &&
+    a.address === b.address
+  )
+}
+
+/** Whether the person asked to delete this account: the app then shows that, and nothing else. */
+export function isClosing(account: api.Account): boolean {
+  return account.state === 'closing'
+}
 
 export function useSession(): SessionValue {
   const value = useContext(SessionContext)
@@ -191,34 +222,39 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('hashchange', arrived)
   }, [load])
 
-  // Coming back to the tab asks again: the link may have been opened in another tab, or the session ended there.
+  // Asks again without a word on screen. Coming back to the tab does: the link may have been opened in another
+  // tab, the session ended there, or the account's deletion asked for or cancelled there.
+  const asking = useRef(false)
+  const refresh = useCallback(async () => {
+    if (asking.current) return
+    if (status.current !== 'signedIn' && status.current !== 'signedOut') return
+    asking.current = true
+    const turn = epoch.current
+    try {
+      const who = await api.me()
+      if (turn !== epoch.current) return
+      // Signed in from another tab: the news that a link did not work here is of no use any more.
+      if (status.current === 'signedOut') setLinkProblem(null)
+      setState((now) =>
+        now.status === 'signedOut' ||
+        (now.status === 'signedIn' && !sameAccount(now.me.account, who.account))
+          ? { status: 'signedIn', me: who }
+          : now,
+      )
+    } catch (error) {
+      // Only the server saying so signs anyone out. No answer changes nothing.
+      if (turn !== epoch.current || api.errorCode(error) !== 'unauthorized') return
+      setState((now) =>
+        now.status === 'signedIn' ? { status: 'signedOut', byChoice: false } : now,
+      )
+    } finally {
+      asking.current = false
+    }
+  }, [])
+
   useEffect(() => {
-    let asking = false
-    const check = async () => {
-      if (document.visibilityState !== 'visible' || asking) return
-      if (status.current !== 'signedIn' && status.current !== 'signedOut') return
-      asking = true
-      const turn = epoch.current
-      try {
-        const who = await api.me()
-        if (turn !== epoch.current) return
-        // Signed in from another tab: the news that a link did not work here is of no use any more.
-        if (status.current === 'signedOut') setLinkProblem(null)
-        setState((now) =>
-          now.status === 'signedOut' ||
-          (now.status === 'signedIn' && now.me.account.id !== who.account.id)
-            ? { status: 'signedIn', me: who }
-            : now,
-        )
-      } catch (error) {
-        // Only the server saying so signs anyone out. No answer changes nothing.
-        if (turn !== epoch.current || api.errorCode(error) !== 'unauthorized') return
-        setState((now) =>
-          now.status === 'signedIn' ? { status: 'signedOut', byChoice: false } : now,
-        )
-      } finally {
-        asking = false
-      }
+    const check = () => {
+      if (document.visibilityState === 'visible') void refresh()
     }
     document.addEventListener('visibilitychange', check)
     window.addEventListener('focus', check)
@@ -226,7 +262,32 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', check)
       window.removeEventListener('focus', check)
     }
-  }, [])
+  }, [refresh])
+
+  // A request was refused because the account is being deleted, asked for in another tab or on another device.
+  // The server is asked how the account is, and the answer leads to the screen that says it is closing.
+  const closing = state.status === 'signedIn' && isClosing(state.me.account)
+  const known = useRef(closing)
+  known.current = closing
+  useEffect(() => {
+    api.onAccountClosing(() => {
+      if (status.current === 'signedIn' && !known.current) void load()
+    })
+    return () => api.onAccountClosing(null)
+  }, [load])
+
+  const failed = useCallback(
+    (error: unknown) => {
+      const code = api.errorCode(error)
+      // The request itself told the session that the account is closing: see above.
+      if (code === 'account_closing') return null
+      if (code !== 'unauthorized') return code
+      // The session ended, here or from another device. The app asks who this is, and leads to the sign-in screen.
+      void load()
+      return null
+    },
+    [load],
+  )
 
   const value = useMemo<SessionValue>(
     () => ({
@@ -245,6 +306,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setLinkProblem(null)
         setState({ status: 'signedIn', me: who })
       },
+      accountChanged: (account) => {
+        // A slower answer to an earlier question must not put the account back as it was.
+        epoch.current++
+        setState((now) =>
+          now.status === 'signedIn' && now.me.account.id === account.id
+            ? { status: 'signedIn', me: { ...now.me, account } }
+            : now,
+        )
+      },
+      refresh,
+      failed,
       signOut: async () => {
         try {
           await api.signOut()
@@ -260,7 +332,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setState({ status: 'signedOut', byChoice: true })
       },
     }),
-    [state, linkProblem, ask, settled, load, acceptLink],
+    [state, linkProblem, ask, settled, load, acceptLink, refresh, failed],
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

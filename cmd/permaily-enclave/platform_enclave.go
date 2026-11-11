@@ -145,9 +145,12 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			records = anchored
 			// Accounts keep their records apart: /status names the records it
 			// lists, and the name of an account's record is its identifier.
+			// Only the newest version of one is kept, so a name or a passkey
+			// that was removed does not stay in the table (ADR 0017); the TLS
+			// identity above keeps every version (ADR 0016).
 			var accountRecords *store.Anchored
 			if cfg.mailFrom != "" {
-				accountRecords = &store.Anchored{Records: awsStore, Commits: commits}
+				accountRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true}
 				if err := p.signIn(ctx, cfg, hosts, awsCfg, egress, accountRecords, awsStore, root, log); err != nil {
 					return nil, err
 				}
@@ -170,7 +173,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 
 // signIn turns accounts on: the mail of a sign-in goes out through SES, and
 // only while SES says nobody else gets a copy of it.
-func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, awsCfg aws.Config, egress *http.Client, records store.Records, entries store.Entries, root *keys.Root, log *slog.Logger) error {
+func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, awsCfg aws.Config, egress *http.Client, records accounts.Records, entries store.Entries, root *keys.Root, log *slog.Logger) error {
 	_, domain, ok := strings.Cut(cfg.mailFrom, "@")
 	if !ok || domain == "" {
 		return errors.New("-mail-from is not an address")
@@ -190,7 +193,12 @@ func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, a
 		},
 		AppURL: "https://" + hosts.App, Log: log,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	// Accounts whose person asked to delete them are removed when their day comes.
+	go p.accounts.Run(ctx, accounts.RemoveEvery)
+	return nil
 }
 
 // accountRecord stands for the name of an account's record in /status: the

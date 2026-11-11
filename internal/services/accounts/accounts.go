@@ -13,6 +13,10 @@
 // with a passkey, is kept nowhere but in this enclave's memory: its count of
 // wrong codes cannot be set back by whoever runs the storage, and a restart
 // ends it.
+//
+// An account its person asked to delete is closing for seven days and then
+// removed: its record is committed as gone, so nothing put back in the
+// storage brings it back (settings.go).
 package accounts
 
 import (
@@ -29,6 +33,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -63,11 +68,21 @@ type Mailer interface {
 	Send(ctx context.Context, m Mail) error
 }
 
+// Records is where the records of accounts are kept: a store that refuses an
+// earlier copy of one, and that removes one for good (store.Anchored).
+type Records interface {
+	store.Records
+	// RemoveRecord makes a record be not there from then on, whatever is put
+	// back in the storage, and deletes what is stored of it.
+	RemoveRecord(ctx context.Context, name string) error
+}
+
 // Config is what a Service needs.
 type Config struct {
 	// Records holds the account records. It must refuse an earlier copy of
-	// one (store.Anchored): an account's ways to sign in must not come back.
-	Records store.Records
+	// one (store.Anchored): an account's ways to sign in must not come back,
+	// and neither must an account that was removed.
+	Records Records
 	Entries store.Entries
 	Keys    Keys
 	Mailer  Mailer
@@ -204,6 +219,12 @@ func randomString(alphabet string, n int) string {
 	return string(out)
 }
 
+// identifiers are taken out of the errors this package logs: logs leave the
+// enclave, and a store's error names the record it was about.
+var identifiers = regexp.MustCompile(`\b(acc|ses|att|cer)_[a-z2-7]{26}`)
+
+func scrub(err error) string { return identifiers.ReplaceAllString(err.Error(), "${1}_…") }
+
 func (s *Service) signingKey(ctx context.Context) ([]byte, error) {
 	key, err := s.cfg.Keys.Derive(ctx, signingPurpose)
 	if err != nil {
@@ -231,10 +252,21 @@ type accountDoc struct {
 	PasskeyOnly bool `json:"passkey_only,omitempty"`
 	// RecoveryCodes are the hashes of the recovery codes not used yet.
 	RecoveryCodes [][]byte `json:"recovery_codes,omitempty"`
+	// ClosesAt is when a closing account is removed.
+	ClosesAt time.Time `json:"closes_at,omitzero"`
 }
 
 func (d *accountDoc) view() contracts.Account {
-	return contracts.Account{ID: d.ID, State: d.State, Address: d.Address, Name: d.Name, Language: d.Language, CreatedAt: d.CreatedAt}
+	return contracts.Account{
+		ID: d.ID, State: d.State, Address: d.Address, Name: d.Name, Language: d.Language,
+		CreatedAt: d.CreatedAt, ClosesAt: d.ClosesAt,
+	}
+}
+
+// due reports whether the account's person asked to delete it and the days
+// they had to cancel are over: from then on it is nobody's account.
+func (d *accountDoc) due(now time.Time) bool {
+	return d.State == contracts.AccountClosing && !now.Before(d.ClosesAt)
 }
 
 func recordName(accountID string) string { return "account-" + accountID }
@@ -243,11 +275,26 @@ func recordAAD(name string) []byte { return envelope.AAD("record", name) }
 
 func entryAAD(partition, key string) []byte { return envelope.AAD("entry", partition, key) }
 
-// account reads an account's record. It returns nil when there is no such
+// account returns an account that can be used: nil when there is none, and
+// an error when there is one that cannot be trusted (read). An account that
+// is due is removed here, the moment anyone tries to use it, so it does not
+// live on when the list that the enclave finds it by was written to.
+func (s *Service) account(ctx context.Context, id string) (*accountDoc, error) {
+	doc, err := s.read(ctx, id)
+	if err != nil || doc == nil || !doc.due(s.now()) {
+		return doc, err
+	}
+	if err := s.remove(ctx, id); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// read reads an account's record. It returns nil when there is no such
 // account, and an error when there is one that cannot be trusted: a record
 // that does not verify, or whose newest version is gone. Such an account is
 // never taken for a missing one, which a sign-up could then replace.
-func (s *Service) account(ctx context.Context, id string) (*accountDoc, error) {
+func (s *Service) read(ctx context.Context, id string) (*accountDoc, error) {
 	rec, err := s.cfg.Records.GetRecord(ctx, recordName(id))
 	switch {
 	case errors.Is(err, store.ErrLost):
@@ -301,15 +348,36 @@ func (s *Service) own(ctx context.Context, who *Authenticated) (*accountDoc, err
 	return doc, nil
 }
 
-// change reads an account's record, lets edit change it and stores it as the
-// newest version. When edit fails nothing is stored. An account that is not
-// there is ErrUnauthorized: its session stands for nothing.
+// change is rewrite for everything a closing account refuses: all but
+// cancelling, and a recovery code used to sign in.
 func (s *Service) change(ctx context.Context, id string, edit func(*accountDoc) error) (*accountDoc, error) {
+	return s.rewrite(ctx, id, func(doc *accountDoc) error {
+		if doc.State == contracts.AccountClosing {
+			return contracts.ErrAccountClosing
+		}
+		return edit(doc)
+	})
+}
+
+// rewrite reads an account's record, lets edit change it and stores it as the
+// newest version. When edit fails nothing is stored. An account that is not
+// there, or is due and so removed here, is ErrUnauthorized: its session
+// stands for nothing.
+func (s *Service) rewrite(ctx context.Context, id string, edit func(*accountDoc) error) (*accountDoc, error) {
 	s.changing.Lock()
 	defer s.changing.Unlock()
-	doc, err := s.own(ctx, &Authenticated{AccountID: id})
+	doc, err := s.read(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if doc != nil && doc.due(s.now()) {
+		if err := s.removeLocked(ctx, doc); err != nil {
+			return nil, err
+		}
+		doc = nil
+	}
+	if doc == nil {
+		return nil, contracts.ErrUnauthorized
 	}
 	if err := edit(doc); err != nil {
 		return nil, err
@@ -338,9 +406,44 @@ func (s *Service) Account(ctx context.Context, id string) (*contracts.Account, e
 
 // An address leads to its account through an entry. The entry is only a
 // pointer: the account's record says which address is its own, so a pointer
-// written by hand leads nowhere.
+// written by hand leads nowhere. The entries of the two lists of accounts
+// (settings.go) are pointers too.
 type loginDoc struct {
 	Account string `json:"account"`
+}
+
+// pointed returns the account a pointer names, or "" when the entry is not
+// one this deployment wrote where it is.
+func pointed(key []byte, e *store.Entry) string {
+	var login loginDoc
+	raw, err := envelope.Verified(key, e.Value, entryAAD(e.Partition, e.Key))
+	if err != nil || json.Unmarshal(raw, &login) != nil || !validID("acc", login.Account) {
+		return ""
+	}
+	return login.Account
+}
+
+// point writes the pointer to an account at an entry, in the place of the
+// version given (0 for a new one).
+func (s *Service) point(ctx context.Context, partition, key, accountID string, version uint64) error {
+	signing, err := s.signingKey(ctx)
+	if err != nil {
+		return err
+	}
+	e := &store.Entry{Partition: partition, Key: key, Version: version, UpdatedAt: s.now()}
+	raw, _ := json.Marshal(loginDoc{Account: accountID})
+	if e.Value, err = envelope.Sign(signing, raw, entryAAD(partition, key)); err != nil {
+		return err
+	}
+	return s.cfg.Entries.PutEntry(ctx, e)
+}
+
+// forget deletes an entry that may be gone already.
+func (s *Service) forget(ctx context.Context, partition, key string) error {
+	if err := s.cfg.Entries.DeleteEntry(ctx, partition, key); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 func loginPartition(address string) string { return "login#email#" + address }
@@ -362,12 +465,11 @@ func (s *Service) lookup(ctx context.Context, address string) (*accountDoc, *sto
 	if err != nil {
 		return nil, nil, err
 	}
-	var login loginDoc
-	raw, err := envelope.Verified(key, e.Value, entryAAD(e.Partition, e.Key))
-	if err != nil || json.Unmarshal(raw, &login) != nil || !validID("acc", login.Account) {
+	id := pointed(key, e)
+	if id == "" {
 		return nil, e, nil
 	}
-	doc, err := s.account(ctx, login.Account)
+	doc, err := s.account(ctx, id)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -385,25 +487,29 @@ func (s *Service) create(ctx context.Context, address string, stale *store.Entry
 		V: 1, ID: newID("acc"), State: contracts.AccountActive, Address: address,
 		Language: "en", CreatedAt: now, AddressVerifiedAt: now,
 	}
+	// The entry in the list of accounts goes in before the record: one without
+	// a record lists nothing, where an account without one would never be shown.
+	if err := s.point(ctx, accountsPartition, listKey(doc), doc.ID, 0); err != nil {
+		return nil, err
+	}
 	if err := s.putAccount(ctx, doc, true); err != nil {
+		_ = s.forget(ctx, accountsPartition, listKey(doc))
 		return nil, err
 	}
-	key, err := s.signingKey(ctx)
-	if err != nil {
-		return nil, err
-	}
-	e := &store.Entry{Partition: loginPartition(address), Key: loginKey, UpdatedAt: now}
+	version := uint64(0)
 	if stale != nil {
-		e.Version = stale.Version
+		version = stale.Version
 	}
-	raw, _ := json.Marshal(loginDoc{Account: doc.ID})
-	if e.Value, err = envelope.Sign(key, raw, entryAAD(e.Partition, e.Key)); err != nil {
-		return nil, err
+	err := s.point(ctx, loginPartition(address), loginKey, doc.ID, version)
+	if err != nil {
+		// No address leads to the record just written, and none will: it is
+		// removed, as far as that works now.
+		_ = s.forget(ctx, accountsPartition, listKey(doc))
+		_ = s.cfg.Records.RemoveRecord(ctx, recordName(doc.ID))
 	}
-	err = s.cfg.Entries.PutEntry(ctx, e)
 	if errors.Is(err, store.ErrExists) || errors.Is(err, store.ErrConflict) {
 		// Another sign-up of the same address ended first: that account is
-		// the address's, and the record just written leads nowhere.
+		// the address's.
 		winner, _, err := s.lookup(ctx, address)
 		if err != nil {
 			return nil, err
@@ -583,7 +689,7 @@ func (s *Service) StartEmail(ctx context.Context, in contracts.EmailStart) (*con
 func (s *Service) deliver(ctx context.Context, id, address, invitation string) {
 	doc, _, err := s.lookup(ctx, address)
 	if err != nil {
-		s.cfg.Log.Error("accounts: looking an address up", "err", err)
+		s.cfg.Log.Error("accounts: looking an address up", "err", scrub(err))
 		return
 	}
 	if doc == nil && invitation == "" {
@@ -846,6 +952,12 @@ func (s *Service) Authenticate(ctx context.Context, cookie string) (*Authenticat
 	if doc == nil || subtle.ConstantTimeCompare(sum[:], doc.TokenSHA256) != 1 {
 		return nil, contracts.ErrUnauthorized
 	}
+	// A session is only as good as its account: one that was removed, or that
+	// is due and is removed here, signs nobody in, whatever entries of it are
+	// put back in the storage.
+	if _, err := s.own(ctx, &Authenticated{AccountID: accountID}); err != nil {
+		return nil, err
+	}
 	if now := s.now(); now.Sub(doc.LastUsedAt) >= domain.SessionTouch {
 		doc.LastUsedAt = now
 		// Another request of the same session may have written it first.
@@ -857,7 +969,7 @@ func (s *Service) Authenticate(ctx context.Context, cookie string) (*Authenticat
 }
 
 func (s *Service) sessions(ctx context.Context, accountID string) ([]sessionDoc, error) {
-	entries, err := s.cfg.Entries.ListEntries(ctx, accountPartition(accountID), sessionPrefix, 2*maxSessions)
+	entries, err := s.cfg.Entries.ListEntries(ctx, accountPartition(accountID), sessionPrefix, "", 2*maxSessions)
 	if err != nil {
 		return nil, err
 	}

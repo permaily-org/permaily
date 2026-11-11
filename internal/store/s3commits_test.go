@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -505,4 +506,85 @@ func TestS3CommitsAgainstS3(t *testing.T) {
 	if head, next, err := c.Head(ctx, name); err != nil || head.Version != 4 || next != 5 {
 		t.Fatalf("head %+v, next %d, %v", head, next, err)
 	}
+}
+
+// A commit that says a record is gone is a commit like any other in the
+// bucket: the same fields, locked, authenticated with its digest of zeros. So
+// nothing added to the bucket turns it into a record, and an image from
+// before records could be removed reads it as a commit whose value is not
+// there, which is a lost record and never an earlier one.
+func TestS3CommitsCarryARemoval(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 11, 8, 0, 0, 0, time.UTC)
+	b := &lockedBucket{objectLock: true}
+	records := store.NewMemory()
+	a := &store.Anchored{Records: records, Commits: s3Commits(b, now), Now: func() time.Time { return now }}
+	for _, v := range []string{"one", "two"} {
+		if err := a.PutRecord(ctx, rec("account", v), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stored := names(t, records, "account")
+	earlier, err := records.GetRecord(ctx, stored[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.RemoveRecord(ctx, "account"); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.versions) != 3 {
+		t.Fatalf("%d objects in the bucket", len(b.versions))
+	}
+	fields := func(v bucketVersion) map[string]any {
+		var doc map[string]any
+		if err := json.Unmarshal(v.body, &doc); err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+	written, removal := fields(b.versions[1]), fields(b.versions[2])
+	if len(removal) != len(written) || removal["digest"] != strings.Repeat("0", 64) || removal["version"] != float64(3) || removal["name"] != "account" {
+		t.Fatalf("the commit of a removal: %v", removal)
+	}
+	for field := range written {
+		if _, ok := removal[field]; !ok {
+			t.Fatalf("the commit of a removal has no %s: %v", field, removal)
+		}
+	}
+	if v := b.versions[2]; v.mode != s3types.ObjectLockModeCompliance || !v.until.Equal(now.Add(24*time.Hour)) {
+		t.Fatalf("the commit of a removal is not locked: %+v", v)
+	}
+	head, next, err := s3Commits(b, now).Head(ctx, "account")
+	if err != nil || head == nil || !head.Gone() || head.Version != 3 || next != 4 {
+		t.Fatalf("head %+v, next %d, %v", head, next, err)
+	}
+
+	gone := func(t *testing.T) {
+		t.Helper()
+		fresh := &store.Anchored{Records: records, Commits: s3Commits(b, now)}
+		if _, err := fresh.GetRecord(ctx, "account"); !errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrLost) {
+			t.Fatalf("a removed record: %v", err)
+		}
+	}
+	// The operator hides the commit and puts the value before it back.
+	b.add(bucketVersion{key: b.versions[2].key, deleteMarker: true})
+	records.SetRecord(*earlier)
+	gone(t)
+	// The commit of the value before it, written over the removal and after it.
+	b.add(bucketVersion{key: b.versions[2].key, body: b.versions[1].body})
+	b.add(bucketVersion{key: strings.Replace(b.versions[2].key, "0003", "0004", 1), body: b.versions[1].body})
+	gone(t)
+	// The removal with its digest changed to the one of that value: the
+	// authentication code covers the digest.
+	forged := bytes.Replace(b.versions[2].body, []byte(strings.Repeat("0", 64)), []byte(written["digest"].(string)), 1)
+	b.add(bucketVersion{key: b.versions[2].key, body: forged})
+	gone(t)
+	// Another enclave of the deployment that wrote the same version at the
+	// same time: of the two commits the removal counts, for every reader.
+	c := s3Commits(b, now)
+	b.add(bucketVersion{key: b.versions[2].key, deleteMarker: true})
+	if _, err := c.Append(ctx, commitOf("account", 3, "written at the same time")); err != nil {
+		t.Fatal(err)
+	}
+	gone(t)
 }

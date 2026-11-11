@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/inbox"
@@ -59,6 +60,17 @@ type platform struct {
 	mail func() *attestation.MailStatus
 }
 
+// devAhead is how far the clock of dev mode runs ahead of the real one, in
+// nanoseconds. The test of the whole service moves it past the days an
+// account takes to be deleted.
+var devAhead atomic.Int64
+
+func devClock() time.Time { return time.Now().Add(time.Duration(devAhead.Load())) }
+
+// devRemoveEvery is how often dev mode looks for accounts that are due: its
+// storage is in memory, so looking costs nothing.
+const devRemoveEvery = time.Second
+
 // logOutput is the terminal in dev mode.
 func logOutput(config) io.Writer { return os.Stdout }
 
@@ -66,7 +78,7 @@ func logOutput(config) io.Writer { return os.Stdout }
 // 2525 in dev), uses a self-signed certificate (valid for every host plus
 // localhost), a fake attester, local keys and an in-memory store. DKIM uses
 // the system resolver. Accounts are on, and mail to people is kept in memory.
-func newPlatform(_ context.Context, cfg config, hosts router.Hosts, log *slog.Logger) (*platform, error) {
+func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.Logger) (*platform, error) {
 	att, err := fakensm.New()
 	if err != nil {
 		return nil, err
@@ -96,6 +108,7 @@ func newPlatform(_ context.Context, cfg config, hosts router.Hosts, log *slog.Lo
 		return nil, err
 	}
 	mem := store.NewMemory()
+	mem.Now = devClock
 	p := &platform{mode: "dev", listener: ln, attester: att, certs: certs, store: mem}
 	local, err := keys.NewLocal()
 	if err != nil {
@@ -109,11 +122,13 @@ func newPlatform(_ context.Context, cfg config, hosts router.Hosts, log *slog.Lo
 	}
 	outbox := &accounts.Outbox{}
 	if p.accounts, err = accounts.New(accounts.Config{
-		Records: &store.Anchored{Records: mem, Commits: store.NewMemoryCommits()}, Entries: mem,
-		Keys: local, Mailer: outbox, AppURL: appURL, Log: log,
+		// As in the enclave: only the newest version of an account's record is kept.
+		Records: &store.Anchored{Records: mem, Commits: store.NewMemoryCommits(), OnlyNewest: true, Now: devClock}, Entries: mem,
+		Keys: local, Mailer: outbox, AppURL: appURL, Log: log, Now: devClock,
 	}); err != nil {
 		return nil, err
 	}
+	go p.accounts.Run(ctx, devRemoveEvery)
 	p.devRoutes = map[string]http.Handler{"/dev/outbox": http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(outbox.Sent())

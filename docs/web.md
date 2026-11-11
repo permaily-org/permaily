@@ -11,7 +11,7 @@ The web app people use to decide what each app, agent or vendor can read from th
 | Rules | The person's own filters. Each one holds back emails or removes details from them before any query runs, for every connection, every connection except some, or only the vendors and connections picked, set here or from a connection's page. New accounts get one suggested for sign-in and security mail |
 | Activity | A receipt for every email that leaves, showing who got it, which parts and why |
 | Accounts | Connected mailboxes and how Permaily reaches them |
-| Settings | Profile, sign-in, notifications and your data |
+| Settings | Profile, sign-in, notifications and your data, and deleting the account |
 | Sign in, sign up | The only screens open without a session. Everything else sits behind one |
 
 Apps and agents also send people to the consent screen. There they see the query the connection asks for, and a preview of exactly what it would get, before they allow it. The approved query caps what that connection can fetch. A vendor that wants something else asks for another connection, which is approved, listed and revoked on its own.
@@ -42,7 +42,7 @@ Design tokens, typography and the design language are in [design.md](design.md).
 
 ## Screens
 
-Signing in, signing up, the session and the Sign-in section of Settings talk to the server. Every other screen, and the rest of Settings, still runs on sample data in `web/src/data/sample.ts`, behind the session. States that need special data are reached with a `?state=` parameter.
+Signing in, signing up, the session, and in Settings the Profile and Sign-in sections and deleting the account, talk to the server. Every other screen, and the rest of Settings (Notifications, Your data), still runs on sample data in `web/src/data/sample.ts`, behind the session. States that need special data are reached with a `?state=` parameter.
 
 | Route | Screen | States |
 | --- | --- | --- |
@@ -59,7 +59,8 @@ Signing in, signing up, the session and the Sign-in section of Settings talk to 
 | `/accounts` | Connected mailboxes | `?state=filter-behind`, `?state=mailbox-error` |
 | `/accounts/new` | Connect a mailbox | |
 | `/accounts/new/forwarding` | Forwarding setup | |
-| `/settings` | Profile, sign-in, notifications, appearance and data. Sign-in is the server's: passkeys, "passkey only", recovery codes and sessions | |
+| `/settings` | Profile, sign-in, notifications, appearance and data, and deleting the account. Profile, Sign-in and deleting are the server's: the name, the contact address, passkeys, "passkey only", recovery codes and sessions | |
+| Any route, while the account is closing | Only that the account is being deleted, on which day, and two actions: cancel the deletion and sign out | |
 | `/consent/trip-app` | An app asks for access. The mailbox picker switches to the forwarding preview | `?state=loading`, `?state=error` |
 | `/consent/claude` | An agent asks to connect and starts with nothing | `?state=loading`, `?state=error` |
 | `/consent/ledgerly` | A connection asks for more | `?state=loading`, `?state=error` |
@@ -97,16 +98,30 @@ The API is the one of [ADR 0017](decisions/0017-accounts-and-sign-in.md), under 
 - **Focus** follows what changed: a form's field when it opens and the action that opened it when it closes; the heading of a question or of the codes, never the action that answers it, so Enter answers nothing unread; the action that opened a dialog when it closes; the section when the row that had focus is gone. What changed without moving focus is said in a status for screen readers.
 - **Nothing of this is stored.** A recovery code, a browser's answer and the server's name for a ceremony never go to `localStorage`, `sessionStorage`, the address or a log. Recovery codes are in the page's memory only while they are on screen, and "Copy all" puts them on the clipboard because the person asked.
 
+## The account: name, address and deleting it
+
+The API is the one of [ADR 0017](decisions/0017-accounts-and-sign-in.md) ("Settings, deleting an account and the operator's tool"), under `/api/v1/` (`web/src/lib/api.ts`): `PATCH account`, `POST account/delete` and `POST account/delete/cancel`, each answering with the account, which `GET me` carries too with its `state` (`active` or `closing`) and, while closing, `closes_at`.
+
+- **Profile** (`web/src/pages/settings/account/Profile.tsx`) shows the account as the session has it. The name is changed in place (Edit, or Add when there is none) and taken away with Remove or by saving an empty field. A name of more than 80 characters, or with a character the server does not keep (anything but letters, marks, digits, punctuation, symbols and the plain space), is said before it is sent, and the server has the last word (`invalid_name`). The contact address is shown as it is, with no action and "It can't be changed yet." The language is shown with no action. The server's answer to a change goes to the session (`accountChanged`), so the account menu follows without a reload.
+- **Delete my account** (`web/src/pages/settings/account/DeleteAccount.tsx`) asks first, in a dialog that says what happens before the server hears anything: the account stops working at once and every other device is signed out; it is deleted for good in seven days, with the day; until then the person can sign in and cancel; after that nothing brings it back, and the address returns only with a new invitation, as a new account. To go on the person types the account's address, in any case. Nothing in the dialog is the default: focus opens on the question, Enter in the field only checks what was typed, and "Keep my account" comes before "Delete my account". Asking without the address says so in the field and asks nothing of the server.
+- **An account that is closing shows one screen** (`web/src/pages/auth/AccountClosing.tsx`): that it is being deleted, the day and the time with its zone, in the person's own time zone, how many days are left by their calendar ("in 7 days", "tomorrow", "today"), and "Cancel the deletion" and "Sign out". `RequireSession` (`web/src/components/SessionGate.tsx`) shows it in place of every route, the way every route leads to sign-in without a session, also after a reload and after signing in again. The address stays where the person was, so cancelling goes back to that page, and a screen reader is told the account works again.
+- **Every way of finding out leads to that screen.** The answer to the request to delete; `GET me` when the app opens or the tab is come back to, which now also follows a name or a state changed in another tab; and any request refused with `account_closing` (409), such as a change made in a tab that was open before: `web/src/lib/api.ts` tells the session, which asks `GET me` again, and the part of the page that asked says nothing (`failed` of the session answers null, as it does for a session that ended).
+- **When the day comes** the account is removed and its session stands for nothing: the next request is answered 401, and the sign-in screen follows, as for any session that ended. A closing screen left open asks the server once its own clock reaches the day; only the server's answer signs anyone out.
+- **Dates** are written by `Intl` (`web/src/lib/closing.ts`), never by hand. The day in the dialog is this browser's clock plus seven days, as the day only; the closing screen shows the server's `closes_at`.
+- **No answer from the server** is said where it was asked: under the name, in the dialog ("it isn't known whether your account is being deleted", since the request may have arrived) and on the closing screen, each with focus back on what can be tried again. Asking to delete twice changes nothing: the day stays.
+
 `Dialog` (`web/src/components/ui/Dialog.tsx`) takes `dismissable={false}` for a dialog that must be answered, and gives focus to the element marked `data-dialog-focus` when it opens.
 
 To try passkeys by hand, the page's host must be the relying party and its certificate must be one the browser accepts, which the dev server on `localhost` is not. Serve the built app from the dev enclave on its own name (`-domain permaily.test -port 18443`, with `web/dist` copied to `internal/webui/dist` before building) and start Chromium with `--host-resolver-rules="MAP *.permaily.test 127.0.0.1"` and `--ignore-certificate-errors-spki-list=<base64 of the SHA-256 of the certificate's public key>`: Chromium refuses WebAuthn on a page with a certificate error, and with that flag the certificate counts as valid. A virtual authenticator from the DevTools protocol (`WebAuthn.enable`, `WebAuthn.addVirtualAuthenticator` with resident keys and user verification) stands in for a device.
 
 The build keeps every asset as a file of its own (`assetsInlineLimit: 0` in `web/vite.config.ts`): a font put in the stylesheet as a `data:` URL is refused by the enclave's `Content-Security-Policy`.
 
-Not built yet: signing in with Google, GitHub, Meta or Microsoft, changing the name or the contact address, and deleting the account. Outside its Sign-in section the Settings page still shows sample data.
+Not built yet: signing in with Google, GitHub, Meta or Microsoft, changing the contact address, and choosing a language. The Notifications and Your data sections of Settings still show sample data.
 
 ## TODO
 
 - [ ] After a sign-in with a recovery code the app opens where the person was going. Leading them to Settings to add a passkey would save a step.
 - [ ] A passkey the server refused when it was made stays in the authenticator, and so does one that was removed here. `PublicKeyCredential.signalUnknownCredential` could tell the authenticator, where the browser has it.
+- [ ] After the day of a deletion passes, the sign-in screen says nothing of why the person is there: the server answers a removed account like any session that ended.
+- [ ] After a deletion is cancelled, or a sign-in, focus starts at the top of the app. Moving it to the page's heading would save a screen reader the way through the sidebar.
 - [ ] Try passkeys on real authenticators and in Safari and Firefox: the flows were run in Chromium with a virtual authenticator. Safari may want the prompt opened straight from the click, before the request for the options.
