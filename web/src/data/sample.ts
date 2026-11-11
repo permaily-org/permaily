@@ -316,9 +316,9 @@ export function vendorOf(connection: Connection): Vendor {
   return vendor
 }
 
-/** "Claude · Morning summary" */
+/** A connection is named app/connection, like its address: "Claude/Morning summary". */
 export function connectionLabel(connection: Connection): string {
-  return `${vendorOf(connection).name} · ${connection.name}`
+  return `${vendorOf(connection).name}/${connection.name}`
 }
 
 /** "When asked", "Daily, 07:00" or "On new mail". */
@@ -479,7 +479,7 @@ export function isConnectionTarget(target: string): boolean {
   return target.includes('/')
 }
 
-/** "Claude" for a vendor, "Claude · Morning summary" for one connection. */
+/** "Claude" for a vendor, "Claude/Morning summary" for one connection. */
 export function targetLabel(target: string): string {
   if (!isConnectionTarget(target)) return vendorById(target)?.name ?? target
   const connection = connectionById(target)
@@ -538,7 +538,7 @@ export function withConnection(
     : { to: 'some', only: without(appliesTo.only, connection) }
 }
 
-/** "Every connection", "Every connection except Claude · Morning summary", or "Claude and Trip App". */
+/** "Every connection", "Every connection except Claude/Morning summary", or "Claude and Trip App". */
 export function appliesToText(appliesTo: AppliesTo): string {
   if (appliesTo.to === 'some')
     return appliesTo.only.length === 0

@@ -4,6 +4,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router'
 import {
   Button,
   ButtonLink,
+  EffectMark,
   InfoTip,
   Notice,
   TextLink,
@@ -14,17 +15,25 @@ import {
   type AppliesTo,
   attention,
   connectionById,
-  connectionLabel,
+  connectionsOf,
+  everyConnection,
   type RuleEffect,
-  ruleConnections,
-  targetLabel,
+  vendors,
 } from '../../data/sample.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
-import { Conditions } from './Conditions.tsx'
-import { joinNames, type RuleSeed, ruleSeed } from './data.ts'
-import { type Draft, emails, initialDraft, type Preview, preview, savedDraft } from './draft.ts'
+import { Criteria } from './Criteria.tsx'
+import {
+  type Criterion,
+  operators,
+  type Removal,
+  type RuleSeed,
+  removalComplete,
+  ruleSeed,
+} from './data.ts'
+import { type Draft, initialDraft, preview, savedDraft } from './draft.ts'
 import { PreviewPane } from './PreviewPane.tsx'
-import { Targets } from './Targets.tsx'
+import { RemovalParts } from './Removal.tsx'
+import { TargetSearch } from './Targets.tsx'
 
 export function RuleEditorPage() {
   const { id = 'new' } = useParams()
@@ -53,7 +62,19 @@ export function RuleEditorPage() {
   )
 }
 
-type Scope = 'all' | 'some'
+/**
+ * The editor lists what a rule applies to, and none means every connection. A saved "every connection except" becomes
+ * the vendors and connections it leaves in.
+ */
+function targetsOf(appliesTo: AppliesTo): string[] {
+  if (appliesTo.to === 'some') return appliesTo.only
+  if (appliesTo.except.length === 0) return []
+  return vendors.flatMap((vendor) => {
+    const list = connectionsOf(vendor.id)
+    const kept = list.filter((c) => !appliesTo.except.some((t) => t === vendor.id || t === c.id))
+    return kept.length === list.length ? [vendor.id] : kept.map((c) => c.id)
+  })
+}
 
 function RuleEditor({
   ruleId,
@@ -71,18 +92,18 @@ function RuleEditor({
   const [description, setDescription] = useState(seed.description)
   const [hint, setHint] = useState<string | null>(null)
   const [effect, setEffect] = useState<RuleEffect>(seed.effect)
-  const [removes, setRemoves] = useState(seed.removes)
-  const [scope, setScope] = useState<Scope>(seed.appliesTo.to)
-  const [except, setExcept] = useState<string[]>(
-    seed.appliesTo.to === 'all' ? seed.appliesTo.except : [],
-  )
-  const [only, setOnly] = useState<string[]>(
-    seed.appliesTo.to === 'some' ? seed.appliesTo.only : [],
-  )
+  const [removal, setRemoval] = useState<Removal>(seed.removal)
+  const initialTargets = useMemo(() => targetsOf(seed.appliesTo), [seed])
+  const [targets, setTargets] = useState<string[]>(initialTargets)
   const descriptionId = useId()
-  const removesId = useId()
 
-  const appliesTo: AppliesTo = scope === 'all' ? { to: 'all', except } : { to: 'some', only }
+  // Targets left as they were keep the rule's own wording, such as "every connection except", when it's saved.
+  const sameTargets = JSON.stringify(targets) === JSON.stringify(initialTargets)
+  const appliesTo: AppliesTo = sameTargets
+    ? seed.appliesTo
+    : targets.length === 0
+      ? everyConnection
+      : { to: 'some', only: targets }
   const result = useMemo(() => preview(seed, isNew, draft), [seed, isNew, draft])
   const saved = useMemo(() => savedDraft(seed, isNew), [seed, isNew])
   const changed =
@@ -90,14 +111,11 @@ function RuleEditor({
     name !== seed.name ||
     description !== seed.description ||
     effect !== seed.effect ||
-    removes !== seed.removes ||
-    JSON.stringify(appliesTo) !== JSON.stringify(seed.appliesTo) ||
+    JSON.stringify(removal) !== JSON.stringify(seed.removal) ||
+    !sameTargets ||
     JSON.stringify(draft) !== JSON.stringify(saved)
-  const hasConditions = draft.blocks.some((block) => block.some((g) => g.chips.length > 0))
-  const complete =
-    hasConditions &&
-    (scope === 'all' || only.length > 0) &&
-    (effect === 'hold' || removes.trim() !== '')
+  const hasConditions = draft.groups.some((g) => g.criteria.some((c) => c.values.length > 0))
+  const complete = hasConditions && (effect === 'hold' || removalComplete(removal))
   const flag = attention.find((item) => item.to.split('?')[0] === `/rules/${ruleId}`)
 
   function rewrite() {
@@ -108,8 +126,37 @@ function RuleEditor({
     )
   }
 
+  /** Excluding a sender from the preview leaves it out of every group, adding "Sender isn't" where a group has none. */
   function exclude(address: string) {
-    setDraft((d) => (d.butNot.includes(address) ? d : { ...d, butNot: [...d.butNot, address] }))
+    setDraft((d) => ({
+      groups: d.groups.map((g) => {
+        const notFrom = g.criteria.find((c) => c.field === 'sender' && c.operator === 'isNot')
+        if (notFrom?.values.includes(address)) return g
+        const criteria: Criterion[] = notFrom
+          ? g.criteria.map((c) => (c === notFrom ? { ...c, values: [...c.values, address] } : c))
+          : [
+              ...g.criteria,
+              { id: `${g.id}-not-from`, field: 'sender', operator: 'isNot', values: [address] },
+            ]
+        return { ...g, criteria }
+      }),
+    }))
+  }
+
+  /** Including it again takes it out of every negative condition, and drops a condition or group left empty. */
+  function include(entry: string) {
+    setDraft((d) => ({
+      groups: d.groups
+        .map((g) => ({
+          ...g,
+          criteria: g.criteria.flatMap((c) => {
+            if (!operators[c.operator].negative || !c.values.includes(entry)) return [c]
+            const values = c.values.filter((v) => v !== entry)
+            return values.length > 0 ? [{ ...c, values }] : []
+          }),
+        }))
+        .filter((g) => g.criteria.length > 0),
+    }))
   }
 
   // From xl the editor is a column that stays in place with the save bar at its foot, and the preview scrolls beside
@@ -158,78 +205,35 @@ function RuleEditor({
           </p>
 
           <div className="mt-3 border-y border-rule">
-            <Setting label="What happens">
+            <Setting
+              label="What happens"
+              tip="Full holds back the whole email. Partial takes out only the parts you pick, and the rest still goes through."
+            >
               <ViewSwitch
                 label="What happens"
                 value={effect}
                 onChange={setEffect}
                 options={[
-                  { value: 'hold', label: 'Hold back the email' },
-                  { value: 'remove', label: 'Remove details' },
+                  { value: 'hold', label: <EffectLabel effect="hold">Full</EffectLabel> },
+                  { value: 'remove', label: <EffectLabel effect="remove">Partial</EffectLabel> },
                 ]}
               />
-              {effect === 'remove' && (
-                <div className="flex w-full items-center gap-2">
-                  <label htmlFor={removesId} className="shrink-0 text-small text-ink-2">
-                    Takes out
-                  </label>
-                  <input
-                    id={removesId}
-                    value={removes}
-                    onChange={(event) => setRemoves(event.target.value)}
-                    placeholder="For example, the address"
-                    className={cx(
-                      'min-w-0 flex-1 rounded-sm border border-ink bg-transparent px-2 py-1 text-body placeholder:text-ink-3',
-                      focusRing,
-                    )}
-                  />
-                </div>
-              )}
+              {effect === 'remove' && <RemovalParts removal={removal} onChange={setRemoval} />}
             </Setting>
             <Setting
               label="Applies to"
-              tip="Every connection includes ones you approve later. A vendor covers all of its connections. None of them are told about this rule."
+              tip="With none picked, it applies to every connection, including ones you approve later. A vendor covers all of its connections. None of them are told about this rule."
             >
-              <ViewSwitch
-                label="Applies to"
-                value={scope}
-                onChange={setScope}
-                options={[
-                  { value: 'all', label: 'Every connection' },
-                  { value: 'some', label: 'Only some' },
-                ]}
-              />
-              <div className="flex w-full items-start gap-3">
-                <span className="w-12 shrink-0 py-0.5 text-small text-ink-2">
-                  {scope === 'all' ? 'Except' : 'Only'}
-                </span>
-                {scope === 'all' ? (
-                  <Targets key="except" label="Except" targets={except} onChange={setExcept} />
-                ) : (
-                  <Targets key="only" label="Only" targets={only} onChange={setOnly} />
-                )}
-              </div>
+              <TargetSearch targets={targets} onChange={setTargets} />
             </Setting>
           </div>
 
           <div className="mt-3">
-            <Conditions
-              blocks={draft.blocks}
-              butNot={draft.butNot}
-              onBlocksChange={(blocks) => setDraft((d) => ({ ...d, blocks }))}
-              onButNotChange={(butNot) => setDraft((d) => ({ ...d, butNot }))}
-            />
+            <Criteria groups={draft.groups} onChange={(groups) => setDraft({ groups })} />
           </div>
         </div>
 
         <SaveBar
-          seed={seed}
-          isNew={isNew}
-          effect={effect}
-          removes={removes}
-          appliesTo={appliesTo}
-          result={result}
-          changed={changed}
           canSave={changed && complete}
           onSave={() => {
             if (!isNew) setRuleScopes({ [ruleId]: appliesTo })
@@ -239,15 +243,21 @@ function RuleEditor({
         />
       </div>
 
-      <PreviewPane
-        preview={result}
-        effect={effect}
-        onExclude={exclude}
-        onInclude={(entry) =>
-          setDraft((d) => ({ ...d, butNot: d.butNot.filter((e) => e !== entry) }))
-        }
-      />
+      <PreviewPane preview={result} effect={effect} onExclude={exclude} onInclude={include} />
     </div>
+  )
+}
+
+/** An effect with its mark. The mark sits on a paper tile, so it keeps its colors when the option is picked and turns dark. */
+function EffectLabel({ effect, children }: { effect: RuleEffect; children: ReactNode }) {
+  return (
+    // A flex row rather than an inline one: the mark has no text, so on a line of text it would sit off the baseline.
+    <span className="flex items-center gap-2">
+      <span className="inline-flex size-[18px] shrink-0 items-center justify-center rounded-[1px] bg-paper">
+        <EffectMark effect={effect} />
+      </span>
+      {children}
+    </span>
   )
 }
 
@@ -255,7 +265,7 @@ function RuleEditor({
 function Setting({ label, tip, children }: { label: string; tip?: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-2 border-b border-rule py-3 last:border-b-0 sm:flex-row sm:items-start sm:gap-3">
-      <span className="flex items-center gap-1.5 text-small sm:w-[98px] sm:shrink-0 sm:pt-1.5">
+      <span className="flex items-center gap-1.5 text-small whitespace-nowrap sm:w-[116px] sm:shrink-0 sm:pt-1.5">
         {label}
         {tip && (
           <InfoTip label={`About ${label.toLowerCase()}`} align="start">
@@ -340,130 +350,27 @@ function RuleTitle({ name, onRename }: { name: string; onRename: (name: string) 
   )
 }
 
-/** Connections a change of "Applies to" lets back in, and the ones it newly covers. */
-function scopeChange(before: AppliesTo, after: AppliesTo) {
-  const was = ruleConnections(before)
-  const now = ruleConnections(after)
-  return {
-    freed: was.filter((c) => !now.includes(c)).map(connectionLabel),
-    added: now.filter((c) => !was.includes(c)).map(connectionLabel),
-  }
-}
-
-/** "every connection", "every connection except Claude · Morning summary", or "Claude". */
-function targetText(appliesTo: AppliesTo): string {
-  if (appliesTo.to === 'some') return joinNames(appliesTo.only.map(targetLabel))
-  const all = 'every connection'
-  return appliesTo.except.length === 0
-    ? all
-    : `${all} except ${joinNames(appliesTo.except.map(targetLabel))}`
-}
-
-/** What saving would change, in one line, above the buttons. */
+/**
+ * Save and Discard. Below xl the bar sticks to the foot of the window until the editor column ends, and the page's scroll
+ * padding keeps a field that gets focus from scrolling in behind it.
+ */
 function SaveBar({
-  seed,
-  isNew,
-  effect,
-  removes,
-  appliesTo,
-  result,
-  changed,
   canSave,
   onSave,
   onDiscard,
 }: {
-  seed: RuleSeed
-  isNew: boolean
-  effect: RuleEffect
-  removes: string
-  appliesTo: AppliesTo
-  result: Preview
-  changed: boolean
   canSave: boolean
   onSave: () => void
   onDiscard: () => void
 }) {
-  const { count, newCount: n, dropped } = result
-  const what = removes.trim() || 'the matching details'
-  const { freed, added } = scopeChange(seed.appliesTo, appliesTo)
-  let notice: ReactNode = null
-
-  if (isNew) {
-    notice = (
-      <Notice
-        tone="neutral"
-        title={
-          effect === 'hold'
-            ? `Saving holds back ${emails(count)} from ${targetText(appliesTo)}.`
-            : `Saving takes ${what} out of ${emails(count)}.`
-        }
-      />
-    )
-  } else if (effect !== seed.effect) {
-    notice =
-      effect === 'hold' ? (
-        <Notice
-          tone="neutral"
-          title={`Saving holds back all ${emails(count)}, not just ${seed.removes}.`}
-        />
-      ) : (
-        <Notice title={`These ${emails(count)} go through again, with ${what} taken out.`} />
-      )
-  } else if (freed.length > 0) {
-    notice = (
-      <Notice
-        title={`${joinNames(freed)} can get ${effect === 'hold' ? `these ${emails(count)}` : `${what} in these ${emails(count)}`} again.`}
-      />
-    )
-  } else if (added.length > 0) {
-    notice = (
-      <Notice
-        tone="neutral"
-        title={
-          effect === 'hold'
-            ? `${joinNames(added)} ${added.length === 1 ? 'stops' : 'stop'} getting these ${emails(count)}.`
-            : `${joinNames(added)} ${added.length === 1 ? 'gets' : 'get'} these ${emails(count)} without ${what}.`
-        }
-      />
-    )
-  } else if (n > 0) {
-    notice = (
-      <Notice
-        tone="neutral"
-        title={
-          effect === 'hold'
-            ? `This edit holds back ${emails(n)} more.`
-            : `This edit takes ${what} out of ${emails(n)} more.`
-        }
-      />
-    )
-  } else if (dropped > 0) {
-    notice = (
-      <Notice
-        title={
-          effect === 'hold'
-            ? `${emails(dropped)} stop being held back.`
-            : `${emails(dropped)} go through untouched again.`
-        }
-      />
-    )
-  } else if (changed) {
-    notice = <Notice tone="neutral" title="This edit changes nothing your connections can get." />
-  }
-
-  // Below xl the bar sticks to the foot of the window until the editor column ends, and the page's scroll padding keeps
-  // a field that gets focus from scrolling in behind it.
   return (
-    <div className="shrink-0 border-t border-rule-strong px-4 pt-4 pb-3.5 sm:px-8 lg:px-10 max-xl:sticky max-xl:bottom-0 max-xl:bg-paper max-xl:[html:has(&)]:scroll-pb-40">
-      {notice}
-      <div className={cx('flex gap-3', notice && 'mt-2.5')}>
-        <Button onClick={onSave} disabled={!canSave}>
-          Save rule
-        </Button>
-        <Button variant="secondary" onClick={onDiscard}>
-          Discard
-        </Button>
-      </div>
+    <div className="flex shrink-0 gap-3 border-t border-rule-strong px-4 pt-4 pb-3.5 sm:px-8 lg:px-10 max-xl:sticky max-xl:bottom-0 max-xl:bg-paper max-xl:[html:has(&)]:scroll-pb-24">
+      <Button onClick={onSave} disabled={!canSave}>
+        Save rule
+      </Button>
+      <Button variant="secondary" onClick={onDiscard}>
+        Discard
+      </Button>
     </div>
   )
 }
