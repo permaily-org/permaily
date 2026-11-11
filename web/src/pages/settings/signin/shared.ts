@@ -2,7 +2,7 @@ import type { ApiErrorCode } from '../../../lib/api.ts'
 
 /** What every part of the Sign-in section needs from the section around it. */
 export type SignInSection = {
-  /** Asks the server again for the passkeys and the sessions, after something changed. */
+  /** Asks the server again for the passkeys, the providers and the sessions, after something changed. */
   refresh: () => Promise<void>
   /**
    * The code of a failure, or null when it was the session ending: the app then goes to the sign-in screen

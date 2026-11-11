@@ -90,6 +90,13 @@ jobs:
           go test -run='^$' -fuzz=FuzzParse -fuzztime=150000x ./internal/inbox
           go test -run='^$' -fuzz='^FuzzRegistered$' -fuzztime=400000x ./internal/webauthn
           go test -run='^$' -fuzz='^FuzzAsserted$' -fuzztime=400000x ./internal/webauthn
+          go test -run='^$' -fuzz='^FuzzIDToken$' -fuzztime=400000x ./internal/idp
+          go test -run='^$' -fuzz='^FuzzClaims$' -fuzztime=300000x ./internal/idp
+          go test -run='^$' -fuzz='^FuzzKeys$' -fuzztime=400000x ./internal/idp
+          go test -run='^$' -fuzz='^FuzzTokenAnswer$' -fuzztime=200000x ./internal/idp
+          go test -run='^$' -fuzz='^FuzzGitHubUser$' -fuzztime=100000x ./internal/idp
+          go test -run='^$' -fuzz='^FuzzGitHubEmails$' -fuzztime=300000x ./internal/idp
+          go test -run='^$' -fuzz='^FuzzMetaUser$' -fuzztime=300000x ./internal/idp
 
   # pkg/provenance verifies release bundles with the standard library, inside
   # the enclave. Here it must give the same answers as sigstore-go, which lives
@@ -127,6 +134,27 @@ jobs:
         with:
           go-version-file: tests/webauthn-differential/go.mod
           cache-dependency-path: tests/webauthn-differential/go.sum
+      - run: test -z "$(gofmt -l .)" && go vet ./...
+      - run: go test -count=1 ./...
+
+  # internal/idp checks the ID tokens of Google and Microsoft with this
+  # repository's own code, inside the enclave. Here it must give the same
+  # answers as go-oidc, which lives in its own module so its dependencies
+  # never reach the image; where the two differ on purpose, the test says so
+  # case by case.
+  idp-differential:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: tests/idp-differential
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tests/idp-differential/go.mod
+          cache-dependency-path: tests/idp-differential/go.sum
       - run: test -z "$(gofmt -l .)" && go vet ./...
       - run: go test -count=1 ./...
 

@@ -1,6 +1,6 @@
 // Package accounts is the service behind accounts and sign-in (ADR 0017):
-// invitations, signing in by email and with passkeys, "passkey only" with its
-// recovery codes, and sessions.
+// invitations, signing in by email, with passkeys and with a provider
+// (providers.go), "passkey only" with its recovery codes, and sessions.
 //
 // What it stores falls under three of the ADR's treatments. An account's
 // record is readable and signed: whoever runs the storage reads the contact
@@ -42,6 +42,7 @@ import (
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/envelope"
+	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/webauthn"
 )
@@ -86,6 +87,9 @@ type Config struct {
 	Entries store.Entries
 	Keys    Keys
 	Mailer  Mailer
+	// Providers is how Google, GitHub, Meta and Microsoft are asked who signed
+	// in (idp.Client). Without it every provider is off.
+	Providers Providers
 	// AppURL is where the web app is served, without a trailing slash. Its
 	// host is who passkeys are made for, and it is the only page whose
 	// answers about a passkey are taken.
@@ -120,6 +124,11 @@ type Service struct {
 	mu         sync.Mutex
 	attempts   map[string]*attempt
 	ceremonies map[string]*ceremony
+	// trips are the sign-ins with a provider whose answer is awaited, by their
+	// state; unconfirmed are the ones that wait for an address to be
+	// confirmed, by the hash of their browser's cookie.
+	trips       map[string]*trip
+	unconfirmed map[string]*unconfirmed
 	// starts and wrong count, per address or invitation, the sign-ins started
 	// in the last hour and the wrong codes of the last day; recoveries, per
 	// address, the wrong recovery codes of the last hour.
@@ -132,6 +141,13 @@ type Service struct {
 	// written. The storage takes whichever write comes last, so two changes
 	// at once would undo one another: a recovery code would work twice.
 	changing sync.Mutex
+
+	// The applications registered at the providers, as their sealed record
+	// holds them: read once, and replaced with each change. A map that was
+	// handed out is never written to again.
+	appsMu   sync.Mutex
+	apps     map[idp.Provider]appDoc
+	appsRead bool
 
 	sending chan struct{}
 	work    sync.WaitGroup
@@ -171,6 +187,7 @@ func New(cfg Config) (*Service, error) {
 		rp:         webauthn.RelyingParty{ID: app.Hostname(), Origins: []string{app.Scheme + "://" + app.Host}},
 		attempts:   map[string]*attempt{},
 		ceremonies: map[string]*ceremony{},
+		trips:      map[string]*trip{}, unconfirmed: map[string]*unconfirmed{},
 		starts:     map[string][]time.Time{},
 		wrong:      map[string][]time.Time{},
 		recoveries: map[string][]time.Time{},
@@ -252,6 +269,9 @@ type accountDoc struct {
 	PasskeyOnly bool `json:"passkey_only,omitempty"`
 	// RecoveryCodes are the hashes of the recovery codes not used yet.
 	RecoveryCodes [][]byte `json:"recovery_codes,omitempty"`
+	// Providers are the provider accounts that sign in to the account. One
+	// that is not here signs nobody in, wherever its pointer leads.
+	Providers []providerDoc `json:"providers,omitempty"`
 	// ClosesAt is when a closing account is removed.
 	ClosesAt time.Time `json:"closes_at,omitzero"`
 }
@@ -454,7 +474,14 @@ const loginKey = "account"
 // and the pointer that was found, which a sign-up replaces when it leads
 // nowhere.
 func (s *Service) lookup(ctx context.Context, address string) (*accountDoc, *store.Entry, error) {
-	e, err := s.cfg.Entries.GetEntry(ctx, loginPartition(address), loginKey)
+	return s.follow(ctx, loginPartition(address), func(doc *accountDoc) bool { return doc.Address == address })
+}
+
+// follow returns the account a pointer leads to, when the account's own
+// record bears the pointer out (owns): nil when it does not or there is no
+// pointer, and the pointer that was found.
+func (s *Service) follow(ctx context.Context, partition string, owns func(*accountDoc) bool) (*accountDoc, *store.Entry, error) {
+	e, err := s.cfg.Entries.GetEntry(ctx, partition, loginKey)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil, nil
 	}
@@ -473,7 +500,7 @@ func (s *Service) lookup(ctx context.Context, address string) (*accountDoc, *sto
 	if err != nil {
 		return nil, nil, err
 	}
-	if doc == nil || doc.Address != address {
+	if doc == nil || !owns(doc) {
 		return nil, e, nil
 	}
 	return doc, e, nil
@@ -619,6 +646,8 @@ func (s *Service) sweep(now time.Time) {
 			delete(s.ceremonies, id)
 		}
 	}
+	ended(s.trips, now)
+	ended(s.unconfirmed, now)
 	for _, counted := range []struct {
 		m      map[string][]time.Time
 		window time.Duration
@@ -664,9 +693,18 @@ func (s *Service) StartEmail(ctx context.Context, in contracts.EmailStart) (*con
 		if invitation, err = s.invitation(ctx, in.Invitation); err != nil {
 			return nil, err
 		}
-		if invitation == "" || !s.allow(invitation, s.now()) {
+		if invitation == "" {
 			return nil, contracts.ErrInvalidInvitation
 		}
+	}
+	return s.startEmail(ctx, address, invitation)
+}
+
+// startEmail starts a sign-in by email for an address as accounts are found
+// by, with the entry of an invitation that was checked, if there is one.
+func (s *Service) startEmail(ctx context.Context, address, invitation string) (*contracts.EmailStarted, error) {
+	if invitation != "" && !s.allow(invitation, s.now()) {
+		return nil, contracts.ErrInvalidInvitation
 	}
 	id := newID("att")
 	select {
@@ -790,39 +828,50 @@ func (s *Service) match(in contracts.EmailFinish, use bool) (*attempt, error) {
 // address's account or, with an invitation, to a new one. It returns the
 // account and the value of the session's cookie.
 func (s *Service) FinishEmail(ctx context.Context, in contracts.EmailFinish, userAgent string) (*contracts.Me, string, error) {
-	a, err := s.take(in)
+	doc, err := s.proved(ctx, in)
 	if err != nil {
 		return nil, "", err
-	}
-	doc, stale, err := s.lookup(ctx, a.address)
-	if err != nil {
-		return nil, "", err
-	}
-	if doc != nil && doc.PasskeyOnly {
-		// "Passkey only" was turned on after the message was sent.
-		return nil, "", contracts.ErrInvalidCode
-	}
-	if doc == nil {
-		// The address proved to be the person's, and has no account. The
-		// invitation is used up here, by whoever deletes it first.
-		if a.invitation == "" {
-			return nil, "", contracts.ErrInvalidCode
-		}
-		if err := s.cfg.Entries.DeleteEntry(ctx, a.invitation, invitationKey); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				return nil, "", contracts.ErrInvalidInvitation
-			}
-			return nil, "", err
-		}
-		if doc, err = s.create(ctx, a.address, stale); err != nil {
-			return nil, "", err
-		}
 	}
 	session, cookie, err := s.newSession(ctx, doc.ID, userAgent)
 	if err != nil {
 		return nil, "", err
 	}
 	return &contracts.Me{Account: doc.view(), Session: *session}, cookie, nil
+}
+
+// proved ends a sign-in by email with the code or the token of its message,
+// and returns the account of the address that so proved to be the person's:
+// the one it has or, with an invitation, a new one.
+func (s *Service) proved(ctx context.Context, in contracts.EmailFinish) (*accountDoc, error) {
+	a, err := s.take(in)
+	if err != nil {
+		return nil, err
+	}
+	doc, stale, err := s.lookup(ctx, a.address)
+	switch {
+	case err != nil:
+		return nil, err
+	case doc != nil && doc.PasskeyOnly:
+		// "Passkey only" was turned on after the message was sent.
+		return nil, contracts.ErrInvalidCode
+	case doc != nil:
+		return doc, nil
+	case a.invitation == "":
+		return nil, contracts.ErrInvalidCode
+	}
+	return s.signUp(ctx, a.address, a.invitation, stale)
+}
+
+// signUp makes the account of an address that proved to be the person's and
+// has none. The invitation is used up here, by whoever deletes it first.
+func (s *Service) signUp(ctx context.Context, address, invitation string, stale *store.Entry) (*accountDoc, error) {
+	if err := s.cfg.Entries.DeleteEntry(ctx, invitation, invitationKey); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, contracts.ErrInvalidInvitation
+		}
+		return nil, err
+	}
+	return s.create(ctx, address, stale)
 }
 
 // LookEmail says which address the link of a message would sign in, and ends

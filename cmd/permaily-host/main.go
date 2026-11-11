@@ -33,6 +33,15 @@ var defaultEgress = []string{
 	"s3.us-east-2.amazonaws.com:443",
 	"email.us-east-2.amazonaws.com:443", // SES: the service's own mail (sign-in messages)
 	"cloudflare-dns.com:443",
+	// Signing in with a provider (ADR 0017): where the enclave asks who signed
+	// in. They are internal/idp's Hosts(), which the host does not link; a
+	// test of cmd/permaily-enclave fails when the two differ.
+	"oauth2.googleapis.com:443",     // Google: the code for an ID token
+	"www.googleapis.com:443",        // Google: the keys its ID tokens are signed with
+	"github.com:443",                // GitHub: the code for an access token
+	"api.github.com:443",            // GitHub: who holds the token, and their addresses
+	"graph.facebook.com:443",        // Meta: the code for an access token, and who holds it
+	"login.microsoftonline.com:443", // Microsoft: the code for an ID token, and the keys it is signed with
 }
 
 func uint32Flag(dst *uint32) func(string) error {

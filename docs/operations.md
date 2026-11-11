@@ -194,12 +194,29 @@ It asks the enclave (`GET /v1/admin/accounts`, with the admin token from `~/.con
 
 A person deletes their own account, from Settings; it is removed seven days later, within ten minutes of the moment it is due, or as soon as it is next used. Until then they can sign in and cancel. There is no way to delete an account for someone, and none to bring one back.
 
+## Sign-in with Google, GitHub, Meta and Microsoft
+
+A provider is on once the enclave has been given the application registered there:
+
+```sh
+scripts/verify.sh                                          # first: the secret goes to whoever answers
+scripts/provider.sh                                        # which are set, with their client ids
+scripts/provider.sh set google <client id>                 # asks for the secret without showing it
+pass show permaily/github | scripts/provider.sh set github <client id>
+scripts/provider.sh remove meta                            # off from then; the links are kept
+```
+
+At each provider's console the application is a web application whose only redirect address is `https://app.permaily.com/api/v1/auth/provider/callback`. The secret is kept by the enclave, sealed, and is never answered back: keep your own copy where you keep secrets, never in the repository. It survives upgrades with everything else under the root secret; after starting over (a new deployment) every provider has to be set again.
+
+- **A provider's sign-in fails for everyone.** The enclave's log says `provider` and a fixed reason: the secret or the redirect address is wrong at the provider (`invalid_provider_app`), or the provider cannot be reached (an old `permaily-host` without its hosts in the allowlist). Rotating a secret at the provider means setting it again here.
+- **Meta and Microsoft work accounts** always ask the person to confirm an address by mail the first time: neither vouches for the address (ADR 0017).
+
 ## Outgoing mail
 
 The enclave sends its own mail (sign-in messages) through SES in `us-east-2`, from the address in `mail_from` of `deploy/enclave.json`, on a domain of its own (`deploy/tofu/ses.tf`: the identity, DKIM, the bounce domain with SPF, DMARC).
 
 - **Nobody receives the sign-in message.** Look at the enclave's logs: `sesmail: SES refused a message` carries the kind of error SES gave (`MessageRejected` while the account is in the sandbox and the recipient is not verified; `AccountSuspendedException`, `SendingPausedException` when AWS stopped the account), and `sesmail: SES could not be reached` means the host does not let the enclave reach `email.us-east-2.amazonaws.com:443` (an old `permaily-host`). The address is never logged. `aws sesv2 get-account` says whether the account is out of the sandbox and how much it may send; `aws sesv2 get-email-identity --email-identity <domain>` says whether DKIM and the bounce domain verified.
-- **The sandbox.** A new SES account sends only to verified addresses, 200 messages a day. Ask AWS for production access once, in the console (SES > Account dashboard > Request production access) or with `aws sesv2 put-account-details`: transactional mail, sign-in messages only, to addresses whose owners asked for them. Until then, verify the address of each person who tests (`aws sesv2 create-email-identity --email-identity <address>`; they get a message from AWS to confirm) and delete it afterwards. In the sandbox SES also asks for the permission to send on the identity of the recipient, which is why the role's policy names every identity, with the sender's address as its condition.
+- **The sandbox.** The account left it on 2026-11-11 (50,000 messages a day, 14 a second; `aws sesv2 get-account` says what it is now). A new SES account, as after moving to another AWS account or region, sends only to verified addresses, 200 messages a day. Ask AWS for production access once, in the console (SES > Account dashboard > Request production access) or with `aws sesv2 put-account-details`: transactional mail, sign-in messages only, to addresses whose owners asked for them. Until then, verify the address of each person who tests (`aws sesv2 create-email-identity --email-identity <address>`; they get a message from AWS to confirm) and delete it afterwards. In the sandbox SES also asks for the permission to send on the identity of the recipient, which is why the role's policy names every identity, with the sender's address as its condition.
 - **The verifier fails on `mail`.** The enclave saw a configuration set on the domain or on the address it sends from, which could give whoever set it a copy of every message, sign-in codes included (ADR 0021); or it cannot read those settings. Nobody signs in by mail meanwhile. Find out who did it (CloudTrail: `PutEmailIdentityConfigurationSetAttributes`, `CreateEmailIdentity`, `CreateConfigurationSet`, `PutConfigurationSetArchivingOptions`), remove it (`aws sesv2 put-email-identity-configuration-set-attributes --email-identity <domain>` with no set, or delete the address identity), and look in the archive for what was copied: every account that signed in by mail in that time may have been entered. The enclave starts sending again on the next clean reading, within a minute. The verifier keeps failing until the enclave restarts, because the history is the point; restart it only after writing down what happened, and say so in public. Never add a configuration set to that identity, for metrics or for anything else.
 - **Bounces and complaints.** SES stops writing to an address that bounced for good or whose owner marked the mail as spam (the account's suppression list). A person who cannot get the message may be on it: `aws sesv2 get-suppressed-destination --email-address <address>`, and `delete-suppressed-destination` once their mailbox works.
 

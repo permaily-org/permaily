@@ -28,15 +28,17 @@ type world struct {
 	// up: only the newest version of a record is kept.
 	anchored *store.Anchored
 	out      *Outbox
-	logs     *bytes.Buffer
-	svc      *Service
-	now      time.Time
+	// idp plays the providers (providers_test.go).
+	idp  *fakeProviders
+	logs *bytes.Buffer
+	svc  *Service
+	now  time.Time
 }
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
 	w := &world{
-		t: t, mem: store.NewMemory(), commits: store.NewMemoryCommits(), out: &Outbox{}, logs: &bytes.Buffer{},
+		t: t, mem: store.NewMemory(), commits: store.NewMemoryCommits(), out: &Outbox{}, idp: newFakeProviders(), logs: &bytes.Buffer{},
 		now: time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC),
 	}
 	w.mem.Now = func() time.Time { return w.now }
@@ -52,7 +54,7 @@ func (w *world) service(k Keys) *Service {
 	w.anchored = &store.Anchored{Records: w.mem, Commits: w.commits, OnlyNewest: true, Now: func() time.Time { return w.now }}
 	svc, err := New(Config{
 		Records: w.anchored,
-		Entries: w.mem, Keys: k, Mailer: w.out, AppURL: "https://app.permaily.test",
+		Entries: w.mem, Keys: k, Mailer: w.out, Providers: w.idp, AppURL: "https://app.permaily.test",
 		Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: func() time.Time { return w.now },
 	})
 	if err != nil {
@@ -704,9 +706,17 @@ type failing struct {
 	store.Entries
 	Keys
 	fail map[string]error
+	// skip is how many times an operation still works before it fails.
+	skip map[string]int
 }
 
-func (f *failing) err(op string) error { return f.fail[op] }
+func (f *failing) err(op string) error {
+	if f.skip[op] > 0 {
+		f.skip[op]--
+		return nil
+	}
+	return f.fail[op]
+}
 
 func (f *failing) GetRecord(ctx context.Context, name string) (*store.Record, error) {
 	if err := f.err("get record"); err != nil {
@@ -738,6 +748,9 @@ func (f *failing) PutEntry(ctx context.Context, e *store.Entry) error {
 	}
 	if err := f.err("put " + e.Key); err != nil {
 		delete(f.fail, "put "+e.Key)
+		return err
+	}
+	if err := f.err("put " + e.Partition); err != nil {
 		return err
 	}
 	return f.Entries.PutEntry(ctx, e)

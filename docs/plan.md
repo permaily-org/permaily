@@ -48,13 +48,13 @@ Each step ends deployed and verified, like the releases so far. The estimates ar
 | 8 | Receipts chained and anchored, and the activity screen | 1 |
 | 9 | Notices by mail, the threat model and the public pages brought up to date, a round of tests with staging images | 1 |
 
-Step 1, in the order it is built:
+Step 1, in the order it is built (all of it released in v0.10.0 on 2026-11-11):
 
 - [x] The layers, and the core of accounts: invitations made by the operator (`scripts/invite.sh`), signing up and signing in by email with a code or a link, sessions. On in dev mode only (2026-11-11).
 - [x] Outgoing mail through SES, which turns accounts on in the image: the SES identity and its DNS records, the host's allowlist, the watch on who else gets a copy of what is sent (ADR 0021), the threat model, a staging image (2026-11-11). Asking AWS to leave the sandbox is under "Before real users".
 - [x] The sign-in and sign-up screens of the web app, and the app behind a session (2026-11-11). Made without a design of their own: layout and copy are for the designer to review.
 - [x] Passkeys, the "passkey only" switch and recovery codes, with their screens and the real list of sessions in Settings (2026-11-11). Not yet tried with a real authenticator in a real browser: that needs a certificate browsers trust, so it waits for the release.
-- [ ] Google, GitHub, Meta and Microsoft.
+- [x] Google, GitHub, Meta and Microsoft, with their screens (2026-11-11). Built and tried against providers played by the tests; not yet against the real ones, which needs an application registered at each (docs/operations.md).
 - [x] Settings: name, sessions per device, deleting the account. The operator's tool to see accounts (`scripts/accounts.sh`) (2026-11-11). The contact address cannot be changed yet.
 
 About sixteen weeks. Steps 3 and 4 do not depend on 1 and 2, and can go first if seeing `about` work early is worth more than having accounts.
@@ -62,7 +62,7 @@ About sixteen weeks. Steps 3 and 4 do not depend on 1 and 2, and can go first if
 ### Before real users
 
 - Zero data retention approved by OpenAI for the organization (ADR 0020).
-- SES out of its sandbox (ADR 0017).
+- ~~SES out of its sandbox (ADR 0017).~~ Done on 2026-11-11: AWS granted production access in `us-east-2`, 50,000 messages a day and 14 a second.
 - The mailbox's state and every record of F2 whose going back matters stored through `store.Anchored` (ADR 0016).
 - Whoever can merge into `main` decides what the enclave accepts: require two-factor sign-in in the GitHub organization and a second person's review (docs/threat-model.md).
 

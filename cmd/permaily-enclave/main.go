@@ -107,6 +107,10 @@ func main() {
 	}
 }
 
+// providerCallback is where a provider sends the browser back, on the app's
+// host. It is registered with each provider, to the letter.
+const providerCallback = "/api/v1/auth/provider/callback"
+
 func uint32Flag(dst *uint32) func(string) error {
 	return func(s string) error {
 		v, err := strconv.ParseUint(s, 10, 32)
@@ -154,6 +158,11 @@ func run(cfg config, log *slog.Logger) error {
 		operator := httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Accounts(p.accounts, log))
 		api.Handle("/v1/admin/accounts", operator)
 		api.Handle("/v1/admin/accounts/", operator)
+		// The applications registered at Google, GitHub, Meta and Microsoft:
+		// their secrets come in here, over the attested connection.
+		providers := httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.ProviderApps(p.accounts, log))
+		api.Handle("/v1/admin/providers", providers)
+		api.Handle("/v1/admin/providers/", providers)
 	}
 
 	if cfg.mailboxID != "" {

@@ -56,6 +56,30 @@ export type EmailStarted = {
   expires_in: number
 }
 
+/** The providers a person can sign in with, in the order they are always offered in. */
+export const providers = ['google', 'github', 'meta', 'microsoft'] as const
+
+export type Provider = (typeof providers)[number]
+
+/** Where to send the browser to sign in at a provider, and for how many seconds its answer is taken. */
+export type ProviderStarted = { url: string; expires_in: number }
+
+/**
+ * A sign-in with a provider that waits in this browser: the provider said who the person is there, and not
+ * that an address is theirs. `address` is what the provider gave, if anything: it proves nothing.
+ */
+export type ProviderPending = {
+  provider: Provider
+  address: string
+  /** The path of the app the person was going to. */
+  return_to: string
+  /** Seconds left to confirm an address. */
+  expires_in: number
+}
+
+/** A provider account that signs in to the account. Nothing else of it is kept, so nothing else is shown. */
+export type LinkedProvider = { provider: Provider; linked_at: string }
+
 /** The codes the server answers with, plus `network` for a request that got no answer. */
 export type ApiErrorCode =
   | 'invalid_address'
@@ -71,6 +95,13 @@ export type ApiErrorCode =
   | 'passkey_needed'
   | 'passkey_only_off'
   | 'account_closing'
+  | 'provider_off'
+  | 'provider_failed'
+  | 'provider_unavailable'
+  | 'provider_in_use'
+  | 'provider_linked'
+  | 'invitation_needed'
+  | 'last_way_in'
   | 'network'
   | 'other'
 
@@ -88,6 +119,13 @@ const known: ReadonlySet<string> = new Set([
   'passkey_needed',
   'passkey_only_off',
   'account_closing',
+  'provider_off',
+  'provider_failed',
+  'provider_unavailable',
+  'provider_in_use',
+  'provider_linked',
+  'invitation_needed',
+  'last_way_in',
 ])
 
 export class ApiError extends Error {
@@ -318,4 +356,102 @@ export async function sessions(): Promise<Session[]> {
 /** Signs one device out. */
 export function closeSession(id: string): Promise<void> {
   return request('DELETE', `/api/v1/sessions/${encodeURIComponent(id)}`)
+}
+
+function isProvider(name: unknown): name is Provider {
+  return (providers as readonly unknown[]).includes(name)
+}
+
+/** The providers that are on, in the order they are offered in. One this app does not know is left out. */
+export async function providersOn(): Promise<Provider[]> {
+  const answer = await request<{ providers?: unknown } | null>('GET', '/api/v1/auth/providers')
+  if (!Array.isArray(answer?.providers)) throw new ApiError('other')
+  const on: unknown[] = answer.providers
+  return providers.filter((provider) => on.includes(provider))
+}
+
+function started(answer: Partial<ProviderStarted> | null): ProviderStarted {
+  if (typeof answer?.url !== 'string' || answer.url === '') throw new ApiError('other')
+  return {
+    url: answer.url,
+    expires_in: typeof answer.expires_in === 'number' ? answer.expires_in : 0,
+  }
+}
+
+/**
+ * Starts a sign-in with a provider. The answer is where to send the browser; the server gives this browser a
+ * cookie, and takes the provider's answer only where that cookie is. `invitation` is for whoever has no account
+ * yet, and `returnTo` is the path of the app to come back to.
+ */
+export async function startProvider(
+  provider: Provider,
+  how: { invitation?: string; returnTo?: string } = {},
+): Promise<ProviderStarted> {
+  return started(
+    await request('POST', '/api/v1/auth/provider/start', {
+      provider,
+      ...(how.invitation ? { invitation: how.invitation } : {}),
+      ...(how.returnTo ? { return_to: how.returnTo } : {}),
+    }),
+  )
+}
+
+/** What waits in this browser for an address to be confirmed. `provider_failed` when nothing does. */
+export async function pendingProvider(): Promise<ProviderPending> {
+  const answer = await request<Partial<ProviderPending> | null>(
+    'GET',
+    '/api/v1/auth/provider/pending',
+  )
+  if (!isProvider(answer?.provider)) throw new ApiError('other')
+  return {
+    provider: answer.provider,
+    address: typeof answer.address === 'string' ? answer.address : '',
+    return_to: typeof answer.return_to === 'string' ? answer.return_to : '/',
+    expires_in: typeof answer.expires_in === 'number' ? answer.expires_in : 0,
+  }
+}
+
+/**
+ * Asks for the message that confirms an address for the sign-in that waits in this browser. It is a sign-in
+ * by mail: the answer is the same whether the address has an account or not.
+ */
+export function startProviderConfirm(address: string): Promise<EmailStarted> {
+  return request('POST', '/api/v1/auth/provider/confirm/start', { address })
+}
+
+/**
+ * Ends the sign-in that waits in this browser with the code of that message: the provider account is linked
+ * to the account of the address, and the server sets the session cookie.
+ */
+export function finishProviderConfirm(attempt: string, code: string): Promise<Me> {
+  return request('POST', '/api/v1/auth/provider/confirm/finish', { attempt, code })
+}
+
+/** The provider accounts that sign in to the account, the oldest first. */
+export async function linkedProviders(): Promise<LinkedProvider[]> {
+  const answer = await request<{ providers?: unknown } | null>('GET', '/api/v1/providers')
+  if (!Array.isArray(answer?.providers)) throw new ApiError('other')
+  return (answer.providers as Array<Partial<LinkedProvider> | null>).filter(
+    (linked): linked is LinkedProvider =>
+      isProvider(linked?.provider) && typeof linked.linked_at === 'string',
+  )
+}
+
+/** Starts linking a provider account to the account that is signed in. The browser comes back to `returnTo`. */
+export async function linkProvider(
+  provider: Provider,
+  returnTo?: string,
+): Promise<ProviderStarted> {
+  return started(
+    await request(
+      'POST',
+      '/api/v1/providers/start',
+      returnTo ? { provider, return_to: returnTo } : { provider },
+    ),
+  )
+}
+
+/** Takes a provider account out of the account. The server refuses the only way left to sign in. */
+export function unlinkProvider(provider: Provider): Promise<void> {
+  return request('DELETE', `/api/v1/providers/${encodeURIComponent(provider)}`)
 }

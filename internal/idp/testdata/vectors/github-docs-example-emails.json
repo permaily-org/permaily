@@ -1,0 +1,15 @@
+{
+  "name": "github-docs-example-emails",
+  "source": {
+    "retrieved": "2026-11-11",
+    "license": "CC-BY-4.0 (the documentation of github/docs)",
+    "url": "https://docs.github.com/en/rest/users/emails?apiVersion=2022-11-28#list-email-addresses-for-the-authenticated-user"
+  },
+  "provider": "github",
+  "kind": "github-emails",
+  "note": "The example answer to GET /user/emails in GitHub's REST documentation.",
+  "body": "[\n  {\n    \"email\": \"octocat@github.com\",\n    \"verified\": true,\n    \"primary\": true,\n    \"visibility\": \"public\"\n  }\n]",
+  "expect": {
+    "address": "octocat@github.com"
+  }
+}

@@ -6,14 +6,22 @@ import { passkeysSupported } from '../../../lib/webauthn.ts'
 import { messageFor } from '../../auth/messages.ts'
 import { PasskeyOnly } from './PasskeyOnly.tsx'
 import { Passkeys } from './Passkeys.tsx'
+import { Providers } from './Providers.tsx'
 import { Sessions } from './Sessions.tsx'
 import type { SignInSection } from './shared.ts'
 
-type Loaded = { list: api.PasskeyList; sessions: api.Session[] }
+type Loaded = {
+  list: api.PasskeyList
+  sessions: api.Session[]
+  /** The providers that are on, and the ones that sign in to this account. */
+  on: api.Provider[]
+  linked: api.LinkedProvider[]
+}
 
 /**
  * How the account is signed in to, as the server has it: its passkeys, "passkey only" with its recovery
- * codes, and the devices signed in. Every change is made on the server and the section is read again after.
+ * codes, the providers linked to it, and the devices signed in. Every change is made on the server and the
+ * section is read again after.
  */
 export function SignIn() {
   const session = useSession()
@@ -34,9 +42,14 @@ export function SignIn() {
   const refresh = useCallback(async () => {
     const mine = ++turn.current
     try {
-      const [list, sessions] = await Promise.all([api.passkeys(), api.sessions()])
+      const [list, sessions, on, linked] = await Promise.all([
+        api.passkeys(),
+        api.sessions(),
+        api.providersOn(),
+        api.linkedProviders(),
+      ])
       if (mine !== turn.current) return
-      setLoaded({ list, sessions })
+      setLoaded({ list, sessions, on, linked })
       setFailure(null)
     } catch (error) {
       if (mine !== turn.current) return
@@ -101,6 +114,7 @@ export function SignIn() {
             section={section}
           />
           <PasskeyOnly list={loaded.list} address={address} section={section} />
+          <Providers on={loaded.on} linked={loaded.linked} list={loaded.list} section={section} />
           <Sessions sessions={loaded.sessions} section={section} />
         </>
       ) : (
