@@ -31,6 +31,7 @@ var defaultEgress = []string{
 	"kms.us-east-2.amazonaws.com:443",
 	"dynamodb.us-east-2.amazonaws.com:443",
 	"s3.us-east-2.amazonaws.com:443",
+	"email.us-east-2.amazonaws.com:443", // SES: the service's own mail (sign-in messages)
 	"cloudflare-dns.com:443",
 }
 

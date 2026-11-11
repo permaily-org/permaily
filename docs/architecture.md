@@ -30,12 +30,13 @@ sending MTA ─STARTTLS───▶ EIP:25  ─▶ permaily-host ─────
 
   Every host serves `/attestation?nonce=<hex>`, `/status` (the KMS key that locks the root secret, and the TLS identity) and `/version`.
 - **Mail (F1)**: `internal/smtpd` (MX), `internal/inbox` (parse, Gmail confirmation codes, seal, serve), `internal/msgauth` (DKIM over DoH), `internal/keys` (the root secret that every data key is wrapped under, its handoff to the next release, KMS Recipient and CMS), `internal/envelope` (AES-256-GCM with key commitment), `internal/store` (DynamoDB and S3). Design: [plan.md](plan.md), ADR 0008 and 0009; data: [data.md](data.md).
+- **Accounts (F2)**: `internal/services/accounts` (sign-up by invitation, sign-in by mail, sessions; ADR 0017) and `internal/sesmail`, which sends the sign-in message through SES and reads from SES whether anyone else would be given a copy, sending only while nobody is (ADR 0021). An image whose configuration has no `mail_from` has no accounts.
 - **permaily-host** (`cmd/permaily-host`): forwards TCP 443 and 25 to vsock, exposes an allowlisted HTTP CONNECT proxy on vsock 8000 for the enclave's outbound TLS, and serves the instance role credentials on vsock 8002.
 - **permaily-verify** (`cmd/permaily-verify`, `pkg/attestation`, `pkg/kmspolicy`, `pkg/certwatch`): verifier CLI and libraries. It checks the image, the TLS key, that the KMS key locking the root secret belongs to that image alone for good, how mail gets in, and whether a certificate for the hosts exists outside the enclave.
 - **Records that cannot go back** (`internal/store`, ADR 0016): each change of the TLS identity leaves a commit in an S3 bucket with Object Lock, and the enclave reads the record by its newest commit, so an earlier copy put back in the table is refused.
 - **Releases and the root secret** (`pkg/provenance`, ADR 0013): the running enclave hands the root secret only to an image whose measurements were published by the release workflow, which it checks offline from the release's Sigstore bundle. Nothing in AWS is edited to let a release in.
 - **Build** (`flake.nix`, `nix/`): Nix with [monzo/aws-nitro-util](https://github.com/monzo/aws-nitro-util) and AWS's prebuilt kernel/init blobs; PCR0 is identical from x86_64 and arm64 builders.
-- **Infrastructure** (`deploy/`): OpenTofu; one Graviton `c7g.large` in `us-east-2` (enclave: 1 vCPU, 2 GiB), Cloudflare DNS (DNS only), S3 for deploy artifacts, SSM for administration; for mail, a DynamoDB table and an S3 bucket (`mail.tf`), one KMS key per release (`releases.tf`) and the storage of the staging deployment (`staging.tf`). The image's runtime configuration is `deploy/enclave.json`.
+- **Infrastructure** (`deploy/`): OpenTofu; one Graviton `c7g.large` in `us-east-2` (enclave: 1 vCPU, 2 GiB), Cloudflare DNS (DNS only), S3 for deploy artifacts, SSM for administration; for mail, a DynamoDB table and an S3 bucket (`mail.tf`), one KMS key per release (`releases.tf`), the SES identity of the service's own mail (`ses.tf`) and the storage of the staging deployment (`staging.tf`). The image's runtime configuration is `deploy/enclave.json`.
 
 ## Layers (F2)
 
@@ -46,7 +47,7 @@ What F2 adds is written in four layers, each importing only the ones before it. 
 | Contracts | `internal/contracts` | The types and error codes that cross the boundary, defined once for the API, MCP, the command line and the web app. Imports nothing of the service |
 | Domain | `internal/domain` | Rules that need nothing but their arguments: how long a session lasts, what an address or an invitation looks like. Imports only contracts |
 | Services | `internal/services/...` | The use cases: `accounts` (invitations, sign-in by email, sessions, ADR 0017). They reach storage and keys through `internal/store` and `internal/keys`, and know nothing of HTTP |
-| Adapters | `internal/httpapi`, later MCP and the command line | One thin translation each, so they all behave the same |
+| Adapters | `internal/httpapi`, later MCP and the command line; `internal/sesmail` for the mail a service sends | One thin translation each, so they all behave the same |
 
 The code of F0 and F1 (`inbox`, `smtpd`, `keys`, `store`) stays where it is: it moves into these layers when F2 touches it.
 
