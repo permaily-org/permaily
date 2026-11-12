@@ -412,9 +412,7 @@ func TestBlockedAPI(t *testing.T) {
 		rec := a.call("POST", "/api/v1/auth/email/start", `{"address":"`+address+`"}`, nil)
 		var started contracts.EmailStarted
 		read(t, rec, 200, &started)
-		a.svc.Wait()
-		sent := a.out.Sent()
-		last := sent[len(sent)-1]
+		last := a.mailOf(started.Attempt)
 		if last.To != address || last.Subject != "Sign in to Permaily" {
 			t.Fatalf("no sign-in message for %s: %+v", address, last)
 		}
@@ -462,9 +460,7 @@ func TestBlockedAPI(t *testing.T) {
 	}
 	var started contracts.EmailStarted
 	read(t, a.call("POST", "/api/v1/auth/provider/confirm/start", `{"address":"ana@example.org"}`, nil), 200, &started)
-	a.svc.Wait()
-	sent := a.out.Sent()
-	blocked("confirming an address for a provider", a.call("POST", "/api/v1/auth/provider/confirm/finish", `{"attempt":"`+started.Attempt+`","code":"`+sentCode.FindStringSubmatch(sent[len(sent)-1].Text)[1]+`"}`, nil))
+	blocked("confirming an address for a provider", a.call("POST", "/api/v1/auth/provider/confirm/finish", `{"attempt":"`+started.Attempt+`","code":"`+sentCode.FindStringSubmatch(a.mailOf(started.Attempt).Text)[1]+`"}`, nil))
 
 	// Nobody is signed in to either, and the cookie from before stays nothing.
 	for _, account := range []string{id, bea.Account.ID} {
@@ -504,12 +500,7 @@ func TestAddressAPI(t *testing.T) {
 		if started.ExpiresIn != 600 || !strings.HasPrefix(started.Attempt, "att_") {
 			t.Fatalf("the answer: %s", rec.Body)
 		}
-		a.svc.Wait()
-		sent := a.out.Sent()
-		if len(sent) == before {
-			return started, rec.Body.String(), nil
-		}
-		return started, rec.Body.String(), &sent[len(sent)-1]
+		return started, rec.Body.String(), a.mailTo(before, address, "Confirm your new address for Permaily")
 	}
 	// The answer is the same whether the address is another account's or
 	// nobody's, and the message is sent either way.
@@ -856,9 +847,7 @@ func (a *app) signInWith(address, invitation string) {
 	a.t.Helper()
 	var started contracts.EmailStarted
 	read(a.t, a.call("POST", "/api/v1/auth/email/start", `{"address":"`+address+`","invitation":"`+invitation+`","terms":"`+domain.TermsVersion+`"}`, nil), 200, &started)
-	a.svc.Wait()
-	sent := a.out.Sent()
-	read(a.t, a.call("POST", "/api/v1/auth/email/finish", `{"attempt":"`+started.Attempt+`","code":"`+sentCode.FindStringSubmatch(sent[len(sent)-1].Text)[1]+`"}`, nil), 200, nil)
+	read(a.t, a.call("POST", "/api/v1/auth/email/finish", `{"attempt":"`+started.Attempt+`","code":"`+sentCode.FindStringSubmatch(a.mailOf(started.Attempt).Text)[1]+`"}`, nil), 200, nil)
 }
 
 // What the operator did through the enclave is on /status: how many of each

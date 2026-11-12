@@ -145,9 +145,11 @@ func (e *enclave) start(address, invitation string) contracts.EmailFinish {
 	if err != nil {
 		e.w.t.Fatal(err)
 	}
-	e.svc.Wait()
-	sent := e.w.out.Sent()
-	return contracts.EmailFinish{Attempt: res.Attempt, Code: code(&sent[len(sent)-1])}
+	mail := e.w.mailOf(e.svc, res.Attempt)
+	if mail == nil {
+		e.w.t.Fatalf("no sign-in message for %s", address)
+	}
+	return contracts.EmailFinish{Attempt: res.Attempt, Code: code(mail)}
 }
 
 // doc reads an account's record through an enclave that was just started.
@@ -776,13 +778,16 @@ func TestASessionConfirmedThroughOneEnclaveChangesThroughTheOther(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	before := len(w.out.Sent())
 	started, err := one.svc.StartConfirmEmail(ctx, who)
 	if err != nil {
 		t.Fatal(err)
 	}
-	one.svc.Wait()
-	sent := w.out.Sent()
-	if _, err := one.svc.FinishConfirmEmail(ctx, who, contracts.ConfirmFinish{Attempt: started.Attempt, Code: code(&sent[len(sent)-1])}); err != nil {
+	mail := w.mailTo(one.svc, before, "ana@example.org", confirmSubject)
+	if mail == nil {
+		t.Fatal("no message to confirm")
+	}
+	if _, err := one.svc.FinishConfirmEmail(ctx, who, contracts.ConfirmFinish{Attempt: started.Attempt, Code: code(mail)}); err != nil {
 		t.Fatal(err)
 	}
 	// The next request lands on the other.

@@ -447,16 +447,11 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 	// who is not Ana, never sees its code, and guessing takes five tries.
 	confirm := func(browser, address string) (string, *Mail) {
 		t.Helper()
-		before := len(w.out.Sent())
 		started, err := w.svc.StartProviderConfirm(ctx, browser, contracts.ProviderConfirmStart{Address: address})
 		if err != nil || !validID("att", started.Attempt) || started.ExpiresIn != 600 {
 			t.Fatalf("asking for the message: %+v %v", started, err)
 		}
-		w.svc.Wait()
-		if sent := w.out.Sent(); len(sent) > before {
-			return started.Attempt, &sent[len(sent)-1]
-		}
-		return started.Attempt, nil
+		return started.Attempt, w.mailOf(w.svc, started.Attempt)
 	}
 	attempt, mail := confirm(malloryBrowser, " ANA@example.org ")
 	if mail == nil || mail.To != "ana@example.org" {
@@ -562,16 +557,11 @@ func TestProviderConfirmRefusals(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		before := len(w.out.Sent())
 		started, err := w.svc.StartProviderConfirm(ctx, done.Browser, contracts.ProviderConfirmStart{Address: address})
 		if err != nil {
 			t.Fatal(err)
 		}
-		w.svc.Wait()
-		if sent := w.out.Sent(); len(sent) > before {
-			mail = &sent[len(sent)-1]
-		}
-		return done.Browser, started.Attempt, mail
+		return done.Browser, started.Attempt, w.mailOf(w.svc, started.Attempt)
 	}
 	finish := func(browser, attempt string, mail *Mail) error {
 		_, cookie, err := w.svc.FinishProviderConfirm(ctx, browser, contracts.ProviderConfirm{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""})
@@ -1466,8 +1456,7 @@ func TestProviderFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		w.svc.Wait()
-		sent := w.out.Sent()
+		mail := w.mailOf(w.svc, started.Attempt)
 		before := sessions()
 
 		f.fail[op] = down
@@ -1484,7 +1473,7 @@ func TestProviderFailures(t *testing.T) {
 				t.Fatalf("%s down, linking: %+v %v", op, done, err)
 			}
 		}
-		_, session, err := w.svc.FinishProviderConfirm(ctx, waiting.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(&sent[len(sent)-1])}, Browser{UserAgent: ""})
+		_, session, err := w.svc.FinishProviderConfirm(ctx, waiting.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(mail)}, Browser{UserAgent: ""})
 		if (err == nil) != (session != "") {
 			t.Fatalf("%s down, confirming: a session %v with %v", op, session != "", err)
 		}
@@ -1689,10 +1678,9 @@ func TestProviderFailuresWhileLinking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.svc.Wait()
-	sent := w.out.Sent()
+	mail := w.mailOf(w.svc, started.Attempt)
 	f.fail["list entries"] = down
-	if me, session, err := w.svc.FinishProviderConfirm(ctx, waiting.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(&sent[len(sent)-1])}, Browser{UserAgent: ""}); !errors.Is(err, down) || me != nil || session != "" {
+	if me, session, err := w.svc.FinishProviderConfirm(ctx, waiting.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, down) || me != nil || session != "" {
 		t.Fatalf("confirming with no session to be made: %+v %v", me, err)
 	}
 

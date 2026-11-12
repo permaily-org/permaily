@@ -29,11 +29,15 @@ func (a *app) later() { a.ahead += domain.ConfirmationLifetime + time.Second }
 // account's address.
 func (a *app) confirmByMail() contracts.Me {
 	a.t.Helper()
+	address := a.me().Account.Address
+	before := len(a.out.Sent())
 	var started contracts.EmailStarted
 	read(a.t, a.call("POST", "/api/v1/auth/confirm/email/start", "", nil), 200, &started)
-	a.svc.Wait()
-	sent := a.out.Sent()
-	code := sentCode.FindStringSubmatch(sent[len(sent)-1].Text)[1]
+	mail := a.mailTo(before, address, "Confirm it is you on Permaily")
+	if mail == nil {
+		a.t.Fatal("no message to confirm")
+	}
+	code := sentCode.FindStringSubmatch(mail.Text)[1]
 	var me contracts.Me
 	read(a.t, a.call("POST", "/api/v1/auth/confirm/email/finish", `{"attempt":"`+started.Attempt+`","code":"`+code+`"}`, nil), 200, &me)
 	return me

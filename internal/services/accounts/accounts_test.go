@@ -79,7 +79,6 @@ var (
 // the sign-up screen: the person agreed to the terms in force.
 func (w *world) start(address, invitation string) (string, *Mail) {
 	w.t.Helper()
-	before := len(w.out.Sent())
 	in := contracts.EmailStart{Address: address, Invitation: invitation}
 	if invitation != "" {
 		in.Terms = w.terms
@@ -91,15 +90,54 @@ func (w *world) start(address, invitation string) (string, *Mail) {
 	if res.ExpiresIn != 600 || !validID("att", res.Attempt) {
 		w.t.Fatalf("answer: %+v", res)
 	}
-	w.svc.Wait()
-	sent := w.out.Sent()
-	if len(sent) == before {
-		return res.Attempt, nil
-	}
-	return res.Attempt, &sent[len(sent)-1]
+	return res.Attempt, w.mailOf(w.svc, res.Attempt)
 }
 
+// mailOf waits for what svc is sending and returns the sign-in message of
+// attempt, found by the link it carries, nil when none was sent. Not the
+// newest message: svc sends its messages in the background and Wait waits
+// for all of them, so a message a test started earlier and did not wait for
+// can be sent after this one.
+func (w *world) mailOf(svc *Service, attempt string) *Mail {
+	w.t.Helper()
+	svc.Wait()
+	var found *Mail
+	for _, m := range w.out.Sent() {
+		if g := linkRE.FindStringSubmatch(m.Text); g != nil && g[1] == attempt {
+			if found != nil {
+				w.t.Fatalf("two messages for the attempt %s", attempt)
+			}
+			found = &m
+		}
+	}
+	return found
+}
+
+// mailTo waits for what svc is sending and returns the message to address
+// with subject sent since there were n, nil when none was; it fails when
+// there are more. Not the newest message, for the reason mailOf gives.
+func (w *world) mailTo(svc *Service, n int, address, subject string) *Mail {
+	w.t.Helper()
+	svc.Wait()
+	var found *Mail
+	for _, m := range w.out.Sent()[n:] {
+		if m.To == address && m.Subject == subject {
+			if found != nil {
+				w.t.Fatalf("two messages %q to %s", subject, address)
+			}
+			found = &m
+		}
+	}
+	return found
+}
+
+// confirmSubject is the subject of the message that confirms a session.
+const confirmSubject = "Confirm it is you on Permaily"
+
 func code(m *Mail) string {
+	if m == nil {
+		return ""
+	}
 	if g := codeRE.FindStringSubmatch(m.Text); g != nil {
 		return g[1]
 	}

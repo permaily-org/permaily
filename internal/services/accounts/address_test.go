@@ -26,12 +26,11 @@ func (w *world) askFor(svc *Service, who *Authenticated, address string) (string
 	if res.ExpiresIn != 600 || !validID("att", res.Attempt) {
 		w.t.Fatalf("answer: %+v", res)
 	}
-	svc.Wait()
-	sent := w.out.Sent()
-	if len(sent) == before {
-		return res.Attempt, nil
+	to, err := domain.NormalizeAddress(address)
+	if err != nil {
+		w.t.Fatal(err)
 	}
-	return res.Attempt, &sent[len(sent)-1]
+	return res.Attempt, w.mailTo(svc, before, to, "Confirm your new address for Permaily")
 }
 
 // moveTo changes the address of the account behind a session.

@@ -197,8 +197,7 @@ func TestABlockedAccountSignsInByNoWay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	all, _ := w.sent(0)
-	_, _, err = w.svc.FinishProviderConfirm(ctx, done.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(&all[len(all)-1])}, Browser{})
+	_, _, err = w.svc.FinishProviderConfirm(ctx, done.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(w.mailOf(w.svc, started.Attempt))}, Browser{})
 	blocked("confirming an address for a provider", err)
 	// With a recovery code: the right one is told, and is not used up.
 	_, _, err = w.recover("bea@example.org", codes[0])

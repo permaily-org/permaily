@@ -323,9 +323,7 @@ func TestProviderConfirmAPI(t *testing.T) {
 
 	var started contracts.EmailStarted
 	read(t, a.call("POST", "/api/v1/auth/provider/confirm/start", `{"address":"ana@example.org"}`, nil), 200, &started)
-	a.svc.Wait()
-	sent := a.out.Sent()
-	code := sentCode.FindStringSubmatch(sent[len(sent)-1].Text)[1]
+	code := sentCode.FindStringSubmatch(a.mailOf(started.Attempt).Text)[1]
 	wrong := "000000"
 	if code == wrong {
 		wrong = "000001"

@@ -117,6 +117,44 @@ func (a *app) call(method, path, body string, edit func(*http.Request)) *httptes
 
 var sentCode = regexp.MustCompile(`\n    (\d{6})\n`)
 
+// mailOf waits for what the service is sending and returns the sign-in
+// message of attempt, found by the link it carries. Not the newest message:
+// the service sends its messages in the background and Wait waits for all of
+// them, so a message a test started earlier and did not wait for can be sent
+// after this one.
+func (a *app) mailOf(attempt string) accounts.Mail {
+	a.t.Helper()
+	a.svc.Wait()
+	var found []accounts.Mail
+	for _, m := range a.out.Sent() {
+		if g := sentLink.FindStringSubmatch(m.Text); g != nil && g[1] == attempt {
+			found = append(found, m)
+		}
+	}
+	if len(found) != 1 {
+		a.t.Fatalf("%d sign-in messages for the attempt %s", len(found), attempt)
+	}
+	return found[0]
+}
+
+// mailTo waits for what the service is sending and returns the message to
+// address with subject sent since there were n, nil when none was; it fails
+// when there are more. Not the newest message, for the reason mailOf gives.
+func (a *app) mailTo(n int, address, subject string) *accounts.Mail {
+	a.t.Helper()
+	a.svc.Wait()
+	var found *accounts.Mail
+	for _, m := range a.out.Sent()[n:] {
+		if m.To == address && m.Subject == subject {
+			if found != nil {
+				a.t.Fatalf("two messages %q to %s", subject, address)
+			}
+			found = &m
+		}
+	}
+	return found
+}
+
 // signIn signs the browser in to address, making the account if it is new.
 func (a *app) signIn(address string) contracts.Me {
 	a.t.Helper()
@@ -129,9 +167,7 @@ func (a *app) signIn(address string) contracts.Me {
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &started) != nil || started.Attempt == "" || started.ExpiresIn != 600 {
 		a.t.Fatalf("start: %d %s", rec.Code, rec.Body)
 	}
-	a.svc.Wait()
-	sent := a.out.Sent()
-	code := sentCode.FindStringSubmatch(sent[len(sent)-1].Text)[1]
+	code := sentCode.FindStringSubmatch(a.mailOf(started.Attempt).Text)[1]
 	rec = a.call("POST", "/api/v1/auth/email/finish", `{"attempt":"`+started.Attempt+`","code":"`+code+`"}`, nil)
 	var me contracts.Me
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &me) != nil || me.Account.Address != address {
@@ -148,12 +184,11 @@ func TestLookAtALinkAPI(t *testing.T) {
 	a := newApp(t)
 	a.signIn("ana@example.org")
 	a.call("POST", "/api/v1/auth/sign-out", "", nil)
-	if rec := a.call("POST", "/api/v1/auth/email/start", `{"address":"ana@example.org"}`, nil); rec.Code != 200 {
+	var started contracts.EmailStarted
+	if rec := a.call("POST", "/api/v1/auth/email/start", `{"address":"ana@example.org"}`, nil); rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &started) != nil {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body)
 	}
-	a.svc.Wait()
-	sent := a.out.Sent()
-	link := sentLink.FindStringSubmatch(sent[len(sent)-1].Text)
+	link := sentLink.FindStringSubmatch(a.mailOf(started.Attempt).Text)
 	body := `{"attempt":"` + link[1] + `","token":"` + link[2] + `"}`
 
 	rec := a.call("POST", "/api/v1/auth/email/look", body, nil)

@@ -79,9 +79,7 @@ func TestNoAccountIsMadeWithoutAgreeingToTheTerms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.svc.Wait()
-	sent := w.out.Sent()
-	carl, _, err := w.svc.FinishProviderConfirm(ctx, done.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(&sent[len(sent)-1])}, Browser{})
+	carl, _, err := w.svc.FinishProviderConfirm(ctx, done.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(w.mailOf(w.svc, started.Attempt))}, Browser{})
 	if err != nil || carl.Account.Terms != domain.TermsVersion {
 		t.Fatalf("meta, confirmed: %+v %v", carl, err)
 	}
@@ -123,9 +121,7 @@ func TestSigningInAsksNothingOfTheTerms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.svc.Wait()
-	sent := w.out.Sent()
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: res.Attempt, Code: code(&sent[len(sent)-1])}, Browser{}); err != nil {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: res.Attempt, Code: code(w.mailOf(w.svc, res.Attempt))}, Browser{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.agreedTo(id); got == nil || got.Version != domain.TermsVersion {
@@ -311,17 +307,15 @@ func third3[A, B any](_ A, _ B, err error) error { return err }
 // force.
 func (w *world) startAgreeing(address, invitation string) (string, *Mail) {
 	w.t.Helper()
-	before := len(w.out.Sent())
 	res, err := w.svc.StartEmail(context.Background(), contracts.EmailStart{Address: address, Invitation: invitation, Terms: w.terms})
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	w.svc.Wait()
-	sent := w.out.Sent()
-	if len(sent) == before {
+	mail := w.mailOf(w.svc, res.Attempt)
+	if mail == nil {
 		w.t.Fatal("no message")
 	}
-	return res.Attempt, &sent[len(sent)-1]
+	return res.Attempt, mail
 }
 
 // find is the identifier of the account of an address.
