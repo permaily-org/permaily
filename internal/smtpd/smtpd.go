@@ -106,7 +106,13 @@ func New(r Recipients, cfg Config, log *slog.Logger) *Server {
 	srv := smtp.NewServer(s)
 	srv.Domain = cfg.Domain
 	srv.TLSConfig = cfg.TLS
-	srv.MaxMessageBytes = l.MaxMessage
+	// The size of a message is the session's to check, not go-smtp's: its
+	// reader of DATA refuses a message of exactly MaxMessageBytes, and it
+	// refuses a BDAT chunk over it before the session sees it and leaves the
+	// connection open. With none set, EHLO advertises SIZE without a number;
+	// a SIZE declared at MAIL FROM over MaxMessage is refused there (Mail),
+	// and every byte of DATA and of each chunk is counted in Data.
+	srv.MaxMessageBytes = 0
 	srv.MaxRecipients = MaxRecipients
 	srv.ReadTimeout = l.Command
 	srv.WriteTimeout = l.Command
@@ -183,7 +189,11 @@ func (l *listener) Accept() (net.Conn, error) {
 
 // conn is one session's connection. Every deadline go-smtp asks for is cut
 // to the earliest limit of the session's phase (readCap, writeCap); tls.Conn
-// sets its deadlines on it too, so the cut holds after STARTTLS.
+// sets its deadlines on it too, so the cut holds after STARTTLS. go-smtp
+// sets the read deadline once before it reads each command line (its
+// ReadTimeout), through tls.Conn after STARTTLS: that is where every command
+// is counted, BDAT's included, which the session's own methods do not all
+// see.
 type conn struct {
 	net.Conn
 	s     *Server
@@ -193,15 +203,24 @@ type conn struct {
 	mu                sync.Mutex
 	readCap, writeCap time.Time
 	reqRead, reqWrite time.Time
-	// inData is set while a message's bytes are being read: a timeout then
-	// answers 451 4.4.2 rather than go-smtp's own words.
+	// inData is set while a message's bytes are being read (DATA, and BDAT
+	// from its first chunk to its last): the read deadline is then the
+	// stall's, restarted by every byte that arrives and cut to the
+	// transaction's and the session's ends, never the command's; and a
+	// timeout answers 451 4.4.2 rather than go-smtp's own words.
 	inData   bool
 	released bool
+	// closing: reading has stopped for good (closeSoon); nothing extends it.
+	closing bool
 
 	// What the session did, across the sessions go-smtp makes for it.
 	transactions, commands, failed int
 	txEnd                          time.Time
-	afterData                      bool
+	// idleEnd is when the session ends if no transaction starts: set after
+	// TLS and at the end of each transaction, and never moved by RSET, EHLO,
+	// NOOP or any command outside a transaction.
+	idleEnd   time.Time
+	afterData bool
 }
 
 func newConn(c net.Conn, s *Server) *conn {
@@ -225,8 +244,32 @@ func earliest(a, b time.Time) time.Time {
 func (k *conn) capRead(t time.Time) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	if k.closing {
+		return
+	}
 	k.readCap = earliest(t, k.end)
-	_ = k.Conn.SetReadDeadline(earliest(k.reqRead, k.readCap))
+	k.applyRead()
+}
+
+// applyRead sets the read deadline: the cap of the session's phase, and
+// outside a message's bytes also what go-smtp asked. The caller holds k.mu.
+func (k *conn) applyRead() {
+	d := k.readCap
+	if !k.inData {
+		d = earliest(k.reqRead, d)
+	}
+	_ = k.Conn.SetReadDeadline(d)
+}
+
+// stall restarts the stall deadline of a message's bytes: DataStall from now,
+// cut to the transaction's end (and the session's, by capRead). The caller
+// holds k.mu.
+func (k *conn) stall(now time.Time) {
+	if k.closing {
+		return
+	}
+	k.readCap = earliest(earliest(now.Add(k.s.limits.DataStall), k.txEnd), k.end)
+	k.applyRead()
 }
 
 func (k *conn) capWrite(t time.Time) {
@@ -236,11 +279,23 @@ func (k *conn) capWrite(t time.Time) {
 	_ = k.Conn.SetWriteDeadline(earliest(k.reqWrite, k.writeCap))
 }
 
+// SetReadDeadline is what go-smtp calls before it reads each command line:
+// the line is counted here. A session past MaxCommands is answered by the
+// session's method for that command (421 4.7.0, closing); a command no method
+// sees (BDAT after the first chunk, NOOP, RSET, an unknown one) is answered
+// by go-smtp, and the read of the next line fails at once, which go-smtp
+// answers with 421 and closes.
 func (k *conn) SetReadDeadline(t time.Time) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	k.commands++
+	if k.commands > k.s.limits.Commands+1 {
+		k.closing = true
+		k.readCap = time.Now()
+	}
 	k.reqRead = t
-	return k.Conn.SetReadDeadline(earliest(t, k.readCap))
+	k.applyRead()
+	return nil
 }
 
 func (k *conn) SetWriteDeadline(t time.Time) error {
@@ -263,6 +318,15 @@ var errStalled = &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 4
 
 func (k *conn) Read(p []byte) (int, error) {
 	n, err := k.Conn.Read(p)
+	if n > 0 {
+		// Bytes of a message that arrive restart its stall deadline, however
+		// few: a read of go-smtp's need not return for that.
+		k.mu.Lock()
+		if k.inData {
+			k.stall(time.Now())
+		}
+		k.mu.Unlock()
+	}
 	if err != nil {
 		var ne net.Error
 		k.mu.Lock()
@@ -287,10 +351,15 @@ func (k *conn) Close() error {
 }
 
 // closeSoon closes the session after its next answer: reading stops at once
-// and writing has CloseGrace. go-smtp then fails its next read and closes.
+// and for good, and writing has CloseGrace. go-smtp then fails its next read
+// and closes.
 func (k *conn) closeSoon() {
 	now := time.Now()
-	k.capRead(now)
+	k.mu.Lock()
+	k.closing = true
+	k.readCap = now
+	k.applyRead()
+	k.mu.Unlock()
 	k.capWrite(now.Add(k.s.limits.CloseGrace))
 }
 
@@ -317,7 +386,13 @@ func (s *Server) NewSession(c *smtp.Conn) (smtp.Session, error) {
 	if ss.encrypted() {
 		// The EHLO that follows STARTTLS ends the TLS deadline: from here to
 		// the first MAIL FROM is idle.
-		k.capRead(time.Now().Add(s.limits.Idle))
+		k.mu.Lock()
+		if k.idleEnd.IsZero() {
+			k.idleEnd = time.Now().Add(s.limits.Idle)
+		}
+		idle := k.idleEnd
+		k.mu.Unlock()
+		k.capRead(idle)
 	}
 	if err := ss.command(); err != nil {
 		return nil, err
@@ -344,11 +419,11 @@ type session struct {
 
 func (ss *session) encrypted() bool { _, ok := ss.c.TLSConnectionState(); return ok }
 
-// command counts a command; past MaxCommands the session closes.
+// command refuses a command past MaxCommands (counted by the connection, as
+// go-smtp reads each line), and closes the session.
 func (ss *session) command() error {
 	k := ss.k
 	k.mu.Lock()
-	k.commands++
 	over := k.commands > ss.s.limits.Commands
 	k.mu.Unlock()
 	if over {
@@ -374,22 +449,21 @@ func (ss *session) refuse(err *smtp.SMTPError) error {
 }
 
 // Reset implements smtp.Session: RSET, a second EHLO, and the end of every
-// transaction. The session is idle until its next MAIL FROM.
+// transaction. The end of a transaction starts the idle deadline again; a
+// Reset outside one leaves it where it was.
 func (ss *session) Reset() {
 	ss.from, ss.mailboxes = "", nil
 	k := ss.k
 	k.mu.Lock()
-	afterData := k.afterData
+	inTransaction := !k.txEnd.IsZero()
 	k.afterData, k.txEnd = false, time.Time{}
-	k.mu.Unlock()
-	if !afterData {
-		_ = ss.command()
+	if inTransaction {
+		k.idleEnd = time.Now().Add(ss.s.limits.Idle)
 	}
-	k.mu.Lock()
-	closing := !k.readCap.After(time.Now())
+	idle := k.idleEnd
 	k.mu.Unlock()
-	if !closing && ss.encrypted() {
-		k.capRead(time.Now().Add(ss.s.limits.Idle))
+	if ss.encrypted() && !idle.IsZero() {
+		k.capRead(idle)
 	}
 }
 
@@ -397,7 +471,7 @@ func (ss *session) Reset() {
 func (ss *session) Logout() error { return nil }
 
 // Mail implements smtp.Session.
-func (ss *session) Mail(from string, _ *smtp.MailOptions) error {
+func (ss *session) Mail(from string, opts *smtp.MailOptions) error {
 	if err := ss.command(); err != nil {
 		return err
 	}
@@ -405,6 +479,11 @@ func (ss *session) Mail(from string, _ *smtp.MailOptions) error {
 		// Whoever sits between the sender and the enclave (the parent instance
 		// included) could read a message sent without TLS.
 		return ss.refuse(errNoTLS)
+	}
+	if opts != nil && opts.Size > ss.s.limits.MaxMessage {
+		// A declared size is a hint, never a reservation; one over the limit
+		// is refused here.
+		return ss.refuse(errTooLarge)
 	}
 	k := ss.k
 	k.mu.Lock()
@@ -449,9 +528,9 @@ func (ss *session) Rcpt(to string, _ *smtp.RcptOptions) error {
 }
 
 // deadline is a context that ends after d, and no later than the
-// transaction's deadline.
+// transaction's deadline and the session's.
 func (ss *session) deadline(d time.Duration) (context.Context, context.CancelFunc) {
-	end := time.Now().Add(d)
+	end := earliest(time.Now().Add(d), ss.k.end)
 	ss.k.mu.Lock()
 	if !ss.k.txEnd.IsZero() {
 		end = earliest(end, ss.k.txEnd)
@@ -473,11 +552,13 @@ func (ss *session) Data(r io.Reader) (err error) {
 	k.afterData = true
 	k.inData = true
 	txEnd := k.txEnd
+	k.stall(time.Now())
 	k.mu.Unlock()
 	steps, whole := 0, false
 	defer func() {
 		k.mu.Lock()
 		k.inData = false
+		k.applyRead()
 		k.mu.Unlock()
 		ss.s.give(steps)
 		if !whole && err != nil && !errors.Is(err, smtp.ErrDataReset) {
@@ -486,8 +567,6 @@ func (ss *session) Data(r io.Reader) (err error) {
 			k.closeSoon()
 		}
 	}()
-	stall := func() { k.capRead(earliest(txEnd, time.Now().Add(ss.s.limits.DataStall))) }
-	stall()
 	admit, cancel := ss.deadline(ss.s.limits.Transaction)
 	defer cancel()
 	var buf bytes.Buffer
@@ -506,13 +585,15 @@ func (ss *session) Data(r io.Reader) (err error) {
 				continue
 			}
 		}
-		n, rerr := r.Read(chunk[:min(int64(len(chunk)), room)])
+		// Never more than one byte past the largest message: what follows it
+		// in a BDAT chunk is left unread, so go-smtp's copy of the chunk fails
+		// and the chunk is answered with the refusal.
+		n, rerr := r.Read(chunk[:min(int64(len(chunk)), room, ss.s.limits.MaxMessage+1-int64(buf.Len()))])
 		if n > 0 {
 			buf.Write(chunk[:n])
 			if int64(buf.Len()) > ss.s.limits.MaxMessage {
 				return errTooLarge
 			}
-			stall()
 		}
 		if errors.Is(rerr, io.EOF) {
 			break
@@ -534,6 +615,7 @@ func (ss *session) Data(r io.Reader) (err error) {
 	}
 	k.mu.Lock()
 	k.inData = false
+	k.applyRead()
 	k.mu.Unlock()
 	if !time.Now().Before(txEnd) {
 		return errStalled
@@ -547,7 +629,9 @@ func (ss *session) Data(r io.Reader) (err error) {
 		if !errors.Is(err, mailboxes.ErrNotAllStored) {
 			ss.s.log.Warn("smtpd: a message could not be stored")
 		}
-		return errTemporary
+		// A failed delivery is a refusal like any other: past
+		// MaxFailedCommands the session closes.
+		return ss.refuse(errTemporary)
 	}
 	return nil
 }

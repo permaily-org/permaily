@@ -350,36 +350,53 @@ func TestD2SizeIsAHint(t *testing.T) {
 	f.zero(t)
 }
 
-// D3: DATA that brings a byte just inside DataStall each time holds one step
-// and ends at TransactionDeadline with 451 4.4.2, closed.
+// D3: DATA that brings a byte just inside DataStall each time holds one step,
+// goes on until the transaction's deadline (each byte restarts the stall),
+// and ends at TransactionDeadline with 451 4.4.2, closed: not before it, and
+// not a stall later.
 func TestD3SlowDataEndsAtTheTransactionsDeadline(t *testing.T) {
 	l := Limits{Transaction: 900 * time.Millisecond, DataStall: 300 * time.Millisecond}
 	f := start(t, l)
 	c := f.open(t, true)
 	c.do("MAIL FROM:<a@example.org>", 250)
+	began := time.Now() // the transaction's deadline runs from MAIL FROM
 	c.do("RCPT TO:<u@inbox.test>", 250)
 	c.do("DATA", 354)
-	held := int64(0)
+	var mu sync.Mutex
+	held, written := int64(0), 0
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for range 10 {
+		for range 20 {
 			if _, err := c.conn.Write([]byte("x")); err != nil {
 				return
 			}
+			mu.Lock()
+			written++
+			mu.Unlock()
 			time.Sleep(200 * time.Millisecond)
 			if h := f.srv.Held(); h > held {
+				mu.Lock()
 				held = h
+				mu.Unlock()
 			}
 		}
 	}()
 	code, msg := c.answer()
+	ended := time.Since(began)
 	<-done
 	if code != 451 || !strings.HasPrefix(msg, "4.4.2") || !c.closed() {
 		t.Fatalf("%d %s", code, msg)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if held != DataStep {
 		t.Fatalf("held %d", held)
+	}
+	// It went on past three stalls' worth of bytes, and stopped at the
+	// transaction's end rather than at the stall after it.
+	if written < 4 || ended < 850*time.Millisecond || ended > 900*time.Millisecond+250*time.Millisecond {
+		t.Fatalf("%d bytes written, ended after %v", written, ended)
 	}
 	f.zero(t)
 }
@@ -675,13 +692,12 @@ func TestD9SessionCaps(t *testing.T) {
 	})
 	t.Run("commands", func(t *testing.T) {
 		f := start(t, Limits{Transactions: 1000})
-		c := f.open(t, true) // EHLO twice: two commands
-		for n := 2; n+2 < MaxCommands; n += 2 {
+		c := f.open(t, true) // EHLO, STARTTLS, EHLO: three commands
+		for n := 3; n+2 < MaxCommands; n += 2 {
 			c.do("MAIL FROM:<a@example.org>", 250)
 			c.do("RSET", 250)
 		}
-		c.do("MAIL FROM:<a@example.org>", 250) // the 199th
-		c.do("RCPT TO:<u@inbox.test>", 250)    // the 200th
+		c.do("MAIL FROM:<a@example.org>", 250) // the 200th
 		if code, msg, _ := c.send("RCPT TO:<u@inbox.test>"); code != 421 || !strings.HasPrefix(msg, "4.7.0") || !c.closed() {
 			t.Fatalf("%d %s", code, msg)
 		}
