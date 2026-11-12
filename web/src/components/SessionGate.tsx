@@ -3,6 +3,7 @@ import { Navigate, Outlet, useLocation } from 'react-router'
 import { useProviderArrival } from '../lib/arrival.ts'
 import { destination } from '../lib/destination.ts'
 import { isClosing, termsToAgree, useSession } from '../lib/session.tsx'
+import { isMailboxPath } from '../pages/accounts/standing.ts'
 import { AccountClosing } from '../pages/auth/AccountClosing.tsx'
 import { AuthLayout } from '../pages/auth/AuthLayout.tsx'
 import { LinkConfirmation, LinkEnded } from '../pages/auth/LinkConfirmation.tsx'
@@ -42,50 +43,54 @@ function Waiting() {
  * an account that is being deleted every route shows that, and nothing else of the app, until the person
  * cancels. And once the terms in force are not the ones the person agreed to, every route shows the screen
  * that asks for the agreement, until they agree. The address stays where it was, so the app goes back to the
- * page they were on.
+ * page they were on. The mailbox routes are the exception: they show in a limited form (`MailboxLayout`).
  */
 export function RequireSession() {
   const { state } = useSession()
   const { pathname, search, hash } = useLocation()
   // The version of the terms to agree to, when the person has to before anything else.
   const terms = state.status === 'signedIn' ? termsToAgree(state.me) : null
-  const blocking =
+  const closing = state.status === 'signedIn' && isClosing(state.me.account)
+  // A closing account, and one that has not agreed, still reach their mailboxes in a limited form (ADR 0026):
+  // reading, downloading and disconnecting are theirs to do. Every other route shows the screen that blocks it.
+  const showing: Showing =
     state.status !== 'signedIn'
       ? 'waiting'
-      : isClosing(state.me.account)
-        ? 'closing'
-        : terms !== null
-          ? 'terms'
-          : 'page'
-  usePageFocus(blocking, pathname)
+      : (closing || terms !== null) && isMailboxPath(pathname)
+        ? 'limited'
+        : closing
+          ? 'closing'
+          : terms !== null
+            ? 'terms'
+            : 'page'
+  usePageFocus(showing, pathname)
   // Said to a screen reader when the app comes back after a deletion was cancelled, or the terms agreed to: it
-  // is here, and not on the screen that goes away, so it is still in the page when it is read.
+  // is here, and not on the screen that goes away, so it is still in the page when it is read. Either can
+  // happen on the screen that blocks the app or on a mailbox page.
   const [said, setSaid] = useState('')
-  const before = useRef(blocking)
+  const was = useRef({ closing, terms: terms !== null })
   useEffect(() => {
-    if (before.current === 'terms' && blocking === 'page')
-      setSaid('Thanks. You agreed to the terms.')
-    before.current = blocking
-  }, [blocking])
+    if (state.status !== 'signedIn') return
+    if (was.current.closing && !closing) setSaid('Deletion cancelled. Your account works again.')
+    else if (was.current.terms && terms === null) setSaid('Thanks. You agreed to the terms.')
+    was.current = { closing, terms: terms !== null }
+  }, [state.status, closing, terms])
   if (state.status === 'signedIn') {
-    const closing = blocking === 'closing'
     return (
       <>
         <p role="status" className="sr-only">
-          {blocking === 'page' ? said : ''}
+          {showing === 'page' ? said : ''}
         </p>
-        {closing ? (
-          <AccountClosing
-            account={state.me.account}
-            onKept={() => setSaid('Deletion cancelled. Your account works again.')}
-          />
-        ) : terms !== null ? (
+        {showing === 'closing' ? (
+          <AccountClosing account={state.me.account} />
+        ) : showing === 'terms' && terms !== null ? (
           // Deleting the account from there may ask the person to confirm it's them.
           <ConfirmProvider>
             <TermsChanged account={state.me.account} version={terms} />
           </ConfirmProvider>
         ) : (
-          // Every page can ask the person to confirm it's them before a change that needs it.
+          // Every page can ask the person to confirm it's them before a change that needs it, disconnecting a
+          // mailbox among them.
           <ConfirmProvider>
             <Outlet />
           </ConfirmProvider>
@@ -101,6 +106,9 @@ export function RequireSession() {
   return <Waiting />
 }
 
+/** What the gate shows: the wait, a screen that blocks the app, a mailbox page in a limited form, or a page. */
+type Showing = 'waiting' | 'closing' | 'terms' | 'limited' | 'page'
+
 /**
  * Puts focus on the heading of a page of the app when the page is new to the person: they just signed in,
  * they just cancelled a deletion, or they went to another page. A screen reader then starts at what the page
@@ -109,15 +117,15 @@ export function RequireSession() {
  * It leaves focus alone when the app opens straight on a page, where the browser starts at the top as on any
  * site, and when something on the page took focus for itself, such as a field that opens ready to type in.
  */
-function usePageFocus(showing: 'waiting' | 'closing' | 'terms' | 'page', pathname: string) {
+function usePageFocus(showing: Showing, pathname: string) {
   // What this gate showed last, and whether it ever showed a page.
-  const before = useRef<'nothing' | 'waiting' | 'closing' | 'terms' | 'page'>('nothing')
+  const before = useRef<'nothing' | Showing>('nothing')
   const shown = useRef(false)
   // biome-ignore lint/correctness/useExhaustiveDependencies: the page is another when its path is
   useEffect(() => {
     const last = before.current
     before.current = showing
-    if (showing !== 'page') return
+    if (showing !== 'page' && showing !== 'limited') return
     const first = !shown.current
     shown.current = true
     // The app opened straight on this page: nothing came before it but the wait for the server.

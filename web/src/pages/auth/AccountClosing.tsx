@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button } from '../../components/ui/index.ts'
+import { Button, TextLink } from '../../components/ui/index.ts'
 import * as api from '../../lib/api.ts'
 import { closesAt, closingDays, daysLeft, formatClock, formatFullDay } from '../../lib/closing.ts'
 import { useSession } from '../../lib/session.tsx'
@@ -17,14 +17,7 @@ const tick = 60_000
  * who asked when it was Permaily's operator and not the person, and the two things left to do, cancel or
  * sign out. Every route leads here until it is cancelled, which the person can do whoever asked.
  */
-export function AccountClosing({
-  account,
-  onKept,
-}: {
-  account: api.Account
-  /** The deletion was cancelled: the app is back, and says so to a screen reader. */
-  onKept: () => void
-}) {
+export function AccountClosing({ account }: { account: api.Account }) {
   const { accountChanged, refresh, failed, signOut } = useSession()
   const [pending, setPending] = useState<'keep' | 'leave' | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -67,9 +60,8 @@ export function AccountClosing({
     setPending('keep')
     tried.current = keepRef
     try {
-      const kept = await api.cancelDeletion()
-      onKept()
-      accountChanged(kept)
+      // The app is back, and RequireSession says so to a screen reader.
+      accountChanged(await api.cancelDeletion())
     } catch (failure) {
       // The day came meanwhile: the account is gone, and the sign-in screen follows.
       const code = failed(failure)
@@ -157,6 +149,10 @@ export function AccountClosing({
           Sign out
         </Button>
       </div>
+      {/* Until the day, the person can still read, download and disconnect their mailboxes (ADR 0026). */}
+      <p className="mt-8 text-small text-ink-2">
+        <TextLink to="/accounts">Your mailboxes</TextLink>
+      </p>
     </AuthLayout>
   )
 }

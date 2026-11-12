@@ -34,7 +34,7 @@
 | Reproducibility | Nix | CI `eif` + `reproducible` jobs | every PR |
 | Third-party programs in the image | `bun test` on synthetic images (a kernel or a ramdisk file that is not the one described, a file the inventory misses, one it names that the image lacks) and on `nix/aws-blobs.json`; `scripts/image-inventory.ts` on the built production and staging images | `scripts/image-inventory.test.ts`; CI `eif` | `make check`, CI `repo` and `eif`, every PR |
 | Mail | Golden texts of every message (`TestEveryMessageReadsAsItsGoldenText`, written before the HTML existed); on every message's fixture, the rules of its HTML: nothing fetched, no link the text lacks, the text's words in order, nothing identifying in the markup, hostile values escaped, under 40 KB, both themes, the code on one line (`internal/domain/mail`); the fixtures and templates current (`TestThePreviewShowsWhatTheServiceSends`, `bun run check` in `packages/mail`); the template build deterministic and the tokens read from `packages/ui/colors.css` (`bun run test` there) | `internal/domain/mail`, `internal/services/accounts/mail_samples_test.go`, `packages/mail/tests` | `make check`, CI `go` and `repo` |
-| Web app | Vitest with Testing Library in jsdom, against a played `fetch`: each module of `web/src/lib`, the session gate, every step of signing in (mail and code, the link that asks first, passkey, recovery code, provider, confirming an address, account closing) and the Sign-in and account parts of Settings. Each component test file runs axe (WCAG 2.0 to 2.2, A and AA, without contrast, which jsdom cannot measure) and asserts what must never be stored or left in the address | `web/tests/` ([web.md](web.md), "Tests") | `bun run test` in `web/`, `make check`, CI `web` |
+| Web app | Vitest with Testing Library in jsdom, against a played `fetch`: each module of `web/src/lib`, the session gate, every step of signing in (mail and code, the link that asks first, passkey, recovery code, provider, confirming an address, account closing), the Sign-in and account parts of Settings, the admin panel, and mailboxes and the inbox (ADR 0026, W1 to W6). Each component test file runs axe (WCAG 2.0 to 2.2, A and AA, without contrast, which jsdom cannot measure) and asserts what must never be stored or left in the address | `web/tests/` ([web.md](web.md), "Tests") | `bun run test` in `web/`, `make check`, CI `web` |
 | Site content | Vitest on the built HTML | `site/tests/` | `bun run test`, Amplify build, CI |
 | Accessibility and CSP | Playwright + axe | `site/e2e/` | `bun run test:e2e`, CI |
 | End to end against production | `permaily-verify` | `scripts/verify.sh` | after each deploy |
@@ -80,11 +80,13 @@ Coverage of the web app is in `web/vitest.config.ts`, one threshold for each are
 
 | Area of `web/src` | Statements, branches, functions, lines | Measured 2026-11-11 |
 |---|---|---|
-| `lib` | 98, 96, 100, 100 | 98.11, 96.13, 100, 100 |
-| `components/SessionGate.tsx` | 96, 94, 100, 100 | 96.29, 94.82, 100, 100 |
+| `lib` | 98, 97, 100, 100 | 98.43, 97.22, 100, 100 (2026-11-12) |
+| `components/SessionGate.tsx` | 98, 97, 100, 100 | 98.43, 97.64, 100, 100 (2026-11-12) |
 | `pages/auth` | 97, 94, 98, 100 | 97.02, 94.43, 98.93, 100 |
 | `pages/settings/signin` | 95, 90, 98, 99 | 95.15, 90.87, 98.85, 99.47 |
 | `pages/settings/account` | 94, 87, 100, 99 | 94.91, 87.5, 100, 99.06 |
+| `pages/accounts` | 97, 88, 100, 100 | 97.84, 88.78, 100, 100 (2026-11-12) |
+| `pages/inbox` | 98, 92, 100, 100 | 98.87, 92.51, 100, 100 (2026-11-12) |
 
 Mutation testing of `pkg/attestation` (gremlins 0.6.0, 2026-11-09): efficacy 100% (29 killed, 0 lived, 22 timed out), mutator coverage 55.77%. Thresholds: efficacy 90, mutator coverage 55.
 
