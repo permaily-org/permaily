@@ -7,15 +7,14 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
@@ -75,10 +74,13 @@ type MailboxesService interface {
 	// before the slot is freed and before it answers: a readable record goes
 	// through disconnecting; a lost one is removed directly. A mailbox of the
 	// caller's that is disconnected already, by this request or another, is
-	// nil: the answer is the same. One whose record is forked takes no
-	// commit: contracts.ErrMailboxForked, and it stays listed and counted.
-	// One that is not the caller's, or never existed, is
-	// contracts.ErrNotFound, the same for both.
+	// nil, the same answer, until the sweep's last pass has removed it
+	// (mailboxes.SweepGrace after the disconnect, or later): from then it
+	// cannot be told from a mailbox never made, and is contracts.ErrNotFound
+	// to everyone, its owner included. No permanent receipt is kept. One
+	// whose record is forked takes no commit: contracts.ErrMailboxForked,
+	// and it stays listed and counted. One that is not the caller's, or
+	// never existed, is contracts.ErrNotFound, the same for both.
 	Disconnect(ctx context.Context, c mailboxes.Caller, id string) error
 	// Open checks that the mailbox is the caller's, that its record can be
 	// read and that the account's standing allows a, and returns it opened
@@ -216,10 +218,6 @@ type mailboxesAPI struct {
 	pages map[string][]time.Time // search pages asked in the last minute, by account
 }
 
-// mailIdentifiers are what a logged error of the mailbox routes must never
-// hold: mailbox and message identifiers, besides the accounts' own.
-var mailIdentifiers = regexp.MustCompile(`\bmbx_[0-9A-Za-z_-]*|\b[0-9a-f]{32}\b`)
-
 // fail answers an error of the service or the reader. One a caller can act
 // on goes out with its code and fixed words; any other is logged without
 // identifiers and answered with nothing of its own.
@@ -233,7 +231,7 @@ func (a *mailboxesAPI) fail(w http.ResponseWriter, err error) {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		msg = "past the request's deadline"
 	} else {
-		msg = identifiers.ReplaceAllString(mailIdentifiers.ReplaceAllString(err.Error(), "…"), "${1}_…")
+		msg = domain.Redacted(err)
 	}
 	a.cfg.Log.Error("mailboxes: internal error", "err", msg)
 	writeError(w, http.StatusInternalServerError, "internal", "internal error")
@@ -470,7 +468,7 @@ func (a *mailboxesAPI) attachment(w http.ResponseWriter, r *http.Request, c mail
 		a.fail(w, err)
 		return
 	}
-	download(w, "application/octet-stream", AttachmentFilename(name, index), data)
+	download(w, "application/octet-stream", domain.AttachmentFilename(name, index), data)
 }
 
 func (a *mailboxesAPI) deleteOne(w http.ResponseWriter, r *http.Request, c mailboxes.Caller) {
@@ -511,36 +509,6 @@ func (a *mailboxesAPI) deleteMany(w http.ResponseWriter, r *http.Request, c mail
 		return
 	}
 	writeJSON(w, contracts.MessagesDeleted{Deleted: n})
-}
-
-// AttachmentFilename is the name an attachment is downloaded as (ADR 0026,
-// "What a message returns"): the name the message gave it, which anyone
-// who sends mail chooses, without a path, control or formatting characters
-// (bidirectional overrides among them), quotes or the characters file
-// systems refuse, trimmed of spaces and dots, at most 120 characters, and
-// "attachment-<index>" when nothing is left.
-func AttachmentFilename(name string, index int) string {
-	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
-		name = name[i+1:]
-	}
-	var b strings.Builder
-	n := 0
-	for _, r := range strings.ToValidUTF8(name, "") {
-		if n == 120 {
-			break
-		}
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == utf8.RuneError || strings.ContainsRune(`"<>:|?*`, r) ||
-			unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
-			continue
-		}
-		b.WriteRune(r)
-		n++
-	}
-	out := strings.Trim(b.String(), " .\t")
-	if out == "" {
-		return "attachment-" + strconv.Itoa(index)
-	}
-	return out
 }
 
 // contentDisposition is an attachment's header: an ASCII filename, in which

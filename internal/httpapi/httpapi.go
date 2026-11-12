@@ -3,10 +3,13 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/permaily-org/permaily/internal/buildinfo"
 	"github.com/permaily-org/permaily/internal/nsm"
@@ -77,4 +80,41 @@ func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// APIError is the error body of every API response that fails.
+type APIError struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	var e APIError
+	e.Error.Code, e.Error.Message = code, message
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(e)
+}
+
+// TokenAuth accepts requests whose bearer token hashes (SHA-256, hex) to
+// tokenSHA256. The image carries only the hash, so publishing it reveals
+// nothing; the token itself stays with the mailbox owners (F1 test mailbox).
+func TokenAuth(tokenSHA256 string, next http.Handler) http.Handler {
+	want, err := hex.DecodeString(tokenSHA256)
+	if err != nil || len(want) != sha256.Size {
+		want = nil // misconfigured: reject everything
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		sum := sha256.Sum256([]byte(token))
+		if !ok || want == nil || subtle.ConstantTimeCompare(sum[:], want) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="permaily"`)
+			writeError(w, http.StatusUnauthorized, "unauthorized", "a valid bearer token is required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

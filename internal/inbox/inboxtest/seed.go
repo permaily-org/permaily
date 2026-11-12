@@ -36,28 +36,16 @@ type Message struct {
 }
 
 // Partition is where a mailbox's messages and entries are.
-func Partition(mailboxID string) string { return "mailbox#" + mailboxID }
+func Partition(mailboxID string) string { return inbox.Partition(mailboxID) }
 
 // Seed stores m in the box as delivery does, in its order, so that a
-// listing never shows a message whose search entry is not there yet: the
-// search entry and, when it has one, the confirmation entry; then the raw
-// message and the meta sealed under the box's key and the message item (one
-// store.Store.PutMessage, raw first, until pull request 0's MessageParts);
-// then the seen# entry, marked stored, with what the claim fixed.
+// listing never shows a message whose search entry or raw object is not
+// there yet: the raw message sealed under the box's key, then the search
+// entry and, when it has one, the confirmation entry, then the message item
+// (store.MessageParts when st has them, otherwise one PutMessage after the
+// entries), then the seen# entry, marked stored, with what the claim fixed.
 func Seed(ctx context.Context, st store.Store, entries store.Entries, b inbox.Box, m Message) error {
 	expires := m.ReceivedAt.AddDate(0, 0, m.RetentionDays)
-	search := m.Search
-	if search == nil {
-		search = &inbox.SearchEntry{From: m.Meta.From, Subject: m.Meta.Subject, ReceivedAt: m.ReceivedAt}
-	}
-	if err := put(ctx, entries, b, inbox.KeySearch+m.ID, inbox.PurposeSearch, m.ID, search, expires); err != nil {
-		return err
-	}
-	if m.Confirm != nil {
-		if err := put(ctx, entries, b, inbox.KeyConfirm+m.ID, inbox.PurposeConfirm, m.ID, m.Confirm, m.Confirm.Ends); err != nil {
-			return err
-		}
-	}
 	meta, err := json.Marshal(m.Meta)
 	if err != nil {
 		return err
@@ -70,10 +58,34 @@ func Seed(ctx context.Context, st store.Store, entries store.Entries, b inbox.Bo
 	if err != nil {
 		return err
 	}
-	if err := st.PutMessage(ctx, &store.Message{
+	item := &store.Message{
 		MailboxID: b.MailboxID, ID: m.ID, ReceivedAt: m.ReceivedAt, ExpiresAt: expires,
 		Size: len(m.Raw), RetentionDays: m.RetentionDays, Meta: sealedMeta,
-	}, sealedRaw); err != nil {
+	}
+	parts, _ := st.(store.MessageParts)
+	if parts != nil {
+		if err := parts.PutRaw(ctx, item, sealedRaw); err != nil {
+			return err
+		}
+	}
+	search := m.Search
+	if search == nil {
+		search = &inbox.SearchEntry{From: m.Meta.From, Subject: m.Meta.Subject, ReceivedAt: m.ReceivedAt}
+	}
+	if err := put(ctx, entries, b, inbox.KeySearch+m.ID, inbox.PurposeSearch, m.ID, search, expires); err != nil {
+		return err
+	}
+	if m.Confirm != nil {
+		if err := put(ctx, entries, b, inbox.KeyConfirm+m.ID, inbox.PurposeConfirm, m.ID, m.Confirm, m.Confirm.Ends); err != nil {
+			return err
+		}
+	}
+	if parts != nil {
+		err = parts.PutItem(ctx, item)
+	} else {
+		err = st.PutMessage(ctx, item, sealedRaw)
+	}
+	if err != nil {
 		return err
 	}
 	seen := m.Seen

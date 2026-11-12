@@ -2,6 +2,7 @@ package inbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -11,6 +12,9 @@ import (
 
 	"github.com/permaily-org/permaily/internal/contracts"
 )
+
+// What PR #90 wrote and fuzzed for reading, brought here as the one
+// extraction of the tree (review 3), with the cases of the review.
 
 // The text taken out of HTML: text nodes, a line per block, nothing of
 // script, style or head, entities decoded, a link's target after its text.
@@ -35,12 +39,12 @@ func TestTextFromHTML(t *testing.T) {
 		{"<scr<script>ipt>alert(1)</script>", "ipt>alert(1)"},
 		{"\xff\xfeinvalid", "\uFFFDinvalid"},
 	} {
-		got, truncated := readHTMLText([]byte(c.in), 1<<10)
+		got, truncated := readHTMLText(context.Background(), []byte(c.in), 1<<10)
 		if got != c.want || truncated {
 			t.Errorf("%q: %q, want %q", c.in, got, c.want)
 		}
 	}
-	got, truncated := readHTMLText([]byte("<p>"+strings.Repeat("é", 100)+"</p>"), 11)
+	got, truncated := readHTMLText(context.Background(), []byte("<p>"+strings.Repeat("é", 100)+"</p>"), 11)
 	if !truncated || got != strings.Repeat("é", 5) {
 		t.Errorf("cut: %q %v", got, truncated)
 	}
@@ -83,10 +87,10 @@ func nested(depth int, leaf string) string {
 // sixteen levels of nesting and five hundred parts.
 func TestTheWalkStopsAtItsLimits(t *testing.T) {
 	ctx := context.Background()
-	if text, from, _ := readText(ctx, []byte(nested(MaxMIMEDepth, "deep")), 1<<10); text != "deep" || from != contracts.TextFromPlain {
+	if text, from, _ := MessageText(ctx, []byte(nested(MaxMIMEDepth, "deep")), 1<<10); text != "deep" || from != contracts.TextFromPlain {
 		t.Errorf("at the limit: %q %s", text, from)
 	}
-	if text, from, _ := readText(ctx, []byte(nested(MaxMIMEDepth+1, "deeper")), 1<<10); text != "" || from != contracts.TextFromNone {
+	if text, from, _ := MessageText(ctx, []byte(nested(MaxMIMEDepth+1, "deeper")), 1<<10); text != "" || from != contracts.TextFromNone {
 		t.Errorf("past it: %q %s", text, from)
 	}
 	var b strings.Builder
@@ -96,19 +100,25 @@ func TestTheWalkStopsAtItsLimits(t *testing.T) {
 	}
 	b.WriteString("--x--\r\n")
 	visited := 0
-	if err := walkParts(ctx, []byte(b.String()), func(*message.Entity, bool) (bool, error) { visited++; return true, nil }); err != nil {
-		t.Fatal(err)
+	if err := walkParts(ctx, []byte(b.String()), func(*message.Entity, bool) (bool, error) { visited++; return true, nil }); !errors.Is(err, errLimit) {
+		t.Fatalf("past the parts: %v", err)
 	}
 	// The message itself is a part, and the walk stops at the 500th.
 	if visited != MaxMIMEParts-1 {
 		t.Errorf("visited %d", visited)
 	}
 	head := "From: a@example.org\r\nX-Big: " + strings.Repeat("a", MaxHeaderBytes) + "\r\n\r\nbody"
-	if text, from, _ := readText(ctx, []byte(head), 1<<10); text != "" || from != contracts.TextFromNone {
+	if text, from, _ := MessageText(ctx, []byte(head), 1<<10); text != "" || from != contracts.TextFromNone {
 		t.Errorf("a header past the limit: %q %s", text, from)
 	}
 	if err := walkParts(ctx, []byte(head), func(*message.Entity, bool) (bool, error) { return true, nil }); err == nil {
 		t.Error("no error for a header past the limit")
+	}
+	// A part's header past the limit ends the walk too (review 8).
+	part := "From: a@example.org\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\nX-Big: " +
+		strings.Repeat("a", MaxHeaderBytes) + "\r\n\r\nbody\r\n--x--\r\n"
+	if err := walkParts(ctx, []byte(part), func(*message.Entity, bool) (bool, error) { return true, nil }); !errors.Is(err, errLimit) {
+		t.Errorf("a part's header past the limit: %v", err)
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
@@ -130,14 +140,14 @@ var fuzzSeeds = []string{
 	"",
 }
 
-// FuzzReadText: whatever a message holds, its text is valid UTF-8 within its
+// FuzzMessageText: whatever a message holds, its text is valid UTF-8 within its
 // bound, from one of the three sources, and reading it never panics.
-func FuzzReadText(f *testing.F) {
+func FuzzMessageText(f *testing.F) {
 	for _, s := range fuzzSeeds {
 		f.Add([]byte(s))
 	}
 	f.Fuzz(func(t *testing.T, raw []byte) {
-		text, from, truncated := readText(context.Background(), raw, 512)
+		text, from, truncated := MessageText(context.Background(), raw, 512)
 		if !utf8.ValidString(text) || len(text) > 512 {
 			t.Fatalf("%d bytes, valid %v", len(text), utf8.ValidString(text))
 		}
@@ -150,7 +160,7 @@ func FuzzReadText(f *testing.F) {
 		default:
 			t.Fatalf("from %q", from)
 		}
-		html, _ := readHTMLText(raw, 512)
+		html, _ := readHTMLText(context.Background(), raw, 512)
 		if !utf8.ValidString(html) || len(html) > 512 {
 			t.Fatal("html text")
 		}
@@ -187,4 +197,62 @@ func FuzzWalkParts(f *testing.F) {
 			t.Fatalf("%d parts", visited)
 		}
 	})
+}
+
+// Review 3: what the extraction keeps while it scans is bounded: past
+// maxOpenLinks open links a link keeps no target, and a target longer than
+// maxLinkTarget is not kept, so neither is ever compared or written.
+func TestReview3TheLinkStateIsBounded(t *testing.T) {
+	ctx := context.Background()
+	in := strings.Repeat("<a href=t>", maxOpenLinks) + "<a href=deep>x</a>" + strings.Repeat("</a>", maxOpenLinks)
+	if got, _ := readHTMLText(ctx, []byte(in), 1<<10); got != "x"+strings.Repeat(" [t]", maxOpenLinks) {
+		t.Fatalf("%q", got)
+	}
+	long := "<a href=" + strings.Repeat("h", maxLinkTarget+1) + ">y</a>"
+	if got, _ := readHTMLText(ctx, []byte(long), 1<<20); got != "y" {
+		t.Fatalf("a target of %d bytes: %d bytes written", maxLinkTarget+1, len(got))
+	}
+	// The context is checked between tokens, not only before the walk.
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if got, truncated := readHTMLText(cancelled, []byte(strings.Repeat("<p>w</p>", 10)), 1<<10); got != "" || !truncated {
+		t.Fatalf("%q %v", got, truncated)
+	}
+}
+
+// Review 8: boundMeta empties the metadata in its order until it fits, and
+// leaves what fits alone.
+func TestReview8BoundMetaShrinksInOrder(t *testing.T) {
+	big := strings.Repeat("<", MaxMetaBytes/5)
+	addr := []contracts.MailAddress{{Name: big}}
+	fits := StoredMeta{Subject: "x"}
+	boundMeta(&fits)
+	if fits.Partial || fits.Subject != "x" {
+		t.Fatal("what fits was changed")
+	}
+	for name, c := range map[string]struct {
+		m    StoredMeta
+		kept func(m *StoredMeta) bool
+	}{
+		"recipients": {StoredMeta{To: addr, From: []contracts.MailAddress{{Name: "Ana"}}}, func(m *StoredMeta) bool { return len(m.To) == 0 && len(m.From) == 1 }},
+		"message id": {StoredMeta{MessageID: big, Date: big, Snippet: "s"}, func(m *StoredMeta) bool { return m.MessageID == "" && m.Snippet == "s" }},
+		"names": {StoredMeta{Attachments: []contracts.MessageAttachment{{Name: big}, {Name: big}}, Snippet: "s"}, func(m *StoredMeta) bool {
+			return m.Attachments[0].Name == "" && len(m.Attachments) == 2 && m.Snippet == "s"
+		}},
+		"senders": {StoredMeta{From: addr, Snippet: "s", Subject: "x"}, func(m *StoredMeta) bool { return len(m.From) == 0 && m.Snippet == "" && m.Subject == "x" }},
+		"the rest": {StoredMeta{EnvelopeFrom: strings.Repeat("<", MaxMetaBytes), Auth: []contracts.AuthCheck{{Domain: big, Result: big}}}, func(m *StoredMeta) bool {
+			return len(m.EnvelopeFrom) == 255 && len(m.Auth[0].Domain) == 255
+		}},
+	} {
+		m := c.m
+		boundMeta(&m)
+		if !m.Partial || !c.kept(&m) {
+			t.Errorf("%s: partial %v", name, m.Partial)
+		}
+	}
+	// A part with a Content-Type that cannot be read is no text: it is listed.
+	w := walkMessage(context.Background(), []byte("Content-Type: multipart/mixed; boundary=p\r\n\r\n--p\r\nContent-Type: ;;;\r\n\r\nx\r\n--p--\r\n"), 100, true)
+	if len(w.attachments) != 1 || w.plainSeen {
+		t.Fatalf("%+v", w.attachments)
+	}
 }

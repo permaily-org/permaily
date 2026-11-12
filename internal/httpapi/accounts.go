@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"slices"
 	"strconv"
 	"time"
@@ -131,10 +130,6 @@ const ProviderCookie = "__Host-permaily-provider"
 // provider sends the browser back. It is never logged.
 const DeviceCookie = "__Host-permaily-device"
 
-// identifiers are taken out of what is logged: logs leave the enclave, and
-// would say which account did what, and when.
-var identifiers = regexp.MustCompile(`\b(acc|ses|att|cer|inv)_[a-z2-7]{26}`)
-
 // failed answers a request with the error of a service. An error a caller
 // can act on goes out with its code; anything else is logged and answered
 // with nothing of its own.
@@ -167,10 +162,11 @@ func failed(w http.ResponseWriter, log *slog.Logger, err error) {
 	writeError(w, status, known.Code, known.Message)
 }
 
-// internal logs a failure that is the service's own, without the accounts it
-// was about.
+// internal logs a failure that is the service's own, without the accounts,
+// mailboxes, messages or addresses it was about (domain.Redacted): logs leave
+// the enclave, and would say who did what, and when.
 func internal(log *slog.Logger, err error) {
-	log.Error("api: internal error", "err", identifiers.ReplaceAllString(err.Error(), "${1}_…"))
+	log.Error("api: internal error", "err", domain.Redacted(err))
 }
 
 // maxAccountsBody bounds every request of the accounts API but the two that

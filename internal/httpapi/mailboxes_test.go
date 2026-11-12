@@ -417,6 +417,11 @@ func TestR1AnswersAndErrors(t *testing.T) {
 		want(t, a.call("alice", "DELETE", "/api/v1/mailboxes/"+made.ID, ""), 204, "")
 		want(t, a.call("alice", "DELETE", "/api/v1/mailboxes/"+made.ID, ""), 204, "") // a second disconnect answers as the first
 		want(t, a.call("alice", "GET", "/api/v1/mailboxes/"+made.ID, ""), 404, "not_found")
+		// Until the sweep's last pass, not after it (C17): then the owner's
+		// disconnect is not_found, as everyone else's.
+		a.fake.Sweep()
+		want(t, a.call("alice", "DELETE", "/api/v1/mailboxes/"+made.ID, ""), 404, "not_found")
+		want(t, a.call("bob", "DELETE", "/api/v1/mailboxes/"+made.ID, ""), 404, "not_found")
 	})
 
 	t.Run("an unreadable mailbox", func(t *testing.T) {
@@ -641,28 +646,6 @@ func TestR8Downloads(t *testing.T) {
 		t.Fatalf("%q", rec.Header().Get("Content-Disposition"))
 	}
 
-	for _, c := range []struct {
-		in    string
-		index int
-		want  string
-	}{
-		{"report.pdf", 0, "report.pdf"},
-		{`C:\Users\x\report.pdf`, 0, "report.pdf"},
-		{"../../etc/passwd", 0, "passwd"},
-		{"..", 3, "attachment-3"},
-		{" . ", 2, "attachment-2"},
-		{"\x00\x01\x7f", 4, "attachment-4"},
-		{"a\u202Efdp.exe", 0, "afdp.exe"},
-		{"résumé 日本.pdf", 0, "résumé 日本.pdf"},
-		{strings.Repeat("é", 200), 0, strings.Repeat("é", 120)},
-		{"a<b>:c|d?e*f\".txt", 0, "abcdef.txt"},
-		{"\xff\xfeok", 0, "ok"},
-		{"line\u2028sep", 0, "linesep"},
-	} {
-		if got := httpapi.AttachmentFilename(c.in, c.index); got != c.want {
-			t.Errorf("%q: %q, want %q", c.in, got, c.want)
-		}
-	}
 }
 
 // R6: the read budget: a request that finds it full waits, then is answered

@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -68,5 +69,41 @@ func TestAttestation(t *testing.T) {
 	notReady.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/attestation?nonce="+hex.EncodeToString(nonce), nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("no TLS key: status %d", rec.Code)
+	}
+}
+
+// The operator's bearer token (TokenAuth): the image carries only its hash.
+const token = "pmt_test_token_0123456789abcdef"
+
+func tokenHash() string {
+	s := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(s[:])
+}
+
+func do(h http.Handler, method, path, auth, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if auth != "" {
+		req.Header.Set("Authorization", "Bearer "+auth)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestTokenAuth(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	h := httpapi.TokenAuth(tokenHash(), ok)
+	for _, auth := range []string{"", "wrong", token + "x"} {
+		rec := do(h, "GET", "/v1/admin/accounts", auth, "")
+		if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), `"unauthorized"`) ||
+			rec.Header().Get("Content-Type") != "application/json" || rec.Header().Get("WWW-Authenticate") == "" {
+			t.Errorf("auth %q: %d %s", auth, rec.Code, rec.Body)
+		}
+	}
+	if rec := do(h, "GET", "/v1/admin/accounts", token, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("the token: %d", rec.Code)
+	}
+	if rec := do(httpapi.TokenAuth("not-hex", ok), "GET", "/v1/admin/accounts", token, ""); rec.Code != 401 {
+		t.Fatalf("misconfigured hash must reject: %d", rec.Code)
 	}
 }

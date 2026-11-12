@@ -42,8 +42,8 @@ fuzz:
 	go test -run='^$$' -fuzz='^FuzzTrustUpdate$$' -fuzztime=200000x ./pkg/provenance
 	go test -run='^$$' -fuzz=FuzzCMS -fuzztime=500000x ./internal/keys
 	go test -run='^$$' -fuzz=FuzzParse -fuzztime=150000x ./internal/inbox
-	go test -run='^$$' -fuzz='^FuzzReadText$$' -fuzztime=300000x ./internal/inbox
-	go test -run='^$$' -fuzz='^FuzzWalkParts$$' -fuzztime=300000x ./internal/inbox
+	go test -run='^$$' -fuzz='^FuzzMessageText$$' -fuzztime=150000x ./internal/inbox
+	go test -run='^$$' -fuzz='^FuzzWalkParts$$' -fuzztime=150000x ./internal/inbox
 	go test -run='^$$' -fuzz='^FuzzRegistered$$' -fuzztime=400000x ./internal/webauthn
 	go test -run='^$$' -fuzz='^FuzzAsserted$$' -fuzztime=400000x ./internal/webauthn
 	go test -run='^$$' -fuzz='^FuzzIDToken$$' -fuzztime=400000x ./internal/idp

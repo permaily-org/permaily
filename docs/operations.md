@@ -86,7 +86,7 @@ Not deployed: one enclave runs today. The code is ready for two behind one addre
 - **The TLS identity.** One enclave logs `acme: certificate obtained`, the other `acme: certificate installed` within ten minutes. Both serve one key. While one orders, the identity holds its claim; the other waits up to the end of that claim (eleven minutes, more after failed tries) and then orders itself. Nothing needs doing.
 - **`the stored identity holds another key`** in one enclave's log: the identity was lost and made again by the other enclave. Restart the enclave that logs it, so both serve the new key, and follow "Replace the TLS key" for the CAA records.
 - **The challenges** of an open order are items `pk=acme-challenge#tls-<CA host>` in the table, sealed. They expire with the order and are deleted when it ends; one left behind ends by itself.
-- **The test mailbox** is made once by whichever enclave starts first, until the release that retires it (ADR 0026).
+- **The test mailbox** is made once by whichever enclave starts first, until the release that retires it (ADR 0026). From that release, mailboxes are made once and changed at the version read whichever enclave a request lands on, every enclave sweeps disconnected mailboxes every ten minutes, and each counts the mail one mailbox takes in its own memory (600 messages an hour, 2 GiB a day each).
 - **Sign-ins in progress** (by mail, address changes, confirmations, passkey ceremonies, trips to a provider) are sealed items `pk=pending#…` in the table, so one started through one enclave ends through the other. An enclave ends none started before it started: replacing or restarting one ends the sign-ins started before, and the person asks again.
 - **Limits** are counted in each enclave's memory, on purpose, so with two each is at most twice what it says, and **`/status`** is the enclave's that answered (ADR 0017, "Two enclaves at once").
 
@@ -188,7 +188,7 @@ Check that the next run starts, then delete the old token. Other applies run wit
 
 ## Read the test mailbox
 
-Until the release that builds mailboxes per account (ADR 0026), which retires it: see the next section.
+Until the release that builds mailboxes per account (ADR 0026), which retires it: see the next section. That release has no `/v1/mailbox` and no `-mailbox-*` flags; what follows works only against v0.11.0 and before.
 
 ```sh
 token=$(cat ~/.config/permaily/test-mailbox-token)

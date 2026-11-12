@@ -45,7 +45,7 @@ func TestForward(t *testing.T) {
 	go func() {
 		_ = Forward(ctx, ln, func(ctx context.Context) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "tcp", echo.Addr().String())
-		}, slog.New(slog.DiscardHandler))
+		}, 0, slog.New(slog.DiscardHandler))
 	}()
 
 	c, err := net.Dial("tcp", ln.Addr().String())
@@ -58,6 +58,73 @@ func TestForward(t *testing.T) {
 	line, err := bufio.NewReader(c).ReadString('\n')
 	if err != nil || line != "ping\n" {
 		t.Fatalf("got %q, %v", line, err)
+	}
+}
+
+// D10 (ADR 0026): the ninth connection from one address to the SMTP port is
+// refused by the host's proxy; one given back makes room again.
+func TestForwardLimitsConnectionsPerAddress(t *testing.T) {
+	echo := echoServer(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = Forward(ctx, ln, func(ctx context.Context) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", echo.Addr().String())
+		}, SMTPPerAddress, slog.New(slog.DiscardHandler))
+	}()
+	open := func() (net.Conn, bool) {
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = c.SetDeadline(time.Now().Add(2 * time.Second))
+		fmt.Fprint(c, "ping\n")
+		line, err := bufio.NewReader(c).ReadString('\n')
+		return c, err == nil && line == "ping\n"
+	}
+	var held []net.Conn
+	for i := range SMTPPerAddress {
+		c, ok := open()
+		if !ok {
+			t.Fatalf("connection %d refused", i+1)
+		}
+		held = append(held, c)
+	}
+	if c, ok := open(); ok {
+		t.Fatal("the ninth connection from one address was forwarded")
+	} else {
+		c.Close()
+	}
+	held[0].Close()
+	for range 100 {
+		c, ok := open()
+		c.Close()
+		if ok {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("a connection given back made no room")
+}
+
+func TestPerAddressCount(t *testing.T) {
+	p := &perAddressCount{n: map[string]int{}}
+	if !p.take("a", 1) || p.take("a", 1) {
+		t.Fatal("take")
+	}
+	p.give("a")
+	if len(p.n) != 0 || !p.take("a", 1) {
+		t.Fatal("give")
+	}
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	if remoteHost(a) != "pipe" {
+		t.Fatal(remoteHost(a))
 	}
 }
 
