@@ -1,218 +1,279 @@
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useState } from 'react'
+import { useParams } from 'react-router'
 import {
-  Button,
-  Count,
   Headline,
   StepMarker,
   type StepState,
   TextAction,
   TextLink,
 } from '../../components/ui/index.ts'
+import * as api from '../../lib/api.ts'
+import { useSession } from '../../lib/session.tsx'
 import { cx } from '../../lib/styles.ts'
-import { suggestedRulePath } from '../rules/data.ts'
-import { expectations, filterSearch, forwardingAddress, forwardingMailbox } from './data.ts'
-import { FlowHeader } from './FlowHeader.tsx'
+import { messageFor } from '../auth/messages.ts'
+import { formatDay } from '../settings/signin/shared.ts'
+import { Confirmations } from './Confirmations.tsx'
+import { FlowFrame } from './MailboxLayout.tsx'
+import { CopyButton, LoadState, Support } from './shared.tsx'
 
+/** How often the page asks for the mailbox while it waits for Gmail. */
+export const pollEvery = 5_000
+/** How long it goes on asking by itself; then the person asks with "Check again". */
+export const pollFor = 15 * 60_000
+
+/** Gmail's own path to adding a forwarding address, in its own words. */
+const gmailSteps = [
+  'In Gmail, open Settings, then See all settings.',
+  'Open Forwarding and POP/IMAP, and choose Add a forwarding address.',
+  'Paste the address, then choose Next and Proceed.',
+]
+
+/**
+ * A mailbox's forwarding set-up, three steps on one page: the address to add in Gmail, the code Gmail sends
+ * to it, which shows here as soon as it arrives, and turning forwarding on. Gmail forwards all mail: nothing is
+ * filtered (ADR 0018).
+ */
 export function ForwardingSetupPage() {
-  const [verified, setVerified] = useState(false)
-  const [showAddress, setShowAddress] = useState(false)
+  const { mailboxId = '' } = useParams()
+  const { failed } = useSession()
+  const [mailbox, setMailbox] = useState<api.Mailbox | null>(null)
+  const [failure, setFailure] = useState<{ code: api.ApiErrorCode; text: string } | null>(null)
+  // Since when the page has been asking by itself, and whether it stopped.
+  const [since, setSince] = useState(() => Date.now())
+  const [stopped, setStopped] = useState(false)
+  const [checking, setChecking] = useState(false)
 
+  const load = useCallback(async () => {
+    try {
+      setMailbox(await api.mailbox(mailboxId))
+      setFailure(null)
+    } catch (error) {
+      const code = failed(error)
+      if (code) setFailure({ code, text: messageFor(code) })
+    }
+  }, [failed, mailboxId])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const waiting = mailbox?.state === 'waiting'
+  // While Gmail's code or the first mail is awaited, the page asks again every few seconds while it is in view,
+  // for fifteen minutes at most.
+  useEffect(() => {
+    if (!waiting || stopped) return
+    let timer = 0
+    const ask = async () => {
+      if (Date.now() - since >= pollFor) {
+        setStopped(true)
+        return
+      }
+      if (document.visibilityState === 'visible') await load()
+      timer = window.setTimeout(ask, pollEvery)
+    }
+    timer = window.setTimeout(ask, pollEvery)
+    return () => window.clearTimeout(timer)
+  }, [waiting, stopped, since, load])
+
+  async function checkAgain() {
+    if (checking) return
+    setChecking(true)
+    await load()
+    setChecking(false)
+    setSince(Date.now())
+    setStopped(false)
+  }
+
+  if (!mailbox) {
+    return (
+      <FlowFrame>
+        <Headline className="mt-7">Forwarding set-up</Headline>
+        <div className="mt-7 max-w-2xl">
+          {failure?.code === 'not_found' ? (
+            <p className="text-body text-ink-2">
+              That mailbox isn't there any more. <TextLink to="/accounts">Your mailboxes</TextLink>
+            </p>
+          ) : (
+            <LoadState
+              failure={failure?.text ?? null}
+              what="The mailbox"
+              onRetry={() => void load()}
+            />
+          )}
+        </div>
+      </FlowFrame>
+    )
+  }
+
+  if (mailbox.state === 'unreadable') {
+    return (
+      <FlowFrame>
+        <Headline className="mt-7">Forwarding set-up</Headline>
+        <p className="mt-7 max-w-2xl text-body text-ink-2">
+          This mailbox can't be read: it accepts no mail. Disconnect it in{' '}
+          <TextLink to="/accounts">your mailboxes</TextLink>, and write to <Support />.
+        </p>
+      </FlowFrame>
+    )
+  }
+
+  const receiving = mailbox.state === 'receiving' || Boolean(mailbox.receiving_since)
+  const confirmed = mailbox.confirmations.length > 0
+  const step1: StepState = receiving || confirmed ? 'done' : 'current'
+  const step2: StepState = receiving ? 'done' : confirmed ? 'current' : 'next'
+  const step3: StepState = receiving ? 'done' : 'next'
   return (
-    <div className="flex min-h-svh flex-col xl:flex-row">
-      <div className="flex min-w-0 flex-1 flex-col px-4 pt-6 pb-8 sm:px-8 sm:pt-8 lg:px-14">
-        <FlowHeader />
-
-        <main className="flex-1">
-          <Headline className="mt-7">Forward only what your connections ask for.</Headline>
-          <p className="mt-2 flex gap-3 font-mono text-mono">
-            <span>Step {verified ? 3 : 2} of 3</span>
-            <span className="text-ink-2">{forwardingMailbox.address}</span>
+    // The heading stands where it stood while the mailbox loaded, so the focus it took stays.
+    <FlowFrame>
+      <Headline className="mt-7">Forward your Gmail here</Headline>
+      <div className="flex flex-col gap-10 xl:flex-row xl:gap-14">
+        <div className="min-w-0 flex-1">
+          <p className="mt-2 text-body text-ink-2">
+            {mailbox.label ? <span className="font-medium text-ink">{mailbox.label}. </span> : null}
+            {receiving
+              ? mailbox.receiving_since
+                ? `Receiving since ${formatDay(mailbox.receiving_since)}.`
+                : 'Receiving.'
+              : 'Three steps, about three minutes in Gmail.'}
           </p>
+          {mailbox.state === 'paused' && (
+            <p className="mt-4 max-w-2xl rounded-sm bg-attention-bg px-3 py-2.5 text-body text-attention">
+              Paused by Permaily: it accepts no new mail until Permaily resumes it. Write to{' '}
+              <Support /> to ask why.
+            </p>
+          )}
 
           <ol className="mt-7 border-t border-rule">
-            <FoldedStep
-              number={1}
-              title="Forwarding address added in Gmail"
-              aside={
-                <>
-                  <span className="font-mono text-mono text-ink-2">{forwardingAddress}</span>
-                  <TextAction aria-expanded={showAddress} onClick={() => setShowAddress((v) => !v)}>
-                    {showAddress ? 'Hide' : 'Show'}
+            <Step number={1} state={step1} title="Add this address in Gmail">
+              <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 bg-sunken px-3 py-2.5">
+                <span className="min-w-0 font-mono text-body wrap-anywhere select-all">
+                  {mailbox.address}
+                </span>
+                <CopyButton value={mailbox.address} what="the address" />
+              </div>
+              <ol className="mt-3 flex list-decimal flex-col gap-1 pl-5 text-body text-ink-2">
+                {gmailSteps.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+            </Step>
+
+            <Step number={2} state={step2} title="Enter Gmail's code">
+              <p className="text-body text-ink-2">
+                Gmail sends a code to the address. It shows here: type it in Gmail, then choose
+                Verify.
+              </p>
+              {confirmed ? (
+                <div className="mt-3">
+                  <Confirmations confirmations={mailbox.confirmations} />
+                </div>
+              ) : stopped ? (
+                <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <p role="status" className="text-small text-ink-2">
+                    Nothing from Gmail yet.
+                  </p>
+                  <TextAction size="sm" aria-disabled={checking} onClick={checkAgain}>
+                    Check again
                   </TextAction>
-                </>
-              }
-            >
-              {showAddress && (
-                <p className="pb-4 pl-12 text-body text-ink-2">
-                  In Gmail, open Settings, then Forwarding and POP/IMAP, and add{' '}
-                  <span className="font-mono text-small text-ink">{forwardingAddress}</span> as a
-                  forwarding address.
-                </p>
-              )}
-            </FoldedStep>
-
-            {verified ? (
-              <FoldedStep
-                number={2}
-                title="Gmail's verification message approved"
-                aside={<span className="font-mono text-mono text-ink-2">approved just now</span>}
-              />
-            ) : (
-              <OpenStep
-                number={2}
-                state="current"
-                title="Confirm Gmail's verification message"
-                aside={<span className="font-mono text-mono">we received it 12 seconds ago</span>}
-              >
-                <p className="text-body text-ink-2">
-                  Gmail sent the confirmation to Permaily. Open it and approve it. Only you can do
-                  this step.
-                </p>
-                <Button className="mt-3.5" onClick={() => setVerified(true)}>
-                  Open verification link
-                </Button>
-              </OpenStep>
-            )}
-
-            <OpenStep
-              number={3}
-              state={verified ? 'current' : 'next'}
-              title="Create the filter"
-              aside={
-                verified ? null : (
-                  <span className="font-mono text-mono text-ink-2">unlocks after step 2</span>
+                </div>
+              ) : (
+                !receiving && (
+                  <p role="status" className="mt-3 text-small text-ink-2">
+                    Waiting for Gmail's message. This page checks every few seconds.
+                  </p>
                 )
-              }
-            >
-              {verified && <FilterInstructions />}
-            </OpenStep>
+              )}
+            </Step>
+
+            <Step number={3} state={step3} title="Turn forwarding on">
+              <p className="text-body text-ink-2">
+                In Forwarding and POP/IMAP, choose Forward a copy of incoming mail to{' '}
+                <span className="font-mono text-small text-ink wrap-anywhere">
+                  {mailbox.address}
+                </span>
+                , keep Gmail's copy in the Inbox, then choose Save Changes.
+              </p>
+              <p role="status" className={cx('mt-3 text-body', receiving && 'text-ok')}>
+                {receiving
+                  ? mailbox.receiving_since
+                    ? `Receiving since ${formatDay(mailbox.receiving_since)}.`
+                    : 'Receiving.'
+                  : 'Waiting for the first mail.'}
+              </p>
+              {receiving && (
+                <TextLink
+                  to={`/inbox/${encodeURIComponent(mailbox.id)}`}
+                  size="sm"
+                  className="mt-2"
+                >
+                  Open the inbox
+                </TextLink>
+              )}
+            </Step>
           </ol>
-        </main>
 
-        <footer className="mt-12">
-          <TextLink to="/accounts">Finish later</TextLink>
-        </footer>
+          <p className="mt-10">
+            <TextLink to="/accounts">{receiving ? 'Done' : 'Finish later'}</TextLink>
+          </p>
+        </div>
+        <WhatToExpect />
       </div>
-
-      <WhatToExpect />
-    </div>
+    </FlowFrame>
   )
 }
 
-function FoldedStep({
-  number,
-  title,
-  aside,
-  children,
-}: {
-  number: number
-  title: string
-  aside: ReactNode
-  children?: ReactNode
-}) {
-  return (
-    <li className="border-b border-rule">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 py-[13px]">
-        <StepMarker state="done" number={number} />
-        <span className="min-w-0 flex-1 basis-40 text-lead text-ink-2">{title}</span>
-        <span className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 break-all max-sm:w-full max-sm:pl-12">
-          {aside}
-        </span>
-      </div>
-      {children}
-    </li>
-  )
-}
-
-function OpenStep({
+function Step({
   number,
   state,
   title,
-  aside,
   children,
 }: {
   number: number
   state: StepState
   title: string
-  aside: ReactNode
   children: ReactNode
 }) {
   return (
     <li
-      className="flex gap-5 border-b border-rule pt-[18px] pb-5"
+      className="flex gap-4 border-b border-rule pt-4.5 pb-5 sm:gap-5"
       aria-current={state === 'current' ? 'step' : undefined}
     >
       <StepMarker state={state} number={number} />
       <div className="min-w-0 flex-1">
-        <div className="flex min-h-7 flex-wrap items-center justify-between gap-x-4 gap-y-1">
-          <h2 className={cx('text-title font-medium', state === 'next' && 'text-ink-2')}>
-            {title}
-          </h2>
-          {aside}
-        </div>
+        <h2 className={cx('text-title font-medium', state === 'next' && 'text-ink-2')}>{title}</h2>
         <div className="mt-2">{children}</div>
       </div>
     </li>
   )
 }
 
-function FilterInstructions() {
-  const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle')
-
-  async function copySearch() {
-    try {
-      await navigator.clipboard.writeText(filterSearch)
-      setCopy('copied')
-    } catch {
-      setCopy('failed')
-    }
-  }
-
-  return (
-    <>
-      <p className="text-body text-ink-2">
-        In Gmail, open Settings, then Filters and blocked addresses, and create a new filter. Paste
-        this search into Has the words, then choose Forward it to{' '}
-        <span className="font-mono text-small text-ink">{forwardingAddress}</span>.
-      </p>
-      <div className="mt-3.5 flex items-start gap-4 bg-sunken px-3 py-2.5">
-        <code className="min-w-0 flex-1 font-mono text-mono break-words select-all">
-          {filterSearch}
-        </code>
-        <TextAction size="sm" onClick={copySearch}>
-          {copy === 'copied' ? 'Copied' : 'Copy'}
-        </TextAction>
-      </div>
-      <p aria-live="polite" className="mt-1.5 text-small text-ink-2">
-        {copy === 'failed' &&
-          "Couldn't reach the clipboard. Select the search and copy it yourself."}
-      </p>
-      <div className="mt-3 border-t border-rule pt-3">
-        <p className="font-medium">When the first email arrives</p>
-        <p className="mt-0.5 text-small text-ink-2">
-          We confirm it here, then suggest the Sign-in and security rule.
-        </p>
-        <TextLink to={suggestedRulePath} size="sm" className="mt-2.5">
-          Review the suggested rule
-        </TextLink>
-      </div>
-    </>
-  )
-}
+const expectations = [
+  {
+    title: 'Only new mail',
+    detail:
+      'Mail forwarded from now on reaches Permaily. Nothing from before forwarding starts is here.',
+  },
+  {
+    title: 'Gmail shows you a notice',
+    detail: 'For a week after forwarding starts, to keep you informed. That is expected.',
+  },
+  {
+    title: 'Gmail keeps its copy',
+    detail: 'Forwarding sends a copy. Your Gmail inbox stays as it is.',
+  },
+  {
+    title: 'You can stop in Gmail',
+    detail: "Turn forwarding off in Gmail at any time: you don't need Permaily to do it.",
+  },
+]
 
 function WhatToExpect() {
   return (
     <aside
       aria-label="What to expect"
-      className="w-full shrink-0 border-t border-rule bg-raised px-4 pt-8 pb-10 sm:px-8 xl:w-[460px] xl:border-t-0 xl:border-l xl:px-9"
+      className="w-full shrink-0 border-t border-rule pt-6 xl:mt-9 xl:w-85 xl:border-t-0 xl:border-l xl:pt-0 xl:pl-8"
     >
-      <p className="font-mono text-mono text-ink-2">What to expect</p>
-      <Headline as="h2" className="mt-4">
-        About <Count>40</Count> a month.
-      </Headline>
-      <p className="mt-4.5 text-body text-ink-2">
-        Roughly how much mail this filter sends Permaily. Everything else never leaves Gmail.
-      </p>
+      <h2 className="text-title font-medium">What to expect</h2>
       <ul className="mt-3 border-t border-rule-strong">
         {expectations.map((item) => (
           <li key={item.title} className="border-b border-rule py-2.5">
