@@ -309,6 +309,51 @@ describe('accounts.sh and mailboxes', () => {
     expect(stderr).toContain('HTTP 429')
   })
 
+  test('a failed lookup never prints the address it looked for', async () => {
+    const address = 'k7m2Q9@inbox.permaily.com'
+    // An older server without the route (404), and one that fails (500).
+    for (const answer of [
+      undefined,
+      { status: 500, body: { error: { message: 'internal error' } } },
+    ]) {
+      answers = answer ? { 'GET /v1/admin/mailboxes': answer } : {}
+      const { stdout, stderr, exit } = await run('accounts.sh', 'mailbox', 'find', address)
+      expect(exit).toBe(1)
+      expect(stderr).toContain(`HTTP ${answer?.status ?? 404}`)
+      for (const shown of [address, encodeURIComponent(address), 'k7m2Q9', 'address=']) {
+        expect(stdout + stderr).not.toContain(shown)
+      }
+    }
+  })
+
+  test('an identifier the server answers is checked before it is put in a URL', async () => {
+    for (const id of [
+      '../invitations?probe=',
+      `${account}/../../invitations`,
+      `${account}\n../x`,
+      '',
+    ]) {
+      answers = {
+        'GET /v1/admin/accounts': {
+          status: 200,
+          body: { accounts: [{ id, address: 'person@example.com' }], unreadable: 0 },
+        },
+      }
+      for (const args of [
+        ['mailboxes', 'person@example.com'],
+        ['block', 'person@example.com', '--yes'],
+      ]) {
+        asked = []
+        const { stderr, exit } = await run('accounts.sh', ...args)
+        expect(exit).toBe(1)
+        expect(stderr).toContain(
+          'The enclave answered an account identifier that is not one. Nothing was done.',
+        )
+        expect(asked).toEqual(['GET /v1/admin/accounts?address=person%40example.com'])
+      }
+    }
+  })
+
   test('there is no command to disconnect, read or rename a mailbox, and a mailbox is named by its identifier', async () => {
     for (const args of [
       ['mailbox', 'disconnect', mailbox],

@@ -62,15 +62,30 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 # ask <method> <path and query> writes the answer to $work/response.json.
+# What it says of a failure names the path, never the query, which can hold
+# an address.
 ask() {
   local code
   code=$(curl -sS ${PERMAILY_CA_FILE:+--cacert "$PERMAILY_CA_FILE"} -o "$work/response.json" -w '%{http_code}' \
     -X "$1" -H @<(printf 'Authorization: Bearer %s' "$token") "$api$2")
   if [[ $code != 200 ]]; then
     jq -r '.error.message // .' "$work/response.json" >&2 2>/dev/null || cat "$work/response.json" >&2
-    echo "the enclave at $api did not answer $2 (HTTP $code)" >&2
+    echo "the enclave at $api did not answer $1 ${2%%\?*} (HTTP $code)" >&2
     exit 1
   fi
+}
+
+# account_id prints the identifier of the account in a file that holds its
+# record, as the enclave answered it, and fails unless it is one: nothing an
+# answer says goes into a URL unchecked.
+account_id() {
+  local id
+  id=$(jq -r '.id // ""' "$1")
+  if [[ ! $id =~ ^acc_[a-z2-7]{26}$ ]]; then
+    echo "The enclave answered an account identifier that is not one. Nothing was done." >&2
+    exit 1
+  fi
+  printf '%s' "$id"
 }
 
 # What is shown of a time: to the minute, in UTC. A field an older release
@@ -190,7 +205,7 @@ case $action in
 
   block|unblock|delete|cancel|close-sessions)
     resolve "$target"
-    id=$(jq -r .id "$work/account.json")
+    id=$(account_id "$work/account.json")
     case $action in
       block) path=block what="block the account: every device is signed out, and nobody signs in to it until it is unblocked" ;;
       unblock) path=unblock what="unblock the account: its person can sign in again" ;;
@@ -228,7 +243,7 @@ case $action in
       id=$target
     else
       resolve "$target"
-      id=$(jq -r .id "$work/account.json")
+      id=$(account_id "$work/account.json")
     fi
     ask GET "/v1/admin/accounts/$id/mailboxes"
     jq -r "$when$mailbox_fields"'
