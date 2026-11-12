@@ -242,3 +242,48 @@ test('31: after signing out, Back does not show the message until me and the mes
   for (const r of seen)
     expect(r.status === 200 && r.path.includes('/messages/'), r.path).toBe(false)
 })
+
+test('release gate: without Fetch Metadata the route serves the document, and it stays sandboxed', async ({
+  page,
+}, info) => {
+  const dialogs = watchDialogs(page)
+  await signIn(page)
+  const { cases: list } = await cases(page)
+  const hostile = list.find((c) => c.Name === '02-event-attributes')?.Message as string
+  await reset(page)
+  const res = await page.goto(`/test/nometa/${hostile}`)
+  expect(res?.status()).toBe(200)
+  expect(res?.headers()['content-security-policy']).toBe(frameHeaders['content-security-policy'])
+  await expect(page.getByText('kept div')).toBeVisible()
+  await page.waitForTimeout(1500)
+  // A top-level document with the CSP sandbox: an opaque origin, so no storage and no cookie, and nothing ran.
+  const sandboxed = await page.evaluate(() => {
+    let storage = 'readable'
+    try {
+      void localStorage.length
+    } catch {
+      storage = 'throws'
+    }
+    return {
+      origin: self.origin,
+      storage,
+      cookie: (() => {
+        try {
+          return document.cookie
+        } catch {
+          return 'throws'
+        }
+      })(),
+    }
+  })
+  observe(info, 'the frame route without Fetch Metadata, opened as a page', sandboxed)
+  expect(sandboxed.origin).toBe('null')
+  expect(sandboxed.storage).toBe('throws')
+  expect(dialogs).toEqual([])
+  const seen = await requests(page)
+  expect(seen.internet).toEqual([])
+  expect(seen.connects).toEqual([])
+  expect(seen.app.map((r) => r.path).filter((p) => p !== '/favicon.ico')).toEqual([
+    `/test/nometa/${hostile}`,
+  ])
+})

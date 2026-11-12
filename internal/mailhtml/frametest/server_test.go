@@ -110,6 +110,7 @@ type suite struct {
 	box      string
 	cases    map[string][]byte // corpus name -> raw HTML
 	messages map[string]string // corpus name -> message id
+	api      http.Handler
 	app      *httptest.Server
 	internet *httptest.Server
 	web      string
@@ -264,6 +265,7 @@ func newSuite(t *testing.T, web string) *suite {
 		Service: fake, Reader: inbox.NewReader(mem), Sessions: s.sessions, AppOrigin: appOrigin,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
+	s.api = api
 	app := http.NewServeMux()
 	app.Handle("/api/v1/mailboxes", api)
 	app.Handle("/api/v1/mailboxes/", api)
@@ -494,6 +496,21 @@ func (s *suite) test(w http.ResponseWriter, r *http.Request) {
 			`<a id="go" href="/test/probe?from=click">go</a><a id="tab" href="/test/probe?from=tab" target="_blank">tab</a>`)
 	case "viewer-sandboxed":
 		write("text/html; charset=utf-8", page(viewerFrame("/test/sandboxed", "Message: sandboxed")))
+	case "nometa":
+		// The real frame route as a browser that sends no Fetch Metadata
+		// reaches it, or behind a proxy that strips it (release gate:
+		// "Missing Fetch Metadata"): /test/nometa/<message> is the route
+		// for that message of the suite's mailbox, every Sec-Fetch-*
+		// header removed.
+		for k := range r.Header {
+			if strings.HasPrefix(k, "Sec-Fetch-") {
+				r.Header.Del(k)
+			}
+		}
+		r2 := r.Clone(r.Context())
+		r2.URL.Path = "/api/v1/mailboxes/" + s.box + "/messages/" + arg + "/html"
+		r2.RequestURI = r2.URL.RequestURI()
+		s.api.ServeHTTP(w, r2)
 	case "probe":
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("probe"))
