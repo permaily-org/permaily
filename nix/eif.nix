@@ -4,7 +4,7 @@
 #   - kernel, kernel config, cmdline, init and nsm.ko: AWS's prebuilt blobs
 #     from aws-nitro-enclaves-cli (trusting AWS is in scope). Using the prebuilt
 #     init (instead of compiling it) keeps PCRs independent of the build host.
-#     Their source is published with each release (gpl-source.nix).
+#     Pinned in aws-blobs.nix and described in aws-blobs.json.
 #   - rootfs: only the static permaily-enclave binary, copied flat. No
 #     /nix/store paths end up in the image.
 #   - entrypoint and environment: below, one argument per line (AWS init splits
@@ -25,8 +25,7 @@ let
   # An empty value is left out: AWS's init splits the entry point on newlines.
   flag = name: value: lib.optionals (value != "") [ name value ];
 
-  # aws-blobs.nix; their source goes out with each release (gpl-source.nix).
-  blobs = awsBlobs.dir;
+  blobs = awsBlobs;
 
   rootfs = runCommand "permaily-enclave-rootfs" { } ''
     mkdir -p $out

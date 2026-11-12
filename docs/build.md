@@ -6,13 +6,12 @@
 |---|---|
 | `nix build .#eif` | `permaily.eif`, `pcrs.json`, `SHA256SUMS` (production, Let's Encrypt production) |
 | `nix build .#eif-staging` | same, against Let's Encrypt staging |
-| `nix build .#gpl-source` | `permaily-gpl-source.tar.gz`, `SHA256SUMS`: the source of the third-party programs in the image (below) |
 | `nix build .#permaily-host` | host proxy, linux/arm64 |
 | `nix build .#permaily-verify` | verifier for the build machine |
 | `nix build .#web` | SPA `dist/` |
 | `nix develop` | shell with Go, bun, OpenTofu, AWS CLI, jq |
 
-Supported build systems: `x86_64-linux` and `aarch64-linux`. Without a local Nix, run it in Docker (`nixos/nix`), as `scripts/verify.sh` does.
+Supported build systems: `x86_64-linux` and `aarch64-linux`. Without a local Nix, run it in Docker (`nixos/nix`), as `scripts/verify.sh` and `scripts/release-image.sh` do.
 
 ## Why the image is reproducible
 
@@ -23,17 +22,17 @@ Supported build systems: `x86_64-linux` and `aarch64-linux`. Without a local Nix
 
 CI builds the image on x86_64 and arm64 runners and fails if any byte differs. Locally, `nix build .#eif --rebuild` checks determinism on one machine.
 
-## Source of the third-party programs in the image
+## Third-party programs in the image
 
-The image carries AWS's kernel and `nsm.ko` (GPL-2.0) and AWS's `init`, which links the GNU C Library (LGPL-2.1) statically. Their source goes out with every release as `permaily-gpl-source.tar.gz` ([ADR 0022](decisions/0022-publish-the-source-of-the-gpl-parts-of-the-image.md)), built by `nix/gpl-source.nix` from pinned inputs and byte-identical on both architectures. Nothing in it enters the image, so it does not affect the PCRs.
+The image contains, unmodified, AWS's kernel and `nsm.ko` (GPL-2.0) and AWS's `init`, which links the GNU C Library (LGPL-2.1) statically. Permaily does not distribute the image ([ADR 0023](decisions/0023-releases-publish-the-measurements-not-the-image.md)): a release publishes its measurements, and whoever needs the image builds it, getting those programs from AWS.
 
-- `nix/aws-blobs.nix` pins the blobs; the image and the archive both take them from there.
-- `nix/gpl-source/manifest.json` lists each third-party program in the image, the SHA-256 of its binary, which files of the archive are its source, and how certain that is (`exact`, `aws-stated`, `unavailable`); `nix/gpl-source/about.md` becomes the archive's README and explains each. The build fails when a blob is not the binary the manifest describes.
-- `bun scripts/gpl-source.ts permaily.eif permaily-gpl-source.tar.gz` checks an archive against an image: every file against the archive's `SHA256SUMS`, the kernel and every file of the boot ramdisk against the manifest, and nothing in the image unaccounted for. With `--require-complete` (the release) it also fails while a copyleft program's source is `unavailable`, which today is the case for the kernel and the C library inside `init`.
+- `nix/aws-blobs.nix` pins the blobs (aws-nitro-enclaves-cli `v1.5.2`, `blobs/aarch64`).
+- `nix/aws-blobs.json` is the inventory: each program, where it is in the image, the SHA-256 of its binary, its license, where its source is and how sure that is (`exact`, `aws-stated`, `unavailable`). `scripts/third-party-notices.ts` takes the image's AWS entries from it.
+- `bun scripts/image-inventory.ts <permaily.eif>...` checks an image against the inventory: the kernel and every file of the boot ramdisk have the SHA-256 it gives, and nothing in the image is unaccounted for besides Permaily's entry point, environment and root filesystem. CI runs it on the production and staging images it builds.
 
-Updating the AWS blobs means finding the source of the new binaries and updating the manifest, the README and the source inputs in `nix/gpl-source.nix` in the same change.
+Updating the AWS blobs means updating `aws-blobs.json` in the same change, with where the new binaries' source is.
 
-TODO: build the kernel, `nsm.ko` and `init` from source in the flake (ADR 0022); until then the release gate fails.
+TODO: build the kernel, `nsm.ko` and `init` from source in the flake (ADR 0023, option 2), which would let a release publish the image again.
 
 ## Updating dependencies
 

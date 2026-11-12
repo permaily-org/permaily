@@ -263,11 +263,11 @@ jobs:
           persist-credentials: false
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
       - run: nix build .#eif .#eif-staging -L
-      - run: nix build .#gpl-source --out-link gpl-source -L
-      # The release refuses an image whose GPL programs lack their source
-      # (release.yml); here it only warns, so that state is visible early.
-      - name: The source archive describes the image's third-party programs
-        run: nix shell --inputs-from . nixpkgs#bun -c bun scripts/gpl-source.ts result/permaily.eif gpl-source/permaily-gpl-source.tar.gz
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.13
+      - name: The image's third-party programs are the ones nix/aws-blobs.json describes
+        run: bun scripts/image-inventory.ts result/permaily.eif result-1/permaily.eif
       - run: |
           mkdir out
           cp result/pcrs.json result/SHA256SUMS out/
@@ -277,7 +277,6 @@ jobs:
           nix build .#web --out-link web-dist
           {
             sha256sum bin/bin/permaily-enclave | sed 's| .*| permaily-enclave|'
-            sha256sum gpl-source/permaily-gpl-source.tar.gz | sed 's| .*| permaily-gpl-source.tar.gz|'
             (cd web-dist && find . -type f | sort | xargs sha256sum)
           } > out/components.txt
           cp bin/bin/permaily-enclave out/permaily-enclave.bin

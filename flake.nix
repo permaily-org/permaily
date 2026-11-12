@@ -42,9 +42,6 @@
           # staging, its own storage, and a root secret that only images built
           # by the staging workflow can receive (deploy/enclave.json).
           eif-staging = mkEif { acmeDirectory = "https://acme-staging-v02.api.letsencrypt.org/directory"; staging = true; };
-          # The source of the GPL programs in the image (AWS's kernel and
-          # nsm.ko, and init), published next to it with each release.
-          gpl-source = pkgs.callPackage ./nix/gpl-source.nix { inherit awsBlobs; };
           default = eif;
         });
 

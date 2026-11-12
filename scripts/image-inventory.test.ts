@@ -1,17 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
-import {
-  checkArchive,
-  checkImage,
-  cpioFiles,
-  eifSections,
-  incomplete,
-  type Manifest,
-} from './gpl-source'
+import { checkImage, cpioFiles, eifSections, type Inventory } from './image-inventory'
 
 const bytes = (s: string) => new TextEncoder().encode(s)
 const sha256 = (b: Uint8Array) => createHash('sha256').update(b).digest('hex')
@@ -65,25 +57,21 @@ function eif(sections: [number, Uint8Array][]): Uint8Array {
   return out
 }
 
-const manifest = (kernel = 'kernel', init = 'init'): Manifest => ({
+const inventory = (kernel = 'kernel', init = 'init'): Inventory => ({
   components: [
     {
       name: 'kernel',
       location: 'kernel',
       sha256: sha256(bytes(kernel)),
       license: 'GPL-2.0-only',
-      copyleft: true,
       source: 'unavailable',
-      files: ['COPYING'],
     },
     {
       name: 'init',
       location: 'ramdisk:init',
       sha256: sha256(bytes(init)),
       license: 'Apache-2.0',
-      copyleft: false,
       source: 'aws-stated',
-      files: ['src/init.c'],
     },
   ],
 })
@@ -105,80 +93,44 @@ describe('image', () => {
     expect(new TextDecoder().decode(files.get('a/b'))).toBe('xyz')
   })
 
-  test('accepts an image whose programs are the ones the manifest describes', () => {
-    expect(checkImage(image({ init: 'init' }), manifest())).toEqual([])
+  test('accepts an image whose programs are the ones the inventory describes', () => {
+    expect(checkImage(image({ init: 'init' }), inventory())).toEqual([])
   })
 
   test('refuses a kernel that is not the one described', () => {
-    const problems = checkImage(image({ init: 'init' }, 'other kernel'), manifest())
+    const problems = checkImage(image({ init: 'init' }, 'other kernel'), inventory())
     expect(problems).toHaveLength(1)
     expect(problems[0]).toContain('kernel in the image is')
   })
 
-  test('refuses a program the manifest does not account for', () => {
-    expect(checkImage(image({ init: 'init', 'extra.ko': 'x' }), manifest())).toEqual([
-      "ramdisk:extra.ko is in the image but not in the archive's manifest",
+  test('refuses a program the inventory does not account for', () => {
+    expect(checkImage(image({ init: 'init', 'extra.ko': 'x' }), inventory())).toEqual([
+      'ramdisk:extra.ko is in the image but not in the inventory',
     ])
   })
 
-  test('refuses a manifest that names a program the image does not have', () => {
-    expect(checkImage(image({}), manifest())).toEqual(['init: no ramdisk:init in the image'])
+  test('refuses an inventory that names a program the image does not have', () => {
+    expect(checkImage(image({}), inventory())).toEqual(['init: no ramdisk:init in the image'])
   })
 
   test('refuses something that is not an EIF', () => {
-    expect(() => checkImage(bytes('not an image at all'), manifest())).toThrow('not an EIF')
+    expect(() => checkImage(bytes('not an image at all'), inventory())).toThrow('not an EIF')
   })
 })
 
-describe('archive', () => {
-  const build = (files: Record<string, string>, sums: Record<string, string>) => {
-    const root = mkdtempSync(join(tmpdir(), 'gpl-source-test-'))
-    for (const [f, data] of Object.entries(files)) {
-      mkdirSync(join(root, f, '..'), { recursive: true })
-      writeFileSync(join(root, f), data)
-    }
-    writeFileSync(
-      join(root, 'SHA256SUMS'),
-      Object.entries(sums)
-        .map(([f, data]) => `${sha256(bytes(data))}  ${f}\n`)
-        .join(''),
-    )
-    return root
+test('the inventory describes each program with its license and how sure its source is', () => {
+  const real: Inventory = JSON.parse(
+    readFileSync(join(import.meta.dir, '../nix/aws-blobs.json'), 'utf8'),
+  )
+  expect(real.components.map((c) => c.location).sort()).toEqual([
+    'kernel',
+    'ramdisk:init',
+    'ramdisk:init',
+    'ramdisk:nsm.ko',
+  ])
+  for (const c of real.components) {
+    expect(c.sha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(['exact', 'aws-stated', 'unavailable']).toContain(c.source)
+    expect(c.license).not.toBe('')
   }
-  const complete = {
-    COPYING: 'gpl',
-    'README.md': 'readme',
-    'manifest.json': '{}',
-    'src/init.c': 'int main',
-  }
-
-  test('accepts an archive that matches its SHA256SUMS and has every source named', () => {
-    const root = build(complete, complete)
-    expect(checkArchive(root, manifest())).toEqual([])
-    rmSync(root, { recursive: true })
-  })
-
-  test('refuses changed, missing and unlisted files', () => {
-    const root = build(
-      { ...complete, 'src/init.c': 'changed', 'stray.txt': 's' },
-      { ...complete, 'gone.txt': 'g' },
-    )
-    expect(checkArchive(root, manifest()).sort()).toEqual([
-      'gone.txt is in SHA256SUMS but not in the archive',
-      'src/init.c does not match SHA256SUMS',
-      'stray.txt is not in SHA256SUMS',
-    ])
-    rmSync(root, { recursive: true })
-  })
-
-  test('refuses an archive without the source the manifest names', () => {
-    const { 'src/init.c': _, ...rest } = complete
-    const root = build(rest, rest)
-    expect(checkArchive(root, manifest())).toEqual(['init: src/init.c is not in the archive'])
-    rmSync(root, { recursive: true })
-  })
-
-  test('copyleft programs without their source are incomplete', () => {
-    expect(incomplete(manifest()).map((c) => c.name)).toEqual(['kernel'])
-  })
 })
