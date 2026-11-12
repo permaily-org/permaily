@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/envelope"
@@ -108,10 +110,34 @@ func searchedTo(id string, at time.Time) time.Time {
 	return timeOfMessageID(id)
 }
 
-// searchTerms splits a query on white space, each part lower-cased.
+// searchTerms splits a query on white space, each part case-folded.
 func searchTerms(q string) []string {
-	terms := strings.Fields(strings.ToLower(q))
-	return terms
+	return strings.Fields(foldCase(q))
+}
+
+// foldCase is s under Unicode simple case folding: each character becomes the
+// smallest of its orbit under unicode.SimpleFold (Σ, σ and ς are Σ; K, k and
+// the Kelvin sign are K; İ and ı are each only themselves), so two strings
+// that differ only in case fold to the same string, and a character folds to
+// one character, never to several (ß stays ß, not ss). There is no Unicode
+// normalisation: accents, and composed and decomposed forms, stay distinct.
+// It allocates once, for the result, and not at all when nothing changes.
+func foldCase(s string) string {
+	return strings.Map(foldRune, s)
+}
+
+func foldRune(r rune) rune {
+	if r < utf8.RuneSelf {
+		if 'a' <= r && r <= 'z' {
+			return r - 'a' + 'A'
+		}
+		return r
+	}
+	least := r
+	for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+		least = min(least, f)
+	}
+	return least
 }
 
 type searchEntry struct{ SearchEntry }
@@ -131,18 +157,20 @@ func openSearchEntry(b Box, id string, value []byte) (*searchEntry, bool) {
 	return &e, true
 }
 
-// matches says whether every term appears, without regard to case, in one
-// of the senders' names and addresses, the subject or the text.
+// matches says whether every term (case-folded, searchTerms) appears,
+// without regard to case, in one of the senders' names and addresses, the
+// subject or the text. Each field is folded once per entry, whatever the
+// number of terms.
 func (e *searchEntry) matches(terms []string) bool {
 	fields := make([]string, 0, 2+2*len(e.From))
 	for _, a := range e.From {
-		fields = append(fields, strings.ToLower(a.Name), strings.ToLower(a.Address))
+		fields = append(fields, foldCase(a.Name), foldCase(a.Address))
 	}
 	text := e.Text
 	if len(text) > SearchTextMax {
 		text, _ = cutText(text, SearchTextMax)
 	}
-	fields = append(fields, strings.ToLower(e.Subject), strings.ToLower(text))
+	fields = append(fields, foldCase(e.Subject), foldCase(text))
 	for _, t := range terms {
 		found := false
 		for _, f := range fields {

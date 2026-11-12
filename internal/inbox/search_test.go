@@ -96,6 +96,63 @@ func TestR5WhatASearchFinds(t *testing.T) {
 	})
 }
 
+// The code review of PR #90: search matched lower case, not case: "ος"
+// (final sigma) did not find "ΟΣ". Terms and fields are compared by Unicode
+// simple case folding, rune by rune, without normalisation.
+func TestR5SearchIsCaselessForUnicode(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	at := now.Add(-time.Hour)
+	seed := func(subject string) string {
+		w.n++
+		when := at.Add(time.Duration(w.n) * time.Second)
+		mid := id(when, w.n)
+		e := &inbox.SearchEntry{From: []contracts.MailAddress{{Address: "a@example.org"}}, Subject: subject, ReceivedAt: when}
+		if err := inboxtest.Seed(ctx, w.st, w.st, w.b, inboxtest.Message{ID: mid, ReceivedAt: when, RetentionDays: 30, Raw: []byte(plainMail), Meta: inbox.StoredMeta{Subject: subject}, Search: e}); err != nil {
+			t.Fatal(err)
+		}
+		return mid
+	}
+	sigma := seed("ΟΣ")
+	dotted := seed("İzmir")
+	plainI := seed("izmir")
+	dotless := seed("ızmir")
+	sharp := seed("Straße")
+	ascii := seed("Invoice KELVIN")
+	accent := seed("café")
+	for _, c := range []struct {
+		q    string
+		want []string
+	}{
+		{"ΟΣ", []string{sigma}},
+		{"οσ", []string{sigma}},
+		{"ος", []string{sigma}},
+		{"Ος", []string{sigma}},
+		// i and I are one; İ and ı each fold only to themselves.
+		{"izmir", []string{plainI}},
+		{"IZMIR", []string{plainI}},
+		{"İZMIR", []string{dotted}},
+		{"izmİr", nil},
+		{"ızmır", nil},
+		{"ızmir", []string{dotless}},
+		// ß and ẞ are one; ss is not (that would be full folding).
+		{"STRAẞE", []string{sharp}},
+		{"straße", []string{sharp}},
+		{"strasse", nil},
+		{"iNVOICE", []string{ascii}},
+		{"Kelvin", []string{ascii}},
+		// Accents stay significant: no normalisation.
+		{"cafe", nil},
+		{"CAFÉ", []string{accent}},
+		{"café", nil},
+	} {
+		got, _ := searchAll(t, w.r, w.b, c.q, 50)
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%q: %v, want %v", c.q, got, c.want)
+		}
+	}
+}
+
 // R5: a page reads at most 2,000 entries, expired ones and ones that do not
 // open counted; a page that found nothing has next and searched_to, and the
 // next page goes on below.
