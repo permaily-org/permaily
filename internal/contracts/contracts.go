@@ -29,7 +29,11 @@ func (e *Error) Is(target error) bool {
 
 // The failures of accounts and sign-in. Use errors.Is.
 var (
-	ErrInvalidAddress    = &Error{"invalid_address", "that is not an email address we can use"}
+	ErrInvalidAddress = &Error{"invalid_address", "that is not an email address we can use"}
+	// ErrSameAddress has the code of ErrInvalidAddress: changing the contact
+	// address to the one the account has already. It is the asker's own
+	// address, so saying so tells nothing.
+	ErrSameAddress       = &Error{"invalid_address", "that is the account's address already"}
 	ErrInvalidInvitation = &Error{"invalid_invitation", "that invitation is not valid, or was used already"}
 	// ErrInvalidCode covers a wrong code, one that ended and one that was
 	// used: whoever is guessing learns nothing from which.
@@ -85,7 +89,8 @@ var (
 	ErrTermsNeeded = &Error{"terms_needed", "agree to the terms of service and the privacy policy to make an account"}
 	// ErrTermsChanged has the code of ErrTermsNeeded: an account whose person
 	// agreed to an earlier version, or to none, changes nothing until they
-	// agree to the one in force.
+	// agree to the one in force; and an account that agrees to a version that
+	// is not that one is told the same.
 	ErrTermsChanged = &Error{"terms_needed", "the terms changed; agree to them to go on"}
 )
 

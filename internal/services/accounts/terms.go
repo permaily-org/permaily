@@ -82,7 +82,8 @@ func (s *Service) agreeing(doc *accountDoc) error {
 func (s *Service) AgreeTerms(ctx context.Context, who *Authenticated, in contracts.TermsAgree) (*contracts.Account, error) {
 	current := s.terms()
 	if in.Version != current {
-		return nil, contracts.ErrTermsNeeded
+		// The account exists: it is told to agree to go on, not to make one.
+		return nil, contracts.ErrTermsChanged
 	}
 	at := s.now()
 	var view contracts.Account

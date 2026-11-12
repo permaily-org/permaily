@@ -163,7 +163,7 @@ func TestChangingTheContactAddress(t *testing.T) {
 
 	// Changing to the address it has already is nothing to do, and back to
 	// one it had is a change like another.
-	if _, err := w.svc.StartAddressChange(ctx, w.fresh(who), contracts.AddressStart{Address: "ANA.new@example.org"}); !errors.Is(err, contracts.ErrInvalidAddress) {
+	if _, err := w.svc.StartAddressChange(ctx, w.fresh(who), contracts.AddressStart{Address: "ANA.new@example.org"}); !errors.Is(err, contracts.ErrInvalidAddress) || err.Error() != contracts.ErrSameAddress.Error() {
 		t.Fatalf("its own address: %v", err)
 	}
 	if got, err := w.moveTo(who, "third@example.org"); err != nil || got.Address != "third@example.org" {
@@ -215,8 +215,15 @@ func TestAddressChangeRefusals(t *testing.T) {
 
 	// What cannot be an address, and the account's own.
 	n := w.count()
-	for _, address := range []string{"", "new", "new@", "new@example", "Ana <new@example.org>", "a@b.org, c@d.org", "ana@example.org", " ANA@example.org "} {
-		if err := start(address); !errors.Is(err, contracts.ErrInvalidAddress) {
+	for _, address := range []string{"", "new", "new@", "new@example", "Ana <new@example.org>", "a@b.org, c@d.org"} {
+		if err := start(address); !errors.Is(err, contracts.ErrInvalidAddress) || err.Error() != contracts.ErrInvalidAddress.Error() {
+			t.Errorf("%q: %v", address, err)
+		}
+	}
+	// The account's own is refused with the same code and says what it is:
+	// it is the asker's own address, so that tells nothing.
+	for _, address := range []string{"ana@example.org", " ANA@example.org "} {
+		if err := start(address); !errors.Is(err, contracts.ErrInvalidAddress) || err.Error() != contracts.ErrSameAddress.Error() {
 			t.Errorf("%q: %v", address, err)
 		}
 	}

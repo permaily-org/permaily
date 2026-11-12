@@ -1025,6 +1025,10 @@ func TestTermsAPI(t *testing.T) {
 		if read(t, a.call("POST", "/api/v1/account/terms", body, nil), 400, &e); e.Error.Code != code {
 			t.Errorf("%s: %+v", body, e)
 		}
+		// The account exists: nothing is said of making one.
+		if strings.Contains(e.Error.Message, "make an account") {
+			t.Errorf("%s: %q", body, e.Error.Message)
+		}
 	}
 	var agreed contracts.Account
 	if read(t, a.call("POST", "/api/v1/account/terms", `{"version":"`+domain.TermsVersion+`"}`, nil), 200, &agreed); agreed.Terms != domain.TermsVersion {

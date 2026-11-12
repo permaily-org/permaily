@@ -12,7 +12,7 @@ const browsers: Array<[RegExp, string]> = [
   [/\b(OPR|OPT)\//, 'Opera'],
   [/\bSamsungBrowser\//, 'Samsung Internet'],
   [/\b(Firefox|FxiOS)\//, 'Firefox'],
-  [/\b(Chrome|CriOS|Chromium)\//, 'Chrome'],
+  [/\b(HeadlessChrome|Chrome|CriOS|Chromium)\//, 'Chrome'],
   [/\bSafari\//, 'Safari'],
 ]
 
