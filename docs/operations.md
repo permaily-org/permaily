@@ -73,6 +73,23 @@ The TLS identity is read by its newest commit in the bucket `permaily-anchors-<a
 - **The verifier warns that a lock ends within 30 days**: the newest commit of a record is ten years old. Make the record change (for the TLS identity, a renewal does) so that it gets a new commit.
 - The enclave's role can list, read and write in that bucket and cannot delete. Nothing needs to be cleaned there: a commit is a few hundred bytes.
 
+## Two enclaves
+
+Not deployed: one enclave runs today. The code is ready for two behind one address (ADR 0017, ADR 0024). What the operator would see:
+
+- **The TLS identity.** One enclave logs `acme: certificate obtained`, the other `acme: certificate installed` within ten minutes. Both serve one key. While one orders, the identity holds its claim; the other waits up to the end of that claim (eleven minutes, more after failed tries) and then orders itself. Nothing needs doing.
+- **`the stored identity holds another key`** in one enclave's log: the identity was lost and made again by the other enclave. Restart the enclave that logs it, so both serve the new key, and follow "Replace the TLS key" for the CAA records.
+- **The challenges** of an open order are items `pk=acme-challenge#tls-<CA host>` in the table, sealed. They expire with the order and are deleted when it ends; one left behind ends by itself.
+- **The test mailbox** is made once by whichever enclave starts first.
+
+Still needed before two run:
+
+1. A load balancer that passes TCP through on ports 443 and 25 (a Network Load Balancer with TCP listeners, never TLS ones), with health checks that do not end TLS.
+2. The parent instances, or one instance with two enclaves, each with its host proxy, behind it.
+3. A first release with ADR 0024 must run alone before a second enclave is added: a release from before writes the TLS identity without the claim.
+4. A way to roll a release out to two: hand the root secret to the new release once (any enclave of the running release can), then replace the enclaves one at a time. While both releases serve, `permaily-verify -release` fails on connections that land on the older one.
+5. The sign-in state that is still in each enclave's memory moved to the storage (ADR 0017).
+
 ## Look at enclave logs
 
 The enclave sends its log lines to the host, which keeps them in the journal with the prefix `enclave:` (since v0.5.0):
@@ -94,7 +111,7 @@ Debug mode zeroes the PCRs, so verification fails on purpose and the enclave doe
 
 ## Let's Encrypt rate limits
 
-At most 5 certificates per week for the same set of names. Since v0.4.0 the enclave keeps its key and certificate sealed, so a restart or an upgrade issues nothing; only a renewal (every 60 days) or a new TLS key does. If issuance fails with `rateLimited`, wait for the window, and use `.#eif-staging` for tests.
+At most 5 certificates per week for the same set of names. Since v0.4.0 the enclave keeps its key and certificate sealed, so a restart or an upgrade issues nothing; only a renewal (every 60 days) or a new TLS key does. With two enclaves, one asks and the other serves what it stores, so they make no more orders than one (ADR 0024). If issuance fails with `rateLimited`, wait for the window, and use `.#eif-staging` for tests.
 
 ## Rotate the Cloudflare token
 

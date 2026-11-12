@@ -167,7 +167,7 @@ Built on 2026-11-12, after the decision above. All with the admin token, on the 
 
 ### Two enclaves at once
 
-One enclave runs today, and running two at once is not ready. This is what reading the code showed on 2026-11-12; none of what does not hold is fixed.
+One enclave runs today, and running two at once is not ready. This is what reading the code showed on 2026-11-12. Of what did not hold, the TLS identity and the test mailbox were fixed the same day (ADR 0024).
 
 What holds:
 
@@ -180,6 +180,9 @@ What holds:
 - **Devices signed in at the same time** can leave an account with a few more sessions than it keeps; the next sign-in brings it back.
 - **A change of the contact address**: no two accounts end with one address and none ends where it cannot be found, whatever the order two enclaves do it in, with each other and with a sign-up of the same address (see "Changing the contact address").
 - **Blocking**: every request reads the account's record, so a session made through one enclave in the moment another blocks the account stands for nothing.
+- **The TLS identity** (ADR 0024): one key, one ACME account and one certificate for both enclaves. The one that asks the CA claims the order in the sealed identity, written only if nothing changed since it was read; the other waits and serves what it stores, within ten minutes, without a restart. The CA's check may land on either: the challenge is kept sealed in the storage while the order is open, and both answer it. Two enclaves never make more orders than one would (`TestTwoEnclavesStartingTogetherOrderOneCertificate`, `TestTheCAsCheckReachesTheEnclaveThatDidNotOrder`).
+- **The test mailbox** (ADR 0024): made once, by a write that only creates, and its state written at the version read. Two enclaves that start together use one data key, and neither undoes the other's change (`TestTheMailboxMadeByTwoEnclavesAtOnceIsOne`, `TestTwoEnclavesChangingTheMailboxDoNotUndoEachOther`).
+- **The root secret** (ADR 0024): its records are made by writes that only create. Two enclaves of one image that start together get one secret, and two that hand it over at once write the next release's record once.
 - **Confirming again and admins** (ADR 0022): the time of a session's proof is in its signed entry, an admin's role in the account's record (changed only through `change`, read with the record), the admin log in entries. A session confirmed through one enclave changes through the other, and an admin made through one acts through the other (`TestASessionConfirmedThroughOneEnclaveChangesThroughTheOther`, `TestAnAdminMadeThroughOneEnclaveActsThroughTheOther`).
 
 **The rule from now on** (maintainer, 2026-11-12): the service must be ready to run two enclaves at once, though one runs today. Everything a request may need on another enclave lives in the storage; memory holds only what can be lost (a cache) or counted apart by each enclave (a limit). The machinery of sign-in that is still in memory (below) moves to the storage in one piece of work.
@@ -192,8 +195,6 @@ What does not:
 - **One provider account linked to two accounts in the same moment**, through two enclaves, can end listed by both records, with its pointer leading to one. It signs in to that one; the other counts a way in that does not work.
 - **A removal wins over a cancel that lands while it runs.** An enclave that read the account as due removes it; a cancel written in that moment through another enclave, whose clock is a little behind, was answered as kept. One enclave decides this under its lock.
 - **Signing the other devices out when deleting is asked** misses a device that is signing in just then, in one enclave as in two. That session sees only that the account is closing.
-- **The TLS identity** (ADR 0016) is stored with a plain write. Two enclaves hold the same key and each asks the CA for its own certificate; the CA's check reaches whichever enclave the connection lands on, so it can fail, and the certificate saved last is the one a restart finds.
-- **The test mailbox** is made, and its state written, with a plain write. Two enclaves that start together can each make it with a key of its own; the later one stays, and mail sealed under the other cannot be opened.
 - **What the operator did is counted by the enclave that did it**: `admin` on `/status` is one enclave's count, from when it started. The admin log (ADR 0022) is in the storage, and both read and write it.
 - **Two sign-ins of one new device at once** send two notices, and one account changing to two addresses at once ends at one of them and tells the other request to ask again.
 - **What `/status` says is one enclave's**: the history of the mail watch (ADR 0021) and of the key policy, the commits it has seen, the trust root it took. Whoever verifies asks one enclave and learns nothing of the other.

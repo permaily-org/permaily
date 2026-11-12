@@ -27,3 +27,4 @@ Architecture Decision Records. Each one records the context, the options conside
 | [0020](0020-openai-models-for-meaning.md) | OpenAI's models for what depends on meaning | Accepted, not built |
 | [0021](0021-watch-the-copies-of-outgoing-mail.md) | Watch who else gets a copy of the mail the enclave sends | Accepted |
 | [0022](0022-admins-and-confirming-again.md) | Admins, and confirming again before a sensitive change | Accepted, not released |
+| [0024](0024-two-enclaves-share-one-tls-identity.md) | Two enclaves share one TLS identity and answer each other's ACME challenge | Accepted, not released |

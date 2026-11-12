@@ -93,6 +93,14 @@ Certificates with other keys issued before the enclave's key existed are counted
 
 What this does not prove: it trusts Cert Spotter's view of the logs, the DNS records can change after the check, and a certificate issued before the key's creation time is not judged. That time is printed; if it changes between two checks, the key was replaced. `-skip-certificates` skips these checks (releases before v0.4.0 do not report their TLS key); `-doh-resolver` and `-ct-api` choose the services.
 
+## Two enclaves behind one address
+
+One enclave runs today; the service is ready to run two behind one address, with TLS ending in each (ADR 0024). Both hold the same TLS key, so the verifier checks each connection as before: the certificate on it carries the attested key, and `/status` is read only over a connection with that key. A run whose requests land on both enclaves passes. What `/status` reports is the enclave's own (the version at which it read the TLS identity, the commits it saw, the mail it watched, the operator's counts), and each answer is checked on its own.
+
+During a renewal, Certificate Transparency lists two valid certificates with the attested key, and for up to ten minutes the other enclave still serves the earlier one. Both count as the enclave's own, so the check passes. A certificate with another key still fails, also one for a key that the other enclave holds after the identity was lost and made again.
+
+Not built: reaching each enclave on purpose. Behind one address the verifier checks the ones its connections land on. Each attestation document names the enclave that made it (`module_id`, printed for each host). Counting the distinct ones over many connections, or giving each enclave an address of its own, needs a decision. While a release is being rolled out to two enclaves, a connection that lands on the other release fails the check of its measurements.
+
 ## Checking that an interceptor is detected
 
 `TestProductionMITM` puts a TLS-terminating proxy between the verifier and the live service, as the parent instance or a CDN could, and requires verification to fail. The proxy relays everything untouched, so the attestation document is genuine and fresh; it fails because the document vouches for the enclave's TLS key and the connection uses the proxy's.
