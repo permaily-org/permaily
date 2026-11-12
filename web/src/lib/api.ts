@@ -113,6 +113,97 @@ export type ProviderPending = {
 /** A provider account that signs in to the account. Nothing else of it is kept, so nothing else is shown. */
 export type LinkedProvider = { provider: Provider; linked_at: string }
 
+/**
+ * Mailboxes and the inbox (ADR 0026), the shapes of `internal/contracts/mailboxes.go`. The calls that use them
+ * come with the screens that do.
+ */
+
+/** `waiting` until mail other than Gmail's confirmations arrives; `paused` while Permaily's operator stops it. */
+export type MailboxState = 'waiting' | 'receiving' | 'paused'
+
+/** A forwarding confirmation Gmail sent to the mailbox. `verified` only when Google signed it. */
+export type ForwardingConfirmation = {
+  code: string
+  /** The Gmail account that asked, as the message says. */
+  requester?: string
+  received_at: string
+  verified: boolean
+  /** The message that carried it, in the mailbox's inbox. */
+  message?: string
+}
+
+export type Mailbox = {
+  id: string
+  /** Where the person forwards their mail, at inbox.permaily.com. */
+  address: string
+  /** The person's own name for it. Empty when they gave none. */
+  label: string
+  state: MailboxState
+  created_at: string
+  /** Days mail received from now on is kept, one of `retention_options`. */
+  retention_days: number
+  retention_options: number[]
+  /** When the first mail that was not a confirmation arrived: nothing from before it is here. */
+  receiving_since?: string
+  paused_at?: string
+  /** The Gmail account Google said asked to forward here. Absent: the label is shown as not verified. */
+  source?: { provider: 'gmail'; address: string; verified_at: string }
+  /** The newest first, ten at most, for thirty days each. */
+  confirmations: ForwardingConfirmation[]
+}
+
+export type MailboxList = { mailboxes: Mailbox[]; limit: number }
+
+export type MailAddress = { name?: string; address: string }
+
+export type MessageSummary = {
+  /** Time-ordered: a later message has a greater one. */
+  id: string
+  received_at: string
+  expires_at: string
+  size: number
+  from: MailAddress[]
+  subject: string
+  snippet: string
+  /** How many attachments it has. */
+  attachments: number
+  confirmation: boolean
+}
+
+export type MessagePage = {
+  messages: MessageSummary[]
+  /** What to ask the next page with (`after`). Absent when nothing older is left to list or search. */
+  next?: string
+  /** For a search: when the oldest message this page looked at arrived. */
+  searched_to?: string
+}
+
+export type MessageAttachment = { index: number; name: string; type: string; size: number }
+
+export type Message = {
+  id: string
+  received_at: string
+  expires_at: string
+  size: number
+  from: MailAddress[]
+  to: MailAddress[]
+  cc: MailAddress[]
+  reply_to: MailAddress[]
+  subject: string
+  /** The Date header as the sender wrote it. */
+  date: string
+  /** Text only, 256 KiB at most. The HTML of a message never reaches the browser. */
+  text: string
+  text_from: 'plain' | 'html' | 'none'
+  text_truncated: boolean
+  attachments: MessageAttachment[]
+  /** DKIM checks: `result` is `pass` or `fail: <reason>`. */
+  auth: { method: string; domain: string; result: string }[]
+  confirmation: boolean
+  /** Not readable as mail: only the raw message can be downloaded. */
+  unparsed: boolean
+}
+
 /** The codes the server answers with, plus `network` for a request that got no answer. */
 export type ApiErrorCode =
   | 'invalid_address'
@@ -144,6 +235,11 @@ export type ApiErrorCode =
   | 'not_cancellable'
   | 'invalid_provider_app'
   | 'terms_needed'
+  | 'too_many_mailboxes'
+  | 'invalid_label'
+  | 'invalid_retention'
+  | 'invalid_query'
+  | 'too_many_messages'
   | 'network'
   | 'other'
 
@@ -177,6 +273,11 @@ const known: ReadonlySet<string> = new Set([
   'not_cancellable',
   'invalid_provider_app',
   'terms_needed',
+  'too_many_mailboxes',
+  'invalid_label',
+  'invalid_retention',
+  'invalid_query',
+  'too_many_messages',
 ])
 
 export class ApiError extends Error {

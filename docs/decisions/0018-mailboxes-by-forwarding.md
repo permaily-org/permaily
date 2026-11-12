@@ -1,6 +1,6 @@
 # 0018 Mailboxes: forwarding only, several per account
 
-Status: Accepted. Not built beyond the single test mailbox of F1.
+Status: Accepted. Not built beyond the single test mailbox of F1. How it is built: [ADR 0026](0026-mailboxes-per-account-how.md) (proposed 2026-11-12), which keeps the address, the label and the Gmail account sealed where ADR 0017 listed the forwarding address as readable.
 Date: 2026-11-11 (decided on 2026-11-09)
 
 ## Context

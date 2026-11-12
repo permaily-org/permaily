@@ -69,6 +69,16 @@ After v0.10.0, built on 2026-11-12 and not released yet (ADR 0017):
 - [x] The TLS identity and the test mailbox ready for two enclaves: one order, the CA's check answered by either, the mailbox made once (ADR 0024, 2026-11-12).
 - [ ] A staging image with all of it: the notices through SES, and the counts on `/status` read by `permaily-verify`.
 
+Step 2, designed in ADR 0026 (2026-11-12), in the order it is built. Four pull requests at the same time once the design merges; their scope, files, seams and tests are in ADR 0026, "Implementation pull requests". The server core goes first; the others are built against its interfaces and merged after it, and a release takes all four.
+
+- [x] The design and the contract: ADR 0026, `internal/contracts/mailboxes.go`, the same types in `web/src/lib/api.ts`, docs/web.md, docs/data.md, docs/threat-model.md (2026-11-12).
+- [ ] **1. Server core.** `internal/services/mailboxes`: the mailbox record and the account's list, both anchored, the pointer named by an HMAC of the address, a data key per mailbox, making (with the limit of five), label and retention, the forwarding confirmation and the verified Gmail account, disconnecting (record first, then slot and pointer) and the sweep that deletes the mail, pausing, an account's mailboxes removed with it; `RCPT TO` and ingest through it, with the mark that stores a message once; the test mailbox moved into the owner's account at the first start, and `/v1/mailbox` answering 410; the two-enclave tests of ADR 0026.
+- [ ] **2. Server messages.** The inbox: list, one message as text (from HTML inside the enclave), attachments and the raw message as files, deleting one and many, search by a bounded scan of sealed `txt#` entries; every route under `/api/v1/mailboxes`.
+- [ ] **3. Web.** Accounts on real mailboxes (list, connect, the forwarding set-up with the code as it arrives, verified or not, disconnect), and the new Inbox (list, search, one message, delete, empty states, "nothing from before forwarding started").
+- [ ] **4. Operator, admin panel and notices.** Counts and records without addresses, finding a mailbox by its address, pause and resume (token, panel, `/status` kinds, admin log), the five notices by mail.
+- [ ] A staging image with all four: a Gmail account forwarding to a new mailbox through both steps of Gmail's set-up, the test mailbox moved, a disconnect deleting its mail; then the release.
+- [ ] The release after: delete F1's mailbox item (`pk=mailbox#test`, `sk=mailbox`), the `/v1/mailbox` route and `TokenAuth` if nothing else uses it.
+
 Step 9 keeps the notices about connections (one approved, one about to end), which need step 5, and the wording of every message reviewed with the designer.
 
 About sixteen weeks. Steps 3 and 4 do not depend on 1 and 2, and can go first if seeing `about` work early is worth more than having accounts.
@@ -77,7 +87,7 @@ About sixteen weeks. Steps 3 and 4 do not depend on 1 and 2, and can go first if
 
 - ~~Zero data retention approved by OpenAI for the organization (ADR 0020).~~ Not a condition for real users: decided on 2026-11-12 that real mail goes to OpenAI before it is approved, under OpenAI's ordinary retention, disclosed on the privacy page; zero data retention is asked for and stays a residual risk until approved (docs/legal.md).
 - ~~SES out of its sandbox (ADR 0017).~~ Done on 2026-11-11: AWS granted production access in `us-east-2`, 50,000 messages a day and 14 a second.
-- The mailbox's state and every record of F2 whose going back matters stored through `store.Anchored` (ADR 0016).
+- The mailbox's state and every record of F2 whose going back matters stored through `store.Anchored` (ADR 0016). For mailboxes: step 2 (ADR 0026).
 - Whoever can merge into `main` decides what the enclave accepts: require two-factor sign-in in the GitHub organization and a second person's review (docs/threat-model.md).
 
 ## F2: lessons to apply
