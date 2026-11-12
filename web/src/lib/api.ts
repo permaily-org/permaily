@@ -192,7 +192,7 @@ export type Message = {
   subject: string
   /** The Date header as the sender wrote it. */
   date: string
-  /** Text only, 256 KiB at most. The HTML of a message never reaches the browser. */
+  /** The text, always: 256 KiB at most. The text view and search use it. */
   text: string
   text_from: 'plain' | 'html' | 'none'
   text_truncated: boolean
@@ -202,6 +202,36 @@ export type Message = {
   confirmation: boolean
   /** Not readable as mail: only the raw message can be downloaded. */
   unparsed: boolean
+  /** Its HTML, when it has a text/html part. Absent: show the text, without the switch. */
+  html?: MessageHTML
+}
+
+/**
+ * What the app is told of a message's HTML (ADR 0026, "Showing a message's HTML"). The HTML itself is never here:
+ * when `status` is `shown`, a sandboxed frame loads it from `.../messages/{message}/html`, a new frame per message.
+ */
+export type MessageHTML = {
+  /** `too_large` and `unreadable`: show the text, say why, offer the original. */
+  status: 'shown' | 'too_large' | 'unreadable'
+  /** Images the message would have fetched from elsewhere, never loaded: "3 remote images were not loaded". */
+  remote_images: number
+  /** Other remote references taken out: stylesheets, fonts, frames, media. */
+  remote_other: number
+  /** Images that travel in the message and are shown; and the ones not shown (SVG, wrong type, too large). */
+  inline_images: number
+  inline_images_omitted: number
+  /** Links that open the link page. */
+  links: number
+}
+
+/** Where a link of a message leads, for the link page (`GET .../messages/{message}/links/{n}`). */
+export type MessageLink = {
+  /** http or https, as the server wrote it: the only address the link page leaves for. */
+  url: string
+  /** The host in ASCII (`xn--` for other characters), so a look-alike shows. */
+  host: string
+  /** The host the link's text named, when it named another one. */
+  shown?: string
 }
 
 /** The codes the server answers with, plus `network` for a request that got no answer. */

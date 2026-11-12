@@ -165,8 +165,9 @@ type MessagePage struct {
 const (
 	// TextFromPlain is the message's text/plain part.
 	TextFromPlain = "plain"
-	// TextFromHTML is text the enclave took out of its text/html part: the
-	// HTML itself never reaches the browser.
+	// TextFromHTML is text the enclave took out of its text/html part, for
+	// a message with no text/plain part. The HTML itself is shown only
+	// through the frame (Message.HTML).
 	TextFromHTML = "html"
 	// TextFromNone is a message with no text to show.
 	TextFromNone = "none"
@@ -190,7 +191,8 @@ type AuthCheck struct {
 	Result string `json:"result"`
 }
 
-// Message is one message, as the inbox shows it: text only.
+// Message is one message, as the inbox shows it: its text always, and what
+// the formatted view needs to know of its HTML.
 type Message struct {
 	ID         string        `json:"id"`
 	ReceivedAt time.Time     `json:"received_at"`
@@ -214,6 +216,82 @@ type Message struct {
 	// Unparsed says the message could not be read as mail: only the raw
 	// message can be downloaded.
 	Unparsed bool `json:"unparsed"`
+	// HTML says whether the message is shown formatted and what was taken
+	// out of it. Absent when it has no text/html part (or is unparsed): the
+	// app shows the text and no switch.
+	HTML *MessageHTML `json:"html,omitempty"`
+}
+
+// The states of a message's HTML (MessageHTML.Status).
+const (
+	// HTMLShown is HTML the frame shows: GET .../messages/{message}/html
+	// answers the cleaned document.
+	HTMLShown = "shown"
+	// HTMLTooLarge is HTML over one of the limits below: the text is shown,
+	// and the original can be downloaded.
+	HTMLTooLarge = "too_large"
+	// HTMLUnreadable is HTML whose charset cannot be decoded, or that the
+	// sanitiser could not make into a document that parses back to itself:
+	// the text is shown.
+	HTMLUnreadable = "unreadable"
+)
+
+// The limits of showing a message's HTML (ADR 0026, "Showing a message's
+// HTML"). Past the first three the HTML is HTMLTooLarge; past the others
+// what is over is left out and the rest is shown.
+const (
+	// MessageHTMLMaxBytes bounds the HTML part, decoded.
+	MessageHTMLMaxBytes = 2 << 20
+	// MessageHTMLMaxElements bounds the elements it has.
+	MessageHTMLMaxElements = 50_000
+	// MessageHTMLMaxDepth bounds how deep they nest.
+	MessageHTMLMaxDepth = 256
+	// MessageHTMLMaxLinks is how many links are numbered; the rest are text.
+	MessageHTMLMaxLinks = 1000
+	// MessageInlineImagesMax, MessageInlineImageMaxBytes and
+	// MessageInlineImagesMaxBytes bound the images that travel in the
+	// message (cid: parts and data: URIs), decoded.
+	MessageInlineImagesMax      = 50
+	MessageInlineImageMaxBytes  = 2 << 20
+	MessageInlineImagesMaxBytes = 5 << 20
+)
+
+// MessageHTML is what the app is told of a message's HTML. The HTML itself
+// is never in it: the frame loads it from its own route, sanitised on read.
+type MessageHTML struct {
+	// Status is HTMLShown, HTMLTooLarge or HTMLUnreadable.
+	Status string `json:"status"`
+	// RemoteImages counts the images the message would have fetched from
+	// elsewhere (img, background, CSS url() in image properties), none of
+	// which is ever loaded: "3 remote images were not loaded".
+	RemoteImages int `json:"remote_images"`
+	// RemoteOther counts the other remote references taken out: stylesheets,
+	// @import, fonts, frames, objects, media, prefetch hints.
+	RemoteOther int `json:"remote_other"`
+	// InlineImages counts the images in the message that are shown (PNG,
+	// JPEG, GIF, WebP, checked by their bytes); InlineImagesOmitted the ones
+	// that are not: SVG, a type that does not match its bytes, or over the
+	// limits.
+	InlineImages        int `json:"inline_images"`
+	InlineImagesOmitted int `json:"inline_images_omitted"`
+	// Links counts the links that open the link page, at most
+	// MessageHTMLMaxLinks.
+	Links int `json:"links"`
+}
+
+// MessageLink is where a link of a message's HTML leads, for the page the
+// app shows before the person follows it (GET .../links/{n}).
+type MessageLink struct {
+	// URL is the link's address, http or https, as the server parsed and
+	// wrote it again.
+	URL string `json:"url"`
+	// Host is its host in ASCII: a host with other characters is shown in
+	// its xn-- form, so a look-alike is seen.
+	Host string `json:"host"`
+	// Shown is the host the link's text named when it named another one
+	// (the text says one address and the link leads to another); absent
+	// otherwise.
+	Shown string `json:"shown,omitempty"`
 }
 
 // MessagesDelete deletes messages of a mailbox, 100 at most.
