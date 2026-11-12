@@ -15,6 +15,7 @@ import (
 	ddb "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
 
 // AWS stores records in one DynamoDB table and raw messages in one S3 bucket.
@@ -93,6 +94,9 @@ func rawKey(mailboxID, id string) string { return "raw/" + mailboxID + "/" + id 
 
 // GetMailbox implements Store.
 func (s *AWS) GetMailbox(ctx context.Context, id string) (*Mailbox, error) {
+	if err := checkIDs(true, id); err != nil {
+		return nil, err
+	}
 	out, err := s.DB.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName:      aws.String(s.Table),
 		Key:            map[string]ddb.AttributeValue{"pk": pk(id), "sk": str("mailbox")},
@@ -117,6 +121,9 @@ func (s *AWS) GetMailbox(ctx context.Context, id string) (*Mailbox, error) {
 
 // PutMailbox implements Store.
 func (s *AWS) PutMailbox(ctx context.Context, m *Mailbox) error {
+	if err := checkIDs(false, m.ID); err != nil {
+		return err
+	}
 	in := &dynamodb.PutItemInput{
 		TableName: aws.String(s.Table),
 		Item: map[string]ddb.AttributeValue{
@@ -252,6 +259,9 @@ func (s *AWS) DeleteRecord(ctx context.Context, name string) error {
 // PutMessage implements Store. The raw message is written first, so a record
 // never points at a missing object.
 func (s *AWS) PutMessage(ctx context.Context, m *Message, raw []byte) error {
+	if err := checkIDs(false, m.MailboxID, m.ID); err != nil {
+		return err
+	}
 	_, err := s.S3.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:               aws.String(s.Bucket),
 		Key:                  aws.String(rawKey(m.MailboxID, m.ID)),
@@ -264,7 +274,44 @@ func (s *AWS) PutMessage(ctx context.Context, m *Message, raw []byte) error {
 	if err != nil {
 		return fmt.Errorf("store: put raw message: %w", err)
 	}
-	_, err = s.DB.PutItem(ctx, &dynamodb.PutItemInput{
+	return s.PutItem(ctx, m)
+}
+
+// PutRaw implements MessageParts: the object is written only where nothing
+// is (If-None-Match), so an earlier try's stays whole with the date of its
+// first write. S3 answers 412 when something is there (ErrExists), and 409
+// while another write to the key is under way: an error to try again, since
+// that write may yet fail.
+func (s *AWS) PutRaw(ctx context.Context, m *Message, raw []byte) error {
+	if err := checkIDs(false, m.MailboxID, m.ID); err != nil {
+		return err
+	}
+	_, err := s.S3.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:               aws.String(s.Bucket),
+		Key:                  aws.String(rawKey(m.MailboxID, m.ID)),
+		Body:                 bytes.NewReader(raw),
+		ContentLength:        aws.Int64(int64(len(raw))),
+		ContentType:          aws.String("application/octet-stream"),
+		Tagging:              aws.String("retention-days=" + strconv.Itoa(m.RetentionDays)),
+		ServerSideEncryption: s3types.ServerSideEncryptionAes256,
+		IfNoneMatch:          aws.String("*"),
+	})
+	if err != nil {
+		var api smithy.APIError
+		if errors.As(err, &api) && api.ErrorCode() == "PreconditionFailed" {
+			return ErrExists
+		}
+		return fmt.Errorf("store: put raw message: %w", err)
+	}
+	return nil
+}
+
+// PutItem implements MessageParts.
+func (s *AWS) PutItem(ctx context.Context, m *Message) error {
+	if err := checkIDs(false, m.MailboxID, m.ID); err != nil {
+		return err
+	}
+	_, err := s.DB.PutItem(ctx, &dynamodb.PutItemInput{
 		TableName: aws.String(s.Table),
 		Item: map[string]ddb.AttributeValue{
 			"pk": pk(m.MailboxID), "sk": str("msg#" + m.ID),
@@ -279,6 +326,58 @@ func (s *AWS) PutMessage(ctx context.Context, m *Message, raw []byte) error {
 		return fmt.Errorf("store: put message: %w", err)
 	}
 	return nil
+}
+
+// Item implements MessageParts. The read is consistent: a message deleted
+// or written by a request that returned is seen so.
+func (s *AWS) Item(ctx context.Context, mailboxID, id string) (*Message, error) {
+	if err := checkIDs(true, mailboxID, id); err != nil {
+		return nil, err
+	}
+	out, err := s.DB.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName:      aws.String(s.Table),
+		Key:            map[string]ddb.AttributeValue{"pk": pk(mailboxID), "sk": str("msg#" + id)},
+		ConsistentRead: aws.Bool(true),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: get message: %w", err)
+	}
+	if len(out.Item) == 0 {
+		return nil, ErrNotFound
+	}
+	m := s.message(mailboxID, out.Item)
+	if !m.ExpiresAt.After(s.now()) {
+		return nil, ErrNotFound
+	}
+	return &m, nil
+}
+
+// ReadRaw implements MessageParts: no more than maxBytes and one byte are
+// read from S3, whatever the object's size.
+func (s *AWS) ReadRaw(ctx context.Context, mailboxID, id string, maxBytes int64) ([]byte, error) {
+	if err := checkRawBound(maxBytes); err != nil {
+		return nil, err
+	}
+	if err := checkIDs(true, mailboxID, id); err != nil {
+		return nil, err
+	}
+	obj, err := s.S3.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.Bucket), Key: aws.String(rawKey(mailboxID, id))})
+	if err != nil {
+		var nsk *s3types.NoSuchKey
+		if errors.As(err, &nsk) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("store: get raw message: %w", err)
+	}
+	defer obj.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(obj.Body, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("store: get raw message: %w", err)
+	}
+	if int64(len(raw)) > maxBytes {
+		return nil, ErrTooLarge
+	}
+	return raw, nil
 }
 
 func (s *AWS) message(mailboxID string, item map[string]ddb.AttributeValue) Message {
@@ -296,6 +395,9 @@ func (s *AWS) message(mailboxID string, item map[string]ddb.AttributeValue) Mess
 // ListMessages implements Store. DynamoDB deletes expired items lazily, so
 // they are filtered here too.
 func (s *AWS) ListMessages(ctx context.Context, mailboxID string, limit int, before string) ([]Message, error) {
+	if err := checkIDs(true, mailboxID); err != nil {
+		return nil, err
+	}
 	cond := "pk = :pk AND begins_with(sk, :msg)"
 	values := map[string]ddb.AttributeValue{":pk": pk(mailboxID), ":msg": str("msg#"), ":now": num(s.now().Unix())}
 	if before != "" {
@@ -336,6 +438,9 @@ func (s *AWS) ListMessages(ctx context.Context, mailboxID string, limit int, bef
 
 // GetMessage implements Store.
 func (s *AWS) GetMessage(ctx context.Context, mailboxID, id string) (*Message, []byte, error) {
+	if err := checkIDs(true, mailboxID, id); err != nil {
+		return nil, nil, err
+	}
 	out, err := s.DB.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.Table),
 		Key:       map[string]ddb.AttributeValue{"pk": pk(mailboxID), "sk": str("msg#" + id)},
@@ -366,8 +471,17 @@ func (s *AWS) GetMessage(ctx context.Context, mailboxID, id string) (*Message, [
 	return &m, raw, nil
 }
 
-// DeleteMessage implements Store.
+// DeleteMessage implements Store. The raw object goes first (S3 answers a
+// key that is not there as deleted), then the item: a delete that stopped
+// between the two is finished by asking again, and ErrNotFound means only
+// that the item was not there.
 func (s *AWS) DeleteMessage(ctx context.Context, mailboxID, id string) error {
+	if err := checkIDs(true, mailboxID, id); err != nil {
+		return err
+	}
+	if _, err := s.S3.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.Bucket), Key: aws.String(rawKey(mailboxID, id))}); err != nil {
+		return fmt.Errorf("store: delete raw message: %w", err)
+	}
 	out, err := s.DB.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 		TableName:    aws.String(s.Table),
 		Key:          map[string]ddb.AttributeValue{"pk": pk(mailboxID), "sk": str("msg#" + id)},
@@ -379,10 +493,88 @@ func (s *AWS) DeleteMessage(ctx context.Context, mailboxID, id string) error {
 	if len(out.Attributes) == 0 {
 		return ErrNotFound
 	}
-	if _, err := s.S3.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.Bucket), Key: aws.String(rawKey(mailboxID, id))}); err != nil {
-		return fmt.Errorf("store: delete raw message: %w", err)
-	}
 	return nil
+}
+
+// ScanMessagesDown implements Scanner.
+func (s *AWS) ScanMessagesDown(ctx context.Context, mailboxID, before string, maxRead int) (*MessageScan, error) {
+	if err := checkIDs(true, mailboxID); err != nil {
+		return nil, err
+	}
+	if before != "" {
+		before = "msg#" + before
+	}
+	items, read, more, err := s.scanDown(ctx, "mailbox#"+mailboxID, "msg#", before, maxRead)
+	if err != nil {
+		return nil, err
+	}
+	out := &MessageScan{Messages: []Message{}, Read: read, More: more}
+	now := s.now()
+	for _, item := range items {
+		m := s.message(mailboxID, item)
+		out.Last = m.ID
+		if m.ExpiresAt.After(now) {
+			out.Messages = append(out.Messages, m)
+		}
+	}
+	return out, nil
+}
+
+// ScanEntriesDown implements Scanner.
+func (s *AWS) ScanEntriesDown(ctx context.Context, partition, prefix, before string, maxRead int) (*EntryScan, error) {
+	items, read, more, err := s.scanDown(ctx, partition, prefix, before, maxRead)
+	if err != nil {
+		return nil, err
+	}
+	out := &EntryScan{Entries: []Entry{}, Read: read, More: more}
+	for _, item := range items {
+		e := s.entry(item)
+		out.Last = e.Key
+		if !s.expired(&e) {
+			out.Entries = append(out.Entries, e)
+		}
+	}
+	return out, nil
+}
+
+// scanDown is one consistent Query of a partition from the greatest key
+// down, of at most maxRead items whose key starts with prefix and is strictly
+// below before. It starts below before with ExclusiveStartKey, which needs no
+// item at that key, so before itself is never read or counted. DynamoDB's
+// Limit counts items read and there is no filter, so every item read comes
+// back, expired or not, and ScannedCount is what was read. It never reads a
+// second page: more is LastEvaluatedKey being set.
+func (s *AWS) scanDown(ctx context.Context, partition, prefix, before string, maxRead int) (items []map[string]ddb.AttributeValue, read int, more bool, err error) {
+	if err := scanBound(maxRead); err != nil {
+		return nil, 0, false, err
+	}
+	if before != "" && !strings.HasPrefix(before, prefix) {
+		if before < prefix {
+			return nil, 0, false, nil // every key with the prefix is above before
+		}
+		before = "" // every key with the prefix is below before
+	}
+	cond, values := "pk = :pk", map[string]ddb.AttributeValue{":pk": str(partition)}
+	if prefix != "" {
+		// DynamoDB takes no empty string for a key: no prefix is no condition.
+		cond, values[":prefix"] = cond+" AND begins_with(sk, :prefix)", str(prefix)
+	}
+	in := &dynamodb.QueryInput{
+		TableName:                 aws.String(s.Table),
+		KeyConditionExpression:    aws.String(cond),
+		ExpressionAttributeValues: values,
+		ScanIndexForward:          aws.Bool(false),
+		ConsistentRead:            aws.Bool(true),
+		Limit:                     aws.Int32(int32(maxRead)), //nolint:gosec // bounded by scanBound
+	}
+	if before != "" {
+		in.ExclusiveStartKey = entryKey(partition, before)
+	}
+	res, err := s.DB.Query(ctx, in)
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("store: scan a partition: %w", err)
+	}
+	return res.Items, int(res.ScannedCount), len(res.LastEvaluatedKey) > 0, nil
 }
 
 func entryKey(partition, key string) map[string]ddb.AttributeValue {

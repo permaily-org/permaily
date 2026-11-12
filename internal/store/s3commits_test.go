@@ -12,6 +12,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -535,6 +536,11 @@ func TestS3CommitsAgainstS3(t *testing.T) {
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true })
 	c := &store.S3Commits{S3: client, Bucket: bucket, Retention: 2 * time.Minute, Key: func(context.Context) ([]byte, error) { return commitKey, nil }}
 	name := fmt.Sprintf("test-%d", time.Now().UnixNano())
+	// What strict records rest on (ADR 0026, pull request 0), with commits
+	// locked for a day (MinCommitLock), as staging's are. The records are
+	// named for this test and the time it ran; their objects are under
+	// commits/<hash of the name>/ and stay locked for a day.
+	t.Run("strict records", func(t *testing.T) { strictAgainstS3(t, client, bucket) })
 
 	if head, next, err := c.Head(ctx, name); err != nil || head != nil || next != 1 {
 		t.Fatalf("an empty record: %+v, %d, %v", head, next, err)
@@ -609,6 +615,215 @@ func TestS3CommitsAgainstS3(t *testing.T) {
 	if head, next, err := c.Head(ctx, name); err != nil || head.Version != 4 || next != 5 {
 		t.Fatalf("head %+v, next %d, %v", head, next, err)
 	}
+}
+
+// strictAgainstS3 is the part of TestS3CommitsAgainstS3 that ADR 0026's pull
+// request 0 adds: a fork made through a delete marker, a commit appended
+// above it, a replayed copy without a lock and with a governance lock of a
+// few seconds, the lock headers read back, and two commits appended at once.
+// What S3 did is logged, for docs/acceptance.md.
+func strictAgainstS3(t *testing.T, client *s3.Client, bucket string) {
+	ctx := context.Background()
+	codes := &putCodes{S3CommitsAPI: client}
+	day := &store.S3Commits{S3: codes, Bucket: bucket, Retention: store.MinCommitLock, Key: func(context.Context) ([]byte, error) { return commitKey, nil }}
+	stamp := time.Now().UTC().Format("20060102t150405")
+	prefixOf := func(name string) string {
+		sum := sha256.Sum256([]byte(name))
+		return fmt.Sprintf("commits/%x/", sum[:16])
+	}
+	listing := func(name string) *s3.ListObjectVersionsOutput {
+		t.Helper()
+		out, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{Bucket: aws.String(bucket), Prefix: aws.String(prefixOf(name))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, v := range out.Versions {
+			t.Logf("  version %s %s latest=%v size=%d", short(aws.ToString(v.Key)), aws.ToString(v.VersionId), aws.ToBool(v.IsLatest), aws.ToInt64(v.Size))
+		}
+		for _, m := range out.DeleteMarkers {
+			t.Logf("  delete marker %s %s latest=%v", short(aws.ToString(m.Key)), aws.ToString(m.VersionId), aws.ToBool(m.IsLatest))
+		}
+		return out
+	}
+	key := func(name string, version uint64) string { return prefixOf(name) + fmt.Sprintf("%020d", version) }
+	value := func(name string, version uint64, v string) store.Commit {
+		return store.Commit{Name: name, Version: version, Digest: sha256.Sum256([]byte(v)), At: time.Now().UTC().Truncate(time.Second)}
+	}
+
+	// A fork: a commit at version 1, a delete marker over it, a second
+	// commit at version 1, which S3 takes.
+	fork := "store-test-fork-" + stamp
+	t.Logf("fork: record %s, objects under %s", fork, prefixOf(fork))
+	first, err := day.Append(ctx, value(fork, 1, "one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(key(fork, 1))}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := day.Append(ctx, value(fork, 1, "two"))
+	if err != nil {
+		t.Fatalf("a conditional create over a delete marker: %v", err)
+	}
+	t.Log("fork: the conditional create (If-None-Match: *) over a delete marker succeeded; the listing of versions:")
+	if out := listing(fork); len(out.Versions) != 2 || len(out.DeleteMarkers) != 1 {
+		t.Fatalf("%d versions and %d delete markers", len(out.Versions), len(out.DeleteMarkers))
+	}
+	h, err := day.History(ctx, fork)
+	if err != nil || len(h.Forks) != 1 || h.Forks[0].Version != 1 || len(h.Forks[0].Digests) != 2 || len(h.Unlocked) != 0 || h.Next != 2 {
+		t.Fatalf("history of a fork: %+v, %v", h, err)
+	}
+	smaller := first.Digest
+	if bytes.Compare(second.Digest[:], smaller[:]) < 0 {
+		smaller = second.Digest
+	}
+	if head, next, err := day.Head(ctx, fork); err != nil || head == nil || head.Digest != smaller || next != 2 {
+		t.Fatalf("head of a fork: %+v, %d, %v", head, next, err)
+	}
+	t.Log("fork: History reports the fork at version 1; Head answers the smaller digest")
+
+	// The lock headers of a commit, read back by version.
+	for _, v := range listing(fork).Versions {
+		out, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: v.Key, VersionId: v.VersionId})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out.Body.Close()
+		until := aws.ToTime(out.ObjectLockRetainUntilDate)
+		t.Logf("lock headers of %s: mode %q, until %s", aws.ToString(v.VersionId), out.ObjectLockMode, until.Format(time.RFC3339))
+		if out.ObjectLockMode != s3types.ObjectLockModeCompliance || time.Until(until) < store.MinCommitLock-time.Hour || time.Until(until) > store.MinCommitLock+time.Hour {
+			t.Fatalf("lock headers: %q until %s", out.ObjectLockMode, until)
+		}
+	}
+
+	// A commit appended above the fork does not bury it.
+	if _, err := day.Append(ctx, value(fork, 2, "three")); err != nil {
+		t.Fatal(err)
+	}
+	h, err = day.History(ctx, fork)
+	if err != nil || len(h.Forks) != 1 || h.Forks[0].Version != 1 || h.Head == nil || h.Head.Version != 2 || h.Next != 3 {
+		t.Fatalf("history with a commit above a fork: %+v, %v", h, err)
+	}
+	t.Log("above: a commit at version 2 appended above the fork; History still reports the fork at version 1")
+
+	// A replay: the bytes of a commit written again at its key, without a
+	// lock and with a governance lock of a few seconds.
+	replay := "store-test-replay-" + stamp
+	t.Logf("replay: record %s, objects under %s", replay, prefixOf(replay))
+	if _, err := day.Append(ctx, value(replay, 1, "one")); err != nil {
+		t.Fatal(err)
+	}
+	original := listing(replay).Versions[0]
+	got, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: original.Key, VersionId: original.VersionId})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(got.Body)
+	got.Body.Close()
+	unlocked, err := client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(bucket), Key: original.Key, Body: bytes.NewReader(body)})
+	if err != nil {
+		t.Fatalf("a copy without a lock: %v", err)
+	}
+	sum := sha256.Sum256(body)
+	governed, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: original.Key, Body: bytes.NewReader(body),
+		ChecksumSHA256: aws.String(base64.StdEncoding.EncodeToString(sum[:])),
+		ObjectLockMode: s3types.ObjectLockModeGovernance, ObjectLockRetainUntilDate: aws.Time(time.Now().Add(5 * time.Second)),
+	})
+	if err != nil {
+		t.Fatalf("a copy with a governance lock: %v", err)
+	}
+	listing(replay)
+	copied, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: original.Key, VersionId: unlocked.VersionId})
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied.Body.Close()
+	t.Logf("replay: the copy without a lock reads with mode %q and no date (%v)", copied.ObjectLockMode, copied.ObjectLockRetainUntilDate == nil)
+	if copied.ObjectLockMode != "" || copied.ObjectLockRetainUntilDate != nil {
+		t.Fatalf("an unlocked copy: %q %v", copied.ObjectLockMode, copied.ObjectLockRetainUntilDate)
+	}
+	if h, err := day.History(ctx, replay); err != nil || len(h.Forks) != 0 || len(h.Unlocked) != 0 || h.Head == nil || h.Head.Version != 1 || h.Next != 2 {
+		t.Fatalf("history of a replayed commit: %+v, %v", h, err)
+	}
+	t.Log("replay: History reports one digest, no fork and nothing unlocked")
+	if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: original.Key, VersionId: original.VersionId}); err == nil {
+		t.Fatal("the original commit was deleted")
+	} else {
+		t.Logf("replay: deleting the original commit's version is refused: %v", errorCode(err))
+	}
+	if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: original.Key, VersionId: unlocked.VersionId}); err != nil {
+		t.Fatalf("deleting the unlocked copy: %v", err)
+	}
+	t.Log("replay: the unlocked copy was deleted")
+	for range 20 {
+		time.Sleep(time.Second) // the governance lock ends
+		if _, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: original.Key, VersionId: governed.VersionId}); err == nil {
+			break
+		}
+	}
+	if err != nil {
+		t.Fatalf("deleting the copy whose governance lock ended: %v", err)
+	}
+	t.Log("replay: the copy whose governance lock ended was deleted")
+	if out := listing(replay); len(out.Versions) != 1 || aws.ToString(out.Versions[0].VersionId) != aws.ToString(original.VersionId) {
+		t.Fatalf("left: %d versions", len(out.Versions))
+	}
+
+	// Two commits appended at once at one version: S3 takes one.
+	race := "store-test-race-" + stamp
+	t.Logf("race: record %s, objects under %s", race, prefixOf(race))
+	for version := uint64(1); version <= 2; version++ {
+		errs := make([]error, 2)
+		var wg sync.WaitGroup
+		for i := range errs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, errs[i] = day.Append(ctx, value(race, version, fmt.Sprint("enclave ", i)))
+			}()
+		}
+		wg.Wait()
+		if (errs[0] == nil) == (errs[1] == nil) || (!errors.Is(errs[0], store.ErrExists) && !errors.Is(errs[1], store.ErrExists)) {
+			t.Fatalf("two appends at once at version %d: %v", version, errs)
+		}
+	}
+	t.Logf("race: of two appends at once, one was taken each time; S3 answered the other %v", codes.seen())
+	listing(race)
+	if h, err := day.History(ctx, race); err != nil || len(h.Forks) != 0 || h.Head == nil || h.Head.Version != 2 {
+		t.Fatalf("history of the race: %+v, %v", h, err)
+	}
+}
+
+// putCodes records the error codes S3 answers to writes.
+type putCodes struct {
+	store.S3CommitsAPI
+	mu    sync.Mutex
+	codes []string
+}
+
+func (p *putCodes) PutObject(ctx context.Context, in *s3.PutObjectInput, opts ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	out, err := p.S3CommitsAPI.PutObject(ctx, in, opts...)
+	if err != nil {
+		p.mu.Lock()
+		p.codes = append(p.codes, errorCode(err))
+		p.mu.Unlock()
+	}
+	return out, err
+}
+
+func (p *putCodes) seen() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.codes)
+}
+
+func errorCode(err error) string {
+	var api smithy.APIError
+	if errors.As(err, &api) {
+		return api.ErrorCode()
+	}
+	return "not an S3 error"
 }
 
 // A commit that says a record is gone is a commit like any other in the

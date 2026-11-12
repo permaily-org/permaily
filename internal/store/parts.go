@@ -17,6 +17,11 @@ import (
 // more than the caller allowed: nothing past the limit was kept.
 var ErrTooLarge = errors.New("store: larger than the caller allows")
 
+// maxRawRead is the largest bound ReadRaw takes: the largest message the
+// service accepts (25 MiB, inbox.MaxMessageBytes) and its seal, rounded up.
+// A bound above it is a mistake of the caller's, and an error.
+const maxRawRead = 32 << 20
+
 // MessageParts is the parts of a stored message.
 type MessageParts interface {
 	// PutRaw writes the message's sealed raw object (raw/<mailbox>/<id>,
@@ -34,7 +39,9 @@ type MessageParts interface {
 	Item(ctx context.Context, mailboxID, id string) (*Message, error)
 	// ReadRaw reads the sealed raw object and stops with ErrTooLarge once
 	// more than max bytes come, whatever the item's Size says (whoever
-	// writes to the table sets it): ErrNotFound when it is not there.
+	// writes to the table sets it): ErrNotFound when it is not there. A max
+	// below zero or above the largest sealed message the service accepts
+	// (32 MiB) is an error before any request.
 	ReadRaw(ctx context.Context, mailboxID, id string, max int64) ([]byte, error)
 }
 
