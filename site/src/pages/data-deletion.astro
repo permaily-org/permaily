@@ -1,0 +1,52 @@
+---
+import { OPERATOR } from '../config/legal';
+import { LINKS } from '../config/site';
+import Legal from '../layouts/Legal.astro';
+---
+
+<Legal
+  title="Deleting your data"
+  heading="How to delete your data"
+  description="How to delete your Permaily account and data, what is removed and when, what stays and for how long, and what to do if you can’t sign in."
+  intro="You can delete your account yourself, at any time. This page says how, what happens at once, what is removed later, and what stays."
+>
+  <div class="prose">
+    <h2>Delete your account</h2>
+    <ol>
+      <li>Sign in at <a class="link" href="https://app.permaily.com">app.permaily.com</a>.</li>
+      <li>Open Settings, and choose Delete account. You may be asked to confirm it’s you.</li>
+      <li>You get a message at your contact address when you ask, and if you cancel.</li>
+    </ol>
+
+    <h2>What happens, and when</h2>
+    <ul>
+      <li><b>At once:</b> the account closes. Every other device is signed out, and nothing can be changed but cancelling. Once connections exist, they are revoked at once.</li>
+      <li><b>After seven days,</b> unless you cancel: your account’s record (contact address, name, passkeys, linked providers, recovery codes, settings), your sessions, the devices that signed in, and the entries that find your account are removed, and the account can’t be brought back. Your address can then sign up again as a new account.</li>
+      <li><b>Once mailboxes open (planned):</b> removing your account, or disconnecting a mailbox, destroys the mailbox’s key, so its mail can no longer be read by the service. The stored copies themselves expire later: message details within days, and raw messages a day after their retention period.</li>
+    </ul>
+
+    <h2>What stays, and for how long</h2>
+    <ul>
+      <li><b>Backups:</b> our database keeps a rolling backup of the last 35 days, so what was removed stays there until it ages out. Once mailboxes exist, that includes mailbox keys, which only the service can unlock.</li>
+      <li><b>The admin log:</b> entries naming your account’s identifier, if an admin acted on it, for 400 days from each entry.</li>
+      <li><b>Integrity records:</b> small records of each change to your account, with its identifier, a version, a hash and the time, locked for ten years. What happens to them after that isn’t decided yet.</li>
+      <li><b>Addresses that bounced or complained:</b> AWS keeps them until we remove them; write to us if yours is one.</li>
+      <li><b>Records the law makes us keep</b>, such as a government request to preserve them, for as long as it requires.</li>
+      <li><b>What a connection already received</b> is in its hands: ask it to delete it.</li>
+    </ul>
+
+    <h2>Remove just one thing</h2>
+    <ul>
+      <li><b>A provider you signed in with</b> (Google, GitHub, Facebook or Microsoft): unlink it in Settings, under Sign-in, unless it’s your only way left to sign in. We delete the identifier it gave us. If you signed up with it, your contact address came from it and stays: change it in Settings. You can also remove Permaily in your account at the provider.</li>
+      <li><b>A passkey or a device</b>: remove the passkey, or sign the device out, in Settings.</li>
+      <li><b>Mail</b>: once mailboxes open, delete a message in the app, or disconnect the mailbox.</li>
+    </ul>
+
+    <h2>If you signed in with Facebook</h2>
+    <p>Facebook told us its identifier for you, your name and, if you allowed it, an address. We keep only the identifier, to sign you in, and never take Facebook’s word for an address: if you signed up with Facebook, you confirmed your contact address with a code. To delete what we keep from Facebook, unlink it in Settings; to delete everything, delete your account as above. Removing Permaily in your Facebook settings stops future sign-ins with it, and doesn’t delete your Permaily account or its data.</p>
+
+    <h2>If you can’t sign in</h2>
+    <p>Write to <a class="link" href={`mailto:${OPERATOR.privacy}`}>{OPERATOR.privacy}</a> from your account’s contact address. We’ll ask for your account to be deleted, which starts the same seven days; you get a message, and can still cancel if you sign in. We can’t delete an account for anyone who can’t show it’s theirs.</p>
+    <p>More in the <a class="link" href={LINKS.privacy}>privacy policy</a>.</p>
+  </div>
+</Legal>

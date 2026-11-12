@@ -30,7 +30,7 @@ Field conditions are exact, so they can be previewed and audited.
 
 A person can describe a rule in a sentence, and a model turns it into conditions. That model sees only the sentence, never the mailbox.
 
-Some rules can't become conditions at all, such as "my children's names" or "anything about my car". For those, a small model inside the enclave checks each email against the topic and finds the words a rule removes. It runs inside the measured image, so no mail leaves the verified boundary and no third party reads it.
+Some rules can't become conditions at all, such as "my children's names" or "anything about my car". For those, a model decides whether a message, or each of its sentences, is about the topic, and the service drops what is. That model runs at OpenAI, outside the enclave: only the field the rule names (the subject or the body text) leaves, only when exact conditions don't settle it, and only for people who turned such a rule on ([ADR 0020](https://github.com/permaily-org/permaily/blob/main/docs/decisions/0020-openai-models-for-meaning.md)). Planned, not built yet.
 
 A model can miss, and a missed match is a leak. So the person previews every rule on their own mail before saving it.
 

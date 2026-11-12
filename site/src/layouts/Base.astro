@@ -10,13 +10,11 @@ import { LINKS, SITE } from '../config/site';
 interface Props {
   title?: string;
   description: string;
-  /** Sign up and Log in show only the wordmark, with no navigation or footer. */
-  minimal?: boolean;
   /** For the 404 page, which has no address of its own to index. */
   noindex?: boolean;
 }
 
-const { title, description, minimal = false, noindex = false } = Astro.props;
+const { title, description, noindex = false } = Astro.props;
 const fullTitle = title ? `${title} | ${SITE.name}` : SITE.name;
 const canonical = new URL(Astro.url.pathname, Astro.site);
 const image = new URL('/og.png', Astro.site);
@@ -85,11 +83,11 @@ const structuredData = {
   </head>
   <body>
     <a class="skip" href="#main">Skip to content</a>
-    <Header minimal={minimal} />
+    <Header />
     <main id="main">
       <slot />
     </main>
-    {!minimal && <Footer />}
+    <Footer />
     <script>
       import '../scripts/site';
     </script>

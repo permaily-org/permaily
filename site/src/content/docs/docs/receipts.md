@@ -15,11 +15,11 @@ Every message you read carries its receipt id, as `message.receipt` in the SDK, 
 
 ## The ledger
 
-Together, receipts form the ledger a person sees as Activity. Receipts are hash chained, so a missing one shows. Companies can [export them](/pricing/) for an audit, to show what each vendor received, when, and for which query.
+Together, receipts form the ledger a person sees as Activity. Receipts are hash chained, so a missing one shows. Exporting them for an audit is planned for companies, and not available yet.
 
 ## How they're kept
 
-Sender and subject are sensitive even without a body, so receipts are stored under the person's own key. The person decides how long they're kept, with a default limit.
+Sender and subject are sensitive even without a body, so receipts are sealed so that only the service can read them. They are kept for as long as the account exists, even after the mail they describe is gone. Receipts are planned, not built yet.
 
 ## What a receipt can't do
 

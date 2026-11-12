@@ -1,6 +1,6 @@
 # Public site
 
-The public site for Permaily: the marketing pages, pricing, security, changelog, the sign-up and log-in screens, and the docs at `/docs`. It's a static site built with [Astro](https://astro.build), and the docs use [Starlight](https://starlight.astro.build).
+The public site for Permaily: the marketing pages, pricing, security, changelog, and the docs at `/docs`. Signing up and signing in happen in the web app at `app.permaily.com` (see [web.md](web.md)), not here. It's a static site built with [Astro](https://astro.build), and the docs use [Starlight](https://starlight.astro.build).
 
 It lives in `site/` and is not part of the enclave image: it is hosted on AWS Amplify (`main` at permaily.com, `develop` at beta.permaily.com, pull request previews; see [deploy.md](deploy.md)) and changing it never changes the PCRs.
 
@@ -20,8 +20,8 @@ bun run dev
 | `bun run build` | Clears Astro's content cache, then builds the static site and the docs search into `dist/` |
 | `bun run preview` | Serves `dist/`, to check the real build. Docs search only works here, not in `bun run dev` |
 | `bun run check` | Type-checks pages, components and scripts |
-| `bun run test` | Checks the built pages: metadata, one h1, CSP, structured data, internal links, the release measurement |
-| `bun run test:e2e` | axe (WCAG 2.2 AA) and CSP violations in Chromium, desktop and mobile, light and dark |
+| `bun run test` | Checks the built pages: metadata, one h1, CSP, structured data, internal links, the release measurement, that every sign-up and log-in link goes to the app, that no page holds a sign-in or sign-up form, and the redirects of the old addresses |
+| `bun run test:e2e` | axe (WCAG 2.2 AA) and CSP violations in Chromium, desktop and mobile, light and dark, and that `/signup/` and `/login/` land in the app (stubbed) |
 
 Lint and format with Biome from the repo root (`bun run lint`).
 
@@ -38,7 +38,7 @@ Lint and format with Biome from the repo root (`bun run lint`).
 | `src/scripts/site.ts` | The phone menu, the theme switch and form handling |
 | `src/styles/tokens.css` | Type and spacing. Colours and fonts come from `packages/ui/colors.css` |
 | `src/styles/global.css` | The reset, layout, type and parts used across pages |
-| `src/config/site.ts` | Every outside link, so each can be changed in one place |
+| `src/config/site.ts` | Every outside link, so each can be changed in one place, including the app's sign-up and sign-in addresses |
 | `src/config/release.ts` | Reads the latest release's PCR0 at build time for the footer |
 | `integrations/csp-inline-hashes.mjs` | Adds hashes for inline scripts Astro's CSP misses (Starlight) |
 | `src/data/` | Sample mail, sample vendors and logo shapes |
@@ -47,7 +47,7 @@ Lint and format with Biome from the repo root (`bun run lint`).
 | `src/styles/docs.css` | Starlight's look, mapped onto the site's tokens. Only docs pages load it |
 | `src/scripts/docs.ts` | The theme switch on docs pages |
 | `src/content/i18n/en.json` | Starlight's interface wording, where it differs from the default |
-| `astro.config.mjs` | The docs sidebar, the Starlight parts replaced, and how code blocks look |
+| `astro.config.mjs` | The docs sidebar, the Starlight parts replaced, how code blocks look, and the redirects of old addresses |
 
 ## Animations
 
@@ -101,13 +101,19 @@ It should read from a tagged release of that repository, never `main`, with the 
 
 Missing: the API itself, its spec, and tagged releases.
 
+## Sign up and log in
+
+Every link that invites someone to sign up goes to `https://app.permaily.com/sign-up`, and every one to log in goes to `https://app.permaily.com/sign-in`. Both live in `LINKS` in `src/config/site.ts`, and pages use `LINKS.signup` and `LINKS.login`, never the address itself. Signing up is by invitation for now, which the app's sign-up screen asks for, so calls to action say "Sign up by invitation" rather than promising an account at once.
+
+The site has no sign-up or log-in page of its own. The old addresses `/signup/` and `/login/` are Astro `redirects` in `astro.config.mjs`: the build writes a small page at each, with no index and a `<meta http-equiv="refresh">` to the app, which the site's CSP does not restrict, and the sitemap leaves them out. The host serves them with status 200, not a 301.
+
 ## Not connected yet
 
-- **Forms.** Contact, Sign up and Log in don't send anything. They're marked `data-no-backend`, and the Google and Microsoft buttons do nothing.
-- **Sign up and Log in links.** They go to the pages here until the app has its own address. Change them in `src/config/site.ts`.
-- **Terms, Data processing and Subprocessors.** These links are placeholders until the pages have had legal review.
+- **Contact form.** It doesn't send anything. It's marked `data-no-backend`.
+- **Agreeing to the terms.** The legal pages (Terms, Privacy, Data processing, Subprocessors, Deleting your data) are written, without a lawyer, and `docs/legal.md` holds the reasoning and what is open. The app does not record acceptance of the terms yet (engineering item 1 there).
 - **The domain.** `permaily.com` is set in `astro.config.mjs` and is used for canonical links, the sitemap and the social image.
 - **API reference.** See [Generated pages](#generated-pages-not-wired-up-yet).
+- **A 301 for the old sign-up and log-in addresses.** A rule on the Amplify app (`deploy/tofu/site.tf`) could send `/signup/` and `/login/` to the app with a 301, so links elsewhere pass on. The meta refresh pages work until then.
 
 The product docs list the rest, including sample numbers and claims to check before publishing: see `docs/10-website.md` in the Permaily project folder.
 

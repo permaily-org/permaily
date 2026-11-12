@@ -1,159 +1,344 @@
 ---
+import { MINIMUM_AGE, OPERATOR } from '../config/legal';
 import { LINKS } from '../config/site';
-import Base from '../layouts/Base.astro';
+import Legal from '../layouts/Legal.astro';
 
-const data = [
+// Every row comes from docs/data.md and the code it describes. A change there
+// changes this page in the same pull request (docs/legal.md).
+const today = [
   {
-    data: 'Mail fetched from your account',
-    where: 'Memory, inside the enclave',
-    kept: 'Not stored',
+    data: 'Your account: contact address, name, language, whether it’s active or closing, when it was made and when the address was confirmed. While you change your address, the new one too',
+    why: 'To run your account, sign you in and write to you',
+    where:
+      'Our database, readable by us and by the admins, signed by the service so nobody can change it by hand',
+    kept: 'Until the account is removed, seven days after you or we ask to delete it',
   },
   {
-    data: 'Mail received by forwarding',
-    where: 'Encrypted storage, under your key',
-    kept: 'Until delivered, or a short limit',
+    data: 'How you sign in: your passkeys’ public keys, names and dates; whether “passkey only” is on',
+    why: 'To sign you in only the ways you chose',
+    where: 'Our database, readable and signed. Never a private key',
+    kept: 'Until you remove it, or the account is removed',
   },
   {
-    data: 'Tokens for your mailbox',
-    where: 'Encrypted database, under your key',
-    kept: 'Until you disconnect',
+    data: 'A provider you linked (Google, GitHub, Facebook or Microsoft): which one, its identifier for your account there, and when you linked it',
+    why: 'To know it’s you when you sign in with it',
+    where: 'Our database, readable and signed',
+    kept: 'Until you unlink it, or the account is removed',
   },
   {
-    data: 'Rules and access settings',
-    where: 'Encrypted database, under your key',
-    kept: 'Until you delete them',
+    data: 'Recovery codes',
+    why: 'To let you in if you lose your passkeys',
+    where: 'Our database, only as a hash',
+    kept: 'Until used or replaced',
   },
   {
-    data: 'Receipts',
-    where: 'Encrypted database, hash chained',
-    kept: 'You decide, with a default limit',
+    data: 'Sessions: the browser as it describes itself, when each started and was last used, and when you last confirmed it’s you',
+    why: 'To keep you signed in, show you your devices, and ask you to confirm before a sensitive change',
+    where: 'Our database; the session’s secret only as a hash',
+    kept: 'Seven days without use, thirty at most',
   },
   {
-    data: 'Your account email and billing details',
-    where: 'Our database and our payment provider',
-    kept: 'Until you delete your account',
-  },
-  {
-    data: 'Devices that signed in to your account',
-    where: 'Our database, as a hash of a random cookie',
+    data: 'Devices that signed in to your account: a hash of each one’s device cookie, and its last sign-in',
+    why: 'To tell you of a sign-in from a new device',
+    where: 'Our database. Not the cookie itself, and nothing else of the browser',
     kept: 'A year from each one’s last sign-in, 50 at most',
   },
+  {
+    data: 'Whether we or an admin blocked your account and when, and whether you or we asked to delete it',
+    why: 'To stop misuse, and to show you who asked',
+    where: 'Your account’s record',
+    kept: 'Until unblocked or cancelled, or the account is removed',
+  },
+  {
+    data: 'If your account is an admin: who made it one, and when',
+    why: 'To let admins help run the service',
+    where: 'Your account’s record',
+    kept: 'Until that’s removed, or the account is removed',
+  },
+  {
+    data: 'The admin log: when an admin acted, which admin, what kind of action, and the identifier of the account or invitation it was about',
+    why: 'So the admins can see what each of them did',
+    where:
+      'Our database, signed, readable by the admins. It names accounts by identifier, not address',
+    kept: '400 days from each entry, also after the account it names is removed',
+  },
+  {
+    data: 'Invitations, and the list of unused ones',
+    why: 'To let invited people sign up',
+    where: 'Our database, the code only as a hash',
+    kept: 'Thirty days, or until used or revoked',
+  },
+  {
+    data: 'Something you started: a sign-in, a change of address, a confirmation that it’s you, or a sign-in with a provider waiting for you to confirm an address',
+    why: 'To finish it',
+    where: 'The service’s memory only, never stored',
+    kept: 'Five to twenty minutes, or until the service restarts',
+  },
+];
+
+const soon = [
+  {
+    data: 'Mail you forward to Permaily: each message with its attachments, and its envelope, headers, subject, snippet and attachment names',
+    why: 'To hold it for the connections and rules you set',
+    where: 'Sealed: encrypted with your mailbox’s key, which only the service can use',
+    kept: '90 days unless you pick 7, 30, 180 or 365. Disconnecting the mailbox destroys its key at once',
+  },
+  {
+    data: 'Your rules, your connections and the queries you approved',
+    why: 'To give each connection only what you approved',
+    where: 'Sealed, except the app’s name, dates and state of each connection, which we can read',
+    kept: 'Until you delete them, the connection ends, or the account is removed',
+  },
+  {
+    data: 'Receipts of what each connection received, and of what was refused',
+    why: 'So you can see what left',
+    where: 'Sealed, chained so that a missing one shows',
+    kept: 'As long as your account, even after the mail they describe is gone',
+  },
+  {
+    data: 'What a model said about a message and a topic',
+    why: 'So the same question gets the same answer',
+    where: 'Sealed',
+    kept: 'As long as the message',
+  },
+];
+
+const storage = [
+  {
+    name: '__Host-permaily-session',
+    kind: 'Cookie, app',
+    what: 'Keeps you signed in. Without it you’d sign in on every page.',
+    kept: 'The browser keeps it 30 days; the service ends the session sooner, after seven days without use',
+  },
+  {
+    name: '__Host-permaily-provider',
+    kind: 'Cookie, app',
+    what: 'Ties a sign-in with Google, GitHub, Facebook or Microsoft to the browser that started it, so nobody can finish it in another.',
+    kept: 'Ten minutes, or twenty while you confirm an address',
+  },
+  {
+    name: '__Host-permaily-device',
+    kind: 'Cookie, app',
+    what: 'A random value whose only use is to tell you by mail when a device that hadn’t signed in to your account before does. Your account keeps a hash of it, for up to 50 devices.',
+    kept: 'A year, set again at each sign-in',
+  },
+  {
+    name: 'permaily-closes-at',
+    kind: 'Local storage, app',
+    what: 'While your account is being deleted, the day it closes, so the sign-in screen can say why you’re there. No address, name or identifier. It never leaves the browser.',
+    kept: 'Until the day passes, or the deletion is cancelled',
+  },
+  {
+    name: 'permaily-invitation',
+    kind: 'Session storage, app',
+    what: 'Your invitation, while you leave to sign up with another provider, so you don’t have to type it again.',
+    kept: 'Until you come back, or close the tab',
+  },
+  {
+    name: 'permaily-theme',
+    kind: 'Local storage, app, this site and the docs',
+    what: 'The light or dark theme you picked. It never leaves the browser.',
+    kept: 'Until you pick “System”',
+  },
+];
+
+const providers = [
+  { name: 'Google', href: 'https://myaccount.google.com/connections' },
+  { name: 'GitHub', href: 'https://github.com/settings/applications' },
+  { name: 'Facebook', href: 'https://www.facebook.com/settings?tab=applications' },
+  { name: 'Microsoft', href: 'https://account.live.com/consent/Manage' },
 ];
 ---
 
-<Base title="Privacy" description="What we keep, and why.">
-  <section class="page-head">
-    <div class="wrap">
-      <nav class="tabs" aria-label="Legal">
-        <a href="/privacy/" aria-current="page">Privacy</a>
-        <a href={LINKS.terms}>Terms</a>
-        <a href={LINKS.dataProcessing}>Data processing</a>
-        <a href={LINKS.subprocessors}>Subprocessors</a>
-      </nav>
-      <p class="small updated">Updated 12 November 2026</p>
-      <h1 class="h-l title">What we keep, and why</h1>
-      <p class="intro plain">This is the plain version of our privacy policy. We don’t sell, mine or advertise on email, and we don’t train models on it.</p>
-    </div>
-  </section>
+<Legal
+  title="Privacy"
+  heading="What we keep, and why"
+  description="What Permaily keeps, why, for how long, who else sees it, what we and the admins can do, and how to ask for a copy or deletion."
+  intro="This is our privacy policy, in plain words. We don’t sell, mine or advertise on email, and we don’t train models on it. The service is built so that we can’t read your mail; this page also says where that has limits."
+>
+  <div class="prose">
+    <h2>Who we are</h2>
+    {/* TODO LEGAL: the operator's state (Florida) is not confirmed; docs/legal.md. */}
+    <p>Permaily is run by one person, {OPERATOR.name}, in {OPERATOR.state}, {OPERATOR.country} (“we”), who decides what the service does with your data. Admins named by the operator can help run it from the app, with the powers listed below. Write to us at <a class="link" href={`mailto:${OPERATOR.privacy}`}>{OPERATOR.privacy}</a>.</p>
+    <p>Permaily is an early beta, by invitation, for adults. Invitations aren’t limited to one country, but United States sanctions law can forbid us to serve someone; the <a class="link" href={LINKS.terms}>terms</a> say who can use it. If you live in the EU, the EEA, Switzerland or the UK, read <a class="link" href="#europe">If you live in Europe</a> too. Today you can make an account, sign in and manage it. Mailboxes, connections, rules and receipts aren’t open yet: what this page says of them is how they’re planned to work, and we’ll update it before they open.</p>
+    <p>We wrote this page ourselves, without a lawyer. If something here is wrong or unclear, tell us.</p>
+  </div>
 
-  <section class="page-end">
-    <div class="wrap stack sections">
-      <div class="tbl-scroll">
-        <table class="tbl">
-          <thead>
+  <div class="stack">
+    <h2 class="h-h">What we keep today</h2>
+    <div class="tbl-scroll" tabindex="0">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th scope="col">Data</th>
+            <th scope="col">Why</th>
+            <th scope="col">Where</th>
+            <th scope="col">How long</th>
+          </tr>
+        </thead>
+        <tbody>
+          {
+            today.map((row) => (
+              <tr>
+                <th scope="row">{row.data}</th>
+                <td>{row.why}</td>
+                <td>{row.where}</td>
+                <td>{row.kept}</td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="prose">
+    <h2>What a sign-in provider tells us</h2>
+    <p>If you sign in with Google, GitHub, Facebook or Microsoft, we ask it for your identifier there, your email address and your basic profile. It tells us that identifier, an address, whether it vouches that the address is yours, and usually your name.</p>
+    <ul>
+      <li><b>Kept as the link:</b> which provider, and its identifier for you. Nothing else of the provider, and no token.</li>
+      <li><b>Can become your account’s data:</b> if you sign up with a provider, the address it vouches for (Google, GitHub, and Microsoft for some accounts) becomes your contact address. If it doesn’t vouch for one (Facebook never does), you confirm an address with a code, and that becomes your contact address. Unlinking the provider later doesn’t change your contact address; change it in Settings.</li>
+      <li><b>Read and dropped:</b> your name at the provider, and an address it doesn’t vouch for, which is only offered back to you in the form while you confirm one, for up to twenty minutes.</li>
+    </ul>
+    <p>The provider learns that you signed in to Permaily, and when.</p>
+
+    <h2>Records that stay after something is deleted</h2>
+    <ul>
+      <li><b>Integrity records.</b> Each change to your account’s record also writes a small record of that change: the record’s name, which includes your account’s identifier, a version number, a hash of the change and the time. It holds no address or name, but it can be matched to your account by anyone who knows the identifier. These records are locked for ten years so that nobody, us included, can delete them or quietly put back an old copy of your account. What happens to them when the lock ends hasn’t been decided or built yet, so we don’t promise they are deleted then.</li>
+      <li><b>Backups.</b> Our database keeps a rolling backup of the last 35 days, so something deleted stays in the backup until it ages out.</li>
+      <li><b>The admin log</b> keeps the identifier of an account an admin acted on for 400 days, also after the account is removed.</li>
+    </ul>
+
+    <h2>Logs and where data goes</h2>
+    <p>The service runs with Amazon Web Services in the United States (Ohio): that’s where accounts, and later mail, are stored. Its logs say what kind of thing happened and never name an address, an account, a code, a token or anything from your mail. The service as built doesn’t record your IP address; the machine in front of it, which we run and which isn’t covered by the verification, sees it in passing.</p>
+    <p>This website and the docs are served by AWS’s content delivery network from locations around the world. AWS keeps an access log of every visit, which we can read: the time, the page, your IP address and what your browser says of itself. It’s kept until we remove the site from AWS. We use it only to run and secure the site, and run no analytics. DNS for permaily.com is run by Cloudflare, worldwide. The planned model provider is in the United States.</p>
+  </div>
+
+  <div class="stack">
+    <h2 class="h-h">What we’ll keep once mailboxes open (planned)</h2>
+    <div class="tbl-scroll" tabindex="0">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th scope="col">Data</th>
+            <th scope="col">Why</th>
+            <th scope="col">Where</th>
+            <th scope="col">How long</th>
+          </tr>
+        </thead>
+        <tbody>
+          {
+            soon.map((row) => (
+              <tr>
+                <th scope="row">{row.data}</th>
+                <td>{row.why}</td>
+                <td>{row.where}</td>
+                <td>{row.kept}</td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="prose">
+    <h2>What we’ll do with your mail (planned)</h2>
+    <p>The service will read mail only inside its verified environment, to apply your rules and answer the connections you approve, and release to each connection only what you approved. It won’t be used to train anything.</p>
+    <p>Some rules and requests depend on meaning, such as “mail about invoices.” When one does and exact conditions can’t settle it, the service will send OpenAI, in the United States, the subject or the body text of that message, cut at a set length, or its sentences one by one to remove what talks about a topic. Never the sender, the recipients or an attachment. OpenAI answers how likely the text is to be about the topic. A rule you write in plain words will also be sent to OpenAI, to be turned into conditions you confirm, without any of your mail. You turn each of these on yourself, and the consent screen will say when a model is involved.</p>
+    <p>What OpenAI keeps: it doesn’t train on what its API receives. Its abuse-monitoring logs may hold the text it receives, and its answer, for up to 30 days, and it may keep flagged text and a sample of requests for automated safety review, for a time it doesn’t state (<a class="link" href="https://developers.openai.com/api/docs/guides/your-data">OpenAI, your data</a>). The part that turns a rule into conditions also keeps a request for 30 days unless the request asks it not to; the service is planned to ask it not to. We’ll ask OpenAI for zero data retention, which only OpenAI can approve, and we won’t wait for it: until it’s approved, your mail goes to OpenAI on the terms above, and the consent screen will say so. Zero data retention takes the text out of those logs, OpenAI says; its page doesn’t say whether it also ends the safety sample, and either way it’s OpenAI’s word, which we can’t check.</p>
+    <p>None of this is running: mailboxes, rules and connections aren’t built yet.</p>
+
+    <h2>Why we use your data</h2>
+    <p>Only to run the service you asked for, to keep accounts safe, to answer you, and to do what the law requires. We don’t sell or share your data for advertising, build profiles, or send marketing.</p>
+
+    <h2>Who else is involved</h2>
+    <p>AWS runs the hardware, storage and keys, serves this website, and carries the mail we send you; its terms let it store and scan that mail to block spam and abuse. Cloudflare answers DNS questions, including the ones the service asks to check where a message came from. If you sign in with a provider, it tells us it’s you. Your mail provider will forward your mail to us once mailboxes open. Connections you approve receive what you approved, under their own policies. The list, with what each one gets, is on <a class="link" href={LINKS.subprocessors}>Subprocessors</a>. No other company collects information about what you do on other sites through Permaily.</p>
+
+    <h2>What we and the admins can see and do</h2>
+    <p>We, and the admins, see each account’s contact address, name, state, dates, how many passkeys and sessions it has, which providers are linked, whether it’s blocked or closing, and the admin log. Through the service we and the admins can block an account and unblock it, sign all its devices out, ask to delete it (the same seven days as when you ask), cancel a deletion we asked for (not one you asked for), make and revoke invitations, and, for the super admin, make and remove admins. You’re told by mail of a block, an unblock, a deletion asked or cancelled, and becoming or no longer being an admin; not when your devices are signed out.</p>
+    <p>The service gives neither us nor the admins a way to sign in as you, read your mail, change your contact address, or add or remove a way you sign in, and the public code can be checked for that. What this rests on, and its limits:</p>
+    <ul>
+      <li>Signing in by mail trusts your mail provider and AWS, which carries the message. Someone who administers our AWS account could set it to keep a copy of the messages we send; the service watches for that and stops sending, but a copy made in the second a message leaves could go unseen. “Passkey only” takes mail out of signing in.</li>
+      <li>AWS Support can give the account’s owner back control of a key that nobody can change; the service checks every minute and publishes what it sees, but that would make stored data readable from then on.</li>
+      <li>Your browser can’t check by itself that the app it loads is the published one. The <a class="link" href={LINKS.trustModel}>trust model</a> explains how to check, and what’s left.</li>
+      <li>We can delete stored data or stop the service; that keeps you out, and reads nothing.</li>
+    </ul>
+    <p>How many of each kind of action we and the admins took since the service last started is public at <code>/status</code>, never naming an account.</p>
+
+    <h2>Mail we send you</h2>
+    <p>Sign-in codes and links; a code to a new address when you change your contact address; a code when you confirm it’s you before a sensitive change. Notices, which you can’t turn off: a sign-in from a device that hadn’t signed in to your account before; a change in how you sign in (passkeys, providers, passkey only, recovery codes); a change of your contact address, to the old and the new one; a deletion asked for or cancelled; your account blocked or unblocked; your account made an admin or no longer one. A notice holds no code or link. We try once: if sending fails or takes too long, the notice is dropped. AWS carries this mail, and keeps addresses that bounced or complained so it doesn’t write to them again. We send no newsletters or marketing.</p>
+
+    <h2>Cookies and storage in your browser</h2>
+    <p>The app sets three cookies, all for signing in and your account’s security, and keeps your theme and two other small things in the browser; this site keeps only your theme. None are for analytics or advertising, and none are anyone else’s. Because nothing tracks you, every visit is treated the same, with or without a “Do Not Track” signal.</p>
+  </div>
+
+  <div class="tbl-scroll" tabindex="0">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th scope="col">Name</th>
+          <th scope="col">Kind</th>
+          <th scope="col">What it’s for</th>
+          <th scope="col">How long</th>
+        </tr>
+      </thead>
+      <tbody>
+        {
+          storage.map((row) => (
             <tr>
-              <th scope="col">Data</th>
-              <th scope="col">Where it lives</th>
-              <th scope="col">How long</th>
+              <th scope="row"><code>{row.name}</code></th>
+              <td>{row.kind}</td>
+              <td>{row.what}</td>
+              <td>{row.kept}</td>
             </tr>
-          </thead>
-          <tbody>
-            {
-              data.map((row) => (
-                <tr>
-                  <th scope="row">{row.data}</th>
-                  <td>{row.where}</td>
-                  <td>{row.kept}</td>
-                </tr>
-              ))
-            }
-          </tbody>
-        </table>
-      </div>
-      <div class="prose">
-        <h2>What we do with your mail</h2>
-        <p>The service reads mail inside the enclave to apply your rules, then releases only what you approved to the connection you approved. No third-party model reads it, and it isn’t used to train anything.</p>
-        <h2>Who else is involved</h2>
-        <p>Your mail provider hosts your mail, and we can’t change that. AWS runs the hardware. Connections you approve receive what you approved, and what they do next is covered by their own policies.</p>
-        <h2>What we can see and do with your account</h2>
-        <p>We see your account’s contact address, name, the ways you sign in and how many sessions you have, never your mail. Through the service we can block your account, which signs every device out and lets nobody sign in, and unblock it. We can ask to delete it, which takes the same seven days as when you ask and which you can cancel unless it’s also blocked, and we can cancel a deletion. We can sign all your devices out, and revoke invitations nobody has used yet.</p>
-        <p>We can’t enter your account, read your mail, change your contact address, or add or remove a way you sign in. So if you lose your email, your passkeys and your recovery codes, support can’t give your account back. The service counts each kind of these actions since it last started and publishes the counts at <code>/status</code>, never naming an account.</p>
-        <h2>Mail we send you</h2>
-        <p>We send sign-in codes and links, and a code to the new address when you change your contact address. We also tell you about security and access, and you can’t turn these off: a sign-in from a device that hadn’t signed in to your account before, a change in how you sign in (passkeys, signing in with another account, passkey only, recovery codes), a change of your contact address, sent to the old address and the new one, a deletion asked for or cancelled, and your account blocked or unblocked. A notice holds no code or link. AWS carries this mail to your mail provider.</p>
-        <h2>Cookies</h2>
-        <p>The app sets three cookies, for signing in and for your account’s security, and none for analytics or advertising. The session cookie keeps you signed in, for seven days without use and thirty at most. A short-lived cookie ties a sign-in with Google, GitHub, Meta or Microsoft to the browser that started it. The device cookie is a random value, kept for a year from your last sign-in, whose only use is to tell you by mail when a device that hadn’t signed in to your account before does. Your account keeps a hash of it, for up to 50 devices. This site sets no cookies.</p>
-        <h2>Your rights</h2>
-        <p>You can export your data, revoke any access and delete your account at any time, on any plan. Mail a connection already received can’t be recalled, and we show you what each one holds, so you can ask them to delete it.</p>
-        <h2>Contact</h2>
-        <p>Write to <a class="link" href="mailto:privacy@permaily.com">privacy@permaily.com</a>. If you’re in the EU or UK, you can also complain to your local data protection authority.</p>
-      </div>
-    </div>
-  </section>
-</Base>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
 
-<style>
-  .tabs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-24);
-    margin-bottom: var(--space-40);
-    border-bottom: var(--hair) solid var(--rule);
-  }
+  <div class="prose">
+    <h2>Seeing, copying and deleting your data</h2>
+    <ul>
+      <li><b>See and change it.</b> Settings shows your account, your ways to sign in and your devices. You can change your name and contact address there.</li>
+      <li><b>A copy.</b> There’s no export button yet. Until there is, write to us from your contact address and we’ll send your account data within 30 days. Mail we can’t read, so we can’t send it; once mailboxes open, you can read and delete it in the app.</li>
+      <li><b>Delete it.</b> Delete your account in Settings. It closes at once, you can cancel for seven days, and then it’s removed. What’s removed, when, and what stays: <a class="link" href={LINKS.dataDeletion}>Deleting your data</a>.</li>
+      <li><b>Revoke access.</b> Once connections open, revoking one stops it at once. Mail a connection already received can’t be recalled.</li>
+      <li><b>Unlink a provider.</b> Do it in Settings. You can also remove Permaily at the provider: {providers.map((p, i) => (<>{i > 0 && (i === providers.length - 1 ? ' or ' : ', ')}<a class="link" href={p.href}>{p.name}</a></>))}.</li>
+    </ul>
+    <p>If someone forwards mail you sent them to Permaily, it will be in their mailbox, sealed: we can’t search it or tell whose mail it is. Ask the person you wrote to.</p>
 
-  .tabs a {
-    margin-bottom: -1px;
-    padding-block: var(--space-10);
-    color: var(--ink-2);
-    font-size: var(--text-body);
-    text-decoration: none;
-  }
+    <h2 id="europe">If you live in Europe</h2>
+    <p>We may invite people who live in the European Union, the European Economic Area, Switzerland or the United Kingdom. If you’re one of them, European data protection law, such as the GDPR or the UK GDPR, may apply to what we do with your data, even though we’re in the United States. What that means today:</p>
+    <ul>
+      <li><b>Who decides.</b> The person named in “Who we are” decides what’s done with your data, and is who you write to.</li>
+      <li><b>Why.</b> Your account, signing in and the mail we send you: to provide the service you asked for under the <a class="link" href={LINKS.terms}>terms</a>. Sessions, devices, blocks, the admin log, the integrity records and backups: to keep accounts and the service safe, which is our legitimate interest and yours. Keeping or handing over data the law requires: a legal obligation. Once connections and models open, sending mail to one: the instruction you give when you turn it on.</li>
+      <li><b>Where.</b> Your data is stored in the United States and handled by the companies on <a class="link" href={LINKS.subprocessors}>Subprocessors</a>, mostly there. We have no office or representative in Europe.</li>
+      <li><b>Your rights.</b> You can ask us for a copy of your data, in a form you can reuse; to correct or delete it; to limit what we do with it; and you can object to what we do for security. Write to <a class="link" href={`mailto:${OPERATOR.privacy}`}>{OPERATOR.privacy}</a>; we answer within a month. You can also complain to the data protection authority where you live or work.</li>
+    </ul>
+    <p>Not in place yet, and we won’t pretend otherwise:</p>
+    <ul>
+      <li>We haven’t named a representative in the EU or in the UK. Until we do, write to us directly.</li>
+      <li>We haven’t done a data protection impact assessment, or a written assessment of the interests above.</li>
+      <li>The session cookie keeps you signed in for up to 30 days, and there’s no choice yet to keep it only until you close the browser.</li>
+      <li>Once mailboxes open, people whose mail you forward won’t be told by us that it’s there.</li>
+    </ul>
 
-  .tabs a[aria-current='page'] {
-    border-bottom: 2px solid var(--ink);
-    color: var(--ink);
-    font-weight: 500;
-  }
+    <h2>Requests from authorities</h2>
+    <p>We hand over data only when the law requires it, after checking that the request is valid and no wider than it must be. We can read your account’s record, your sessions, the admin log and the integrity records, and could hand those over. Mail and everything else that’s sealed we can only hand over encrypted, because we can’t open it, and we don’t promise anyone a way to. Unless the law or a court order forbids it, we tell you before we answer, or as soon as we may.</p>
+    <p>If the law requires us to preserve specific records, such as a government request to preserve them for 90 days, renewable once, those records are kept for that time even if you delete them or your account; they’re deleted when it ends. If we learn of child sexual abuse material, the law requires us to report it, and to keep what we reported for a year.</p>
 
-  .updated {
-    margin-bottom: var(--space-12);
-  }
+    <h2>Security and breaches</h2>
+    <p>How the service is protected, and what that does and doesn’t prove, is on <a class="link" href="/security/">Security</a> and in the <a class="link" href={LINKS.trustModel}>trust model</a>. If a breach puts your data at risk, we’ll tell you and the authorities the law requires, as fast as we can and within the time the law sets.</p>
 
-  .title {
-    margin-bottom: var(--space-20);
-  }
+    <h2>Age</h2>
+    <p>Accounts are for people {MINIMUM_AGE} and older. If we learn an account belongs to someone younger, we close it and delete its data. Mail people forward will mention others, children included; we can’t read it and use it only to run the service for the account holder.</p>
 
-  .plain {
-    max-width: 38em;
-  }
+    <h2>Changes</h2>
+    <p>This page takes effect on the date at the top, which says when it last changed. If a change matters to how we use your data, we’ll tell you by mail before it takes effect.</p>
 
-  .sections {
-    gap: var(--space-48);
-  }
-
-  .prose {
-    display: grid;
-    gap: var(--space-24);
-    max-width: 42em;
-  }
-
-  .prose h2 {
-    font-size: var(--text-heading);
-    font-weight: 500;
-    letter-spacing: var(--tracking-h);
-    line-height: var(--leading-snug);
-  }
-
-  .prose p {
-    color: var(--ink-2);
-  }
-</style>
+    <h2>Contact</h2>
+    <p>Privacy: <a class="link" href={`mailto:${OPERATOR.privacy}`}>{OPERATOR.privacy}</a>. Your account: <a class="link" href={`mailto:${OPERATOR.support}`}>{OPERATOR.support}</a>. A vulnerability: <a class="link" href={`mailto:${OPERATOR.security}`}>{OPERATOR.security}</a>.</p>
+  </div>
+</Legal>

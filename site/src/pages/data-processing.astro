@@ -1,0 +1,28 @@
+---
+import { OPERATOR } from '../config/legal';
+import { LINKS } from '../config/site';
+import Legal from '../layouts/Legal.astro';
+---
+
+<Legal
+  title="Data processing"
+  heading="Data processing agreements"
+  description="Why Permaily signs no data processing agreements yet, and what an organisation would need first."
+  intro="A data processing agreement is the contract an organisation signs with a provider that handles personal data on its behalf. Permaily doesn’t offer one yet. Here’s why, and what would change."
+>
+  <div class="prose">
+    <h2>Personal accounts</h2>
+    <p>Permaily is for people using it for themselves and their own mail (<a class="link" href={LINKS.terms}>terms</a>, section 3). We handle your account and your data as the <a class="link" href={LINKS.privacy}>privacy policy</a> says; that is our commitment to you, and there’s no separate agreement to sign.</p>
+    <p>Using Permaily for mail you handle for an employer or for clients isn’t allowed yet. That use can make you responsible for other people’s data in a way that calls for a data processing agreement, which we don’t offer.</p>
+
+    <h2>Organisations (planned)</h2>
+    <p>Permaily isn’t offered to companies or other organisations yet, and we sign no data processing agreements. Before we offer it to them, we’ll publish here what the agreement covers, such as acting only on the organisation’s instructions, the subprocessors it may use, notice of a breach, and deleting or returning data at the end.</p>
+    <p>An organisation that runs the code itself under a commercial license (<a class="link" href={`${LINKS.source}/blob/main/docs/commercial.md`}>commercial licensing</a>) runs the service in its own AWS account, and we don’t handle its data.</p>
+
+    <h2>Our own providers</h2>
+    <p>The providers that handle data for us are on <a class="link" href={LINKS.subprocessors}>Subprocessors</a>. AWS’s data processing addendum is part of its service terms. OpenAI’s is part of its services agreement, and applies once it is used, which it isn’t yet.</p>
+
+    <h2>Questions</h2>
+    <p>Write to <a class="link" href={`mailto:${OPERATOR.privacy}`}>{OPERATOR.privacy}</a>.</p>
+  </div>
+</Legal>
