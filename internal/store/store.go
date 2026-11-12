@@ -112,6 +112,12 @@ type Entries interface {
 	// DeleteEntry returns ErrNotFound when there was nothing to delete: of
 	// two callers, only one deletes.
 	DeleteEntry(ctx context.Context, partition, key string) error
+	// DeleteEntryAt deletes e only if it is still as it was read, the same
+	// version and the same value, and fails with ErrConflict when it changed
+	// or is gone. The value counts because versions start over: an entry that
+	// was deleted and made again by another writer is at the version the one
+	// before was read at, and it stays.
+	DeleteEntryAt(ctx context.Context, e *Entry) error
 	// ListEntries returns up to limit entries of a partition whose key starts
 	// with prefix and comes after the key after ("" for the first ones), in
 	// the order of their keys, without the expired ones.

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"slices"
 	"strings"
@@ -205,6 +206,18 @@ func (s *Memory) DeleteEntry(_ context.Context, partition, key string) error {
 	if !e.ExpiresAt.IsZero() && !e.ExpiresAt.After(s.Now()) {
 		return ErrNotFound
 	}
+	return nil
+}
+
+// DeleteEntryAt implements Entries.
+func (s *Memory) DeleteEntryAt(_ context.Context, e *Entry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old, ok := s.entries[memoryKey(e.Partition, e.Key)]
+	if !ok || old.Version != e.Version || !bytes.Equal(old.Value, e.Value) {
+		return ErrConflict
+	}
+	delete(s.entries, memoryKey(e.Partition, e.Key))
 	return nil
 }
 

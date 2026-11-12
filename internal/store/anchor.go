@@ -34,6 +34,11 @@ import (
 // be forgiven checks for ErrLost first.
 var ErrLost = fmt.Errorf("%w: the committed version of the record is gone", ErrNotFound)
 
+// ErrChanged is returned by PutRecordAt when something was committed for the
+// record since it was read: another enclave stored it or removed it. Nothing
+// was made the newest version; the caller reads again and decides again.
+var ErrChanged = errors.New("store: the record changed since it was read")
+
 // ErrRolledBack means the store of commits itself went back: a commit this
 // enclave saw or made is not there any more. Nobody can remove one, so this is
 // either a failure of that guarantee or another store put in its place.
@@ -62,8 +67,11 @@ func (c *Commit) Gone() bool { return c.Digest == [sha256.Size]byte{} }
 // Commits is a store that only grows.
 type Commits interface {
 	// Head returns the commit of name with the highest version among those
-	// this enclave's deployment made, nil when there is none, and the lowest
-	// version nothing was appended at yet.
+	// this enclave's deployment made, nil when there is none, and where the
+	// next commit goes: the lowest version above it that nothing is at. Never
+	// a higher one: a commit made above a free version would hide the one an
+	// enclave that read earlier then makes there, and neither would know
+	// (PutRecordAt).
 	Head(ctx context.Context, name string) (latest *Commit, next uint64, err error)
 	// Append adds c and returns it as stored, with the date it is kept
 	// until. It fails with ErrExists when something is at that version
@@ -184,74 +192,150 @@ func (a *Anchored) committed(ctx context.Context, c *Commit) (*Record, error) {
 // commits of its record changed under it.
 const maxChanges = 3
 
+// Mark is where a record was when it was read: what PutRecordAt needs to
+// store it only if nothing was committed since. The zero value marks nothing.
+type Mark struct {
+	name string
+	// next is the version the next commit of the record takes.
+	next uint64
+	// head is the commit the record was read by, if it had one.
+	head *Commit
+}
+
 // GetRecord implements Records: the value of the newest commit, ErrLost when
 // that value is gone, ErrNotFound when the record was never stored or was
 // removed.
 func (a *Anchored) GetRecord(ctx context.Context, name string) (*Record, error) {
+	rec, _, err := a.GetRecordAt(ctx, name)
+	return rec, err
+}
+
+// GetRecordAt is GetRecord that also says where the record was read, for a
+// change that must not undo another enclave's: read, change the value, and
+// store it with PutRecordAt. A record that is not there (ErrNotFound, which
+// ErrLost is) has a mark too: PutRecordAt makes it, if nobody did meanwhile.
+func (a *Anchored) GetRecordAt(ctx context.Context, name string) (*Record, Mark, error) {
 	var missing *Commit
 	for range maxChanges {
 		head, next, err := a.head(ctx, name)
 		if err != nil {
-			return nil, err
+			return nil, Mark{}, err
 		}
+		at := Mark{name: name, next: next, head: head}
 		if head == nil {
-			return a.adopt(ctx, name, next)
+			adopted, err := a.adopt(ctx, name, next)
+			if adopted {
+				continue // it has a commit now: read by it
+			}
+			if !errors.Is(err, ErrNotFound) {
+				return nil, Mark{}, err
+			}
+			return nil, at, err
 		}
 		if head.Gone() {
-			return nil, ErrNotFound
+			return nil, at, ErrNotFound
 		}
 		if missing != nil && head.Version == missing.Version && head.Digest == missing.Digest {
-			return nil, ErrLost
+			return nil, at, ErrLost
 		}
 		rec, err := a.committed(ctx, head)
+		if err == nil {
+			return rec, at, nil
+		}
 		if !errors.Is(err, ErrLost) {
-			return rec, err
+			return nil, Mark{}, err
 		}
 		// A write or a removal that came between the two reads deletes the
 		// value this commit names. The record is lost only if that commit is
 		// still the newest.
 		missing = head
 	}
-	return nil, fmt.Errorf("store: the commits of %s keep changing", name)
+	return nil, Mark{}, fmt.Errorf("store: the commits of %s keep changing", name)
 }
 
-// adopt reads a record that has no commit yet. One written before commits
+// adopt commits a record that has no commit yet. One written before commits
 // existed is under its plain name: it is taken as it is, once, and committed.
 // It stays there for the release that wrote it, should that one have to run
-// again.
-func (a *Anchored) adopt(ctx context.Context, name string, next uint64) (*Record, error) {
+// again. It reports whether the record has a commit now, its own or the one
+// another enclave made meanwhile; otherwise the error says why not, and is
+// ErrNotFound when there is nothing under the plain name either.
+func (a *Anchored) adopt(ctx context.Context, name string, next uint64) (bool, error) {
 	rec, err := a.Records.GetRecord(ctx, name)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
-	if err := a.commit(ctx, rec, next); err != nil {
-		if errors.Is(err, ErrExists) {
-			// Another enclave committed it meanwhile: read what it committed.
-			return a.GetRecord(ctx, name)
-		}
-		return nil, err
+	if _, err := a.commit(ctx, rec, next); err != nil && !errors.Is(err, ErrExists) {
+		return false, err
 	}
-	return rec, nil
+	return true, nil
 }
 
 // commit stores r as a version of its own and appends the commit that makes
 // it the newest. The value goes first: a commit never names a value that was
-// not stored, and a value without a commit is nothing.
-func (a *Anchored) commit(ctx context.Context, r *Record, version uint64) error {
+// not stored, and a value without a commit is nothing. It returns the commit
+// it tried to make, also when another one took its version (ErrExists).
+func (a *Anchored) commit(ctx context.Context, r *Record, version uint64) (*Commit, error) {
 	c := Commit{Name: r.Name, Version: version, Digest: r.digest(), At: a.now().UTC().Truncate(time.Second)}
 	value := *r
 	value.Name = versioned(&c)
 	if err := a.Records.PutRecord(ctx, &value, false); err != nil {
-		return err
+		return nil, err
 	}
 	stored, err := a.Commits.Append(ctx, c)
 	if err != nil {
-		return err
+		return &c, err
 	}
 	a.mu.Lock()
 	a.remember(*stored)
 	a.mu.Unlock()
+	return stored, nil
+}
+
+// PutRecordAt makes r the newest version of its record only if nothing was
+// committed for the record since it was read at the mark: no other value, and
+// no removal. Otherwise it fails with ErrChanged and the record stays as the
+// other enclave left it; a record that was removed meanwhile is not brought
+// back.
+//
+// It rests on the store of commits taking one commit per version: this one
+// goes at the version the mark names, the one any other writer that read no
+// later would take too. PutRecord and RemoveRecord are not held back by it:
+// they write whatever the record is.
+func (a *Anchored) PutRecordAt(ctx context.Context, r *Record, at Mark) error {
+	if at.next == 0 || at.name != r.Name {
+		return errors.New("store: a record is stored at the mark it was read at")
+	}
+	c, err := a.commit(ctx, r, at.next)
+	if errors.Is(err, ErrExists) {
+		a.discard(ctx, c)
+		return ErrChanged
+	}
+	if err != nil {
+		return err
+	}
+	if a.OnlyNewest && at.head != nil && !at.head.Gone() {
+		// As in PutRecord: the write is done whatever happens here.
+		_ = a.Records.DeleteRecord(ctx, versioned(at.head))
+	}
 	return nil
+}
+
+// discard deletes the value stored for a commit that was not made, so that it
+// does not stay in the storage. It leaves it when it cannot tell that nobody
+// reads it: two enclaves that store the same value at the same version store
+// it under the same name, and the one whose commit was made needs it.
+func (a *Anchored) discard(ctx context.Context, c *Commit) {
+	head, _, err := a.head(ctx, c.Name)
+	if err != nil || head == nil {
+		return
+	}
+	switch {
+	case head.Version == c.Version && versioned(head) == versioned(c):
+		return // the commit that was made names this very value
+	case head.Version > c.Version && !head.Gone() && !a.OnlyNewest:
+		return // every version is kept, and the one made at this version may be this value
+	}
+	_ = a.Records.DeleteRecord(ctx, versioned(c))
 }
 
 // PutRecord implements Records: r becomes the newest version. With create it
@@ -279,7 +363,7 @@ func (a *Anchored) PutRecord(ctx context.Context, r *Record, create bool) error 
 				return err
 			}
 		}
-		err = a.commit(ctx, r, next)
+		_, err = a.commit(ctx, r, next)
 		if err == nil && a.OnlyNewest && head != nil && !head.Gone() {
 			// The write is done whatever happens here: a value that stays is
 			// not the committed one, and goes when the record is removed.
@@ -391,15 +475,22 @@ func (m *MemoryCommits) Head(_ context.Context, name string) (*Commit, uint64, e
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var latest *Commit
-	next := uint64(1)
+	used := map[uint64]bool{}
 	for _, c := range m.commits[name] {
 		if latest == nil || c.Version > latest.Version {
 			latest = &c
 		}
-		next = max(next, c.Version+1)
+		used[c.Version] = true
 	}
 	for v := range m.taken[name] {
-		next = max(next, v+1)
+		used[v] = true
+	}
+	next := uint64(1)
+	if latest != nil {
+		next = latest.Version + 1
+	}
+	for used[next] {
+		next++
 	}
 	return latest, next, nil
 }

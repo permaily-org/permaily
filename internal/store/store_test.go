@@ -301,6 +301,48 @@ func entries(t *testing.T, s Entries, setNow func(time.Time), now time.Time) {
 		t.Fatalf("another partition: %v %v", keys(list), err)
 	}
 
+	// An entry is deleted as it was read only while it is still that one: not
+	// once it was written again, and not one made again in its place, which is
+	// at the same version with another value.
+	pointer := &Entry{Partition: "login#x", Key: "account", Value: []byte(`{"to":1}`), UpdatedAt: now}
+	if err := s.PutEntry(ctx, pointer); err != nil {
+		t.Fatal(err)
+	}
+	read, err := s.GetEntry(ctx, "login#x", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten := *read
+	rewritten.Value = []byte(`{"to":2}`)
+	if err := s.PutEntry(ctx, &rewritten); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteEntryAt(ctx, read); !errors.Is(err, ErrConflict) {
+		t.Fatalf("delete of an entry that was written again: %v", err)
+	}
+	if err := s.DeleteEntry(ctx, "login#x", "account"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteEntryAt(ctx, read); !errors.Is(err, ErrConflict) {
+		t.Fatalf("delete of an entry that is gone: %v", err)
+	}
+	again = &Entry{Partition: "login#x", Key: "account", Value: []byte(`{"to":3}`), UpdatedAt: now}
+	if err := s.PutEntry(ctx, again); err != nil || again.Version != read.Version {
+		t.Fatalf("made again: version %d, %v", again.Version, err)
+	}
+	if err := s.DeleteEntryAt(ctx, read); !errors.Is(err, ErrConflict) {
+		t.Fatalf("delete of an entry made again in its place: %v", err)
+	}
+	if got, err := s.GetEntry(ctx, "login#x", "account"); err != nil || string(got.Value) != `{"to":3}` {
+		t.Fatalf("the entry made again: %+v, %v", got, err)
+	}
+	if err := s.DeleteEntryAt(ctx, again); err != nil {
+		t.Fatalf("delete of an entry as it is: %v", err)
+	}
+	if _, err := s.GetEntry(ctx, "login#x", "account"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted entry still there: %v", err)
+	}
+
 	// Of two deletes, one succeeds.
 	if err := s.DeleteEntry(ctx, "account#1", "session#a"); err != nil {
 		t.Fatal(err)
@@ -341,6 +383,29 @@ func anchoredContract(t *testing.T, table RecordTable) {
 			t.Fatalf("only newest %v: stored %q", onlyNewest, names)
 		}
 		if got, err := a.GetRecord(ctx, "account-x"); err != nil || string(got.Value) != "three" || !got.Plain {
+			t.Fatalf("only newest %v: read %+v %v", onlyNewest, got, err)
+		}
+		// A second enclave on the same table: of two that read one version, one
+		// writes, and the other leaves nothing in the table.
+		b := &Anchored{Records: table, Commits: a.Commits, OnlyNewest: onlyNewest}
+		_, first, err := a.GetRecordAt(ctx, "account-x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, second, err := b.GetRecordAt(ctx, "account-x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := b.PutRecordAt(ctx, &Record{Name: "account-x", Value: []byte("four"), Plain: true, UpdatedAt: time.Unix(1, 0)}, second); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.PutRecordAt(ctx, &Record{Name: "account-x", Value: []byte("not this"), Plain: true, UpdatedAt: time.Unix(1, 0)}, first); !errors.Is(err, ErrChanged) {
+			t.Fatalf("only newest %v: a write over another enclave's: %v", onlyNewest, err)
+		}
+		if names := stored(); len(names) != want+1-map[bool]int{true: 1}[onlyNewest] || !strings.HasPrefix(names[len(names)-1], "account-x@00000000000000000004-") {
+			t.Fatalf("only newest %v: stored after a refused write %q", onlyNewest, names)
+		}
+		if got, err := a.GetRecord(ctx, "account-x"); err != nil || string(got.Value) != "four" || !got.Plain {
 			t.Fatalf("only newest %v: read %+v %v", onlyNewest, got, err)
 		}
 		if err := a.RemoveRecord(ctx, "account-x"); err != nil {

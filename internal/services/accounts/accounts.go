@@ -70,9 +70,15 @@ type Mailer interface {
 }
 
 // Records is where the records of accounts are kept: a store that refuses an
-// earlier copy of one, and that removes one for good (store.Anchored).
+// earlier copy of one, that writes one only if no other enclave changed it
+// since it was read, and that removes one for good (store.Anchored).
 type Records interface {
 	store.Records
+	// GetRecordAt reads a record and says where it was read, and PutRecordAt
+	// stores it only if nothing was committed for it since: store.ErrChanged
+	// otherwise, with the record as the other enclave left it.
+	GetRecordAt(ctx context.Context, name string) (*store.Record, store.Mark, error)
+	PutRecordAt(ctx context.Context, r *store.Record, at store.Mark) error
 	// RemoveRecord makes a record be not there from then on, whatever is put
 	// back in the storage, and deletes what is stored of it.
 	RemoveRecord(ctx context.Context, name string) error
@@ -138,8 +144,11 @@ type Service struct {
 	swept      time.Time
 
 	// changing is held while an account's record is read, changed and
-	// written. The storage takes whichever write comes last, so two changes
-	// at once would undo one another: a recovery code would work twice.
+	// written, and while an account is removed. It is not what keeps two
+	// changes from undoing one another: the write is refused when the record
+	// changed since it was read, whoever changed it (rewrite). It keeps the
+	// requests of this enclave from making each other start over, and the
+	// pointers that are written along with a record in one order here.
 	changing sync.Mutex
 
 	// The applications registered at the providers, as their sealed record
@@ -316,6 +325,19 @@ func (s *Service) account(ctx context.Context, id string) (*accountDoc, error) {
 // never taken for a missing one, which a sign-up could then replace.
 func (s *Service) read(ctx context.Context, id string) (*accountDoc, error) {
 	rec, err := s.cfg.Records.GetRecord(ctx, recordName(id))
+	return s.opened(ctx, id, rec, err)
+}
+
+// readAt is read that also says where the record was read, for a change
+// that is written only if nothing changed since (rewrite).
+func (s *Service) readAt(ctx context.Context, id string) (*accountDoc, store.Mark, error) {
+	rec, at, err := s.cfg.Records.GetRecordAt(ctx, recordName(id))
+	doc, err := s.opened(ctx, id, rec, err)
+	return doc, at, err
+}
+
+// opened is the account in a record that was read, as read says.
+func (s *Service) opened(ctx context.Context, id string, rec *store.Record, err error) (*accountDoc, error) {
 	switch {
 	case errors.Is(err, store.ErrLost):
 		return nil, fmt.Errorf("accounts: an account's record: %w", err)
@@ -339,21 +361,42 @@ func (s *Service) read(ctx context.Context, id string) (*accountDoc, error) {
 	return &doc, nil
 }
 
-func (s *Service) putAccount(ctx context.Context, doc *accountDoc, create bool) error {
+// signed is an account's record as it is stored.
+func (s *Service) signed(ctx context.Context, doc *accountDoc) (*store.Record, error) {
 	key, err := s.signingKey(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	raw, err := json.Marshal(doc)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	name := recordName(doc.ID)
 	value, err := envelope.Sign(key, raw, recordAAD(name))
 	if err != nil {
+		return nil, err
+	}
+	return &store.Record{Name: name, Value: value, Plain: true, UpdatedAt: s.now()}, nil
+}
+
+// makeAccount stores the record of a new account: one that is there already
+// is store.ErrExists.
+func (s *Service) makeAccount(ctx context.Context, doc *accountDoc) error {
+	rec, err := s.signed(ctx, doc)
+	if err != nil {
 		return err
 	}
-	return s.cfg.Records.PutRecord(ctx, &store.Record{Name: name, Value: value, Plain: true, UpdatedAt: s.now()}, create)
+	return s.cfg.Records.PutRecord(ctx, rec, true)
+}
+
+// putAccountAt stores an account's record that was read at a mark, if it did
+// not change since: store.ErrChanged when it did, or was removed.
+func (s *Service) putAccountAt(ctx context.Context, doc *accountDoc, at store.Mark) error {
+	rec, err := s.signed(ctx, doc)
+	if err != nil {
+		return err
+	}
+	return s.cfg.Records.PutRecordAt(ctx, rec, at)
 }
 
 // own returns the account behind a session.
@@ -379,33 +422,51 @@ func (s *Service) change(ctx context.Context, id string, edit func(*accountDoc) 
 	})
 }
 
+// maxRewrites is how many times a change of an account's record is tried
+// when other enclaves keep changing the record under it.
+const maxRewrites = 4
+
 // rewrite reads an account's record, lets edit change it and stores it as the
 // newest version. When edit fails nothing is stored. An account that is not
 // there, or is due and so removed here, is ErrUnauthorized: its session
 // stands for nothing.
+//
+// The record is stored only if nothing was committed for it since it was
+// read (store.ErrChanged): another enclave of the deployment may have changed
+// or removed it in between. Then it is read again and edit runs again, on
+// what is there now, so no change undoes another and none brings a removed
+// account back. So edit can run more than once: it decides everything from
+// the record it is given, sets what it hands to its caller on every run, and
+// whatever else it writes it can write again. After maxRewrites tries the
+// change is given up, as an error.
 func (s *Service) rewrite(ctx context.Context, id string, edit func(*accountDoc) error) (*accountDoc, error) {
 	s.changing.Lock()
 	defer s.changing.Unlock()
-	doc, err := s.read(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if doc != nil && doc.due(s.now()) {
-		if err := s.removeLocked(ctx, doc); err != nil {
+	for range maxRewrites {
+		doc, at, err := s.readAt(ctx, id)
+		if err != nil {
 			return nil, err
 		}
-		doc = nil
+		if doc != nil && doc.due(s.now()) {
+			if err := s.removeLocked(ctx, doc); err != nil {
+				return nil, err
+			}
+			doc = nil
+		}
+		if doc == nil {
+			return nil, contracts.ErrUnauthorized
+		}
+		if err := edit(doc); err != nil {
+			return nil, err
+		}
+		switch err := s.putAccountAt(ctx, doc, at); {
+		case err == nil:
+			return doc, nil
+		case !errors.Is(err, store.ErrChanged):
+			return nil, err
+		}
 	}
-	if doc == nil {
-		return nil, contracts.ErrUnauthorized
-	}
-	if err := edit(doc); err != nil {
-		return nil, err
-	}
-	if err := s.putAccount(ctx, doc, false); err != nil {
-		return nil, err
-	}
-	return doc, nil
+	return nil, errors.New("accounts: an account's record keeps changing")
 }
 
 // Account returns an account by its id.
@@ -519,7 +580,7 @@ func (s *Service) create(ctx context.Context, address string, stale *store.Entry
 	if err := s.point(ctx, accountsPartition, listKey(doc), doc.ID, 0); err != nil {
 		return nil, err
 	}
-	if err := s.putAccount(ctx, doc, true); err != nil {
+	if err := s.makeAccount(ctx, doc); err != nil {
 		_ = s.forget(ctx, accountsPartition, listKey(doc))
 		return nil, err
 	}
@@ -951,11 +1012,16 @@ func (s *Service) readSession(key []byte, e *store.Entry, accountID string) *ses
 
 func (s *Service) newSession(ctx context.Context, accountID, userAgent string) (*contracts.Session, string, error) {
 	// One device more than an account keeps: the one used longest ago goes.
-	if list, err := s.sessions(ctx, accountID); err != nil {
+	// More than one goes when there are more than it keeps: sign-ins that
+	// ended at the same time, here or in another enclave, each saw room for
+	// theirs.
+	list, err := s.sessions(ctx, accountID)
+	if err != nil {
 		return nil, "", err
-	} else if len(list) >= maxSessions {
-		oldest := slices.MinFunc(list, func(a, b sessionDoc) int { return a.LastUsedAt.Compare(b.LastUsedAt) })
-		if err := s.cfg.Entries.DeleteEntry(ctx, accountPartition(accountID), sessionPrefix+oldest.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+	}
+	slices.SortFunc(list, func(a, b sessionDoc) int { return a.LastUsedAt.Compare(b.LastUsedAt) })
+	for i := 0; i <= len(list)-maxSessions; i++ {
+		if err := s.forget(ctx, accountPartition(accountID), sessionPrefix+list[i].ID); err != nil {
 			return nil, "", err
 		}
 	}

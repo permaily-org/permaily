@@ -57,10 +57,10 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `internal/inbox` | 84 | 84.7 |
 | `internal/msgauth` | 86 | 86.0 |
 | `internal/smtpd` | 92 | 92.5 |
-| `internal/store` | 95 (with emulators) | 95.6 (2026-11-11) |
+| `internal/store` | 96 (with emulators) | 96.1 (2026-11-12) |
 | `internal/contracts` | 100 | 100.0 (2026-11-11) |
 | `internal/domain` | 100 | 100.0 (2026-11-11) |
-| `internal/services/accounts` | 98 | 98.9 (2026-11-11) |
+| `internal/services/accounts` | 98 | 99.1 (2026-11-12) |
 | `internal/sesmail` | 98 | 98.6 (2026-11-11) |
 | `internal/webauthn` | 99 | 99.4 (2026-11-11) |
 | `internal/idp` | 100 | 100.0 (2026-11-11) |
