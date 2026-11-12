@@ -47,6 +47,13 @@ const messages: Record<ApiErrorCode, string> = {
     "Permaily's terms changed since this page opened. Reload it to read them, then agree to go on.",
   invalid_provider_app:
     "Permaily couldn't use that client ID and secret. Check them, then enter the secret again.",
+  too_many_mailboxes: 'This account has as many mailboxes as it can have. Disconnect one first.',
+  invalid_label: 'A label is one line of at most 64 characters.',
+  invalid_retention: 'Choose 7, 30, 90, 180 or 365 days.',
+  invalid_query: 'A search is 1 to 200 characters.',
+  too_many_messages: 'Delete at most 100 messages at a time.',
+  mailbox_unreadable:
+    "This mailbox can't be read. Disconnect it, and write to support@permaily.com.",
   other: 'Something went wrong on our side. Try again in a moment.',
 }
 

@@ -21,6 +21,7 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 | `buildinfo` | commit set via ldflags |
 | `smtpd` | MX on port 25 (vsock), STARTTLS with the enclave certificate, refuses mail without TLS (F1) |
 | `inbox` | mailbox: parse, Gmail confirmation codes, seal, store, serve (F1) |
+| `services/mailboxes`, `services/mailboxes/mailboxestest` | mailboxes per account (ADR 0026): for now the seam only (the interfaces it needs and gives, its limits, `Access` by an account's standing, its errors) and fakes of each side for tests; the service comes with ADR 0026's pull request 1, and `inbox/box.go` and `inbox/inboxtest` are the stored format of a message and a stand-in that writes it |
 | `msgauth` | DKIM verification with DNS-over-HTTPS (F1) |
 | `keys` | keys for one purpose derived from the root secret (`Derive`); the root secret (`Root`): created in an enclave, stored one record per image under that image's KMS key, accepted only from an enclave of the same image or of a public release, handed only to a newer public release (ADR 0013); data keys wrapped under it; KMS with attestation (Recipient, CMS); the reader that watches the policy and grants of the image's key and keeps every state seen, for `/status`; local keys for dev |
 | `envelope` | AES-256-GCM with key commitment and context binding (F1); `Sign` for values that stay readable outside the enclave and only an enclave can make (F2); `SealText` for sealed values kept as text, in entries |

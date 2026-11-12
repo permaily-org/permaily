@@ -73,6 +73,8 @@ linters:
               "!**/provenancetest/**",
               "!**/internal/webauthn/webauthntest/**",
               "!**/internal/idp/idptest/**",
+              "!**/internal/inbox/inboxtest/**",
+              "!**/internal/services/mailboxes/mailboxestest/**",
             ]
           list-mode: lax
           deny:
@@ -86,6 +88,10 @@ linters:
               desc: the software authenticator is only for dev mode and tests
             - pkg: github.com/permaily-org/permaily/internal/idp/idptest
               desc: the fake providers are only for dev mode and tests
+            - pkg: github.com/permaily-org/permaily/internal/inbox/inboxtest
+              desc: the stand-in for delivery is only for tests
+            - pkg: github.com/permaily-org/permaily/internal/services/mailboxes/mailboxestest
+              desc: the fake mailboxes are only for tests
     gosec:
       excludes:
         - G104 # unhandled errors are covered by errcheck

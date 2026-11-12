@@ -69,6 +69,18 @@ After v0.10.0, built on 2026-11-12 and released in v0.11.0, in production since 
 - [x] The TLS identity and the test mailbox ready for two enclaves: one order, the CA's check answered by either, the mailbox made once (ADR 0024, 2026-11-12).
 - [ ] A staging image with all of it: the notices through SES, and the counts on `/status` read by `permaily-verify`.
 
+Step 2, designed in ADR 0026 (2026-11-12, revised after an adversarial review the same day), in the order it is built. Six pull requests; their scope, files, seams, tests and definition of done are in ADR 0026, "Implementation pull requests", and the interfaces and fakes they build against are already in the repository (`internal/store/scan.go`, `internal/services/mailboxes`, `mailboxestest`, `internal/inbox/box.go`, `inboxtest`, `internal/httpapi/mailboxes*.go`, `internal/smtpd/recipients.go`, `internal/services/accounts/mailboxes.go`). The store goes first and alone; then 1 to 4 at the same time; 5 once 2 and 3 have merged. A release takes all six: the owner decided on 2026-11-12 that the inbox shows HTML from the start.
+
+- [x] The design, the contract and the seams: ADR 0026, `internal/contracts/mailboxes.go`, the same types in `web/src/lib/api.ts`, the interfaces and fakes above, ADR 0016 and 0018 amended, docs/web.md, docs/data.md, docs/threat-model.md (2026-11-12).
+- [ ] **0. Store.** Two commits at one version refuse the record (`ErrForked`), reported in `/status`; the TLS identity takes a fork for a loss (`ForkIsLost`); `CreateNew`; the descending scan bounded by items read (`Scanner`).
+- [ ] **1. Server core.** `internal/services/mailboxes`: the mailbox record and the account's list (anchored, with the state machines and fences of ADR 0026), the settings entry, the pointer, a data key per mailbox, making (five, ten in thirty days), the forwarding confirmation bound to the mailbox, disconnecting and the sweep, pausing, an account's mailboxes removed with it, access by the account's standing; delivery that never loses mail (claim, store, mark) with its admission budgets and parse limits; the test mailbox retired (its code, flags, token and `/v1/mailbox` gone, TLS-RPT a variable); `TestMailEndToEnd` on the API; the interleavings M1 to M22.
+- [ ] **2. Server messages.** The inbox's `Reader`: list and search pages bounded by items read, one message's text, attachments and the raw message as files, deleting one and many; every route under `/api/v1/mailboxes`, with the access table.
+- [ ] **3. Web.** Accounts on real mailboxes (list, connect, the forwarding set-up with the code as it arrives, confirmed or not, disconnect with its exact words), the new Inbox, and the gate that lets a closing account and one that has not agreed reach what they may.
+- [ ] **4. Operator, admin panel and notices.** Counts and records without addresses, finding a mailbox by its address, pause and resume through the operator's token and the admin's actor-bound facade (fresh proof, guard, admin log, `/status` kinds), the five notices by mail.
+- [ ] **5. Showing HTML.** `internal/mailhtml`: the sanitiser, its corpus of hostile messages and fuzz target; the routes `.../html` and `.../links/{n}`; `Message.html`; `frame-src 'self'` in the app's CSP; the frame, the switch, the notes and the link page in the web app; Playwright tests in Chromium, Firefox and WebKit.
+- [ ] A staging image with all six: a Gmail account forwarding to a new mailbox through both steps of Gmail's set-up (its real confirmation captured as a test fixture), a disconnect deleting its mail, a closing account reading its mail; then the release.
+- [ ] After the release: the super admin makes the "TLS reports" mailbox and `tls_rpt_address` is set (docs/operations.md); once a rollback to v0.11.0 is no longer wanted, F1's items are deleted (`pk=mailbox#test`, `raw/test/`) and the KMS keys of v0.11.0 and before are retired.
+
 Step 9 keeps the notices about connections (one approved, one about to end), which need step 5, and the wording of every message reviewed with the designer.
 
 About sixteen weeks. Steps 3 and 4 do not depend on 1 and 2, and can go first if seeing `about` work early is worth more than having accounts.
@@ -77,7 +89,7 @@ About sixteen weeks. Steps 3 and 4 do not depend on 1 and 2, and can go first if
 
 - ~~Zero data retention approved by OpenAI for the organization (ADR 0020).~~ Not a condition for real users: decided on 2026-11-12 that real mail goes to OpenAI before it is approved, under OpenAI's ordinary retention, disclosed on the privacy page; zero data retention is asked for and stays a residual risk until approved (docs/legal.md).
 - ~~SES out of its sandbox (ADR 0017).~~ Done on 2026-11-11: AWS granted production access in `us-east-2`, 50,000 messages a day and 14 a second.
-- The mailbox's state and every record of F2 whose going back matters stored through `store.Anchored` (ADR 0016).
+- The mailbox's state and every record of F2 whose going back matters stored through `store.Anchored` (ADR 0016). For mailboxes: step 2 (ADR 0026).
 - Whoever can merge into `main` decides what the enclave accepts: require two-factor sign-in in the GitHub organization and a second person's review (docs/threat-model.md).
 
 ## F2: lessons to apply

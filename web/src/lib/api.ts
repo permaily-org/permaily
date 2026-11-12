@@ -113,6 +113,141 @@ export type ProviderPending = {
 /** A provider account that signs in to the account. Nothing else of it is kept, so nothing else is shown. */
 export type LinkedProvider = { provider: Provider; linked_at: string }
 
+/**
+ * Mailboxes and the inbox (ADR 0026), the shapes of `internal/contracts/mailboxes.go`. The calls that use them
+ * come with the screens that do.
+ */
+
+/**
+ * `waiting` until mail other than Gmail's confirmations arrives; `paused` while Permaily's operator stops it;
+ * `unreadable` when its record can't be read: it shows only its id and `created_at`, and can only be disconnected.
+ */
+export type MailboxState = 'waiting' | 'receiving' | 'paused' | 'unreadable'
+
+/** A forwarding confirmation Gmail sent to the mailbox. Anyone can send one that looks like it. */
+export type ForwardingConfirmation = {
+  /** Empty when `for_another_address`: it confirms nothing here. */
+  code: string
+  /** The Gmail account that asked, as the message says. */
+  requester?: string
+  received_at: string
+  /** Google signed it and it names this mailbox: Google confirms that `requester` asked to forward here. */
+  verified: boolean
+  /** Google signed it for another forwarding address, and someone sent it here: it says nothing of this mailbox. */
+  for_another_address?: boolean
+  /** The message that carried it, in the mailbox's inbox. */
+  message?: string
+}
+
+export type Mailbox = {
+  id: string
+  /** Where the person forwards their mail, at inbox.permaily.com. Empty when `unreadable`. */
+  address: string
+  /** The person's own name for it. Empty when they gave none. */
+  label: string
+  state: MailboxState
+  created_at: string
+  /** Days mail received from now on is kept, one of `retention_options`. */
+  retention_days: number
+  retention_options: number[]
+  /** When the first mail that was not a confirmation arrived: nothing from before it is here. */
+  receiving_since?: string
+  paused_at?: string
+  /**
+   * The first Gmail account Google confirmed asked to forward here, while the mailbox waited. Not that forwarding is
+   * on, nor that later mail comes from it. Absent: shown as not verified.
+   */
+  source?: { provider: 'gmail'; address: string; verified_at: string }
+  /** The newest first, ten at most, for thirty days each. */
+  confirmations: ForwardingConfirmation[]
+}
+
+export type MailboxList = { mailboxes: Mailbox[]; limit: number }
+
+export type MailAddress = { name?: string; address: string }
+
+export type MessageSummary = {
+  /** Time-ordered: a later message has a greater one. */
+  id: string
+  received_at: string
+  expires_at: string
+  size: number
+  from: MailAddress[]
+  subject: string
+  snippet: string
+  /** How many attachments it has. */
+  attachments: number
+  confirmation: boolean
+}
+
+/**
+ * A page reads a bounded number of stored items (500 for a list, 2,000 for a search), so it may hold fewer messages
+ * than asked for, or none, and still have `next`: show "Older" or "Search older mail" whenever `next` is there.
+ */
+export type MessagePage = {
+  messages: MessageSummary[]
+  /** What to ask the next page with (`after`): the last item the page read. Absent when nothing older is left. */
+  next?: string
+  /** For a search: when the oldest message this page looked at arrived; absent when it looked at none. */
+  searched_to?: string
+}
+
+export type MessageAttachment = { index: number; name: string; type: string; size: number }
+
+export type Message = {
+  id: string
+  received_at: string
+  expires_at: string
+  size: number
+  from: MailAddress[]
+  to: MailAddress[]
+  cc: MailAddress[]
+  reply_to: MailAddress[]
+  subject: string
+  /** The Date header as the sender wrote it. */
+  date: string
+  /** The text, always: 256 KiB at most. The text view and search use it. */
+  text: string
+  text_from: 'plain' | 'html' | 'none'
+  text_truncated: boolean
+  attachments: MessageAttachment[]
+  /** DKIM checks: `result` is `pass` or `fail: <reason>`. */
+  auth: { method: string; domain: string; result: string }[]
+  confirmation: boolean
+  /** Not readable as mail: only the raw message can be downloaded. */
+  unparsed: boolean
+  /** Its HTML, when it has a text/html part. Absent: show the text, without the switch. */
+  html?: MessageHTML
+}
+
+/**
+ * What the app is told of a message's HTML (ADR 0026, "Showing a message's HTML"). The HTML itself is never here:
+ * when `status` is `shown`, a sandboxed frame loads it from `.../messages/{message}/html`, a new frame per message.
+ */
+export type MessageHTML = {
+  /** `too_large` and `unreadable`: show the text, say why, offer the original. */
+  status: 'shown' | 'too_large' | 'unreadable'
+  /** Images the message would have fetched from elsewhere, never loaded: "3 remote images were not loaded". */
+  remote_images: number
+  /** Other remote references taken out: stylesheets, fonts, frames, media. */
+  remote_other: number
+  /** Images that travel in the message and are shown; and the ones not shown (SVG, wrong type, too large). */
+  inline_images: number
+  inline_images_omitted: number
+  /** Links that open the link page. */
+  links: number
+}
+
+/** Where a link of a message leads, for the link page (`GET .../messages/{message}/links/{n}`). */
+export type MessageLink = {
+  /** http or https, as the server wrote it: the only address the link page leaves for. */
+  url: string
+  /** The host in ASCII (`xn--` for other characters), so a look-alike shows. */
+  host: string
+  /** The host the link's text named, when it named another one. */
+  shown?: string
+}
+
 /** The codes the server answers with, plus `network` for a request that got no answer. */
 export type ApiErrorCode =
   | 'invalid_address'
@@ -144,6 +279,12 @@ export type ApiErrorCode =
   | 'not_cancellable'
   | 'invalid_provider_app'
   | 'terms_needed'
+  | 'too_many_mailboxes'
+  | 'invalid_label'
+  | 'invalid_retention'
+  | 'invalid_query'
+  | 'too_many_messages'
+  | 'mailbox_unreadable'
   | 'network'
   | 'other'
 
@@ -177,6 +318,12 @@ const known: ReadonlySet<string> = new Set([
   'not_cancellable',
   'invalid_provider_app',
   'terms_needed',
+  'too_many_mailboxes',
+  'invalid_label',
+  'invalid_retention',
+  'invalid_query',
+  'too_many_messages',
+  'mailbox_unreadable',
 ])
 
 export class ApiError extends Error {
