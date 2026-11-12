@@ -153,3 +153,75 @@ func TestSearchEntriesThatDoNotOpen(t *testing.T) {
 		t.Fatalf("%+v %v", p, err)
 	}
 }
+
+// cancelling is the store with a call that succeeds and then ends the
+// request's context, as a deadline that passes during it does.
+type cancelling struct {
+	*store.Memory
+	cancel                       context.CancelFunc
+	onScan, onItem, onDeleteNext bool
+}
+
+func (c *cancelling) ScanMessagesDown(ctx context.Context, mailboxID, before string, maxRead int) (*store.MessageScan, error) {
+	s, err := c.Memory.ScanMessagesDown(ctx, mailboxID, before, maxRead)
+	if c.onScan {
+		c.cancel()
+	}
+	return s, err
+}
+
+func (c *cancelling) Item(ctx context.Context, mailboxID, id string) (*store.Message, error) {
+	m, err := c.Memory.Item(ctx, mailboxID, id)
+	if c.onItem {
+		c.cancel()
+	}
+	return m, err
+}
+
+func (c *cancelling) DeleteMessage(ctx context.Context, mailboxID, id string) error {
+	err := c.Memory.DeleteMessage(ctx, mailboxID, id)
+	if c.onDeleteNext {
+		c.cancel()
+	}
+	return err
+}
+
+// The code review of PR #90: List finished its batch and answered a page
+// after its context ended. Every loop of the reader over stored items checks
+// the context between items and before it answers.
+func TestTheReaderStopsWhenItsContextEndsMidway(t *testing.T) {
+	w := newWorld(t)
+	at := now.Add(-time.Hour)
+	first := w.seed(at, 30, "needle one", "text", "")
+	second := w.seed(at.Add(time.Minute), 30, "needle two", "text", "")
+	run := func(set func(*cancelling)) (*cancelling, context.Context) {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		c := &cancelling{Memory: w.mem, cancel: cancel}
+		set(c)
+		return c, ctx
+	}
+
+	t.Run("List: a scan that ends the context", func(t *testing.T) {
+		c, ctx := run(func(c *cancelling) { c.onScan = true })
+		if p, err := inbox.NewReader(c).List(ctx, w.b, "", 10); !errors.Is(err, context.Canceled) {
+			t.Fatalf("a page %+v after the context ended, err %v", p, err)
+		}
+	})
+	t.Run("Search: an item read that ends the context, on the page's last match", func(t *testing.T) {
+		c, ctx := run(func(c *cancelling) { c.onItem = true })
+		if p, err := inbox.NewReader(c).Search(ctx, w.b, "needle one", "", 10); !errors.Is(err, context.Canceled) {
+			t.Fatalf("a page %+v after the context ended, err %v", p, err)
+		}
+	})
+	t.Run("Delete: the context ends after the first", func(t *testing.T) {
+		c, ctx := run(func(c *cancelling) { c.onDeleteNext = true })
+		n, err := inbox.NewReader(c).Delete(ctx, w.b, []string{second, first})
+		if n != 1 || !errors.Is(err, context.Canceled) {
+			t.Fatalf("%d deleted, err %v", n, err)
+		}
+		if _, err := w.mem.Item(context.Background(), w.b.MailboxID, first); err != nil {
+			t.Fatalf("the second id was deleted after the context ended: %v", err)
+		}
+	})
+}

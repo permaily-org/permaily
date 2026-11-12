@@ -64,7 +64,7 @@ func (r *storeReader) Search(ctx context.Context, b Box, q, before string, limit
 				// the next page, never skipped.
 				page.Next = id
 				page.SearchedTo = searchedTo(id, entry.ReceivedAt)
-				return page, nil
+				return answer(ctx, page)
 			}
 		}
 		if scan.Last != "" {
@@ -81,17 +81,17 @@ func (r *storeReader) Search(ctx context.Context, b Box, q, before string, limit
 				page.Next = last
 			}
 			page.SearchedTo = searchedTo(last, lastAt)
-			return page, nil
+			return answer(ctx, page)
 		}
 		if !scan.More || scan.Read == 0 {
 			page.SearchedTo = searchedTo(last, lastAt)
-			return page, nil
+			return answer(ctx, page)
 		}
 		after = scan.Last
 	}
 	page.Next = last
 	page.SearchedTo = searchedTo(last, lastAt)
-	return page, nil
+	return answer(ctx, page)
 }
 
 // searchedTo is when the message of the last entry a page consumed arrived:

@@ -127,6 +127,15 @@ func summaryOf(m *store.Message, meta *StoredMeta) contracts.MessageSummary {
 	}
 }
 
+// answer is a page, unless the context ended while it was made: a page is
+// never answered for a request whose deadline passed.
+func answer(ctx context.Context, page *contracts.MessagePage) (*contracts.MessagePage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return page, nil
+}
+
 // List implements Reader.
 func (r *storeReader) List(ctx context.Context, b Box, before string, limit int) (*contracts.MessagePage, error) {
 	page := &contracts.MessagePage{Messages: []contracts.MessageSummary{}}
@@ -141,6 +150,9 @@ func (r *storeReader) List(ctx context.Context, b Box, before string, limit int)
 		}
 		read += scan.Read
 		for i := range scan.Messages {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			m := &scan.Messages[i]
 			meta, err := openMeta(b, m)
 			if err != nil {
@@ -155,16 +167,16 @@ func (r *storeReader) List(ctx context.Context, b Box, before string, limit int)
 				} else if scan.More {
 					page.Next = scan.Last
 				}
-				return page, nil
+				return answer(ctx, page)
 			}
 		}
 		if !scan.More || scan.Read == 0 {
-			return page, nil
+			return answer(ctx, page)
 		}
 		before = scan.Last
 	}
 	page.Next = before
-	return page, nil
+	return answer(ctx, page)
 }
 
 // item reads a message's item and opens its meta: the message is the box's
