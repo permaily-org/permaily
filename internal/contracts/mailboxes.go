@@ -28,10 +28,16 @@ var (
 	// request deletes.
 	ErrTooManyMessages = &Error{"too_many_messages", "delete at most 100 messages at a time"}
 	// ErrMailboxUnreadable refuses opening or changing a mailbox whose record
-	// cannot be read: its newest version is gone, or two versions were
-	// committed in its place (ADR 0026). It accepts no mail; it can only be
-	// disconnected, which deletes what it holds.
+	// cannot be read: its newest version is gone (lost), or its commits were
+	// forked (ADR 0026, "An unreadable mailbox"). It accepts no mail. A lost
+	// one can be disconnected, which deletes what it holds.
 	ErrMailboxUnreadable = &Error{"mailbox_unreadable", "this mailbox can't be read; disconnect it, and write to support@permaily.com"}
+	// ErrMailboxForked refuses disconnecting a mailbox whose record was
+	// forked: nothing can be written to the record, so it stays in the
+	// account's list and counts against the limit, accepting no mail and
+	// opened by nobody, for as long as the two commits exist (the lock
+	// period). Same code as ErrMailboxUnreadable, other words.
+	ErrMailboxForked = &Error{"mailbox_unreadable", "this mailbox can't be disconnected: what Permaily stores for it was changed by someone else. It accepts no mail and nobody can open it. Write to support@permaily.com"}
 	// ErrLinkChanged refuses a link of a message's HTML whose token no longer
 	// names the link at its number (409): the page was rendered by another
 	// release of the sanitiser. The message must be opened again.
@@ -62,8 +68,10 @@ const (
 	// until the operator resumes it. What it holds stays.
 	MailboxPaused MailboxState = "paused"
 	// MailboxUnreadable is a mailbox whose record cannot be read
-	// (ErrMailboxUnreadable): it refuses mail, shows nothing of itself but
-	// its identifier and when it was added, and can only be disconnected.
+	// (ErrMailboxUnreadable): it refuses mail and shows nothing of itself
+	// but its identifier and when it was added. One whose record was lost
+	// can be disconnected; one whose record was forked cannot
+	// (ErrMailboxForked) and stays, counted, for the lock period.
 	MailboxUnreadable MailboxState = "unreadable"
 )
 
@@ -122,10 +130,14 @@ type ForwardingConfirmation struct {
 	// Requester is the Gmail account that asked, as the message says.
 	Requester  string    `json:"requester,omitempty"`
 	ReceivedAt time.Time `json:"received_at"`
-	// Verified is true only when google.com signed the message (DKIM, over
-	// its From, To and Subject and its whole body) and the address it names
-	// as where mail is forwarded is this mailbox's: Google confirms that
-	// Requester asked to forward to this mailbox.
+	// Verified is true only when every check of ADR 0026 ("Gmail's
+	// forwarding confirmation") holds: one From, To and Subject each; From
+	// exactly Gmail's forwarding service; a passing DKIM signature of
+	// google.com over From, To and Subject and the whole body; To this
+	// mailbox's address; and a body in Gmail's template that names it. Then
+	// Google confirms that Requester asked to forward to this mailbox. It is
+	// false for every confirmation until a release turns the check on, once
+	// a real confirmation captured in staging passes it.
 	Verified bool `json:"verified"`
 	// ForAnotherAddress is a message Google signed for another forwarding
 	// address, sent here by someone else: it says nothing of this mailbox.

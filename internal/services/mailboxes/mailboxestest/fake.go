@@ -4,9 +4,11 @@
 // and accounts (accounts.Mailboxes, pull request 4) see it; Accounts and
 // Notices are what the service needs of accounts (pull request 1). Each keeps
 // the policy of the interface it fakes, so a test against it fails where the
-// real one would: the owner, the account's standing, the fresh proof.
-// Nothing here is anchored, sealed or shared between enclaves. Never imported
-// outside tests and dev mode (depguard).
+// real one would: the owner, the account's standing, the fresh proof, the
+// limits, a closed list, a lost or forked record, the order of the errors.
+// Contract runs the same cases against Fake here and, from pull request 1,
+// against *mailboxes.Service. Nothing here is anchored, sealed or shared
+// between enclaves. Never imported outside tests and dev mode (depguard).
 package mailboxestest
 
 import (
@@ -92,18 +94,44 @@ func (n *Notices) Sent() []Notice {
 	return slices.Clone(n.sent)
 }
 
+// What a fake mailbox's record is, as ADR 0026's state machine has it.
+type recordState int
+
+const (
+	recordActive recordState = iota
+	// recordLeaving is disconnecting, cancelled or gone: it is not listed,
+	// does not count, and its slot is free.
+	recordLeaving
+	// recordLost is a record whose newest value is gone (store.ErrLost): it
+	// counts, and disconnecting it removes it.
+	recordLost
+	// recordForked is a record with a fork in its history
+	// (store.ErrForked): it counts, and nothing can end it.
+	recordForked
+)
+
 type box struct {
-	account    string
-	mailbox    contracts.Mailbox
-	unreadable bool
-	changes    []time.Time
+	account string
+	mailbox contracts.Mailbox
+	state   recordState
+	changes []time.Time
+}
+
+func (b *box) unreadable() bool { return b.state == recordLost || b.state == recordForked }
+
+// list is an account's list of mailboxes: whether it is closed and when the
+// last ten were made.
+type list struct {
+	closed bool
+	made   []time.Time
 }
 
 // Fake is the mailboxes service in memory, with the policy of ADR 0026: the
-// owner, the account's standing (Accounts), the fresh proof, the limit of
-// five, a mailbox that cannot be read, pausing. It implements
-// httpapi.MailboxesService and accounts.Mailboxes; mailboxestest's own tests
-// check both.
+// owner, the account's standing (Accounts), the fresh proof, five mailboxes
+// and ten made in thirty days, a closed list, a lost or forked record,
+// pausing, and the order of the errors (httpapi.MailboxesService). It
+// implements httpapi.MailboxesService and accounts.Mailboxes; Contract
+// checks it.
 type Fake struct {
 	Accounts *Accounts
 	Notices  *Notices
@@ -113,12 +141,13 @@ type Fake struct {
 	mu    sync.Mutex
 	boxes map[string]*box
 	order []string
+	lists map[string]*list
 	made  int
 }
 
 // New returns an empty Fake with its own Accounts and Notices.
 func New() *Fake {
-	return &Fake{Accounts: NewAccounts(), Notices: &Notices{}, boxes: map[string]*box{}}
+	return &Fake{Accounts: NewAccounts(), Notices: &Notices{}, boxes: map[string]*box{}, lists: map[string]*list{}}
 }
 
 func (f *Fake) now() time.Time {
@@ -135,24 +164,40 @@ func Key(mailboxID string) []byte {
 	return k[:]
 }
 
-// Add makes a mailbox of an account as Create would, without its checks.
+// Add makes a mailbox of an account as Create would, without its checks; it
+// counts toward the ten made in thirty days.
 func (f *Fake) Add(account, label string) contracts.Mailbox {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.add(account, label)
 }
 
+func (f *Fake) listOf(account string) *list {
+	l := f.lists[account]
+	if l == nil {
+		l = &list{}
+		f.lists[account] = l
+	}
+	return l
+}
+
 func (f *Fake) add(account, label string) contracts.Mailbox {
 	f.made++
+	now := f.now()
 	id := fmt.Sprintf("mbx_%026d", f.made)
 	m := contracts.Mailbox{
 		ID: id, Address: fmt.Sprintf("fake%016d@inbox.permaily.test", f.made), Label: label,
-		State: contracts.MailboxWaiting, CreatedAt: f.now(),
+		State: contracts.MailboxWaiting, CreatedAt: now,
 		RetentionDays: contracts.MailboxRetentionDefault, RetentionOptions: slices.Clone(contracts.MailboxRetentionDays),
 		Confirmations: []contracts.ForwardingConfirmation{},
 	}
 	f.boxes[id] = &box{account: account, mailbox: m}
 	f.order = append(f.order, id)
+	l := f.listOf(account)
+	l.made = append(l.made, now)
+	if len(l.made) > mailboxes.MaxMadePerPeriod {
+		l.made = l.made[len(l.made)-mailboxes.MaxMadePerPeriod:]
+	}
 	return m
 }
 
@@ -165,18 +210,20 @@ func (f *Fake) Change(id string, edit func(*contracts.Mailbox)) {
 	}
 }
 
-// MakeUnreadable makes a mailbox's record unreadable, as a fork or a loss does.
-func (f *Fake) MakeUnreadable(id string) {
+// MakeLost makes a mailbox's record lost, as deleting its newest value does
+// (store.ErrLost).
+func (f *Fake) MakeLost(id string) { f.set(id, recordLost) }
+
+// MakeForked makes a mailbox's record forked, as a second commit at one of
+// its versions does (store.ErrForked).
+func (f *Fake) MakeForked(id string) { f.set(id, recordForked) }
+
+func (f *Fake) set(id string, s recordState) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if b, ok := f.boxes[id]; ok {
-		b.unreadable = true
+		b.state = s
 	}
-}
-
-// standing is the account's, or the error every request of it gets.
-func (f *Fake) standing(ctx context.Context, account string) (mailboxes.Standing, error) {
-	return f.Accounts.Standing(ctx, account)
 }
 
 // refuse says whether a standing allows a change (create, update, delete
@@ -207,17 +254,17 @@ func allows(s mailboxes.Standing, a mailboxes.Access) error {
 	return contracts.ErrNotFound
 }
 
-// own is the caller's mailbox, or not_found.
+// own is the caller's mailbox that is not leaving, or not_found.
 func (f *Fake) own(c mailboxes.Caller, id string) (*box, error) {
 	b, ok := f.boxes[id]
-	if !ok || b.account != c.Account {
+	if !ok || b.account != c.Account || b.state == recordLeaving {
 		return nil, contracts.ErrNotFound
 	}
 	return b, nil
 }
 
 func (b *box) view() contracts.Mailbox {
-	if b.unreadable {
+	if b.unreadable() {
 		return contracts.Mailbox{ID: b.mailbox.ID, State: contracts.MailboxUnreadable, CreatedAt: b.mailbox.CreatedAt, RetentionOptions: []int{}, Confirmations: []contracts.ForwardingConfirmation{}}
 	}
 	m := b.mailbox
@@ -233,10 +280,11 @@ func validLabel(s string) bool {
 	return !strings.ContainsFunc(s, func(r rune) bool { return !unicode.IsPrint(r) })
 }
 
+// mine is the account's mailboxes that count: not leaving.
 func (f *Fake) mine(account string) []*box {
 	var out []*box
 	for _, id := range f.order {
-		if b := f.boxes[id]; b != nil && b.account == account {
+		if b := f.boxes[id]; b.account == account && b.state != recordLeaving {
 			out = append(out, b)
 		}
 	}
@@ -245,7 +293,7 @@ func (f *Fake) mine(account string) []*box {
 
 // List implements httpapi.MailboxesService.
 func (f *Fake) List(ctx context.Context, c mailboxes.Caller) (*contracts.MailboxList, error) {
-	if _, err := f.standing(ctx, c.Account); err != nil {
+	if _, err := f.Accounts.Standing(ctx, c.Account); err != nil {
 		return nil, err
 	}
 	f.mu.Lock()
@@ -259,7 +307,7 @@ func (f *Fake) List(ctx context.Context, c mailboxes.Caller) (*contracts.Mailbox
 
 // Create implements httpapi.MailboxesService.
 func (f *Fake) Create(ctx context.Context, c mailboxes.Caller, in contracts.MailboxCreate) (*contracts.Mailbox, error) {
-	s, err := f.standing(ctx, c.Account)
+	s, err := f.Accounts.Standing(ctx, c.Account)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +318,22 @@ func (f *Fake) Create(ctx context.Context, c mailboxes.Caller, in contracts.Mail
 		return nil, contracts.ErrInvalidLabel
 	}
 	f.mu.Lock()
-	if len(f.mine(c.Account)) >= mailboxes.MaxMailboxes {
+	l := f.listOf(c.Account)
+	now := f.now()
+	recent := 0
+	for _, t := range l.made {
+		if now.Sub(t) < mailboxes.Period {
+			recent++
+		}
+	}
+	switch {
+	case l.closed:
+		f.mu.Unlock()
+		return nil, contracts.ErrAccountClosing
+	case recent >= mailboxes.MaxMadePerPeriod:
+		f.mu.Unlock()
+		return nil, contracts.ErrTooManyRequests
+	case len(f.mine(c.Account)) >= mailboxes.MaxMailboxes:
 		f.mu.Unlock()
 		return nil, contracts.ErrTooManyMailboxes
 	}
@@ -282,7 +345,7 @@ func (f *Fake) Create(ctx context.Context, c mailboxes.Caller, in contracts.Mail
 
 // Get implements httpapi.MailboxesService.
 func (f *Fake) Get(ctx context.Context, c mailboxes.Caller, id string) (*contracts.Mailbox, error) {
-	if _, err := f.standing(ctx, c.Account); err != nil {
+	if _, err := f.Accounts.Standing(ctx, c.Account); err != nil {
 		return nil, err
 	}
 	f.mu.Lock()
@@ -297,7 +360,7 @@ func (f *Fake) Get(ctx context.Context, c mailboxes.Caller, id string) (*contrac
 
 // Update implements httpapi.MailboxesService.
 func (f *Fake) Update(ctx context.Context, c mailboxes.Caller, id string, in contracts.MailboxUpdate) (*contracts.Mailbox, error) {
-	s, err := f.standing(ctx, c.Account)
+	s, err := f.Accounts.Standing(ctx, c.Account)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +373,7 @@ func (f *Fake) Update(ctx context.Context, c mailboxes.Caller, id string, in con
 	if err := refuse(s); err != nil {
 		return nil, err
 	}
-	if b.unreadable {
+	if b.unreadable() {
 		return nil, contracts.ErrMailboxUnreadable
 	}
 	if in.Label != nil && !validLabel(*in.Label) {
@@ -331,34 +394,37 @@ func (f *Fake) Update(ctx context.Context, c mailboxes.Caller, id string, in con
 
 // Disconnect implements httpapi.MailboxesService.
 func (f *Fake) Disconnect(ctx context.Context, c mailboxes.Caller, id string) error {
-	if _, err := f.standing(ctx, c.Account); err != nil {
+	if _, err := f.Accounts.Standing(ctx, c.Account); err != nil {
 		return err
 	}
 	f.mu.Lock()
-	b, err := f.own(c, id)
-	if err != nil {
+	b, ok := f.boxes[id]
+	if !ok || b.account != c.Account {
 		f.mu.Unlock()
-		return err
+		return contracts.ErrNotFound
+	}
+	if b.state == recordLeaving {
+		f.mu.Unlock()
+		return nil // disconnected already: the same answer
 	}
 	now := f.now()
 	if !now.Before(c.ConfirmedUntil) {
 		f.mu.Unlock()
 		return contracts.ErrConfirmationNeeded
 	}
-	f.remove(id)
+	if b.state == recordForked {
+		f.mu.Unlock()
+		return contracts.ErrMailboxForked
+	}
+	b.state = recordLeaving
 	f.mu.Unlock()
 	f.Notices.MailboxNotice(ctx, b.account, mailboxes.NoticeDisconnected, now)
 	return nil
 }
 
-func (f *Fake) remove(id string) {
-	delete(f.boxes, id)
-	f.order = slices.DeleteFunc(f.order, func(o string) bool { return o == id })
-}
-
 // Open implements httpapi.MailboxesService.
 func (f *Fake) Open(ctx context.Context, c mailboxes.Caller, id string, a mailboxes.Access) (inbox.Box, error) {
-	s, err := f.standing(ctx, c.Account)
+	s, err := f.Accounts.Standing(ctx, c.Account)
 	if err != nil {
 		return inbox.Box{}, err
 	}
@@ -371,18 +437,24 @@ func (f *Fake) Open(ctx context.Context, c mailboxes.Caller, id string, a mailbo
 	if err := allows(s, a); err != nil {
 		return inbox.Box{}, err
 	}
-	if b.unreadable {
+	if b.unreadable() {
 		return inbox.Box{}, contracts.ErrMailboxUnreadable
 	}
 	return inbox.Box{MailboxID: id, Key: Key(id)}, nil
 }
 
-// RemoveAccount implements accounts.Mailboxes.
+// RemoveAccount implements accounts.Mailboxes: the list ends closed, made
+// closed when there was none; every mailbox ends but a forked one, which
+// stays named in it.
 func (f *Fake) RemoveAccount(_ context.Context, account string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	l := f.listOf(account)
+	l.closed, l.made = true, nil
 	for _, b := range f.mine(account) {
-		f.remove(b.mailbox.ID)
+		if b.state != recordForked {
+			b.state = recordLeaving
+		}
 	}
 	return nil
 }
@@ -398,11 +470,17 @@ func (f *Fake) Count(_ context.Context, account string) (int, error) {
 func (f *Fake) Total(context.Context) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return len(f.boxes), nil
+	n := 0
+	for _, b := range f.boxes {
+		if b.state != recordLeaving {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (b *box) record() contracts.MailboxRecord {
-	if b.unreadable {
+	if b.unreadable() {
 		return contracts.MailboxRecord{ID: b.mailbox.ID, Account: b.account, State: contracts.MailboxUnreadable, CreatedAt: b.mailbox.CreatedAt}
 	}
 	m := b.mailbox
@@ -412,7 +490,8 @@ func (b *box) record() contracts.MailboxRecord {
 	}
 }
 
-// Records implements accounts.Mailboxes.
+// Records implements accounts.Mailboxes: an account with no list, or no
+// account at all, is an empty list.
 func (f *Fake) Records(_ context.Context, account string) (*contracts.MailboxRecordList, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -429,7 +508,8 @@ func (f *Fake) ByAddress(_ context.Context, address string) (*contracts.MailboxR
 	defer f.mu.Unlock()
 	out := &contracts.MailboxRecordList{Mailboxes: []contracts.MailboxRecord{}}
 	for _, id := range f.order {
-		if b := f.boxes[id]; !b.unreadable && strings.EqualFold(b.mailbox.Address, strings.TrimSpace(address)) {
+		b := f.boxes[id]
+		if b.state == recordActive && strings.EqualFold(b.mailbox.Address, strings.TrimSpace(address)) {
 			out.Mailboxes = append(out.Mailboxes, b.record())
 		}
 	}
@@ -441,7 +521,7 @@ func (f *Fake) Record(_ context.Context, id string) (*contracts.MailboxRecord, e
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	b, ok := f.boxes[id]
-	if !ok {
+	if !ok || b.state == recordLeaving {
 		return nil, contracts.ErrNotFound
 	}
 	r := b.record()
@@ -461,7 +541,7 @@ func (f *Fake) Resume(ctx context.Context, id string) (*contracts.MailboxRecord,
 func (f *Fake) pause(ctx context.Context, id string, on bool) (*contracts.MailboxRecord, error) {
 	f.mu.Lock()
 	b, ok := f.boxes[id]
-	if !ok || b.unreadable {
+	if !ok || b.state != recordActive {
 		f.mu.Unlock()
 		return nil, contracts.ErrNotFound
 	}

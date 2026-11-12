@@ -63,7 +63,7 @@ What a verifier cannot do is reach each enclave on purpose. Behind one address, 
 
 ## What it rests on
 
-- **The store of commits keeps one commit per version** (ADR 0016). Whoever writes to the bucket can, in the moment between two writes, put a second commit where one is. From ADR 0026 that is a fork: the identity's `Anchored` takes a fork for a loss (`ForkIsLost`), so the identity is made again with a new key, as "A lost identity" below, and the fork is reported in `/status`, where `permaily-verify` fails on it. It costs a new key, the steps of "Replace the TLS key" for the CAA records, and a certificate; never an earlier key.
+- **The store of commits keeps one commit per version** (ADR 0016). Whoever writes to the bucket can, in the moment between two writes, put a commit where one is. Two claims would then both count, and two enclaves would order. That is noticed (`/status`, `permaily-verify`), not prevented, and costs one certificate.
 - **The enclaves' clocks agree to within a minute.** A claim lasts at least 11 minutes. Clocks that differ by more could let both enclaves order: one certificate more.
 - **Records that keep commits.** The identity uses `GetRecordAt` and `PutRecordAt` only when its records are `store.Anchored`, which every image with an anchor bucket has: production and staging. Without one the last write wins, which is for one enclave only.
 - **The limit of the CA.** At most 5 certificates a week for one set of names. One enclave alone makes one order every 60 days. Two enclaves make the same, plus one in the worst case each time an order outlives its claim (more than 11 minutes) or the clocks or the bucket go wrong as above.
