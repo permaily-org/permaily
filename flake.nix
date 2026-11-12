@@ -23,9 +23,10 @@
           web = pkgs.callPackage ./nix/web.nix { };
           goBin = args: pkgs.callPackage ./nix/go.nix ({ inherit rev; } // args);
           enclaveBin = goBin { subPackage = "permaily-enclave"; goarch = "arm64"; inherit web; };
+          awsBlobs = pkgs.callPackage ./nix/aws-blobs.nix { };
           mkEif = { acmeDirectory, staging ? false }: pkgs.callPackage ./nix/eif.nix {
             nitro = nitro-util.lib.${system};
-            inherit enclaveBin acmeDirectory staging;
+            inherit awsBlobs enclaveBin acmeDirectory staging;
           };
         in
         rec {

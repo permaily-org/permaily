@@ -27,3 +27,4 @@ Architecture Decision Records. Each one records the context, the options conside
 | [0020](0020-openai-models-for-meaning.md) | OpenAI's models for what depends on meaning | Accepted, not built |
 | [0021](0021-watch-the-copies-of-outgoing-mail.md) | Watch who else gets a copy of the mail the enclave sends | Accepted |
 | [0022](0022-admins-and-confirming-again.md) | Admins, and confirming again before a sensitive change | Accepted, not released |
+| [0023](0023-releases-publish-the-measurements-not-the-image.md) | Releases publish the image's measurements, not the image | Accepted |

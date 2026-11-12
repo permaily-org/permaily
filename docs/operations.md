@@ -7,15 +7,15 @@ Runbooks for production. Setup from scratch is in [deploy.md](deploy.md). Every 
 The running enclave hands the root secret to the next release, then the next release is started (ADR 0013). Nothing in AWS is edited to let a release in: each release has a KMS key of its own that only its image can use.
 
 ```sh
-old=v0.8.0 new=v0.9.0
-mkdir -p /tmp/permaily-$new && cd /tmp/permaily-$new
-gh release download $new --repo permaily-org/permaily
-gh attestation verify permaily.eif --repo permaily-org/permaily --signer-workflow permaily-org/permaily/.github/workflows/release.yml --source-ref refs/heads/main
-sha256sum -c SHA256SUMS --ignore-missing
-mkdir eif && mv permaily.eif pcrs.json eif/
+old=v0.8.0 new=v0.9.0 dir=/tmp/permaily-v0.9.0
+# 0. The image. Releases publish its measurements, not the image (ADR 0023):
+#    this builds it from the tag (Nix, or Docker) and refuses unless its
+#    measurements are the release's pcrs.json, whose build provenance it checks,
+#    as it does the host program's. It leaves the three files in $dir.
+scripts/release-image.sh $new $dir
 
 # 1. The key of the new image. deploy/tofu/production.auto.tfvars:
-#      release_keys = { "v0.8.0" = "<its PCR0>", "v0.9.0" = "<jq -r .PCR0 eif/pcrs.json>" }
+#      release_keys = { "v0.8.0" = "<its PCR0>", "v0.9.0" = "<jq -r .PCR0 $dir/pcrs.json>" }
 tofu -chdir=deploy/tofu apply          # creates one KMS key and its alias; then `tofu plan` must show no changes
 
 # 2. The running enclave gives the root secret to the new release. The script
@@ -23,7 +23,7 @@ tofu -chdir=deploy/tofu apply          # creates one KMS key and its alias; then
 scripts/handoff.sh $old $new
 
 # 3. Start the new image and verify.
-scripts/deploy.sh eif permaily-host-linux-arm64
+scripts/deploy.sh $dir $dir/permaily-host-linux-arm64
 scripts/verify.sh $new                 # from a server with outbound port 25, add -require-smtp
 ```
 
@@ -36,7 +36,7 @@ Then delete the key of the previous release (below), and open the pull request t
 
 ## Roll back
 
-Deploy the previous release again with `scripts/deploy.sh`. Its record and its key are still there, and everything stored since is sealed under the same root secret, so it reads it. A handoff back to an older release is refused on purpose: a rollback only works while the old release's key exists.
+Build the previous release's image again (`scripts/release-image.sh <tag> <dir>`) and deploy it with `scripts/deploy.sh`. Its record and its key are still there, and everything stored since is sealed under the same root secret, so it reads it. A handoff back to an older release is refused on purpose: a rollback only works while the old release's key exists.
 
 ## Delete the key of an old release
 
@@ -53,8 +53,8 @@ If the instance is lost, nothing is: create it again with OpenTofu and deploy th
 A staging image (`.#eif-staging`) is a deployment of its own on the same instance and names: Let's Encrypt staging, the table `permaily-mail-staging`, and a root secret that only staging images can receive. Production is down while a staging image runs.
 
 ```sh
-git push origin HEAD:refs/heads/staging/<name>     # the staging-image workflow builds and attests it
-gh run download <run id> --name staging-image --dir /tmp/stg-a
+git push origin HEAD:refs/heads/staging/<name>     # the staging-image workflow builds and attests its pcrs.json
+scripts/release-image.sh --staging <run id> /tmp/stg-a   # builds the image of that run's commit, refuses other measurements
 # release_keys: add "staging-a" = "<its PCR0>", without committing; acme_account_uris: see Certificates below
 tofu -chdir=deploy/tofu apply
 scripts/deploy.sh /tmp/stg-a /tmp/stg-a/permaily-host-linux-arm64
