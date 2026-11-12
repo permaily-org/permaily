@@ -68,4 +68,4 @@ Plaintext outside the enclave: ids, sizes, timestamps, retention period. Message
 - [x] Default retention: 90 days, configurable to 7, 30, 180 or 365.
 - [x] Receipts are kept for as long as the account (ADR 0019).
 - [x] The model provider is OpenAI (ADR 0020).
-- [ ] Zero data retention approved by OpenAI, before real users.
+- [ ] Ask OpenAI for zero data retention. Not a condition for real users: real mail goes to OpenAI before it is approved, under its ordinary retention, a residual risk the maintainers accepted on 2026-11-12 ([legal.md](legal.md), "Decided" and "Residual risks").
