@@ -6,7 +6,7 @@ Each criterion, the evidence that proves it, and its status: **covered** (a test
 
 | Criterion | Evidence | Status |
 |---|---|---|
-| The enclave image is byte-identical when built on x86_64 and arm64 | CI `reproducible` job (`.github/workflows/ci.yml`) | covered |
+| The enclave image is byte-identical when built on x86_64 and arm64 | CI `reproducible` job (`.github/workflows/ci.yml`); `scripts/release-image.sh v0.10.0` on an x86_64 machine in Docker built the same `permaily.eif` (SHA-256 `2ce4fb08…`) as the arm64 release (2026-11-12) | covered |
 | A rebuild on the same machine gives the same image | `nix build .#eif --rebuild` (2026-11-08) | covered |
 | The image holds no build-machine paths | ADR 0003; no `/nix/store` strings in `permaily-enclave` (2026-11-09) | covered |
 | An attestation signed outside the AWS Nitro chain is rejected | `TestVerify/untrusted_root_(default_AWS_root)`, `TestVerifyRemote/fake_attester_rejected_against_AWS_root` | covered |

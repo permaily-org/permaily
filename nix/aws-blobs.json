@@ -1,0 +1,51 @@
+{
+  "about": "The third-party programs inside the enclave image, all prebuilt by AWS and taken unmodified from the blobs of aws-nitro-enclaves-cli (nix/aws-blobs.nix). For each: where it is in the image, the SHA-256 of its binary, its license, where its source is, and how sure that is: exact (shown to be the source of this binary), aws-stated (the source AWS says it built this binary from, not shown), unavailable (AWS does not publish the source of this binary). scripts/image-inventory.ts checks an image against this file; CI runs it on every image it builds. Permaily does not distribute the image (docs/decisions/0023).",
+  "blobs": {
+    "repository": "https://github.com/aws/aws-nitro-enclaves-cli",
+    "tag": "v1.5.2",
+    "commit": "1c496ed730d2dc41ec5bff6df89b4f3185e18840",
+    "directory": "blobs/aarch64"
+  },
+  "components": [
+    {
+      "name": "Linux kernel 4.14.256-209.484.amzn2.aarch64",
+      "location": "kernel",
+      "blob": "Image",
+      "sha256": "03808bbf031a6f27178b35657e6b4b8cdf11820c349396407995ceeec82ec9b9",
+      "license": "GPL-2.0-only",
+      "source": "unavailable",
+      "where": "Not published. Its configuration is blobs/aarch64/Image.config of aws-nitro-enclaves-cli v1.5.2, byte for byte configs/microvm-kernel-config-aarch64 of https://github.com/aws/aws-nitro-enclaves-sdk-bootstrap at ed24913346a34d719afa2031299253160a2e3460.",
+      "note": "The binary reports 'Linux version 4.14.256-209.484.amzn2.aarch64 (mockbuild@ip-10-0-42-103) (gcc version 7.3.1 20180712 (Red Hat 7.3.1-13) (GCC)) #1 SMP Tue Jan 11 21:47:26 UTC 2022', an Amazon Linux 2 kernel built by Amazon's build system. The Amazon Linux 2 source repository has kernel-4.14.256-197.484.amzn2.src.rpm and no 209.484, and aws-nitro-enclaves-sdk-bootstrap builds linux-4.14.204, so the source of this build is not published (read 2026-11-12)."
+    },
+    {
+      "name": "nsm.ko, Nitro Secure Module driver",
+      "location": "ramdisk:nsm.ko",
+      "blob": "nsm.ko",
+      "sha256": "fa5475cbe0506ff3b7353b8ffa056da95eacd36626562f27326d73f384e8e49a",
+      "license": "GPL-2.0-only",
+      "source": "exact",
+      "where": "nsm-driver/nsm.c of https://github.com/aws/aws-nitro-enclaves-sdk-bootstrap at ed24913346a34d719afa2031299253160a2e3460 (unchanged since 9a1a825), built against the kernel above.",
+      "note": "The module's srcversion (D3B5E8FDCD94DD8FF56025B) is the MD4 digest the kernel's modpost takes of the module's source, and that nsm.c gives the same value."
+    },
+    {
+      "name": "init",
+      "location": "ramdisk:init",
+      "blob": "init",
+      "sha256": "c478b57a645ec594df9c355824f571bb684ca559d35ab380bb0cda81a0dc590d",
+      "license": "Apache-2.0",
+      "source": "aws-stated",
+      "where": "init/init.c of https://github.com/aws/aws-nitro-enclaves-sdk-bootstrap at 203242d54e4fbb9b5d57b49e73c947226e08ce82 (tag v1.0.0).",
+      "note": "AWS replaced the blob on 2024-05-22, 25 minutes after merging that commit, and cited it. It was built with GCC 11.4.1 20230605 (Red Hat 11.4.1-2) and is not reproducible from that source, so the correspondence rests on AWS's word."
+    },
+    {
+      "name": "GNU C Library, statically linked into init",
+      "location": "ramdisk:init",
+      "blob": "init",
+      "sha256": "c478b57a645ec594df9c355824f571bb684ca559d35ab380bb0cda81a0dc590d",
+      "license": "LGPL-2.1-or-later",
+      "source": "unavailable",
+      "where": "https://sourceware.org/glibc/, release unknown.",
+      "note": "init is linked with -static. The binary does not record which release of the library it contains, and AWS does not say."
+    }
+  ]
+}
