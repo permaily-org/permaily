@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { type Provider, providersOn } from './api.ts'
 
-/** What each provider is called on screen. Text only: no mark of theirs is drawn or loaded. */
+/**
+ * What each provider is called on screen, and the one place that says so. Text only: no mark of theirs is
+ * drawn or loaded. `meta` is Facebook to a person: the trip goes to Facebook's sign-in, and Meta's own rules
+ * name the action "Continue with Facebook". The identifier stays `meta` in the API and in the code.
+ */
 export const providerNames: Record<Provider, string> = {
   google: 'Google',
   github: 'GitHub',
-  meta: 'Meta',
+  meta: 'Facebook',
   microsoft: 'Microsoft',
 }
 

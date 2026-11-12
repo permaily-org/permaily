@@ -67,7 +67,7 @@ export function Providers({
         return
       }
       cameBack.current = true
-      setOutcome({ quiet: false, text: linkProblem(arrived.reason) })
+      setOutcome({ quiet: false, text: linkProblem(arrived.reason, arrived.provider) })
     }
   }, [arrived])
 

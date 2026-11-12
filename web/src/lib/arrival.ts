@@ -1,12 +1,15 @@
 import { useSyncExternalStore } from 'react'
 import { type Provider, providers } from './api.ts'
+import { normalizeInvitation } from './invitation.ts'
 
 /**
  * What the address carried when the app was opened: the link of a sign-in message
  * (/sign-in#attempt=<id>&token=<token>), an invitation (/sign-up?invitation=<code>), or how a sign-in with a
- * provider ended (/sign-in#provider_confirm, /sign-in#provider_error=<reason>, /settings#provider_error=<reason>
- * and /settings#linked=<provider>). All are taken out of the address bar before anything renders, and live
- * only in this module's memory: never in storage, in history or in a log.
+ * provider ended (/sign-in#provider_confirm, /sign-in#provider_error=<reason>, /settings#provider_error=<reason>,
+ * each reason with `&provider=<id>` when the server still knew the trip, and /settings#linked=<provider>).
+ * All are taken out of the address bar before anything renders, and live only in this module's memory: never
+ * in storage, in history or in a log. The one exception is an invitation, which crosses a trip to a provider
+ * in `sessionStorage` and is taken out of it as soon as the app loads again (`keepInvitation`).
  */
 
 export type SignInLink = { attempt: string; token: string }
@@ -41,8 +44,8 @@ export type ProviderReason = (typeof providerReasons)[number]
 export type ProviderArrival =
   /** The provider did not vouch for an address: one waits to be confirmed, in this browser. */
   | { screen: 'sign-in'; kind: 'confirm' }
-  /** Nobody was signed in, or nothing was linked. */
-  | { screen: 'sign-in' | 'settings'; kind: 'failed'; reason: ProviderReason }
+  /** Nobody was signed in, or nothing was linked. `provider` is there when the server still knew the trip. */
+  | { screen: 'sign-in' | 'settings'; kind: 'failed'; reason: ProviderReason; provider?: Provider }
   /** Settings asked to link this provider, and the server sent the browser back without a reason. */
   | { screen: 'settings'; kind: 'linked'; provider: Provider }
 
@@ -62,7 +65,9 @@ function providerAnswer(pathname: string, fragment: URLSearchParams): ProviderAr
   if (reason !== null) {
     // A reason this app does not know says the least of them: it did not work.
     const known = providerReasons.find((one) => one === reason) ?? 'provider_failed'
-    return { screen, kind: 'failed', reason: known }
+    // Which provider it was is one of the four the app knows, or it is not said at all.
+    const named = providers.find((one) => one === fragment.get('provider'))
+    return { screen, kind: 'failed', reason: known, ...(named ? { provider: named } : {}) }
   }
   if (screen === 'sign-in') {
     return fragment.has('provider_confirm') ? { screen, kind: 'confirm' } : null
@@ -113,8 +118,49 @@ export function takeArrival(): void {
     }
   }
 
+  // An invitation that crossed a trip to a provider is back in memory, whatever the trip came to, and out
+  // of storage. One in the address is newer, and counts.
+  const kept = takeKeptInvitation()
+  if (kept && arrival.invitation === null) arrival.invitation = kept
+
   if (cleanSearch !== search || cleanHash !== hash) {
     window.history.replaceState(window.history.state, '', pathname + cleanSearch + cleanHash)
+  }
+}
+
+/** Where an invitation waits while the browser is away at a provider. Nothing else is ever kept there. */
+const keptInvitation = 'permaily-invitation'
+
+/**
+ * Keeps an invitation across a trip to a provider, which unloads the page: call it only when the browser is
+ * about to leave. An invitation is a one-use code that names nobody. It goes to `sessionStorage`, which ends
+ * with the tab, never to `localStorage`, and is taken out again as soon as the app loads (`takeArrival`).
+ * Without an invitation, or without storage, nothing is kept and the person types it again.
+ */
+export function keepInvitation(invitation: string | null | undefined): void {
+  const code = invitation ? normalizeInvitation(invitation) : null
+  try {
+    if (code) window.sessionStorage.setItem(keptInvitation, code)
+    else window.sessionStorage.removeItem(keptInvitation)
+  } catch {
+    // Storage can be unavailable, for example in a private window.
+  }
+}
+
+/** Forgets an invitation kept for a trip that did not happen, or that the Back button undid. */
+export function forgetKeptInvitation(): void {
+  keepInvitation(null)
+}
+
+/** The invitation kept for a trip, read once: it leaves storage here. Only what can be an invitation counts. */
+function takeKeptInvitation(): string | null {
+  try {
+    const kept = window.sessionStorage.getItem(keptInvitation)
+    if (kept === null) return null
+    window.sessionStorage.removeItem(keptInvitation)
+    return normalizeInvitation(kept)
+  } catch {
+    return null
   }
 }
 
@@ -157,8 +203,19 @@ export function dropInvitation(): void {
  * Says how a trip to a provider ended, as if the address had: for a sign-in that ended while its address
  * was being confirmed, so the sign-in screen says why.
  */
-export function providerEnded(reason: ProviderReason): void {
-  setProvider({ screen: 'sign-in', kind: 'failed', reason })
+export function providerEnded(reason: ProviderReason, named?: Provider): void {
+  setProvider({ screen: 'sign-in', kind: 'failed', reason, ...(named ? { provider: named } : {}) })
+}
+
+/**
+ * What a trip that came back to the sign-in screen is to someone who turns out to be signed in. A failure is
+ * for Settings: it is where they would have started linking, and a trip the server no longer knew (the wait
+ * was too long, or the answer was opened twice) comes back here for want of knowing better. Anything else
+ * the sign-in screen would say is of no use to them.
+ */
+export function providerArrivalSignedIn(): void {
+  if (provider?.screen !== 'sign-in') return
+  setProvider(provider.kind === 'failed' ? { ...provider, screen: 'settings' } : null)
 }
 
 /** Forgets how a trip to a provider ended: it was said, or it is of no use any more. */

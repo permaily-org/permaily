@@ -7,12 +7,14 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain"
+	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/services/accounts"
 )
 
@@ -390,7 +392,9 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 	// Where the provider sends the browser back. It is a navigation and not
 	// a request of the app, so it answers with where to go: a path of the
 	// app that the service chose, with the reason in the fragment when it
-	// failed. What the provider said went wrong is never read.
+	// failed, and next to it the provider when the service still knew the
+	// trip, for the screen to name it. What the provider said went wrong is
+	// never read.
 	mux.HandleFunc("GET /api/v1/auth/provider/callback", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		done, err := svc.FinishProvider(r.Context(), accounts.ProviderAnswer{
@@ -411,8 +415,14 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		if done.Session != "" {
 			setSession(w, done.Session, int(domain.SessionMax/time.Second))
 		}
+		to := done.Path
+		// Only ever one of the fixed identifiers: the fragment holds nothing
+		// a provider or a person wrote.
+		if err != nil && slices.Contains(idp.Providers, done.Provider) {
+			to += "&provider=" + string(done.Provider)
+		}
 		w.Header().Set("Cache-Control", "no-store")
-		http.Redirect(w, r, done.Path, http.StatusSeeOther)
+		http.Redirect(w, r, to, http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /api/v1/auth/provider/pending", func(w http.ResponseWriter, r *http.Request) {
 		out, err := svc.PendingProvider(r.Context(), provider(r))

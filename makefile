@@ -16,7 +16,7 @@ check-go:
 	go test -tags dev ./cmd/permaily-enclave
 
 check-web:
-	cd web && bun install --frozen-lockfile && bun run build
+	cd web && bun install --frozen-lockfile && bun run build && bun run test
 
 check-site:
 	cd site && bun install --frozen-lockfile && bun run check && bun run build && bun run test

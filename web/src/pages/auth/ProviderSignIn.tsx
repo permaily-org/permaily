@@ -1,13 +1,18 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '../../components/ui/index.ts'
 import { ApiError, errorCode, type Provider, startProvider } from '../../lib/api.ts'
-import { dropProviderArrival } from '../../lib/arrival.ts'
+import {
+  arrivedInvitation,
+  dropProviderArrival,
+  forgetKeptInvitation,
+  keepInvitation,
+} from '../../lib/arrival.ts'
 import { leaveFor, providerNames, useCameBack } from '../../lib/providers.ts'
 import { messageFor } from './messages.ts'
 
 /**
- * Signing in with Google, GitHub, Meta or Microsoft: one action for each provider that is on, always in the
- * same order. The server answers where to send the browser, and takes the provider's answer only in this
+ * Signing in with Google, GitHub, Facebook (`meta`) or Microsoft: one action for each provider that is on,
+ * always in the same order. The server answers where to send the browser, and takes the provider's answer only in this
  * browser. Nothing is asked first: the provider says who the person is, and the server what comes of it.
  * They share one group with the other ways in that need no address, which the screen hands over as `first`.
  */
@@ -41,7 +46,14 @@ export function ProviderSignIn({
   // The provider that was refused may be gone from the screen, and focus with its action.
   const lost = useRef(false)
 
-  useCameBack(useCallback(() => setLeaving(null), []))
+  // Back from the provider with the Back button: the page is as it was left, with the invitation still in
+  // its memory, so the copy kept for the trip is of no use.
+  useCameBack(
+    useCallback(() => {
+      forgetKeptInvitation()
+      setLeaving(null)
+    }, []),
+  )
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs once the providers are read again
   useEffect(() => {
@@ -63,9 +75,14 @@ export function ProviderSignIn({
         invitation: code,
         returnTo: returnTo && returnTo !== '/' ? returnTo : undefined,
       })
+      // The page is about to go, and its memory with it. An invitation crosses the trip in the tab's own
+      // storage, so the sign-up screen has it filled in should the provider's account need one: the one
+      // typed here, or on the sign-in screen the one that arrived by link.
+      keepInvitation(invitation ? code : arrivedInvitation())
       // The actions stay as they are while the browser leaves.
       if (!leaveFor(url)) throw new ApiError('other')
     } catch (failure) {
+      forgetKeptInvitation()
       setLeaving(null)
       const failed = errorCode(failure)
       if (failed === 'invalid_invitation' && onInvitationRefused) {

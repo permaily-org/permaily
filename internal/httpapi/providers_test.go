@@ -216,7 +216,9 @@ func TestProvidersAPI(t *testing.T) {
 	// not read, and not sent on.
 	state = a.leave("/api/v1/auth/provider/start", `{"provider":"google"}`)
 	rec, to = a.back("state=" + state + "&error=access_denied&error_description=" + url.QueryEscape(`<script>alert("ana@example.org")</script>`) + "&code=" + a.idp.approve(ana))
-	if to != "/sign-in#provider_error=provider_failed" || set(rec, "__Host-permaily-session") != nil || strings.Contains(rec.Body.String()+fmt.Sprint(rec.Header()), "access_denied") || strings.Contains(rec.Body.String(), "script") {
+	// The trip is one the server still knows, so the screen is told which
+	// provider it was.
+	if to != "/sign-in#provider_error=provider_failed&provider=google" || set(rec, "__Host-permaily-session") != nil || strings.Contains(rec.Body.String()+fmt.Sprint(rec.Header()), "access_denied") || strings.Contains(rec.Body.String(), "script") {
 		t.Fatalf("refused at the provider: %q %s", to, rec.Body)
 	}
 	for _, query := range []string{"", "state=" + state, "code=x", "state=&code=", "state=" + strings.Repeat("s", 5000) + "&code=x", "error=server_error"} {
@@ -398,11 +400,11 @@ func TestLinkedProvidersAPI(t *testing.T) {
 	// Eve's Settings cannot take it, and an address that is Ana's is not
 	// linked from Eve's either.
 	state = eve.leave("/api/v1/providers/start", `{"provider":"google","return_to":"/settings/sign-in"}`)
-	if _, to := eve.comeBack(state, hers); to != "/settings#provider_error=provider_in_use" {
+	if _, to := eve.comeBack(state, hers); to != "/settings#provider_error=provider_in_use&provider=google" {
 		t.Fatalf("a provider account of another account: %q", to)
 	}
 	state = eve.leave("/api/v1/providers/start", `{"provider":"github"}`)
-	if _, to := eve.comeBack(state, idp.Identity{Provider: idp.GitHub, Subject: "5150", Address: "ana@example.org", Verified: true}); to != "/settings#provider_error=provider_in_use" {
+	if _, to := eve.comeBack(state, idp.Identity{Provider: idp.GitHub, Subject: "5150", Address: "ana@example.org", Verified: true}); to != "/settings#provider_error=provider_in_use&provider=github" {
 		t.Fatalf("an address that is another account's: %q", to)
 	}
 	if read(t, eve.call("GET", "/api/v1/providers", "", nil), 200, &linked); len(linked.Providers) != 0 {
@@ -446,7 +448,7 @@ func TestLinkedProvidersAPI(t *testing.T) {
 	// While the account is closing nothing of it changes.
 	state = a.leave("/api/v1/providers/start", `{"provider":"google"}`)
 	read(t, a.call("POST", "/api/v1/account/delete", "", nil), 200, nil)
-	if _, to := a.comeBack(state, hers); to != "/settings#provider_error=account_closing" {
+	if _, to := a.comeBack(state, hers); to != "/settings#provider_error=account_closing&provider=google" {
 		t.Fatalf("linking to a closing account: %q", to)
 	}
 	if read(t, a.call("POST", "/api/v1/providers/start", `{"provider":"google"}`, nil), 409, &e); e.Error.Code != "account_closing" {
@@ -476,6 +478,53 @@ func (b brokenProviders) StartProvider(context.Context, *accounts.Authenticated,
 
 func (b brokenProviders) FinishProvider(context.Context, accounts.ProviderAnswer) (*accounts.ProviderDone, error) {
 	return &accounts.ProviderDone{Path: "/sign-in#provider_error=provider_unavailable"}, b.err
+}
+
+// namedProviders is a service whose trips end as a test says.
+type namedProviders struct {
+	httpapi.AccountsService
+	done accounts.ProviderDone
+	err  error
+}
+
+func (n namedProviders) FinishProvider(context.Context, accounts.ProviderAnswer) (*accounts.ProviderDone, error) {
+	return &n.done, n.err
+}
+
+// The callback names the provider of a trip that failed next to the reason,
+// and only ever one of the four fixed identifiers: the fragment holds
+// nothing else, whatever the service answers.
+func TestProviderCallbackNamesTheProvider(t *testing.T) {
+	a := newApp(t)
+	log := slog.New(slog.NewTextHandler(a.logs, nil))
+	failed := "/settings#provider_error=provider_in_use"
+	for _, c := range []struct {
+		name     string
+		provider idp.Provider
+		path     string
+		err      error
+		want     string
+	}{
+		{"google", idp.Google, failed, contracts.ErrProviderInUse, failed + "&provider=google"},
+		{"github", idp.GitHub, failed, contracts.ErrProviderInUse, failed + "&provider=github"},
+		{"meta", idp.Meta, failed, contracts.ErrProviderInUse, failed + "&provider=meta"},
+		{"microsoft", idp.Microsoft, failed, contracts.ErrProviderInUse, failed + "&provider=microsoft"},
+		{"the service's own failure", idp.Google, "/sign-in#provider_error=provider_unavailable", errors.New("down"), "/sign-in#provider_error=provider_unavailable&provider=google"},
+		{"no trip the service knows", "", failed, contracts.ErrProviderFailed, failed},
+		{"not a provider", "apple", failed, contracts.ErrProviderFailed, failed},
+		{"words in its place", "google&linked=google", failed, contracts.ErrProviderFailed, failed},
+		{"an address in its place", "ana@example.org", failed, contracts.ErrProviderFailed, failed},
+		{"another case", "Google", failed, contracts.ErrProviderFailed, failed},
+		// A trip that worked says nothing of its provider: the path is where
+		// the person was going, as it was.
+		{"a trip that worked", idp.Google, "/connections?new=1", nil, "/connections?new=1"},
+		{"linked from Settings", idp.Google, "/settings#linked=google", nil, "/settings#linked=google"},
+	} {
+		a.h = httpapi.AccountsAPI(namedProviders{done: accounts.ProviderDone{Path: c.path, Provider: c.provider}, err: c.err}, log)
+		if _, to := a.back("state=some-state&code=some-code"); to != c.want {
+			t.Errorf("%s: sent to %q, want %q", c.name, to, c.want)
+		}
+	}
 }
 
 func (b brokenProviders) PendingProvider(context.Context, string) (*contracts.ProviderPending, error) {

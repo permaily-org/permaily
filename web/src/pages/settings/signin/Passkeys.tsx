@@ -3,7 +3,13 @@ import { Button, Dialog, TextAction } from '../../../components/ui/index.ts'
 import * as api from '../../../lib/api.ts'
 import { describeDevice } from '../../../lib/device.ts'
 import { actionClass, cx } from '../../../lib/styles.ts'
-import { makePasskey, PasskeyError, type PasskeyProblem } from '../../../lib/webauthn.ts'
+import {
+  credentialId,
+  forgetPasskey,
+  makePasskey,
+  PasskeyError,
+  type PasskeyProblem,
+} from '../../../lib/webauthn.ts'
 import { solidDanger } from '../../accounts/styles.ts'
 import { messageFor } from '../../auth/messages.ts'
 import { field, SettingRow } from '../rows.tsx'
@@ -149,6 +155,8 @@ function PasskeyRow({
         return
       }
     }
+    // The server no longer has it: the authenticator is told, where the browser can, so it stops offering it.
+    forgetPasskey(passkey.id)
     // The row goes with its passkey, so focus moves to the section it was in.
     setRemoving(false)
     section.announce(`Passkey removed: ${passkey.name}`)
@@ -321,7 +329,7 @@ function AddPasskey({
   const leaving = useRef<AbortController | null>(null)
   // The browser's answer, while the server has not taken it: a name it refuses, or no network, asks for the
   // same answer again and not for another passkey.
-  const made = useRef<{ ceremony: string; credential: unknown } | null>(null)
+  const made = useRef<{ ceremony: string; credential: unknown; rpId?: string } | null>(null)
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -351,7 +359,11 @@ function AddPasskey({
     try {
       if (!made.current) {
         const { ceremony, options } = await api.startPasskey()
-        made.current = { ceremony, credential: await makePasskey(options, signal) }
+        made.current = {
+          ceremony,
+          credential: await makePasskey(options, signal),
+          rpId: options.rp?.id,
+        }
       }
       const passkey = await api.finishPasskey(made.current.ceremony, clean, made.current.credential)
       made.current = null
@@ -365,8 +377,18 @@ function AddPasskey({
         setOutcome(problems[failure.kind])
         return
       }
+      const refusal = api.errorCode(failure)
+      // The server said no to the passkey itself, so it does not have it, and the authenticator made it
+      // all the same: it is told, where the browser can, so it stops offering a passkey that signs nobody
+      // in. A failure of the server's own says nothing of whether it kept the passkey, and tells nothing.
+      if (made.current && !['invalid_name', 'network', 'other'].includes(refusal)) {
+        forgetPasskey(credentialId(made.current.credential), made.current.rpId)
+      }
       const code = section.failed(failure)
-      if (!code) return
+      if (!code) {
+        made.current = null
+        return
+      }
       // Only a name to fix, or no answer at all, leaves the browser's answer worth sending again.
       if (code !== 'invalid_name' && code !== 'network') made.current = null
       setOutcome({

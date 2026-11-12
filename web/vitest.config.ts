@@ -1,0 +1,47 @@
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vitest/config'
+
+// Dates are written by Intl in the person's own time zone: the tests have one, so a day reads the same on
+// every machine.
+process.env.TZ = 'UTC'
+
+// The tests have their own configuration and live in tests/, outside src/: nothing of them is part of
+// `tsc -b` or `vite build`, so the built app is the same with or without them (docs/web.md).
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    include: ['tests/**/*.test.{ts,tsx}'],
+    setupFiles: ['tests/setup.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text'],
+      // What talks to the server. The screens on sample data are left out: they are still changing.
+      include: [
+        'src/lib/**',
+        'src/components/SessionGate.tsx',
+        'src/pages/auth/**',
+        'src/pages/settings/signin/**',
+        'src/pages/settings/account/**',
+      ],
+      // The measured values, rounded down. They only go up (docs/testing.md).
+      thresholds: {
+        'src/lib/**': { statements: 98, branches: 96, functions: 100, lines: 100 },
+        'src/components/SessionGate.tsx': {
+          statements: 96,
+          branches: 94,
+          functions: 100,
+          lines: 100,
+        },
+        'src/pages/auth/**': { statements: 97, branches: 94, functions: 98, lines: 100 },
+        'src/pages/settings/signin/**': { statements: 95, branches: 90, functions: 98, lines: 99 },
+        'src/pages/settings/account/**': {
+          statements: 94,
+          branches: 87,
+          functions: 100,
+          lines: 99,
+        },
+      },
+    },
+  },
+})

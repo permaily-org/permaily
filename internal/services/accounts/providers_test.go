@@ -1120,9 +1120,33 @@ func TestProviderReasons(t *testing.T) {
 	// The same failure answers the same on the two screens.
 	done, err := w.svc.FinishProvider(ctx, ProviderAnswer{State: "unknown", Code: "x", Browser: "y"})
 	w.refusedWith("a state nobody started", done, err, contracts.ErrProviderFailed, "/sign-in#provider_error=provider_failed")
+	// A trip the service does not know names no provider.
+	if done.Provider != "" {
+		t.Fatalf("a state nobody started names %q", done.Provider)
+	}
 	state, cookie := w.leave(w.who(eveCookie), contracts.ProviderStart{Provider: "google"})
 	done, err = w.svc.FinishProvider(ctx, ProviderAnswer{State: state, Refused: true, Browser: cookie})
 	w.refusedWith("refused at the provider, from Settings", done, err, contracts.ErrProviderFailed, "/settings#provider_error=provider_failed")
+	// A trip that failed names the provider it was started with, and one
+	// tried again, or in a browser that did not start it, names none.
+	if done.Provider != idp.Google {
+		t.Fatalf("a trip that failed names %q", done.Provider)
+	}
+	if done, _ = w.svc.FinishProvider(ctx, ProviderAnswer{State: state, Refused: true, Browser: cookie}); done.Provider != "" {
+		t.Fatalf("the same state again names %q", done.Provider)
+	}
+	state, _ = w.leave(nil, contracts.ProviderStart{Provider: "meta"})
+	if done, _ = w.svc.FinishProvider(ctx, ProviderAnswer{State: state, Code: "x", Browser: "another-browser"}); done.Provider != "" {
+		t.Fatalf("an answer in another browser names %q", done.Provider)
+	}
+	state, cookie = w.leave(nil, contracts.ProviderStart{Provider: "meta"})
+	if done, _ = w.svc.FinishProvider(ctx, ProviderAnswer{State: state, Refused: true, Browser: cookie}); done.Provider != idp.Meta || done.Path != "/sign-in#provider_error=provider_failed" {
+		t.Fatalf("a sign-in that failed: %+v", done)
+	}
+	// A trip that worked names none: there is nothing to say of it.
+	if done, err = w.through(person(idp.Google, "named-1", "ana@example.org", true), ""); err != nil || done.Provider != "" {
+		t.Fatalf("a trip that worked: %+v %v", done, err)
+	}
 }
 
 // Where the browser goes after the callback is a path of the app, whatever

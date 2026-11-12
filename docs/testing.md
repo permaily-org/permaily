@@ -25,6 +25,7 @@
 | Whole service, dev mode | SMTP client and HTTPS: mail in and read back; an invitation, a sign-up by email, a session and signing out | `cmd/permaily-enclave/main_dev_test.go` | `go test -tags dev ./cmd/permaily-enclave`, CI |
 | Mutation | gremlins | `pkg/attestation` | manual (`mutation` workflow) |
 | Reproducibility | Nix | CI `eif` + `reproducible` jobs | every PR |
+| Web app | Vitest with Testing Library in jsdom, against a played `fetch`: each module of `web/src/lib`, the session gate, every step of signing in (mail and code, the link that asks first, passkey, recovery code, provider, confirming an address, account closing) and the Sign-in and account parts of Settings. Each component test file runs axe (WCAG 2.0 to 2.2, A and AA, without contrast, which jsdom cannot measure) and asserts what must never be stored or left in the address | `web/tests/` ([web.md](web.md), "Tests") | `bun run test` in `web/`, `make check`, CI `web` |
 | Site content | Vitest on the built HTML | `site/tests/` | `bun run test`, Amplify build, CI |
 | Accessibility and CSP | Playwright + axe | `site/e2e/` | `bun run test:e2e`, CI |
 | End to end against production | `permaily-verify` | `scripts/verify.sh` | after each deploy |
@@ -65,6 +66,16 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `internal/webauthn` | 99 | 99.4 (2026-11-11) |
 | `internal/idp` | 100 | 100.0 (2026-11-11) |
 
+Coverage of the web app is in `web/vitest.config.ts`, one threshold for each area that talks to the server, set the same way. The screens on sample data have none: they are still changing.
+
+| Area of `web/src` | Statements, branches, functions, lines | Measured 2026-11-11 |
+|---|---|---|
+| `lib` | 98, 96, 100, 100 | 98.11, 96.13, 100, 100 |
+| `components/SessionGate.tsx` | 96, 94, 100, 100 | 96.29, 94.82, 100, 100 |
+| `pages/auth` | 97, 94, 98, 100 | 97.02, 94.43, 98.93, 100 |
+| `pages/settings/signin` | 95, 90, 98, 99 | 95.15, 90.87, 98.85, 99.47 |
+| `pages/settings/account` | 94, 87, 100, 99 | 94.91, 87.5, 100, 99.06 |
+
 Mutation testing of `pkg/attestation` (gremlins 0.6.0, 2026-11-09): efficacy 100% (29 killed, 0 lived, 22 timed out), mutator coverage 55.77%. Thresholds: efficacy 90, mutator coverage 55.
 
 ## TODO
@@ -73,4 +84,5 @@ Mutation testing of `pkg/attestation` (gremlins 0.6.0, 2026-11-09): efficacy 100
 - [ ] `internal/enclave` and `cmd/*`: test the vsock paths with a loopback vsock in CI or a fake listener (the log sink is tested over TCP).
 - [ ] Raise `pkg/attestation` coverage to 95% (covers the 23 mutants not reached today).
 - [x] A real attestation document captured from the first deployment, committed as a fixture (`pkg/attestation/testdata`), verified in `TestVerifyRealDocument`.
-- [ ] Web app tests (Vitest + Testing Library, axe per component) when it talks to the backend.
+- [x] Web app tests (Vitest + Testing Library, axe per component): `web/tests/`, 395 tests. Twenty changes that break the code on purpose (any address taken by `leaveFor`, any reason or provider taken from the address, an invitation left in storage, focus not moved, and others) each failed at least one test.
+- [ ] Web app tests in a real browser (Playwright, both themes, contrast), once a dev enclave serves the app in CI: see [accessibility.md](accessibility.md).

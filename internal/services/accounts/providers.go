@@ -309,6 +309,10 @@ type ProviderDone struct {
 	// Browser is the value of the cookie of a sign-in that waits for an
 	// address to be confirmed; without it the trip's cookie is dropped.
 	Browser string
+	// Provider is the provider of a trip that failed, for the screen to name
+	// it. It is the one this browser asked for when it started the trip, and
+	// empty when the service knows no such trip any more.
+	Provider idp.Provider
 }
 
 // providerReasons are the reasons a trip to a provider ends with, in the
@@ -348,7 +352,11 @@ func (s *Service) FinishProvider(ctx context.Context, in ProviderAnswer) (*Provi
 	if t != nil && t.account != "" {
 		screen = settingsScreen
 	}
-	return &ProviderDone{Path: screen + errorFragment + providerReason(err)}, err
+	done = &ProviderDone{Path: screen + errorFragment + providerReason(err)}
+	if t != nil {
+		done.Provider = t.provider
+	}
+	return done, err
 }
 
 // arrive returns the trip a state belongs to, when it is still running and
