@@ -133,9 +133,11 @@ func TestPrintKMS(t *testing.T) {
 
 type discard struct{}
 
-func (discard) Accepts(string) bool { return false }
-func (discard) Ingest(context.Context, string, []string, []byte) (string, error) {
+func (discard) Accept(context.Context, string) (string, error) {
 	return "", errors.New("the check must not send mail")
+}
+func (discard) Deliver(context.Context, string, []string, []byte) error {
+	return errors.New("the check must not send mail")
 }
 
 // mailFixture is an enclave-like deployment: one key for the HTTPS policy host

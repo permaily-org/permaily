@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"errors"
 	"log/slog"
 	"net/http"
 
@@ -63,7 +62,7 @@ func accountMailboxRoutes(mux *http.ServeMux, prefix string, op func(*http.Reque
 			return
 		}
 		out, err := m.MailboxRecords(r.Context(), r.PathValue("id"))
-		mailboxAnswer(w, log, out, err)
+		answerWith(w, log, out, err)
 	})
 	mux.HandleFunc(prefix+"/accounts/{id}/mailboxes", refuse(http.MethodGet))
 }
@@ -84,7 +83,7 @@ func mailboxRoutes(mux *http.ServeMux, prefix string, op func(*http.Request) Mai
 			return
 		}
 		out, err := m.MailboxRecordByAddress(r.Context(), addresses[0])
-		mailboxAnswer(w, log, out, err)
+		answerWith(w, log, out, err)
 	})
 	for path, pause := range map[string]bool{"pause": true, "resume": false} {
 		mux.HandleFunc("POST "+prefix+"/mailboxes/{id}/"+path, func(w http.ResponseWriter, r *http.Request) {
@@ -98,22 +97,9 @@ func mailboxRoutes(mux *http.ServeMux, prefix string, op func(*http.Request) Mai
 				act = m.PauseMailbox
 			}
 			out, err := act(r.Context(), r.PathValue("id"))
-			mailboxAnswer(w, log, out, err)
+			answerWith(w, log, out, err)
 		})
 		mux.HandleFunc(prefix+"/mailboxes/{id}/"+path, refuse(http.MethodPost))
 	}
 	mux.HandleFunc(prefix+"/mailboxes", refuse(http.MethodGet))
-}
-
-// mailboxAnswer writes what the service gave, or its error. An error of the
-// service's own is logged with nothing of what it says, which may name a
-// mailbox, its address or an account, and answered with nothing of its own.
-func mailboxAnswer(w http.ResponseWriter, log *slog.Logger, out any, err error) {
-	var known *contracts.Error
-	if err != nil && !errors.As(err, &known) {
-		log.Error("api: internal error in a route of mailboxes")
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-	answerWith(w, log, out, err)
 }

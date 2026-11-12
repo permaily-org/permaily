@@ -47,22 +47,21 @@ var mailboxIDRE = regexp.MustCompile(`^mbx_[a-z0-9]{26}$`)
 
 // mailboxCount is how many mailboxes an account has, none without mailboxes.
 func (s *Service) mailboxCount(ctx context.Context, account string) (int, error) {
-	if s.cfg.Mailboxes == nil {
+	if s.mailboxesOf() == nil {
 		return 0, nil
 	}
-	return s.cfg.Mailboxes.Count(ctx, account)
+	return s.mailboxesOf().Count(ctx, account)
 }
 
 // countMailboxes puts the deployment's mailboxes in the counts, and says
-// whether it could. What failed is logged without what its error says, which
-// may name a mailbox.
+// whether it could. What failed is logged through the one redactor.
 func (s *Service) countMailboxes(ctx context.Context, out *contracts.Stats) bool {
-	if s.cfg.Mailboxes == nil {
+	if s.mailboxesOf() == nil {
 		return true
 	}
-	total, err := s.cfg.Mailboxes.Total(ctx)
+	total, err := s.mailboxesOf().Total(ctx)
 	if err != nil {
-		s.cfg.Log.Error("accounts: the mailboxes could not be counted for the admin panel")
+		s.cfg.Log.Error("accounts: the mailboxes could not be counted for the admin panel", "err", scrub(err))
 		return false
 	}
 	out.Mailboxes.Total = total
@@ -83,10 +82,10 @@ func (s *Service) MailboxRecords(ctx context.Context, accountID string) (*contra
 	if doc == nil {
 		return nil, contracts.ErrNotFound
 	}
-	if s.cfg.Mailboxes == nil {
+	if s.mailboxesOf() == nil {
 		return &contracts.MailboxRecordList{Mailboxes: []contracts.MailboxRecord{}}, nil
 	}
-	return s.cfg.Mailboxes.Records(ctx, accountID)
+	return s.mailboxesOf().Records(ctx, accountID)
 }
 
 // MailboxRecordByAddress is the mailbox an address leads to, as a list of
@@ -103,10 +102,10 @@ func (s *Service) MailboxRecordByAddress(ctx context.Context, address string) (*
 	if address == "" {
 		return nil, contracts.ErrInvalidAddress
 	}
-	if s.cfg.Mailboxes == nil || len(address) > maxLookupAddress {
+	if s.mailboxesOf() == nil || len(address) > maxLookupAddress {
 		return &contracts.MailboxRecordList{Mailboxes: []contracts.MailboxRecord{}}, nil
 	}
-	return s.cfg.Mailboxes.ByAddress(ctx, address)
+	return s.mailboxesOf().ByAddress(ctx, address)
 }
 
 // PauseMailbox makes a mailbox refuse new mail, keeping what it holds; its
@@ -121,19 +120,19 @@ func (s *Service) ResumeMailbox(ctx context.Context, id string) (*contracts.Mail
 }
 
 func (s *Service) pauseMailbox(ctx context.Context, by *acting, id string, pause bool) (*contracts.MailboxRecord, error) {
-	if !mailboxIDRE.MatchString(id) || s.cfg.Mailboxes == nil {
+	if !mailboxIDRE.MatchString(id) || s.mailboxesOf() == nil {
 		return nil, contracts.ErrNotFound
 	}
-	kind, act := ActionMailboxResumed, s.cfg.Mailboxes.Resume
+	kind, act := ActionMailboxResumed, s.mailboxesOf().Resume
 	if pause {
-		kind, act = ActionMailboxPaused, s.cfg.Mailboxes.Pause
+		kind, act = ActionMailboxPaused, s.mailboxesOf().Pause
 	}
 	if by != nil {
 		// Whose it is, from its signed record, and whether this admin may act
 		// on that account: told before being asked to confirm. A mailbox is
 		// never moved to another account, so its owner does not change
 		// between this and the change.
-		rec, err := s.cfg.Mailboxes.Record(ctx, id)
+		rec, err := s.mailboxesOf().Record(ctx, id)
 		if err != nil {
 			return nil, err
 		}

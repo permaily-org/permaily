@@ -38,6 +38,15 @@ func TestCheckAnchors(t *testing.T) {
 		"the store of commits went back": {func(a *attestation.AnchorStatus) {
 			a.Regressions = []attestation.AnchorRegression{{Name: "tls-acme-v02.api.letsencrypt.org", Had: 4, Found: 3, At: now}}
 		}, "had tls-acme-v02.api.letsencrypt.org at version 4, and at 2026-11-11T08:00:00Z the store answered version 3"},
+		"a strict record forked (ADR 0026)": {func(a *attestation.AnchorStatus) {
+			a.Regressions = []attestation.AnchorRegression{{Name: "mailbox", Found: 2, At: now, Fork: true}}
+		}, "a mailbox record has two commits of different digests at version 2"},
+		"a commit S3 does not keep locked (ADR 0026)": {func(a *attestation.AnchorStatus) {
+			a.Regressions = []attestation.AnchorRegression{{Name: "mailbox", Found: 1, At: now, Unlocked: true}}
+		}, "a mailbox record has a commit at version 1 that S3 does not keep locked"},
+		"a strict record whose value is lost (PR #91's review)": {func(a *attestation.AnchorStatus) {
+			a.Regressions = []attestation.AnchorRegression{{Name: "mailbox", Had: 3, Found: 3, At: now, Lost: true}}
+		}, "a mailbox record's newest commit, at version 3, names a value the table no longer holds"},
 	} {
 		a := good()
 		c.change(a)

@@ -142,14 +142,20 @@ resource "cloudflare_dns_record" "mta_sts" {
   comment = "MTA-STS for the enclave MX (managed by OpenTofu)"
 }
 
+variable "tls_rpt_address" {
+  description = "Where senders send SMTP TLS reports: the address of an ordinary mailbox the super admin made for them in the app (ADR 0026, \"The test mailbox: retired\"). Empty writes no TLS-RPT record."
+  type        = string
+  default     = ""
+}
+
 resource "cloudflare_dns_record" "tls_rpt" {
-  count   = var.mail_dns_enabled ? 1 : 0
+  count   = var.mail_dns_enabled && var.tls_rpt_address != "" ? 1 : 0
   zone_id = data.cloudflare_zone.main.zone_id
   name    = "_smtp._tls.inbox.${var.domain}"
   type    = "TXT"
-  content = "\"v=TLSRPTv1; rua=mailto:${jsondecode(file("${path.module}/../enclave.json")).mailbox_address}\""
+  content = "\"v=TLSRPTv1; rua=mailto:${var.tls_rpt_address}\""
   ttl     = 300
-  comment = "SMTP TLS reports, delivered to the test mailbox (managed by OpenTofu)"
+  comment = "SMTP TLS reports, delivered to the TLS reports mailbox (managed by OpenTofu)"
 }
 
 output "mail_table" {

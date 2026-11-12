@@ -792,3 +792,38 @@ func TestCreateNewAroundWhatIsNotACommit(t *testing.T) {
 		t.Fatalf("history %+v, %v", h, err)
 	}
 }
+
+// PR #91's review, finding 1: a strict record whose newest value is gone
+// reads as ErrLost on every enclave and is reported once per enclave, as a
+// fork is, so /status shows it (attestation.AnchorRegression.Lost). A record
+// that is not strict reports nothing new.
+func TestReview1ALostStrictRecordIsReported(t *testing.T) {
+	ctx := context.Background()
+	records, commits := store.NewMemory(), store.NewMemoryCommits()
+	a := &store.Anchored{Records: records, Commits: commits, OnlyNewest: true, Strict: true}
+	if err := a.CreateNew(ctx, rec("mailboxes-acc", "made")); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range records.RecordNames() {
+		if strings.HasPrefix(n, "mailboxes-acc@") {
+			_ = records.DeleteRecord(ctx, n)
+		}
+	}
+	b := &store.Anchored{Records: records, Commits: commits, OnlyNewest: true, Strict: true}
+	for i, e := range []*store.Anchored{a, b} {
+		for range 2 {
+			if _, err := e.GetRecord(ctx, "mailboxes-acc"); !errors.Is(err, store.ErrLost) {
+				t.Fatalf("enclave %d: %v", i, err)
+			}
+		}
+		r := e.Regressions()
+		if len(r) != 1 || !r[0].Lost || r[0].Name != "mailboxes-acc" || r[0].Found != 1 || r[0].Fork || r[0].Unlocked {
+			t.Fatalf("enclave %d: %+v", i, r)
+		}
+	}
+	lax := &store.Anchored{Records: records, Commits: commits, OnlyNewest: true}
+	_, _ = lax.GetRecord(ctx, "mailboxes-acc")
+	if r := lax.Regressions(); len(r) != 0 {
+		t.Fatalf("a record that is not strict: %+v", r)
+	}
+}

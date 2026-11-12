@@ -4,9 +4,9 @@
 // inside the enclave), serves app./api./mcp./inbox./mta-sts.inbox. by Host,
 // answers GET /attestation?nonce=<hex> with an NSM attestation document whose
 // user_data is the SHA-256 of the TLS certificate's SPKI, reports the key that
-// holds its root secret on GET /status, and (F1) receives mail for the mailbox
-// over SMTP, encrypting it under a root secret that only an enclave running a
-// public release can obtain (ADR 0013).
+// holds its root secret on GET /status, and receives mail for the mailboxes of
+// accounts over SMTP (ADR 0026), encrypting it under a root secret that only
+// an enclave running a public release can obtain (ADR 0013).
 //
 // Build with -tags dev to run locally over TCP with a self-signed certificate,
 // a fake attester, local keys and an in-memory store.
@@ -28,8 +28,9 @@ import (
 
 	"github.com/permaily-org/permaily/internal/buildinfo"
 	"github.com/permaily-org/permaily/internal/httpapi"
-	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/router"
+	"github.com/permaily-org/permaily/internal/services/accounts"
+	"github.com/permaily-org/permaily/internal/services/mailboxes"
 	"github.com/permaily-org/permaily/internal/smtpd"
 	"github.com/permaily-org/permaily/internal/webui"
 	"github.com/permaily-org/permaily/pkg/attestation"
@@ -42,15 +43,14 @@ type config struct {
 	port          uint32
 	egressPort    uint32
 
-	// F1 mailbox. All of it is compiled into the image (entry point flags).
-	mailboxID          string
-	mailboxAddress     string
-	mailboxTokenSHA256 string
-	smtpPort           uint32
-	mtaSTSMode         string
-	awsRegion          string
-	dynamoTable        string
-	s3Bucket           string
+	// Storage and mail. All of it is compiled into the image (entry point
+	// flags): storage and SMTP are on whenever a table is named, and the
+	// mailboxes of accounts whenever accounts are (mailFrom).
+	smtpPort    uint32
+	mtaSTSMode  string
+	awsRegion   string
+	dynamoTable string
+	s3Bucket    string
 	// Where the commits of the records that must not go back are kept (ADR 0016).
 	anchorBucket        string
 	anchorRetentionDays int
@@ -81,9 +81,6 @@ func main() {
 	flag.Func("egress-port", "vsock port of the host's CONNECT proxy (default 8000)", uint32Flag(&cfg.egressPort))
 	flag.Func("smtp-port", "SMTP listen port (vsock in the enclave, TCP in dev mode) (default 25)", uint32Flag(&cfg.smtpPort))
 	flag.Func("credentials-port", "vsock port of the host's credentials endpoint (default 8002)", uint32Flag(&cfg.credentialsPort))
-	flag.StringVar(&cfg.mailboxID, "mailbox-id", "", "id of the mailbox (F1 test mailbox); empty disables mail")
-	flag.StringVar(&cfg.mailboxAddress, "mailbox-address", "", "email address of the mailbox")
-	flag.StringVar(&cfg.mailboxTokenSHA256, "mailbox-token-sha256", "", "hex SHA-256 of the bearer token that reads the mailbox")
 	flag.StringVar(&cfg.mtaSTSMode, "mta-sts-mode", "testing", "MTA-STS policy mode: testing or enforce")
 	flag.StringVar(&cfg.awsRegion, "aws-region", "us-east-2", "AWS region of KMS, DynamoDB and S3")
 	flag.StringVar(&cfg.awsAccount, "aws-account", "", "AWS account that holds the KMS key of each release (pinned)")
@@ -94,7 +91,7 @@ func main() {
 	flag.StringVar(&cfg.releases.Workflow, "release-workflow", "", "path of the workflow that publishes releases")
 	flag.StringVar(&cfg.releases.Ref, "release-ref", "", "the git ref whose runs of that workflow are releases")
 	flag.StringVar(&cfg.releases.RefPrefix, "release-ref-prefix", "", "instead of -release-ref: every ref that starts with this (test images)")
-	flag.StringVar(&cfg.dynamoTable, "dynamodb-table", "", "DynamoDB table for mailboxes and messages")
+	flag.StringVar(&cfg.dynamoTable, "dynamodb-table", "", "DynamoDB table for accounts, mailboxes and messages; empty leaves storage and SMTP off")
 	flag.StringVar(&cfg.s3Bucket, "s3-bucket", "", "S3 bucket for raw messages")
 	flag.StringVar(&cfg.anchorBucket, "anchor-bucket", "", "S3 bucket with Object Lock for the commits of the records that must not be put back to an earlier copy")
 	flag.IntVar(&cfg.anchorRetentionDays, "anchor-retention-days", 0, "days S3 keeps each commit, whatever anyone asks")
@@ -116,6 +113,35 @@ func main() {
 // host. It is registered with each provider, to the letter.
 const providerCallback = "/api/v1/auth/provider/callback"
 
+// keyRoutes mounts the operator's handoff of the root secret to the next
+// release, and a newer trust root of Sigstore's, each when the platform has
+// it: on their own conditions, whatever else the image runs.
+func keyRoutes(api *http.ServeMux, cfg config, p *platform, log *slog.Logger) {
+	if p.handoff != nil {
+		api.Handle("/v1/admin/handoff", httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Handoff(p.handoff, log)))
+	}
+	if p.updateTrust != nil {
+		api.Handle("/v1/admin/trust-root", httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.TrustRoot(p.updateTrust)))
+	}
+}
+
+// The mailboxes service is what three adapters ask, and accounts asks it.
+var (
+	_ httpapi.MailboxesService = (*mailboxes.Service)(nil)
+	_ accounts.Mailboxes       = (*mailboxes.Service)(nil)
+	_ smtpd.Recipients         = (*mailboxes.Service)(nil)
+	_ mailboxes.Accounts       = (*accounts.Service)(nil)
+)
+
+// nobody is the recipients of an image without mailboxes: every address is
+// refused like one never made.
+type nobody struct{}
+
+func (nobody) Accept(context.Context, string) (string, error) { return "", mailboxes.ErrNoSuchMailbox }
+func (nobody) Deliver(context.Context, string, []string, []byte) error {
+	return mailboxes.ErrNotAllStored
+}
+
 func uint32Flag(dst *uint32) func(string) error {
 	return func(s string) error {
 		v, err := strconv.ParseUint(s, 10, 32)
@@ -136,7 +162,7 @@ func run(cfg config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	log.Info("starting", "commit", buildinfo.Commit, "mode", p.mode, "hosts", hosts.All(), "acme", cfg.acmeDirectory, "mailbox", cfg.mailboxID != "")
+	log.Info("starting", "commit", buildinfo.Commit, "mode", p.mode, "hosts", hosts.All(), "acme", cfg.acmeDirectory, "smtp", p.smtpListener != nil, "mailboxes", p.mailboxes != nil)
 
 	api := http.NewServeMux()
 	api.Handle("/", router.Hello("api"))
@@ -179,23 +205,18 @@ func run(cfg config, log *slog.Logger) error {
 		api.Handle("/v1/admin/mailboxes/", mailboxesOf)
 	}
 
-	if cfg.mailboxID != "" {
-		mailbox := inbox.New(inbox.Config{MailboxID: cfg.mailboxID, Address: cfg.mailboxAddress}, p.store, p.keys, p.auth, log)
-		go func() {
-			// Create or unlock the mailbox early; operations retry lazily if KMS is not reachable yet.
-			if err := mailbox.Ensure(ctx); err != nil {
-				log.Error("inbox: ensure mailbox", "err", err)
-			}
-		}()
-		api.Handle("/v1/", httpapi.TokenAuth(cfg.mailboxTokenSHA256, httpapi.MailboxAPI(mailbox)))
-		if p.handoff != nil {
-			api.Handle("/v1/admin/handoff", httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Handoff(p.handoff, log)))
-		}
-		if p.updateTrust != nil {
-			api.Handle("/v1/admin/trust-root", httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.TrustRoot(p.updateTrust)))
-		}
+	keyRoutes(api, cfg, p, log)
 
-		smtpSrv := smtpd.New(mailbox, smtpd.Config{Domain: hosts.Inbox, TLS: p.certs.TLSConfig()}, log)
+	if p.mailboxes != nil {
+		// Every enclave sweeps what disconnected mailboxes left.
+		go p.mailboxes.Run(ctx)
+	}
+	if p.smtpListener != nil {
+		var recipients smtpd.Recipients = nobody{}
+		if p.mailboxes != nil {
+			recipients = p.mailboxes
+		}
+		smtpSrv := smtpd.New(recipients, smtpd.Config{Domain: hosts.Inbox, TLS: p.certs.TLSConfig()}, log)
 		go func() {
 			if err := smtpSrv.Serve(p.smtpListener); err != nil && ctx.Err() == nil {
 				log.Error("smtpd: stopped", "err", err)

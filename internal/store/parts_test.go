@@ -733,3 +733,38 @@ type failingGets struct {
 func (f *failingGets) GetItem(context.Context, *dynamodb.GetItemInput, ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
 	return nil, f.err
 }
+
+// PR #91's review, finding 4: on DynamoDB a mailbox's messages and its
+// entries share a partition, so a listing of entries without a prefix reads
+// the message rows too; the memory store keeps them apart. The sweep lists
+// entries only by their kinds' prefixes, and deletes messages only through
+// DeleteMessage, the raw object first (services/mailboxes, clean).
+func TestReview4ListingEntriesWithoutAPrefixReadsMessages(t *testing.T) {
+	s, _ := emulated(t)
+	ctx := context.Background()
+	m := &Message{MailboxID: "mbx_x", ID: strings.Repeat("a", 32), ReceivedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), Size: 1, RetentionDays: 90, Meta: []byte("m")}
+	if err := s.PutRaw(ctx, m, []byte("raw")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutItem(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutEntry(ctx, &Entry{Partition: "mailbox#mbx_x", Key: "txt#" + m.ID, Value: []byte("t")}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := s.ListEntries(ctx, "mailbox#mbx_x", "", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, e := range all {
+		keys = append(keys, e.Key)
+	}
+	if len(keys) != 2 || keys[0] != "msg#"+m.ID || keys[1] != "txt#"+m.ID {
+		t.Fatalf("%v", keys)
+	}
+	kind, err := s.ListEntries(ctx, "mailbox#mbx_x", "txt#", "", 10)
+	if err != nil || len(kind) != 1 {
+		t.Fatalf("%v %v", kind, err)
+	}
+}

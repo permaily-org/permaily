@@ -419,7 +419,8 @@ func TestTheMailboxRoutesInternalErrors(t *testing.T) {
 	if !strings.Contains(logs.String(), "api: internal error") {
 		t.Fatalf("not logged:\n%s", logs.String())
 	}
-	for _, s := range []string{"secret", "inbox.permaily", "mbx_", "acc_", "mailboxes down"} {
+	// Logged through the one redactor: what kind of identifier, never which.
+	for _, s := range []string{"secret", "inbox.permaily", "mbx_a", "acc_a"} {
 		if strings.Contains(logs.String(), s) {
 			t.Fatalf("logged %q:\n%s", s, logs.String())
 		}
@@ -432,7 +433,7 @@ func TestTheMailboxRoutesInternalErrors(t *testing.T) {
 	}{nil, brokenMailboxes{}}, slog.New(slog.NewTextHandler(&logs, nil))))
 	rec := httptest.NewRecorder()
 	accountsH.ServeHTTP(rec, httptest.NewRequest("GET", "https://api.permaily.test/v1/admin/accounts/acc_aaaaaaaaaaaaaaaaaaaaaaaaaa/mailboxes", nil))
-	if rec.Code != 500 || strings.Contains(logs.String(), "mbx_") || strings.Contains(logs.String(), "acc_aaaa") {
+	if rec.Code != 500 || strings.Contains(logs.String(), "mbx_a") || strings.Contains(logs.String(), "acc_a") || strings.Contains(logs.String(), "secret") {
 		t.Fatalf("%d %s\n%s", rec.Code, rec.Body, logs.String())
 	}
 }

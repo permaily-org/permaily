@@ -388,50 +388,51 @@ func TestAccountsWithoutMailboxes(t *testing.T) {
 	}
 }
 
-// failingMailboxes is a mailboxes service whose every call fails, with an
+// brokenMailboxes is a mailboxes service whose every call fails, with an
 // error that names an address, an account and a mailbox, as a storage error
 // might.
-type failingMailboxes struct{ *mailboxestest.Fake }
+type brokenMailboxes struct{ *mailboxestest.Fake }
 
-var errMailboxesDown = errors.New("mailboxes down: secret@inbox.permaily.test mbx_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+var errMailboxesBroken = errors.New("mailboxes down: secret@inbox.permaily.test mbx_aaaaaaaaaaaaaaaaaaaaaaaaaa")
 
-func (failingMailboxes) Count(context.Context, string) (int, error) { return 0, errMailboxesDown }
-func (failingMailboxes) Total(context.Context) (int, error)         { return 0, errMailboxesDown }
-func (failingMailboxes) Records(context.Context, string) (*contracts.MailboxRecordList, error) {
-	return nil, errMailboxesDown
+func (brokenMailboxes) Count(context.Context, string) (int, error) { return 0, errMailboxesBroken }
+func (brokenMailboxes) Total(context.Context) (int, error)         { return 0, errMailboxesBroken }
+func (brokenMailboxes) Records(context.Context, string) (*contracts.MailboxRecordList, error) {
+	return nil, errMailboxesBroken
 }
-func (failingMailboxes) ByAddress(context.Context, string) (*contracts.MailboxRecordList, error) {
-	return nil, errMailboxesDown
+func (brokenMailboxes) ByAddress(context.Context, string) (*contracts.MailboxRecordList, error) {
+	return nil, errMailboxesBroken
 }
-func (failingMailboxes) Record(context.Context, string) (*contracts.MailboxRecord, error) {
-	return nil, errMailboxesDown
+func (brokenMailboxes) Record(context.Context, string) (*contracts.MailboxRecord, error) {
+	return nil, errMailboxesBroken
 }
-func (failingMailboxes) Pause(context.Context, string) (*contracts.MailboxRecord, error) {
-	return nil, errMailboxesDown
+func (brokenMailboxes) Pause(context.Context, string) (*contracts.MailboxRecord, error) {
+	return nil, errMailboxesBroken
 }
 
 // When the mailboxes service fails, what was asked fails with its error
-// (which the adapter does not log) and nothing is counted or written; the
-// counts say they are not complete.
+// (which the adapter logs, redacted) and nothing is counted or written; the
+// counts say they are not complete, and their failure is logged through the
+// one redactor.
 func TestWhenTheMailboxesServiceFails(t *testing.T) {
 	w, ctx := newWorld(t), context.Background()
-	w.svc.SetMailboxes(failingMailboxes{mailboxestest.New()})
+	w.svc.SetMailboxes(brokenMailboxes{mailboxestest.New()})
 	boss := w.account(superAdmin, true)
 	me, _ := w.signUp("ann@example.org")
 	before := w.logs.Len()
-	if _, err := w.svc.AccountRecord(ctx, me.Account.ID); !errors.Is(err, errMailboxesDown) {
+	if _, err := w.svc.AccountRecord(ctx, me.Account.ID); !errors.Is(err, errMailboxesBroken) {
 		t.Fatalf("record: %v", err)
 	}
-	if _, err := w.svc.MailboxRecords(ctx, me.Account.ID); !errors.Is(err, errMailboxesDown) {
+	if _, err := w.svc.MailboxRecords(ctx, me.Account.ID); !errors.Is(err, errMailboxesBroken) {
 		t.Fatalf("records: %v", err)
 	}
-	if _, err := w.svc.MailboxRecordByAddress(ctx, "x@inbox.permaily.test"); !errors.Is(err, errMailboxesDown) {
+	if _, err := w.svc.MailboxRecordByAddress(ctx, "x@inbox.permaily.test"); !errors.Is(err, errMailboxesBroken) {
 		t.Fatalf("by address: %v", err)
 	}
-	if _, err := w.svc.PauseMailbox(ctx, "mbx_aaaaaaaaaaaaaaaaaaaaaaaaaa"); !errors.Is(err, errMailboxesDown) {
+	if _, err := w.svc.PauseMailbox(ctx, "mbx_aaaaaaaaaaaaaaaaaaaaaaaaaa"); !errors.Is(err, errMailboxesBroken) {
 		t.Fatalf("pause: %v", err)
 	}
-	if _, err := w.as(boss).PauseMailbox(ctx, "mbx_aaaaaaaaaaaaaaaaaaaaaaaaaa"); !errors.Is(err, errMailboxesDown) {
+	if _, err := w.as(boss).PauseMailbox(ctx, "mbx_aaaaaaaaaaaaaaaaaaaaaaaaaa"); !errors.Is(err, errMailboxesBroken) {
 		t.Fatalf("an admin's pause: %v", err)
 	}
 	stats, err := w.svc.Stats(ctx)
@@ -439,10 +440,10 @@ func TestWhenTheMailboxesServiceFails(t *testing.T) {
 		t.Fatalf("stats: %+v %v", stats, err)
 	}
 	logged := w.logs.String()[before:]
-	if strings.Contains(logged, "inbox.permaily") || strings.Contains(logged, "mbx_") {
+	if strings.Contains(logged, "inbox.permaily") || strings.Contains(logged, "secret") || strings.Contains(logged, "mbx_a") {
 		t.Fatalf("logged what the error says:\n%s", logged)
 	}
-	if !strings.Contains(logged, "mailboxes could not be counted") {
+	if !strings.Contains(logged, "mailboxes could not be counted") || !strings.Contains(logged, "mbx_…") {
 		t.Fatalf("the counts' failure is not logged:\n%s", logged)
 	}
 	_, actions := w.svc.OperatorActions()

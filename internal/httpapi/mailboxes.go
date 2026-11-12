@@ -62,10 +62,13 @@ type MailboxesService interface {
 	// before the slot is freed and before it answers: a readable record goes
 	// through disconnecting; a lost one is removed directly. A mailbox of the
 	// caller's that is disconnected already, by this request or another, is
-	// nil: the answer is the same. One whose record is forked takes no
-	// commit: contracts.ErrMailboxForked, and it stays listed and counted.
-	// One that is not the caller's, or never existed, is
-	// contracts.ErrNotFound, the same for both.
+	// nil, the same answer, until the sweep's last pass has removed it
+	// (mailboxes.SweepGrace after the disconnect, or later): from then it
+	// cannot be told from a mailbox never made, and is contracts.ErrNotFound
+	// to everyone, its owner included. No permanent receipt is kept. One
+	// whose record is forked takes no commit: contracts.ErrMailboxForked,
+	// and it stays listed and counted. One that is not the caller's, or
+	// never existed, is contracts.ErrNotFound, the same for both.
 	Disconnect(ctx context.Context, c mailboxes.Caller, id string) error
 	// Open checks that the mailbox is the caller's, that its record can be
 	// read and that the account's standing allows a, and returns it opened
