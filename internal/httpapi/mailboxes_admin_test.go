@@ -363,7 +363,9 @@ func TestTheOperatorsMailboxes(t *testing.T) {
 	if srec.Code != 200 || json.Unmarshal(srec.Body.Bytes(), &st) != nil || st.Admin == nil {
 		t.Fatalf("status: %d %s", srec.Code, srec.Body)
 	}
-	if st.Admin.Actions[attestation.AdminMailboxPaused] != 2 || st.Admin.Actions[attestation.AdminMailboxResumed] != 1 {
+	// Pause, pause again, resume: the second pause changed nothing and is
+	// not counted.
+	if st.Admin.Actions[attestation.AdminMailboxPaused] != 1 || st.Admin.Actions[attestation.AdminMailboxResumed] != 1 {
 		t.Fatalf("counted: %+v", st.Admin.Actions)
 	}
 	for _, s := range append(secrets, box.ID, carl.Account.ID, "mbx_", "acc_") {

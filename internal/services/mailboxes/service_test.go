@@ -132,7 +132,7 @@ func TestTheLogHoldsNothingOfAnyone(t *testing.T) {
 	})
 	_ = b.deliver(t, message("Fails"), m.Address)
 	w.setInterrupt(nil)
-	_, _ = a.Pause(ctx, n.ID)
+	_, _, _ = a.Pause(ctx, n.ID)
 	_ = a.Disconnect(ctx, me, m.ID)
 	w.clock.add(mailboxes.SweepGrace)
 	sweepAll(t, b)
@@ -200,7 +200,7 @@ func TestStandingAndAccess(t *testing.T) {
 		if _, err := a.Record(ctx, id); !errors.Is(err, contracts.ErrNotFound) {
 			t.Errorf("%q: %v", id, err)
 		}
-		if _, err := a.Pause(ctx, id); !errors.Is(err, contracts.ErrNotFound) {
+		if _, _, err := a.Pause(ctx, id); !errors.Is(err, contracts.ErrNotFound) {
 			t.Errorf("%q: %v", id, err)
 		}
 	}
@@ -426,8 +426,8 @@ func TestEveryFailureIsAnError(t *testing.T) {
 		_ = e.deliver(w.t, message("one"), m.Address, n.Address)
 		_ = e.deliver(w.t, []byte("From: forwarding-noreply@google.com\r\nTo: "+m.Address+"\r\nSubject: hi\r\n\r\nConfirmation code: 123456789\r\n"), m.Address)
 		_, _ = e.Get(ctx, me, m.ID)
-		_, _ = e.Pause(ctx, n.ID)
-		_, _ = e.Resume(ctx, n.ID)
+		_, _, _ = e.Pause(ctx, n.ID)
+		_, _, _ = e.Resume(ctx, n.ID)
 		_, _ = e.Record(ctx, n.ID)
 		_, _ = e.Records(ctx, me.Account)
 		_, _ = e.ByAddress(ctx, n.Address)
@@ -738,7 +738,7 @@ func TestEverythingKeepsChanging(t *testing.T) {
 	if _, err := a.Create(ctx, me, contracts.MailboxCreate{}); err == nil {
 		t.Fatal("create")
 	}
-	if _, err := a.Pause(ctx, m.ID); err == nil {
+	if _, _, err := a.Pause(ctx, m.ID); err == nil {
 		t.Fatal("pause")
 	}
 	if err := a.Disconnect(ctx, me, m.ID); err == nil {

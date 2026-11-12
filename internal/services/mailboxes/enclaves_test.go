@@ -314,7 +314,7 @@ func TestM9DisconnectAndPause(t *testing.T) {
 		}
 		return nil
 	})
-	_, errB = b.Pause(ctx, m.ID)
+	_, _, errB = b.Pause(ctx, m.ID)
 	if !errors.Is(errB, contracts.ErrNotFound) {
 		t.Fatalf("pause of a disconnecting mailbox: %v", errB)
 	}
@@ -322,7 +322,7 @@ func TestM9DisconnectAndPause(t *testing.T) {
 	a.records.set(func(op, name string) error {
 		if op == "put" && isMailbox(name) {
 			a.records.set(nil)
-			if _, err := b.Pause(ctx, n.ID); err != nil {
+			if _, _, err := b.Pause(ctx, n.ID); err != nil {
 				t.Error(err)
 			}
 		}
@@ -497,7 +497,7 @@ func TestM14OneRecipientPausedMeanwhile(t *testing.T) {
 	x, y := a.mustCreate(t, me), a.mustCreate(t, me)
 	ix, _ := a.Accept(ctx, x.Address)
 	iy, _ := a.Accept(ctx, y.Address)
-	if _, err := b.Pause(ctx, y.ID); err != nil {
+	if _, _, err := b.Pause(ctx, y.ID); err != nil {
 		t.Fatal(err)
 	}
 	raw := message("both")
@@ -595,7 +595,7 @@ func TestM18PausedOnOneEnclaveRefusedOnTheOther(t *testing.T) {
 	a, b := w.enclave(), w.enclave()
 	me := caller("acc_me", w.clock)
 	m := a.mustCreate(t, me)
-	if _, err := a.Pause(ctx, m.ID); err != nil {
+	if _, _, err := a.Pause(ctx, m.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := b.deliver(t, message("paused"), m.Address); !errors.Is(err, mailboxes.ErrNoSuchMailbox) {
@@ -604,7 +604,7 @@ func TestM18PausedOnOneEnclaveRefusedOnTheOther(t *testing.T) {
 	if got, _ := a.Get(ctx, me, m.ID); got.State != contracts.MailboxPaused {
 		t.Fatal(got.State)
 	}
-	if _, err := b.Resume(ctx, m.ID); err != nil {
+	if _, _, err := b.Resume(ctx, m.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.deliver(t, message("resumed"), m.Address); err != nil {

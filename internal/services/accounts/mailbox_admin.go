@@ -131,7 +131,10 @@ func (s *Service) pauseMailbox(ctx context.Context, by *acting, id string, pause
 		// Whose it is, from its signed record, and whether this admin may act
 		// on that account: told before being asked to confirm. A mailbox is
 		// never moved to another account, so its owner does not change
-		// between this and the change.
+		// between this and the change. Its role may, and is not checked
+		// again: an owner made an admin in between has the change commit, as
+		// the allowed order "change, then promotion" would (ADR 0026, "What
+		// the operator and admins see and do").
 		rec, err := s.mailboxesOf().Record(ctx, id)
 		if err != nil {
 			return nil, err
@@ -151,12 +154,16 @@ func (s *Service) pauseMailbox(ctx context.Context, by *acting, id string, pause
 	if err := by.changing(); err != nil {
 		return nil, err
 	}
-	rec, err := act(ctx, id)
+	rec, changed, err := act(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	s.acted(kind, 1)
-	s.logged(ctx, by, logDoc{Kind: kind, Account: rec.Account, Mailbox: rec.ID})
+	// Counted and logged by the call that committed the change, and by no
+	// other: one that found it done already answers it as it is.
+	if changed {
+		s.acted(kind, 1)
+		s.logged(ctx, by, logDoc{Kind: kind, Account: rec.Account, Mailbox: rec.ID})
+	}
 	return rec, nil
 }
 

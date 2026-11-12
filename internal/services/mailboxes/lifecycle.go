@@ -599,10 +599,12 @@ func (s *Service) Disconnect(ctx context.Context, c Caller, id string) error {
 			if err != nil {
 				return err
 			}
+			// Committed: this call tells its person now, before any step that
+			// can fail; a retry finds it disconnected and tells nobody.
+			s.notify(ctx, c.Account, NoticeDisconnected, at)
 			if err := s.leave(ctx, l, c.Account, l.doc.Rcpt); err != nil {
 				return err
 			}
-			s.notify(ctx, c.Account, NoticeDisconnected, at)
 			s.wake()
 			return nil
 		case stDisconnecting, stCancelled:
@@ -628,13 +630,14 @@ func (s *Service) Disconnect(ctx context.Context, c Caller, id string) error {
 			} else if err != nil {
 				return err
 			}
+			// Removed: told now, as a readable one is.
+			s.notify(ctx, c.Account, NoticeDisconnected, at)
 			if err := s.takeOut(ctx, c.Account, id); err != nil {
 				return err
 			}
 			if err := s.unpoint(ctx, entry.Rcpt, id); err != nil {
 				return err
 			}
-			s.notify(ctx, c.Account, NoticeDisconnected, at)
 			s.wake()
 			return nil
 		case stForked:

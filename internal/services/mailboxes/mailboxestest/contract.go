@@ -28,8 +28,8 @@ type Service interface {
 	Records(ctx context.Context, accountID string) (*contracts.MailboxRecordList, error)
 	ByAddress(ctx context.Context, address string) (*contracts.MailboxRecordList, error)
 	Record(ctx context.Context, id string) (*contracts.MailboxRecord, error)
-	Pause(ctx context.Context, id string) (*contracts.MailboxRecord, error)
-	Resume(ctx context.Context, id string) (*contracts.MailboxRecord, error)
+	Pause(ctx context.Context, id string) (*contracts.MailboxRecord, bool, error)
+	Resume(ctx context.Context, id string) (*contracts.MailboxRecord, bool, error)
 }
 
 // Subject is one implementation under the contract, fresh for each case,
@@ -294,7 +294,7 @@ var contractCases = []contractCase{
 		is(t, "get", err, contracts.ErrNotFound)
 		_, err = s.Service.Record(ctx, m.ID)
 		is(t, "record", err, contracts.ErrNotFound)
-		_, err = s.Service.Pause(ctx, m.ID)
+		_, _, err = s.Service.Pause(ctx, m.ID)
 		is(t, "pause", err, contracts.ErrNotFound)
 		if len(listed(t, s, me)) != 0 || count(t, s, me.Account) != 0 {
 			t.Error("a disconnected mailbox is listed or counted")
@@ -343,7 +343,7 @@ var contractCases = []contractCase{
 		}
 		_, err := s.Service.Open(ctx, me, m.ID, mailboxes.AccessDownload)
 		is(t, "open", err, contracts.ErrMailboxUnreadable)
-		_, err = s.Service.Pause(ctx, m.ID)
+		_, _, err = s.Service.Pause(ctx, m.ID)
 		is(t, "pause", err, contracts.ErrNotFound)
 		is(t, "remove the account", s.Service.RemoveAccount(ctx, me.Account), nil)
 		r, err := s.Service.Records(ctx, me.Account)
@@ -397,31 +397,37 @@ var contractCases = []contractCase{
 			t.Errorf("by an unknown address %+v %v", none, err)
 		}
 	}},
-	{"C15 pausing: ten changes in thirty days, a notice for each, mail still readable", func(t *testing.T, s *Subject) {
+	{"C15 pausing: ten changes in thirty days, a notice for each, mail still readable, and only a change says it changed", func(t *testing.T, s *Subject) {
 		me := caller("acc_me")
 		m := create(t, s, me)
 		for i := range mailboxes.MaxStateChangesPerPeriod {
 			var err error
 			if i%2 == 0 {
-				_, err = s.Service.Pause(ctx, m.ID)
+				_, _, err = s.Service.Pause(ctx, m.ID)
 			} else {
-				_, err = s.Service.Resume(ctx, m.ID)
+				_, _, err = s.Service.Resume(ctx, m.ID)
 			}
 			is(t, "change", err, nil)
 		}
-		r, err := s.Service.Resume(ctx, m.ID)
-		if err != nil || r.State == contracts.MailboxPaused {
-			t.Errorf("resuming one that runs: %+v %v", r, err)
+		r, changed, err := s.Service.Resume(ctx, m.ID)
+		if err != nil || r.State == contracts.MailboxPaused || changed {
+			t.Errorf("resuming one that runs: %+v %v %v", r, changed, err)
 		}
-		_, err = s.Service.Pause(ctx, m.ID)
+		_, _, err = s.Service.Pause(ctx, m.ID)
 		is(t, "an eleventh", err, contracts.ErrTooManyRequests)
 		if got := kinds(s); len(got) != 1+mailboxes.MaxStateChangesPerPeriod {
 			t.Errorf("notices %v", got)
 		}
 		s.SetNow(contractStart.Add(mailboxes.Period))
-		r, err = s.Service.Pause(ctx, m.ID)
-		if err != nil || r.State != contracts.MailboxPaused {
-			t.Fatalf("thirty days later: %+v %v", r, err)
+		r, changed, err = s.Service.Pause(ctx, m.ID)
+		if err != nil || r.State != contracts.MailboxPaused || !changed {
+			t.Fatalf("thirty days later: %+v %v %v", r, changed, err)
+		}
+		// Pausing it again changes nothing, says so, and tells nobody.
+		n := len(kinds(s))
+		r, changed, err = s.Service.Pause(ctx, m.ID)
+		if err != nil || r.State != contracts.MailboxPaused || changed || len(kinds(s)) != n {
+			t.Fatalf("pausing a paused one: %+v %v %v", r, changed, err)
 		}
 		late := mailboxes.Caller{Account: me.Account, ConfirmedUntil: contractStart.Add(mailboxes.Period + time.Hour)}
 		_, err = s.Service.Open(ctx, late, m.ID, mailboxes.AccessReadMessage)

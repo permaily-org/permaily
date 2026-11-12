@@ -57,6 +57,13 @@ const supportAddress = "support@permaily.com"
 // are sent or when noticeWait has passed, whichever is first. It returns
 // nothing: what caused the notice is done already.
 func (s *Service) notify(ctx context.Context, kind string, mails ...Mail) {
+	s.notifyBy(ctx, time.Now().Add(s.noticeWait), kind, mails...)
+}
+
+// notifyBy is notify within a deadline set before it was called: a notice
+// that read something first spends one budget on the read and the sending
+// together, never one for each.
+func (s *Service) notifyBy(ctx context.Context, deadline time.Time, kind string, mails ...Mail) {
 	select {
 	case s.noticing <- struct{}{}:
 	default:
@@ -65,7 +72,7 @@ func (s *Service) notify(ctx context.Context, kind string, mails ...Mail) {
 	}
 	// The request may end before the notice is sent, and the wait ends the
 	// sending too: a mail system that does not answer holds nothing.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.noticeWait)
+	ctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
 	done := make(chan sending, 1)
 	s.work.Add(1)
 	go func() {
@@ -331,20 +338,21 @@ func mailboxMail(to, app string, kind mailboxes.NoticeKind, moment time.Time) Ma
 // MailboxNotice tells an account's person of what happened to one of its
 // mailboxes, at its contact address: it implements mailboxes.Notifier. It is
 // called after the change is stored, fails nothing and holds its caller back
-// no longer than any notice (notify): the account is read within that wait
-// too. One that cannot be sent, for an account that is gone or a kind there
-// is no notice of, is logged by its kind alone.
+// no longer than any notice (notify): one deadline covers the read of the
+// account and the sending. One that cannot be sent, for an account that is
+// gone or a kind there is no notice of, is logged by its kind alone.
 func (s *Service) MailboxNotice(ctx context.Context, accountID string, kind mailboxes.NoticeKind, moment time.Time) {
 	if _, known := mailboxNotices[kind]; !known || !validID("acc", accountID) {
 		s.cfg.Log.Warn("accounts: a notice could not be sent", "kind", string(kind))
 		return
 	}
-	reading, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.noticeWait)
+	deadline := time.Now().Add(s.noticeWait)
+	reading, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
 	doc, err := s.read(reading, accountID)
 	cancel()
 	if err != nil || doc == nil {
 		s.cfg.Log.Warn("accounts: a notice could not be sent", "kind", string(kind))
 		return
 	}
-	s.notify(ctx, string(kind), mailboxMail(doc.Address, s.rp.ID, kind, moment))
+	s.notifyBy(ctx, deadline, string(kind), mailboxMail(doc.Address, s.rp.ID, kind, moment))
 }

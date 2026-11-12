@@ -90,8 +90,8 @@ func TestTheOperatorPausesAndResumesAMailbox(t *testing.T) {
 		t.Fatalf("pause: %+v %v", paused, err)
 	}
 	noAddressOrLabel(t, "the paused record", paused, address, "Work Gmail")
-	// Pausing one that is paused changes nothing, and is counted: the
-	// enclave did it, as blocking a blocked account is counted.
+	// Pausing one that is paused changes nothing, answers it as it is, and
+	// is neither counted nor logged: only the call that changed it is.
 	if again, err := w.svc.PauseMailbox(ctx, m.ID); err != nil || again.State != contracts.MailboxPaused {
 		t.Fatalf("pause again: %+v %v", again, err)
 	}
@@ -100,7 +100,7 @@ func TestTheOperatorPausesAndResumesAMailbox(t *testing.T) {
 		t.Fatalf("resume: %+v %v", resumed, err)
 	}
 	_, actions := w.svc.OperatorActions()
-	if actions[ActionMailboxPaused] != 2 || actions[ActionMailboxResumed] != 1 {
+	if actions[ActionMailboxPaused] != 1 || actions[ActionMailboxResumed] != 1 {
 		t.Fatalf("counted %v", actions)
 	}
 	// The person is told, once a change, by the mailboxes service (which
@@ -406,8 +406,8 @@ func (brokenMailboxes) ByAddress(context.Context, string) (*contracts.MailboxRec
 func (brokenMailboxes) Record(context.Context, string) (*contracts.MailboxRecord, error) {
 	return nil, errMailboxesBroken
 }
-func (brokenMailboxes) Pause(context.Context, string) (*contracts.MailboxRecord, error) {
-	return nil, errMailboxesBroken
+func (brokenMailboxes) Pause(context.Context, string) (*contracts.MailboxRecord, bool, error) {
+	return nil, false, errMailboxesBroken
 }
 
 // When the mailboxes service fails, what was asked fails with its error

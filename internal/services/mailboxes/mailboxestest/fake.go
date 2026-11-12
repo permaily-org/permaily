@@ -560,32 +560,33 @@ func (f *Fake) Record(_ context.Context, id string) (*contracts.MailboxRecord, e
 }
 
 // Pause implements accounts.Mailboxes.
-func (f *Fake) Pause(ctx context.Context, id string) (*contracts.MailboxRecord, error) {
+func (f *Fake) Pause(ctx context.Context, id string) (*contracts.MailboxRecord, bool, error) {
 	return f.pause(ctx, id, true)
 }
 
 // Resume implements accounts.Mailboxes.
-func (f *Fake) Resume(ctx context.Context, id string) (*contracts.MailboxRecord, error) {
+func (f *Fake) Resume(ctx context.Context, id string) (*contracts.MailboxRecord, bool, error) {
 	return f.pause(ctx, id, false)
 }
 
-func (f *Fake) pause(ctx context.Context, id string, on bool) (*contracts.MailboxRecord, error) {
+// pause says whether this call changed the mailbox, as the service does.
+func (f *Fake) pause(ctx context.Context, id string, on bool) (*contracts.MailboxRecord, bool, error) {
 	f.mu.Lock()
 	b, ok := f.boxes[id]
 	if !ok || b.state != recordActive {
 		f.mu.Unlock()
-		return nil, contracts.ErrNotFound
+		return nil, false, contracts.ErrNotFound
 	}
 	now := f.now()
 	if on == !b.mailbox.PausedAt.IsZero() {
 		r := b.record()
 		f.mu.Unlock()
-		return &r, nil
+		return &r, false, nil
 	}
 	b.changes = slices.DeleteFunc(b.changes, func(t time.Time) bool { return now.Sub(t) >= mailboxes.Period })
 	if len(b.changes) >= mailboxes.MaxStateChangesPerPeriod {
 		f.mu.Unlock()
-		return nil, contracts.ErrTooManyRequests
+		return nil, false, contracts.ErrTooManyRequests
 	}
 	b.changes = append(b.changes, now)
 	kind := mailboxes.NoticeResumed
@@ -602,5 +603,5 @@ func (f *Fake) pause(ctx context.Context, id string, on bool) (*contracts.Mailbo
 	account := b.account
 	f.mu.Unlock()
 	f.Notices.MailboxNotice(ctx, account, kind, now)
-	return &r, nil
+	return &r, true, nil
 }
