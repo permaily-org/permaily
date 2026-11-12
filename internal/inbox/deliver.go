@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/envelope"
@@ -150,7 +151,13 @@ func (w *Writer) putSeen(ctx context.Context, b Box, c *Claim, version uint64) e
 // is there already and counts as written.
 func (w *Writer) Store(ctx context.Context, b Box, c *Claim, p *Parsed, raw []byte, confirm *ConfirmEntry) error {
 	id := c.Seen.Message
-	meta, err := json.Marshal(p.Meta)
+	// The metadata as written, within MaxMetaBytes whatever delivery added
+	// to it after parsing (the envelope sender, the signatures' results).
+	bounded := p.Meta
+	bounded.Attachments = slices.Clone(bounded.Attachments)
+	bounded.Auth = slices.Clone(bounded.Auth)
+	boundMeta(&bounded)
+	meta, err := json.Marshal(bounded)
 	if err != nil {
 		return err
 	}
@@ -195,16 +202,42 @@ func (w *Writer) putOnce(ctx context.Context, b Box, key, purpose, bound string,
 	return nil
 }
 
-// Mark marks the claim stored, at the version of the claim. When another
-// delivery took the claim over meanwhile it writes the same parts, and Store
-// wrote them all: the message is stored either way.
+// errNotMarked is a mark that could not be written: the entry holds neither
+// this message's mark nor its claim. The delivery fails, and the sender's
+// retry claims again.
+var errNotMarked = errors.New("inbox: the claim of a message changed before its mark")
+
+// Mark marks the claim stored, at the version of the claim; Store wrote every
+// part of it before. When another delivery took the claim over meanwhile, the
+// entry is read again and opened: it is this message's mark already, which
+// is success; or this message's claim, which the mark is written over at the
+// version read (the parts are the same keys under the same fixed values);
+// anything else is an error, never success.
 func (w *Writer) Mark(ctx context.Context, b Box, c *Claim) error {
 	c.Seen.Stored, c.Seen.StoredAt = true, w.now()
-	err := w.putSeen(ctx, b, c, c.entry.Version)
-	if errors.Is(err, store.ErrConflict) || errors.Is(err, store.ErrExists) {
-		return nil
+	version := c.entry.Version
+	for range 2 {
+		err := w.putSeen(ctx, b, c, version)
+		if !errors.Is(err, store.ErrConflict) && !errors.Is(err, store.ErrExists) {
+			return err
+		}
+		e, err := w.Entries.GetEntry(ctx, Partition(b.MailboxID), c.key)
+		if errors.Is(err, store.ErrNotFound) {
+			return errNotMarked
+		}
+		if err != nil {
+			return err
+		}
+		var now SeenEntry
+		if err := openJSON(b, e.Value, PurposeSeen, c.key, &now, envelope.OpenText); err != nil || now.Message != c.Seen.Message {
+			return errNotMarked
+		}
+		if now.Stored {
+			return nil
+		}
+		version = e.Version
 	}
-	return err
+	return errNotMarked
 }
 
 func sealJSON(b Box, v any, purpose, bound string) ([]byte, error) {

@@ -9,8 +9,7 @@ package inbox
 import (
 	"bytes"
 	"context"
-	"errors"
-	"io"
+	"encoding/json"
 	"regexp"
 	"slices"
 	"strings"
@@ -75,6 +74,10 @@ type Confirmation struct {
 	from                 string
 	to                   []string
 	named                string
+	// fromSubject: the code and the requester come from a Subject that is
+	// the template. Only such a confirmation may be verified: the body is
+	// what recognition may read, never what verification decides by.
+	fromSubject bool
 }
 
 const gmailForwarding = "forwarding-noreply@google.com"
@@ -95,7 +98,7 @@ var (
 // address when Google signed it for someone else's (ADR 0026). Both are false
 // while VerifyGmail is off.
 func (c *Confirmation) Verdict(auth []AuthResult, address string) (verified, forAnother bool) {
-	if !VerifyGmail || !c.signed(auth) || len(c.to) != 1 || c.named == "" {
+	if !VerifyGmail || !c.fromSubject || !c.signed(auth) || len(c.to) != 1 || c.named == "" {
 		return false, false
 	}
 	to, named := strings.ToLower(c.to[0]), strings.ToLower(c.named)
@@ -110,7 +113,9 @@ func (c *Confirmation) Verdict(auth []AuthResult, address string) (verified, for
 
 // signed is every check but which address: one From, To and Subject; From
 // exactly Gmail's forwarding service; and a passing signature of google.com
-// over From, To and Subject and the whole body.
+// over From, To and Subject and the whole body. Verdict also needs the
+// signed Subject to be the template, which the code and the requester come
+// from.
 func (c *Confirmation) signed(auth []AuthResult) bool {
 	if c.froms != 1 || c.tos != 1 || c.subjects != 1 || c.from != gmailForwarding {
 		return false
@@ -124,7 +129,9 @@ func (c *Confirmation) signed(auth []AuthResult) bool {
 // Parse reads a message within the limits of ADR 0026 ("What a message may
 // hold"). Past one it stops reading and sets Partial; a message that cannot
 // be read as mail at all is Unparsed. Mail is never refused for its content.
-func Parse(raw []byte) Parsed {
+// ctx is the delivery's: when it ends, parsing stops between parts and
+// between the tokens of HTML, and what was read is Partial.
+func Parse(ctx context.Context, raw []byte) Parsed {
 	var p Parsed
 	head, partial := boundHeader(raw)
 	// An unknown charset or transfer encoding still gives a message to read.
@@ -146,10 +153,9 @@ func Parse(raw []byte) Parsed {
 	m.ReplyTo = addressList(h, "Reply-To", &partial)
 	m.Auth = []contracts.AuthCheck{}
 
-	w := walker{}
-	w.walk(e, 0)
+	w := walkMessage(ctx, raw, MessageTextMax, true)
 	partial = partial || w.partial
-	text, _, _ := w.text(SearchTextMax)
+	text, _, _ := w.text(ctx, SearchTextMax)
 	p.Text = text
 	m.Snippet = snippet(text)
 	m.Attachments = w.attachments
@@ -157,9 +163,63 @@ func Parse(raw []byte) Parsed {
 		m.Attachments = []contracts.MessageAttachment{}
 	}
 	m.Partial = partial
-	p.Confirmation = recognise(h, m, w.plain, text)
+	plain := ""
+	if w.plainSeen {
+		plain, _ = readPlain(w.plain, MessageTextMax)
+	}
+	p.Confirmation = recognise(h, m, plain, text)
 	m.Confirmation = p.Confirmation != nil
+	boundMeta(m)
 	return p
+}
+
+// MaxMetaBytes bounds a message's metadata as it is serialised (StoredMeta,
+// in JSON), before it is sealed into the message's item: every field within
+// its own limit can still add up, with JSON's escapes, to more than the
+// 400 KB a DynamoDB item may hold. 256 KiB leaves more than 130 KB for the
+// seal and the rest of the item (identifiers, times, sizes).
+const MaxMetaBytes = 256 << 10
+
+func metaSize(m *StoredMeta) int {
+	b, _ := json.Marshal(m)
+	return len(b)
+}
+
+// boundMeta keeps a message's metadata within MaxMetaBytes, checked before
+// it is written: past it the message is Partial and its fields are emptied
+// in this order until it fits: the lists of recipients, the Message-ID and
+// the Date, the attachments' names, the senders and the snippet, and last
+// what remains is cut to a fixed size. The raw message is stored whole.
+func boundMeta(m *StoredMeta) {
+	if metaSize(m) <= MaxMetaBytes {
+		return
+	}
+	m.Partial = true
+	for _, shrink := range []func(){
+		func() {
+			m.To, m.Cc, m.ReplyTo = []contracts.MailAddress{}, []contracts.MailAddress{}, []contracts.MailAddress{}
+		},
+		func() { m.MessageID, m.Date = "", "" },
+		func() {
+			for i := range m.Attachments {
+				m.Attachments[i].Name = ""
+			}
+		},
+		func() { m.From, m.Snippet = []contracts.MailAddress{}, "" },
+		func() {
+			var partial bool
+			m.EnvelopeFrom = cut(m.EnvelopeFrom, 255, &partial)
+			for i := range m.Auth {
+				m.Auth[i].Domain = cut(m.Auth[i].Domain, 255, &partial)
+				m.Auth[i].Result = cut(m.Auth[i].Result, 255, &partial)
+			}
+		},
+	} {
+		shrink()
+		if metaSize(m) <= MaxMetaBytes {
+			return
+		}
+	}
 }
 
 // readEntity reads a message's header, within MaxHeaderBytes.
@@ -234,7 +294,7 @@ func recognise(h mail.Header, m *StoredMeta, plain, text string) *Confirmation {
 	}
 	c.from = gmailForwarding
 	if s := reForwardSubject.FindStringSubmatch(m.Subject); s != nil {
-		c.Code, c.Requester = s[1], s[2]
+		c.Code, c.Requester, c.fromSubject = s[1], s[2], true
 	} else if s := reForwardCode.FindStringSubmatch(text); s != nil {
 		c.Code = s[1]
 	} else {
@@ -247,105 +307,6 @@ func recognise(h mail.Header, m *StoredMeta, plain, text string) *Confirmation {
 		c.named = s[2]
 	}
 	return c
-}
-
-// walker reads a message's parts: its first text/plain and text/html parts
-// and its attachments, within the limits of depth, parts and attachments.
-type walker struct {
-	parts       int
-	partial     bool
-	plain       string
-	plainSeen   bool
-	html        string
-	htmlSeen    bool
-	attachments []contracts.MessageAttachment
-}
-
-// maxHTMLForText bounds how much of a text/html part is read to take text
-// out of it.
-const maxHTMLForText = 2 << 20
-
-func (w *walker) walk(e *message.Entity, depth int) {
-	if depth > MaxMIMEDepth {
-		w.partial = true
-		return
-	}
-	if mr := e.MultipartReader(); mr != nil {
-		for {
-			part, err := mr.NextPart()
-			if errors.Is(err, io.EOF) {
-				return
-			}
-			if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
-				w.partial = true
-				return
-			}
-			if part == nil {
-				return
-			}
-			w.parts++
-			if w.parts > MaxMIMEParts {
-				w.partial = true
-				return
-			}
-			w.walk(part, depth+1)
-		}
-	}
-	w.leaf(e)
-}
-
-func (w *walker) leaf(e *message.Entity) {
-	ct, _, _ := e.Header.ContentType()
-	disp, params, _ := e.Header.ContentDisposition()
-	_, ctParams, _ := e.Header.ContentType()
-	name := params["filename"]
-	if name == "" {
-		name = ctParams["name"]
-	}
-	if disp == "attachment" || (name != "" && disp != "inline") || (disp == "inline" && !strings.HasPrefix(ct, "text/")) {
-		n, _ := io.Copy(io.Discard, io.LimitReader(e.Body, MaxMessageBytes+1))
-		if len(w.attachments) == MaxAttachmentsListed {
-			w.partial = true
-			return
-		}
-		if len(name) > MaxAttachmentName {
-			name = cut(name, MaxAttachmentName, &w.partial)
-		}
-		if ct == "" {
-			ct = "application/octet-stream"
-		}
-		w.attachments = append(w.attachments, contracts.MessageAttachment{Index: len(w.attachments), Name: name, Type: ct, Size: n})
-		return
-	}
-	switch {
-	case (ct == "text/plain" || ct == "") && !w.plainSeen:
-		w.plainSeen = true
-		b, _ := io.ReadAll(io.LimitReader(e.Body, MessageTextMax+1))
-		w.plain = strings.ToValidUTF8(string(b), "�")
-	case ct == "text/html" && !w.htmlSeen:
-		w.htmlSeen = true
-		b, _ := io.ReadAll(io.LimitReader(e.Body, maxHTMLForText))
-		w.html = string(b)
-	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(e.Body, MaxMessageBytes+1))
-}
-
-// text is the message's text, at most max bytes: its text/plain part, else
-// what is taken out of its text/html part, else nothing.
-func (w *walker) text(max int) (text, from string, truncated bool) {
-	switch {
-	case w.plainSeen:
-		text, from = w.plain, contracts.TextFromPlain
-	case w.htmlSeen:
-		text, from = htmlText(w.html), contracts.TextFromHTML
-	default:
-		return "", contracts.TextFromNone, false
-	}
-	if len(text) > max {
-		truncated = true
-		text = cut(text, max, &truncated)
-	}
-	return text, from, truncated
 }
 
 func snippet(text string) string {

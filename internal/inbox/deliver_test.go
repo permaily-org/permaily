@@ -67,7 +67,7 @@ func TestDelivery(t *testing.T) {
 		}
 		return nil
 	}
-	p := inbox.Parse([]byte(confirmation("forwarding-noreply@google.com", address, template(address))))
+	p := inbox.Parse(context.Background(), []byte(confirmation("forwarding-noreply@google.com", address, template(address))))
 	claim, err := w.Claim(ctx, box, "seen1", 30)
 	if err != nil || claim.Stored() || claim.Seen.RetentionDays != 30 || !claim.Seen.ExpiresAt.Equal(c.t.AddDate(0, 0, 30)) {
 		t.Fatalf("%+v %v", claim, err)
@@ -106,7 +106,7 @@ func TestDelivery(t *testing.T) {
 // delivery stopped before each of its writes is completed by the retry.
 func TestClaimTakenOverAfterAStoppedDelivery(t *testing.T) {
 	ctx := context.Background()
-	p := inbox.Parse([]byte(plainMessage))
+	p := inbox.Parse(context.Background(), []byte(plainMessage))
 	for _, stop := range []store.Step{store.StepRaw, store.StepEntry, store.StepItem} {
 		mem := store.NewMemory()
 		c := &clock{t: time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)}

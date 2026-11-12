@@ -34,7 +34,7 @@ const plainMessage = "From: Alice <alice@example.org>\r\n" +
 	"--b--\r\n"
 
 func TestParse(t *testing.T) {
-	p := inbox.Parse([]byte(plainMessage))
+	p := inbox.Parse(context.Background(), []byte(plainMessage))
 	m := p.Meta
 	if m.Subject != "Your flight to Lisbon" || m.MessageID != "abc@example.org" || m.Date == "" || m.Partial || m.Unparsed {
 		t.Fatalf("%+v", m)
@@ -52,16 +52,16 @@ func TestParse(t *testing.T) {
 }
 
 func TestParseKeepsWhatCannotBeRead(t *testing.T) {
-	p := inbox.Parse([]byte("this is not mail at all\r\nno header here\r\n\r\n"))
+	p := inbox.Parse(context.Background(), []byte("this is not mail at all\r\nno header here\r\n\r\n"))
 	if !p.Meta.Unparsed || p.Meta.From == nil || p.Meta.Attachments == nil {
 		t.Fatalf("%+v", p.Meta)
 	}
-	p = inbox.Parse([]byte("From: not an address <<<\r\nSubject: x\r\n\r\nbody\r\n"))
+	p = inbox.Parse(context.Background(), []byte("From: not an address <<<\r\nSubject: x\r\n\r\nbody\r\n"))
 	if p.Meta.Unparsed || len(p.Meta.From) != 1 || p.Meta.From[0].Address == "" {
 		t.Fatalf("an address kept as written: %+v", p.Meta.From)
 	}
 	long := strings.Repeat("word ", 100)
-	if got := inbox.Parse([]byte("Subject: x\r\n\r\n" + long)).Meta.Snippet; len([]rune(got)) != 201 || !strings.HasSuffix(got, "…") {
+	if got := inbox.Parse(context.Background(), []byte("Subject: x\r\n\r\n"+long)).Meta.Snippet; len([]rune(got)) != 201 || !strings.HasSuffix(got, "…") {
 		t.Fatalf("snippet %q", got)
 	}
 }
@@ -97,7 +97,7 @@ func TestParseLimits(t *testing.T) {
 			strings.Repeat("n", inbox.MaxAttachmentName+5) + "\"\r\n\r\nx\r\n--p--\r\n",
 	}
 	for name, raw := range cases {
-		p := inbox.Parse([]byte(raw))
+		p := inbox.Parse(context.Background(), []byte(raw))
 		if !p.Meta.Partial {
 			t.Errorf("%s: not marked partial", name)
 		}
@@ -131,22 +131,22 @@ func TestMessageText(t *testing.T) {
 		"<html><head><title>T</title><style>p{}</style></head><body><p>Hello&nbsp;<b>you</b> &amp; me</p>" +
 		"<script>alert(1)</script><!-- hidden --><div>Read <a href=\"https://example.org/x?a=1&amp;b=2\">this</a> and " +
 		"<a href='https://example.org/'>https://example.org/</a><br>bye</div><a>no target</a></body></html>"
-	text, from, truncated := inbox.MessageText([]byte(html), 1<<10)
-	want := "Hello you & me\n\nRead this [https://example.org/x?a=1&b=2] and https://example.org/\nbye\nno target"
+	text, from, truncated := inbox.MessageText(context.Background(), []byte(html), 1<<10)
+	want := "Hello you & me\nRead this [https://example.org/x?a=1&b=2] and https://example.org/\nbye\nno target"
 	if text != want || from != contracts.TextFromHTML || truncated {
 		t.Fatalf("%q %s %v", text, from, truncated)
 	}
-	text, from, truncated = inbox.MessageText([]byte(plainMessage), 10)
+	text, from, truncated = inbox.MessageText(context.Background(), []byte(plainMessage), 10)
 	if text != "Booking re" || from != contracts.TextFromPlain || !truncated {
 		t.Fatalf("%q %s %v", text, from, truncated)
 	}
-	if text, from, _ := inbox.MessageText([]byte("Subject: x\r\nContent-Type: image/png\r\n\r\nxx"), 10); text != "" || from != contracts.TextFromNone {
+	if text, from, _ := inbox.MessageText(context.Background(), []byte("Subject: x\r\nContent-Type: image/png\r\n\r\nxx"), 10); text != "" || from != contracts.TextFromNone {
 		t.Fatalf("%q %s", text, from)
 	}
 	for _, odd := range []string{"<p", "a < b", "<!-- open", "<script>never closed", "<a href=>x</a>", "<a href=\"open>x", "<a hreff=x href=y>z</a>", "<a href=", "<!DOCTYPE html>x"} {
-		_, _, _ = inbox.MessageText([]byte("Content-Type: text/html\r\n\r\n"+odd), 100)
+		_, _, _ = inbox.MessageText(context.Background(), []byte("Content-Type: text/html\r\n\r\n"+odd), 100)
 	}
-	if got, _, _ := inbox.MessageText([]byte("Content-Type: text/html\r\n\r\n<a hreff=x href=y>z</a>"), 100); got != "z [y]" {
+	if got, _, _ := inbox.MessageText(context.Background(), []byte("Content-Type: text/html\r\n\r\n<a hreff=x href=y>z</a>"), 100); got != "z [y]" {
 		t.Fatalf("%q", got)
 	}
 }
@@ -188,7 +188,7 @@ func sign(t *testing.T, raw string, headers ...string) string {
 func verdict(t *testing.T, raw string) (recognised, verified, other bool) {
 	t.Helper()
 	auth := msgauth.DKIM(resolver)(context.Background(), []byte(raw))
-	p := inbox.Parse([]byte(raw))
+	p := inbox.Parse(context.Background(), []byte(raw))
 	if p.Confirmation == nil {
 		return false, false, false
 	}
@@ -204,17 +204,17 @@ func withVerify(t *testing.T) {
 
 func TestGmailConfirmationIsRecognised(t *testing.T) {
 	raw := confirmation("forwarding-noreply@google.com", address, template(address))
-	p := inbox.Parse([]byte(raw))
+	p := inbox.Parse(context.Background(), []byte(raw))
 	if p.Confirmation == nil || p.Confirmation.Code != "123456789" || p.Confirmation.Requester != "someone@gmail.com" || !p.Meta.Confirmation {
 		t.Fatalf("%+v", p.Confirmation)
 	}
 	// A code in the body alone is enough to recognise one.
-	p = inbox.Parse([]byte("From: forwarding-noreply@google.com\r\nSubject: hi\r\n\r\nConfirmation code: 987654321\r\n"))
+	p = inbox.Parse(context.Background(), []byte("From: forwarding-noreply@google.com\r\nSubject: hi\r\n\r\nConfirmation code: 987654321\r\n"))
 	if p.Confirmation == nil || p.Confirmation.Code != "987654321" || p.Confirmation.Requester != "" {
 		t.Fatalf("%+v", p.Confirmation)
 	}
 	// No code: an ordinary message.
-	if inbox.Parse([]byte("From: forwarding-noreply@google.com\r\nSubject: hi\r\n\r\nhello\r\n")).Confirmation != nil {
+	if inbox.Parse(context.Background(), []byte("From: forwarding-noreply@google.com\r\nSubject: hi\r\n\r\nhello\r\n")).Confirmation != nil {
 		t.Fatal("recognised without a code")
 	}
 }
@@ -259,7 +259,7 @@ func TestGmailPredicate(t *testing.T) {
 	}
 	// A signature that covers part of the body (l=) is never enough, whatever
 	// the verifier says of it; nor one of another domain.
-	p := inbox.Parse([]byte(good))
+	p := inbox.Parse(context.Background(), []byte(good))
 	for name, auth := range map[string][]inbox.AuthResult{
 		"l=":             {{Method: "dkim", Domain: "google.com", Result: "pass", Headers: []string{"from", "to", "subject"}, BodyLimited: true}},
 		"another domain": {{Method: "dkim", Domain: "gmail.com", Result: "pass", Headers: []string{"from", "to", "subject"}}},
@@ -288,10 +288,10 @@ func FuzzParse(f *testing.F) {
 	f.Add([]byte(confirmation("forwarding-noreply@google.com", address, template(address))))
 	f.Add([]byte("Content-Type: text/html\r\n\r\n<p>x<a href=y>z</a>"))
 	f.Fuzz(func(t *testing.T, raw []byte) {
-		p := inbox.Parse(raw)
+		p := inbox.Parse(context.Background(), raw)
 		if p.Meta.From == nil || p.Meta.To == nil || p.Meta.Attachments == nil || len(p.Text) > inbox.SearchTextMax {
 			t.Fatalf("%+v", p.Meta)
 		}
-		_, _, _ = inbox.MessageText(raw, 100)
+		_, _, _ = inbox.MessageText(context.Background(), raw, 100)
 	})
 }
