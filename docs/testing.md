@@ -9,6 +9,7 @@
 - Security checks need a negative test that tries to break them: every rejection path in `pkg/attestation` has one (wrong nonce, wrong user data, MITM, debug PCRs, different image, stale, wrong root, tampered, malformed).
 - What is stored outside the enclave is tested with the storage in the hands of someone else: the test writes to it by hand (`store.Memory.SetEntry`, `SetRecord`, `DeleteRecord`) and nothing it writes may let anyone in (`TestStorageWrittenByHand`).
 - A property the product promises gets a test named for what it shows, so the name is the promise: `TestABlockedAccountSignsInByNoWay`, `TestNothingSaysAnAddressIsBlockedBeforeProof`, `TestTheOperatorsRoutesCannotChangeAnAddressOrAWayIn`, `TestAnAddressAttemptSignsNobodyIn`, `TestTwoEnclavesChangingAddressesLeaveOneAccountPerAddress`, `TestNoticesHoldNoCodeLinkOrToken`, `TestANoticeThatFailsDoesNotFailTheAction`, `TestASessionThatIsNotFreshlyConfirmedChangesNoWayIn`, `TestAnAttemptMadeToConfirmSignsNobodyInAndChangesNoAddress`, `TestAnAdminWhoseAccountIsNotPasskeyOnlyDoesNothing`, `TestNothingInTheTableMakesAnAdmin`, `TestAnAdminsRoutesCannotChangeAnAddressOrAWayIn`, `TestSomeoneWhoIsNotAnAdminLearnsNothingFromTheAdminRoutes`, `TestOnlyTheSuperAdminMakesAdmins`.
+- What two enclaves share is tested with two instances over one storage, started together, one after the other, and one changing while the other serves; a test of what happens at once makes the interleaving happen (a store that holds both reads until both have read, or that runs the other enclave just before a write), never with sleeps: `TestTwoEnclavesStartingTogetherOrderOneCertificate`, `TestTheCAsCheckReachesTheEnclaveThatDidNotOrder`, `TestTheMailboxMadeByTwoEnclavesAtOnceIsOne`, `TestTwoEnclavesOfOneImageStartingTogetherHaveOneRootSecret`.
 - A change that needs a fresh proof of who the person is (ADR 0022) is tested with the clock the test controls, never with real time. A test of something else starts from a session whose proof is fresh (`world.fresh` in `internal/services/accounts`); the proof itself is tested through the storage (`confirm_test.go`).
 
 ## Layers
@@ -23,7 +24,8 @@
 | Captured answers | `internal/webauthn` on 96 public captures of what real authenticators and browsers answered (YubiKeys and other security keys, Apple, Android, Windows Hello with and without a TPM, iCloud Keychain, Google Password Manager, 1Password; the vectors of the WebAuthn specification), each with its source and licence; one that is refused must be refused for the reason its file states | `internal/webauthn/testdata/vectors` (`TestCapturedAnswers`, `TestCapturedAnswersCoverTheKinds`); the same captures against go-webauthn in `tests/webauthn-differential` | `make check`, CI |
 | Commits against S3 | a real bucket with Object Lock: conditional writes, locks, delete markers, deletion refused | `internal/store` (`TestS3CommitsAgainstS3`) | by hand, with `PERMAILY_TEST_ANCHOR_BUCKET=permaily-anchors-staging-<account>` and credentials; skipped otherwise |
 | Storage contract | DynamoDB Local and S3Mock | `internal/store/store_test.go` | CI services; locally with `PERMAILY_TEST_DYNAMODB` and `PERMAILY_TEST_S3` |
-| ACME issuance and renewal | Pebble 2.6.0 (test CA that accepts every challenge) | `internal/tlsacme` (`TestObtainAgainstACME`) | CI service; locally with `PERMAILY_TEST_ACME` |
+| ACME issuance and renewal | Pebble 2.6.0 (test CA that accepts every challenge) | `internal/tlsacme` (`TestObtainAgainstACME`, and two enclaves on one storage: `TestTwoEnclavesAgainstACME`) | CI service; locally with `PERMAILY_TEST_ACME` |
+| The CA's TLS-ALPN-01 check landing on the enclave that did not order | Pebble 2.6.0 that validates (no `PEBBLE_VA_ALWAYS_VALID`, `-dnsserver` pointing at `pebble-challtestsrv -defaultIPv4 127.0.0.1`), connecting to `127.0.0.1:5001`, where the test sends every connection to the other enclave | `internal/tlsacme` (`TestTheCAsCheckReachesTheOtherEnclaveAgainstACME`) | by hand, with `PERMAILY_TEST_ACME_VALIDATING=<its directory>` (and `PERMAILY_TEST_ACME_TLSALPN` if not on 5001); skipped otherwise |
 | Whole service, dev mode | SMTP client and HTTPS: mail in and read back; an invitation, a sign-up by email, a session and signing out; the operator blocking an account, its sign-in refused, a change of address, the notices in the outbox and the counts on `/status` (`TestOperatorEndToEnd`); the admin panel: the super admin refused until "passkey only", making an admin, who confirms with a passkey and blocks an account, the log, the counts and the notices (`TestAdminPanelEndToEnd`) | `cmd/permaily-enclave/main_dev_test.go` | `go test -tags dev ./cmd/permaily-enclave`, CI |
 | Mutation | gremlins | `pkg/attestation` | manual (`mutation` workflow) |
 | Reproducibility | Nix | CI `eif` + `reproducible` jobs | every PR |
@@ -50,18 +52,18 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `pkg/kmspolicy` | 99 | 99.0 |
 | `pkg/certwatch` | 99 | 99.0 |
 | `pkg/provenance` | 99 | 99.4 |
-| `internal/tlsacme` | 90 (with Pebble) | 90.3 |
+| `internal/tlsacme` | 91 (with Pebble) | 92.1 (2026-11-12); the test of two enclaves started together moves it by a few tenths, run to run |
 | `internal/router` | 100 | 100.0 |
 | `internal/httpapi` | 95 | 95.8 (2026-11-12) |
 | `internal/webui` | 75 | 75.0 |
 | `internal/hostproxy` | 73 | 73.7 |
 | `internal/enclave` | 87 | 87.7 |
 | `internal/envelope` | 94 (target 95) | 94.3 (2026-11-11) |
-| `internal/keys` | 89 (target 95) | 89.5 |
-| `internal/inbox` | 84 | 84.7 |
+| `internal/keys` | 89 (target 95) | 89.9 (2026-11-12) |
+| `internal/inbox` | 86 | 86.3 (2026-11-12) |
 | `internal/msgauth` | 86 | 86.0 |
 | `internal/smtpd` | 92 | 92.5 |
-| `internal/store` | 96 (with emulators) | 96.1 (2026-11-12) |
+| `internal/store` | 96 (with emulators) | 96.3 (2026-11-12) |
 | `internal/contracts` | 100 | 100.0 (2026-11-11) |
 | `internal/domain` | 100 | 100.0 (2026-11-11) |
 | `internal/services/accounts` | 99 | 99.5 (2026-11-12) |

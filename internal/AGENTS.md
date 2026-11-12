@@ -5,7 +5,7 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 | Package | Role |
 |---|---|
 | `enclave` | vsock listener, egress HTTP client through the host's CONNECT proxy (the parent instance is vsock CID 3), and the log sink that sends log lines to the host |
-| `tlsacme` | one multi-SAN certificate via ACME TLS-ALPN-01; the certificate key and the ACME account key are kept sealed under the root secret (`Sealed`) and reused across restarts |
+| `tlsacme` | one multi-SAN certificate via ACME TLS-ALPN-01; the certificate key and the ACME account key are kept sealed under the root secret (`Sealed`) and reused across restarts; with two enclaves one claims the order in the identity and the other serves what it stores, and the challenge of an open order is kept sealed in the storage so either answers the CA (ADR 0024) |
 | `nsm`, `nsm/fakensm` | real NSM attester; fake attester for dev mode and tests |
 | `contracts` | types and error codes that cross the boundary (API, MCP, command line, web app); imports nothing of the service (F2) |
 | `domain` | rules that need only their arguments: session lifetimes, what an address or an invitation looks like; imports only `contracts` (F2) |
@@ -30,9 +30,10 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 - `cmd/permaily-enclave` with `-tags dev` runs locally over TCP with a self-signed certificate and `fakensm`; never import `fakensm` from non-dev enclave code.
 - No CGO, no files read at runtime inside the enclave; CA roots come from `x509roots/fallback`.
 - New outbound destinations must be added to the host allowlist (`cmd/permaily-host`) and documented in [../docs/threat-model.md](../docs/threat-model.md).
+- With two enclaves, only the enclave whose claim is in the stored identity asks the CA (`ensure`); a change of the identity is written with `Write` at the `Version` read, never with a plain write. A challenge goes to the storage before the CA is told to check (`publish`). Never adopt a stored identity with another key.
 - The TLS key is created once and reused across restarts and upgrades; `/attestation` binds `sha256(SPKI)` as user data. It leaves the enclave only sealed. When the sealed record cannot be loaded the enclave waits: never fall back to a fresh key, which would break the CAA records and the certificate history that verifiers check.
 - Log lines leave the enclave (ADR 0015). Before adding one, read it as if it were public; never put an address, a subject, content, a token or a key in it, and keep `TestMailEndToEnd`'s log check passing.
-- Nothing outside the enclave sees plaintext mail: seal with `envelope` under the mailbox data key before calling `store`; never log addresses, subjects or content.
+- Nothing outside the enclave sees plaintext mail: seal with `envelope` under the mailbox data key before calling `store`; never log addresses, subjects or content. A mailbox is made with `PutMailbox` at version 0 (only creates; on `ErrExists` use the one stored) and changed at the version read (on `ErrConflict` read and change again).
 - Every KMS response is checked against the key that was asked (`keys.ErrKeyMismatch`), every key must be in the pinned account and region, and no key is used before `kmspolicy.Sealed` accepts it. Never use KMS without the Recipient parameter.
 - A record whose going back to an earlier copy would matter (the TLS identity, later permissions) is stored through `store.Anchored`, never straight into the table. Decide for each what `store.ErrLost` means: made again, or refused (ADR 0016).
 - An anchored record that is read, edited and written back is read with `GetRecordAt` and written with `PutRecordAt`, never with `PutRecord`: two enclaves may run at once, and `PutRecord` writes over what the other just did. On `store.ErrChanged` read again and decide again, a bounded number of times, then fail. A lock in memory is no substitute: it holds in one enclave. The same goes for entries: `PutEntry` at the version read, `DeleteEntryAt` for an entry that is deleted because of what it says.

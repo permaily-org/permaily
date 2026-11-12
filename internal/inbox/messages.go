@@ -34,7 +34,7 @@ func (s *Service) Ingest(ctx context.Context, from string, rcpts []string, raw [
 	}
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	mb, st, key, err := s.loadMailbox(ctx)
+	mb, _, key, err := s.loadMailbox(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -48,13 +48,13 @@ func (s *Service) Ingest(ctx context.Context, from string, rcpts []string, raw [
 
 	if code, requester, ok := forwardingConfirmation(meta, text); ok {
 		meta.ForwardingConfirmation = true
-		st.ForwardingConfirmations = append(st.ForwardingConfirmations, ForwardingConfirmation{
-			Code: code, Requester: requester, ReceivedAt: now, Verified: dkimPass(meta.Auth, "google.com"),
-		})
-		if n := len(st.ForwardingConfirmations); n > 10 { // keep the latest ones only
-			st.ForwardingConfirmations = st.ForwardingConfirmations[n-10:]
-		}
-		if err := s.saveMailbox(ctx, mb, st, key); err != nil {
+		confirmation := ForwardingConfirmation{Code: code, Requester: requester, ReceivedAt: now, Verified: dkimPass(meta.Auth, "google.com")}
+		if mb, err = s.update(ctx, func(_ *store.Mailbox, st *mailboxState) {
+			st.ForwardingConfirmations = append(st.ForwardingConfirmations, confirmation)
+			if n := len(st.ForwardingConfirmations); n > 10 { // keep the latest ones only
+				st.ForwardingConfirmations = st.ForwardingConfirmations[n-10:]
+			}
+		}); err != nil {
 			return "", err
 		}
 	}
@@ -126,12 +126,8 @@ func (s *Service) SetRetention(ctx context.Context, days int) error {
 	}
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	mb, st, key, err := s.loadMailbox(ctx)
-	if err != nil {
-		return err
-	}
-	mb.RetentionDays = days
-	return s.saveMailbox(ctx, mb, st, key)
+	_, err := s.update(ctx, func(mb *store.Mailbox, _ *mailboxState) { mb.RetentionDays = days })
+	return err
 }
 
 // Summary is a message in a listing.
