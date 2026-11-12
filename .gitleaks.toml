@@ -5,6 +5,11 @@ useDefault = true
 # narrow a line-level exception further.
 
 [[allowlists]]
+description = "the history of deploy/enclave.json carries the public SHA-256 of the test mailbox token (ADR 0009), a field that ADR 0026 removed; the scan reads every commit, so the exception stays for as long as the history does; the token itself was never committed"
+regexTarget = "line"
+regexes = ['''^\s*"mailbox_token_sha256": "[0-9a-f]{64}",?\s*$''']
+
+[[allowlists]]
 description = "deploy/enclave.json carries the public SHA-256 of the admin token that may ask for a handoff (ADR 0013); the token itself is never committed"
 regexTarget = "line"
 regexes = ['''^\s*"admin_token_sha256": "[0-9a-f]{64}",?\s*$''']

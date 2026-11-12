@@ -350,7 +350,9 @@ func TestRemoveAccountEndsEverything(t *testing.T) {
 		t.Fatal(err)
 	}
 	close(goOn)
-	<-done
+	if err := <-done; err == nil {
+		t.Fatal("a mailbox was made for an account that is being removed")
+	}
 	if r, _ := b.Records(ctx, me.Account); len(r.Mailboxes) != 0 {
 		t.Fatalf("%+v", r)
 	}
@@ -836,7 +838,9 @@ func TestDisconnectingAReservationRaces(t *testing.T) {
 	_, goOn, done = reserveAndStop(t, a, me)
 	pending = reservedID(t, w, me.Account)
 	close(goOn)
-	<-done
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 	w.fork(pending)
 	w.clock.add(mailboxes.ReservationAge)
 	if l := listed(t, b, caller("acc_me", w.clock)); len(l) != 1 || l[0].State != contracts.MailboxUnreadable {
