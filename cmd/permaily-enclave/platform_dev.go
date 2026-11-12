@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -85,6 +86,24 @@ type devStorage struct {
 	mem     *store.Memory
 	commits *store.MemoryCommits
 	keys    *keys.Local
+	// apps is held while a platform gives the providers their applications:
+	// the operator gives them through one enclave at a time, and two
+	// platforms writing the one record at once can each lose more times than
+	// the service tries again.
+	apps sync.Mutex
+}
+
+// newDevStorage is empty storage and new keys on the clock of dev mode. The
+// clock is set here, before any platform uses the storage: a platform that
+// set it on storage it shares would write it while another reads it.
+func newDevStorage() (*devStorage, error) {
+	local, err := keys.NewLocal()
+	if err != nil {
+		return nil, err
+	}
+	mem := store.NewMemory()
+	mem.Now = devClock
+	return &devStorage{mem: mem, commits: store.NewMemoryCommits(), keys: local}, nil
 }
 
 // defaultSuperAdmin is the super admin's address in dev mode, which a test or
@@ -132,15 +151,13 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	if err != nil {
 		return nil, err
 	}
-	mem, commits := store.NewMemory(), store.NewMemoryCommits()
-	local, err := keys.NewLocal()
-	if err != nil {
-		return nil, err
+	storage := devShared.Load()
+	if storage == nil {
+		if storage, err = newDevStorage(); err != nil {
+			return nil, err
+		}
 	}
-	if shared := devShared.Load(); shared != nil {
-		mem, commits, local = shared.mem, shared.commits, shared.keys
-	}
-	mem.Now = devClock
+	mem, commits, local := storage.mem, storage.commits, storage.keys
 	p := &platform{mode: "dev", listener: ln, attester: att, certs: certs, store: mem}
 	// Accounts, with the messages kept instead of sent: GET /dev/outbox on
 	// the app's host shows them, sign-in codes included.
@@ -166,6 +183,8 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	}
 	// Every provider is on from the start, with the application the local
 	// server knows: in the enclave the operator gives each (scripts/provider.sh).
+	storage.apps.Lock()
+	defer storage.apps.Unlock()
 	for _, provider := range idp.Providers {
 		app := providers.App(provider)
 		if _, err := p.accounts.SetProviderApp(ctx, string(provider), contracts.ProviderAppSet{ClientID: app.ClientID, ClientSecret: app.ClientSecret}); err != nil {

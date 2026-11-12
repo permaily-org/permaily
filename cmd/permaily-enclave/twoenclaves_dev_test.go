@@ -18,19 +18,16 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/permaily-org/permaily/internal/keys"
-	"github.com/permaily-org/permaily/internal/store"
 )
 
 // Two enclaves of one deployment, over one storage: a sign-up by mail started
 // through one ends through the other, whose session the first then knows.
 func TestASignInStartedThroughOneEnclaveEndsThroughTheOther(t *testing.T) {
-	local, err := keys.NewLocal()
+	shared, err := newDevStorage()
 	if err != nil {
 		t.Fatal(err)
 	}
-	devShared.Store(&devStorage{mem: store.NewMemory(), commits: store.NewMemoryCommits(), keys: local})
+	devShared.Store(shared)
 	t.Cleanup(func() { devShared.Store(nil) })
 	const admin = "pma_two_enclaves"
 	sum := sha256.Sum256([]byte(admin))
