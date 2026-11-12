@@ -203,6 +203,9 @@ function MessageContent({
   const confirmation = message.confirmation
     ? mailbox?.confirmations.find((c) => c.message === message.id)
     : undefined
+  // The text gets a rule of its own only below something; right under the head, the head's rule is enough.
+  const between =
+    notes.length > 0 || message.unparsed || message.confirmation || message.attachments.length > 0
   return (
     <>
       {notes.length > 0 && (
@@ -248,7 +251,10 @@ function MessageContent({
 
       <section
         aria-label={formatted ? 'Message' : 'Message text'}
-        className={cx('mt-7 flex flex-1 flex-col', !formatted && 'border-t border-rule pt-6')}
+        className={cx(
+          'mt-7 flex flex-1 flex-col',
+          !formatted && between && 'border-t border-rule pt-6',
+        )}
       >
         <MessageBody mailboxId={mailboxId} message={message} view={view} />
         {!formatted && message.text_truncated && (
