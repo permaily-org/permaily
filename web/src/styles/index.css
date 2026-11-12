@@ -2,6 +2,15 @@
 @import '../../../packages/ui/colors.css';
 
 /*
+  The tests are no part of the app. Tailwind looks for class names in every file of the project, and would
+  take a word such as "container" in a test for one: left out, the built stylesheet is the same with or
+  without them.
+*/
+@source not '../../tests';
+@source not '../../vitest.config.ts';
+@source not '../../tsconfig.test.json';
+
+/*
   Tailwind theme for the web app. Colors come from packages/ui/colors.css.
   Black means withheld and the highlight means shared. Nothing else uses either.
   Colors follow the system setting, and data-theme on <html> overrides it.
@@ -93,5 +102,13 @@
     font-size: var(--text-body);
     line-height: var(--text-body--line-height);
     -webkit-font-smoothing: antialiased;
+  }
+
+  /*
+    A page's heading takes focus when the page is new to the person (components/SessionGate.tsx), so a screen
+    reader starts there. It is not a control and cannot be reached with Tab, so it shows no ring.
+  */
+  h1[tabindex='-1']:focus {
+    outline: none;
   }
 }

@@ -5,6 +5,7 @@ import {
   type ApiErrorCode,
   errorCode,
   finishProviderConfirm,
+  type Provider,
   type ProviderPending,
   pendingProvider,
   startProviderConfirm,
@@ -124,7 +125,7 @@ export function ProviderConfirm() {
   }, [navigate])
 
   /** Takes a refusal that ends the confirmation, and says whether it did. */
-  function ended(failed: ApiErrorCode): boolean {
+  function ended(failed: ApiErrorCode, provider?: Provider): boolean {
     if (failed === 'provider_failed') {
       turn.current++
       setSent(null)
@@ -139,7 +140,7 @@ export function ProviderConfirm() {
     ) {
       // The address was the person's, and the server would not link the provider to its account: the
       // sign-in screen says why, as it does when a provider's own answer ends that way.
-      providerEnded(failed)
+      providerEnded(failed, provider)
       leave()
       return true
     }
@@ -224,7 +225,7 @@ export function ProviderConfirm() {
           // The app opens where the person was going: the router's state says where.
           session.signedIn(who)
         }}
-        ended={ended}
+        ended={(failed) => ended(failed, pending.provider)}
         sendAnother={async () => {
           setSent(sentTo(current.address, await startProviderConfirm(current.address)))
         }}
@@ -251,7 +252,7 @@ export function ProviderConfirm() {
       setSent(sentTo(typed, await startProviderConfirm(typed)))
     } catch (failure) {
       const failed = errorCode(failure)
-      if (ended(failed)) return
+      if (ended(failed, pending.provider)) return
       if (failed === 'invalid_address') {
         setErrors({ address: messageFor(failed) })
         addressRef.current?.focus()

@@ -8,6 +8,7 @@ import {
   dropProviderArrival,
   useProviderArrival,
 } from '../../lib/arrival.ts'
+import { formatFullDay } from '../../lib/closing.ts'
 import { destination } from '../../lib/destination.ts'
 import {
   caretAfter,
@@ -22,7 +23,7 @@ import { AuthLayout } from './AuthLayout.tsx'
 import { CodeStep, type Sent, sentTo } from './CodeStep.tsx'
 import { Field } from './Field.tsx'
 import { Address } from './LinkConfirmation.tsx'
-import { linkHeadlines, messageFor, needsInvitation, providerProblems } from './messages.ts'
+import { linkHeadlines, messageFor, needsInvitation, providerProblem } from './messages.ts'
 import { PasskeySignIn } from './PasskeySignIn.tsx'
 import { type ConfirmState, ProviderConfirm } from './ProviderConfirm.tsx'
 import { ProviderSignIn } from './ProviderSignIn.tsx'
@@ -131,17 +132,19 @@ function AddressStep({
   onStarted: (started: Started) => void
   onRecover: () => void
 }) {
-  const { linkProblem, clearLinkProblem } = useSession()
+  const { linkProblem, clearLinkProblem, deletedOn } = useSession()
   const { state } = useLocation()
   const signUp = mode === 'sign-up'
   // Why a sign-in with a provider came back without signing anyone in, until the person tries something else.
   const arrived = useProviderArrival()
-  const reason =
+  const failed =
     arrived?.screen === 'sign-in' &&
     arrived.kind === 'failed' &&
     needsInvitation(arrived.reason) === signUp
-      ? arrived.reason
+      ? arrived
       : null
+  const reason = failed?.reason ?? null
+  const said = failed ? providerProblem(failed.reason, failed.provider) : null
   const [providers, askProviders] = useProvidersOn()
   const [invitation, setInvitation] = useState(() =>
     signUp ? formatInvitation(arrivedInvitation() ?? '') : '',
@@ -230,10 +233,19 @@ function AddressStep({
   // The newest news comes first: a provider's answer, then a link that did not work.
   const problem = signUp || reason ? null : linkProblem
   // An invitation the server refused is said in its field, like one refused before the browser left.
-  const refused = reason === 'invalid_invitation' ? providerProblems[reason].text : undefined
-  const told = reason && !refused ? providerProblems[reason] : null
-  const title = reason
-    ? providerProblems[reason].title
+  const refused = said && reason === 'invalid_invitation' ? said.text : undefined
+  const told = said && !refused ? said : null
+  // An account seen closing in this browser, whose day has passed: why there is no session to come back to.
+  // It names nobody, since whoever reads this may not be whose account it was.
+  const deleted = signUp ? null : deletedOn
+  const described = [
+    problem ? 'link-problem' : told && !signUp ? 'provider-problem' : null,
+    deleted ? 'deleted-account' : null,
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const title = said
+    ? said.title
     : problem
       ? linkHeadlines[problem]
       : signUp
@@ -255,6 +267,15 @@ function AddressStep({
             : 'Enter your address to ask for a new one.'}
         </p>
       )}
+      {deleted && (
+        <p id="deleted-account" className="mt-3 text-body text-ink-2">
+          An account used in this browser was deleted on{' '}
+          <time dateTime={deleted.toISOString()} className="text-ink">
+            {formatFullDay(deleted)}
+          </time>
+          , unless that was cancelled from another device.
+        </p>
+      )}
 
       <form noValidate onSubmit={submit} className="mt-8 flex flex-col gap-5">
         <Field
@@ -272,7 +293,7 @@ function AddressStep({
           value={address}
           onChange={(event) => onAddress(event.target.value)}
           error={errors.address}
-          describedBy={problem ? 'link-problem' : told && !signUp ? 'provider-problem' : undefined}
+          describedBy={described || undefined}
         />
         {signUp && (
           <Field

@@ -65,7 +65,8 @@ export function RecoveryStep({
     setErrors({})
     setPending(true)
     try {
-      session.signedIn(await recover(typed, normalized))
+      // The code is used up, for want of a passkey: the app opens on Settings, which invites them to add one.
+      session.signedIn(await recover(typed, normalized), 'recovery')
     } catch (failure) {
       setPending(false)
       const failed = errorCode(failure)
