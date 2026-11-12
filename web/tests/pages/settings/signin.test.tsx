@@ -97,6 +97,23 @@ describe('the sign-in section', () => {
 })
 
 describe('passkeys', () => {
+  it('says how an account without one signs in: by mail, and with each provider linked that is on', async () => {
+    await settings({
+      on: ['google', 'github'],
+      linked: [
+        { provider: 'google', linked_at: '2026-11-12T09:00:00Z' },
+        { provider: 'github', linked_at: '2026-11-12T09:05:00Z' },
+        // Linked and off: it signs nobody in, so it is not said here.
+        { provider: 'meta', linked_at: '2026-11-12T09:06:00Z' },
+      ],
+    })
+    expect(
+      section().getByText(
+        "None. You sign in with a message sent to your email address, or with Google or GitHub. This browser can't make passkeys.",
+      ),
+    ).toBeTruthy()
+  })
+
   it('lists each with its name, the day it was made and whether it is synced', async () => {
     browserWithPasskeys()
     await settings({ passkeys: [phone, key] })

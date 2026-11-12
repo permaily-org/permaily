@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { Button } from '../../components/ui/index.ts'
 import * as api from '../../lib/api.ts'
+import { providerNames } from '../../lib/providers.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import { adminMessage, formatWhen, ListState, useAdmin } from './shared.tsx'
 
@@ -19,6 +20,22 @@ const kinds: Record<string, string> = {
   provider_app_removed: "Removed a provider's application",
   admin_made: 'Made an admin',
   admin_removed: 'Removed an admin',
+}
+
+/** What an entry about a provider's application says, with the provider by name. */
+const providerKinds: Record<string, (name: string) => string> = {
+  provider_app_set: (name) => `Set up the application of ${name}`,
+  provider_app_removed: (name) => `Removed the application of ${name}`,
+}
+
+/** What an entry says it did: with the provider's name when it names one this app knows. */
+function said(entry: api.LogEntry): string | undefined {
+  const provider = entry.provider
+  const named = provider ? providerKinds[entry.kind] : undefined
+  if (named && provider && Object.hasOwn(providerNames, provider)) {
+    return named(providerNames[provider as api.Provider])
+  }
+  return kinds[entry.kind]
 }
 
 /** What the admins did, the newest first, a page at a time. */
@@ -84,9 +101,7 @@ export function LogPage() {
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block">
-                    {kinds[entry.kind] ?? (
-                      <span className="font-mono text-small">{entry.kind}</span>
-                    )}
+                    {said(entry) ?? <span className="font-mono text-small">{entry.kind}</span>}
                   </span>
                   {entry.account && (
                     <span className="block text-small text-ink-2">

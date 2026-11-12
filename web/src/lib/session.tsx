@@ -112,8 +112,19 @@ function sameAccount(a: api.Account, b: api.Account): boolean {
     a.name === b.name &&
     a.address === b.address &&
     a.admin === b.admin &&
-    a.passkey_only === b.passkey_only
+    a.passkey_only === b.passkey_only &&
+    a.terms === b.terms
   )
+}
+
+/**
+ * The version of the terms the person has to agree to before anything else, when they agreed to an earlier
+ * one, or to none; null otherwise. A server that says nothing of the terms asks nothing.
+ */
+export function termsToAgree(me: api.Me): string | null {
+  return typeof me.terms === 'string' && me.terms !== '' && me.account.terms !== me.terms
+    ? me.terms
+    : null
 }
 
 /** Whether the person asked to delete this account: the app then shows that, and nothing else. */
@@ -312,7 +323,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (status.current === 'signedOut') setLinkProblem(null)
       setState((now) =>
         now.status === 'signedOut' ||
-        (now.status === 'signedIn' && !sameAccount(now.me.account, who.account))
+        (now.status === 'signedIn' &&
+          (!sameAccount(now.me.account, who.account) || now.me.terms !== who.terms))
           ? { status: 'signedIn', me: who }
           : now,
       )
@@ -351,11 +363,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => api.onAccountClosing(null)
   }, [load])
 
+  // A request was refused because the terms changed since the app last asked (a new release): the server is
+  // asked again, and its answer leads to the screen that asks for the agreement.
+  useEffect(() => {
+    api.onTermsNeeded(() => {
+      if (status.current === 'signedIn') void load()
+    })
+    return () => api.onTermsNeeded(null)
+  }, [load])
+
   const failed = useCallback(
     (error: unknown) => {
       const code = api.errorCode(error)
-      // The request itself told the session that the account is closing: see above.
+      // The request itself told the session that the account is closing, or that the terms changed: see above.
       if (code === 'account_closing') return null
+      if (code === 'terms_needed' && status.current === 'signedIn') return null
       if (code !== 'unauthorized') return code
       // The session ended, here or from another device. The app asks who this is, and leads to the sign-in screen.
       void load()

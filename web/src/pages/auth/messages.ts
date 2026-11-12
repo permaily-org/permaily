@@ -43,6 +43,8 @@ const messages: Record<ApiErrorCode, string> = {
   passkey_only_needed: 'The admin panel works only while your account signs in with passkeys only.',
   super_admin_only: 'Only the super admin can do that.',
   not_cancellable: 'The person asked for this deletion, so only they can cancel it.',
+  terms_needed:
+    "Permaily's terms changed since this page opened. Reload it to read them, then agree to go on.",
   invalid_provider_app:
     "Permaily couldn't use that client ID and secret. Check them, then enter the secret again.",
   other: 'Something went wrong on our side. Try again in a moment.',

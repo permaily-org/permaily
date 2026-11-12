@@ -74,7 +74,7 @@ export function useAdminChange() {
     about: About,
   ): Promise<{ done: T } | { said: string | null; code: ApiErrorCode | null }> {
     try {
-      return { done: await confirmed(action) }
+      return { done: await confirmed(action, 'admin') }
     } catch (error) {
       if (isCancelled(error)) return { said: null, code: null }
       const code = failed(error)

@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router'
 import { useProviderArrival } from '../lib/arrival.ts'
 import { destination } from '../lib/destination.ts'
-import { isClosing, useSession } from '../lib/session.tsx'
+import { isClosing, termsToAgree, useSession } from '../lib/session.tsx'
 import { AccountClosing } from '../pages/auth/AccountClosing.tsx'
 import { AuthLayout } from '../pages/auth/AuthLayout.tsx'
 import { LinkConfirmation, LinkEnded } from '../pages/auth/LinkConfirmation.tsx'
+import { TermsChanged } from '../pages/auth/Terms.tsx'
 import { ConfirmProvider } from './Confirm.tsx'
 import { Button, Headline } from './ui/index.ts'
 
@@ -37,32 +38,52 @@ function Waiting() {
 }
 
 /**
- * Everything of the app sits behind this: without a session, every route leads to the sign-in screen. And
- * with an account that is being deleted every route shows that, and nothing else of the app, until the person
- * cancels. The address stays where it was, so cancelling goes back to the page they were on.
+ * Everything of the app sits behind this: without a session, every route leads to the sign-in screen. With
+ * an account that is being deleted every route shows that, and nothing else of the app, until the person
+ * cancels. And once the terms in force are not the ones the person agreed to, every route shows the screen
+ * that asks for the agreement, until they agree. The address stays where it was, so the app goes back to the
+ * page they were on.
  */
 export function RequireSession() {
   const { state } = useSession()
   const { pathname, search, hash } = useLocation()
-  usePageFocus(
-    state.status !== 'signedIn' ? 'waiting' : isClosing(state.me.account) ? 'closing' : 'page',
-    pathname,
-  )
-  // Said to a screen reader when the app comes back after a deletion was cancelled: it is here, and not on
-  // the screen that goes away, so it is still in the page when it is read.
+  // The version of the terms to agree to, when the person has to before anything else.
+  const terms = state.status === 'signedIn' ? termsToAgree(state.me) : null
+  const blocking =
+    state.status !== 'signedIn'
+      ? 'waiting'
+      : isClosing(state.me.account)
+        ? 'closing'
+        : terms !== null
+          ? 'terms'
+          : 'page'
+  usePageFocus(blocking, pathname)
+  // Said to a screen reader when the app comes back after a deletion was cancelled, or the terms agreed to: it
+  // is here, and not on the screen that goes away, so it is still in the page when it is read.
   const [said, setSaid] = useState('')
+  const before = useRef(blocking)
+  useEffect(() => {
+    if (before.current === 'terms' && blocking === 'page')
+      setSaid('Thanks. You agreed to the terms.')
+    before.current = blocking
+  }, [blocking])
   if (state.status === 'signedIn') {
-    const closing = isClosing(state.me.account)
+    const closing = blocking === 'closing'
     return (
       <>
         <p role="status" className="sr-only">
-          {closing ? '' : said}
+          {blocking === 'page' ? said : ''}
         </p>
         {closing ? (
           <AccountClosing
             account={state.me.account}
             onKept={() => setSaid('Deletion cancelled. Your account works again.')}
           />
+        ) : terms !== null ? (
+          // Deleting the account from there may ask the person to confirm it's them.
+          <ConfirmProvider>
+            <TermsChanged account={state.me.account} version={terms} />
+          </ConfirmProvider>
         ) : (
           // Every page can ask the person to confirm it's them before a change that needs it.
           <ConfirmProvider>
@@ -88,9 +109,9 @@ export function RequireSession() {
  * It leaves focus alone when the app opens straight on a page, where the browser starts at the top as on any
  * site, and when something on the page took focus for itself, such as a field that opens ready to type in.
  */
-function usePageFocus(showing: 'waiting' | 'closing' | 'page', pathname: string) {
+function usePageFocus(showing: 'waiting' | 'closing' | 'terms' | 'page', pathname: string) {
   // What this gate showed last, and whether it ever showed a page.
-  const before = useRef<'nothing' | 'waiting' | 'closing' | 'page'>('nothing')
+  const before = useRef<'nothing' | 'waiting' | 'closing' | 'terms' | 'page'>('nothing')
   const shown = useRef(false)
   // biome-ignore lint/correctness/useExhaustiveDependencies: the page is another when its path is
   useEffect(() => {

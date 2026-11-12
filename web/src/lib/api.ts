@@ -29,6 +29,11 @@ export type Account = {
    * it is on. A server from before says nothing, which reads as off.
    */
   passkey_only?: boolean
+  /**
+   * The version of the terms of service and the privacy policy the person agreed to. Absent when they agreed
+   * to none, as an account made before there were terms.
+   */
+  terms?: string
 }
 
 export type Session = {
@@ -45,7 +50,15 @@ export type Session = {
   confirmed_until?: string
 }
 
-export type Me = { account: Account; session: Session }
+export type Me = {
+  account: Account
+  session: Session
+  /**
+   * The version of the terms in force. When the account's is another, the person agrees to this one before
+   * anything else of the app. A server from before says nothing, and nothing is asked.
+   */
+  terms?: string
+}
 
 export type Passkey = {
   /** The credential's identifier, as the browser names it: base64url without padding. */
@@ -130,6 +143,7 @@ export type ApiErrorCode =
   | 'super_admin_only'
   | 'not_cancellable'
   | 'invalid_provider_app'
+  | 'terms_needed'
   | 'network'
   | 'other'
 
@@ -162,6 +176,7 @@ const known: ReadonlySet<string> = new Set([
   'super_admin_only',
   'not_cancellable',
   'invalid_provider_app',
+  'terms_needed',
 ])
 
 export class ApiError extends Error {
@@ -187,6 +202,16 @@ let closingHeard: (() => void) | null = null
  */
 export function onAccountClosing(listener: (() => void) | null) {
   closingHeard = listener
+}
+
+let termsHeard: (() => void) | null = null
+
+/**
+ * Whom to tell that a request of someone signed in was refused because the terms changed and they did not
+ * agree to the new ones yet: the session, which asks again and shows the screen that asks for the agreement.
+ */
+export function onTermsNeeded(listener: (() => void) | null) {
+  termsHeard = listener
 }
 
 /** How long a request may take before it counts as no answer. */
@@ -228,6 +253,7 @@ async function request<T>(
     // An answer that is not the API's own, such as a proxy's error page.
   }
   if (code === 'account_closing') closingHeard?.()
+  if (code === 'terms_needed' && response.status === 400) termsHeard?.()
   if (typeof code === 'string' && known.has(code)) throw new ApiError(code as ApiErrorCode)
   if (response.status === 401) throw new ApiError('unauthorized')
   if (response.status === 404) throw new ApiError('not_found')
@@ -235,12 +261,19 @@ async function request<T>(
   throw new ApiError('other')
 }
 
-/** Asks for the sign-in message. The answer is the same whether the address has an account or not. */
-export function startEmail(address: string, invitation?: string): Promise<EmailStarted> {
+/**
+ * Asks for the sign-in message. The answer is the same whether the address has an account or not. With an
+ * invitation it is a sign-up, which carries the version of the terms the person agreed to.
+ */
+export function startEmail(
+  address: string,
+  invitation?: string,
+  terms?: string,
+): Promise<EmailStarted> {
   return request(
     'POST',
     '/api/v1/auth/email/start',
-    invitation ? { address, invitation } : { address },
+    invitation ? { address, invitation, ...(terms ? { terms } : {}) } : { address },
   )
 }
 
@@ -291,6 +324,11 @@ export function renameAccount(name: string): Promise<Account> {
  */
 export function deleteAccount(): Promise<Account> {
   return account(request('POST', '/api/v1/account/delete'))
+}
+
+/** Agrees to the terms in force, by the version the person was shown. */
+export function agreeTerms(version: string): Promise<Account> {
+  return account(request('POST', '/api/v1/account/terms', { version }))
 }
 
 /** Keeps an account that was closing: it is active again, as it was. */
@@ -438,13 +476,14 @@ function started(answer: Partial<ProviderStarted> | null): ProviderStarted {
  */
 export async function startProvider(
   provider: Provider,
-  how: { invitation?: string; returnTo?: string } = {},
+  how: { invitation?: string; returnTo?: string; terms?: string } = {},
 ): Promise<ProviderStarted> {
   return started(
     await request('POST', '/api/v1/auth/provider/start', {
       provider,
       ...(how.invitation ? { invitation: how.invitation } : {}),
       ...(how.returnTo ? { return_to: how.returnTo } : {}),
+      ...(how.invitation && how.terms ? { terms: how.terms } : {}),
     }),
   )
 }
@@ -721,6 +760,8 @@ export type LogEntry = {
   account?: { id: string; address?: string }
   /** The invitation it was about, made or revoked: its identifier, which says nothing of its code. */
   invitation?: string
+  /** The provider whose application was set or removed. A server from before says nothing. */
+  provider?: string
 }
 
 export async function adminLog(

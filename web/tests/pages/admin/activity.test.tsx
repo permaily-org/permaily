@@ -33,6 +33,38 @@ function log() {
 }
 
 describe("the admins' activity", () => {
+  it('names the provider whose application was set or removed, and one it does not know as before', async () => {
+    asAdmin().on(
+      first,
+      ok({
+        entries: [
+          { at: '2026-11-12T09:00:00Z', kind: 'provider_app_set', admin: by, provider: 'meta' },
+          {
+            at: '2026-11-12T08:00:00Z',
+            kind: 'provider_app_removed',
+            admin: by,
+            provider: 'github',
+          },
+          { at: '2026-11-12T07:00:00Z', kind: 'provider_app_set', admin: by, provider: 'myspace' },
+          { at: '2026-11-12T06:00:00Z', kind: 'provider_app_set', admin: by },
+        ],
+      }),
+    )
+    await activity()
+    await log().findByText('Set up the application of Facebook')
+    expect(
+      log()
+        .getAllByRole('listitem')
+        .map((row) => row.textContent),
+    ).toEqual([
+      '12 Nov 2026, 09:00 UTCSet up the application of FacebookBy boss@example.org',
+      '12 Nov 2026, 08:00 UTCRemoved the application of GitHubBy boss@example.org',
+      "12 Nov 2026, 07:00 UTCSet up a provider's applicationBy boss@example.org",
+      "12 Nov 2026, 06:00 UTCSet up a provider's applicationBy boss@example.org",
+    ])
+    await expectAccessible()
+  })
+
   it('says each kind in words, and one it does not know as it is', async () => {
     asAdmin().on(
       first,

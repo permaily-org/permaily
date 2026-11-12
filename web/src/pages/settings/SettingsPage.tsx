@@ -1,20 +1,11 @@
 import { useState } from 'react'
-import { InfoTip, SectionHeading, TextAction, ViewSwitch } from '../../components/ui/index.ts'
+import { SectionHeading, ViewSwitch } from '../../components/ui/index.ts'
+import { closingDays } from '../../lib/closing.ts'
 import { pagePadding } from '../../lib/styles.ts'
 import { applyTheme, readTheme, saveTheme, type Theme } from '../../lib/theme.ts'
 import { DeleteAccount } from './account/DeleteAccount.tsx'
 import { Profile } from './account/Profile.tsx'
-import { ExportReady } from './ExportReady.tsx'
-import { EditableRow, NotificationRow, SettingRow } from './rows.tsx'
 import { SignIn } from './signin/SignIn.tsx'
-
-const notificationOptions = [
-  { id: 'requests', title: 'New connection requests', on: true },
-  { id: 'widening', title: 'Requests for more access', on: true },
-  { id: 'unusual', title: 'A rule matching far more than usual', on: true },
-  { id: 'unused', title: 'Connections unused for 60 days', on: true },
-  { id: 'weekly', title: 'Weekly summary of what left', on: false },
-]
 
 const themeOptions: Array<{ value: Theme; label: string }> = [
   { value: 'light', label: 'Light' },
@@ -66,65 +57,33 @@ function Appearance() {
   )
 }
 
+/**
+ * The mail Permaily sends: only about security and access (ADR 0017), and none of it can be turned off, so
+ * there is nothing here to switch.
+ */
 function Notifications() {
-  const [on, setOn] = useState(
-    () => new Set(notificationOptions.filter((n) => n.on).map((n) => n.id)),
-  )
-
-  function toggle(id: string, checked: boolean) {
-    setOn((current) => {
-      const next = new Set(current)
-      if (checked) next.add(id)
-      else next.delete(id)
-      return next
-    })
-  }
-
   return (
     <section aria-labelledby="notifications">
       <SectionHeading id="notifications" title="Notifications" />
-      {notificationOptions.map((option) => (
-        <NotificationRow
-          key={option.id}
-          title={option.title}
-          checked={on.has(option.id)}
-          onChange={(checked) => toggle(option.id, checked)}
-        />
-      ))}
+      <p className="border-b border-rule py-2 text-body text-ink-2">
+        Permaily emails you only about security and access: a sign-in from a new device, a change in
+        how you sign in or in your contact address, and your account being deleted or blocked. These
+        emails can't be turned off.
+      </p>
     </section>
   )
 }
 
+/** What happens to the account's data today. Nothing here is a control until it works. */
 function YourData() {
-  const [retention, setRetention] = useState('Kept for 1 year')
-  const [exported, setExported] = useState(false)
-
   return (
     <section aria-labelledby="your-data">
       <SectionHeading id="your-data" title="Your data" />
-      <EditableRow
-        label="Receipts"
-        value={retention}
-        onSave={setRetention}
-        options={['Kept for 30 days', 'Kept for 90 days', 'Kept for 1 year', 'Kept for 2 years']}
-      />
-      <SettingRow label="Queued mail">
-        <span className="inline-flex items-center gap-1.5">
-          0 emails
-          <InfoTip label="When queued mail is deleted" align="start">
-            Deleted after delivery, or after 7 days
-          </InfoTip>
-        </span>
-      </SettingRow>
-      <SettingRow
-        label="Export"
-        action={
-          exported ? undefined : <TextAction onClick={() => setExported(true)}>Export</TextAction>
-        }
-      >
-        Rules, connections and receipts. No email
-      </SettingRow>
-      {exported && <ExportReady />}
+      <p className="border-b border-rule py-2 text-body text-ink-2">
+        Deleting your account below stops it at once and removes it for good after {closingDays}{' '}
+        days: your address, your name, your ways to sign in and your devices. Exporting your data
+        isn't built yet.
+      </p>
     </section>
   )
 }

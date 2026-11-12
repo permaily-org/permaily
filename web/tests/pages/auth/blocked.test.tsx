@@ -1,6 +1,6 @@
 import { screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { current, expectNotKept, open, settle } from '../../helpers/app.tsx'
+import { agree, current, expectNotKept, open, settle } from '../../helpers/app.tsx'
 import { expectAccessible } from '../../helpers/axe.ts'
 import { answered, browserWithPasskeys, requestOptions } from '../../helpers/passkeys.ts'
 import { ana, meOf, ok, refused, server } from '../../helpers/server.ts'
@@ -43,6 +43,7 @@ async function saysBlocked() {
 /** Asks for the message of a sign-in by mail and enters its code. */
 async function codeOf(user: User, address = 'ana@example.org') {
   await user.type(await screen.findByLabelText('Email address'), address)
+  await agree(user)
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.type(await screen.findByLabelText('Code from the message'), '123456')
 }

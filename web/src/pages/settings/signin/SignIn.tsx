@@ -171,6 +171,8 @@ export function SignIn() {
           )}
           <Passkeys
             list={loaded.list}
+            on={loaded.on}
+            linked={loaded.linked}
             supported={supported}
             adding={adding}
             onAddingDone={() => setAdding(false)}

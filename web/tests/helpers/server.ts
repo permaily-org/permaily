@@ -51,6 +51,7 @@ export type Account = {
   closing_by?: 'person' | 'operator'
   admin?: 'super' | 'admin'
   passkey_only?: boolean
+  terms?: string
 }
 
 export const ana: Account = {
@@ -62,8 +63,13 @@ export const ana: Account = {
   created_at: '2026-03-06T10:00:00Z',
 }
 
-export function meOf(account: Account = ana, session: { confirmed_until?: string } = {}) {
+export function meOf(
+  account: Account = ana,
+  session: { confirmed_until?: string } = {},
+  terms?: string,
+) {
   return {
+    ...(terms ? { terms } : {}),
     account,
     session: {
       ...session,

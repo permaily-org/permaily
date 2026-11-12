@@ -25,9 +25,20 @@ import { Button, Dialog, TextAction } from './ui/index.ts'
 /**
  * Runs an action that may need a fresh proof of who the person is. When the server answers
  * `confirmation_needed`, the person is asked to confirm it's them, and the action runs again, once, as it was:
- * nothing they typed is asked for again. Throws `ConfirmCancelled` when they chose not to.
+ * nothing they typed is asked for again. Throws `ConfirmCancelled` when they chose not to. `why` says what the
+ * dialog explains: a change to the person's own account, or an admin action on the service.
  */
-export type Confirmed = <T>(action: () => Promise<T>) => Promise<T>
+export type Confirmed = <T>(action: () => Promise<T>, why?: ConfirmWhy) => Promise<T>
+
+/** Why the dialog asks: a change that decides who gets into the person's account, or an admin action. */
+export type ConfirmWhy = 'account' | 'admin'
+
+const reasons: Record<ConfirmWhy, string> = {
+  account:
+    "This change decides who can get into your account, so Permaily asks you to show it's you again. It counts for the next 10 minutes.",
+  admin:
+    "This is an admin action, so Permaily asks you to show it's you again. It counts for the next 10 minutes.",
+}
 
 const ConfirmContext = createContext<Confirmed>((action) => action())
 
@@ -42,12 +53,15 @@ export function useConfirmed(): Confirmed {
  */
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [asking, setAsking] = useState(false)
+  // Two actions that ask at once share the dialog, which says why the first one asked.
+  const [why, setWhy] = useState<ConfirmWhy>('account')
   const waiting = useRef<{ answer: Promise<boolean>; give: (confirmed: boolean) => void } | null>(
     null,
   )
 
-  const ask = useCallback((): Promise<boolean> => {
+  const ask = useCallback((reason: ConfirmWhy): Promise<boolean> => {
     if (waiting.current) return waiting.current.answer
+    setWhy(reason)
     let give: (confirmed: boolean) => void = () => {}
     const answer = new Promise<boolean>((resolve) => {
       give = resolve
@@ -85,12 +99,12 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   )
 
   const confirmed = useCallback<Confirmed>(
-    async (action) => {
+    async (action, reason = 'account') => {
       try {
         return await action()
       } catch (error) {
         if (api.errorCode(error) !== 'confirmation_needed') throw error
-        if (!(await ask())) throw new ConfirmCancelled()
+        if (!(await ask(reason))) throw new ConfirmCancelled()
         return action()
       }
     },
@@ -100,12 +114,20 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   return (
     <ConfirmContext.Provider value={confirmed}>
       {children}
-      <ConfirmDialog open={asking} onDone={end} />
+      <ConfirmDialog open={asking} why={why} onDone={end} />
     </ConfirmContext.Provider>
   )
 }
 
-function ConfirmDialog({ open, onDone }: { open: boolean; onDone: (confirmed: boolean) => void }) {
+function ConfirmDialog({
+  open,
+  why,
+  onDone,
+}: {
+  open: boolean
+  why: ConfirmWhy
+  onDone: (confirmed: boolean) => void
+}) {
   const [busy, setBusy] = useState(false)
   return (
     <Dialog
@@ -114,7 +136,7 @@ function ConfirmDialog({ open, onDone }: { open: boolean; onDone: (confirmed: bo
       onClose={() => onDone(false)}
       labelledBy="confirm-heading"
     >
-      {open && <ConfirmSteps onDone={onDone} onBusy={setBusy} />}
+      {open && <ConfirmSteps why={why} onDone={onDone} onBusy={setBusy} />}
     </Dialog>
   )
 }
@@ -144,9 +166,11 @@ const freshFor = 120_000
 type Prepared = api.PasskeyCeremony<PublicKeyCredentialRequestOptionsJSON> & { at: number }
 
 function ConfirmSteps({
+  why,
   onDone,
   onBusy,
 }: {
+  why: ConfirmWhy
   onDone: (confirmed: boolean) => void
   onBusy: (busy: boolean) => void
 }) {
@@ -356,10 +380,7 @@ function ConfirmSteps({
   return (
     <>
       {heading}
-      <p className="mt-3 text-body text-ink-2">
-        This change decides who can get into your account, so Permaily asks you to show it's you
-        again. It counts for the next 10 minutes.
-      </p>
+      <p className="mt-3 text-body text-ink-2">{reasons[why]}</p>
       {step.kind === 'loading' && (
         <p role="status" className="mt-6 text-small text-ink-2">
           Loading
