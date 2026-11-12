@@ -102,12 +102,33 @@ func contract(t *testing.T, s interface {
 		t.Fatalf("missing mailbox: %v", err)
 	}
 	mb := &Mailbox{ID: "mb", WrappedKey: []byte("wk"), RetentionDays: 90, State: []byte("st"), UpdatedAt: now}
-	if err := s.PutMailbox(ctx, mb); err != nil {
-		t.Fatal(err)
+	if err := s.PutMailbox(ctx, mb); err != nil || mb.Version != 1 {
+		t.Fatalf("made: %v, version %d", err, mb.Version)
 	}
 	got, err := s.GetMailbox(ctx, "mb")
-	if err != nil || !bytes.Equal(got.WrappedKey, []byte("wk")) || got.RetentionDays != 90 || !bytes.Equal(got.State, []byte("st")) {
+	if err != nil || !bytes.Equal(got.WrappedKey, []byte("wk")) || got.RetentionDays != 90 || !bytes.Equal(got.State, []byte("st")) || got.Version != 1 {
 		t.Fatalf("mailbox round trip: %+v %v", got, err)
+	}
+	// Made once: a second enclave that makes it too is told it exists, and
+	// what it would have stored is not.
+	if err := s.PutMailbox(ctx, &Mailbox{ID: "mb", WrappedKey: []byte("other"), State: []byte("st2"), UpdatedAt: now}); !errors.Is(err, ErrExists) {
+		t.Fatalf("made twice: %v", err)
+	}
+	// Written at the version read: of two writers, the later one is refused.
+	first, second := *got, *got
+	first.RetentionDays = 30
+	if err := s.PutMailbox(ctx, &first); err != nil || first.Version != 2 {
+		t.Fatalf("write at the version read: %v, version %d", err, first.Version)
+	}
+	second.RetentionDays = 7
+	if err := s.PutMailbox(ctx, &second); !errors.Is(err, ErrConflict) {
+		t.Fatalf("write at an earlier version: %v", err)
+	}
+	if err := s.PutMailbox(ctx, &Mailbox{ID: "none", WrappedKey: []byte("wk"), State: []byte("st"), Version: 3}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("write to a mailbox that is not there: %v", err)
+	}
+	if got, _ := s.GetMailbox(ctx, "mb"); got.RetentionDays != 30 || got.Version != 2 || !bytes.Equal(got.WrappedKey, []byte("wk")) {
+		t.Fatalf("after two writers: %+v", got)
 	}
 
 	for i := range 5 {
@@ -497,6 +518,30 @@ func TestAWS(t *testing.T) {
 	}
 	s := &AWS{DB: db, S3: s3c, Table: table, Bucket: bucket}
 	contract(t, s, func(n time.Time) { s.Now = func() time.Time { return n } })
+
+	// A mailbox stored before versions existed reads as version 1, and is
+	// written at it once.
+	if _, err := db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(table), Item: map[string]ddb.AttributeValue{
+		"pk": pk("mb-old"), "sk": str("mailbox"),
+		"wrapped_key": &ddb.AttributeValueMemberB{Value: []byte("wk")}, "state": &ddb.AttributeValueMemberB{Value: []byte("st")},
+		"retention_days": &ddb.AttributeValueMemberN{Value: "90"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	old, err := s.GetMailbox(ctx, "mb-old")
+	if err != nil || old.Version != 1 {
+		t.Fatalf("a mailbox from before versions: %+v %v", old, err)
+	}
+	again := *old
+	if err := s.PutMailbox(ctx, old); err != nil || old.Version != 2 {
+		t.Fatalf("written at version 1: %v", err)
+	}
+	if err := s.PutMailbox(ctx, &again); !errors.Is(err, ErrConflict) {
+		t.Fatalf("written twice at version 1: %v", err)
+	}
+	if err := s.PutMailbox(ctx, &Mailbox{ID: "mb-none", WrappedKey: []byte("wk"), State: []byte("st"), Version: 1}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("version 1 of a mailbox that is not there: %v", err)
+	}
 }
 
 // brokenDB is DynamoDB that answers what it is told to.
@@ -504,6 +549,11 @@ type brokenDB struct {
 	DynamoAPI
 	query  func() (*dynamodb.QueryOutput, error)
 	delete error
+	put    error
+}
+
+func (b *brokenDB) PutItem(context.Context, *dynamodb.PutItemInput, ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
+	return &dynamodb.PutItemOutput{}, b.put
 }
 
 func (b *brokenDB) Query(context.Context, *dynamodb.QueryInput, ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
@@ -526,6 +576,10 @@ func TestAWSListAndDeleteFailures(t *testing.T) {
 	}
 	if err := s.DeleteRecord(ctx, "x@1"); !errors.Is(err, down) {
 		t.Errorf("delete record: %v", err)
+	}
+	db.put = down
+	if err := s.PutMailbox(ctx, &Mailbox{ID: "mb", Version: 2}); !errors.Is(err, down) {
+		t.Errorf("put mailbox: %v", err)
 	}
 	if _, err := s.ListEntries(ctx, "p", "", "k", 10); !errors.Is(err, down) {
 		t.Errorf("list entries: %v", err)
