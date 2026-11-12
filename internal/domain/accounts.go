@@ -24,6 +24,20 @@ const (
 	SessionTouch = time.Hour
 )
 
+// ConfirmationLifetime is how long a proof of who the person is lasts for a
+// session: from a sign-in, or from confirming it is them again. A change that
+// decides who gets into an account needs one that is fresh.
+const ConfirmationLifetime = 10 * time.Minute
+
+// ConfirmedUntil is when a proof made at confirmed stops being fresh: never
+// fresh when there was none.
+func ConfirmedUntil(confirmed time.Time) time.Time {
+	if confirmed.IsZero() {
+		return time.Time{}
+	}
+	return confirmed.Add(ConfirmationLifetime)
+}
+
 // SessionExpiry is when a session ends, given when it was made and last used.
 func SessionExpiry(created, lastUsed time.Time) time.Time {
 	idle, max := lastUsed.Add(SessionIdle), created.Add(SessionMax)

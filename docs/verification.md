@@ -57,7 +57,7 @@ What this does not show: a configuration set put in place and removed between tw
 
 ## What the operator did to accounts
 
-The operator, with the admin token, can do some things to an account through the enclave: block it and unblock it, ask to delete it and cancel that, sign its devices out, and make and revoke invitations (ADR 0017). The enclave counts each kind and serves the counts on `/status` under `admin`, with the time it started counting. The verifier prints them:
+The operator, with the admin token, can do some things to an account through the enclave: block it and unblock it, ask to delete it and cancel a deletion the operator asked for, sign its devices out, and make and revoke invitations (ADR 0017). The admins do the same from the web app, and the super admin makes and removes admins (ADR 0022). The enclave counts each kind of what both do and serves the counts on `/status` under `admin`, with the time it started counting. The verifier prints them:
 
 ```
       what the operator did to accounts through this enclave since 2026-11-12T04:58:12Z: blocked an account 1 time; made an invitation 2 times
@@ -170,7 +170,7 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
   },
   "admin": {
     "since": "<when this enclave started counting: when it started>",
-    "actions": {"block": 0, "unblock": 0, "delete": 0, "delete_cancel": 0, "sessions_close": 0, "invitations_made": 0, "invitation_revoked": 0, "provider_app_set": 0, "provider_app_removed": 0}
+    "actions": {"block": 0, "unblock": 0, "delete": 0, "delete_cancel": 0, "sessions_close": 0, "invitations_made": 0, "invitation_revoked": 0, "provider_app_set": 0, "provider_app_removed": 0, "admin_made": 0, "admin_removed": 0}
   },
   "anchors": {
     "bucket": "<S3 bucket with Object Lock that holds the commits>",
@@ -187,7 +187,7 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
 
 `mail` says what SES would do with a message of the enclave besides delivering it, as the enclave read it: each identity is `no_configuration_set`, `configuration_set`, `not_verified` or `absent`. `failing` is true when the newest attempt got no answer to go by, and `state` and `checked_at` then describe the last one that did; `history_truncated` appears after more than 32 states. It is absent in an image that sends no mail. A regression of the record of an account is listed in `anchors.regressions` without the account's name.
 
-`admin` counts what the operator did to accounts through this enclave since it started, by kind: an account blocked or unblocked, a deletion asked or cancelled, the devices of an account signed out, invitations made (one by one) and one revoked, and the application of a provider set or removed. Every kind the enclave knows is there, also at zero; a later image may count more kinds, which the verifier prints by name. It never holds an account, an address or an identifier. It is absent in an image without accounts and in images up to v0.10.0. The verifier checks nothing of it.
+`admin` counts what the operator did to accounts through this enclave since it started, by kind: an account blocked or unblocked, a deletion asked or cancelled, the devices of an account signed out, invitations made (one by one) and one revoked, the application of a provider set or removed, and an admin made or removed. It counts what the operator does with the token and what the admins do in the web app together. Every kind the enclave knows is there, also at zero; a later image may count more kinds, which the verifier prints by name. It never holds an account, an address or an identifier. It is absent in an image without accounts and in images up to v0.10.0. The verifier checks nothing of it.
 
 `root` is absent in an image that stores no mail. `from` is present when another release's enclave handed the root secret over. `history` and `gaps` are every state of the key's policy and grants the enclave has read since it started, and the periods in which it could not read. Releases up to v0.7.0 also report `kms`, the key they wrapped data keys with directly, with the same `history` and `gaps`. If KMS cannot be reached, or the image has no root secret yet, the endpoint answers 503.
 

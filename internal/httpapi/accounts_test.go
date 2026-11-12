@@ -61,7 +61,7 @@ func newApp(t *testing.T) *app {
 	a.svc, err = accounts.New(accounts.Config{
 		// As the enclave sets it up: only the newest version of a record is kept.
 		Records: &store.Anchored{Records: mem, Commits: store.NewMemoryCommits(), OnlyNewest: true}, Entries: mem,
-		Keys: k, Mailer: a.out, Providers: a.idp, AppURL: appOrigin, Log: log,
+		Keys: k, Mailer: a.out, Providers: a.idp, AppURL: appOrigin, SuperAdmin: superAdmin, Log: log,
 		Now: func() time.Time { return time.Now().Add(a.ahead) },
 	})
 	if err != nil {
@@ -541,7 +541,9 @@ func TestPasskeysAPI(t *testing.T) {
 		t.Fatalf("a code from before the new ones: %+v", e)
 	}
 	read(t, a.call("POST", "/api/v1/auth/recovery", body, nil), 200, &signed)
-	if signed.Account != me.Account || a.cookie == nil || a.cookie.MaxAge != 30*24*3600 || !a.cookie.HttpOnly {
+	want := me.Account
+	want.PasskeyOnly = true // turned on above
+	if signed.Account != want || a.cookie == nil || a.cookie.MaxAge != 30*24*3600 || !a.cookie.HttpOnly {
 		t.Fatalf("recovered: %+v, cookie %+v", signed, a.cookie)
 	}
 	old := a.cookie

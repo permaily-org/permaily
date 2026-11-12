@@ -5,6 +5,13 @@ import { AccountsPage } from './pages/accounts/AccountsPage.tsx'
 import { ConnectMailboxPage } from './pages/accounts/ConnectMailboxPage.tsx'
 import { ForwardingSetupPage } from './pages/accounts/ForwardingSetupPage.tsx'
 import { ActivityPage } from './pages/activity/ActivityPage.tsx'
+import { AccountPage as AdminAccountPage } from './pages/admin/AccountPage.tsx'
+import { AccountsPage as AdminAccountsPage } from './pages/admin/AccountsPage.tsx'
+import { AdminGate } from './pages/admin/AdminLayout.tsx'
+import { AdminsPage } from './pages/admin/AdminsPage.tsx'
+import { InvitationsPage } from './pages/admin/InvitationsPage.tsx'
+import { LogPage } from './pages/admin/LogPage.tsx'
+import { ProvidersPage } from './pages/admin/ProvidersPage.tsx'
 import { SignInPage } from './pages/auth/SignInPage.tsx'
 import { ConnectAgentPage } from './pages/connections/ConnectAgentPage.tsx'
 import { ConnectionDetailPage } from './pages/connections/ConnectionDetailPage.tsx'
@@ -37,6 +44,18 @@ export function App() {
           <Route path="activity" element={<ActivityPage />} />
           <Route path="accounts" element={<AccountsPage />} />
           <Route path="settings" element={<SettingsPage />} />
+
+          {/* The admin panel: anyone who is not an admin is led where any unknown route leads */}
+          <Route path="admin" element={<AdminGate />}>
+            <Route index element={<Navigate to="accounts" replace />} />
+            <Route path="accounts" element={<AdminAccountsPage />} />
+            <Route path="accounts/:id" element={<AdminAccountPage />} />
+            <Route path="invitations" element={<InvitationsPage />} />
+            <Route path="providers" element={<ProvidersPage />} />
+            <Route path="admins" element={<AdminsPage />} />
+            <Route path="activity" element={<LogPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
         </Route>
 
         {/* Full-page flows without the sidebar */}

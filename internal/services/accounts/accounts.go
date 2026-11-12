@@ -100,8 +100,12 @@ type Config struct {
 	// host is who passkeys are made for, and it is the only page whose
 	// answers about a passkey are taken.
 	AppURL string
-	Log    *slog.Logger
-	Now    func() time.Time
+	// SuperAdmin is the contact address of the super admin's account, as
+	// compiled into the image: whichever account has it is the super admin
+	// (admins.go). Empty leaves the admin panel to nobody.
+	SuperAdmin string
+	Log        *slog.Logger
+	Now        func() time.Time
 }
 
 // Limits on what one enclave keeps in memory and starts at once.
@@ -180,9 +184,10 @@ type Service struct {
 type attempt struct {
 	address string
 	// account is whose contact address the attempt changes (address.go);
-	// empty for a sign-in. An attempt works for what it was started for and
-	// for nothing else: one of an account signs nobody in, and a sign-in
-	// changes no address.
+	// empty for a sign-in; confirmFor of a session for an attempt that
+	// confirms that session (confirm.go). An attempt works for what it was
+	// started for and for nothing else: one of an account signs nobody in,
+	// one that confirms changes no address, and a sign-in does neither.
 	account string
 	// invitation is the entry of the invitation the sign-up will use, if the
 	// address has no account when the sign-in ends.
@@ -204,6 +209,13 @@ func New(cfg Config) (*Service, error) {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.SuperAdmin != "" {
+		address, err := domain.NormalizeAddress(cfg.SuperAdmin)
+		if err != nil {
+			return nil, errors.New("accounts: the super admin's address is not one")
+		}
+		cfg.SuperAdmin = address
 	}
 	app, err := url.Parse(cfg.AppURL)
 	if err != nil || app.Hostname() == "" {
@@ -315,12 +327,15 @@ type accountDoc struct {
 	// written in between, and leads here from then on.
 	MovingTo    string `json:"moving_to,omitempty"`
 	MovingClaim string `json:"moving_claim,omitempty"`
+	// Admin says the super admin made the account an admin, who and when
+	// (admins.go). Nothing else makes one but the super admin's address.
+	Admin *adminDoc `json:"admin,omitempty"`
 }
 
 func (d *accountDoc) view() contracts.Account {
 	return contracts.Account{
 		ID: d.ID, State: d.State, Address: d.Address, Name: d.Name, Language: d.Language,
-		CreatedAt: d.CreatedAt, ClosesAt: d.ClosesAt, ClosingBy: d.closingBy(),
+		CreatedAt: d.CreatedAt, ClosesAt: d.ClosesAt, ClosingBy: d.closingBy(), PasskeyOnly: d.PasskeyOnly,
 	}
 }
 
@@ -696,6 +711,13 @@ const invitationKey = "invitation"
 // only their hash is kept. Each is also listed for the operator under an
 // identifier of its own, which says nothing of the code (operator.go).
 func (s *Service) CreateInvitations(ctx context.Context, count int) (*contracts.Invitations, error) {
+	return s.createInvitations(ctx, nil, count)
+}
+
+func (s *Service) createInvitations(ctx context.Context, by *acting, count int) (*contracts.Invitations, error) {
+	if err := by.changing(); err != nil {
+		return nil, err
+	}
 	if count < 1 || count > MaxInvitations {
 		return nil, &contracts.Error{Code: "invalid_count", Message: fmt.Sprintf("count must be 1-%d", MaxInvitations)}
 	}
@@ -706,7 +728,12 @@ func (s *Service) CreateInvitations(ctx context.Context, count int) (*contracts.
 	now := s.now()
 	out := &contracts.Invitations{ExpiresAt: now.Add(domain.InvitationLifetime)}
 	// The ones made before a failure are made all the same.
-	defer func() { s.acted(ActionInvitationsMade, len(out.Invitations)) }()
+	defer func() {
+		s.acted(ActionInvitationsMade, len(out.Invitations))
+		for _, id := range out.IDs {
+			s.logged(ctx, by, ActionInvitationsMade, "", id)
+		}
+	}()
 	for range count {
 		code, id := randomString(domain.InvitationAlphabet, domain.InvitationLength), newID("inv")
 		partition := invitationPartition(code)
@@ -1046,15 +1073,27 @@ type sessionDoc struct {
 	CreatedAt   time.Time `json:"created_at"`
 	LastUsedAt  time.Time `json:"last_used_at"`
 	Device      string    `json:"device"`
+	// ConfirmedAt is when the person last proved who they are with this
+	// session: when it was made, by signing in, or when they confirmed it is
+	// them again (confirm.go). It is signed with the rest, so whoever writes to
+	// the storage cannot make a session fresh, and it is in the storage, so a
+	// request that lands on another enclave sees it.
+	ConfirmedAt time.Time `json:"confirmed_at,omitzero"`
 }
 
 func (d *sessionDoc) expiry() time.Time { return domain.SessionExpiry(d.CreatedAt, d.LastUsedAt) }
 
-func (d *sessionDoc) view(current string) contracts.Session {
-	return contracts.Session{
+// view is the session as its person sees it at now. Only the session that
+// asks says until when its proof is fresh, and only while it is.
+func (d *sessionDoc) view(current string, now time.Time) contracts.Session {
+	out := contracts.Session{
 		ID: d.ID, CreatedAt: d.CreatedAt, LastUsedAt: d.LastUsedAt, ExpiresAt: d.expiry(),
 		Device: d.Device, Current: d.ID == current,
 	}
+	if until := domain.ConfirmedUntil(d.ConfirmedAt); out.Current && now.Before(until) {
+		out.ConfirmedUntil = until
+	}
+	return out
 }
 
 func accountPartition(accountID string) string { return "account#" + accountID }
@@ -1112,11 +1151,13 @@ func (s *Service) newSession(ctx context.Context, accountID, userAgent string) (
 	doc := &sessionDoc{
 		V: 1, Account: accountID, ID: newID("ses"), TokenSHA256: sum[:],
 		CreatedAt: now, LastUsedAt: now, Device: domain.Device(userAgent),
+		// Signing in is a proof of who the person is.
+		ConfirmedAt: now,
 	}
 	if err := s.putSession(ctx, doc, 0); err != nil {
 		return nil, "", err
 	}
-	view := doc.view(doc.ID)
+	view := doc.view(doc.ID, now)
 	return &view, accountID + "." + doc.ID + "." + secret, nil
 }
 
@@ -1162,7 +1203,7 @@ func (s *Service) Authenticate(ctx context.Context, cookie string) (*Authenticat
 			return nil, err
 		}
 	}
-	return &Authenticated{AccountID: accountID, Session: doc.view(id)}, nil
+	return &Authenticated{AccountID: accountID, Session: doc.view(id, s.now())}, nil
 }
 
 func (s *Service) sessions(ctx context.Context, accountID string) ([]sessionDoc, error) {
@@ -1190,9 +1231,9 @@ func (s *Service) Sessions(ctx context.Context, who *Authenticated) (*contracts.
 		return nil, err
 	}
 	slices.SortFunc(list, func(a, b sessionDoc) int { return b.LastUsedAt.Compare(a.LastUsedAt) })
-	out := &contracts.SessionList{Sessions: []contracts.Session{}}
+	out, now := &contracts.SessionList{Sessions: []contracts.Session{}}, s.now()
 	for i := range list {
-		out.Sessions = append(out.Sessions, list[i].view(who.Session.ID))
+		out.Sessions = append(out.Sessions, list[i].view(who.Session.ID, now))
 	}
 	return out, nil
 }
@@ -1215,5 +1256,13 @@ func (s *Service) Me(ctx context.Context, who *Authenticated) (*contracts.Me, er
 	if err != nil {
 		return nil, err
 	}
-	return &contracts.Me{Account: doc.view(), Session: who.Session}, nil
+	return &contracts.Me{Account: s.view(doc), Session: who.Session}, nil
+}
+
+// view is the account as its person sees it, with what it is in the admin
+// panel, worked out from the record each time (admins.go).
+func (s *Service) view(doc *accountDoc) contracts.Account {
+	out := doc.view()
+	out.Admin = s.role(doc)
+	return out
 }

@@ -147,6 +147,17 @@ func TestOperatorAPI(t *testing.T) {
 	}
 	act("/unblock")
 
+	// A deletion the person asked for is theirs to cancel, not the operator's.
+	a.signIn("ana@example.org")
+	read(t, a.call("POST", "/api/v1/account/delete", "", nil), 200, nil)
+	if read(t, do(h, "POST", one+"/delete/cancel", token, ""), 409, &e); e.Error.Code != "not_cancellable" || e.Error.Message != "only the person can cancel a deletion they asked for" {
+		t.Fatalf("the operator cancels what the person asked: %+v", e)
+	}
+	if rec := a.record(id); rec.State != contracts.AccountClosing || rec.ClosingBy != contracts.ClosingByPerson {
+		t.Fatalf("after the refusal: %+v", rec)
+	}
+	read(t, a.call("POST", "/api/v1/account/delete/cancel", "", nil), 200, nil)
+
 	// Finding the account of an address.
 	var list contracts.AccountList
 	for _, q := range []string{"ana@example.org", " ANA@Example.org "} {
@@ -249,8 +260,8 @@ func TestTheOperatorsRoutesCannotChangeAnAddressOrAWayIn(t *testing.T) {
 		names = append(names, service.Method(i).Name)
 	}
 	want := []string{
-		"AccountRecord", "AccountRecordByAddress", "AccountRecords", "BlockAccount", "CloseAccountSessions", "CreateInvitations",
-		"DeleteAccount", "Invitations", "KeepAccount", "RevokeInvitation", "UnblockAccount",
+		"AccountRecord", "AccountRecordByAddress", "AccountRecords", "AdminLog", "Admins", "BlockAccount", "CloseAccountSessions",
+		"CreateInvitations", "DeleteAccount", "Invitations", "KeepAccount", "RevokeInvitation", "Stats", "UnblockAccount",
 	}
 	if !slices.Equal(names, want) {
 		t.Fatalf("what the operator's routes can ask of the service:\n%v\nwant\n%v", names, want)
@@ -870,7 +881,7 @@ func TestStatusSaysWhatTheOperatorDid(t *testing.T) {
 		return st, rec.Body.String()
 	}
 	st, _ := get()
-	if st.Admin.Since.IsZero() || len(st.Admin.Actions) != 9 || st.Admin.Actions["invitations_made"] != 1 || st.Admin.Actions["block"] != 0 {
+	if st.Admin.Since.IsZero() || len(st.Admin.Actions) != 11 || st.Admin.Actions["invitations_made"] != 1 || st.Admin.Actions["block"] != 0 {
 		t.Fatalf("at the start: %+v", st.Admin)
 	}
 	one := "/v1/admin/accounts/" + me.Account.ID
@@ -890,6 +901,7 @@ func TestStatusSaysWhatTheOperatorDid(t *testing.T) {
 	want := map[string]int{
 		"block": 2, "unblock": 1, "delete": 1, "delete_cancel": 1, "sessions_close": 1,
 		"invitations_made": 5, "invitation_revoked": 1, "provider_app_set": 1, "provider_app_removed": 1,
+		"admin_made": 0, "admin_removed": 0,
 	}
 	if !reflect.DeepEqual(st.Admin.Actions, want) {
 		t.Fatalf("what the operator did: %+v, want %+v", st.Admin.Actions, want)

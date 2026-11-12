@@ -54,7 +54,7 @@ func (w *world) service(k Keys) *Service {
 	w.anchored = &store.Anchored{Records: w.mem, Commits: w.commits, OnlyNewest: true, Now: func() time.Time { return w.now }}
 	svc, err := New(Config{
 		Records: w.anchored,
-		Entries: w.mem, Keys: k, Mailer: w.out, Providers: w.idp, AppURL: "https://app.permaily.test",
+		Entries: w.mem, Keys: k, Mailer: w.out, Providers: w.idp, AppURL: "https://app.permaily.test", SuperAdmin: superAdmin,
 		Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: func() time.Time { return w.now },
 	})
 	if err != nil {
@@ -119,6 +119,24 @@ func (w *world) signUp(address string) (*contracts.Me, string) {
 		w.t.Fatal(err)
 	}
 	return me, cookie
+}
+
+// fresh returns the session behind who as one whose person proved who they
+// are a moment ago: the tests of what such a session does start from there.
+// It writes nothing; confirm_test.go tests the proof itself, through the
+// storage.
+func (w *world) fresh(who *Authenticated) *Authenticated {
+	if who == nil {
+		return nil
+	}
+	out := *who
+	out.Session.ConfirmedUntil = w.now.Add(domain.ConfirmationLifetime)
+	return &out
+}
+
+// ghost is a session with a fresh proof, of an account that is not there.
+func (w *world) ghost() *Authenticated {
+	return &Authenticated{AccountID: newID("acc"), Session: contracts.Session{ID: newID("ses"), ConfirmedUntil: w.now.Add(domain.ConfirmationLifetime)}}
 }
 
 func (w *world) wrongCode(m *Mail) string {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router'
 import { SectionHeading, TextAction } from '../../../components/ui/index.ts'
 import * as api from '../../../lib/api.ts'
 import { useSession } from '../../../lib/session.tsx'
@@ -37,6 +38,11 @@ export function SignIn() {
   // The person just signed in with a recovery code, for want of a passkey: the section invites them to add
   // one. The session says so once; from then on it is this section's to show, until a passkey is added.
   const [invited, setInvited] = useState(session.recovered)
+  // Sent here to turn on passkey only, such as by the admin panel: the section takes focus once it is read.
+  const location = useLocation()
+  const [sent] = useState(
+    () => (location.state as { section?: unknown } | null)?.section === 'sign-in',
+  )
   const { recovered, clearRecovered } = session
   useEffect(() => {
     if (recovered) clearRecovered()
@@ -94,6 +100,9 @@ export function SignIn() {
     if (invited && !led.current) {
       led.current = true
       invitedRef.current?.focus()
+    } else if (sent && !led.current) {
+      led.current = true
+      sectionRef.current?.focus()
     }
   }, [read])
 

@@ -39,7 +39,7 @@ func (w *world) who(cookie string) *Authenticated {
 // create asks to make a passkey and has the authenticator answer.
 func (w *world) create(who *Authenticated, auth *webauthntest.Authenticator, name string) contracts.PasskeyFinish {
 	w.t.Helper()
-	started, err := w.svc.StartPasskey(context.Background(), who)
+	started, err := w.svc.StartPasskey(context.Background(), w.fresh(who))
 	if err != nil {
 		w.t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func (w *world) signInWith(auth *webauthntest.Authenticator, id []byte) (*contra
 // passkeyOnly turns "passkey only" on and returns the recovery codes.
 func (w *world) passkeyOnly(who *Authenticated) []string {
 	w.t.Helper()
-	state, err := w.svc.SetPasskeyOnly(context.Background(), who, contracts.PasskeyOnly{On: true})
+	state, err := w.svc.SetPasskeyOnly(context.Background(), w.fresh(who), contracts.PasskeyOnly{On: true})
 	if err != nil || !state.PasskeyOnly || len(state.RecoveryCodes) != domain.RecoveryCodes {
 		w.t.Fatalf("turning passkey only on: %+v %v", state, err)
 	}
@@ -125,7 +125,7 @@ func TestPasskeys(t *testing.T) {
 
 	// What the browser is told to make: a passkey for this app alone, that
 	// knows which account it is for and asks for the person.
-	started, err := w.svc.StartPasskey(ctx, who)
+	started, err := w.svc.StartPasskey(ctx, w.fresh(who))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestPasskeys(t *testing.T) {
 	if _, err := w.svc.change(ctx, me.Account.ID, func(doc *accountDoc) error { doc.Name = "Ana"; return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if named, _ := w.svc.StartPasskey(ctx, who); named.Options.User.DisplayName != "Ana" || named.Options.User.Name != "ana@example.org" {
+	if named, _ := w.svc.StartPasskey(ctx, w.fresh(who)); named.Options.User.DisplayName != "Ana" || named.Options.User.Name != "ana@example.org" {
 		t.Fatalf("user of a named account: %+v", named.Options.User)
 	}
 
@@ -189,7 +189,7 @@ func TestPasskeys(t *testing.T) {
 		}
 	}
 	// The ones the account has are not made twice by their authenticator.
-	again, _ := w.svc.StartPasskey(ctx, who)
+	again, _ := w.svc.StartPasskey(ctx, w.fresh(who))
 	if ex := again.Options.ExcludeCredentials; len(ex) != 3 || ex[0].Type != "public-key" || !bytes.Equal(ex[2].ID, made[2].ID) {
 		t.Fatalf("excluded: %+v", ex)
 	}
@@ -242,7 +242,7 @@ func TestPasskeys(t *testing.T) {
 		if _, err := w.svc.FinishPasskey(ctx, who, in); err != nil {
 			t.Fatalf("after a name that was refused: %v", err)
 		}
-		if err := w.svc.RemovePasskey(ctx, who, in.Credential.RawID.String()); err != nil {
+		if err := w.svc.RemovePasskey(ctx, w.fresh(who), in.Credential.RawID.String()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -251,14 +251,14 @@ func TestPasskeys(t *testing.T) {
 		if _, err := w.svc.RenamePasskey(ctx, who, unknown, contracts.PasskeyRename{Name: "x"}); !errors.Is(err, contracts.ErrNotFound) {
 			t.Errorf("renaming %q: %v", unknown, err)
 		}
-		if err := w.svc.RemovePasskey(ctx, who, unknown); !errors.Is(err, contracts.ErrNotFound) {
+		if err := w.svc.RemovePasskey(ctx, w.fresh(who), unknown); !errors.Is(err, contracts.ErrNotFound) {
 			t.Errorf("removing %q: %v", unknown, err)
 		}
 	}
 	// Nobody renames or removes a passkey of another account.
 	_, eveCookie := w.signUp("eve@example.org")
 	eve := w.who(eveCookie)
-	if err := w.svc.RemovePasskey(ctx, eve, id); !errors.Is(err, contracts.ErrNotFound) {
+	if err := w.svc.RemovePasskey(ctx, w.fresh(eve), id); !errors.Is(err, contracts.ErrNotFound) {
 		t.Fatalf("removing another account's passkey: %v", err)
 	}
 	if _, err := w.svc.RenamePasskey(ctx, eve, id, contracts.PasskeyRename{Name: "mine"}); !errors.Is(err, contracts.ErrNotFound) {
@@ -266,13 +266,13 @@ func TestPasskeys(t *testing.T) {
 	}
 
 	// A passkey that was removed signs nobody in; the others still do.
-	if err := w.svc.RemovePasskey(ctx, who, id); err != nil {
+	if err := w.svc.RemovePasskey(ctx, w.fresh(who), id); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := w.signInWith(auths[1], made[1].ID); !errors.Is(err, contracts.ErrInvalidPasskey) {
 		t.Fatalf("a removed passkey: %v", err)
 	}
-	if err := w.svc.RemovePasskey(ctx, who, id); !errors.Is(err, contracts.ErrNotFound) {
+	if err := w.svc.RemovePasskey(ctx, w.fresh(who), id); !errors.Is(err, contracts.ErrNotFound) {
 		t.Fatalf("removing it again: %v", err)
 	}
 	if _, _, err := w.signInWith(auths[2], made[2].ID); err != nil {
@@ -280,7 +280,7 @@ func TestPasskeys(t *testing.T) {
 	}
 	// Without "passkey only" the last one can go too: mail still signs in.
 	for _, i := range []int{0, 2} {
-		if err := w.svc.RemovePasskey(ctx, who, made[i].ID.String()); err != nil {
+		if err := w.svc.RemovePasskey(ctx, w.fresh(who), made[i].ID.String()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -345,7 +345,7 @@ func TestPasskeyRefusals(t *testing.T) {
 			return who, in
 		},
 		"another page": func() (*Authenticated, contracts.PasskeyFinish) {
-			started, _ := w.svc.StartPasskey(ctx, who)
+			started, _ := w.svc.StartPasskey(ctx, w.fresh(who))
 			in := contracts.PasskeyFinish{Ceremony: started.Ceremony, Name: "x"}
 			in.Credential.RawID, in.Credential.Response.ClientDataJSON, in.Credential.Response.AttestationObject = evil.Create(testRP, "https://permaily.test", started.Options.Challenge, started.Options.User.ID)
 			return who, in
@@ -367,7 +367,7 @@ func TestPasskeyRefusals(t *testing.T) {
 			return who, second
 		},
 		"an answer that is nothing": func() (*Authenticated, contracts.PasskeyFinish) {
-			started, _ := w.svc.StartPasskey(ctx, who)
+			started, _ := w.svc.StartPasskey(ctx, w.fresh(who))
 			return who, contracts.PasskeyFinish{Ceremony: started.Ceremony, Name: "x"}
 		},
 		"another identifier than the one proved": func() (*Authenticated, contracts.PasskeyFinish) {
@@ -429,7 +429,7 @@ func TestPasskeyRefusals(t *testing.T) {
 			return in
 		},
 		"the ceremony of making one": func() contracts.PasskeySignIn {
-			started, _ := w.svc.StartPasskey(ctx, who)
+			started, _ := w.svc.StartPasskey(ctx, w.fresh(who))
 			in := contracts.PasskeySignIn{Ceremony: started.Ceremony}
 			in.Credential.RawID = mine.ID
 			r := &in.Credential.Response
@@ -549,7 +549,7 @@ func TestPasskeysAreBounded(t *testing.T) {
 	for i := range domain.MaxPasskeys {
 		w.addPasskey(who, webauthntest.New(webauthntest.EdDSA), fmt.Sprintf("key %d", i))
 	}
-	if _, err := w.svc.StartPasskey(ctx, who); !errors.Is(err, contracts.ErrTooManyPasskeys) {
+	if _, err := w.svc.StartPasskey(ctx, w.fresh(who)); !errors.Is(err, contracts.ErrTooManyPasskeys) {
 		t.Fatalf("starting passkey twenty-one: %v", err)
 	}
 	if _, err := w.svc.FinishPasskey(ctx, who, late); !errors.Is(err, contracts.ErrTooManyPasskeys) {
@@ -598,13 +598,13 @@ func TestPasskeyOnly(t *testing.T) {
 	who := w.who(cookie)
 
 	// It needs a passkey, and without it there are no recovery codes.
-	if _, err := w.svc.SetPasskeyOnly(ctx, who, contracts.PasskeyOnly{On: true}); !errors.Is(err, contracts.ErrPasskeyNeeded) {
+	if _, err := w.svc.SetPasskeyOnly(ctx, w.fresh(who), contracts.PasskeyOnly{On: true}); !errors.Is(err, contracts.ErrPasskeyNeeded) {
 		t.Fatalf("passkey only without a passkey: %v", err)
 	}
-	if _, err := w.svc.NewRecoveryCodes(ctx, who); !errors.Is(err, contracts.ErrPasskeyOnlyOff) {
+	if _, err := w.svc.NewRecoveryCodes(ctx, w.fresh(who)); !errors.Is(err, contracts.ErrPasskeyOnlyOff) {
 		t.Fatalf("recovery codes without passkey only: %v", err)
 	}
-	if state, err := w.svc.SetPasskeyOnly(ctx, who, contracts.PasskeyOnly{On: false}); err != nil || state.PasskeyOnly || state.RecoveryCodes == nil || len(state.RecoveryCodes) != 0 {
+	if state, err := w.svc.SetPasskeyOnly(ctx, w.fresh(who), contracts.PasskeyOnly{On: false}); err != nil || state.PasskeyOnly || state.RecoveryCodes == nil || len(state.RecoveryCodes) != 0 {
 		t.Fatalf("turning off what is off: %+v %v", state, err)
 	}
 	auth := webauthntest.New(webauthntest.ES256)
@@ -628,7 +628,7 @@ func TestPasskeyOnly(t *testing.T) {
 		t.Fatalf("after turning it on: %+v", list)
 	}
 	// Asked again it stays on, and the codes just shown keep working.
-	if state, err := w.svc.SetPasskeyOnly(ctx, who, contracts.PasskeyOnly{On: true}); err != nil || !state.PasskeyOnly || len(state.RecoveryCodes) != 0 {
+	if state, err := w.svc.SetPasskeyOnly(ctx, w.fresh(who), contracts.PasskeyOnly{On: true}); err != nil || !state.PasskeyOnly || len(state.RecoveryCodes) != 0 {
 		t.Fatalf("turning on what is on: %+v %v", state, err)
 	}
 
@@ -652,14 +652,14 @@ func TestPasskeyOnly(t *testing.T) {
 	}
 
 	// The last passkey stays; with a second one, either goes.
-	if err := w.svc.RemovePasskey(ctx, who, first.ID.String()); !errors.Is(err, contracts.ErrLastPasskey) {
+	if err := w.svc.RemovePasskey(ctx, w.fresh(who), first.ID.String()); !errors.Is(err, contracts.ErrLastPasskey) {
 		t.Fatalf("removing the last passkey: %v", err)
 	}
 	second := w.addPasskey(who, webauthntest.New(webauthntest.EdDSA), "second")
-	if err := w.svc.RemovePasskey(ctx, who, first.ID.String()); err != nil {
+	if err := w.svc.RemovePasskey(ctx, w.fresh(who), first.ID.String()); err != nil {
 		t.Fatalf("removing one of two: %v", err)
 	}
-	if err := w.svc.RemovePasskey(ctx, who, second.ID.String()); !errors.Is(err, contracts.ErrLastPasskey) {
+	if err := w.svc.RemovePasskey(ctx, w.fresh(who), second.ID.String()); !errors.Is(err, contracts.ErrLastPasskey) {
 		t.Fatalf("removing the one left: %v", err)
 	}
 	if list, _ := w.svc.Passkeys(ctx, who); len(list.Passkeys) != 1 || !list.PasskeyOnly {
@@ -667,7 +667,7 @@ func TestPasskeyOnly(t *testing.T) {
 	}
 
 	// New codes: ten, and the ones before them stop working.
-	fresh, err := w.svc.NewRecoveryCodes(ctx, who)
+	fresh, err := w.svc.NewRecoveryCodes(ctx, w.fresh(who))
 	if err != nil || len(fresh.RecoveryCodes) != domain.RecoveryCodes || slices.Contains(fresh.RecoveryCodes, codes[0]) {
 		t.Fatalf("new codes: %+v %v", fresh, err)
 	}
@@ -679,7 +679,7 @@ func TestPasskeyOnly(t *testing.T) {
 	}
 
 	// Turned off, the codes are dropped and mail signs in again.
-	if state, err := w.svc.SetPasskeyOnly(ctx, who, contracts.PasskeyOnly{On: false}); err != nil || state.PasskeyOnly || len(state.RecoveryCodes) != 0 {
+	if state, err := w.svc.SetPasskeyOnly(ctx, w.fresh(who), contracts.PasskeyOnly{On: false}); err != nil || state.PasskeyOnly || len(state.RecoveryCodes) != 0 {
 		t.Fatalf("turning it off: %+v %v", state, err)
 	}
 	if list, _ := w.svc.Passkeys(ctx, who); list.PasskeyOnly || list.RecoveryCodesLeft != 0 || len(list.Passkeys) != 1 {
@@ -695,7 +695,7 @@ func TestPasskeyOnly(t *testing.T) {
 	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); err != nil {
 		t.Fatalf("signing in by mail again: %v", err)
 	}
-	if err := w.svc.RemovePasskey(ctx, who, second.ID.String()); err != nil {
+	if err := w.svc.RemovePasskey(ctx, w.fresh(who), second.ID.String()); err != nil {
 		t.Fatalf("removing the last passkey with passkey only off: %v", err)
 	}
 	// Turned on again, the codes are new ones.
@@ -974,7 +974,7 @@ func TestPasskeysWrittenByHand(t *testing.T) {
 	removed := w.addPasskey(who, auth, "removed")
 	kept := w.addPasskey(who, webauthntest.New(webauthntest.ES256), "kept")
 	withIt := w.record(w.newest(id))
-	if err := w.svc.RemovePasskey(ctx, who, removed.ID.String()); err != nil {
+	if err := w.svc.RemovePasskey(ctx, w.fresh(who), removed.ID.String()); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := w.signInWith(auth, removed.ID); !errors.Is(err, contracts.ErrInvalidPasskey) {
@@ -1069,7 +1069,7 @@ func TestWhatIsStoredOfPasskeys(t *testing.T) {
 	who := w.who(cookie)
 	made := w.addPasskey(who, webauthntest.New(webauthntest.ES256), "Laptop")
 	codes := w.passkeyOnly(who)
-	more, err := w.svc.NewRecoveryCodes(ctx, who)
+	more, err := w.svc.NewRecoveryCodes(ctx, w.fresh(who))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1216,7 +1216,7 @@ func TestPasskeyFailures(t *testing.T) {
 		if _, err := e.w.svc.FinishPasskey(ctx, e.who, in); !errors.Is(err, down) {
 			t.Errorf("%s down: making a passkey: %v", op, err)
 		}
-		if _, err := e.w.svc.StartPasskey(ctx, e.who); !errors.Is(err, down) && op != "put record" {
+		if _, err := e.w.svc.StartPasskey(ctx, e.w.fresh(e.who)); !errors.Is(err, down) && op != "put record" {
 			t.Errorf("%s down: starting a passkey: %v", op, err)
 		}
 		if _, err := e.w.svc.Passkeys(ctx, e.who); !errors.Is(err, down) && op != "put record" {
@@ -1225,13 +1225,13 @@ func TestPasskeyFailures(t *testing.T) {
 		if _, err := e.w.svc.RenamePasskey(ctx, e.who, e.made.ID.String(), contracts.PasskeyRename{Name: "renamed"}); !errors.Is(err, down) {
 			t.Errorf("%s down: renaming: %v", op, err)
 		}
-		if err := e.w.svc.RemovePasskey(ctx, e.who, e.made.ID.String()); !errors.Is(err, down) {
+		if err := e.w.svc.RemovePasskey(ctx, e.w.fresh(e.who), e.made.ID.String()); !errors.Is(err, down) {
 			t.Errorf("%s down: removing: %v", op, err)
 		}
-		if _, err := e.w.svc.SetPasskeyOnly(ctx, e.who, contracts.PasskeyOnly{On: true}); !errors.Is(err, down) {
+		if _, err := e.w.svc.SetPasskeyOnly(ctx, e.w.fresh(e.who), contracts.PasskeyOnly{On: true}); !errors.Is(err, down) {
 			t.Errorf("%s down: passkey only: %v", op, err)
 		}
-		if _, err := e.w.svc.NewRecoveryCodes(ctx, e.who); !errors.Is(err, down) && op != "put record" {
+		if _, err := e.w.svc.NewRecoveryCodes(ctx, e.w.fresh(e.who)); !errors.Is(err, down) && op != "put record" {
 			t.Errorf("%s down: recovery codes: %v", op, err)
 		}
 		e.f.fail = map[string]error{}
@@ -1242,10 +1242,10 @@ func TestPasskeyFailures(t *testing.T) {
 	}
 	e = setup(t, true)
 	e.f.fail["put record"] = down
-	if _, err := e.w.svc.NewRecoveryCodes(ctx, e.who); !errors.Is(err, down) {
+	if _, err := e.w.svc.NewRecoveryCodes(ctx, e.w.fresh(e.who)); !errors.Is(err, down) {
 		t.Errorf("put record down: recovery codes: %v", err)
 	}
-	if _, err := e.w.svc.SetPasskeyOnly(ctx, e.who, contracts.PasskeyOnly{On: false}); !errors.Is(err, down) {
+	if _, err := e.w.svc.SetPasskeyOnly(ctx, e.w.fresh(e.who), contracts.PasskeyOnly{On: false}); !errors.Is(err, down) {
 		t.Errorf("put record down: turning passkey only off: %v", err)
 	}
 	e.f.fail = map[string]error{}
@@ -1262,15 +1262,15 @@ func TestPasskeyFailures(t *testing.T) {
 
 	// A session of an account that is not there does nothing.
 	w := newWorld(t)
-	ghost := &Authenticated{AccountID: "acc_" + strings.Repeat("a", 26)}
+	ghost := w.ghost()
 	id := contracts.Bytes("x").String()
 	for what, err := range map[string]error{
 		"passkeys":       second(w.svc.Passkeys(ctx, ghost)),
-		"start":          second(w.svc.StartPasskey(ctx, ghost)),
+		"start":          second(w.svc.StartPasskey(ctx, w.fresh(ghost))),
 		"rename":         second(w.svc.RenamePasskey(ctx, ghost, id, contracts.PasskeyRename{Name: "x"})),
-		"remove":         w.svc.RemovePasskey(ctx, ghost, id),
-		"passkey only":   second(w.svc.SetPasskeyOnly(ctx, ghost, contracts.PasskeyOnly{On: true})),
-		"recovery codes": second(w.svc.NewRecoveryCodes(ctx, ghost)),
+		"remove":         w.svc.RemovePasskey(ctx, w.fresh(ghost), id),
+		"passkey only":   second(w.svc.SetPasskeyOnly(ctx, w.fresh(ghost), contracts.PasskeyOnly{On: true})),
+		"recovery codes": second(w.svc.NewRecoveryCodes(ctx, w.fresh(ghost))),
 	} {
 		if !errors.Is(err, contracts.ErrUnauthorized) {
 			t.Errorf("%s without an account: %v", what, err)

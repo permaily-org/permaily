@@ -179,5 +179,5 @@ func (s *Service) enter(ctx context.Context, doc *accountDoc, how way, from Brow
 	if !s.known(ctx, doc.ID, from.Device) && !made {
 		s.notify(ctx, noticeNewDevice, newDeviceMail(doc.Address, s.rp.ID, s.now(), how, session.Device))
 	}
-	return &contracts.Me{Account: doc.view(), Session: *session}, cookie, nil
+	return &contracts.Me{Account: s.view(doc), Session: *session}, cookie, nil
 }

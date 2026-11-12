@@ -14,8 +14,8 @@ import (
 // Notices by mail (ADR 0017): a person is told of security and access, and of
 // nothing else. A sign-in from a device that had not signed in before, a
 // change in how the account is signed into, a change of the contact address,
-// a deletion asked or cancelled, and the operator blocking or unblocking the
-// account. They cannot be turned off.
+// a deletion asked or cancelled, the operator blocking or unblocking the
+// account, and the account made an admin or no longer one. They cannot be turned off.
 //
 // A notice is plain text, from the same sender and through the same Mailer
 // as a sign-in message, so the watch of ADR 0021 applies to it. Its subject
@@ -44,6 +44,8 @@ const (
 	noticeDeletionCancelled = "deletion_cancelled"
 	noticeBlocked           = "blocked"
 	noticeUnblocked         = "unblocked"
+	noticeAdminMade         = "admin_made"
+	noticeAdminRemoved      = "admin_removed"
 )
 
 // supportAddress is where a person writes when they cannot help themselves.
@@ -251,4 +253,18 @@ func blockedMail(to, app string, at time.Time, blocked bool) Mail {
 	return noticeMail(to, "Your Permaily account was unblocked",
 		"Permaily's operator unblocked your Permaily account. You can sign in to it again at "+app+".",
 		facts, "To ask why it was blocked, write to "+supportAddress+".")
+}
+
+// adminMail tells that the account was made an admin of Permaily, or stopped
+// being one.
+func adminMail(to, app string, at time.Time, made bool) Mail {
+	facts := [][2]string{{"When", when(at)}}
+	if made {
+		return noticeMail(to, "Your Permaily account is now an admin",
+			"Your Permaily account was made an admin of Permaily. It can manage the accounts and the invitations of the service in the admin panel at "+app+", while it signs in with passkeys only.",
+			facts, "If you did not expect this, write to "+supportAddress+".")
+	}
+	return noticeMail(to, "Your Permaily account is no longer an admin",
+		"Your Permaily account is no longer an admin of Permaily. The admin panel is closed to it from now on.",
+		facts, "To ask why, write to "+supportAddress+".")
 }

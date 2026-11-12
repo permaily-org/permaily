@@ -70,7 +70,8 @@ let
     ++ flag "-release-ref-prefix" config.release_ref_prefix
     ++ flag "-anchor-bucket" config.anchor_bucket
     ++ flag "-anchor-retention-days" (toString config.anchor_retention_days)
-    ++ flag "-mail-from" (config.mail_from or ""));
+    ++ flag "-mail-from" (config.mail_from or "")
+    ++ flag "-super-admin" (config.super_admin or ""));
     env = "GOMEMLIMIT=${gomemlimit}";
   };
 in

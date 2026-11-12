@@ -244,6 +244,12 @@ func (s *Service) pointProvider(ctx context.Context, doc *accountDoc, p idp.Prov
 // It asks for no address and looks no account up but the session's own, so
 // it tells nobody who has an account.
 func (s *Service) StartProvider(ctx context.Context, who *Authenticated, in contracts.ProviderStart) (*contracts.ProviderStarted, string, error) {
+	// Linking from Settings adds a way in: it needs a fresh proof.
+	if who != nil {
+		if err := s.confirmed(who); err != nil {
+			return nil, "", err
+		}
+	}
 	p := idp.Provider(in.Provider)
 	app, on, err := s.app(ctx, p)
 	if err != nil {
@@ -635,6 +641,9 @@ func (s *Service) LinkedProviders(ctx context.Context, who *Authenticated) (*con
 // UnlinkProvider takes a provider account out of the account: it signs
 // nobody in from then on. It is refused for the only way left to sign in.
 func (s *Service) UnlinkProvider(ctx context.Context, who *Authenticated, provider string) error {
+	if err := s.confirmed(who); err != nil {
+		return err
+	}
 	p := idp.Provider(provider)
 	doc, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
 		i := doc.provider(p)
@@ -808,6 +817,13 @@ func (s *Service) ProviderApps(ctx context.Context) (*contracts.ProviderApps, er
 // SetProviderApp gives the enclave the application of a provider, in place
 // of the one it had. The provider is on from then.
 func (s *Service) SetProviderApp(ctx context.Context, provider string, in contracts.ProviderAppSet) (*contracts.ProviderApp, error) {
+	return s.setProviderApp(ctx, nil, provider, in)
+}
+
+func (s *Service) setProviderApp(ctx context.Context, by *acting, provider string, in contracts.ProviderAppSet) (*contracts.ProviderApp, error) {
+	if err := by.superOnly(); err != nil {
+		return nil, err
+	}
 	p := idp.Provider(provider)
 	if !slices.Contains(idp.Providers, p) {
 		return nil, contracts.ErrNotFound
@@ -825,6 +841,7 @@ func (s *Service) SetProviderApp(ctx context.Context, provider string, in contra
 	}
 	s.cfg.Log.Info("accounts: a provider's application was set", "provider", provider)
 	s.acted(ActionProviderAppSet, 1)
+	s.logged(ctx, by, ActionProviderAppSet, "", "")
 	return &contracts.ProviderApp{Provider: provider, ClientID: set.ClientID, SetAt: set.SetAt}, nil
 }
 
@@ -832,6 +849,13 @@ func (s *Service) SetProviderApp(ctx context.Context, provider string, in contra
 // is off, for signing in too. The provider accounts that are linked stay
 // linked, for when it is on again.
 func (s *Service) RemoveProviderApp(ctx context.Context, provider string) error {
+	return s.removeProviderApp(ctx, nil, provider)
+}
+
+func (s *Service) removeProviderApp(ctx context.Context, by *acting, provider string) error {
+	if err := by.superOnly(); err != nil {
+		return err
+	}
 	p := idp.Provider(provider)
 	if !slices.Contains(idp.Providers, p) {
 		return contracts.ErrNotFound
@@ -845,6 +869,7 @@ func (s *Service) RemoveProviderApp(ctx context.Context, provider string) error 
 	if err == nil && removed {
 		s.cfg.Log.Info("accounts: a provider's application was removed", "provider", provider)
 		s.acted(ActionProviderAppRemove, 1)
+		s.logged(ctx, by, ActionProviderAppRemove, "", "")
 	}
 	return err
 }

@@ -18,12 +18,13 @@ import (
 	"github.com/permaily-org/permaily/internal/services/accounts"
 )
 
-// OperatorService is everything the operator's routes can ask of the
-// service about accounts and invitations: look, block and unblock, ask to
-// delete and cancel that, sign devices out, and list and revoke invitations.
-// Nothing here changes a contact address or a way to sign in, turns "passkey
-// only" off or signs anyone in, and the handlers of those routes are given
-// nothing else: what is not in this list they cannot call.
+// OperatorService is everything the operator's routes, and the admin panel's,
+// can ask of the service about accounts and invitations: look, block and
+// unblock, ask to delete and cancel that, sign devices out, list and revoke
+// invitations, and read the counts, the admins and the admin log. Nothing here
+// changes a contact address or a way to sign in, turns "passkey only" off or
+// signs anyone in, and the handlers of those routes are given nothing else:
+// what is not in this list they cannot call.
 type OperatorService interface {
 	AccountRecord(ctx context.Context, id string) (*contracts.AccountRecord, error)
 	AccountRecords(ctx context.Context, after string, limit int) (*contracts.AccountList, error)
@@ -37,11 +38,35 @@ type OperatorService interface {
 	CreateInvitations(ctx context.Context, count int) (*contracts.Invitations, error)
 	Invitations(ctx context.Context) (*contracts.InvitationList, error)
 	RevokeInvitation(ctx context.Context, id string) error
+
+	Stats(ctx context.Context) (*contracts.Stats, error)
+	Admins(ctx context.Context) (*contracts.AdminList, error)
+	AdminLog(ctx context.Context, after string, limit int) (*contracts.AdminLog, error)
+}
+
+// ProviderAppService is the applications registered at the providers: which
+// are set, and setting and removing one.
+type ProviderAppService interface {
+	ProviderApps(ctx context.Context) (*contracts.ProviderApps, error)
+	SetProviderApp(ctx context.Context, provider string, in contracts.ProviderAppSet) (*contracts.ProviderApp, error)
+	RemoveProviderApp(ctx context.Context, provider string) error
+}
+
+// AdminOperator is everything the admin panel's routes can ask of the
+// service, as one admin: what the operator's routes can, the providers'
+// applications, and making and removing admins. It holds nothing that
+// changes an address or a way into an account (accounts.Admin is it).
+type AdminOperator interface {
+	OperatorService
+	ProviderAppService
+	MakeAdmin(ctx context.Context, id string) (*contracts.AdminList, error)
+	RemoveAdmin(ctx context.Context, id string) (*contracts.AdminList, error)
 }
 
 // AccountsService is what the accounts API needs from the service.
 type AccountsService interface {
 	OperatorService
+	ProviderAppService
 
 	StartEmail(ctx context.Context, in contracts.EmailStart) (*contracts.EmailStarted, error)
 	LookEmail(ctx context.Context, in contracts.EmailLook) (*contracts.EmailPending, error)
@@ -76,9 +101,16 @@ type AccountsService interface {
 	FinishProviderConfirm(ctx context.Context, browser string, in contracts.ProviderConfirm, from accounts.Browser) (*contracts.Me, string, error)
 	LinkedProviders(ctx context.Context, who *accounts.Authenticated) (*contracts.LinkedProviders, error)
 	UnlinkProvider(ctx context.Context, who *accounts.Authenticated, provider string) error
-	ProviderApps(ctx context.Context) (*contracts.ProviderApps, error)
-	SetProviderApp(ctx context.Context, provider string, in contracts.ProviderAppSet) (*contracts.ProviderApp, error)
-	RemoveProviderApp(ctx context.Context, provider string) error
+
+	ConfirmWays(ctx context.Context, who *accounts.Authenticated) (*contracts.ConfirmWays, error)
+	StartConfirmPasskey(ctx context.Context, who *accounts.Authenticated) (*contracts.PasskeyRequest, error)
+	FinishConfirmPasskey(ctx context.Context, who *accounts.Authenticated, in contracts.PasskeySignIn) (*contracts.Me, error)
+	StartConfirmEmail(ctx context.Context, who *accounts.Authenticated) (*contracts.EmailStarted, error)
+	FinishConfirmEmail(ctx context.Context, who *accounts.Authenticated, in contracts.ConfirmFinish) (*contracts.Me, error)
+
+	// Admin is what the admin behind a session can do: not_found for anyone
+	// else.
+	Admin(ctx context.Context, who *accounts.Authenticated) (*accounts.Admin, error)
 }
 
 // SessionCookie is the cookie of a signed-in browser. The __Host- prefix
@@ -121,12 +153,13 @@ func failed(w http.ResponseWriter, log *slog.Logger, err error) {
 		status = http.StatusNotFound
 	case contracts.ErrTooManyRequests.Code:
 		status = http.StatusTooManyRequests
-	case contracts.ErrAccountBlocked.Code:
-		// Who it is was proved, and the account lets nobody in.
+	case contracts.ErrAccountBlocked.Code, contracts.ErrConfirmationNeeded.Code, contracts.ErrPasskeyOnlyNeeded.Code, contracts.ErrSuperAdminOnly.Code:
+		// Who it is was proved, and the account lets nobody in; or who it is
+		// was not proved lately, or is not enough for what was asked.
 		status = http.StatusForbidden
 	case contracts.ErrLastPasskey.Code, contracts.ErrPasskeyNeeded.Code, contracts.ErrPasskeyOnlyOff.Code, contracts.ErrTooManyPasskeys.Code,
 		contracts.ErrAccountClosing.Code, contracts.ErrProviderOff.Code, contracts.ErrProviderInUse.Code, contracts.ErrProviderLinked.Code,
-		contracts.ErrLastWayIn.Code, contracts.ErrAddressInUse.Code:
+		contracts.ErrLastWayIn.Code, contracts.ErrAddressInUse.Code, contracts.ErrNotCancellable.Code, contracts.ErrPasskeyRequired.Code:
 		// Well asked, and refused for how the account is now.
 		status = http.StatusConflict
 	}
@@ -540,9 +573,120 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
+	// Confirming it is them again, for the changes that need a fresh proof.
+	mux.HandleFunc("GET /api/v1/auth/confirm", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		out, err := svc.ConfirmWays(r.Context(), who)
+		answer(w, out, err)
+	}))
+	mux.HandleFunc("POST /api/v1/auth/confirm/passkey/start", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		out, err := svc.StartConfirmPasskey(r.Context(), who)
+		answer(w, out, err)
+	}))
+	mux.HandleFunc("POST /api/v1/auth/confirm/passkey/finish", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		var in contracts.PasskeySignIn
+		if !decodeUpTo(w, r, &in, maxPasskeyBody) {
+			return
+		}
+		out, err := svc.FinishConfirmPasskey(r.Context(), who, in)
+		answer(w, out, err)
+	}))
+	mux.HandleFunc("POST /api/v1/auth/confirm/email/start", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		out, err := svc.StartConfirmEmail(r.Context(), who)
+		answer(w, out, err)
+	}))
+	mux.HandleFunc("POST /api/v1/auth/confirm/email/finish", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		var in contracts.ConfirmFinish
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := svc.FinishConfirmEmail(r.Context(), who, in)
+		answer(w, out, err)
+	}))
+	// The admin panel: a session of an admin, or nothing at all. Who is not
+	// an admin is answered not_found, whatever path and method they ask.
+	panel := adminPanel(log)
+	mux.Handle("/api/v1/admin/", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		admin, err := svc.Admin(r.Context(), who)
+		if err != nil {
+			failed(w, log, err)
+			return
+		}
+		var op AdminOperator = admin
+		panel.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), adminKey{}, op)))
+	}))
 	// Anything else under /api/ is not the web app's to answer with a page.
 	mux.HandleFunc("/api/", noSuchEndpoint)
 	return fromTheApp(mux)
+}
+
+// adminKey carries, in a request of the admin panel, what its admin can do.
+type adminKey struct{}
+
+func adminOf(r *http.Request) AdminOperator { return r.Context().Value(adminKey{}).(AdminOperator) }
+
+// adminPanel returns the routes of the admin panel, under /api/v1/admin/, for
+// a request that carries its admin (adminKey): the operator's routes, the
+// providers' applications, and the admins, the log and the counts.
+func adminPanel(log *slog.Logger) http.Handler {
+	const prefix = "/api/v1/admin"
+	op := func(r *http.Request) OperatorService { return adminOf(r) }
+	mux := http.NewServeMux()
+	accountRoutes(mux, prefix, op, log)
+	invitationRoutes(mux, prefix, op, log)
+	providerAppRoutes(mux, prefix, func(r *http.Request) ProviderAppService { return adminOf(r) }, log)
+	mux.HandleFunc("GET "+prefix+"/admins", func(w http.ResponseWriter, r *http.Request) {
+		out, err := adminOf(r).Admins(r.Context())
+		answerWith(w, log, out, err)
+	})
+	mux.HandleFunc("PUT "+prefix+"/admins/{id}", func(w http.ResponseWriter, r *http.Request) {
+		out, err := adminOf(r).MakeAdmin(r.Context(), r.PathValue("id"))
+		answerWith(w, log, out, err)
+	})
+	mux.HandleFunc("DELETE "+prefix+"/admins/{id}", func(w http.ResponseWriter, r *http.Request) {
+		out, err := adminOf(r).RemoveAdmin(r.Context(), r.PathValue("id"))
+		answerWith(w, log, out, err)
+	})
+	mux.HandleFunc("GET "+prefix+"/log", func(w http.ResponseWriter, r *http.Request) {
+		limit, ok := pageLimit(w, r, log)
+		if !ok {
+			return
+		}
+		out, err := adminOf(r).AdminLog(r.Context(), r.URL.Query().Get("after"), limit)
+		answerWith(w, log, out, err)
+	})
+	mux.HandleFunc("GET "+prefix+"/stats", func(w http.ResponseWriter, r *http.Request) {
+		out, err := adminOf(r).Stats(r.Context())
+		answerWith(w, log, out, err)
+	})
+	mux.HandleFunc(prefix+"/admins", refuse(http.MethodGet))
+	mux.HandleFunc(prefix+"/admins/{id}", refuse("PUT, DELETE"))
+	mux.HandleFunc(prefix+"/log", refuse(http.MethodGet))
+	mux.HandleFunc(prefix+"/stats", refuse(http.MethodGet))
+	mux.HandleFunc("/", noSuchEndpoint)
+	return mux
+}
+
+// answerWith writes what a service gave, or its error.
+func answerWith(w http.ResponseWriter, log *slog.Logger, out any, err error) {
+	if err != nil {
+		failed(w, log, err)
+		return
+	}
+	writeJSON(w, out)
+}
+
+// pageLimit reads the limit of a page, domain.DefaultAccountsPage without one.
+func pageLimit(w http.ResponseWriter, r *http.Request, log *slog.Logger) (int, bool) {
+	v := r.URL.Query().Get("limit")
+	if v == "" {
+		return domain.DefaultAccountsPage, true
+	}
+	limit, err := strconv.Atoi(v)
+	if err != nil {
+		failed(w, log, contracts.ErrInvalidLimit)
+		return 0, false
+	}
+	return limit, true
 }
 
 // refuse answers a method an endpoint does not take.
@@ -565,37 +709,35 @@ func noSuchEndpoint(w http.ResponseWriter, _ *http.Request) {
 // up.
 func Invitations(svc OperatorService, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/admin/invitations", func(w http.ResponseWriter, r *http.Request) {
+	invitationRoutes(mux, "/v1/admin", func(*http.Request) OperatorService { return svc }, log)
+	mux.HandleFunc("/", noSuchEndpoint)
+	return mux
+}
+
+// invitationRoutes are the routes of the invitations under prefix, for the
+// operator or for an admin.
+func invitationRoutes(mux *http.ServeMux, prefix string, op func(*http.Request) OperatorService, log *slog.Logger) {
+	mux.HandleFunc("POST "+prefix+"/invitations", func(w http.ResponseWriter, r *http.Request) {
 		in := contracts.InvitationRequest{Count: 1}
 		if r.ContentLength != 0 && !decode(w, r, &in) {
 			return
 		}
-		out, err := svc.CreateInvitations(r.Context(), in.Count)
-		if err != nil {
-			failed(w, log, err)
-			return
-		}
-		writeJSON(w, out)
+		out, err := op(r).CreateInvitations(r.Context(), in.Count)
+		answerWith(w, log, out, err)
 	})
-	mux.HandleFunc("GET /v1/admin/invitations", func(w http.ResponseWriter, r *http.Request) {
-		out, err := svc.Invitations(r.Context())
-		if err != nil {
-			failed(w, log, err)
-			return
-		}
-		writeJSON(w, out)
+	mux.HandleFunc("GET "+prefix+"/invitations", func(w http.ResponseWriter, r *http.Request) {
+		out, err := op(r).Invitations(r.Context())
+		answerWith(w, log, out, err)
 	})
-	mux.HandleFunc("DELETE /v1/admin/invitations/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if err := svc.RevokeInvitation(r.Context(), r.PathValue("id")); err != nil {
+	mux.HandleFunc("DELETE "+prefix+"/invitations/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if err := op(r).RevokeInvitation(r.Context(), r.PathValue("id")); err != nil {
 			failed(w, log, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("/v1/admin/invitations", refuse("GET, POST"))
-	mux.HandleFunc("/v1/admin/invitations/{id}", refuse(http.MethodDelete))
-	mux.HandleFunc("/", noSuchEndpoint)
-	return mux
+	mux.HandleFunc(prefix+"/invitations", refuse("GET, POST"))
+	mux.HandleFunc(prefix+"/invitations/{id}", refuse(http.MethodDelete))
 }
 
 // Accounts returns the handler of the operator's tool. GET /v1/admin/accounts
@@ -613,61 +755,59 @@ func Invitations(svc OperatorService, log *slog.Logger) http.Handler {
 // token.
 func Accounts(svc OperatorService, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/admin/accounts", func(w http.ResponseWriter, r *http.Request) {
+	accountRoutes(mux, "/v1/admin", func(*http.Request) OperatorService { return svc }, log)
+	mux.HandleFunc("/", noSuchEndpoint)
+	return mux
+}
+
+// accountRoutes are the routes of the operator's tool under prefix, for the
+// operator or for an admin.
+func accountRoutes(mux *http.ServeMux, prefix string, op func(*http.Request) OperatorService, log *slog.Logger) {
+	mux.HandleFunc("GET "+prefix+"/accounts", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		if q.Has("address") {
-			out, err := svc.AccountRecordByAddress(r.Context(), q.Get("address"))
-			if err != nil {
-				failed(w, log, err)
-				return
-			}
-			writeJSON(w, out)
+			out, err := op(r).AccountRecordByAddress(r.Context(), q.Get("address"))
+			answerWith(w, log, out, err)
 			return
 		}
-		limit := domain.DefaultAccountsPage
-		if v := q.Get("limit"); v != "" {
-			var err error
-			if limit, err = strconv.Atoi(v); err != nil {
-				failed(w, log, contracts.ErrInvalidLimit)
-				return
-			}
-		}
-		out, err := svc.AccountRecords(r.Context(), q.Get("after"), limit)
-		if err != nil {
-			failed(w, log, err)
+		limit, ok := pageLimit(w, r, log)
+		if !ok {
 			return
 		}
-		writeJSON(w, out)
+		out, err := op(r).AccountRecords(r.Context(), q.Get("after"), limit)
+		answerWith(w, log, out, err)
 	})
-	mux.HandleFunc("GET /v1/admin/accounts/{id}", func(w http.ResponseWriter, r *http.Request) {
-		out, err := svc.AccountRecord(r.Context(), r.PathValue("id"))
-		if err != nil {
-			failed(w, log, err)
-			return
-		}
-		writeJSON(w, out)
+	mux.HandleFunc("GET "+prefix+"/accounts/{id}", func(w http.ResponseWriter, r *http.Request) {
+		out, err := op(r).AccountRecord(r.Context(), r.PathValue("id"))
+		answerWith(w, log, out, err)
 	})
-	for path, act := range map[string]func(context.Context, string) (*contracts.AccountRecord, error){
-		"block": svc.BlockAccount, "unblock": svc.UnblockAccount,
-		"delete": svc.DeleteAccount, "delete/cancel": svc.KeepAccount,
-		"sessions/close": svc.CloseAccountSessions,
+	for path, act := range map[string]func(OperatorService) func(context.Context, string) (*contracts.AccountRecord, error){
+		"block": func(s OperatorService) func(context.Context, string) (*contracts.AccountRecord, error) {
+			return s.BlockAccount
+		},
+		"unblock": func(s OperatorService) func(context.Context, string) (*contracts.AccountRecord, error) {
+			return s.UnblockAccount
+		},
+		"delete": func(s OperatorService) func(context.Context, string) (*contracts.AccountRecord, error) {
+			return s.DeleteAccount
+		},
+		"delete/cancel": func(s OperatorService) func(context.Context, string) (*contracts.AccountRecord, error) {
+			return s.KeepAccount
+		},
+		"sessions/close": func(s OperatorService) func(context.Context, string) (*contracts.AccountRecord, error) {
+			return s.CloseAccountSessions
+		},
 	} {
-		mux.HandleFunc("POST /v1/admin/accounts/{id}/"+path, func(w http.ResponseWriter, r *http.Request) {
-			out, err := act(r.Context(), r.PathValue("id"))
-			if err != nil {
-				failed(w, log, err)
-				return
-			}
-			writeJSON(w, out)
+		mux.HandleFunc("POST "+prefix+"/accounts/{id}/"+path, func(w http.ResponseWriter, r *http.Request) {
+			out, err := act(op(r))(r.Context(), r.PathValue("id"))
+			answerWith(w, log, out, err)
 		})
-		mux.HandleFunc("/v1/admin/accounts/{id}/"+path, refuse(http.MethodPost))
+		mux.HandleFunc(prefix+"/accounts/{id}/"+path, refuse(http.MethodPost))
 	}
 	// Looking is all these two take: an account is changed by what is above,
 	// and by nothing else.
-	mux.HandleFunc("/v1/admin/accounts", refuse(http.MethodGet))
-	mux.HandleFunc("/v1/admin/accounts/{id}", refuse(http.MethodGet))
-	mux.HandleFunc("/", noSuchEndpoint)
-	return mux
+	mux.HandleFunc(prefix+"/accounts", refuse(http.MethodGet))
+	mux.HandleFunc(prefix+"/accounts/{id}", refuse(http.MethodGet))
 }
 
 // ProviderApps returns the handler of the applications registered at the
@@ -676,37 +816,35 @@ func Accounts(svc OperatorService, log *slog.Logger) http.Handler {
 // lists which are set, with their client ids and never a secret. Put it
 // behind TokenAuth with the operator's token, on a connection the operator
 // verified: the secret is sent to whoever answers.
-func ProviderApps(svc AccountsService, log *slog.Logger) http.Handler {
+func ProviderApps(svc ProviderAppService, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/admin/providers", func(w http.ResponseWriter, r *http.Request) {
-		out, err := svc.ProviderApps(r.Context())
-		if err != nil {
-			failed(w, log, err)
-			return
-		}
-		writeJSON(w, out)
+	providerAppRoutes(mux, "/v1/admin", func(*http.Request) ProviderAppService { return svc }, log)
+	mux.HandleFunc("/", noSuchEndpoint)
+	return mux
+}
+
+// providerAppRoutes are the routes of the providers' applications under
+// prefix, for the operator or for an admin.
+func providerAppRoutes(mux *http.ServeMux, prefix string, op func(*http.Request) ProviderAppService, log *slog.Logger) {
+	mux.HandleFunc("GET "+prefix+"/providers", func(w http.ResponseWriter, r *http.Request) {
+		out, err := op(r).ProviderApps(r.Context())
+		answerWith(w, log, out, err)
 	})
-	mux.HandleFunc("PUT /v1/admin/providers/{provider}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PUT "+prefix+"/providers/{provider}", func(w http.ResponseWriter, r *http.Request) {
 		var in contracts.ProviderAppSet
 		if !decode(w, r, &in) {
 			return
 		}
-		out, err := svc.SetProviderApp(r.Context(), r.PathValue("provider"), in)
-		if err != nil {
-			failed(w, log, err)
-			return
-		}
-		writeJSON(w, out)
+		out, err := op(r).SetProviderApp(r.Context(), r.PathValue("provider"), in)
+		answerWith(w, log, out, err)
 	})
-	mux.HandleFunc("DELETE /v1/admin/providers/{provider}", func(w http.ResponseWriter, r *http.Request) {
-		if err := svc.RemoveProviderApp(r.Context(), r.PathValue("provider")); err != nil {
+	mux.HandleFunc("DELETE "+prefix+"/providers/{provider}", func(w http.ResponseWriter, r *http.Request) {
+		if err := op(r).RemoveProviderApp(r.Context(), r.PathValue("provider")); err != nil {
 			failed(w, log, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("/v1/admin/providers", refuse(http.MethodGet))
-	mux.HandleFunc("/v1/admin/providers/{provider}", refuse("PUT, DELETE"))
-	mux.HandleFunc("/", noSuchEndpoint)
-	return mux
+	mux.HandleFunc(prefix+"/providers", refuse(http.MethodGet))
+	mux.HandleFunc(prefix+"/providers/{provider}", refuse("PUT, DELETE"))
 }
