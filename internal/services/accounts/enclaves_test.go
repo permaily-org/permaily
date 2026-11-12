@@ -27,6 +27,8 @@ type between struct {
 	meanwhile func()
 	always    bool
 	writes    int
+	// onRecord, when set, is given each record before it is written.
+	onRecord func(*store.Record)
 }
 
 func (b *between) run() {
@@ -40,11 +42,17 @@ func (b *between) run() {
 }
 
 func (b *between) PutRecord(ctx context.Context, r *store.Record, create bool) error {
+	if b.onRecord != nil {
+		b.onRecord(r)
+	}
 	b.run()
 	return b.Anchored.PutRecord(ctx, r, create)
 }
 
 func (b *between) PutRecordAt(ctx context.Context, r *store.Record, at store.Mark) error {
+	if b.onRecord != nil {
+		b.onRecord(r)
+	}
 	b.run()
 	return b.Anchored.PutRecordAt(ctx, r, at)
 }
@@ -106,15 +114,23 @@ type enclave struct {
 
 func (w *world) enclave() *enclave {
 	w.t.Helper()
+	return w.enclaveAt(0)
+}
+
+// enclaveAt is an enclave whose clock is ahead of the world's by ahead, or
+// behind it.
+func (w *world) enclaveAt(ahead time.Duration) *enclave {
+	w.t.Helper()
+	now := func() time.Time { return w.now.Add(ahead) }
 	e := &enclave{
 		w:       w,
-		records: &between{Anchored: &store.Anchored{Records: w.mem, Commits: w.commits, OnlyNewest: true, Now: func() time.Time { return w.now }}},
+		records: &between{Anchored: &store.Anchored{Records: w.mem, Commits: w.commits, OnlyNewest: true, Now: now}},
 		entries: &watched{Entries: w.mem},
 	}
 	var err error
 	e.svc, err = New(Config{
 		Records: e.records, Entries: e.entries, Keys: w.svc.cfg.Keys, Mailer: w.out, Providers: w.idp,
-		AppURL: "https://app.permaily.test", SuperAdmin: superAdmin, Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: func() time.Time { return w.now },
+		AppURL: "https://app.permaily.test", SuperAdmin: superAdmin, Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: now,
 	})
 	if err != nil {
 		w.t.Fatal(err)
@@ -252,7 +268,7 @@ func TestTwoEnclavesChangeOneAccount(t *testing.T) {
 		if doc := w.doc(who.AccountID); len(doc.RecoveryCodes) != domain.RecoveryCodes-1 {
 			t.Fatalf("%d codes left", len(doc.RecoveryCodes))
 		}
-		if list, _ := w.svc.sessions(ctx, who.AccountID); len(list) != 2 {
+		if list, _ := w.svc.sessions(ctx, who.AccountID, nil); len(list) != 2 {
 			t.Fatalf("%d sessions: one code signed in twice", len(list))
 		}
 		// The use that lost is not a wrong code.
@@ -622,15 +638,15 @@ func TestSessionsOverTheBoundGoBack(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if list, _ := w.svc.sessions(ctx, me.Account.ID); len(list) != maxSessions+3 {
+	if list, _ := w.svc.sessions(ctx, me.Account.ID, nil); len(list) != maxSessions+3 {
 		t.Fatalf("%d sessions", len(list))
 	}
 	w.now = w.now.Add(time.Minute)
-	newest, _, err := w.enclave().svc.newSession(ctx, me.Account.ID, "device")
+	newest, _, err := w.enclave().svc.newSession(ctx, w.doc(me.Account.ID), "device")
 	if err != nil {
 		t.Fatal(err)
 	}
-	list, _ := w.svc.sessions(ctx, me.Account.ID)
+	list, _ := w.svc.sessions(ctx, me.Account.ID, nil)
 	if len(list) != maxSessions {
 		t.Fatalf("%d sessions kept", len(list))
 	}
@@ -745,15 +761,15 @@ func TestChangeFailures(t *testing.T) {
 		w, f, me, _ := setup(t)
 		for range maxSessions {
 			w.now = w.now.Add(time.Minute)
-			if _, _, err := w.svc.newSession(ctx, me.Account.ID, "device"); err != nil {
+			if _, _, err := w.svc.newSession(ctx, w.doc(me.Account.ID), "device"); err != nil {
 				t.Fatal(err)
 			}
 		}
 		f.fail["delete "+accountPartition(me.Account.ID)] = down
-		if _, _, err := w.svc.newSession(ctx, me.Account.ID, "device"); !errors.Is(err, down) {
+		if _, _, err := w.svc.newSession(ctx, w.doc(me.Account.ID), "device"); !errors.Is(err, down) {
 			t.Fatalf("got %v", err)
 		}
-		if list, _ := w.svc.sessions(ctx, me.Account.ID); len(list) != maxSessions {
+		if list, _ := w.svc.sessions(ctx, me.Account.ID, nil); len(list) != maxSessions {
 			t.Fatalf("%d sessions", len(list))
 		}
 	})

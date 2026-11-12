@@ -1,6 +1,6 @@
 # Minimum statement coverage per Go package, checked by scripts/check-coverage.sh.
 # Set to the measured value rounded down; raise them as tests improve, never lower them.
-# Target for pkg/attestation, internal/envelope and internal/keys is 95.
+# Target for pkg/attestation and internal/keys is 95.
 # internal/store is measured with the DynamoDB and S3 emulators (CI services).
 github.com/permaily-org/permaily/pkg/attestation 85
 github.com/permaily-org/permaily/pkg/kmspolicy 99
@@ -10,7 +10,7 @@ github.com/permaily-org/permaily/internal/router 100
 github.com/permaily-org/permaily/internal/httpapi 95
 github.com/permaily-org/permaily/internal/webui 75
 github.com/permaily-org/permaily/internal/hostproxy 73
-github.com/permaily-org/permaily/internal/envelope 94
+github.com/permaily-org/permaily/internal/envelope 97
 github.com/permaily-org/permaily/internal/keys 89
 github.com/permaily-org/permaily/internal/inbox 86
 github.com/permaily-org/permaily/internal/msgauth 86

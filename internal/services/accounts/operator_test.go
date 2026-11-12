@@ -212,7 +212,7 @@ func TestABlockedAccountSignsInByNoWay(t *testing.T) {
 	// Nobody was signed in, nothing was linked, and nothing of how the
 	// accounts are signed into changed.
 	for _, id := range []string{ana.Account.ID, bea.Account.ID} {
-		if list, err := w.svc.sessions(ctx, id); err != nil || len(list) != 0 {
+		if list, err := w.svc.sessions(ctx, id, nil); err != nil || len(list) != 0 {
 			t.Fatalf("a blocked account has sessions: %+v %v", list, err)
 		}
 	}
@@ -551,7 +551,7 @@ func TestTheOperatorClosesSessions(t *testing.T) {
 	bea, beaCookie := w.signUp("bea@example.org")
 	// More than one page of them, as whoever runs the storage could leave.
 	for range 2*maxSessions + 5 {
-		if _, _, err := w.svc.newSession(ctx, bea.Account.ID, "x"); err != nil {
+		if _, _, err := w.svc.newSession(ctx, w.doc(bea.Account.ID), "x"); err != nil {
 			t.Fatal(err)
 		}
 		w.now = w.now.Add(time.Second)
@@ -719,7 +719,7 @@ func TestTheOperatorsActionsChangeNoAddressAndNoWayIn(t *testing.T) {
 			if got := w.ways(id); !reflect.DeepEqual(got, before) {
 				t.Fatalf("%s changed how the account is signed into:\n%+v\n%+v", step.name, got, before)
 			}
-			if list, err := w.svc.sessions(ctx, id); err != nil || len(list) != 0 {
+			if list, err := w.svc.sessions(ctx, id, nil); err != nil || len(list) != 0 {
 				t.Fatalf("%s left or made a session: %+v %v", step.name, list, err)
 			}
 		}

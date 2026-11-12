@@ -53,7 +53,7 @@ For admins:
 - **The person is told by mail** when the account is made an admin ("Your Permaily account is now an admin") and when it stops being one ("Your Permaily account is no longer an admin"), with the rules of the other notices.
 - **The token stays.** `/v1/admin/...` on the API host and the scripts stay, for the first invitation and for automation. They cannot make admins, and are not written in the admin log.
 
-**Two enclaves (a rule from now on).** Everything a request may need on another enclave lives in the storage; memory holds only what can be lost (a cache) or counted apart by each enclave (a limit). The proof's time is in the session's entry, the roles in the records, the log in entries. The attempts and ceremonies of confirming use the machinery sign-in has today, which is still in memory: it moves to the storage in the next piece of work, all at once.
+**Two enclaves (a rule from now on).** Everything a request may need on another enclave lives in the storage; memory holds only what can be lost (a cache) or counted apart by each enclave (a limit). The proof's time is in the session's entry, the roles in the records, the log in entries. The attempts and ceremonies of confirming use the machinery of sign-in, which is in the storage since 2026-11-12 (ADR 0017, "Two enclaves at once"): a confirmation started through one enclave ends through the other.
 
 ## Decided while building
 
@@ -73,4 +73,4 @@ For admins:
 - **The admin token remains**, with the powers of ADR 0017, outside the admin log. Whoever holds it can still block and delete every account, the super admin's included, and cannot make admins.
 - **An admin's power over availability** is the operator's: they can block and delete accounts that are not admins'. The person is told by mail of each, as with the token.
 - **A stolen session that is still fresh** (ten minutes after a sign-in or a confirmation) can still make the sensitive changes. After that it needs a passkey or the mailbox.
-- **Attempts and ceremonies of confirming are in one enclave's memory.** With two enclaves, a confirmation started in one and ended in the other fails, and the person starts again. That machinery moves to the storage next.
+- **Attempts and ceremonies of confirming are sealed entries** (2026-11-12, ADR 0017): they end through either enclave, once, and their tries are counted in each enclave's memory, so with two enclaves a code takes ten tries at most.

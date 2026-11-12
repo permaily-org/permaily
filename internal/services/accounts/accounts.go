@@ -9,10 +9,11 @@
 // refuses an earlier copy, so a passkey that was removed or a recovery code
 // that was used does not come back. Sessions and invitations are kept by the
 // hash of their secret, in entries that are signed too, so one cannot be made
-// by hand or moved to another account. A sign-in that was started, by mail or
-// with a passkey, is kept nowhere but in this enclave's memory: its count of
-// wrong codes cannot be set back by whoever runs the storage, and a restart
-// ends it.
+// by hand or moved to another account. A sign-in that was started, by mail,
+// with a passkey or with a provider, is an entry that is sealed, works once
+// and is ended through any enclave that started after it was made; its count
+// of wrong answers is in each enclave's memory, where whoever runs the storage
+// cannot set it back (pending.go).
 //
 // An account its person asked to delete is closing for seven days and then
 // removed: its record is committed as gone, so nothing put back in the
@@ -110,10 +111,10 @@ type Config struct {
 
 // Limits on what one enclave keeps in memory and starts at once.
 const (
-	maxAttempts = 10000
-	// maxCeremonies is how many passkey ceremonies wait for their answer.
-	maxCeremonies = 10000
-	maxSending    = 32
+	// maxRecoveryCounts is how many addresses one enclave counts wrong
+	// recovery codes for.
+	maxRecoveryCounts = 10000
+	maxSending        = 32
 	// maxNoticing is how many notices are being sent at once; one more is
 	// dropped, and logged as that.
 	maxNoticing = 32
@@ -137,14 +138,10 @@ type Service struct {
 	cfg Config
 	rp  webauthn.RelyingParty
 
-	mu         sync.Mutex
-	attempts   map[string]*attempt
-	ceremonies map[string]*ceremony
-	// trips are the sign-ins with a provider whose answer is awaited, by their
-	// state; unconfirmed are the ones that wait for an address to be
-	// confirmed, by the hash of their browser's cookie.
-	trips       map[string]*trip
-	unconfirmed map[string]*unconfirmed
+	mu sync.Mutex
+	// marks is what this enclave remembers of the sign-ins in progress it was
+	// asked to end, by their partition (pending.go).
+	marks map[string]*mark
 	// starts and wrong count, per address or invitation, the sign-ins started
 	// in the last hour and the wrong codes of the last day; recoveries, per
 	// address, the wrong recovery codes of the last hour.
@@ -152,8 +149,9 @@ type Service struct {
 	wrong      map[string][]time.Time
 	recoveries map[string][]time.Time
 	swept      time.Time
-	// since is when this enclave started counting what the operator does
-	// through it, and actions how many of each kind it did (operator.go).
+	// since is when this enclave started: it counts what the operator does
+	// through it from then, and ends no sign-in made before (pending.go).
+	// actions is how many of each kind the operator did (operator.go).
 	since   time.Time
 	actions map[string]int
 
@@ -166,11 +164,12 @@ type Service struct {
 	changing sync.Mutex
 
 	// The applications registered at the providers, as their sealed record
-	// holds them: read once, and replaced with each change. A map that was
-	// handed out is never written to again.
+	// held them when it was read at appsRead (zero for never): read again once
+	// that is appsFresh ago. A map that was handed out is never written to
+	// again.
 	appsMu   sync.Mutex
 	apps     map[idp.Provider]appDoc
-	appsRead bool
+	appsRead time.Time
 
 	sending chan struct{}
 	// noticing bounds the notices being sent, and noticeWait is how long one
@@ -180,23 +179,26 @@ type Service struct {
 	work       sync.WaitGroup
 }
 
-// attempt is a sign-in that was started and whose message was sent.
-type attempt struct {
-	address string
-	// account is whose contact address the attempt changes (address.go);
+// attemptDoc is a sign-in by mail that was started and whose message was
+// sent, as kept sealed until it ends (pending.go).
+type attemptDoc struct {
+	V       int    `json:"v"`
+	Address string `json:"address"`
+	// Account is whose contact address the attempt changes (address.go);
 	// empty for a sign-in; confirmFor of a session for an attempt that
 	// confirms that session (confirm.go). An attempt works for what it was
 	// started for and for nothing else: one of an account signs nobody in,
 	// one that confirms changes no address, and a sign-in does neither.
-	account string
-	// invitation is the entry of the invitation the sign-up will use, if the
+	Account string `json:"account,omitempty"`
+	// Invitation is the entry of the invitation the sign-up will use, if the
 	// address has no account when the sign-in ends.
-	invitation string
-	// code is empty when the message carried only the link.
-	code, token [sha256.Size]byte
-	withCode    bool
-	expires     time.Time
-	tries       int
+	Invitation string `json:"invitation,omitempty"`
+	// Code and Token are the hashes of the code and of the link's token; Code
+	// is empty when the message carried only the link, and Token when it
+	// carried only the code.
+	Code  []byte `json:"code,omitempty"`
+	Token []byte `json:"token,omitempty"`
+	pendingTimes
 }
 
 // New returns a Service.
@@ -226,9 +228,7 @@ func New(cfg Config) (*Service, error) {
 		noticing: make(chan struct{}, maxNoticing), noticeWait: noticeTimeout,
 		// The port is part of the origin and not of who the passkeys are for.
 		rp:         webauthn.RelyingParty{ID: app.Hostname(), Origins: []string{app.Scheme + "://" + app.Host}},
-		attempts:   map[string]*attempt{},
-		ceremonies: map[string]*ceremony{},
-		trips:      map[string]*trip{}, unconfirmed: map[string]*unconfirmed{},
+		marks:      map[string]*mark{},
 		starts:     map[string][]time.Time{},
 		wrong:      map[string][]time.Time{},
 		recoveries: map[string][]time.Time{},
@@ -330,6 +330,20 @@ type accountDoc struct {
 	// Admin says the super admin made the account an admin, who and when
 	// (admins.go). Nothing else makes one but the super admin's address.
 	Admin *adminDoc `json:"admin,omitempty"`
+	// Linking is a provider account being linked, until the record lists it
+	// (providers.go). It signs nobody in.
+	Linking *linkingDoc `json:"linking,omitempty"`
+	// Removing says an enclave is removing the account: written before
+	// anything of it is destroyed, it is never taken back, so a cancel that
+	// comes after it cannot be answered as kept (settings.go).
+	Removing bool `json:"removing,omitempty"`
+	// SignOuts counts the times every device was signed out, and KeptSession
+	// is the one session the last of them kept. A session stands only when it
+	// was made at the count the record has, or is the one kept: so a session
+	// made through another enclave in the moment the devices are signed out
+	// stands for nothing (stands).
+	SignOuts    int    `json:"sign_outs,omitempty"`
+	KeptSession string `json:"kept_session,omitempty"`
 }
 
 func (d *accountDoc) view() contracts.Account {
@@ -362,7 +376,20 @@ func (d *accountDoc) has(address string) bool {
 // due reports whether the account's person asked to delete it and the days
 // they had to cancel are over: from then on it is nobody's account.
 func (d *accountDoc) due(now time.Time) bool {
-	return d.State == contracts.AccountClosing && !now.Before(d.ClosesAt)
+	return d.Removing || (d.State == contracts.AccountClosing && !now.Before(d.ClosesAt))
+}
+
+// signOut signs every device of the account out, but the session keep (""
+// for none): from this record on, no session made before it stands.
+func (d *accountDoc) signOut(keep string) {
+	d.SignOuts++
+	d.KeptSession = keep
+}
+
+// stands reports whether a session of the account still stands: it was not
+// made before the devices were last signed out, or that kept it.
+func (d *accountDoc) stands(session *sessionDoc) bool {
+	return session.SignOuts == d.SignOuts || (d.KeptSession != "" && d.KeptSession == session.ID)
 }
 
 func recordName(accountID string) string { return "account-" + accountID }
@@ -564,6 +591,10 @@ func (s *Service) Account(ctx context.Context, id string) (*contracts.Account, e
 // (settings.go) are pointers too.
 type loginDoc struct {
 	Account string `json:"account"`
+	// Write makes each write of an entry a value of its own, so that one that
+	// is deleted as it was read (DeleteEntryAt) is that write and no later
+	// one: versions start over when an entry is deleted and made again.
+	Write string `json:"write,omitempty"`
 }
 
 // pointed returns the account a pointer names, or "" when the entry is not
@@ -585,11 +616,33 @@ func (s *Service) point(ctx context.Context, partition, key, accountID string, v
 		return err
 	}
 	e := &store.Entry{Partition: partition, Key: key, Version: version, UpdatedAt: s.now()}
-	raw, _ := json.Marshal(loginDoc{Account: accountID})
+	raw, _ := json.Marshal(loginDoc{Account: accountID, Write: newWrite()})
 	if e.Value, err = envelope.Sign(signing, raw, entryAAD(partition, key)); err != nil {
 		return err
 	}
 	return s.cfg.Entries.PutEntry(ctx, e)
+}
+
+// newWrite names one write of an entry (loginDoc.Write).
+func newWrite() string {
+	b := make([]byte, 12)
+	_, _ = rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// repoint writes the pointer of a partition to an account in the place of
+// the one that was read (nil for none): that one is deleted as it was read,
+// and the new one is written where none is. Writing at the version that was
+// read would not do: a version repeats once an entry is deleted and made
+// again, and the write would land on the pointer another account just made.
+// store.ErrConflict or store.ErrExists says another writer came in between.
+func (s *Service) repoint(ctx context.Context, partition, accountID string, old *store.Entry) error {
+	if old != nil {
+		if err := s.cfg.Entries.DeleteEntryAt(ctx, old); err != nil {
+			return err
+		}
+	}
+	return s.point(ctx, partition, loginKey, accountID, 0)
 }
 
 // forget deletes an entry that may be gone already.
@@ -659,11 +712,7 @@ func (s *Service) create(ctx context.Context, address string, stale *store.Entry
 		_ = s.forget(ctx, accountsPartition, listKey(doc))
 		return nil, false, err
 	}
-	version := uint64(0)
-	if stale != nil {
-		version = stale.Version
-	}
-	err := s.point(ctx, loginPartition(address), loginKey, doc.ID, version)
+	err := s.repoint(ctx, loginPartition(address), doc.ID, stale)
 	if err != nil {
 		// No address leads to the record just written, and none will: it is
 		// removed, as far as that works now.
@@ -800,18 +849,7 @@ func (s *Service) sweep(now time.Time) {
 		return
 	}
 	s.swept = now
-	for id, a := range s.attempts {
-		if !a.expires.After(now) {
-			delete(s.attempts, id)
-		}
-	}
-	for id, c := range s.ceremonies {
-		if !c.expires.After(now) {
-			delete(s.ceremonies, id)
-		}
-	}
-	ended(s.trips, now)
-	ended(s.unconfirmed, now)
+	s.sweepMarks(now)
 	for _, counted := range []struct {
 		m      map[string][]time.Time
 		window time.Duration
@@ -904,29 +942,32 @@ func (s *Service) deliver(ctx context.Context, id, address, invitation string) {
 	if !s.allow(address, now) {
 		return
 	}
-	a := &attempt{address: address, invitation: invitation, expires: now.Add(domain.EmailCodeLifetime)}
 	code, token := "", newSecret()
-	a.token = sha256.Sum256([]byte(token))
-
+	a := &attemptDoc{V: 1, Address: address, Invitation: invitation, pendingTimes: pendingTimes{Made: now, Expires: now.Add(domain.EmailCodeLifetime)}}
+	sum := sha256.Sum256([]byte(token))
+	a.Token = sum[:]
 	s.mu.Lock()
-	if len(s.attempts) >= maxAttempts {
-		s.mu.Unlock()
-		s.cfg.Log.Warn("accounts: too many sign-ins waiting, one was dropped")
-		return
-	}
 	if s.wrong[address] = recent(s.wrong[address], now, 24*time.Hour); len(s.wrong[address]) < wrongCodesPerDay {
 		code = randomString("0123456789", domain.EmailCodeDigits)
-		a.code, a.withCode = sha256.Sum256([]byte(code)), true
+		sum := sha256.Sum256([]byte(code))
+		a.Code = sum[:]
 	}
-	s.attempts[id] = a
 	s.mu.Unlock()
+	s.send(ctx, id, a, signInMail(address, s.cfg.AppURL, id, code, token), "accounts: a sign-in message could not be sent")
+}
 
-	if err := s.cfg.Mailer.Send(ctx, signInMail(address, s.cfg.AppURL, id, code, token)); err != nil {
+// send keeps an attempt and sends its message. One whose message could not be
+// sent is dropped: nobody has its code.
+func (s *Service) send(ctx context.Context, id string, a *attemptDoc, m Mail, failed string) {
+	partition := pendingPartition(kindAttempt, id)
+	if err := s.stash(ctx, partition, a); err != nil {
+		s.cfg.Log.Error("accounts: a sign-in in progress could not be kept", "err", scrub(err))
+		return
+	}
+	if err := s.cfg.Mailer.Send(ctx, m); err != nil {
 		// Not the error: a mail system's errors carry the address.
-		s.cfg.Log.Warn("accounts: a sign-in message could not be sent")
-		s.mu.Lock()
-		delete(s.attempts, id)
-		s.mu.Unlock()
+		s.cfg.Log.Warn(failed)
+		_ = s.forget(ctx, partition, pendingKey)
 	}
 }
 
@@ -947,51 +988,74 @@ func signInMail(to, appURL, attempt, code, token string) Mail {
 
 // take ends a sign-in with the code or the token of its message, and returns
 // what it was started for. Every failure is the same error.
-func (s *Service) take(in contracts.EmailFinish) (*attempt, error) {
-	return s.match(in, "", true)
+func (s *Service) take(ctx context.Context, in contracts.EmailFinish) (*attemptDoc, error) {
+	return s.match(ctx, in, "", true)
 }
 
 // match finds the attempt that the code or the token of in belongs to, among
 // the sign-ins (account "") or among the changes of that account's address.
-// With use it ends it: an attempt works once. Without, it is only looked at,
-// and a wrong token counts against it all the same.
-func (s *Service) match(in contracts.EmailFinish, account string, use bool) (*attempt, error) {
-	now := s.now()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	a := s.attempts[in.Attempt]
-	if a != nil && a.account != account {
-		// Started for something else, or for another account: here it is no
-		// attempt at all, and nothing of it changes.
+// With use it ends it: an attempt works once, through whichever enclave ends
+// it first. Without, it is only looked at, and a wrong token counts against it
+// all the same. The wrong answers are counted in this enclave's memory, by the
+// attempt, for as long as it could be ended (pending.go).
+func (s *Service) match(ctx context.Context, in contracts.EmailFinish, account string, use bool) (*attemptDoc, error) {
+	if !validID("att", in.Attempt) {
 		return nil, contracts.ErrInvalidCode
 	}
-	if a == nil || !a.expires.After(now) {
-		delete(s.attempts, in.Attempt)
+	var a attemptDoc
+	e, err := s.unstash(ctx, pendingPartition(kindAttempt, in.Attempt), &a)
+	if err != nil {
+		return nil, err
+	}
+	if e == nil || a.Account != account {
+		// Not there, or started for something else or for another account:
+		// here it is no attempt at all, and nothing of it changes.
 		return nil, contracts.ErrInvalidCode
 	}
-	ok := false
+	ok, byCode := false, false
 	switch {
 	case in.Token != "":
 		sum := sha256.Sum256([]byte(in.Token))
-		ok = subtle.ConstantTimeCompare(sum[:], a.token[:]) == 1
-	case a.withCode:
+		ok = len(a.Token) > 0 && subtle.ConstantTimeCompare(sum[:], a.Token) == 1
+	case len(a.Code) > 0:
 		sum := sha256.Sum256([]byte(in.Code))
-		ok = subtle.ConstantTimeCompare(sum[:], a.code[:]) == 1
-		if !ok {
-			s.wrong[a.address] = append(recent(s.wrong[a.address], now, 24*time.Hour), now)
-		}
+		ok, byCode = subtle.ConstantTimeCompare(sum[:], a.Code) == 1, true
 	}
-	if !ok {
-		if a.tries++; a.tries >= domain.EmailCodeTries {
-			delete(s.attempts, in.Attempt)
+	now := s.now()
+	s.mu.Lock()
+	m := s.marked(e.Partition, a.Expires, now)
+	switch {
+	case m == nil || m.used || m.tries >= domain.EmailCodeTries:
+		s.mu.Unlock()
+		return nil, contracts.ErrInvalidCode
+	case !ok:
+		if byCode {
+			s.wrong[a.Address] = append(recent(s.wrong[a.Address], now, 24*time.Hour), now)
+		}
+		m.tries++
+		spent := m.tries >= domain.EmailCodeTries
+		s.mu.Unlock()
+		if spent {
+			// Out of tries here: it goes from the storage too, as it was read.
+			if _, err := s.drop(ctx, e); err != nil {
+				s.cfg.Log.Warn("accounts: a sign-in that ran out of tries could not be deleted", "err", scrub(err))
+			}
 		}
 		return nil, contracts.ErrInvalidCode
+	case use:
+		m.used = true // it works once
 	}
+	s.mu.Unlock()
 	if use {
-		delete(s.attempts, in.Attempt) // it works once
+		used, err := s.use(ctx, e, a.Expires)
+		if err != nil {
+			return nil, err
+		}
+		if !used {
+			return nil, contracts.ErrInvalidCode // another enclave ended it first
+		}
 	}
-	found := *a // a copy: the one kept may change once the lock is let go
-	return &found, nil
+	return &a, nil
 }
 
 // FinishEmail ends a sign-in by email: it signs the device in, to the
@@ -1011,11 +1075,11 @@ func (s *Service) FinishEmail(ctx context.Context, in contracts.EmailFinish, fro
 // here. An account the operator blocked is ErrAccountBlocked: said here, to
 // whoever proved the address, and never before.
 func (s *Service) proved(ctx context.Context, in contracts.EmailFinish) (*accountDoc, bool, error) {
-	a, err := s.take(in)
+	a, err := s.take(ctx, in)
 	if err != nil {
 		return nil, false, err
 	}
-	doc, stale, err := s.lookup(ctx, a.address)
+	doc, stale, err := s.lookup(ctx, a.Address)
 	switch {
 	case err != nil:
 		return nil, false, err
@@ -1026,10 +1090,10 @@ func (s *Service) proved(ctx context.Context, in contracts.EmailFinish) (*accoun
 		return nil, false, contracts.ErrAccountBlocked
 	case doc != nil:
 		return doc, false, nil
-	case a.invitation == "":
+	case a.Invitation == "":
 		return nil, false, contracts.ErrInvalidCode
 	}
-	return s.signUp(ctx, a.address, a.invitation, stale)
+	return s.signUp(ctx, a.Address, a.Invitation, stale)
 }
 
 // signUp makes the account of an address that proved to be the person's and
@@ -1049,16 +1113,16 @@ func (s *Service) signUp(ctx context.Context, address, invitation string, stale 
 // nothing they could not have. The page asks the person before it signs in:
 // the link may come from someone else, who started a sign-in for their own
 // account to have this person act inside it.
-func (s *Service) LookEmail(_ context.Context, in contracts.EmailLook) (*contracts.EmailPending, error) {
+func (s *Service) LookEmail(ctx context.Context, in contracts.EmailLook) (*contracts.EmailPending, error) {
 	if in.Token == "" {
 		// A code is typed where the sign-in was asked for; only a link travels.
 		return nil, contracts.ErrInvalidCode
 	}
-	a, err := s.match(contracts.EmailFinish{Attempt: in.Attempt, Token: in.Token}, "", false)
+	a, err := s.match(ctx, contracts.EmailFinish{Attempt: in.Attempt, Token: in.Token}, "", false)
 	if err != nil {
 		return nil, err
 	}
-	return &contracts.EmailPending{Address: a.address}, nil
+	return &contracts.EmailPending{Address: a.Address}, nil
 }
 
 // ---- sessions ----
@@ -1079,6 +1143,10 @@ type sessionDoc struct {
 	// the storage cannot make a session fresh, and it is in the storage, so a
 	// request that lands on another enclave sees it.
 	ConfirmedAt time.Time `json:"confirmed_at,omitzero"`
+	// SignOuts is how many times every device of the account had been signed
+	// out when the session was made: it stands while the record says the
+	// same (accountDoc.stands).
+	SignOuts int `json:"sign_outs,omitempty"`
 }
 
 func (d *sessionDoc) expiry() time.Time { return domain.SessionExpiry(d.CreatedAt, d.LastUsedAt) }
@@ -1131,12 +1199,13 @@ func (s *Service) readSession(key []byte, e *store.Entry, accountID string) *ses
 	return &doc
 }
 
-func (s *Service) newSession(ctx context.Context, accountID, userAgent string) (*contracts.Session, string, error) {
+func (s *Service) newSession(ctx context.Context, account *accountDoc, userAgent string) (*contracts.Session, string, error) {
+	accountID := account.ID
 	// One device more than an account keeps: the one used longest ago goes.
 	// More than one goes when there are more than it keeps: sign-ins that
 	// ended at the same time, here or in another enclave, each saw room for
 	// theirs.
-	list, err := s.sessions(ctx, accountID)
+	list, err := s.sessions(ctx, accountID, nil)
 	if err != nil {
 		return nil, "", err
 	}
@@ -1153,6 +1222,9 @@ func (s *Service) newSession(ctx context.Context, accountID, userAgent string) (
 		CreatedAt: now, LastUsedAt: now, Device: domain.Device(userAgent),
 		// Signing in is a proof of who the person is.
 		ConfirmedAt: now,
+		// As the record was read when the person proved who they are: if every
+		// device was signed out since, this one was too.
+		SignOuts: account.SignOuts,
 	}
 	if err := s.putSession(ctx, doc, 0); err != nil {
 		return nil, "", err
@@ -1165,6 +1237,9 @@ func (s *Service) newSession(ctx context.Context, accountID, userAgent string) (
 type Authenticated struct {
 	AccountID string
 	Session   contracts.Session
+	// signOuts is the session's own count of the times every device was
+	// signed out (sessionDoc.SignOuts).
+	signOuts int
 }
 
 // Authenticate returns the session of a cookie's value, or ErrUnauthorized.
@@ -1192,9 +1267,14 @@ func (s *Service) Authenticate(ctx context.Context, cookie string) (*Authenticat
 	}
 	// A session is only as good as its account: one that was removed, or that
 	// is due and is removed here, signs nobody in, whatever entries of it are
-	// put back in the storage.
-	if _, err := s.own(ctx, &Authenticated{AccountID: accountID}); err != nil {
+	// put back in the storage; and one made before every device was signed
+	// out stands for nothing, also when it was written after.
+	account, err := s.own(ctx, &Authenticated{AccountID: accountID})
+	if err != nil {
 		return nil, err
+	}
+	if !account.stands(doc) {
+		return nil, contracts.ErrUnauthorized
 	}
 	if now := s.now(); now.Sub(doc.LastUsedAt) >= domain.SessionTouch {
 		doc.LastUsedAt = now
@@ -1203,10 +1283,12 @@ func (s *Service) Authenticate(ctx context.Context, cookie string) (*Authenticat
 			return nil, err
 		}
 	}
-	return &Authenticated{AccountID: accountID, Session: doc.view(id, s.now())}, nil
+	return &Authenticated{AccountID: accountID, Session: doc.view(id, s.now()), signOuts: doc.SignOuts}, nil
 }
 
-func (s *Service) sessions(ctx context.Context, accountID string) ([]sessionDoc, error) {
+// sessions lists the sessions of an account that are still running; with
+// the account's record, only the ones that stand.
+func (s *Service) sessions(ctx context.Context, accountID string, account *accountDoc) ([]sessionDoc, error) {
 	entries, err := s.cfg.Entries.ListEntries(ctx, accountPartition(accountID), sessionPrefix, "", 2*maxSessions)
 	if err != nil {
 		return nil, err
@@ -1217,7 +1299,7 @@ func (s *Service) sessions(ctx context.Context, accountID string) ([]sessionDoc,
 	}
 	var out []sessionDoc
 	for i := range entries {
-		if doc := s.readSession(key, &entries[i], accountID); doc != nil {
+		if doc := s.readSession(key, &entries[i], accountID); doc != nil && (account == nil || account.stands(doc)) {
 			out = append(out, *doc)
 		}
 	}
@@ -1226,7 +1308,11 @@ func (s *Service) sessions(ctx context.Context, accountID string) ([]sessionDoc,
 
 // Sessions lists the devices signed in to the account, the one last used first.
 func (s *Service) Sessions(ctx context.Context, who *Authenticated) (*contracts.SessionList, error) {
-	list, err := s.sessions(ctx, who.AccountID)
+	account, err := s.own(ctx, who)
+	if err != nil {
+		return nil, err
+	}
+	list, err := s.sessions(ctx, who.AccountID, account)
 	if err != nil {
 		return nil, err
 	}

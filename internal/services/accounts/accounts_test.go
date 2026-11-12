@@ -324,9 +324,10 @@ func TestSignInEnds(t *testing.T) {
 	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("a code after ten minutes: %v", err)
 	}
-	// A sign-in lives in the enclave that started it: another one, or the
-	// same after a restart, knows nothing of it.
+	// An enclave ends no sign-in that was started before it started: a
+	// restart ends the sign-ins that were waiting, as it always did.
 	attempt, mail = w.start("ana@example.org", "")
+	w.now = w.now.Add(time.Second)
 	restarted := w.service(w.svc.cfg.Keys)
 	if _, _, err := restarted.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("a code after a restart: %v", err)
@@ -434,8 +435,8 @@ func TestMailSystemDown(t *testing.T) {
 	w.signUp("ana@example.org")
 	w.out.Fail = true
 	attempt, mail := w.start("ana@example.org", "")
-	if mail != nil || len(w.svc.attempts) != 0 {
-		t.Fatalf("a sign-in is kept for a message that was not sent (%d)", len(w.svc.attempts))
+	if mail != nil || w.pending(kindAttempt) != 0 {
+		t.Fatalf("a sign-in is kept for a message that was not sent (%d)", w.pending(kindAttempt))
 	}
 	if _, _, err := w.svc.FinishEmail(context.Background(), contracts.EmailFinish{Attempt: attempt, Code: "123456"}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatal(err)
@@ -573,11 +574,11 @@ func TestSessionsAreBounded(t *testing.T) {
 	me, first := w.signUp("ana@example.org")
 	for range maxSessions {
 		w.now = w.now.Add(time.Minute)
-		if _, _, err := w.svc.newSession(ctx, me.Account.ID, "device"); err != nil {
+		if _, _, err := w.svc.newSession(ctx, w.doc(me.Account.ID), "device"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	list, _ := w.svc.sessions(ctx, me.Account.ID)
+	list, _ := w.svc.sessions(ctx, me.Account.ID, nil)
 	if len(list) != maxSessions {
 		t.Fatalf("%d sessions kept", len(list))
 	}
@@ -839,6 +840,9 @@ func (f *failing) Derive(ctx context.Context, purpose string) ([]byte, error) {
 	if err := f.err("derive"); err != nil {
 		return nil, err
 	}
+	if err := f.err("derive " + purpose); err != nil {
+		return nil, err
+	}
 	return f.Keys.Derive(ctx, purpose)
 }
 
@@ -986,24 +990,28 @@ func TestTooMuchAtOnce(t *testing.T) {
 	for range maxSending {
 		<-w.svc.sending
 	}
-	// As many sign-ins waiting as the enclave keeps: one more is dropped.
-	for i := range maxAttempts {
-		w.svc.attempts[string(rune(i))] = &attempt{expires: w.now.Add(time.Hour)}
+	// A sign-in the storage could not keep sends no message, and says so.
+	w.svc.cfg.Entries = &failing{Entries: w.mem, fail: map[string]error{"put " + pendingKey: errors.New("down")}}
+	if _, mail := w.start("ana@example.org", ""); mail != nil || !strings.Contains(w.logs.String(), "a sign-in in progress could not be kept") {
+		t.Fatalf("a message for a sign-in that was not kept: %+v", mail)
 	}
-	if _, mail := w.start("ana@example.org", ""); mail != nil {
-		t.Fatal("a sign-in beyond what is kept")
-	}
+	w.svc.cfg.Entries = w.mem
 	// What ended is forgotten.
 	w.now = w.now.Add(2 * time.Hour)
-	if _, mail := w.start("ana@example.org", ""); mail == nil || len(w.svc.attempts) != 1 {
-		t.Fatalf("after the others ended: %d kept", len(w.svc.attempts))
+	attempt, mail := w.start("ana@example.org", "")
+	if mail == nil || w.pending(kindAttempt) != 1 {
+		t.Fatalf("after the others ended: %d kept", w.pending(kindAttempt))
+	}
+	_, _ = w.svc.LookEmail(ctx, contracts.EmailLook{Attempt: attempt, Token: "wrong"})
+	if len(w.svc.marks) != 1 {
+		t.Fatalf("%d sign-ins remembered", len(w.svc.marks))
 	}
 	w.now = w.now.Add(25 * time.Hour)
 	w.svc.mu.Lock()
 	w.svc.sweep(w.now)
 	w.svc.mu.Unlock()
-	if len(w.svc.attempts) != 0 || len(w.svc.starts) != 0 || len(w.svc.wrong) != 0 {
-		t.Fatalf("kept after a day: %d sign-ins, %d starts, %d wrong", len(w.svc.attempts), len(w.svc.starts), len(w.svc.wrong))
+	if w.pending(kindAttempt) != 0 || len(w.svc.marks) != 0 || len(w.svc.starts) != 0 || len(w.svc.wrong) != 0 {
+		t.Fatalf("kept after a day: %d sign-ins, %d remembered, %d starts, %d wrong", w.pending(kindAttempt), len(w.svc.marks), len(w.svc.starts), len(w.svc.wrong))
 	}
 	if _, err := w.svc.StartEmail(ctx, contracts.EmailStart{Address: "ana@example.org"}); err != nil {
 		t.Fatal(err)

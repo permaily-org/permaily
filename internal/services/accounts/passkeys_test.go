@@ -63,20 +63,33 @@ func (w *world) addPasskey(who *Authenticated, auth *webauthntest.Authenticator,
 // with the credential id.
 func (w *world) assert(auth *webauthntest.Authenticator, id []byte) contracts.PasskeySignIn {
 	w.t.Helper()
-	started, err := w.svc.StartPasskeySignIn(context.Background())
+	in, err := w.asserting(auth, id)
 	if err != nil {
 		w.t.Fatal(err)
+	}
+	return in
+}
+
+// asserting is assert, with the failure to start the ceremony.
+func (w *world) asserting(auth *webauthntest.Authenticator, id []byte) (contracts.PasskeySignIn, error) {
+	started, err := w.svc.StartPasskeySignIn(context.Background())
+	if err != nil {
+		return contracts.PasskeySignIn{}, err
 	}
 	in := contracts.PasskeySignIn{Ceremony: started.Ceremony}
 	in.Credential.RawID = id
 	r := &in.Credential.Response
 	r.ClientDataJSON, r.AuthenticatorData, r.Signature, r.UserHandle = auth.Get(started.Options.RPID, testOrigin, started.Options.Challenge, id)
-	return in
+	return in, nil
 }
 
 func (w *world) signInWith(auth *webauthntest.Authenticator, id []byte) (*contracts.Me, string, error) {
 	w.t.Helper()
-	return w.svc.FinishPasskeySignIn(context.Background(), w.assert(auth, id), Browser{UserAgent: "passkey device"})
+	in, err := w.asserting(auth, id)
+	if err != nil {
+		return nil, "", err
+	}
+	return w.svc.FinishPasskeySignIn(context.Background(), in, Browser{UserAgent: "passkey device"})
 }
 
 // passkeyOnly turns "passkey only" on and returns the recovery codes.
@@ -395,7 +408,7 @@ func TestPasskeyRefusals(t *testing.T) {
 			t.Errorf("making a passkey with %s: %+v, %v", name, got, err)
 		}
 		// The ceremony is over, right or wrong.
-		if _, ok := w.svc.end(in.Ceremony, as.AccountID); ok {
+		if _, ok, _ := w.svc.end(ctx, in.Ceremony, as.AccountID); ok {
 			t.Errorf("%s: the ceremony is still running", name)
 		}
 	}
@@ -494,18 +507,18 @@ func TestPasskeyRefusals(t *testing.T) {
 			return w.assert(auth, mine.ID)
 		},
 	}
-	sessions, _ := w.svc.sessions(ctx, me.Account.ID)
+	sessions, _ := w.svc.sessions(ctx, me.Account.ID, nil)
 	for name, make := range assertions {
 		in := make()
 		got, cookie, err := w.svc.FinishPasskeySignIn(ctx, in, Browser{UserAgent: ""})
 		if got != nil || cookie != "" || !errors.Is(err, contracts.ErrInvalidPasskey) || err.Error() != contracts.ErrInvalidPasskey.Error() {
 			t.Errorf("signing in with %s: %+v, %v", name, got, err)
 		}
-		if _, ok := w.svc.end(in.Ceremony, ""); ok {
+		if _, ok, _ := w.svc.end(ctx, in.Ceremony, ""); ok {
 			t.Errorf("%s: the ceremony is still running", name)
 		}
 	}
-	if after, _ := w.svc.sessions(ctx, me.Account.ID); len(after) != len(sessions) {
+	if after, _ := w.svc.sessions(ctx, me.Account.ID, nil); len(after) != len(sessions) {
 		t.Fatalf("a refused sign-in left a session: %d, before %d", len(after), len(sessions))
 	}
 	right2 := w.assert(auth, mine.ID)
@@ -559,35 +572,28 @@ func TestPasskeysAreBounded(t *testing.T) {
 		t.Fatalf("%d passkeys kept", len(list.Passkeys))
 	}
 
-	// As many ceremonies waiting as the enclave keeps: one more takes the
-	// place of the one that waited longest, so starting one never fails.
-	w.svc.ceremonies = map[string]*ceremony{}
+	// A ceremony ends once, and not after its five minutes; one the storage
+	// could not keep is not started.
 	first, _ := w.svc.StartPasskeySignIn(ctx)
-	w.now = w.now.Add(time.Second)
 	second, _ := w.svc.StartPasskeySignIn(ctx)
-	for i := range maxCeremonies - 2 {
-		w.svc.ceremonies[fmt.Sprint(i)] = &ceremony{expires: w.now.Add(time.Hour)}
+	if _, ok, err := w.svc.end(ctx, first.Ceremony, ""); !ok || err != nil {
+		t.Fatalf("a ceremony that runs: %v", err)
 	}
-	third, err := w.svc.StartPasskeySignIn(ctx)
-	if err != nil || len(w.svc.ceremonies) != maxCeremonies {
-		t.Fatalf("one more than is kept: %d, %v", len(w.svc.ceremonies), err)
+	if _, ok, _ := w.svc.end(ctx, first.Ceremony, ""); ok {
+		t.Fatal("a ceremony ended twice")
 	}
-	if _, ok := w.svc.end(first.Ceremony, ""); ok {
-		t.Fatal("the ceremony that waited longest was kept")
+	w.now = w.now.Add(domain.PasskeyCeremonyLifetime)
+	if _, ok, _ := w.svc.end(ctx, second.Ceremony, ""); ok || w.pending(kindCeremony) != 0 {
+		t.Fatalf("a ceremony ended after its time: %d kept", w.pending(kindCeremony))
 	}
-	for _, kept := range []string{second.Ceremony, third.Ceremony} {
-		if _, ok := w.svc.end(kept, ""); !ok {
-			t.Fatal("a newer ceremony was dropped")
-		}
+	if _, ok, _ := w.svc.end(ctx, "not a ceremony", ""); ok {
+		t.Fatal("a ceremony that is not one")
 	}
-	// What ended is forgotten.
-	w.svc.ceremonies = map[string]*ceremony{}
-	_, _ = w.svc.StartPasskeySignIn(ctx)
-	_, _ = w.svc.StartPasskey(ctx, &Authenticated{AccountID: who.AccountID})
-	w.now = w.now.Add(domain.PasskeyCeremonyLifetime + time.Minute)
-	if _, _ = w.svc.StartPasskeySignIn(ctx); len(w.svc.ceremonies) != 1 {
-		t.Fatalf("%d ceremonies kept after they ended", len(w.svc.ceremonies))
+	w.svc.cfg.Entries = &failing{Entries: w.mem, fail: map[string]error{"put " + pendingKey: errors.New("down")}}
+	if started, err := w.svc.StartPasskeySignIn(ctx); started != nil || err == nil {
+		t.Fatalf("a ceremony the storage did not keep: %+v %v", started, err)
 	}
+	w.svc.cfg.Entries = w.mem
 }
 
 var recoveryCodeRE = regexp.MustCompile(`^[2-9A-Z]{4}-[2-9A-Z]{4}-[2-9A-Z]{4}-[2-9A-Z]{4}$`)
@@ -643,8 +649,8 @@ func TestPasskeyOnly(t *testing.T) {
 			t.Fatalf("a sign-in message for an account that signs in with passkeys only (invitation %q)", invitation)
 		}
 	}
-	if len(w.out.Sent()) != sent || len(w.svc.attempts) != 0 {
-		t.Fatalf("a sign-in by mail is waiting: %d", len(w.svc.attempts))
+	if len(w.out.Sent()) != sent || w.pending(kindAttempt) != 0 {
+		t.Fatalf("a sign-in by mail is waiting: %d", w.pending(kindAttempt))
 	}
 	// The passkey signs in.
 	if signed, _, err := w.signInWith(auth, first.ID); err != nil || signed.Account.ID != me.Account.ID {
@@ -822,7 +828,7 @@ func TestRecovery(t *testing.T) {
 	if len(w.svc.recoveries) != 0 {
 		t.Fatalf("wrong codes kept after their hour: %v", w.svc.recoveries)
 	}
-	for i := range maxAttempts {
+	for i := range maxRecoveryCounts {
 		w.svc.recoveries[fmt.Sprint(i)] = []time.Time{w.now}
 	}
 	if _, _, err := w.recover("ana@example.org", codes[2]); !errors.Is(err, contracts.ErrInvalidCode) {
@@ -1170,6 +1176,9 @@ func TestPasskeyFailures(t *testing.T) {
 		e := setup(t, false)
 		in, before := e.w.assert(e.auth, e.made.ID), sessions(e)
 		e.f.fail[op] = down
+		if op == "derive" {
+			e.f.skip = map[string]int{op: 1} // the ceremony is read, and ended, before
+		}
 		me, cookie, err := e.w.svc.FinishPasskeySignIn(ctx, in, Browser{UserAgent: ""})
 		if me != nil || cookie != "" || !errors.Is(err, down) || sessions(e) != before {
 			t.Errorf("%s down: signing in with a passkey: %+v %v", op, me, err)
