@@ -311,6 +311,47 @@ func TestR1EveryRouteInEveryStanding(t *testing.T) {
 		}
 	}
 
+	// The code review of PR #90: a body that is not one is the request's own
+	// input, answered after the standing on every route that takes a body.
+	t.Run("a malformed body, after the standing", func(t *testing.T) {
+		for i, standing := range standings {
+			for _, r := range routes("", "") {
+				if r.body == "" {
+					continue
+				}
+				a := newInboxApp(t, nil)
+				box := a.fake.Add(alice, "Mine")
+				msg := a.seed(box.ID, hostileRaw(), hostileMeta())
+				a.fake.Accounts.Set(alice, standing)
+				for _, x := range routes(box.ID, msg) {
+					if x.name == r.name {
+						r = x
+					}
+				}
+				rec := a.call("alice", r.method, r.path, "{")
+				c := table[r.name][i]
+				if c == yes {
+					c = cell{400, "invalid_body"}
+				}
+				if rec.Code != c.status || errorCode(t, rec) != c.code {
+					t.Errorf("standing %d, %s with {: %d %s, want %d %s", i, r.name, rec.Code, rec.Body, c.status, c.code)
+				}
+			}
+		}
+		// Ownership and the record before the body, for a change too.
+		a := newInboxApp(t, nil)
+		mine, theirs := a.fake.Add(alice, "Mine"), a.fake.Add(bob, "Theirs")
+		want(t, a.call("alice", "PATCH", "/api/v1/mailboxes/"+theirs.ID, "{"), 404, "not_found")
+		a.fake.Accounts.Set(alice, mailboxes.Standing{Closing: true, TermsAgreed: true})
+		want(t, a.call("alice", "PATCH", "/api/v1/mailboxes/"+theirs.ID, "{"), 404, "not_found")
+		a.fake.Accounts.Set(alice, mailboxes.Standing{TermsAgreed: true})
+		a.fake.MakeLost(mine.ID)
+		want(t, a.call("alice", "PATCH", "/api/v1/mailboxes/"+mine.ID, "{"), 409, "mailbox_unreadable")
+		if n := len(a.fake.Notices.Sent()); n != 0 {
+			t.Errorf("%d notices from requests that changed nothing", n)
+		}
+	})
+
 	t.Run("closing and not agreed: account_closing where the closing column refuses", func(t *testing.T) {
 		a := newInboxApp(t, nil)
 		box := a.fake.Add(alice, "Mine")

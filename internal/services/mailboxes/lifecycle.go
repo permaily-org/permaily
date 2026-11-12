@@ -348,6 +348,30 @@ func (s *Service) Open(ctx context.Context, c Caller, id string, a Access) (inbo
 	return inbox.Box{MailboxID: id, Key: key}, nil
 }
 
+// CheckChange implements httpapi.MailboxesService: the checks Create and
+// Update make before their input, in their order, reading and writing
+// nothing else.
+func (s *Service) CheckChange(ctx context.Context, c Caller, id string) error {
+	st, err := s.standing(ctx, c.Account)
+	if err != nil {
+		return err
+	}
+	if id == "" {
+		return refuse(st)
+	}
+	sl, err := s.own(ctx, c, id)
+	if err != nil {
+		return err
+	}
+	if err := refuse(st); err != nil {
+		return err
+	}
+	if sl.l.state != stActive {
+		return contracts.ErrMailboxUnreadable
+	}
+	return nil
+}
+
 // ---- making a mailbox (ADR 0026, "Making a mailbox") ----
 
 // Create implements httpapi.MailboxesService.

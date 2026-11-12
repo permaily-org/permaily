@@ -67,6 +67,14 @@ type MailboxesService interface {
 	// contracts.ErrTermsChanged, contracts.ErrInvalidLabel,
 	// contracts.ErrInvalidRetention, contracts.ErrMailboxUnreadable.
 	Update(ctx context.Context, c mailboxes.Caller, id string, in contracts.MailboxUpdate) (*contracts.Mailbox, error)
+	// CheckChange answers, and changes nothing, what Create (id "") or
+	// Update (id the mailbox's) would answer before it reads its input:
+	// contracts.ErrUnauthorized; for Update contracts.ErrNotFound; the
+	// standing (contracts.ErrAccountClosing, then contracts.ErrTermsChanged);
+	// for Update contracts.ErrMailboxUnreadable; nil when the change may go
+	// on to its input. The adapter asks it before it reads a request's body,
+	// so a body that is not one is answered after all of these.
+	CheckChange(ctx context.Context, c mailboxes.Caller, id string) error
 	// Disconnect stops the mailbox and deletes its mail (ADR 0026,
 	// "Disconnecting"). Allowed in every standing (leaving never needs the
 	// terms); contracts.ErrConfirmationNeeded once c.ConfirmedUntil has
@@ -254,6 +262,12 @@ func (a *mailboxesAPI) list(w http.ResponseWriter, r *http.Request, c mailboxes.
 }
 
 func (a *mailboxesAPI) create(w http.ResponseWriter, r *http.Request, c mailboxes.Caller) {
+	// Who the caller is and what their standing allows come before the
+	// body (ADR 0026, "The API").
+	if err := a.cfg.Service.CheckChange(r.Context(), c, ""); err != nil {
+		a.fail(w, err)
+		return
+	}
 	var in contracts.MailboxCreate
 	if !decode(w, r, &in) {
 		return
@@ -276,18 +290,16 @@ func (a *mailboxesAPI) get(w http.ResponseWriter, r *http.Request, c mailboxes.C
 }
 
 func (a *mailboxesAPI) update(w http.ResponseWriter, r *http.Request, c mailboxes.Caller) {
+	// A body that is not one is the request's own input, answered after
+	// what comes first (ADR 0026, "The API"): a mailbox that is not the
+	// caller's is not_found, and the standing and the record are answered,
+	// whatever the body.
+	if err := a.cfg.Service.CheckChange(r.Context(), c, r.PathValue("id")); err != nil {
+		a.fail(w, err)
+		return
+	}
 	var in contracts.MailboxUpdate
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAccountsBody))
-	dec.DisallowUnknownFields()
-	if dec.Decode(&in) != nil {
-		// A body that is not one is the request's own input, answered after
-		// what comes first (ADR 0026, "The API"): a mailbox that is not the
-		// caller's is not_found whatever the body.
-		if _, err := a.cfg.Service.Get(r.Context(), c, r.PathValue("id")); err != nil {
-			a.fail(w, err)
-			return
-		}
-		writeError(w, http.StatusBadRequest, "invalid_body", "the request is not the JSON this endpoint takes")
+	if !decode(w, r, &in) {
 		return
 	}
 	out, err := a.cfg.Service.Update(r.Context(), c, r.PathValue("id"), in)
