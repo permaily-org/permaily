@@ -336,6 +336,10 @@ describe('34: the link page', () => {
         "This link can't be opened from Permaily.",
       ],
       [
+        ok({ link: '3.AbCdEfGhIjKlMnOp', host: 'a.example' }),
+        "This link can't be shown right now. Close this tab and open it again from the message.",
+      ],
+      [
         refused(409, 'link_changed'),
         'This link changed since the message was opened. Close this tab, open the message again, then the link.',
       ],
