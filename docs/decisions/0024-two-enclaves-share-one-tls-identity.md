@@ -76,7 +76,6 @@ Running two enclaves still needs:
 - A pass-through load balancer for ports 443 and 25, and its health checks.
 - The parent instances or enclaves behind it, and a host proxy for each.
 - A way to roll a release out to two (docs/operations.md).
-- The rest of ADR 0017's list: sign-in state still in memory, limits counted by each enclave, and `/status` being one enclave's.
 - A first release with this code must run alone before a second enclave is added. A release from before writes the identity with a plain write and does not know the claim.
 - How a verifier reaches each enclave behind one address (above).
 
