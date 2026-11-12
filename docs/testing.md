@@ -97,7 +97,7 @@ Coverage of the web app is in `web/vitest.config.ts`, one threshold for each are
 | `pages/settings/signin` | 95, 90, 98, 99 | 95.15, 90.87, 98.85, 99.47 |
 | `pages/settings/account` | 94, 87, 100, 99 | 94.91, 87.5, 100, 99.06 |
 | `pages/accounts` | 97, 88, 100, 100 | 97.84, 88.78, 100, 100 (2026-11-12) |
-| `pages/inbox` | 98, 92, 100, 100 | 98.87, 92.51, 100, 100 (2026-11-12) |
+| `pages/inbox` | 98, 92, 100, 100 | 98.14, 93.47, 100, 100 (2026-11-12, with the formatted view and the link page) |
 
 Mutation testing of `pkg/attestation` (gremlins 0.6.0, 2026-11-09): efficacy 100% (29 killed, 0 lived, 22 timed out), mutator coverage 55.77%. Thresholds: efficacy 90, mutator coverage 55.
 
