@@ -80,18 +80,31 @@ func envelop(t *testing.T, plaintext []byte, pub *rsa.PublicKey, ber bool) []byt
 	return tlv(seq, oid(oidEnvelopedData), tlv(ctx0, ed))
 }
 
+// tamper is b with the byte at i XORed with x.
+func tamper(b []byte, i int, x byte) []byte {
+	out := bytes.Clone(b)
+	out[i] ^= x
+	return out
+}
+
 func TestCMSRejectsGarbage(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 2048)
 	other, _ := rsa.GenerateKey(rand.Reader, 2048)
 	good := envelop(t, []byte("secret data key 32 bytes long!!!"), &priv.PublicKey, false)
 	for name, in := range map[string][]byte{
-		"empty":         nil,
-		"truncated":     good[:len(good)/2],
-		"not a CMS":     tlv(0x30, oid(asn1.ObjectIdentifier{1, 2, 3})),
-		"deep nesting":  bytes.Repeat([]byte{0x30, 0x80}, 40),
-		"bad length":    {0x30, 0x84, 0xff, 0xff, 0xff, 0xff},
-		"other key":     envelop(t, []byte("x"), &other.PublicKey, false),
-		"tampered tail": append(bytes.Clone(good[:len(good)-1]), good[len(good)-1]^0xff),
+		"empty":        nil,
+		"truncated":    good[:len(good)/2],
+		"not a CMS":    tlv(0x30, oid(asn1.ObjectIdentifier{1, 2, 3})),
+		"deep nesting": bytes.Repeat([]byte{0x30, 0x80}, 40),
+		"bad length":   {0x30, 0x84, 0xff, 0xff, 0xff, 0xff},
+		"other key":    envelop(t, []byte("x"), &other.PublicKey, false),
+		// The content is AES-CBC with nothing to authenticate it but its
+		// padding: a byte flipped in the last block turns it into random
+		// bytes, whose padding is valid about once in 256. Flipping the block
+		// before it changes the same byte of the padding, and nothing else of
+		// it, every time: the 32 bytes end in a whole block of 0x10.
+		"tampered tail":    tamper(good, len(good)-1-aes.BlockSize, 0x10), // the last byte of the padding becomes 0
+		"tampered padding": tamper(good, len(good)-2-aes.BlockSize, 0x01), // one byte of the padding becomes 0x11
 	} {
 		if _, err := decryptEnvelopedData(in, priv); err == nil {
 			t.Errorf("%s: accepted", name)
