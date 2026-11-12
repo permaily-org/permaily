@@ -45,7 +45,7 @@ func (s *Service) StartAddressChange(ctx context.Context, who *Authenticated, in
 		return nil, contracts.ErrTermsChanged
 	case doc.Address == address:
 		// Nothing to change to. It is the asker's own address: it tells nothing.
-		return nil, contracts.ErrInvalidAddress
+		return nil, contracts.ErrSameAddress
 	case !s.allow(doc.ID, s.now()):
 		// Counted for the account, which is the asker's own. What the address
 		// was sent already is counted apart, and told to nobody (deliverCode).

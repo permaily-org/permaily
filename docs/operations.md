@@ -46,6 +46,8 @@ An old image can open the root secret for as long as its key exists: a flaw foun
 
 An image creates a root secret only when the table has neither a record `root-<its PCR0>` nor the record `deployment` (`pk=system`, `sk=record#deployment`). To start over on purpose, delete those items, the TLS identity (every `sk` that starts with `record#tls-<CA host>`) and the mailbox items; the next image creates a new root secret, a new TLS key and a new ACME account (see Certificates below), and everything stored before is unreadable. There is no way back. The commits in the anchors bucket cannot be deleted and need not be: they belong to the root secret that is gone, and the new deployment's versions go on after them.
 
+The accounts are kept under the same root secret: delete them too, or they stay in the table as records nobody can read, and an address or a provider's account would still point at an account that cannot be opened. That is every item of `pk=system` whose `sk` starts with `record#account-` (the accounts, every version) or `record#provider-apps` (the providers' applications); every item whose `pk` starts with `account#` (sessions and devices), `login#` (the pointers from an address, `login#email#…`, and from a provider's account, `login#<provider>#…`), `invitation#` (the invitations), `pending#` (the sign-ins, address changes, confirmations and passkey ceremonies in progress, with their `used` marks) or `acme-challenge#` (an ACME order left open); and every item of `pk=accounts`, `pk=closing`, `pk=admins` (the admins), `pk=admin-log` (the admin log) and `pk=invitations` (the list of invitations). With those, the records above and the mailbox items gone, nothing is left in the table: emptying it does the same.
+
 If the instance is lost, nothing is: create it again with OpenTofu and deploy the same release. The root secret is in DynamoDB, locked by the release's KMS key.
 
 ## Test with staging images
@@ -61,6 +63,10 @@ scripts/deploy.sh /tmp/stg-a /tmp/stg-a/permaily-host-linux-arm64
 go run ./cmd/permaily-verify -pcrs /tmp/stg-a/pcrs.json -ca-file letsencrypt-stg-root-x1.pem -skip-certificates
 PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem scripts/handoff.sh /tmp/stg-a /tmp/stg-b    # to a second image, built later
 ```
+
+`letsencrypt-stg-root-x1.pem` is the root of Let's Encrypt staging, fetched with `curl -sO https://letsencrypt.org/certs/staging/letsencrypt-stg-root-x1.pem` (as in [verification.md](verification.md)). Every operator script needs it against a staging image, as `PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem`: `scripts/invite.sh`, `scripts/accounts.sh`, `scripts/provider.sh` and `scripts/handoff.sh` (which passes it on to `scripts/sigstore-trust-root.sh --send`).
+
+The staging table keeps its root secret from one test to the next, and only the key of an image that holds it can open it. When the key of the last staging image that ran is gone (removed from `release_keys` and applied: it is disabled at once and deleted after seven days), nothing can open that secret again: start the staging table over as in "A new deployment, or losing everything", on `permaily-mail-staging`, before the next staging image.
 
 Two staging images built at the same time may be logged in either order, and a handoff only goes forward in that order. Afterwards deploy the production release again, remove the staging keys from `release_keys`, restore the CAA records and delete the `staging/` branches.
 
@@ -81,6 +87,8 @@ Not deployed: one enclave runs today. The code is ready for two behind one addre
 - **`the stored identity holds another key`** in one enclave's log: the identity was lost and made again by the other enclave. Restart the enclave that logs it, so both serve the new key, and follow "Replace the TLS key" for the CAA records.
 - **The challenges** of an open order are items `pk=acme-challenge#tls-<CA host>` in the table, sealed. They expire with the order and are deleted when it ends; one left behind ends by itself.
 - **The test mailbox** is made once by whichever enclave starts first.
+- **Sign-ins in progress** (by mail, address changes, confirmations, passkey ceremonies, trips to a provider) are sealed items `pk=pending#…` in the table, so one started through one enclave ends through the other. An enclave ends none started before it started: replacing or restarting one ends the sign-ins started before, and the person asks again.
+- **Limits** are counted in each enclave's memory, on purpose, so with two each is at most twice what it says, and **`/status`** is the enclave's that answered (ADR 0017, "Two enclaves at once").
 
 Still needed before two run:
 
@@ -88,7 +96,7 @@ Still needed before two run:
 2. The parent instances, or one instance with two enclaves, each with its host proxy, behind it.
 3. A first release with ADR 0024 must run alone before a second enclave is added: a release from before writes the TLS identity without the claim.
 4. A way to roll a release out to two: hand the root secret to the new release once (any enclave of the running release can), then replace the enclaves one at a time. While both releases serve, `permaily-verify -release` fails on connections that land on the older one.
-5. The sign-in state that is still in each enclave's memory moved to the storage (ADR 0017).
+5. A way for a verifier to reach each enclave behind one address (ADR 0024).
 
 ## Look at enclave logs
 
@@ -112,6 +120,8 @@ Debug mode zeroes the PCRs, so verification fails on purpose and the enclave doe
 ## Let's Encrypt rate limits
 
 At most 5 certificates per week for the same set of names. Since v0.4.0 the enclave keeps its key and certificate sealed, so a restart or an upgrade issues nothing; only a renewal (every 60 days) or a new TLS key does. With two enclaves, one asks and the other serves what it stores, so they make no more orders than one (ADR 0024). If issuance fails with `rateLimited`, wait for the window, and use `.#eif-staging` for tests.
+
+To see that an upgrade issued nothing: v0.10.0 logs `acme: certificate installed` both when it reuses the stored certificate and right after ordering one, so for that release only the certificate's serial shows it (the same before and after: `openssl s_client -connect api.permaily.com:443 -servername api.permaily.com </dev/null | openssl x509 -noout -serial`). Later releases also log `acme: certificate obtained` when they order; an upgrade that logs only `installed` ordered nothing.
 
 ## Rotate the Cloudflare token
 

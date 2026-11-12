@@ -61,9 +61,13 @@ ask() {
 }
 
 # What is shown of a time: to the minute, in UTC. A field an older release
-# does not send is said to be unknown, never taken for "none".
+# does not send is said to be unknown, never taken for "none". The admin and
+# the terms are left out of a record when there are none; every release that
+# sends providers sends them too, so a record without providers is the one
+# that says nothing of them.
 when='def when: if . == null then "-" else .[0:16] | sub("T"; " ") end;
-  def unsaid: "not said by this server (an older release)";'
+  def unsaid: "not said by this server (an older release)";
+  def newer: has("providers");'
 
 # show prints one account, from a file that holds its record.
 show() {
@@ -79,8 +83,8 @@ show() {
     ["Passkeys", "\(.passkeys)\(if .passkey_only then ", and nothing else signs in (passkey only)" else "" end)"],
     ["Providers", (if has("providers") | not then unsaid elif .providers == [] then "none" else .providers | join(", ") end)],
     ["Sessions", (if has("sessions") then "\(.sessions)" else unsaid end)],
-    ["Admin", (if .admin == "super" then "the super admin" elif .admin == "admin" then "an admin" else "no, or \(unsaid)" end)],
-    ["Terms", (if .terms then "agreed to \(.terms.version), on \(.terms.at | when) UTC" else "none agreed, or \(unsaid)" end)]
+    ["Admin", (if .admin == "super" then "the super admin" elif .admin == "admin" then "an admin" elif newer then "no" else unsaid end)],
+    ["Terms", (if .terms then "agreed to \(.terms.version), on \(.terms.at | when) UTC" elif newer then "none agreed" else unsaid end)]
     | "\(.[0] + ":" | . + " " * (18 - length))\(.[1])"' "$1"
 }
 
