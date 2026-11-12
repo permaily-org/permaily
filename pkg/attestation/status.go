@@ -90,12 +90,17 @@ const (
 	// given to it, or taken away.
 	AdminProviderAppSet     = "provider_app_set"
 	AdminProviderAppRemoved = "provider_app_removed"
+	// AdminMade and AdminRemoved: the super admin made an account an admin
+	// of the service, or made it stop being one.
+	AdminMade    = "admin_made"
+	AdminRemoved = "admin_removed"
 )
 
 // AdminActions lists the kinds this package knows, in the order they are shown.
 var AdminActions = []string{
 	AdminBlock, AdminUnblock, AdminDelete, AdminDeleteCancel, AdminSessionsClose,
 	AdminInvitationsMade, AdminInvitationRevoked, AdminProviderAppSet, AdminProviderAppRemoved,
+	AdminMade, AdminRemoved,
 }
 
 // What SES says about an identity, a domain or an address mail is sent from

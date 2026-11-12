@@ -44,6 +44,27 @@ describe('signing in with a passkey', () => {
     expectNotKept('cer_secret_1', 'sig_secret', 'cred-1')
   })
 
+  it('is as tall as the providers next to it', async () => {
+    browserWithPasskeys({})
+    server
+      .signedOut()
+      .on(
+        'GET /api/v1/auth/providers',
+        ok({ providers: ['google', 'github', 'meta', 'microsoft'] }),
+      )
+    await open('/sign-in')
+    const passkey = await screen.findByRole('button', { name: 'Sign in with a passkey' })
+    await screen.findByRole('button', { name: 'Continue with Google' })
+    const providers = screen
+      .getAllByRole('button', { name: /^(Continue|Sign in) with / })
+      .filter((button) => button !== passkey)
+    expect(providers).toHaveLength(4)
+    // jsdom lays nothing out, so the height is the class that fixes it: one, and the same on every button.
+    const height = (button: HTMLElement) => [...button.classList].filter((name) => /^h-/.test(name))
+    expect(height(passkey)).toHaveLength(1)
+    for (const provider of providers) expect(height(provider)).toEqual(height(passkey))
+  })
+
   it('is not offered on the sign-up screen', async () => {
     browserWithPasskeys()
     server.signedOut()

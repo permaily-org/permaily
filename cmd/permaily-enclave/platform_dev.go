@@ -75,6 +75,10 @@ func devClock() time.Time { return time.Now().Add(time.Duration(devAhead.Load())
 // whole service tells it.
 var devProviders atomic.Pointer[idptest.Server]
 
+// defaultSuperAdmin is the super admin's address in dev mode, which a test or
+// a person trying the admin panel signs up with.
+const defaultSuperAdmin = "admin@permaily.test"
+
 // devRemoveEvery is how often dev mode looks for accounts that are due: its
 // storage is in memory, so looking costs nothing.
 const devRemoveEvery = time.Second
@@ -140,7 +144,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	if p.accounts, err = accounts.New(accounts.Config{
 		// As in the enclave: only the newest version of an account's record is kept.
 		Records: &store.Anchored{Records: mem, Commits: store.NewMemoryCommits(), OnlyNewest: true, Now: devClock}, Entries: mem,
-		Keys: local, Mailer: outbox, AppURL: appURL, Log: log, Now: devClock,
+		Keys: local, Mailer: outbox, AppURL: appURL, SuperAdmin: cfg.superAdmin, Log: log, Now: devClock,
 		Providers: &idp.Client{HTTP: &http.Client{}, RedirectURL: appURL + providerCallback, Now: devClock, Endpoints: providers.Endpoints()},
 	}); err != nil {
 		return nil, err

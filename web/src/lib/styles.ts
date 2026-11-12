@@ -9,6 +9,9 @@ export const focusRing =
 /** A page's padding: 16px on phones, 32px from sm, the full 56px from lg. */
 export const pagePadding = 'px-4 pt-6 pb-10 sm:px-8 lg:px-14 lg:pt-9 lg:pb-14'
 
+/** The height of the sign-in screen's actions, which stand in one column: the providers' buttons and the passkey's. */
+export const signInHeight = 'h-10'
+
 export type ButtonVariant = 'primary' | 'secondary' | 'danger'
 export type ButtonSize = 'md' | 'sm'
 
@@ -17,7 +20,8 @@ const sizes: Record<ButtonSize, string> = {
   sm: 'px-3 py-[5px] text-small leading-[1.2]',
 }
 
-const variants: Record<ButtonVariant, string> = {
+/** The colours of each kind of button, for a button that has a shape of its own (components/brands). */
+export const buttonVariants: Record<ButtonVariant, string> = {
   primary:
     'border border-ink bg-ink text-paper hover:border-ink-2 hover:bg-ink-2 disabled:border-rule disabled:bg-sunken disabled:text-ink-3',
   secondary:
@@ -34,7 +38,7 @@ export function buttonClass(
   return cx(
     'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-sm font-medium disabled:cursor-not-allowed',
     sizes[size],
-    variants[variant],
+    buttonVariants[variant],
     focusRing,
     extra,
   )

@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
-import { Button } from '../../components/ui/index.ts'
+import { ProviderButton } from '../../components/brands/ProviderButton.tsx'
 import { ApiError, errorCode, type Provider, startProvider } from '../../lib/api.ts'
 import {
   arrivedInvitation,
@@ -106,14 +106,12 @@ export function ProviderSignIn({
     <div className="mt-5 flex flex-col gap-3 border-t border-rule pt-5">
       {first}
       {on.map((provider) => (
-        <Button
+        <ProviderButton
           key={provider}
-          variant="secondary"
+          provider={provider}
           disabled={leaving !== null}
           onClick={() => go(provider)}
-        >
-          Continue with {providerNames[provider]}
-        </Button>
+        />
       ))}
       <p
         ref={errorRef}

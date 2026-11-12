@@ -1,6 +1,8 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react'
+import { useConfirmed } from '../../../components/Confirm.tsx'
 import { Button, Dialog, TextAction } from '../../../components/ui/index.ts'
 import * as api from '../../../lib/api.ts'
+import { isCancelled } from '../../../lib/cancelled.ts'
 import { useSession } from '../../../lib/session.tsx'
 import { CodeForm, type Sent, sentTo } from '../../auth/CodeStep.tsx'
 import { Field } from '../../auth/Field.tsx'
@@ -28,6 +30,7 @@ const changed =
  */
 export function ContactAddress({ account }: { account: api.Account }) {
   const { accountChanged, failed } = useSession()
+  const confirmed = useConfirmed()
   const [open, setOpen] = useState(false)
   const [typed, setTyped] = useState('')
   const [sent, setSent] = useState<Sent | null>(null)
@@ -67,8 +70,10 @@ export function ContactAddress({ account }: { account: api.Account }) {
     setErrors({})
     setPending(true)
     try {
-      setSent(sentTo(address, await api.startAddressChange(address)))
+      setSent(sentTo(address, await confirmed(() => api.startAddressChange(address))))
     } catch (failure) {
+      // The person chose not to confirm it's them: the dialog stays as it was, with what they typed.
+      if (isCancelled(failure)) return
       // Nothing is said here when the session ended or the account is being deleted: its own screen follows.
       const code = failed(failure)
       if (code === 'invalid_address') setErrors({ address: refused })
@@ -146,7 +151,12 @@ export function ContactAddress({ account }: { account: api.Account }) {
                   return failed(new api.ApiError(code)) === null
                 }}
                 sendAnother={async () => {
-                  setSent(sentTo(sent.address, await api.startAddressChange(sent.address)))
+                  setSent(
+                    sentTo(
+                      sent.address,
+                      await confirmed(() => api.startAddressChange(sent.address)),
+                    ),
+                  )
                 }}
                 onBack={() => {
                   setErrors({})
@@ -186,7 +196,7 @@ export function ContactAddress({ account }: { account: api.Account }) {
                   <p role="alert" className="text-small text-danger empty:hidden">
                     {errors.form}
                   </p>
-                  <Button type="submit" disabled={pending}>
+                  <Button type="submit" aria-disabled={pending}>
                     Send the code
                   </Button>
                 </form>

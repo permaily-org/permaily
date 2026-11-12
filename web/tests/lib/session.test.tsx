@@ -173,6 +173,25 @@ describe('what the session takes', () => {
     expect(seen.now.state).toMatchObject({ me: { account: { id: 'acc_ana', name: '' } } })
   })
 
+  it('takes the session of a confirmation, with the proof fresh until when the server says', async () => {
+    server.signedIn()
+    const { seen, settled } = await start()
+    await settled('signedIn')
+    act(() => seen.now.confirmed(meOf(ana, { confirmed_until: '2026-11-12T10:10:00Z' })))
+    expect(seen.now.state).toMatchObject({
+      me: { session: { confirmed_until: '2026-11-12T10:10:00Z' } },
+    })
+    // A confirmation of another account is not this one's.
+    act(() =>
+      seen.now.confirmed(
+        meOf({ ...ana, id: 'acc_other' }, { confirmed_until: '2026-11-12T11:00:00Z' }),
+      ),
+    )
+    expect(seen.now.state).toMatchObject({
+      me: { account: { id: 'acc_ana' }, session: { confirmed_until: '2026-11-12T10:10:00Z' } },
+    })
+  })
+
   it('remembers that a recovery code was used until Settings has said so, or the session ends', async () => {
     server.signedOut()
     const { seen, settled } = await start()

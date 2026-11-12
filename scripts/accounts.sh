@@ -9,7 +9,7 @@
 #   scripts/accounts.sh block <account>           nobody signs in to it; its devices are signed out
 #   scripts/accounts.sh unblock <account>         its person can sign in again
 #   scripts/accounts.sh delete <account>          removed in seven days, unless that is cancelled
-#   scripts/accounts.sh cancel <account>          cancels a deletion, whoever asked for it
+#   scripts/accounts.sh cancel <account>          cancels a deletion the operator asked for; one its person asked for is theirs to cancel
 #   scripts/accounts.sh close-sessions <account>  signs every device out
 #
 # <account> is an identifier (acc_...) or the account's address. A command
@@ -18,6 +18,7 @@
 #
 # There is no command to change an address or a way to sign in, to turn
 # "passkey only" off or to sign in as someone: the enclave has no such route.
+# Nor to make an admin: the super admin does that in the web app (ADR 0022).
 # What is done here is counted, by kind, on /status for anyone to see.
 #
 # Environment:
@@ -28,7 +29,7 @@
 # Needs curl and jq.
 set -euo pipefail
 
-usage() { sed -n '2,28p' "$0"; exit 2; }
+usage() { sed -n '2,29p' "$0"; exit 2; }
 
 action=list target="" yes=""
 case ${1:-} in
@@ -149,7 +150,13 @@ case $action in
       block) path=block what="block the account: every device is signed out, and nobody signs in to it until it is unblocked" ;;
       unblock) path=unblock what="unblock the account: its person can sign in again" ;;
       delete) path=delete what="ask to delete the account: it is removed in seven days, with everything in it, unless that is cancelled" ;;
-      cancel) path=delete/cancel what="cancel the deletion of the account, whoever asked for it" ;;
+      cancel)
+        path=delete/cancel what="cancel the deletion of the account that the operator asked for"
+        if [[ $(jq -r '.closing_by // ""' "$work/account.json") == person ]]; then
+          echo "Its person asked to delete this account: only they can cancel that, by signing in. Nothing was done." >&2
+          exit 1
+        fi
+        ;;
       close-sessions) path=sessions/close what="sign every device out of the account" ;;
     esac
     echo "This will $what." >&2

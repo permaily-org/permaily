@@ -114,7 +114,7 @@ func (w *world) enclave() *enclave {
 	var err error
 	e.svc, err = New(Config{
 		Records: e.records, Entries: e.entries, Keys: w.svc.cfg.Keys, Mailer: w.out, Providers: w.idp,
-		AppURL: "https://app.permaily.test", Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: func() time.Time { return w.now },
+		AppURL: "https://app.permaily.test", SuperAdmin: superAdmin, Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: func() time.Time { return w.now },
 	})
 	if err != nil {
 		w.t.Fatal(err)
@@ -126,7 +126,7 @@ func (w *world) enclave() *enclave {
 func (e *enclave) passkey(who *Authenticated, name string) (*contracts.Passkey, error) {
 	e.w.t.Helper()
 	ctx := context.Background()
-	started, err := e.svc.StartPasskey(ctx, who)
+	started, err := e.svc.StartPasskey(ctx, e.w.fresh(who))
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +216,7 @@ func TestTwoEnclavesChangeOneAccount(t *testing.T) {
 		key := w.addPasskey(who, webauthntest.New(webauthntest.ES256), "key")
 		var codes []string
 		one.records.meanwhile = func() {
-			state, err := two.svc.SetPasskeyOnly(ctx, who, contracts.PasskeyOnly{On: true})
+			state, err := two.svc.SetPasskeyOnly(ctx, w.fresh(who), contracts.PasskeyOnly{On: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -224,7 +224,7 @@ func TestTwoEnclavesChangeOneAccount(t *testing.T) {
 		}
 		// Written over the other's change, this would leave an account that
 		// signs in with passkeys only and has none.
-		if err := one.svc.RemovePasskey(ctx, who, key.ID.String()); !errors.Is(err, contracts.ErrLastPasskey) {
+		if err := one.svc.RemovePasskey(ctx, w.fresh(who), key.ID.String()); !errors.Is(err, contracts.ErrLastPasskey) {
 			t.Fatalf("got %v", err)
 		}
 		doc := w.doc(who.AccountID)
@@ -266,13 +266,13 @@ func TestTwoEnclavesChangeOneAccount(t *testing.T) {
 		w.addPasskey(who, webauthntest.New(webauthntest.ES256), "key")
 		var shown []string
 		one.records.meanwhile = func() {
-			state, err := two.svc.SetPasskeyOnly(ctx, who, contracts.PasskeyOnly{On: true})
+			state, err := two.svc.SetPasskeyOnly(ctx, w.fresh(who), contracts.PasskeyOnly{On: true})
 			if err != nil {
 				t.Fatal(err)
 			}
 			shown = state.RecoveryCodes
 		}
-		state, err := one.svc.SetPasskeyOnly(ctx, who, contracts.PasskeyOnly{On: true})
+		state, err := one.svc.SetPasskeyOnly(ctx, w.fresh(who), contracts.PasskeyOnly{On: true})
 		// It was on already when it came to it: the codes are the ones the
 		// other showed, and none that the record does not hold is shown here.
 		if err != nil || !state.PasskeyOnly || len(state.RecoveryCodes) != 0 {
@@ -292,11 +292,11 @@ func TestTwoEnclavesChangeOneAccount(t *testing.T) {
 		var theirs *contracts.RecoveryCodes
 		one.records.meanwhile = func() {
 			var err error
-			if theirs, err = two.svc.NewRecoveryCodes(ctx, who); err != nil {
+			if theirs, err = two.svc.NewRecoveryCodes(ctx, w.fresh(who)); err != nil {
 				t.Fatal(err)
 			}
 		}
-		mine, err := one.svc.NewRecoveryCodes(ctx, who)
+		mine, err := one.svc.NewRecoveryCodes(ctx, w.fresh(who))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -314,7 +314,7 @@ func TestTwoEnclavesChangeOneAccount(t *testing.T) {
 	t.Run("a name by one while the other starts deleting the account", func(t *testing.T) {
 		w, who, one, two := setup(t)
 		one.records.meanwhile = func() {
-			if _, err := two.svc.StartDeletion(ctx, who); err != nil {
+			if _, err := two.svc.StartDeletion(ctx, w.fresh(who)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -338,7 +338,7 @@ func TestTwoEnclavesChangeOneAccount(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		account, err := one.svc.StartDeletion(ctx, who)
+		account, err := one.svc.StartDeletion(ctx, w.fresh(who))
 		if err != nil || account.State != contracts.AccountClosing || account.Name != "Ana" {
 			t.Fatalf("got %+v, %v", account, err)
 		}
@@ -358,11 +358,11 @@ func TestTwoEnclavesChangeOneAccount(t *testing.T) {
 		one.records.meanwhile = func() {
 			w.now = w.now.Add(3 * time.Second)
 			var err error
-			if theirs, err = two.svc.StartDeletion(ctx, who); err != nil {
+			if theirs, err = two.svc.StartDeletion(ctx, w.fresh(who)); err != nil {
 				t.Fatal(err)
 			}
 		}
-		mine, err := one.svc.StartDeletion(ctx, who)
+		mine, err := one.svc.StartDeletion(ctx, w.fresh(who))
 		// The day is the one that was written, for both.
 		if err != nil || !mine.ClosesAt.Equal(theirs.ClosesAt) {
 			t.Fatalf("got %+v and %+v, %v", mine, theirs, err)
@@ -413,7 +413,7 @@ func TestAChangeDoesNotUndoARemoval(t *testing.T) {
 				return err
 			}
 			one, two := w.enclave(), w.enclave()
-			closing, err := one.svc.StartDeletion(ctx, who)
+			closing, err := one.svc.StartDeletion(ctx, w.fresh(who))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -536,7 +536,7 @@ func TestARemovalLeavesAnotherAccountsPointer(t *testing.T) {
 	w := newWorld(t)
 	me, cookie := w.signUp("ana@example.org")
 	one, two := w.enclave(), w.enclave()
-	closing, err := one.svc.StartDeletion(ctx, w.who(cookie))
+	closing, err := one.svc.StartDeletion(ctx, w.fresh(w.who(cookie)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,12 +578,12 @@ func TestDeletingAskedAgainWhileItIsCancelled(t *testing.T) {
 	me, cookie := w.signUp("ana@example.org")
 	who := w.who(cookie)
 	one, two := w.enclave(), w.enclave()
-	if _, err := one.svc.StartDeletion(ctx, who); err != nil {
+	if _, err := one.svc.StartDeletion(ctx, w.fresh(who)); err != nil {
 		t.Fatal(err)
 	}
 	one.entries.partition = closingPartition
 	one.entries.onDelete = func() {
-		if _, err := two.svc.StartDeletion(ctx, who); err != nil {
+		if _, err := two.svc.StartDeletion(ctx, w.fresh(who)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -693,7 +693,7 @@ func TestChangeFailures(t *testing.T) {
 		// An entry of this second was there and is gone when it is read: the
 		// entry is made.
 		f.fail["put "+key] = store.ErrExists
-		if account, err := w.svc.StartDeletion(ctx, who); err != nil || account.State != contracts.AccountClosing {
+		if account, err := w.svc.StartDeletion(ctx, w.fresh(who)); err != nil || account.State != contracts.AccountClosing {
 			t.Fatalf("got %+v, %v", account, err)
 		}
 		if listed := w.listed(closingPartition); len(listed) != 1 || listed[0] != key {
@@ -704,7 +704,7 @@ func TestChangeFailures(t *testing.T) {
 		w, f, me, who = setup(t)
 		key = timedKey(w.now.Add(domain.AccountClosing), me.Account.ID)
 		f.fail["put "+key], f.fail["get "+closingPartition] = store.ErrExists, down
-		if _, err := w.svc.StartDeletion(ctx, who); !errors.Is(err, down) {
+		if _, err := w.svc.StartDeletion(ctx, w.fresh(who)); !errors.Is(err, down) {
 			t.Fatalf("got %v", err)
 		}
 		delete(f.fail, "get "+closingPartition)
@@ -713,7 +713,7 @@ func TestChangeFailures(t *testing.T) {
 		// It is said to be there every time, and never is.
 		w, f, me, who = setup(t)
 		f.fail["put "+closingPartition] = store.ErrExists
-		if _, err := w.svc.StartDeletion(ctx, who); err == nil || !strings.Contains(err.Error(), "keeps changing") || strings.Contains(err.Error(), me.Account.ID) {
+		if _, err := w.svc.StartDeletion(ctx, w.fresh(who)); err == nil || !strings.Contains(err.Error(), "keeps changing") || strings.Contains(err.Error(), me.Account.ID) {
 			t.Fatalf("got %v", err)
 		}
 		active(t, w, me.Account.ID)
@@ -721,7 +721,7 @@ func TestChangeFailures(t *testing.T) {
 
 	t.Run("the list of closing accounts while deleting is cancelled", func(t *testing.T) {
 		w, f, me, who := setup(t)
-		if _, err := w.svc.StartDeletion(ctx, who); err != nil {
+		if _, err := w.svc.StartDeletion(ctx, w.fresh(who)); err != nil {
 			t.Fatal(err)
 		}
 		f.fail["get "+closingPartition] = down
@@ -757,4 +757,92 @@ func TestChangeFailures(t *testing.T) {
 			t.Fatalf("%d sessions", len(list))
 		}
 	})
+}
+
+// A session confirmed through one enclave makes a sensitive change through
+// the other: the proof is in the session's entry, not in either's memory.
+// And the change is refused through both once the proof is old.
+func TestASessionConfirmedThroughOneEnclaveChangesThroughTheOther(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	me, cookie := w.signUp("ana@example.org")
+	one, other := w.enclave(), w.enclave()
+	w.later()
+	if _, err := other.svc.StartPasskey(ctx, w.who(cookie)); !errors.Is(err, contracts.ErrConfirmationNeeded) {
+		t.Fatalf("before: %v", err)
+	}
+	// Confirmed by mail through the first: the attempt is in its memory.
+	who, err := one.svc.Authenticate(ctx, cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := one.svc.StartConfirmEmail(ctx, who)
+	if err != nil {
+		t.Fatal(err)
+	}
+	one.svc.Wait()
+	sent := w.out.Sent()
+	if _, err := one.svc.FinishConfirmEmail(ctx, who, contracts.ConfirmFinish{Attempt: started.Attempt, Code: code(&sent[len(sent)-1])}); err != nil {
+		t.Fatal(err)
+	}
+	// The next request lands on the other.
+	who, err = other.svc.Authenticate(ctx, cookie)
+	if err != nil || !who.Session.ConfirmedUntil.Equal(w.now.Add(domain.ConfirmationLifetime)) {
+		t.Fatalf("the other enclave reads %+v %v", who, err)
+	}
+	if _, err := other.passkey(who, "made through the other"); err != nil {
+		t.Fatalf("a passkey through the other: %v", err)
+	}
+	if doc := w.doc(me.Account.ID); len(doc.Passkeys) != 1 {
+		t.Fatalf("the passkeys: %+v", doc.Passkeys)
+	}
+	w.later()
+	for _, e := range []*enclave{one, other} {
+		who, _ := e.svc.Authenticate(ctx, cookie)
+		if _, err := e.svc.StartDeletion(ctx, who); !errors.Is(err, contracts.ErrConfirmationNeeded) {
+			t.Fatalf("after the proof is old: %v", err)
+		}
+	}
+}
+
+// An admin made through one enclave acts through the other: the role is in
+// the account's record, read with it.
+func TestAnAdminMadeThroughOneEnclaveActsThroughTheOther(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	boss := w.account(superAdmin, true)
+	ana := w.account("ana@example.org", true)
+	carl, _ := w.signUp("carl@example.org")
+	one, other := w.enclave(), w.enclave()
+	bossWho, _ := one.svc.Authenticate(ctx, boss.cookie)
+	admin, err := one.svc.Admin(ctx, w.fresh(bossWho))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.MakeAdmin(ctx, ana.me.Account.ID); err != nil {
+		t.Fatal(err)
+	}
+	w.now = w.now.Add(time.Second)
+	anaWho, _ := other.svc.Authenticate(ctx, ana.cookie)
+	as, err := other.svc.Admin(ctx, w.fresh(anaWho))
+	if err != nil {
+		t.Fatalf("ana through the other: %v", err)
+	}
+	if rec, err := as.BlockAccount(ctx, carl.Account.ID); err != nil || rec.BlockedAt.IsZero() {
+		t.Fatalf("ana blocks carl through the other: %+v %v", rec, err)
+	}
+	// Both write to the one log, and each counts what it did.
+	log, err := one.svc.AdminLog(ctx, "", 10)
+	if err != nil || len(log.Entries) != 2 || log.Entries[0].Kind != ActionBlock || log.Entries[1].Kind != ActionAdminMade {
+		t.Fatalf("the log read through the first: %+v %v", log, err)
+	}
+	_, counted := other.svc.OperatorActions()
+	if counted[ActionBlock] != 1 || counted[ActionAdminMade] != 0 {
+		t.Fatalf("the other counted %v", counted)
+	}
+	// Removed through the first, ana is no admin through the other.
+	if _, err := admin.RemoveAdmin(ctx, ana.me.Account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.svc.Admin(ctx, w.fresh(anaWho)); !errors.Is(err, contracts.ErrNotFound) {
+		t.Fatalf("ana through the other after: %v", err)
+	}
 }

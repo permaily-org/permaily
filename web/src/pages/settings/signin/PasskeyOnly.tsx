@@ -1,6 +1,9 @@
 import { useState } from 'react'
+import { useConfirmed } from '../../../components/Confirm.tsx'
 import { Button, Dialog, InfoTip, TextAction } from '../../../components/ui/index.ts'
 import * as api from '../../../lib/api.ts'
+import { isCancelled } from '../../../lib/cancelled.ts'
+import { useSession } from '../../../lib/session.tsx'
 import { messageFor } from '../../auth/messages.ts'
 import { SettingRow } from '../rows.tsx'
 import { RecoveryCodes } from './RecoveryCodes.tsx'
@@ -33,6 +36,8 @@ export function PasskeyOnly({
   address: string
   section: SignInSection
 }) {
+  const confirmed = useConfirmed()
+  const session = useSession()
   const [step, setStep] = useState<Step | null>(null)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -55,6 +60,8 @@ export function PasskeyOnly({
       // The codes are on screen before the rows behind them are brought up to date.
       void section.refresh()
     } catch (failure) {
+      // The person chose not to confirm it's them: the question stays, as it was.
+      if (isCancelled(failure)) return
       const code = section.failed(failure)
       if (!code) return
       setError(messageFor(code))
@@ -65,9 +72,17 @@ export function PasskeyOnly({
     }
   }
 
+  // The session's account says whether it is on, which the admin panel reads: it follows the server's answer.
+  function said(on: boolean) {
+    if (session.state.status === 'signedIn') {
+      session.accountChanged({ ...session.state.me.account, passkey_only: on })
+    }
+  }
+
   const turnOn = () =>
     run(async () => {
-      const answer = await api.setPasskeyOnly(true)
+      const answer = await confirmed(() => api.setPasskeyOnly(true))
+      said(answer.passkey_only)
       if (answer.recovery_codes.length > 0) {
         return { kind: 'codes', codes: answer.recovery_codes, replaced: false }
       }
@@ -78,13 +93,17 @@ export function PasskeyOnly({
 
   const turnOff = () =>
     run(async () => {
-      await api.setPasskeyOnly(false)
+      said((await confirmed(() => api.setPasskeyOnly(false))).passkey_only)
       section.announce('Passkey only is off')
       return null
     })
 
   const newCodes = () =>
-    run(async () => ({ kind: 'codes', codes: await api.newRecoveryCodes(), replaced: true }))
+    run(async () => ({
+      kind: 'codes',
+      codes: await confirmed(() => api.newRecoveryCodes()),
+      replaced: true,
+    }))
 
   const cancel = (
     <Button variant="secondary" disabled={pending} onClick={() => setStep(null)}>
@@ -95,6 +114,8 @@ export function PasskeyOnly({
           : 'Not now'}
     </Button>
   )
+  // The actions are not disabled while they wait (run ignores a second click): confirming it's you may open
+  // meanwhile, and the browser gives focus back only to what can take it.
   // The heading of a question takes focus, not its first action: Enter must not answer it unread.
   const question = {
     id: 'passkey-only-dialog',
@@ -169,7 +190,7 @@ export function PasskeyOnly({
             </div>
             {alert}
             <div className="mt-6 flex flex-wrap gap-3">
-              <Button disabled={pending} onClick={turnOn}>
+              <Button aria-disabled={pending} onClick={turnOn}>
                 Turn on passkey only
               </Button>
               {cancel}
@@ -188,7 +209,7 @@ export function PasskeyOnly({
             </div>
             {alert}
             <div className="mt-6 flex flex-wrap gap-3">
-              <Button disabled={pending} onClick={turnOff}>
+              <Button aria-disabled={pending} onClick={turnOff}>
                 Turn off passkey only
               </Button>
               {cancel}
@@ -205,7 +226,7 @@ export function PasskeyOnly({
             </p>
             {alert}
             <div className="mt-6 flex flex-wrap gap-3">
-              <Button disabled={pending} onClick={newCodes}>
+              <Button aria-disabled={pending} onClick={newCodes}>
                 Make new codes
               </Button>
               {cancel}

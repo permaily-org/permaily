@@ -62,6 +62,9 @@ After v0.10.0, built on 2026-11-12 and not released yet (ADR 0017):
 - [x] What the operator can do to an account through the enclave: block and unblock, ask to delete and cancel, sign devices out, find by address, list and revoke invitations (`scripts/accounts.sh`, `scripts/invite.sh`), with every action counted on `/status` and printed by `permaily-verify`. Not what would be a way in: no address, no way to sign in.
 - [x] Changing the contact address, with a code sent to the new one (server side; the screen is in the web app).
 - [x] The notices by mail that need only accounts, brought forward from step 9: a sign-in from a new device, a change in how the account is signed into, the address changed, deleting asked or cancelled, blocked and unblocked.
+- [x] Only the person cancels a deletion they asked for; the operator cancels only one the operator asked for (2026-11-12).
+- [x] Confirming again before a sensitive change, and admins in the web app with a super admin named by the image, an admin log and counts (ADR 0022, server side; the screens are in the web app).
+- [ ] Move what sign-in keeps in memory (attempts, ceremonies, trips) to the storage, so that two enclaves can run at once (ADR 0017, "Two enclaves at once").
 - [ ] A staging image with all of it: the notices through SES, and the counts on `/status` read by `permaily-verify`.
 
 Step 9 keeps the notices about connections (one approved, one about to end), which need step 5, and the wording of every message reviewed with the designer.
@@ -70,7 +73,7 @@ About sixteen weeks. Steps 3 and 4 do not depend on 1 and 2, and can go first if
 
 ### Before real users
 
-- Zero data retention approved by OpenAI for the organization (ADR 0020).
+- ~~Zero data retention approved by OpenAI for the organization (ADR 0020).~~ Not a condition for real users: decided on 2026-11-12 that real mail goes to OpenAI before it is approved, under OpenAI's ordinary retention, disclosed on the privacy page; zero data retention is asked for and stays a residual risk until approved (docs/legal.md).
 - ~~SES out of its sandbox (ADR 0017).~~ Done on 2026-11-11: AWS granted production access in `us-east-2`, 50,000 messages a day and 14 a second.
 - The mailbox's state and every record of F2 whose going back matters stored through `store.Anchored` (ADR 0016).
 - Whoever can merge into `main` decides what the enclave accepts: require two-factor sign-in in the GitHub organization and a second person's review (docs/threat-model.md).

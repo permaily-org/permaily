@@ -82,6 +82,11 @@ type SessionValue = {
    */
   accountChanged: (account: api.Account) => void
   /**
+   * Takes the session as the server answered a confirmation: the same account, with the proof fresh until
+   * `confirmed_until`.
+   */
+  confirmed: (me: api.Me) => void
+  /**
    * Asks the server again who this is, without a word on screen: what changed elsewhere shows here, and a
    * session that ended leads to the sign-in screen. No answer changes nothing.
    */
@@ -105,7 +110,9 @@ function sameAccount(a: api.Account, b: api.Account): boolean {
     a.closes_at === b.closes_at &&
     a.closing_by === b.closing_by &&
     a.name === b.name &&
-    a.address === b.address
+    a.address === b.address &&
+    a.admin === b.admin &&
+    a.passkey_only === b.passkey_only
   )
 }
 
@@ -384,6 +391,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setState((now) =>
           now.status === 'signedIn' && now.me.account.id === account.id
             ? { status: 'signedIn', me: { ...now.me, account } }
+            : now,
+        )
+      },
+      confirmed: (who) => {
+        epoch.current++
+        setState((now) =>
+          now.status === 'signedIn' && now.me.account.id === who.account.id
+            ? { status: 'signedIn', me: who }
             : now,
         )
       },

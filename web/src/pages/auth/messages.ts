@@ -38,6 +38,13 @@ const messages: Record<ApiErrorCode, string> = {
   last_way_in: 'That is the only way left to sign in to this account. Add another first.',
   account_blocked: `That account is blocked. To ask about it, write to ${supportAddress}.`,
   address_in_use: 'That address belongs to another Permaily account. Use another address.',
+  confirmation_needed: "Nothing changed: Permaily needs you to confirm it's you first. Try again.",
+  passkey_required: 'This account confirms with a passkey, not with a code.',
+  passkey_only_needed: 'The admin panel works only while your account signs in with passkeys only.',
+  super_admin_only: 'Only the super admin can do that.',
+  not_cancellable: 'The person asked for this deletion, so only they can cancel it.',
+  invalid_provider_app:
+    "Permaily couldn't use that client ID and secret. Check them, then enter the secret again.",
   other: 'Something went wrong on our side. Try again in a moment.',
 }
 

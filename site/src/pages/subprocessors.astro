@@ -1,0 +1,123 @@
+---
+import { OPERATOR } from '../config/legal';
+import { LINKS } from '../config/site';
+import Legal from '../layouts/Legal.astro';
+
+// From docs/data.md, "Subprocessors", and the infrastructure in deploy/tofu.
+// A new subprocessor is added there first, then here, in the same pull
+// request, before it receives data (docs/legal.md).
+const processors = [
+  {
+    name: 'Amazon Web Services',
+    where: 'United States (Ohio) for the service; worldwide for this website',
+    what: 'Runs the service: the Nitro Enclave it runs in, storage (S3, DynamoDB), keys (KMS) and the mail we send you (SES). Also serves this website and the docs (Amplify, CloudFront).',
+    data: 'Account data; sealed data, which it can’t read in storage; the mail we send you, which it can read and, under its terms, store and scan for spam and abuse; an access log of each visit to this website (time, page, IP address, browser), kept until we remove the site.',
+    since: 'In use',
+  },
+  {
+    name: 'Cloudflare',
+    where: 'Worldwide',
+    what: 'DNS for permaily.com, and the DNS lookups the service makes to check where a message came from.',
+    data: 'Host names, and, once mailboxes open, the domains of the senders of mail you receive. Never mail.',
+    since: 'In use',
+  },
+  {
+    name: 'Let’s Encrypt',
+    where: 'United States',
+    what: 'The service’s TLS certificates.',
+    data: 'Our host names. No personal data.',
+    since: 'In use',
+  },
+  {
+    name: 'OpenAI',
+    where: 'United States',
+    what: 'Deciding whether text is about a topic, for rules and requests that depend on meaning, and turning a rule written in plain words into conditions.',
+    data: 'The subject, the body text or sentences of a message, only when exact conditions can’t settle it and you turned such a rule or request on; the text of a rule. OpenAI doesn’t train on it. Until it approves zero data retention for us, which we’ll ask for, its abuse-monitoring logs may hold that text for up to 30 days, and it may keep flagged text and a sample of requests for automated safety review, for a time its page doesn’t state.',
+    since: 'Planned, not used yet',
+  },
+];
+
+const chosen = [
+  {
+    name: 'Google, GitHub, Facebook (Meta), Microsoft',
+    what: 'Only if you sign in with one: it tells us it’s you.',
+    data: 'It learns that you signed in to Permaily, and when. It tells us its identifier for you, an address and usually your name; we keep the identifier, and the address only if it becomes your contact address.',
+  },
+  {
+    name: 'Your mail provider',
+    what: 'Will forward your mail to us, once mailboxes open.',
+    data: 'It already holds your mail; it learns your Permaily forwarding address.',
+  },
+  {
+    name: 'Apps and agents you connect',
+    what: 'Will receive what you approve, once connections open.',
+    data: 'Only the part of your mail you approved, under their own policies.',
+  },
+];
+---
+
+<Legal
+  title="Subprocessors"
+  heading="Who handles data for us"
+  description="The companies that handle data for Permaily, where, what each one does and what it gets."
+  intro="These are the companies that handle data on our behalf, where, what each does and what it gets. We update this page before a new one receives any data."
+>
+  <div class="tbl-scroll" tabindex="0">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th scope="col">Company</th>
+          <th scope="col">Where</th>
+          <th scope="col">What it does</th>
+          <th scope="col">What it gets</th>
+          <th scope="col">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {
+          processors.map((row) => (
+            <tr>
+              <th scope="row">{row.name}</th>
+              <td>{row.where}</td>
+              <td>{row.what}</td>
+              <td>{row.data}</td>
+              <td>{row.since}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <div class="prose">
+    <h2>Services you choose</h2>
+    <p>These aren’t our subprocessors: they act for you, or on their own account, and only because you chose them. They’re here so the list of who sees what is complete.</p>
+  </div>
+
+  <div class="tbl-scroll" tabindex="0">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th scope="col">Who</th>
+          <th scope="col">Why</th>
+          <th scope="col">What they get</th>
+        </tr>
+      </thead>
+      <tbody>
+        {
+          chosen.map((row) => (
+            <tr>
+              <th scope="row">{row.name}</th>
+              <td>{row.what}</td>
+              <td>{row.data}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <div class="prose">
+    <p>More on each in the <a class="link" href={LINKS.privacy}>privacy policy</a>. Questions: <a class="link" href={`mailto:${OPERATOR.privacy}`}>{OPERATOR.privacy}</a>.</p>
+  </div>
+</Legal>

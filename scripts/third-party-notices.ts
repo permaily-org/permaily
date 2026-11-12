@@ -65,6 +65,22 @@ const awsBlobs: Component[] = [
   },
 ]
 
+// Files of others kept in this repository and built into the web app, outside any package: the font of
+// Google's sign-in button, which Google's guidelines fix (docs/web.md, "Each provider's mark").
+const vendoredWeb = (): Component[] => {
+  const text = readFileSync(
+    join(root, 'web/src/components/brands/google-sans-ofl.txt'),
+    'utf8',
+  ).trim()
+  return [
+    {
+      name: 'Google Sans, Medium, Latin (web/src/components/brands)',
+      license: detectLicense(text),
+      text,
+    },
+  ]
+}
+
 function detectLicense(text: string): string {
   const t = text.replace(/\s+/g, ' ')
   if (/Mozilla Public License,? (Version|v\.?) ?2\.0/i.test(t)) return 'MPL-2.0'
@@ -193,7 +209,12 @@ const sections = [
   {
     title: 'Enclave image (permaily.eif)',
     note: 'The service that runs inside the AWS Nitro Enclave, including the embedded web app.',
-    items: [...awsBlobs, ...goComponents('./cmd/permaily-enclave'), ...npmComponents('web')],
+    items: [
+      ...awsBlobs,
+      ...goComponents('./cmd/permaily-enclave'),
+      ...npmComponents('web'),
+      ...vendoredWeb(),
+    ],
   },
   {
     title: 'permaily-host',

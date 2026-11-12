@@ -6,6 +6,7 @@ import { isClosing, useSession } from '../lib/session.tsx'
 import { AccountClosing } from '../pages/auth/AccountClosing.tsx'
 import { AuthLayout } from '../pages/auth/AuthLayout.tsx'
 import { LinkConfirmation, LinkEnded } from '../pages/auth/LinkConfirmation.tsx'
+import { ConfirmProvider } from './Confirm.tsx'
 import { Button, Headline } from './ui/index.ts'
 
 /** While the server is asked who this is, and when it does not answer. */
@@ -63,7 +64,10 @@ export function RequireSession() {
             onKept={() => setSaid('Deletion cancelled. Your account works again.')}
           />
         ) : (
-          <Outlet />
+          // Every page can ask the person to confirm it's them before a change that needs it.
+          <ConfirmProvider>
+            <Outlet />
+          </ConfirmProvider>
         )}
       </>
     )

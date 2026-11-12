@@ -673,6 +673,8 @@ describe('providers', () => {
     await settle()
     expect(section().queryByText('Meta')).toBeNull()
     expect(section().queryByText('GitHub')).toBeNull()
+    // Named in words only: the providers' rules allow their marks on the sign-in button, not next to a name.
+    expect(document.querySelector('[data-mark]')).toBeNull()
     await expectAccessible()
   })
 
@@ -690,9 +692,11 @@ describe('providers', () => {
     server.on('POST /api/v1/providers/start', starting.answer)
     await user.click(section().getByRole('button', { name: named('Link Facebook') }))
     section().getByText('Taking you to Facebook')
-    expect(
-      (section().getByRole('button', { name: named('Link Google') }) as HTMLButtonElement).disabled,
-    ).toBe(true)
+    // Every action of the group waits: marked so, and a click starts nothing.
+    const google = section().getByRole('button', { name: named('Link Google') })
+    expect(google.getAttribute('aria-disabled')).toBe('true')
+    await user.click(google)
+    expect(server.asked('POST /api/v1/providers/start')).toHaveLength(1)
     starting.give(ok({ url: 'https://www.facebook.com/dialog/oauth?state=x', expires_in: 600 }))
     await waitFor(() =>
       expect(assign).toHaveBeenCalledExactlyOnceWith(

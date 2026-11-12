@@ -37,7 +37,7 @@ type TravelBooking = {
 
 ## Tokens
 
-A token is one processed unit of an email, such as a piece of extracted information. It isn't an LLM token. The [Developer plan](/developers/#pricing) costs $0.01 per 1M tokens, pay as you go.
+A token is one processed unit of an email, such as a piece of extracted information. It isn't an LLM token. The [Developer plan](/developers/#pricing) is planned, not available yet, at $0.01 per 1M tokens, pay as you go.
 
 | You ask for | Tokens per email | 1 million emails cost |
 | --- | --- | --- |

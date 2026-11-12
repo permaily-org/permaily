@@ -22,6 +22,8 @@ var adminWords = map[string]string{
 	attestation.AdminInvitationRevoked:  "revoked an invitation",
 	attestation.AdminProviderAppSet:     "set a provider's application",
 	attestation.AdminProviderAppRemoved: "removed a provider's application",
+	attestation.AdminMade:               "made an account an admin",
+	attestation.AdminRemoved:            "made an admin stop being one",
 }
 
 // printAdmin prints what the enclave counts of what its operator did to

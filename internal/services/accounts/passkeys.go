@@ -45,7 +45,8 @@ func (d *accountDoc) passkey(id []byte) int {
 type ceremony struct {
 	challenge []byte
 	// account is whose passkey is being made; empty for a sign-in, which
-	// learns the account from the answer.
+	// learns the account from the answer; confirmFor of a session for a
+	// ceremony that confirms that session (confirm.go).
 	account string
 	expires time.Time
 }
@@ -106,6 +107,9 @@ const (
 // StartPasskey starts making a passkey for the account behind a session, and
 // returns what the browser needs to make it.
 func (s *Service) StartPasskey(ctx context.Context, who *Authenticated) (*contracts.PasskeyCreation, error) {
+	if err := s.confirmed(who); err != nil {
+		return nil, err
+	}
 	doc, err := s.own(ctx, who)
 	if err != nil {
 		return nil, err
@@ -237,6 +241,9 @@ func (s *Service) RenamePasskey(ctx context.Context, who *Authenticated, id stri
 // then on. The last one stays while the account signs in with passkeys only,
 // or nothing but recovery codes would lead into it.
 func (s *Service) RemovePasskey(ctx context.Context, who *Authenticated, id string) error {
+	if err := s.confirmed(who); err != nil {
+		return err
+	}
 	credential, err := passkeyID(id)
 	if err != nil {
 		return err
@@ -340,6 +347,9 @@ var errUnchanged = errors.New("accounts: nothing to change")
 // dropped. Asking for what is already so changes nothing: codes that were
 // just shown keep working.
 func (s *Service) SetPasskeyOnly(ctx context.Context, who *Authenticated, in contracts.PasskeyOnly) (*contracts.PasskeyOnlyState, error) {
+	if err := s.confirmed(who); err != nil {
+		return nil, err
+	}
 	out := &contracts.PasskeyOnlyState{PasskeyOnly: in.On, RecoveryCodes: []string{}}
 	doc, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
 		// Codes made on a try that was not written are in no record.
@@ -375,6 +385,9 @@ func (s *Service) SetPasskeyOnly(ctx context.Context, who *Authenticated, in con
 // NewRecoveryCodes makes ten new recovery codes for an account that signs in
 // with passkeys only. The ones it had stop working.
 func (s *Service) NewRecoveryCodes(ctx context.Context, who *Authenticated) (*contracts.RecoveryCodes, error) {
+	if err := s.confirmed(who); err != nil {
+		return nil, err
+	}
 	out := &contracts.RecoveryCodes{}
 	doc, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
 		if !doc.PasskeyOnly {

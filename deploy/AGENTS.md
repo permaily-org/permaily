@@ -25,3 +25,4 @@ OpenTofu for AWS (`us-east-2`, profile `permaily`; `us-east-1` only for the site
 - `staging.tf`: storage of the staging deployment. Staging images (`.#eif-staging`) never see production data; their KMS keys go in `release_keys` without committing, for the duration of a test.
 - `permaily-verify` checks the MX and `_mta-sts` records. When the MTA-STS policy changes (`mta_sts_mode` in `../enclave.json`), change the `id` of the `_mta-sts` record in `mail.tf` in the same change.
 - `../enclave.json` is the enclave's runtime configuration, compiled into the image (PCR0). Changing it changes the image.
+- `super_admin` in `../enclave.json` names the super admin of the admin panel: whichever account has that contact address (ADR 0022). Changing it changes who that is, and needs an ADR. Its account must be "passkey only" before anything else: until then whoever reads that mailbox is the super admin.

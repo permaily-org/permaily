@@ -187,7 +187,7 @@ func TestDeletingAnAccount(t *testing.T) {
 	pending := w.create(who, webauthntest.New(webauthntest.ES256), "late")
 
 	asked := w.now
-	got, err := w.svc.StartDeletion(ctx, who)
+	got, err := w.svc.StartDeletion(ctx, w.fresh(who))
 	if err != nil || got.State != contracts.AccountClosing || !got.ClosesAt.Equal(asked.Add(7*24*time.Hour)) || got.ID != ana.Account.ID {
 		t.Fatalf("asked: %+v %v", got, err)
 	}
@@ -215,14 +215,14 @@ func TestDeletingAnAccount(t *testing.T) {
 	for what, err := range map[string]error{
 		"the name":                     second(w.svc.UpdateAccount(ctx, who, contracts.AccountUpdate{Name: text("Ana")})),
 		"a change that says nothing":   second(w.svc.UpdateAccount(ctx, who, contracts.AccountUpdate{})),
-		"starting a passkey":           second(w.svc.StartPasskey(ctx, who)),
+		"starting a passkey":           second(w.svc.StartPasskey(ctx, w.fresh(who))),
 		"a passkey started before":     second(w.svc.FinishPasskey(ctx, who, pending)),
 		"renaming a passkey":           second(w.svc.RenamePasskey(ctx, who, key.ID.String(), contracts.PasskeyRename{Name: "renamed"})),
-		"removing a passkey":           w.svc.RemovePasskey(ctx, who, key.ID.String()),
-		"passkey only":                 second(w.svc.SetPasskeyOnly(ctx, who, contracts.PasskeyOnly{On: true})),
-		"passkey only as it is":        second(w.svc.SetPasskeyOnly(ctx, who, contracts.PasskeyOnly{On: false})),
-		"recovery codes":               second(w.svc.NewRecoveryCodes(ctx, who)),
-		"a passkey that is not there":  w.svc.RemovePasskey(ctx, who, contracts.Bytes("none").String()),
+		"removing a passkey":           w.svc.RemovePasskey(ctx, w.fresh(who), key.ID.String()),
+		"passkey only":                 second(w.svc.SetPasskeyOnly(ctx, w.fresh(who), contracts.PasskeyOnly{On: true})),
+		"passkey only as it is":        second(w.svc.SetPasskeyOnly(ctx, w.fresh(who), contracts.PasskeyOnly{On: false})),
+		"recovery codes":               second(w.svc.NewRecoveryCodes(ctx, w.fresh(who))),
+		"a passkey that is not there":  w.svc.RemovePasskey(ctx, w.fresh(who), contracts.Bytes("none").String()),
 		"renaming one that is not one": second(w.svc.RenamePasskey(ctx, who, contracts.Bytes("none").String(), contracts.PasskeyRename{Name: "x"})),
 	} {
 		if !errors.Is(err, contracts.ErrAccountClosing) {
@@ -252,7 +252,7 @@ func TestDeletingAnAccount(t *testing.T) {
 
 	// Asking again, a day later, keeps the day and signs the others out again.
 	w.now = w.now.Add(24 * time.Hour)
-	if same, err := w.svc.StartDeletion(ctx, who); err != nil || *same != *got || w.version(ana.Account.ID) != written {
+	if same, err := w.svc.StartDeletion(ctx, w.fresh(who)); err != nil || *same != *got || w.version(ana.Account.ID) != written {
 		t.Fatalf("asked again: %+v %v", same, err)
 	}
 	if _, err := w.svc.Authenticate(ctx, tablet); !errors.Is(err, contracts.ErrUnauthorized) {
@@ -298,7 +298,7 @@ func TestDeletingAnAccount(t *testing.T) {
 
 	ghost := &Authenticated{AccountID: "acc_" + strings.Repeat("a", 26)}
 	for what, err := range map[string]error{
-		"deleting":   second(w.svc.StartDeletion(ctx, ghost)),
+		"deleting":   second(w.svc.StartDeletion(ctx, w.fresh(ghost))),
 		"cancelling": second(w.svc.CancelDeletion(ctx, ghost)),
 	} {
 		if !errors.Is(err, contracts.ErrUnauthorized) {
@@ -314,7 +314,7 @@ func TestDeletingAnAccount(t *testing.T) {
 func TestASignInForAnAccountThatWentAway(t *testing.T) {
 	w, ctx := newWorld(t), context.Background()
 	me, cookie := w.signUp("ana@example.org")
-	if _, err := w.svc.StartDeletion(ctx, w.who(cookie)); err != nil {
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(w.who(cookie))); err != nil {
 		t.Fatal(err)
 	}
 	w.now = w.now.Add(domain.AccountClosing - time.Minute)
@@ -337,7 +337,7 @@ func TestRecoveryWhileClosing(t *testing.T) {
 	who := w.who(cookie)
 	w.addPasskey(who, webauthntest.New(webauthntest.ES256), "key")
 	codes := w.passkeyOnly(who)
-	if _, err := w.svc.StartDeletion(ctx, who); err != nil {
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(who)); err != nil {
 		t.Fatal(err)
 	}
 	me, recovered, err := w.recover("ana@example.org", codes[0])
@@ -381,7 +381,7 @@ func newClosing(t *testing.T) *closing {
 	if _, err := c.svc.UpdateAccount(ctx, c.who, contracts.AccountUpdate{Name: text("Ana Closing")}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := c.svc.StartDeletion(ctx, c.who)
+	got, err := c.svc.StartDeletion(ctx, c.fresh(c.who))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,7 +480,7 @@ func TestRemovingAnAccountThatIsDue(t *testing.T) {
 			return wantErr(err, contracts.ErrUnauthorized)
 		},
 		"deleting is asked again": func(c *closing) error {
-			_, err := c.svc.StartDeletion(ctx, c.who)
+			_, err := c.svc.StartDeletion(ctx, c.fresh(c.who))
 			return wantErr(err, contracts.ErrUnauthorized)
 		},
 		"its address asks to sign in": func(c *closing) error {
@@ -585,7 +585,7 @@ func TestARemovedAccountDoesNotComeBack(t *testing.T) {
 	auth := webauthntest.New(webauthntest.ES256)
 	key := w.addPasskey(who, auth, "key")
 	copies := []snapshot{w.snapshot()} // in use, before anything was asked
-	got, err := w.svc.StartDeletion(ctx, who)
+	got, err := w.svc.StartDeletion(ctx, w.fresh(who))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -759,7 +759,7 @@ func TestTheListsProveNothing(t *testing.T) {
 
 	// An entry the enclave did write, for a deletion that was cancelled, put
 	// back: when its day comes it is dropped, and the account stays.
-	first, err := w.svc.StartDeletion(ctx, who)
+	first, err := w.svc.StartDeletion(ctx, w.fresh(who))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -776,7 +776,7 @@ func TestTheListsProveNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Asked again two days before that day: the account has another day now.
-	second, err := w.svc.StartDeletion(ctx, who)
+	second, err := w.svc.StartDeletion(ctx, w.fresh(who))
 	if err != nil || !second.ClosesAt.After(first.ClosesAt) {
 		t.Fatalf("asked again: %+v %v", second, err)
 	}
@@ -807,7 +807,7 @@ func TestTheListsProveNothing(t *testing.T) {
 
 	// The entry of a closing account taken away: the enclave does not find
 	// the account when its day comes, and the first use of it removes it.
-	third, err := w.svc.StartDeletion(ctx, who)
+	third, err := w.svc.StartDeletion(ctx, w.fresh(who))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1069,7 +1069,7 @@ func TestSettingsFailures(t *testing.T) {
 		w, f, me, who, phone := setup(t)
 		asked := w.now
 		f.fail[name] = down
-		if _, err := w.svc.StartDeletion(ctx, who); !errors.Is(err, down) {
+		if _, err := w.svc.StartDeletion(ctx, w.fresh(who)); !errors.Is(err, down) {
 			t.Fatalf("%s down: asking: %v", name, err)
 		}
 		if _, err := w.svc.UpdateAccount(ctx, who, contracts.AccountUpdate{Name: text("Ana")}); !errors.Is(err, down) && name != "put entry" {
@@ -1096,7 +1096,7 @@ func TestSettingsFailures(t *testing.T) {
 	// Asked again in the same second, over the entry a failure left.
 	w, f, me, who, phone := setup(t)
 	f.fail["put record"] = down
-	if _, err := w.svc.StartDeletion(ctx, who); !errors.Is(err, down) {
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(who)); !errors.Is(err, down) {
 		t.Fatal(err)
 	}
 	delete(f.fail, "put record")
@@ -1104,7 +1104,7 @@ func TestSettingsFailures(t *testing.T) {
 	// asking again does it.
 	for _, name := range []string{"list entries", "delete " + accountPartition(me.Account.ID)} {
 		f.fail[name] = down
-		if _, err := w.svc.StartDeletion(ctx, who); !errors.Is(err, down) {
+		if _, err := w.svc.StartDeletion(ctx, w.fresh(who)); !errors.Is(err, down) {
 			t.Fatalf("%s down: asking: %v", name, err)
 		}
 		delete(f.fail, name)
@@ -1112,7 +1112,7 @@ func TestSettingsFailures(t *testing.T) {
 			t.Fatalf("%s down: the account afterwards: %+v %v", name, rec, err)
 		}
 	}
-	got, err := w.svc.StartDeletion(ctx, who)
+	got, err := w.svc.StartDeletion(ctx, w.fresh(who))
 	if err != nil || got.State != contracts.AccountClosing || len(w.listed(closingPartition)) != 1 {
 		t.Fatalf("asked again: %+v %v", got, err)
 	}
@@ -1178,7 +1178,7 @@ func TestTheOperatorsTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.signIn("bea@example.org")
-	closing, err := w.svc.StartDeletion(ctx, w.who(cookies[2]))
+	closing, err := w.svc.StartDeletion(ctx, w.fresh(w.who(cookies[2])))
 	if err != nil {
 		t.Fatal(err)
 	}

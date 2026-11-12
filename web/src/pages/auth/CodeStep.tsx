@@ -1,6 +1,7 @@
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'react'
 import { Button, Headline, TextAction } from '../../components/ui/index.ts'
 import { type ApiErrorCode, type EmailStarted, errorCode } from '../../lib/api.ts'
+import { isCancelled } from '../../lib/cancelled.ts'
 import { AuthLayout } from './AuthLayout.tsx'
 import { Field } from './Field.tsx'
 import { messageFor } from './messages.ts'
@@ -45,6 +46,10 @@ type CodeFormProps = {
   /** Its own words for why another message was not sent, when the usual ones do not fit. */
   notSent?: (failure: ApiErrorCode) => string | undefined
   onBack: () => void
+  /** The words of the action that goes back, when it is not to another address. */
+  backLabel?: string
+  /** The id of the code field, for a form that may be on the page with another one. */
+  id?: string
 }
 
 /**
@@ -78,6 +83,8 @@ export function CodeForm({
   sendAnother,
   notSent,
   onBack,
+  backLabel = 'Use another address',
+  id = 'code',
 }: CodeFormProps) {
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -139,10 +146,13 @@ export function CodeForm({
       setCode('')
       setNote('Asked for another message. Use the code or the link of the newest one.')
     } catch (failure) {
-      const failed = errorCode(failure)
-      const own = notSent?.(failed)
-      if (!own && ended?.(failed)) return
-      setFormError(own ?? messageFor(failed))
+      // The person chose not to confirm it's them, when sending needed it: nothing was sent, and that is all.
+      if (!isCancelled(failure)) {
+        const failed = errorCode(failure)
+        const own = notSent?.(failed)
+        if (!own && ended?.(failed)) return
+        setFormError(own ?? messageFor(failed))
+      }
     }
     setPending(false)
     codeRef.current?.focus()
@@ -150,7 +160,7 @@ export function CodeForm({
 
   return (
     <>
-      <p id="code-intro" className="mt-3 text-body text-ink-2">
+      <p id={`${id}-intro`} className="mt-3 text-body text-ink-2">
         {intro}{' '}
         {expired
           ? 'It has expired by now.'
@@ -160,7 +170,7 @@ export function CodeForm({
 
       <form noValidate onSubmit={submit} className="mt-8 flex flex-col gap-5">
         <Field
-          id="code"
+          id={id}
           label="Code from the message"
           type="text"
           name="code"
@@ -177,7 +187,7 @@ export function CodeForm({
           onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, codeDigits))}
           hint={hint}
           error={error}
-          describedBy="code-intro"
+          describedBy={`${id}-intro`}
         />
         <p role="alert" className="text-small text-danger empty:hidden">
           {formError}
@@ -196,7 +206,7 @@ export function CodeForm({
           Send another message
         </TextAction>
         <TextAction onClick={onBack} disabled={pending}>
-          Use another address
+          {backLabel}
         </TextAction>
       </div>
     </>

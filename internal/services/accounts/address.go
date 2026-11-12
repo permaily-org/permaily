@@ -26,6 +26,9 @@ import (
 // the address is another account's or nobody's: that is told only to whoever
 // proved the address is theirs (FinishAddressChange).
 func (s *Service) StartAddressChange(ctx context.Context, who *Authenticated, in contracts.AddressStart) (*contracts.EmailStarted, error) {
+	if err := s.confirmed(who); err != nil {
+		return nil, err
+	}
 	doc, err := s.own(ctx, who)
 	if err != nil {
 		return nil, err
@@ -127,7 +130,7 @@ func (s *Service) FinishAddressChange(ctx context.Context, who *Authenticated, i
 		s.cfg.Log.Info("accounts: contact address changed")
 		s.notify(ctx, noticeAddressChanged, addressMails(from, moved.Address, s.now())...)
 	}
-	view := moved.view()
+	view := s.view(moved)
 	return &view, nil
 }
 

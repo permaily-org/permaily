@@ -8,7 +8,8 @@
 - Every bug fix starts with a failing test.
 - Security checks need a negative test that tries to break them: every rejection path in `pkg/attestation` has one (wrong nonce, wrong user data, MITM, debug PCRs, different image, stale, wrong root, tampered, malformed).
 - What is stored outside the enclave is tested with the storage in the hands of someone else: the test writes to it by hand (`store.Memory.SetEntry`, `SetRecord`, `DeleteRecord`) and nothing it writes may let anyone in (`TestStorageWrittenByHand`).
-- A property the product promises gets a test named for what it shows, so the name is the promise: `TestABlockedAccountSignsInByNoWay`, `TestNothingSaysAnAddressIsBlockedBeforeProof`, `TestTheOperatorsRoutesCannotChangeAnAddressOrAWayIn`, `TestAnAddressAttemptSignsNobodyIn`, `TestTwoEnclavesChangingAddressesLeaveOneAccountPerAddress`, `TestNoticesHoldNoCodeLinkOrToken`, `TestANoticeThatFailsDoesNotFailTheAction`.
+- A property the product promises gets a test named for what it shows, so the name is the promise: `TestABlockedAccountSignsInByNoWay`, `TestNothingSaysAnAddressIsBlockedBeforeProof`, `TestTheOperatorsRoutesCannotChangeAnAddressOrAWayIn`, `TestAnAddressAttemptSignsNobodyIn`, `TestTwoEnclavesChangingAddressesLeaveOneAccountPerAddress`, `TestNoticesHoldNoCodeLinkOrToken`, `TestANoticeThatFailsDoesNotFailTheAction`, `TestASessionThatIsNotFreshlyConfirmedChangesNoWayIn`, `TestAnAttemptMadeToConfirmSignsNobodyInAndChangesNoAddress`, `TestAnAdminWhoseAccountIsNotPasskeyOnlyDoesNothing`, `TestNothingInTheTableMakesAnAdmin`, `TestAnAdminsRoutesCannotChangeAnAddressOrAWayIn`, `TestSomeoneWhoIsNotAnAdminLearnsNothingFromTheAdminRoutes`, `TestOnlyTheSuperAdminMakesAdmins`.
+- A change that needs a fresh proof of who the person is (ADR 0022) is tested with the clock the test controls, never with real time. A test of something else starts from a session whose proof is fresh (`world.fresh` in `internal/services/accounts`); the proof itself is tested through the storage (`confirm_test.go`).
 
 ## Layers
 
@@ -23,7 +24,7 @@
 | Commits against S3 | a real bucket with Object Lock: conditional writes, locks, delete markers, deletion refused | `internal/store` (`TestS3CommitsAgainstS3`) | by hand, with `PERMAILY_TEST_ANCHOR_BUCKET=permaily-anchors-staging-<account>` and credentials; skipped otherwise |
 | Storage contract | DynamoDB Local and S3Mock | `internal/store/store_test.go` | CI services; locally with `PERMAILY_TEST_DYNAMODB` and `PERMAILY_TEST_S3` |
 | ACME issuance and renewal | Pebble 2.6.0 (test CA that accepts every challenge) | `internal/tlsacme` (`TestObtainAgainstACME`) | CI service; locally with `PERMAILY_TEST_ACME` |
-| Whole service, dev mode | SMTP client and HTTPS: mail in and read back; an invitation, a sign-up by email, a session and signing out; the operator blocking an account, its sign-in refused, a change of address, the notices in the outbox and the counts on `/status` (`TestOperatorEndToEnd`) | `cmd/permaily-enclave/main_dev_test.go` | `go test -tags dev ./cmd/permaily-enclave`, CI |
+| Whole service, dev mode | SMTP client and HTTPS: mail in and read back; an invitation, a sign-up by email, a session and signing out; the operator blocking an account, its sign-in refused, a change of address, the notices in the outbox and the counts on `/status` (`TestOperatorEndToEnd`); the admin panel: the super admin refused until "passkey only", making an admin, who confirms with a passkey and blocks an account, the log, the counts and the notices (`TestAdminPanelEndToEnd`) | `cmd/permaily-enclave/main_dev_test.go` | `go test -tags dev ./cmd/permaily-enclave`, CI |
 | Mutation | gremlins | `pkg/attestation` | manual (`mutation` workflow) |
 | Reproducibility | Nix | CI `eif` + `reproducible` jobs | every PR |
 | Source of the image's third-party programs | `bun test` on synthetic images and archives (a kernel or a ramdisk file that is not the one described, a file the manifest misses, an archive file changed, missing or unlisted); `scripts/gpl-source.ts` on the built image and archive | `scripts/gpl-source.test.ts`; CI `eif` (warns), `release.yml` (`--require-complete`, refuses) | `make check`, CI `repo`, every PR, every release |
@@ -51,7 +52,7 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `pkg/provenance` | 99 | 99.4 |
 | `internal/tlsacme` | 90 (with Pebble) | 90.3 |
 | `internal/router` | 100 | 100.0 |
-| `internal/httpapi` | 95 | 95.3 (2026-11-12) |
+| `internal/httpapi` | 95 | 95.8 (2026-11-12) |
 | `internal/webui` | 75 | 75.0 |
 | `internal/hostproxy` | 73 | 73.7 |
 | `internal/enclave` | 87 | 87.7 |
@@ -63,7 +64,7 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `internal/store` | 96 (with emulators) | 96.1 (2026-11-12) |
 | `internal/contracts` | 100 | 100.0 (2026-11-11) |
 | `internal/domain` | 100 | 100.0 (2026-11-11) |
-| `internal/services/accounts` | 99 | 99.3 (2026-11-12) |
+| `internal/services/accounts` | 99 | 99.5 (2026-11-12) |
 | `internal/sesmail` | 98 | 98.6 (2026-11-11) |
 | `internal/webauthn` | 99 | 99.4 (2026-11-11) |
 | `internal/idp` | 100 | 100.0 (2026-11-11) |

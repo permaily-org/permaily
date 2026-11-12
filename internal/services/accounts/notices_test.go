@@ -187,7 +187,7 @@ func TestASignInFromANewDeviceIsTold(t *testing.T) {
 		t.Fatal(err)
 	}
 	how("a recovery code from the same device", n, "")
-	if _, err := w.svc.SetPasskeyOnly(ctx, w.who(cookie), contracts.PasskeyOnly{On: false}); err != nil {
+	if _, err := w.svc.SetPasskeyOnly(ctx, w.fresh(w.who(cookie)), contracts.PasskeyOnly{On: false}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -344,7 +344,7 @@ func TestDevicesAreBoundedAndProveNothing(t *testing.T) {
 		t.Fatalf("a device's cookie as a session: %v", err)
 	}
 	// They go with the account.
-	if _, err := w.svc.StartDeletion(ctx, &Authenticated{AccountID: id}); err != nil {
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(&Authenticated{AccountID: id})); err != nil {
 		t.Fatal(err)
 	}
 	w.now = w.now.Add(domain.AccountClosing)
@@ -390,7 +390,7 @@ func TestNoticesHoldNoCodeLinkOrToken(t *testing.T) {
 	key, spare := webauthntest.New(webauthntest.ES256), webauthntest.New(webauthntest.ES256)
 	passkey := w.addPasskey(who, key, "see https://evil.example/passkey")
 	extra := w.addPasskey(who, spare, "spare evil.example")
-	if err := w.svc.RemovePasskey(ctx, who, extra.ID.String()); err != nil {
+	if err := w.svc.RemovePasskey(ctx, w.fresh(who), extra.ID.String()); err != nil {
 		t.Fatal(err)
 	}
 	hidden = append(hidden, passkey.ID.String(), extra.ID.String(), "evil")
@@ -398,26 +398,26 @@ func TestNoticesHoldNoCodeLinkOrToken(t *testing.T) {
 	if _, err := w.linkFrom(who, person(idp.Google, "subject-at-google", "ana@example.org", true)); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.svc.UnlinkProvider(ctx, who, "google"); err != nil {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(who), "google"); err != nil {
 		t.Fatal(err)
 	}
 	hidden = append(hidden, "subject-at-google", "Name At Provider")
 	// "Passkey only" on, new recovery codes, one used, and off.
 	codes := w.passkeyOnly(who)
-	fresh, err := w.svc.NewRecoveryCodes(ctx, who)
+	fresh, err := w.svc.NewRecoveryCodes(ctx, w.fresh(who))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := w.svc.Recover(ctx, contracts.Recovery{Address: "ana@example.org", Code: fresh.RecoveryCodes[0]}, Browser{UserAgent: ua, Device: device(2)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.svc.SetPasskeyOnly(ctx, who, contracts.PasskeyOnly{On: false}); err != nil {
+	if _, err := w.svc.SetPasskeyOnly(ctx, w.fresh(who), contracts.PasskeyOnly{On: false}); err != nil {
 		t.Fatal(err)
 	}
 	hidden = append(hidden, codes...)
 	hidden = append(hidden, fresh.RecoveryCodes...)
 	// Deleting asked and cancelled, by the person and by the operator.
-	if _, err := w.svc.StartDeletion(ctx, who); err != nil {
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(who)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := w.svc.CancelDeletion(ctx, who); err != nil {
@@ -595,7 +595,7 @@ func TestANoticeThatFailsDoesNotFailTheAction(t *testing.T) {
 		extra, err = w.svc.FinishPasskey(ctx, who, in)
 		return err
 	})
-	down("removing a passkey", func() error { return w.svc.RemovePasskey(ctx, who, extra.ID.String()) })
+	down("removing a passkey", func() error { return w.svc.RemovePasskey(ctx, w.fresh(who), extra.ID.String()) })
 	attempt, mail := w.start("ana@example.org", "")
 	down("a sign-in from a new device", func() error {
 		_, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{Device: device(1)})
@@ -610,17 +610,17 @@ func TestANoticeThatFailsDoesNotFailTheAction(t *testing.T) {
 		_, err := w.comeBack(state, trip, person(idp.Google, "g-ana", "ana@example.org", true))
 		return err
 	})
-	down("unlinking a provider", func() error { return w.svc.UnlinkProvider(ctx, who, "google") })
+	down("unlinking a provider", func() error { return w.svc.UnlinkProvider(ctx, w.fresh(who), "google") })
 	var codes []string
 	down("turning passkey only on", func() error {
-		out, err := w.svc.SetPasskeyOnly(ctx, who, contracts.PasskeyOnly{On: true})
+		out, err := w.svc.SetPasskeyOnly(ctx, w.fresh(who), contracts.PasskeyOnly{On: true})
 		if err == nil {
 			codes = out.RecoveryCodes
 		}
 		return err
 	})
 	down("new recovery codes", func() error {
-		out, err := w.svc.NewRecoveryCodes(ctx, who)
+		out, err := w.svc.NewRecoveryCodes(ctx, w.fresh(who))
 		if err == nil {
 			codes = out.RecoveryCodes
 		}
@@ -634,10 +634,10 @@ func TestANoticeThatFailsDoesNotFailTheAction(t *testing.T) {
 		return err
 	})
 	down("turning passkey only off", func() error {
-		_, err := w.svc.SetPasskeyOnly(ctx, who, contracts.PasskeyOnly{On: false})
+		_, err := w.svc.SetPasskeyOnly(ctx, w.fresh(who), contracts.PasskeyOnly{On: false})
 		return err
 	})
-	down("asking to delete", func() error { _, err := w.svc.StartDeletion(ctx, who); return err })
+	down("asking to delete", func() error { _, err := w.svc.StartDeletion(ctx, w.fresh(who)); return err })
 	down("cancelling", func() error { _, err := w.svc.CancelDeletion(ctx, who); return err })
 	down("the operator asking to delete", func() error { _, err := w.svc.DeleteAccount(ctx, id); return err })
 	down("the operator cancelling", func() error { _, err := w.svc.KeepAccount(ctx, id); return err })
