@@ -173,6 +173,8 @@ func TestClassify(t *testing.T) {
 
 	r := certwatch.Classify([]certwatch.Issuance{
 		issuance("own", "ABCD", since.Add(time.Hour), later, "app.permaily.com", "mta-sts.inbox.permaily.com"),
+		// The same key renewed by another enclave while the first is valid.
+		issuance("own-renewed", "abcd", since.Add(50*24*time.Hour), later.Add(50*24*time.Hour), "app.permaily.com", "mta-sts.inbox.permaily.com"),
 		issuance("old-wildcard", "1111", since.Add(-24*time.Hour), later, "*.permaily.com", "permaily.com"),
 		issuance("new-wildcard", "2222", since.Add(time.Hour), later, "*.permaily.com"),
 		issuance("new-exact", "3333", since, later, "app.permaily.com"),
@@ -189,7 +191,7 @@ func TestClassify(t *testing.T) {
 		}
 		return strings.Join(out, ",")
 	}
-	if ids(r.Own) != "own" || ids(r.Older) != "old-wildcard" || ids(r.Foreign) != "new-wildcard,new-exact" {
+	if ids(r.Own) != "own,own-renewed" || ids(r.Older) != "old-wildcard" || ids(r.Foreign) != "new-wildcard,new-exact" {
 		t.Fatalf("own %q, older %q, foreign %q", ids(r.Own), ids(r.Older), ids(r.Foreign))
 	}
 }
