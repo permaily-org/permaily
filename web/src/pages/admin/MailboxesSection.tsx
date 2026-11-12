@@ -73,7 +73,7 @@ function MailboxRow({
           {mailboxStateWords(record)}
           {record.paused_at && <> since {formatWhen(record.paused_at)}</>}
           {unreadable
-            ? '. It accepts no mail.'
+            ? ". What Permaily stores for it can't be read: it accepts no mail and nobody can open it."
             : `. Keeps mail ${record.retention_days} days.${record.verified ? ' Google confirmed its Gmail account.' : ''}`}
         </span>
         <span className="block text-small text-ink-2">

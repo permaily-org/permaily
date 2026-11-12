@@ -146,10 +146,11 @@ const (
 	NoticeResumed      NoticeKind = "mailbox_resumed"
 )
 
-// Notifier tells a person by mail. accounts implements it (pull request 4);
-// until then the service is given none and tells nobody. It is called after
-// the change is stored, returns nothing, and never takes longer than its own
-// timeout (ADR 0017, notify): a notice never fails or holds up a change.
+// Notifier tells a person by mail. *accounts.Service implements it, and
+// cmd/permaily-enclave gives it; a service given none tells nobody. It is
+// called after the change is stored, returns nothing, and never takes longer
+// than its own timeout (ADR 0017, notify): a notice never fails or holds up a
+// change.
 type Notifier interface {
 	MailboxNotice(ctx context.Context, accountID string, kind NoticeKind, at time.Time)
 }

@@ -16,7 +16,7 @@ import (
 // What the operator and the admins see and do about mailboxes (ADR 0026,
 // "What the operator and admins see and do"), case O2 of its fourth pull
 // request: against mailboxestest.Fake, which keeps the policy of the real
-// service.
+// service. mailboxes_real_test.go runs them again on the real service.
 
 // withMailboxes gives the world's service the fake mailboxes, as the
 // composition gives it the real ones.

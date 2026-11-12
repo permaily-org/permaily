@@ -1100,17 +1100,24 @@ export async function adminLog(
 export type AdminStats = {
   accounts: { active: number; closing: number; blocked: number; total: number }
   invitations: { unused: number }
-  /** False when some accounts could not be read: the numbers are at least these. */
+  /** The mailboxes (ADR 0026), absent from a server that does not count them. */
+  mailboxes?: MailboxCounts
+  /** False when some accounts or mailboxes could not be read: the numbers are at least these. */
   complete: boolean
 }
 
 export async function adminStats(): Promise<AdminStats> {
-  const answer = await request<Partial<AdminStats> | null>('GET', '/api/v1/admin/stats')
+  const answer = await request<
+    (Omit<Partial<AdminStats>, 'mailboxes'> & { mailboxes?: Partial<MailboxCounts> }) | null
+  >('GET', '/api/v1/admin/stats')
   if (typeof answer?.accounts !== 'object' || answer.accounts === null) throw new ApiError('other')
   return {
     accounts: answer.accounts,
     invitations: { unused: answer.invitations?.unused ?? 0 },
     complete: answer.complete !== false,
+    ...(typeof answer.mailboxes?.total === 'number'
+      ? { mailboxes: { total: answer.mailboxes.total } }
+      : {}),
   }
 }
 
@@ -1137,9 +1144,6 @@ export type MailboxRecord = {
 /** How many mailboxes the deployment has, from an index that proves nothing: it may be off by one or two. */
 export type MailboxCounts = { total: number }
 
-/** The numbers at the top of the admin panel, with the mailboxes when the server counts them. */
-export type AdminStatsWithMailboxes = AdminStats & { mailboxes?: MailboxCounts }
-
 function mailboxRecords(answer: { mailboxes?: unknown } | null): MailboxRecord[] {
   if (!Array.isArray(answer?.mailboxes)) throw new ApiError('other')
   return (answer.mailboxes as Array<Partial<MailboxRecord> | null>).filter(
@@ -1164,22 +1168,6 @@ export function accountMailboxes(record: AccountRecord): number | undefined {
 export function logEntryMailbox(entry: LogEntry): string | undefined {
   const mailbox = (entry as { mailbox?: unknown }).mailbox
   return typeof mailbox === 'string' && mailbox !== '' ? mailbox : undefined
-}
-
-/** The numbers of `adminStats`, and the mailboxes. */
-export async function adminStatsWithMailboxes(): Promise<AdminStatsWithMailboxes> {
-  const answer = await request<
-    (Partial<AdminStats> & { mailboxes?: Partial<MailboxCounts> }) | null
-  >('GET', '/api/v1/admin/stats')
-  if (typeof answer?.accounts !== 'object' || answer.accounts === null) throw new ApiError('other')
-  return {
-    accounts: answer.accounts,
-    invitations: { unused: answer.invitations?.unused ?? 0 },
-    complete: answer.complete !== false,
-    ...(typeof answer.mailboxes?.total === 'number'
-      ? { mailboxes: { total: answer.mailboxes.total } }
-      : {}),
-  }
 }
 
 /** An account's mailboxes, the oldest first. */

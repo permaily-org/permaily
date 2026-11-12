@@ -104,8 +104,8 @@ show() {
 
 # What is shown of a mailbox: what its signed record says, never its address
 # or its label, which the enclave does not give the operator.
-mailbox_fields='def mailbox_state: if .state == "paused" then "paused since \(.paused_at | when) UTC" elif .state == "unreadable" then "unreadable: its record cannot be read; it accepts no mail" else .state end;
-  def verified: if .verified then "yes" else "no" end;'
+mailbox_fields='def mailbox_state: if .state == "paused" then "paused since \(.paused_at | when) UTC" elif .state == "unreadable" then "unreadable: what Permaily stores for it cannot be read; it accepts no mail and nobody can open it" else .state end;
+  def verified: if .state == "unreadable" then "-" elif .verified then "yes" else "no" end;'
 
 # show_mailbox prints one mailbox, from a file that holds its record.
 show_mailbox() {

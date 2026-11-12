@@ -197,7 +197,15 @@ describe('accounts.sh and mailboxes', () => {
     expect(rows[1]).toContain(mailbox)
     expect(rows[1]).toContain('paused since 2026-11-12 09:30 UTC')
     expect(rows[1]).toContain('90 days')
-    expect(rows[2]).toContain('unreadable')
+    // A lost or forked mailbox (ADR 0026, "An unreadable mailbox"): its identifier, when it was added
+    // and that it cannot be read, and no retention or Google confirmation, which its record would say.
+    expect(rows[2]).toContain('mbx_cccccccccccccccccccccccccc')
+    expect(rows[2]).toContain(
+      'unreadable: what Permaily stores for it cannot be read; it accepts no mail and nobody can open it',
+    )
+    expect(rows[2]).toContain('2026-11-02 10:00')
+    expect(rows[2]).not.toContain('0 days')
+    expect(rows[2]).toMatch(/\s-\s+-\s+-$/)
     expect(stderr).toContain('2 mailbox(es) of')
     expect(asked).toEqual([`GET /v1/admin/accounts/${account}/mailboxes`])
   })

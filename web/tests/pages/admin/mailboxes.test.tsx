@@ -74,7 +74,7 @@ describe("an account's mailboxes", () => {
     expect(rows).toEqual([
       'mbx_receivingReceiving. Keeps mail 90 days. Google confirmed its Gmail account.Added 6 Mar 2026, receiving since 7 Mar 2026Pause mailbox',
       'mbx_pausedPaused since 12 Nov 2026, 09:30 UTC. Keeps mail 30 days.Added 6 Mar 2026Resume mailbox',
-      'mbx_unreadableUnreadable. It accepts no mail.Added 6 Mar 2026',
+      "mbx_unreadableUnreadable. What Permaily stores for it can't be read: it accepts no mail and nobody can open it.Added 6 Mar 2026",
     ])
     expect(
       section().getByText(
@@ -350,16 +350,18 @@ describe('the calls of the admin panel about mailboxes', () => {
       code: 'other',
     })
     expect(await api.adminFindMailbox('a@b')).toBeNull()
-    const counted = await api.adminStatsWithMailboxes()
-    expect(counted.mailboxes).toBeUndefined()
-    expect(counted.invitations.unused).toBe(0)
+    // A server that does not count mailboxes: no count, rather than none.
     expect(await api.adminStats()).toEqual({
       accounts: stats.accounts,
       invitations: { unused: 0 },
       complete: true,
     })
+    server.on('GET /api/v1/admin/stats', ok({ accounts: stats.accounts, mailboxes: {} }))
+    expect((await api.adminStats()).mailboxes).toBeUndefined()
+    server.on('GET /api/v1/admin/stats', ok({ accounts: stats.accounts, mailboxes: { total: 4 } }))
+    expect((await api.adminStats()).mailboxes).toEqual({ total: 4 })
     server.on('GET /api/v1/admin/stats', ok(null))
-    await expect(api.adminStatsWithMailboxes()).rejects.toMatchObject({ code: 'other' })
+    await expect(api.adminStats()).rejects.toMatchObject({ code: 'other' })
     expect(api.accountMailboxes(record() as unknown as api.AccountRecord)).toBeUndefined()
     expect(
       api.logEntryMailbox({ at: '', kind: 'block', admin: { id: 'acc_a', address: '' } }),
