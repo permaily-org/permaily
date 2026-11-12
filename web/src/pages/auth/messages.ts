@@ -54,6 +54,9 @@ const messages: Record<ApiErrorCode, string> = {
   too_many_messages: 'Delete at most 100 messages at a time.',
   mailbox_unreadable:
     "This mailbox can't be read. Disconnect it, and write to support@permaily.com.",
+  link_changed:
+    'This link changed since the message was opened. Close this tab, open the message again, then the link.',
+  busy: 'Permaily is busy right now. Try again in a moment.',
   other: 'Something went wrong on our side. Try again in a moment.',
 }
 

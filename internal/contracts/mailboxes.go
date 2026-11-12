@@ -1,6 +1,9 @@
 package contracts
 
-import "time"
+import (
+	"regexp"
+	"time"
+)
 
 // Mailboxes and the inbox (ADR 0018, how in ADR 0026). What the web app's API
 // under /api/v1/mailboxes sends and receives, and what the operator's tool
@@ -29,6 +32,14 @@ var (
 	// committed in its place (ADR 0026). It accepts no mail; it can only be
 	// disconnected, which deletes what it holds.
 	ErrMailboxUnreadable = &Error{"mailbox_unreadable", "this mailbox can't be read; disconnect it, and write to support@permaily.com"}
+	// ErrLinkChanged refuses a link of a message's HTML whose token no longer
+	// names the link at its number (409): the page was rendered by another
+	// release of the sanitiser. The message must be opened again.
+	ErrLinkChanged = &Error{"link_changed", "this link changed since the message was opened; open the message again"}
+	// ErrBusy says the enclave has no room to render a message's HTML now
+	// (503): every render slot is taken and the queue is full or did not move
+	// in time. Nothing is wrong with the message.
+	ErrBusy = &Error{"busy", "Permaily is busy; try again in a moment"}
 )
 
 // MailboxRetentionDays are the periods a mailbox keeps mail for, the default
@@ -253,26 +264,83 @@ const (
 	// sanitiser could not make into a document that parses back to itself:
 	// the text is shown.
 	HTMLUnreadable = "unreadable"
+	// HTMLUnavailable is HTML the enclave could not render now: no render
+	// slot came in time, or the render passed its deadline. The text is
+	// shown, with a way to try again.
+	HTMLUnavailable = "unavailable"
 )
 
 // The limits of showing a message's HTML (ADR 0026, "Showing a message's
-// HTML"). Past the first three the HTML is HTMLTooLarge; past the others
-// what is over is left out and the rest is shown.
+// HTML", "Limits", where each has its reason). Past the ones of the part,
+// the tokens, the tree and the output the HTML is HTMLTooLarge; past the
+// others what is over is left out and the rest is shown. The render budgets
+// marked as starting values are replaced by measured ones when the
+// sanitiser is built.
 const (
-	// MessageHTMLMaxBytes bounds the HTML part, decoded.
+	// MessageHTMLMaxBytes bounds the HTML part, before and after it is
+	// transcoded to UTF-8.
 	MessageHTMLMaxBytes = 2 << 20
-	// MessageHTMLMaxElements bounds the elements it has.
+	// MessageHTMLMaxStartTags bounds the start tags the tokeniser pass
+	// counts, before any tree is built.
+	MessageHTMLMaxStartTags = 50_000
+	// MessageHTMLMaxAttributesPerElement and MessageHTMLMaxAttributes bound
+	// the attributes of one element and of the part.
+	MessageHTMLMaxAttributesPerElement = 64
+	MessageHTMLMaxAttributes           = 200_000
+	// MessageHTMLMaxAttributeBytes bounds one attribute's value, except an
+	// img src, which the inline image limits bound.
+	MessageHTMLMaxAttributeBytes = 8 << 10
+	// MessageHTMLMaxTreeBound bounds the tokeniser pass's upper bound of the
+	// tree the parser would build (amplification by reconstructed formatting
+	// elements included).
+	MessageHTMLMaxTreeBound = 200_000
+	// MessageHTMLMaxElements and MessageHTMLMaxDepth bound the output's
+	// elements and how deep they nest.
 	MessageHTMLMaxElements = 50_000
-	// MessageHTMLMaxDepth bounds how deep they nest.
-	MessageHTMLMaxDepth = 256
+	MessageHTMLMaxDepth    = 256
+	// MessageHTMLMaxMarkupBytes bounds the output without its images,
+	// counted as it is written.
+	MessageHTMLMaxMarkupBytes = 4 << 20
+	// MessageHTMLMaxStyleBytes and MessageHTMLMaxStyleAttributeBytes bound
+	// the CSS of the <style> blocks together and of one style attribute.
+	MessageHTMLMaxStyleBytes          = 256 << 10
+	MessageHTMLMaxStyleAttributeBytes = 8 << 10
+	// MessageHTMLMaxCSSRules, MessageHTMLMaxCSSDeclarations and
+	// MessageHTMLMaxSelectorBytes bound the message's CSS rules, its
+	// declarations in all, and one selector.
+	MessageHTMLMaxCSSRules        = 5_000
+	MessageHTMLMaxCSSDeclarations = 20_000
+	MessageHTMLMaxSelectorBytes   = 1 << 10
 	// MessageHTMLMaxLinks is how many links are numbered; the rest are text.
-	MessageHTMLMaxLinks = 1000
+	// MessageHTMLMaxURLBytes bounds one link's URL; a longer one is text.
+	MessageHTMLMaxLinks    = 1000
+	MessageHTMLMaxURLBytes = 4096
 	// MessageInlineImagesMax, MessageInlineImageMaxBytes and
 	// MessageInlineImagesMaxBytes bound the images that travel in the
 	// message (cid: parts and data: URIs), decoded.
 	MessageInlineImagesMax      = 50
 	MessageInlineImageMaxBytes  = 2 << 20
 	MessageInlineImagesMaxBytes = 5 << 20
+	// MessageInlineImageMaxSide, MessageInlineImageMaxPixels and
+	// MessageInlineImagesMaxPixels bound what an image costs the browser to
+	// decode, read from its header without decoding it: a side, one image's
+	// pixels (64 MiB at four bytes a pixel), all of a message's (128 MiB).
+	MessageInlineImageMaxSide    = 8192
+	MessageInlineImageMaxPixels  = 1 << 24
+	MessageInlineImagesMaxPixels = 1 << 25
+	// MessageHTMLRenders is how many renders run at once in one enclave;
+	// MessageHTMLRenderQueue how many may wait, for at most
+	// MessageHTMLRenderWait. Starting values.
+	MessageHTMLRenders     = 2
+	MessageHTMLRenderQueue = 16
+	MessageHTMLRenderWait  = 5 * time.Second
+	// MessageHTMLRendersPerAccount and MessageHTMLQueuedPerAccount are one
+	// account's share: past it, too_many_requests.
+	MessageHTMLRendersPerAccount = 1
+	MessageHTMLQueuedPerAccount  = 2
+	// MessageHTMLRenderDeadline stops a render that runs longer. Starting
+	// value.
+	MessageHTMLRenderDeadline = 2 * time.Second
 )
 
 // MessageHTML is what the app is told of a message's HTML. The HTML itself
@@ -288,24 +356,49 @@ type MessageHTML struct {
 	// @import, fonts, frames, objects, media, prefetch hints.
 	RemoteOther int `json:"remote_other"`
 	// InlineImages counts the images in the message that are shown (PNG,
-	// JPEG, GIF, WebP, checked by their bytes); InlineImagesOmitted the ones
-	// that are not: SVG, a type that does not match its bytes, or over the
-	// limits.
-	InlineImages        int `json:"inline_images"`
-	InlineImagesOmitted int `json:"inline_images_omitted"`
+	// JPEG, GIF or WebP by their bytes, static, within the limits);
+	// InlineImagesOmitted the ones that are not, and InlineImagesOmittedBy
+	// why, so the app can say it. Remote images are RemoteImages, never
+	// omitted ones.
+	InlineImages          int                  `json:"inline_images"`
+	InlineImagesOmitted   int                  `json:"inline_images_omitted"`
+	InlineImagesOmittedBy MessageImagesOmitted `json:"inline_images_omitted_by"`
 	// Links counts the links that open the link page, at most
 	// MessageHTMLMaxLinks.
 	Links int `json:"links"`
 }
 
+// MessageImagesOmitted says why images that travel in a message were not
+// shown; the three add up to MessageHTML.InlineImagesOmitted.
+type MessageImagesOmitted struct {
+	// TooLarge is over a limit of bytes, of a side, of pixels, or of how
+	// many a message shows.
+	TooLarge int `json:"too_large"`
+	// Animated is an animated GIF, PNG (APNG) or WebP: none is shown in
+	// this version.
+	Animated int `json:"animated"`
+	// Unsupported is not PNG, JPEG, GIF or WebP by its bytes (SVG
+	// included), a cid: that names no part, or a structure that does not
+	// read.
+	Unsupported int `json:"unsupported"`
+}
+
 // MessageLink is where a link of a message's HTML leads, for the page the
-// app shows before the person follows it (GET .../links/{n}).
+// app shows before the person follows it (GET .../links/{link}). The page
+// parses URL with the browser's own URL parser, shows and goes where that
+// parse says, and offers nothing when its host is not Host.
 type MessageLink struct {
-	// URL is the link's address, http or https, as the server parsed and
-	// wrote it again.
+	// Link is the link's token as the route names it, "<n>.<tag>": its
+	// number in the message and a tag bound to its address
+	// (MessageLinkToken), so a link renumbered by another release answers
+	// ErrLinkChanged instead of another address.
+	Link string `json:"link"`
+	// URL is the link's address, http or https, as the server wrote it
+	// again: ASCII, its host a DNS name in ASCII (xn-- for other
+	// characters, so a look-alike is seen), no userinfo, no default port.
 	URL string `json:"url"`
-	// Host is its host in ASCII: a host with other characters is shown in
-	// its xn-- form, so a look-alike is seen.
+	// Host is its host and, when it is not the scheme's default, ":port",
+	// as the WHATWG URL's host attribute writes it.
 	Host string `json:"host"`
 	// Shown is the host the link's text named when it named another one
 	// (the text says one address and the link leads to another); absent
@@ -348,4 +441,19 @@ type MailboxRecordList struct {
 // MailboxCounts counts the mailboxes for the admin panel's first page.
 type MailboxCounts struct {
 	Total int `json:"total"`
+}
+
+// The token of a link of a message's HTML: its number, a dot, and a tag of
+// MessageLinkTagBytes bytes in unpadded base64url (an HMAC under a key of
+// the mailbox, ADR 0026, "The link's token").
+const MessageLinkTagBytes = 12
+
+var messageLinkToken = regexp.MustCompile(`^(0|[1-9][0-9]{0,2})\.[A-Za-z0-9_-]{16}$`)
+
+// MessageLinkToken says whether s has the shape of a link's token: a number
+// below MessageHTMLMaxLinks without leading zeros, a dot, and 16 base64url
+// characters. One that does not is not_found; one that does but no longer
+// names the link is ErrLinkChanged.
+func MessageLinkToken(s string) bool {
+	return messageLinkToken.MatchString(s)
 }
