@@ -34,7 +34,7 @@ Nobody outside needs the image file. Whoever verifies rebuilds the image from th
 
 ## Consequences
 
-- The eleven releases already published (v0.1.0 to v0.10.0) still carry `permaily.eif`, and with it the kernel, `nsm.ko` and `init` without their source. Removing the asset from them is prepared and not done; their `pcrs.json`, its provenance and the rebuild are unaffected, and an older release can still be deployed by building it with `scripts/release-image.sh`.
+- The eleven releases already published (v0.1.0 to v0.10.0) still carry `permaily.eif`, and with it the kernel, `nsm.ko` and `init` without their source. Removing the asset from them was tried on 2026-11-12 and is not possible: the releases are immutable, and GitHub does not let an asset be removed from one. They stay as they are; deleting the whole releases would take their `pcrs.json`, verifier and provenance with it, so that is not done. Their `pcrs.json`, its provenance and the rebuild are unaffected, and an older release can still be deployed by building it with `scripts/release-image.sh`.
 - Deploying needs a build: Nix, or Docker with the `nixos/nix` image, on x86_64 or arm64 Linux (or Docker elsewhere). Rebuilding an old release depends on its pinned inputs staying fetchable, as verifying it already did.
 - AWS can be asked to publish the source of `4.14.256-209.484.amzn2` and of the C library in `init`. If it does, option 1 becomes complete.
 - Option 2 remains the way to distribute the image again.
