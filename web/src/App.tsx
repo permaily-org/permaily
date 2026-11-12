@@ -22,6 +22,7 @@ import { ConsentAppPage } from './pages/consent/ConsentAppPage.tsx'
 import { WideningPage } from './pages/consent/WideningPage.tsx'
 import { InboxIndexPage } from './pages/inbox/InboxIndexPage.tsx'
 import { InboxPage } from './pages/inbox/InboxPage.tsx'
+import { LinkPage } from './pages/inbox/Link.tsx'
 import { MessagePage } from './pages/inbox/MessagePage.tsx'
 import { OverviewPage } from './pages/overview/OverviewPage.tsx'
 import { RuleEditorPage } from './pages/rules/RuleEditorPage.tsx'
@@ -46,6 +47,7 @@ export function App() {
           <Route path="inbox" element={<InboxIndexPage />} />
           <Route path="inbox/:mailboxId" element={<InboxPage />} />
           <Route path="inbox/:mailboxId/:messageId" element={<MessagePage />} />
+          <Route path="inbox/:mailboxId/:messageId/links/:link" element={<LinkPage />} />
           <Route path="accounts" element={<AccountsPage />} />
         </Route>
         <Route element={<MailboxLayout flow />}>

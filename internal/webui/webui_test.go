@@ -23,6 +23,10 @@ func TestSPA(t *testing.T) {
 		{"/assets/app-1.js", "js", "public, max-age=31536000, immutable", 200},
 		{"/favicon.ico", "ico", "", 200},
 		{"/missing.js", "", "", 404},
+		// The link page of a message's HTML (ADR 0026): its last segment is
+		// "<n>.<tag>", which looks like an extension.
+		{"/inbox/mbx_1/18e7/links/3.ZW77byzlKZ-Vz3VP", "<html>app</html>", "no-cache", 200},
+		{"/inbox/missing.js", "<html>app</html>", "no-cache", 200},
 		{"/../../etc/passwd", "", "", 400}, // rejected before touching the FS
 	}
 	for _, c := range cases {

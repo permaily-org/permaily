@@ -1,0 +1,124 @@
+package mailhtml
+
+import (
+	"context"
+	"io"
+	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/permaily-org/permaily/internal/contracts"
+)
+
+// Test 23: adversarial benchmarks on the pinned x/net/html, with the time
+// of one render and the peak of the heap while it runs, for ADR 0026's
+// Limits table. Run in a container of the production enclave's size:
+//
+//	docker run --cpus=1 --memory=2g ... go test ./internal/mailhtml -run '^$' -bench . -benchtime 5x
+
+// peakHeap runs f and says the most the heap held above where it started,
+// sampled every 100 microseconds.
+func peakHeap(f func()) uint64 {
+	runtime.GC()
+	var base runtime.MemStats
+	runtime.ReadMemStats(&base)
+	var peak atomic.Uint64
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		var m runtime.MemStats
+		t := time.NewTicker(100 * time.Microsecond)
+		defer t.Stop()
+		for {
+			runtime.ReadMemStats(&m)
+			if m.HeapAlloc > base.HeapAlloc && m.HeapAlloc-base.HeapAlloc > peak.Load() {
+				peak.Store(m.HeapAlloc - base.HeapAlloc)
+			}
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	f()
+	close(stop)
+	wg.Wait()
+	return peak.Load()
+}
+
+func benchRender(b *testing.B, in Input, want string) {
+	b.Helper()
+	b.ReportAllocs()
+	var peak uint64
+	for b.Loop() {
+		p := peakHeap(func() {
+			st, err := Render(context.Background(), in, io.Discard)
+			if err != nil || st.Status != want {
+				b.Fatalf("%+v %v", st, err)
+			}
+		})
+		peak = max(peak, p)
+	}
+	b.ReportMetric(float64(peak)/(1<<20), "peak-MiB")
+}
+
+// Item 12.
+func BenchmarkAmpersands(b *testing.B) {
+	benchRender(b, input(strings.Repeat("&", contracts.MessageHTMLMaxBytes)), contracts.HTMLTooLarge)
+}
+
+// Item 13: refused by the token pass.
+func BenchmarkBreaks(b *testing.B) {
+	benchRender(b, input(strings.Repeat("<br>", contracts.MessageHTMLMaxBytes/4)), contracts.HTMLTooLarge)
+}
+
+// Item 13: the amplification case, refused by the token pass.
+func BenchmarkAmplification(b *testing.B) {
+	benchRender(b, input(amplification(contracts.MessageHTMLMaxBytes)), contracts.HTMLTooLarge)
+}
+
+// At the limits that are shown: 50,000 start tags, 256 deep.
+func BenchmarkStartTagsAtTheLimit(b *testing.B) {
+	benchRender(b, input(strings.Repeat("<br>", contracts.MessageHTMLMaxStartTags)), contracts.HTMLShown)
+}
+
+func BenchmarkNestingAtTheLimit(b *testing.B) {
+	benchRender(b, input(strings.Repeat("<div>", contracts.MessageHTMLMaxDepth)+"x"), contracts.HTMLShown)
+}
+
+// A 2 MiB real-looking newsletter.
+func BenchmarkNewsletter2MiB(b *testing.B) {
+	benchRender(b, input(realLookingNewsletter(b, contracts.MessageHTMLMaxBytes)), contracts.HTMLShown)
+}
+
+// A newsletter of the size real ones have (about 60 KiB).
+func BenchmarkNewsletter60KiB(b *testing.B) {
+	benchRender(b, input(realLookingNewsletter(b, 60<<10)), contracts.HTMLShown)
+}
+
+// The 50-image message: 50 images that together reach the pixel limit and
+// the 5 MiB of bytes, sent as cid: parts.
+func BenchmarkFiftyImages(b *testing.B) {
+	in := input("")
+	in.Inline = map[string]InlinePart{}
+	var srcs []string
+	for i := range 50 {
+		w, h := 1024, 640
+		if i >= 48 {
+			h = 1024
+		}
+		id := "img" + string(rune('A'+i/26)) + string(rune('a'+i%26))
+		data := pngImage(b, w, h, false)
+		data = append(data, make([]byte, (100<<10)-len(data))...) // 100 KiB each: 5,000 KiB together
+		in.Inline[id] = InlinePart{Type: "image/png", Data: data}
+		srcs = append(srcs, "cid:"+id)
+	}
+	in.HTML = []byte(imgs(srcs...))
+	benchRender(b, in, contracts.HTMLShown)
+}

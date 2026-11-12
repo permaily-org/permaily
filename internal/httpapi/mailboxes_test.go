@@ -524,7 +524,7 @@ func TestR1AnswersAndErrors(t *testing.T) {
 	t.Run("a message, its raw form, its attachments", func(t *testing.T) {
 		var m contracts.Message
 		read(t, a.call("alice", "GET", base+"/messages/"+ids[0], ""), 200, &m)
-		if m.Text != "Hello\n" || m.HTML != nil {
+		if m.Text != "Hello\n" || m.HTML != nil { // a message without HTML has none
 			t.Fatalf("%+v", m)
 		}
 		for _, path := range []string{"/nothex", "/" + ids[0] + "0", "/../" + ids[0]} {
@@ -533,7 +533,9 @@ func TestR1AnswersAndErrors(t *testing.T) {
 		for _, index := range []string{"0", "01", "-1", "100", "x", "99999999999999999999"} {
 			want(t, a.call("alice", "GET", base+"/messages/"+ids[0]+"/attachments/"+index, ""), 404, "not_found")
 		}
-		want(t, a.call("alice", "GET", base+"/messages/"+ids[0]+"/html", ""), 404, "not_found")
+		if rec := a.call("alice", "GET", base+"/messages/"+ids[0]+"/html", ""); rec.Code != 404 || !strings.HasPrefix(rec.Header().Get("Content-Security-Policy"), "sandbox allow-popups") {
+			t.Fatalf("a message without HTML in the frame: %d %v", rec.Code, rec.Header())
+		}
 		want(t, a.call("alice", "GET", base+"/messages/"+ids[0]+"/links/0.AAAAAAAAAAAAAAAA", ""), 404, "not_found")
 	})
 
@@ -594,6 +596,13 @@ func frameCheck(t *testing.T, name string, rec *httptest.ResponseRecorder) {
 	h := rec.Header()
 	if h.Get("X-Content-Type-Options") != "nosniff" {
 		t.Errorf("%s: no nosniff", name)
+	}
+	if strings.HasPrefix(h.Get("Content-Security-Policy"), "sandbox allow-popups") {
+		// The frame's route (pull request 5), the one route that answers a
+		// document: with the frame's headers on every answer, and a body
+		// that is the sanitiser's or a fixed one.
+		frameDocumentCheck(t, name, rec)
+		return
 	}
 	body := rec.Body.String()
 	for _, s := range []string{"7f3a", "<script", "<img", "onload", "alert("} {

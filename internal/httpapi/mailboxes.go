@@ -139,6 +139,16 @@ type MailboxesConfig struct {
 	Wait       time.Duration
 	// Now is the clock of the search pages' rate (time.Now).
 	Now func() time.Time
+	// AppOrigin is the app's origin, the only one that may frame a
+	// message's HTML (frame-ancestors): https://app.<domain>, with its port
+	// when it is not 443. Without one, the request's own host.
+	AppOrigin string
+	// Renders, RenderQueue and RenderWait are the render slots
+	// (contracts.MessageHTMLRenders, MessageHTMLRenderQueue,
+	// MessageHTMLRenderWait); tests set smaller ones.
+	Renders     int
+	RenderQueue int
+	RenderWait  time.Duration
 }
 
 // MailboxesAPI returns every route of the person's table under
@@ -163,9 +173,18 @@ func MailboxesAPI(cfg MailboxesConfig) http.Handler {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.Renders <= 0 {
+		cfg.Renders = contracts.MessageHTMLRenders
+	}
+	if cfg.RenderQueue <= 0 {
+		cfg.RenderQueue = contracts.MessageHTMLRenderQueue
+	}
+	if cfg.RenderWait <= 0 {
+		cfg.RenderWait = contracts.MessageHTMLRenderWait
+	}
 	a := &mailboxesAPI{
 		cfg: cfg, budget: newByteBudget(cfg.ReadBudget), searches: make(chan struct{}, SearchesAtOnce),
-		pages: map[string][]time.Time{},
+		pages: map[string][]time.Time{}, slots: newRenderSlots(cfg.Renders, cfg.RenderQueue, cfg.RenderWait),
 	}
 	mux := http.NewServeMux()
 	const base = "/api/v1/mailboxes"
@@ -191,6 +210,8 @@ func MailboxesAPI(cfg MailboxesConfig) http.Handler {
 	mux.HandleFunc(base+"/{id}/messages/{message}/raw", refuse(http.MethodGet))
 	mux.HandleFunc("GET "+base+"/{id}/messages/{message}/attachments/{index}", in(a.attachment))
 	mux.HandleFunc(base+"/{id}/messages/{message}/attachments/{index}", refuse(http.MethodGet))
+	mux.HandleFunc("GET "+base+"/{id}/messages/{message}/html", a.frame)            // mailboxes_html.go
+	mux.HandleFunc("GET "+base+"/{id}/messages/{message}/links/{link}", in(a.link)) // mailboxes_html.go
 	mux.HandleFunc(base+"/", noSuchEndpoint)
 	app := fromTheApp(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -221,6 +242,7 @@ type mailboxesAPI struct {
 	cfg      MailboxesConfig
 	budget   *byteBudget
 	searches chan struct{}
+	slots    *renderSlots
 
 	mu    sync.Mutex
 	pages map[string][]time.Time // search pages asked in the last minute, by account
@@ -328,7 +350,8 @@ func (a *mailboxesAPI) open(w http.ResponseWriter, r *http.Request, c mailboxes.
 		return inbox.Box{}, nil, nil, false
 	}
 	held := &heldBudget{budget: a.budget, wait: a.cfg.Wait}
-	return b, inbox.WithReadBudget(r.Context(), held), held.release, true
+	ctx := inbox.WithRenderSlots(inbox.WithReadBudget(r.Context(), held), accountSlots{a.slots, c.Account})
+	return b, ctx, held.release, true
 }
 
 func (a *mailboxesAPI) messages(w http.ResponseWriter, r *http.Request, c mailboxes.Caller) {

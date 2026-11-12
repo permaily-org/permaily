@@ -181,7 +181,7 @@ func run(cfg config, log *slog.Logger) error {
 		app.Handle("/api/", httpapi.AccountsAPI(p.accounts, log))
 		if p.mailboxes != nil {
 			// The person's mailboxes and their mail (ADR 0026, "The API").
-			mine := httpapi.MailboxesAPI(httpapi.MailboxesConfig{Service: p.mailboxes, Reader: p.reader, Sessions: p.accounts, Log: log})
+			mine := httpapi.MailboxesAPI(httpapi.MailboxesConfig{Service: p.mailboxes, Reader: p.reader, Sessions: p.accounts, Log: log, AppOrigin: appOrigin(hosts.App, cfg.port)})
 			app.Handle("/api/v1/mailboxes", mine)
 			app.Handle("/api/v1/mailboxes/", mine)
 		}
@@ -261,4 +261,13 @@ func run(cfg config, log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// appOrigin is the app's origin, the only one that may frame a message's
+// HTML: its port written when it is not 443 (dev mode).
+func appOrigin(host string, port uint32) string {
+	if port == 443 {
+		return "https://" + host
+	}
+	return "https://" + host + ":" + strconv.FormatUint(uint64(port), 10)
 }

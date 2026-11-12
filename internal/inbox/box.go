@@ -52,7 +52,9 @@ type Reader interface {
 	// looked (SearchedTo) and where to go on (Next).
 	Search(ctx context.Context, b Box, q, before string, limit int) (*contracts.MessagePage, error)
 	// Get is one message: its meta, its text (at most MessageTextMax), and
-	// what the frame needs of its HTML (absent until pull request 5).
+	// what the frame needs of its HTML (Message.HTML: its status and counts,
+	// rendered under a render slot, WithRenderSlots, and RenderDeadline;
+	// absent when it has no HTML part).
 	Get(ctx context.Context, b Box, id string) (*contracts.Message, error)
 	// Raw is the message as it was received, unsealed.
 	Raw(ctx context.Context, b Box, id string) ([]byte, error)
@@ -98,6 +100,10 @@ const (
 	// message.
 	PurposeSeen = "message-seen"
 )
+
+// The keys derived from a mailbox's key, each for one purpose: the names of
+// its seen# entries (seenPurpose, "permaily seen v1", deliver.go) and the
+// tags of its links (LinkPurpose, "permaily link v1", htmlpart.go).
 
 // The keys of a mailbox's partition (pk=mailbox#<id>) besides its messages
 // (sk=msg#<id>, written with store.Store.PutMessage).

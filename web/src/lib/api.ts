@@ -888,6 +888,34 @@ export function attachmentUrl(mailbox: string, id: string, index: number): strin
   return `${messagePath(mailbox, id)}/attachments/${index}`
 }
 
+/**
+ * Where the formatted view's frame loads a message's HTML from: a document the enclave writes from the message,
+ * sandboxed by the frame's attribute and its own policy. Only an `<iframe src>` asks for it; the app never reads it.
+ */
+export function messageHtmlUrl(mailbox: string, id: string): string {
+  return `${messagePath(mailbox, id)}/html`
+}
+
+/**
+ * Where a link of a message's HTML leads, for the link page. `link` is the token of the link page's address, which
+ * anyone can write: one without the shape of a token is answered `not_found` without asking.
+ */
+export async function messageLink(mailbox: string, id: string, link: string): Promise<MessageLink> {
+  if (!isMessageLinkToken(link)) throw new ApiError('not_found')
+  const answer = await request<Partial<MessageLink> | null>(
+    'GET',
+    `${messagePath(mailbox, id)}/links/${link}`,
+  )
+  if (typeof answer?.url !== 'string' || typeof answer.host !== 'string')
+    throw new ApiError('other')
+  return {
+    link,
+    url: answer.url,
+    host: answer.host,
+    ...(typeof answer.shown === 'string' && answer.shown !== '' ? { shown: answer.shown } : {}),
+  }
+}
+
 export function deleteMessage(mailbox: string, id: string): Promise<void> {
   return request('DELETE', messagePath(mailbox, id))
 }

@@ -26,3 +26,4 @@ github.com/permaily-org/permaily/internal/services/mailboxes 95
 github.com/permaily-org/permaily/internal/sesmail 98
 github.com/permaily-org/permaily/internal/webauthn 99
 github.com/permaily-org/permaily/internal/idp 100
+github.com/permaily-org/permaily/internal/mailhtml 94

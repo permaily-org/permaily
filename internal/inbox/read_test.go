@@ -151,8 +151,12 @@ func TestR3ReadingWhatDeliveryStored(t *testing.T) {
 	if m.Text != "Café at noon" || m.TextFrom != contracts.TextFromPlain || m.TextTruncated {
 		t.Errorf("text %q from %s", m.Text, m.TextFrom)
 	}
-	if m.Subject != "Report" || m.Size != len(raw) || !m.ExpiresAt.Equal(at.AddDate(0, 0, 30)) || len(m.Attachments) != 2 || len(m.Auth) != 1 || m.HTML != nil {
+	if m.Subject != "Report" || m.Size != len(raw) || !m.ExpiresAt.Equal(at.AddDate(0, 0, 30)) || len(m.Attachments) != 2 || len(m.Auth) != 1 {
 		t.Errorf("message %+v", m)
+	}
+	// Pull request 5 fills Message.HTML: the HTML of the alternative, shown.
+	if m.HTML == nil || m.HTML.Status != contracts.HTMLShown || m.HTML.Links != 0 {
+		t.Errorf("html %+v", m.HTML)
 	}
 	if m.To == nil || m.Cc == nil || m.ReplyTo == nil {
 		t.Error("a list is null")
