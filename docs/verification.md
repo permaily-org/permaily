@@ -20,7 +20,7 @@ For each host, `permaily-verify`:
 5. Rejects all-zero PCR0-2 (debug mode).
 6. Compares PCR0, PCR1 and PCR2 with your reproduced build.
 7. Checks that the document's `user_data` equals `sha256(SubjectPublicKeyInfo)` of the TLS certificate presented on the same connection. This proves the TLS session ends inside the attested enclave.
-8. Reads `GET /status` over a connection with that same TLS key and checks the KMS key that locks the root secret everything stored is sealed under (below). When the enclave sends mail of its own, it also checks who else SES would give a copy to (below).
+8. Reads `GET /status` over a connection with that same TLS key and checks the KMS key that locks the root secret everything stored is sealed under (below). When the enclave sends mail of its own, it also checks who else SES would give a copy to (below). When it has accounts, it prints what the operator did to them through the enclave, and fails on nothing (below).
 
 ## Who can read stored mail
 
@@ -54,6 +54,20 @@ Signing in by mail sends one message with a code and a link, through Amazon SES.
 A state that was not clean prints with the times it was first and last seen. A reading that fails right now, within the five minutes, is a warning: the enclave sends nothing while it cannot read.
 
 What this does not show: a configuration set put in place and removed between two readings in the moment a message leaves (the enclave reads before a message, unless it read within five seconds, and after each one, so the moment is about a second, up to six when many messages leave at once); anything from before the enclave started; and other settings of SES, which are not read. AWS and the person's mail provider read the message in any case.
+
+## What the operator did to accounts
+
+The operator, with the admin token, can do some things to an account through the enclave: block it and unblock it, ask to delete it and cancel that, sign its devices out, and make and revoke invitations (ADR 0017). The enclave counts each kind and serves the counts on `/status` under `admin`, with the time it started counting. The verifier prints them:
+
+```
+      what the operator did to accounts through this enclave since 2026-11-12T04:58:12Z: blocked an account 1 time; made an invitation 2 times
+```
+
+It fails on nothing here: blocking an account or asking to delete one is the operator's to do. It is printed so that it is seen, by anyone, twice an hour.
+
+What the operator cannot do through the enclave is not counted because there is no way to do it: change an account's contact address, add or remove a way to sign in, turn "passkey only" off, or sign in as someone. Those would be ways into an account, and the image you verified has no route for them.
+
+What this does not show: which account, on purpose; anything from before the enclave started, since the count is in memory and a restart, which the operator can cause, starts it again (the start time is printed); and what is written to the storage by hand, which the enclave refuses where it would be a way in (ADR 0016, ADR 0017) and which can still delete an account.
 
 ## How mail gets in
 
@@ -154,6 +168,10 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
     "watched_since": "<when this enclave first tried to read them>",
     "history": [{"domain_identity": "no_configuration_set", "address_identity": "absent", "first_seen": "...", "last_seen": "..."}]
   },
+  "admin": {
+    "since": "<when this enclave started counting: when it started>",
+    "actions": {"block": 0, "unblock": 0, "delete": 0, "delete_cancel": 0, "sessions_close": 0, "invitations_made": 0, "invitation_revoked": 0, "provider_app_set": 0, "provider_app_removed": 0}
+  },
   "anchors": {
     "bucket": "<S3 bucket with Object Lock that holds the commits>",
     "retention_days": 3650,
@@ -168,6 +186,8 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
 `anchors` lists the records the enclave refuses an earlier copy of (ADR 0016), as far as it read or wrote them since it started: the version of each, and until when S3 keeps its newest commit whatever anyone asks. The verifier fails when a commit is not locked, and when `regressions` is not empty: a commit the enclave had seen that the store stopped answering with. It warns when a lock ends within thirty days.
 
 `mail` says what SES would do with a message of the enclave besides delivering it, as the enclave read it: each identity is `no_configuration_set`, `configuration_set`, `not_verified` or `absent`. `failing` is true when the newest attempt got no answer to go by, and `state` and `checked_at` then describe the last one that did; `history_truncated` appears after more than 32 states. It is absent in an image that sends no mail. A regression of the record of an account is listed in `anchors.regressions` without the account's name.
+
+`admin` counts what the operator did to accounts through this enclave since it started, by kind: an account blocked or unblocked, a deletion asked or cancelled, the devices of an account signed out, invitations made (one by one) and one revoked, and the application of a provider set or removed. Every kind the enclave knows is there, also at zero; a later image may count more kinds, which the verifier prints by name. It never holds an account, an address or an identifier. It is absent in an image without accounts and in images up to v0.10.0. The verifier checks nothing of it.
 
 `root` is absent in an image that stores no mail. `from` is present when another release's enclave handed the root secret over. `history` and `gaps` are every state of the key's policy and grants the enclave has read since it started, and the periods in which it could not read. Releases up to v0.7.0 also report `kms`, the key they wrapped data keys with directly, with the same `history` and `gaps`. If KMS cannot be reached, or the image has no root secret yet, the endpoint answers 503.
 

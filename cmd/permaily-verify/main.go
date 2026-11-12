@@ -97,6 +97,10 @@ type hostResult struct {
 	// Amazon SES, after it passed checkSentMail; nil when the image is older
 	// or sends no mail.
 	SentMail *attestation.MailStatus `json:"sent_mail,omitempty"`
+	// Admin is what the enclave counts of what its operator did to accounts
+	// through it: reported as it is, and checked against nothing. Nil when
+	// the image is older or has no accounts.
+	Admin *attestation.AdminStatus `json:"admin,omitempty"`
 }
 
 // rootResult is what the verified enclave reported about the KMS key that
@@ -388,6 +392,9 @@ func checkStatus(st *attestation.Status, r hostResult, pcr0 string, kms kmsOptio
 		}
 		r.SentMail = st.Mail
 	}
+	// What the operator did to accounts is told, and fails nothing: blocking
+	// an account is the operator's to do.
+	r.Admin = st.Admin
 	if st.Root != nil {
 		if r.Root, err = checkRoot(st.Root, pcr0, kms.now); err != nil {
 			r.Root = nil
@@ -853,6 +860,7 @@ func printHuman(w io.Writer, source string, expected map[uint][]byte, results []
 		printSigstore(w, r.Sigstore)
 		printAnchors(w, r.Anchors, time.Now())
 		printSentMail(w, r.SentMail)
+		printAdmin(w, r.Admin)
 		if r.TLS != nil && r.TLS.Sealed {
 			fmt.Fprintf(w, "      TLS key created %s, kept sealed with KMS across restarts\n", r.TLS.KeyCreatedAt.UTC().Format(time.RFC3339))
 		}

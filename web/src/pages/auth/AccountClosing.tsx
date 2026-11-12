@@ -13,8 +13,9 @@ const title = 'Your account is being deleted'
 const tick = 60_000
 
 /**
- * All that an account shows from the moment its person asked to delete it: that it is closing, on which day,
- * and the two things left to do, cancel or sign out. Every route leads here until it is cancelled.
+ * All that an account shows from the moment its deletion was asked for: that it is closing, on which day,
+ * who asked when it was Permaily's operator and not the person, and the two things left to do, cancel or
+ * sign out. Every route leads here until it is cancelled, which the person can do whoever asked.
  */
 export function AccountClosing({
   account,
@@ -34,6 +35,8 @@ export function AccountClosing({
   // The action that was tried last: it takes focus back when the try failed.
   const tried = useRef(keepRef)
   const when = closesAt(account.closes_at)
+  // A server from before says nothing of who asked: that reads as the person, like anything but `operator`.
+  const byOperator = account.closing_by === 'operator'
   const due = when?.getTime()
 
   // The screen appears by itself, so its headline takes focus: a screen reader starts there.
@@ -108,7 +111,9 @@ export function AccountClosing({
           The account of <Address>{account.address}</Address> has stopped working.
         </p>
         <p id="closing-when">
-          It will be deleted for good on
+          {byOperator
+            ? "Permaily's operator asked for this account to be deleted on"
+            : 'It will be deleted for good on'}{' '}
           <span className="mt-3 block border-y border-rule py-3 text-body text-ink">
             {when ? (
               <>

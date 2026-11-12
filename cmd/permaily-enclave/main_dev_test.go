@@ -800,3 +800,277 @@ func mustURL(t *testing.T, s string) *url.URL {
 	}
 	return u
 }
+
+// The operator's side of accounts, and what a person is told, on the whole
+// service in dev mode: an account is blocked and its sign-in refused with the
+// reason, unblocked, its contact address changed with a code, an invitation
+// listed and revoked; the notices are in the dev outbox, /status counts what
+// the operator did, and the logs name nobody.
+func TestOperatorEndToEnd(t *testing.T) {
+	const admin = "pma_e2e_operator_token"
+	sum := sha256.Sum256([]byte(admin))
+	cfg := config{
+		domain: "permaily.test", acmeDirectory: "unused", port: freePort(t), mtaSTSMode: "testing",
+		adminTokenSHA256: hex.EncodeToString(sum[:]),
+	}
+	var logs lockedBuffer
+	go func() {
+		_ = run(cfg, slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	}()
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar, Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // dev mode self-signed certificate
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", cfg.port))
+		},
+	}}
+	app, api := fmt.Sprintf("https://app.permaily.test:%d", cfg.port), "https://api.permaily.test"
+	call := func(method, url, auth, body string) (int, string) {
+		t.Helper()
+		var res *http.Response
+		var err error
+		for range 50 {
+			req, _ := http.NewRequest(method, url, strings.NewReader(body))
+			if auth != "" {
+				req.Header.Set("Authorization", "Bearer "+auth)
+			}
+			if strings.HasPrefix(url, app) && method != http.MethodGet {
+				req.Header.Set("Origin", app)
+				req.Header.Set("Content-Type", "application/json")
+			}
+			req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) E2E/1.0")
+			if res, err = client.Do(req); err == nil {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(b)
+	}
+	type mail struct{ To, Subject, Text string }
+	// outbox waits for a message to an address with a subject, and returns it.
+	outbox := func(to, subject string) mail {
+		t.Helper()
+		var sent []mail
+		for range 50 {
+			_, body := call("GET", app+"/dev/outbox", "", "")
+			if err := json.Unmarshal([]byte(body), &sent); err != nil {
+				t.Fatalf("the outbox: %v", err)
+			}
+			for i := len(sent) - 1; i >= 0; i-- {
+				if sent[i].To == to && sent[i].Subject == subject {
+					return sent[i]
+				}
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatalf("no message %q to %s in the outbox: %+v", subject, to, sent)
+		return mail{}
+	}
+	sixDigits := regexp.MustCompile(`\n    (\d{6})\n`)
+	// signIn signs the browser in by mail and returns the answer.
+	signIn := func(address, invitation string) (int, string) {
+		t.Helper()
+		code, body := call("POST", app+"/api/v1/auth/email/start", "", `{"address":"`+address+`","invitation":"`+invitation+`"}`)
+		var started struct {
+			Attempt string `json:"attempt"`
+		}
+		if code != 200 || json.Unmarshal([]byte(body), &started) != nil {
+			t.Fatalf("start: %d %s", code, body)
+		}
+		var m mail
+		for range 50 {
+			if m = outbox(address, "Sign in to Permaily"); strings.Contains(m.Text, started.Attempt) {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		return call("POST", app+"/api/v1/auth/email/finish", "", `{"attempt":"`+started.Attempt+`","code":"`+sixDigits.FindStringSubmatch(m.Text)[1]+`"}`)
+	}
+
+	// Two invitations: each with an identifier that is not its code.
+	code, body := call("POST", api+"/v1/admin/invitations", admin, `{"count":2}`)
+	var made struct {
+		Invitations, IDs []string
+	}
+	if code != 200 || json.Unmarshal([]byte(body), &made) != nil || len(made.Invitations) != 2 || len(made.IDs) != 2 {
+		t.Fatalf("invitations: %d %s", code, body)
+	}
+	if code, body := call("GET", api+"/v1/admin/invitations", admin, ""); code != 200 || !strings.Contains(body, made.IDs[0]) || !strings.Contains(body, made.IDs[1]) || strings.Contains(body, made.Invitations[0]) {
+		t.Fatalf("the list of invitations: %d %s", code, body)
+	}
+	if code, _ := call("DELETE", api+"/v1/admin/invitations/"+made.IDs[1], admin, ""); code != 204 {
+		t.Fatalf("revoking an invitation: %d", code)
+	}
+	if code, body := call("POST", app+"/api/v1/auth/email/start", "", `{"address":"x@example.org","invitation":"`+made.Invitations[1]+`"}`); code != 400 || !strings.Contains(body, "invalid_invitation") {
+		t.Fatalf("a revoked invitation: %d %s", code, body)
+	}
+	if code, body := call("GET", api+"/v1/admin/invitations", "", ""); code != 401 || strings.Contains(body, "inv_") {
+		t.Fatalf("the list without the token: %d %s", code, body)
+	}
+
+	code, body = signIn("olga@example.org", made.Invitations[0])
+	var me struct {
+		Account struct{ ID string }
+	}
+	if code != 200 || json.Unmarshal([]byte(body), &me) != nil || me.Account.ID == "" {
+		t.Fatalf("signing up: %d %s", code, body)
+	}
+	var device string
+	for _, c := range jar.Cookies(mustURL(t, app)) {
+		if c.Name == "__Host-permaily-device" {
+			device = c.Value
+		}
+	}
+	if len(device) != 43 {
+		t.Fatalf("the browser holds no device cookie: %q", device)
+	}
+	one := api + "/v1/admin/accounts/" + me.Account.ID
+
+	// The operator finds the account by its address, and blocks it.
+	if code, body := call("GET", api+"/v1/admin/accounts?address=Olga%40example.org", admin, ""); code != 200 || !strings.Contains(body, me.Account.ID) || !strings.Contains(body, `"providers":[]`) {
+		t.Fatalf("finding the account: %d %s", code, body)
+	}
+	if code, body := call("POST", one+"/block", "", ""); code != 401 {
+		t.Fatalf("blocking without the token: %d %s", code, body)
+	}
+	if code, body := call("POST", one+"/block", admin, ""); code != 200 || !strings.Contains(body, `"blocked_at":"`) || !strings.Contains(body, `"sessions":0`) {
+		t.Fatalf("blocking: %d %s", code, body)
+	}
+	told := outbox("olga@example.org", "Your Permaily account was blocked")
+	if !strings.Contains(told.Text, "Permaily's operator blocked your Permaily account") || !strings.Contains(told.Text, "support@permaily.com") {
+		t.Fatalf("the notice: %s", told.Text)
+	}
+	// The session is nothing, and signing in is refused with the reason,
+	// once the code proved who it is.
+	if code, _ := call("GET", app+"/api/v1/me", "", ""); code != 401 {
+		t.Fatalf("me with the session of a blocked account: %d", code)
+	}
+	if code, body := signIn("olga@example.org", ""); code != 403 || !strings.Contains(body, `"account_blocked"`) || !strings.Contains(body, "this account is blocked; write to support@permaily.com") {
+		t.Fatalf("signing in to a blocked account: %d %s", code, body)
+	}
+	if code, _ := call("GET", app+"/api/v1/me", "", ""); code != 401 {
+		t.Fatalf("me after a refused sign-in: %d", code)
+	}
+	// Unblocked, the same browser signs in, and is not a new device.
+	if code, body := call("POST", one+"/unblock", admin, ""); code != 200 || strings.Contains(body, "blocked_at") {
+		t.Fatalf("unblocking: %d %s", code, body)
+	}
+	outbox("olga@example.org", "Your Permaily account was unblocked")
+	if code, body := signIn("olga@example.org", ""); code != 200 {
+		t.Fatalf("signing in after unblocking: %d %s", code, body)
+	}
+
+	// The contact address changes with a code sent to the new one.
+	code, body = call("POST", app+"/api/v1/account/address/start", "", `{"address":"olga.new@example.org"}`)
+	var started struct {
+		Attempt   string `json:"attempt"`
+		ExpiresIn int    `json:"expires_in"`
+	}
+	if code != 200 || json.Unmarshal([]byte(body), &started) != nil || started.Attempt == "" || started.ExpiresIn != 600 {
+		t.Fatalf("asking for a new address: %d %s", code, body)
+	}
+	proof := outbox("olga.new@example.org", "Confirm your new address for Permaily")
+	newCode := sixDigits.FindStringSubmatch(proof.Text)[1]
+	if strings.Contains(proof.Text, "://") {
+		t.Fatalf("the message that proves an address has a link: %s", proof.Text)
+	}
+	// The attempt signs nobody in.
+	if code, body := call("POST", app+"/api/v1/auth/email/finish", "", `{"attempt":"`+started.Attempt+`","code":"`+newCode+`"}`); code != 400 || !strings.Contains(body, "invalid_code") {
+		t.Fatalf("an address attempt as a sign-in: %d %s", code, body)
+	}
+	if code, body := call("POST", app+"/api/v1/account/address/finish", "", `{"attempt":"`+started.Attempt+`","code":"`+newCode+`"}`); code != 200 || !strings.Contains(body, `"address":"olga.new@example.org"`) {
+		t.Fatalf("changing the address: %d %s", code, body)
+	}
+	const changed = "The contact address of your Permaily account changed"
+	if old := outbox("olga@example.org", changed); !strings.Contains(old.Text, "This address is no longer the account's") || strings.Contains(old.Text, "olga.new") {
+		t.Fatalf("the notice to the old address: %s", old.Text)
+	}
+	outbox("olga.new@example.org", changed)
+	if code, body := call("GET", api+"/v1/admin/accounts?address=olga.new%40example.org", admin, ""); code != 200 || !strings.Contains(body, me.Account.ID) {
+		t.Fatalf("finding the account by its new address: %d %s", code, body)
+	}
+	if code, body := call("GET", api+"/v1/admin/accounts?address=olga%40example.org", admin, ""); code != 200 || !strings.Contains(body, `"accounts":[]`) {
+		t.Fatalf("finding the account by the address it left: %d %s", code, body)
+	}
+	// Another browser signs in: its person is told, with how and from what,
+	// named from fixed words and not as the browser said it.
+	other, _ := cookiejar.New(nil)
+	client.Jar = other
+	if code, body := signIn("olga.new@example.org", ""); code != 200 {
+		t.Fatalf("signing in from another browser: %d %s", code, body)
+	}
+	fresh := outbox("olga.new@example.org", "A new device signed in to your Permaily account")
+	if !strings.Contains(fresh.Text, "How: with a code or a link sent by email") || !strings.Contains(fresh.Text, "    Browser: Linux\n") || strings.Contains(fresh.Text, "E2E") {
+		t.Fatalf("the notice of a new device: %s", fresh.Text)
+	}
+	client.Jar = jar
+
+	// The operator asks to delete, the person sees who asked and cancels;
+	// the operator signs every device out.
+	if code, body := call("POST", one+"/delete", admin, ""); code != 200 || !strings.Contains(body, `"closing_by":"operator"`) {
+		t.Fatalf("the operator asks to delete: %d %s", code, body)
+	}
+	if code, body := call("GET", app+"/api/v1/me", "", ""); code != 200 || !strings.Contains(body, `"closing_by":"operator"`) || !strings.Contains(body, `"state":"closing"`) {
+		t.Fatalf("what the person sees: %d %s", code, body)
+	}
+	if code, body := call("POST", app+"/api/v1/account/delete/cancel", "", ""); code != 200 || !strings.Contains(body, `"state":"active"`) {
+		t.Fatalf("the person cancels: %d %s", code, body)
+	}
+	if code, body := call("POST", one+"/sessions/close", admin, ""); code != 200 || !strings.Contains(body, `"sessions":0`) {
+		t.Fatalf("closing the sessions: %d %s", code, body)
+	}
+	if code, _ := call("GET", app+"/api/v1/me", "", ""); code != 401 {
+		t.Fatalf("me after the operator closed the sessions: %d", code)
+	}
+	// Nothing on the operator's side changes an address or a way in.
+	for _, c := range [][2]string{{"PATCH", one}, {"POST", one + "/address"}, {"POST", one + "/passkey-only"}, {"DELETE", one + "/passkeys/x"}, {"POST", one + "/sign-in"}} {
+		if code, _ := call(c[0], c[1], admin, `{"address":"eve@example.org","on":false}`); code != 404 && code != 405 {
+			t.Fatalf("%s %s: %d", c[0], c[1], code)
+		}
+	}
+
+	// What the operator did is on /status, for anyone: kinds and counts.
+	code, body = call("GET", app+"/status", "", "")
+	var status struct {
+		Admin struct {
+			Since   time.Time
+			Actions map[string]int
+		}
+	}
+	if code != 200 || json.Unmarshal([]byte(body), &status) != nil || status.Admin.Since.IsZero() {
+		t.Fatalf("status: %d %s", code, body)
+	}
+	for kind, n := range map[string]int{
+		"block": 1, "unblock": 1, "delete": 1, "delete_cancel": 0, "sessions_close": 1, "invitations_made": 2, "invitation_revoked": 1,
+		// Dev mode sets the four applications as an operator would.
+		"provider_app_set": 4, "provider_app_removed": 0,
+	} {
+		if got, counted := status.Admin.Actions[kind]; !counted || got != n {
+			t.Errorf("status counts %d of %s, want %d", got, kind, n)
+		}
+	}
+	for _, secret := range []string{"olga", "example.org", me.Account.ID, "acc_", "inv_"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("the status holds %q: %s", secret, body)
+		}
+	}
+
+	// Logs leave the enclave: they say what kind of thing the operator did,
+	// and name no address, account, invitation, attempt, code or cookie.
+	out := logs.String()
+	for _, line := range []string{`"msg":"accounts: the operator acted","kind":"block"`, `"kind":"unblock"`, `"kind":"sessions_close"`, `"kind":"invitation_revoked"`, "accounts: contact address changed"} {
+		if !strings.Contains(out, line) {
+			t.Fatalf("the log does not record %s:\n%s", line, out)
+		}
+	}
+	for _, secret := range []string{"olga", "example.org", me.Account.ID, made.IDs[0], made.IDs[1], made.Invitations[0], made.Invitations[1], started.Attempt, newCode, device, admin, "E2E/1.0"} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("the log contains %q:\n%s", secret, out)
+		}
+	}
+}

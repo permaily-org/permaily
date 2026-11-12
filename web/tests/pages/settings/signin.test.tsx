@@ -791,6 +791,11 @@ describe('providers', () => {
     ],
     ['provider_failed', '', "Nothing was linked: that didn't work. Try again."],
     [
+      'account_blocked',
+      '&provider=google',
+      'Nothing was linked: that account is blocked. To ask about it, write to support@permaily.com.',
+    ],
+    [
       'provider_failed',
       '&provider=microsoft',
       "Nothing was linked: signing in with Microsoft didn't work. Try again.",

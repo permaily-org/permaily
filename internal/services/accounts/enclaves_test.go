@@ -57,6 +57,17 @@ type watched struct {
 	partition string
 	afterGet  func()
 	onDelete  func()
+	// beforePut runs before the enclave writes an entry of the partition,
+	// once: after everything it read to decide what to write.
+	beforePut func()
+}
+
+func (w *watched) PutEntry(ctx context.Context, e *store.Entry) error {
+	if f := w.beforePut; f != nil && e.Partition == w.partition {
+		w.beforePut = nil
+		f()
+	}
+	return w.Entries.PutEntry(ctx, e)
 }
 
 func (w *watched) GetEntry(ctx context.Context, partition, key string) (*store.Entry, error) {
@@ -220,7 +231,7 @@ func TestTwoEnclavesChangeOneAccount(t *testing.T) {
 		if !doc.PasskeyOnly || len(doc.Passkeys) != 1 || len(doc.RecoveryCodes) != domain.RecoveryCodes {
 			t.Fatalf("passkey only %v, %d passkeys, %d codes", doc.PasskeyOnly, len(doc.Passkeys), len(doc.RecoveryCodes))
 		}
-		if _, _, err := one.svc.Recover(ctx, contracts.Recovery{Address: "ana@example.org", Code: codes[0]}, ""); err != nil {
+		if _, _, err := one.svc.Recover(ctx, contracts.Recovery{Address: "ana@example.org", Code: codes[0]}, Browser{UserAgent: ""}); err != nil {
 			t.Fatalf("a code the other enclave showed: %v", err)
 		}
 	})
@@ -231,11 +242,11 @@ func TestTwoEnclavesChangeOneAccount(t *testing.T) {
 		codes := w.passkeyOnly(who)
 		in := contracts.Recovery{Address: "ana@example.org", Code: codes[0]}
 		one.records.meanwhile = func() {
-			if _, _, err := two.svc.Recover(ctx, in, ""); err != nil {
+			if _, _, err := two.svc.Recover(ctx, in, Browser{UserAgent: ""}); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if _, _, err := one.svc.Recover(ctx, in, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+		if _, _, err := one.svc.Recover(ctx, in, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 			t.Fatalf("a code that was used a moment before: %v", err)
 		}
 		if doc := w.doc(who.AccountID); len(doc.RecoveryCodes) != domain.RecoveryCodes-1 {
@@ -398,7 +409,7 @@ func TestAChangeDoesNotUndoARemoval(t *testing.T) {
 					_, err := svc.CancelDeletion(ctx, who)
 					return err
 				}
-				_, _, err := svc.Recover(ctx, contracts.Recovery{Address: "ana@example.org", Code: codes[0]}, "")
+				_, _, err := svc.Recover(ctx, contracts.Recovery{Address: "ana@example.org", Code: codes[0]}, Browser{UserAgent: ""})
 				return err
 			}
 			one, two := w.enclave(), w.enclave()
@@ -450,11 +461,11 @@ func TestTwoEnclavesSignOneAddressUp(t *testing.T) {
 	// The first has found no account and is about to write its record.
 	one.records.meanwhile = func() {
 		var err error
-		if winner, _, err = two.svc.FinishEmail(ctx, second, ""); err != nil {
+		if winner, _, err = two.svc.FinishEmail(ctx, second, Browser{UserAgent: ""}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	loser, _, err := one.svc.FinishEmail(ctx, first, "")
+	loser, _, err := one.svc.FinishEmail(ctx, first, Browser{UserAgent: ""})
 	if err != nil || winner == nil || loser.Account.ID != winner.Account.ID {
 		t.Fatalf("the sign-up that ended second: %+v, the first %+v, %v", loser, winner, err)
 	}
@@ -536,7 +547,7 @@ func TestARemovalLeavesAnotherAccountsPointer(t *testing.T) {
 		if err := two.svc.RemoveDue(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if again, _, err = two.svc.FinishEmail(ctx, two.start("ana@example.org", w.invite()), ""); err != nil {
+		if again, _, err = two.svc.FinishEmail(ctx, two.start("ana@example.org", w.invite()), Browser{UserAgent: ""}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -667,7 +678,7 @@ func TestChangeFailures(t *testing.T) {
 		// And when a new account's record is signed: nothing of it is left.
 		attempt, mail := w.start("eve@example.org", w.invite())
 		f.skip["derive"], f.fail["derive"] = 1, down // the entry in the list of accounts
-		if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, ""); !errors.Is(err, down) {
+		if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, down) {
 			t.Fatalf("got %v", err)
 		}
 		delete(f.fail, "derive")

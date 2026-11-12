@@ -53,3 +53,16 @@ export function TextAction({
 export function TextLink({ tone, size, className, ...props }: LinkProps & ActionStyle) {
   return <Link {...props} className={actionClass(tone, size, className)} />
 }
+
+/**
+ * A text action that leaves the router: for a `mailto:` address. It opens the person's own mail app, and the
+ * app itself sends nothing.
+ */
+export function TextAnchor({
+  tone,
+  size,
+  className,
+  ...props
+}: AnchorHTMLAttributes<HTMLAnchorElement> & ActionStyle) {
+  return <a {...props} className={actionClass(tone, size, className)} />
+}

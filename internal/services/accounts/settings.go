@@ -14,8 +14,9 @@ import (
 
 // ---- the name ----
 
-// UpdateAccount changes what a person may change of their account: its name.
-// The contact address is not one of those yet (ADR 0017).
+// UpdateAccount changes what a person may change of their account here: its
+// name. The contact address changes another way, with a code sent to the new
+// one (address.go).
 func (s *Service) UpdateAccount(ctx context.Context, who *Authenticated, in contracts.AccountUpdate) (*contracts.Account, error) {
 	name := ""
 	if in.Name != nil {
@@ -82,34 +83,55 @@ func closingKey(doc *accountDoc) string { return timedKey(doc.ClosesAt, doc.ID) 
 // StartDeletion is the person asking to delete their account. It is closing
 // from now and removed in seven days; until then they can sign in and cancel,
 // and nothing else of it changes. Every other device is signed out. Asking
-// again changes nothing: the day stays.
+// again changes nothing: the day stays, and so does who asked first.
 func (s *Service) StartDeletion(ctx context.Context, who *Authenticated) (*contracts.Account, error) {
-	var view contracts.Account
-	// The day is set once: the change below may be tried more than once.
+	var same accountDoc
+	edit := s.closing(ctx, contracts.ClosingByPerson)
+	doc, err := s.rewrite(ctx, who.AccountID, func(doc *accountDoc) error {
+		if doc.blocked() {
+			return contracts.ErrUnauthorized // its session stands for nothing
+		}
+		same = *doc
+		return edit(doc)
+	})
+	changed := err == nil
+	if errors.Is(err, errUnchanged) {
+		doc, err = &same, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if changed {
+		s.cfg.Log.Info("accounts: account closing")
+	}
+	// Also when it was closing already: an earlier try may have failed here.
+	err = s.closeOthers(ctx, who)
+	if changed {
+		s.notify(ctx, noticeDeletionAsked, deletionAskedMail(doc, s.rp.ID, s.now()))
+	}
+	if err != nil {
+		return nil, err
+	}
+	view := doc.view()
+	return &view, nil
+}
+
+// closing returns the edit that makes an account closing, asked for by its
+// person or by the operator: removed in seven days, counted from now. One
+// that is closing already stays as it is (errUnchanged).
+func (s *Service) closing(ctx context.Context, by string) func(*accountDoc) error {
+	// The day is set once: the edit may run more than once.
 	closes := s.now().Add(domain.AccountClosing).Truncate(time.Second)
-	_, err := s.rewrite(ctx, who.AccountID, func(doc *accountDoc) error {
+	return func(doc *accountDoc) error {
 		if doc.State == contracts.AccountClosing {
-			view = doc.view()
 			return errUnchanged
 		}
-		doc.State, doc.ClosesAt = contracts.AccountClosing, closes
-		view = doc.view()
+		doc.State, doc.ClosesAt, doc.ClosingBy = contracts.AccountClosing, closes, by
 		// The entry goes in before the record: one the record does not bear
 		// out is dropped when it is found, where a closing account without
 		// one would be found only when someone uses it.
 		return s.listClosing(ctx, doc)
-	})
-	if err != nil && !errors.Is(err, errUnchanged) {
-		return nil, err
 	}
-	if err == nil {
-		s.cfg.Log.Info("accounts: account closing")
-	}
-	// Also when it was closing already: an earlier try may have failed here.
-	if err := s.closeOthers(ctx, who); err != nil {
-		return nil, err
-	}
-	return &view, nil
 }
 
 // listClosing writes the entry of an account in the list of closing accounts.
@@ -140,29 +162,61 @@ func (s *Service) listClosing(ctx context.Context, doc *accountDoc) error {
 
 // closeOthers signs out every device of the account but the one that asks.
 func (s *Service) closeOthers(ctx context.Context, who *Authenticated) error {
-	entries, err := s.cfg.Entries.ListEntries(ctx, accountPartition(who.AccountID), sessionPrefix, "", 2*maxSessions)
-	if err != nil {
-		return err
-	}
-	for i := range entries {
-		if entries[i].Key == sessionPrefix+who.Session.ID {
-			continue
-		}
-		if err := s.forget(ctx, entries[i].Partition, entries[i].Key); err != nil {
+	return s.closeSessions(ctx, who.AccountID, who.Session.ID)
+}
+
+// maxSessionPages bounds one pass over the sessions of an account, which
+// keeps maxSessions of them.
+const maxSessionPages = 10
+
+// closeSessions signs out every device of an account but the one whose
+// session is keep ("" for none).
+func (s *Service) closeSessions(ctx context.Context, accountID, keep string) error {
+	after := ""
+	for range maxSessionPages {
+		entries, err := s.cfg.Entries.ListEntries(ctx, accountPartition(accountID), sessionPrefix, after, 2*maxSessions)
+		if err != nil {
 			return err
+		}
+		for i := range entries {
+			if after = entries[i].Key; after == sessionPrefix+keep {
+				continue
+			}
+			if err := s.forget(ctx, entries[i].Partition, entries[i].Key); err != nil {
+				return err
+			}
+		}
+		if len(entries) < 2*maxSessions {
+			break
 		}
 	}
 	return nil
 }
 
 // CancelDeletion keeps an account that was closing: it is active again. One
-// that is not closing stays as it is.
+// that is not closing stays as it is. The person can cancel a deletion the
+// operator asked for too, unless the account is blocked: then they are not
+// signed in at all.
 func (s *Service) CancelDeletion(ctx context.Context, who *Authenticated) (*contracts.Account, error) {
-	var view contracts.Account
+	doc, _, err := s.keep(ctx, who.AccountID, contracts.ClosingByPerson)
+	if err != nil {
+		return nil, err
+	}
+	view := doc.view()
+	return &view, nil
+}
+
+// keep makes a closing account active again, for its person or for the
+// operator (by), and reports whether it was closing.
+func (s *Service) keep(ctx context.Context, id, by string) (*accountDoc, bool, error) {
+	var same accountDoc
 	var entry *store.Entry
-	_, err := s.rewrite(ctx, who.AccountID, func(doc *accountDoc) error {
+	doc, err := s.rewrite(ctx, id, func(doc *accountDoc) error {
+		if by == contracts.ClosingByPerson && doc.blocked() {
+			return contracts.ErrUnauthorized // its session stands for nothing
+		}
 		if doc.State != contracts.AccountClosing {
-			view = doc.view()
+			same = *doc
 			return errUnchanged
 		}
 		// The entry is read before the record says the account is kept, and
@@ -175,15 +229,14 @@ func (s *Service) CancelDeletion(ctx context.Context, who *Authenticated) (*cont
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
-		doc.State, doc.ClosesAt = contracts.AccountActive, time.Time{}
-		view = doc.view()
+		doc.State, doc.ClosesAt, doc.ClosingBy = contracts.AccountActive, time.Time{}, ""
 		return nil
 	})
 	if errors.Is(err, errUnchanged) {
-		return &view, nil
+		return &same, false, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// The record says it is kept, so the entry is nothing now. If it stays,
 	// it is dropped when the enclave next goes through the list.
@@ -193,7 +246,8 @@ func (s *Service) CancelDeletion(ctx context.Context, who *Authenticated) (*cont
 		}
 	}
 	s.cfg.Log.Info("accounts: account kept")
-	return &view, nil
+	s.notify(ctx, noticeDeletionCancelled, deletionCancelledMail(doc.Address, s.rp.ID, s.now(), by))
+	return doc, true, nil
 }
 
 // ---- removing an account ----
@@ -232,6 +286,13 @@ func (s *Service) removeLocked(ctx context.Context, doc *accountDoc) error {
 	// from the provider accounts go the same way.
 	if err := s.unpoint(ctx, key, loginPartition(doc.Address), doc.ID); err != nil {
 		return err
+	}
+	// And the one from an address it was moving to, if a change of address
+	// stopped halfway (address.go).
+	if doc.MovingTo != "" {
+		if err := s.unpoint(ctx, key, loginPartition(doc.MovingTo), doc.ID); err != nil {
+			return err
+		}
 	}
 	for _, p := range doc.Providers {
 		if err := s.unpoint(ctx, key, providerPartition(p.Provider, p.Subject), doc.ID); err != nil {
@@ -379,10 +440,17 @@ func (s *Service) record(ctx context.Context, doc *accountDoc) (*contracts.Accou
 	if err != nil {
 		return nil, err
 	}
+	// Which providers, and never which account at each: the subject stays in
+	// the record.
+	providers := []string{}
+	for _, p := range doc.Providers {
+		providers = append(providers, string(p.Provider))
+	}
 	return &contracts.AccountRecord{
 		ID: doc.ID, State: doc.State, Address: doc.Address, Name: doc.Name, Language: doc.Language,
 		CreatedAt: doc.CreatedAt, AddressVerifiedAt: doc.AddressVerifiedAt, ClosesAt: doc.ClosesAt,
-		Passkeys: len(doc.Passkeys), PasskeyOnly: doc.PasskeyOnly, Sessions: len(sessions),
+		ClosingBy: doc.closingBy(), BlockedAt: doc.BlockedAt,
+		Passkeys: len(doc.Passkeys), PasskeyOnly: doc.PasskeyOnly, Providers: providers, Sessions: len(sessions),
 	}, nil
 }
 

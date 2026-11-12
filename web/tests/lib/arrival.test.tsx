@@ -95,6 +95,7 @@ describe('how a trip to a provider ended', () => {
     'provider_in_use',
     'provider_linked',
     'account_closing',
+    'account_blocked',
   ] as const)('reads the reason %s on both screens', async (reason) => {
     let arrival = await arrive(`/sign-in#provider_error=${reason}`)
     expect(current()).toBe('/sign-in')
@@ -204,6 +205,28 @@ describe('how a trip to a provider ended', () => {
     act(() => arrival.providerEnded('provider_failed'))
     act(() => arrival.dropProviderArrival())
     expect(seen.result.current).toBeNull()
+    seen.unmount()
+  })
+
+  it('is said the same for a sign-in that ended at a blocked account without a provider', async () => {
+    const arrival = await arrive('/sign-in')
+    expect(provider(arrival)).toBeNull()
+    const seen = renderHook(() => arrival.useProviderArrival())
+    act(() => arrival.signInBlocked())
+    expect(seen.result.current).toEqual({
+      screen: 'sign-in',
+      kind: 'failed',
+      reason: 'account_blocked',
+    })
+    // Said again, it is a new answer: a screen that shows it follows, and puts focus where it belongs.
+    const first = seen.result.current
+    act(() => arrival.signInBlocked())
+    expect(seen.result.current).toEqual(first)
+    expect(seen.result.current).not.toBe(first)
+    // Nothing of it is kept anywhere.
+    expect(current()).toBe('/sign-in')
+    expect({ ...sessionStorage }).toEqual({})
+    expect({ ...localStorage }).toEqual({})
     seen.unmount()
   })
 

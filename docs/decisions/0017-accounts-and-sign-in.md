@@ -1,6 +1,6 @@
 # 0017 Accounts, sign-in and how account data is kept
 
-Status: Accepted. Sign-up by invitation, sign-in by email, sessions, outgoing mail, passkeys, "passkey only" and recovery codes are built (`internal/services/accounts`, `internal/sesmail`, `internal/webauthn`). Settings, deleting an account, the operator's tool and signing in with Google, GitHub, Meta and Microsoft too; the providers have not been tried against the real ones yet, which needs an application registered at each.
+Status: Accepted. Sign-up by invitation, sign-in by email, sessions, outgoing mail, passkeys, "passkey only" and recovery codes are built (`internal/services/accounts`, `internal/sesmail`, `internal/webauthn`). Settings, deleting an account, the operator's tool and signing in with Google, GitHub, Meta and Microsoft too; the providers have not been tried against the real ones yet, which needs an application registered at each. What the operator can do to an account, changing the contact address and the notices by mail are built too (2026-11-12), and not released yet.
 Date: 2026-11-11 (decided on 2026-11-09)
 
 ## Context
@@ -17,7 +17,7 @@ F1 has one test mailbox behind a token. F2 needs people: accounts, ways to sign 
 
 **Sessions.** Seven days without use, thirty days at most, listed and closed per device. Cookies carry the `__Host-` prefix, so the public site at the apex cannot read or overwrite them.
 
-**No second check for sensitive actions.** Changing how one signs in, approving a connection or deleting the account asks for nothing beyond the session. Accepted risk: a stolen session can do all of it until it ends.
+**No second check for sensitive actions.** Changing how one signs in, changing the contact address, approving a connection or deleting the account asks for nothing beyond the session. Accepted risk: a stolen session can do all of it until it ends. The person is told by mail of each (see "Notices by mail").
 
 **Deleting an account.** Its connections are revoked at once and the account is locked; after seven days in which it can be cancelled, its keys are destroyed.
 
@@ -33,6 +33,8 @@ F1 has one test mailbox behind a token. F2 needs people: accounts, ways to sign 
 The public promise becomes: we see your account data, never your mail.
 
 **Changes to account data go through the enclave** (the operator's tool), never by hand in the table: what is signed would stop verifying.
+
+**What the operator may do to an account** (decided by the maintainer on 2026-11-11). Operators manage accounts through the enclave, almost everything a platform's admins manage: block and unblock one, ask to delete one and cancel that, sign its devices out, find one by its address, list and revoke invitations. The limit stays: nothing that lets the operator enter an account or read its mail. So the operator cannot change a contact address, add or remove a way to sign in, turn "passkey only" off, or sign in as someone. The consequence is accepted: someone who loses their mail, their passkeys and their recovery codes cannot be given the account back by support.
 
 **Outgoing mail** (sign-in links and codes, verification, notices) goes through Amazon SES from a subdomain of its own, with the role the enclave already has. Sign-in codes pass through AWS, which is trusted already. By email the user is told only of security and access: a sign-in from a new device, a connection approved, a connection about to end, a change in how the account is signed into. Everything else is shown in the app.
 
@@ -66,7 +68,7 @@ Decided while building the first piece, each to keep whoever runs the storage ou
 - **A recovery code** is sixteen characters of the invitation alphabet, shown in four groups; its hash is taken with the account's identifier. Wrong ones are counted only for an address whose account has "passkey only" on, so made-up addresses do not fill the memory, and past the limit the right code is refused too with the same error, never with one that would say such an account exists. An address without an account costs the storage the same reads as one with.
 - **When too many ceremonies wait** (ten thousand), the oldest is dropped and the new one is kept: anyone can start a sign-in, so refusing new ones would let anyone keep everybody out.
 - **Changes to an account's record never undo one another**, in one enclave or in two. Each is a read, an edit and a write, and the write is refused when anything was committed for the record since the read (`store.Anchored.PutRecordAt`, ADR 0016). Then the record is read again and the edit runs again on what is there, four times at most; after that the change fails with an error and nothing is written. A change that raced with the account's removal is refused the same way, so the account does not come back. Inside one enclave the changes still go one at a time (`change`), so that its own requests do not make each other start over. What else two enclaves at once would break is listed below.
-- **Not done on purpose:** the synced flag of a passkey is not read again at each sign-in, turning "passkey only" on closes no session, a recovery leaves the mode on, and no message is sent yet when the ways to sign in change (the notices by mail come with step 9 of the plan).
+- **Not done on purpose:** the synced flag of a passkey is not read again at each sign-in, turning "passkey only" on closes no session, and a recovery leaves the mode on.
 
 The web app's API for this, all under `/api/v1/`, JSON, binary values as base64url without padding in the shapes of `PublicKeyCredential.toJSON()`:
 
@@ -85,14 +87,14 @@ The web app's API for this, all under `/api/v1/`, JSON, binary values as base64u
 
 ### Settings, deleting an account and the operator's tool
 
-- **The name** is changed by the person (`PATCH account {name}`), one printable line of at most eighty characters. The contact address cannot be changed yet: it is how the account is found and recovered, and changing it needs the new one verified first.
+- **The name** is changed by the person (`PATCH account {name}`), one printable line of at most eighty characters. The contact address is changed another way, with a code sent to the new one (see "Changing the contact address").
 - **Deleting an account takes seven days.** Asking for it (`POST account/delete`) sets the account's state to `closing` with the day it ends, in the anchored record, and closes every other session. Until that day the person can still sign in, sees only that the account is closing, and can cancel (`POST account/delete/cancel`); every other change is refused (`account_closing`). Connections, when they exist, are revoked the moment it is asked.
 - **What deleting removes.** When the day comes the enclave removes the sessions, the pointer from the address, the entry in the list of accounts and the record itself, and commits that the record is gone, so an earlier copy put back in the table does not bring the account back, and the address can sign up again with an invitation. An account that is due is also removed the moment anyone tries to use it, so taking its entry out of the list of what is closing does not keep it alive.
 - **Only the newest version of an account's record is kept.** `store.Anchored` writes each version under its own name; for accounts the one before is deleted once the new one is committed, so a name or a passkey that was removed does not stay in the table. A version that failed to be deleted is harmless (it is not the committed one) and is removed with the account.
 - **Lists are entries that prove nothing.** The list of accounts (for the operator's tool) and the list of accounts that are closing (for the enclave to find the ones that are due) are entries written next to the record. What is shown or acted on is always the signed, anchored record they point to: an entry written by hand lists nothing and deletes nothing.
 - **The order of a removal**: the pointer from the address (only if it still leads to this account), the entry in the list of accounts, the sessions, the record (the commit that it is gone, then every stored version), and last the entry in the list of what is closing. The record goes after everything that is found through it, and while it stands it says the account is due, so nothing uses it and every use or pass of the loop starts again from the first step. A failure in the middle leaves an account nobody can use, never one half usable.
 - **Details.** The day is seven times twenty-four hours from the request, to the second. Asking again keeps the day. A recovery code works while closing: it may be the only way in to cancel. An empty name is allowed. The loop runs every ten minutes. Every request with a session reads the account's record, so a session of an account that is due, or one put back after the account was removed, does nothing; it costs one anchored read a request, which a short memory of records would save if it ever matters.
-- **The operator's tool only looks** (`GET /v1/admin/accounts`, `GET /v1/admin/accounts/{id}`, with the admin token; `scripts/accounts.sh`): the identifier, the address, the name, the state, dates, how many passkeys and sessions, whether "passkey only" is on. It is what the enclave vouches for, where the table is only what is stored. It changes nothing: a person deletes their own account.
+- **What the operator's tool shows** (`GET /v1/admin/accounts`, `GET /v1/admin/accounts/{id}`, with the admin token; `scripts/accounts.sh`): the identifier, the address, the name, the state, dates, how many passkeys and sessions, whether "passkey only" is on, which providers are linked (never the subject at each), whether it is blocked and who asked to delete it. It is what the enclave vouches for, where the table is only what is stored. What it changes is in "What the operator can do to an account".
 
 ### Google, GitHub, Meta and Microsoft
 
@@ -112,7 +114,56 @@ The web app's API for this, all under `/api/v1/`, JSON, binary values as base64u
 
 Accepted: sessions are signed and not anchored. A session that was closed and is put back in the table by whoever runs the storage works again for whoever still holds its cookie, until its thirty days end. Anchoring each session would write a locked commit for every sign-in.
 
-## What it rests on, and what is left
+### What the operator can do to an account
+
+Built on 2026-11-12, after the decision above. All with the admin token, on the API host, each `POST` without a body and answering the account's record after it (`AccountRecord`).
+
+| Request | Does |
+|---|---|
+| `GET /v1/admin/accounts?address=<address>` | The account of exactly that address, read as a sign-in reads it, as a list of none or one |
+| `POST /v1/admin/accounts/{id}/block`, `/unblock` | Blocks the account, or lets its person in again |
+| `POST /v1/admin/accounts/{id}/delete`, `/delete/cancel` | Asks to delete the account, or cancels a deletion |
+| `POST /v1/admin/accounts/{id}/sessions/close` | Signs every device out |
+| `GET /v1/admin/invitations` | The invitations not used yet: `{invitations: [{id, created_at, expires_at}]}` |
+| `DELETE /v1/admin/invitations/{id}` | Revokes one (204) |
+
+- **The limit is in the code twice.** There is no route that changes an address or a way to sign in, turns "passkey only" off or signs someone in. And the handlers of the operator's routes are given a service with eleven methods and nothing else (`httpapi.OperatorService`), each taking only an identifier, an address to look up, a place in the list or a count: a handler could not do it if someone added the route. A test names the eleven; adding one there is adding a way into every account.
+- **A blocked account.** Its record says so with the time (`blocked_at`), every session of it is closed, and nobody signs in to it by any way: mail, passkey, provider, the code that confirms an address for a provider, recovery code. A session that is still in the table, or is put back, stands for nothing: every request reads the record. Blocking is apart from the state: a closing account can be blocked and a blocked one can be closing, and it is removed on its day all the same.
+- **What a blocked person is told.** A sign-in that proved who it is and ends at a blocked account answers `account_blocked` (403, "this account is blocked; write to support@permaily.com") and signs nobody in; from the provider's callback it is the reason `account_blocked` in the fragment. Never before the proof: starting a sign-in by mail for a blocked address sends the message as for any other, a wrong code is a wrong code, and a passkey that is not the account's is a wrong passkey. So nobody learns from the outside that an address has an account, or that it is blocked. A right recovery code is told and not used up. Nothing is linked to a blocked account.
+- **Deleting, asked by the operator**, is the same seven days and the same removal as when the person asks. The record says who asked (`closing_by`: `person` or `operator`), and the person sees it. Asking for an account that is closing already keeps its day and who asked first. The operator's request signs no device out: the person sees the account closing and can cancel it, also when the operator asked. A blocked person cannot, because they are not signed in. The operator can cancel a deletion too, whoever asked for it: support does it for someone who wrote in time.
+- **Finding an account by its address** reads the pointer and the signed record, and only looks: an account that is due is shown and not removed. An address is normalised as a sign-in normalises it, and it is exactly that address or nothing.
+- **Invitations are listed under identifiers of their own.** An identifier is random (`inv_…`) and is stored next to the invitation and in an entry of a list; the code is in neither, and only its hash names where the invitation is kept. The list proves nothing: what is shown is the invitation an entry leads to, if it is there, verifies and has not ended. A used invitation was deleted when it was used, so it is not listed; neither is one that was revoked, which is deleted the same way. A sign-up that was started with an invitation that is then revoked ends with `invalid_invitation`. The invitations made before this (v0.10.0 and earlier) have no identifier: they are not listed and cannot be revoked, and end by themselves in thirty days. The list shows a thousand at most and says when there are more.
+- **What the operator does is visible.** The enclave counts each kind of action it took for the operator (block, unblock, delete, cancel a deletion, sign devices out, invitations made, an invitation revoked, a provider's application set or removed) and serves the counts on `/status` under `admin`, with the time it started counting. Kinds and counts only: never an account, an address or an identifier. `permaily-verify` prints it and fails on nothing. Each action is logged too, by its kind alone. An action is counted when the enclave did it, also when it changed nothing (blocking an account that is blocked); what was refused is not counted. Invitations are counted one by one.
+- **Not done on purpose.** The operator cannot change a name, a language or a session one by one, and is not told who a person is beyond what the record says. Closing an account's sessions sends its person no message. The operator's token has no levels: whoever holds it can do all of this.
+
+### Changing the contact address
+
+| Request | Needs | Answers |
+|---|---|---|
+| `POST account/address/start` `{address}` | a session | `{attempt, expires_in}`, as starting a sign-in by mail does |
+| `POST account/address/finish` `{attempt, code}` | a session | the account, with its new address |
+
+- **A code is sent to the new address, and proves it.** The message carries six digits and no link: the code is typed where the change was asked. It is the machinery of signing in by mail: the attempt lives in the enclave's memory for ten minutes, takes five tries and works once.
+- **The attempt belongs to the account that started it**, and to the enclave whose memory holds it. It signs nobody in, confirms no address for a provider and changes no other account's address; and a sign-in that was started changes no address. Tried as something else it is no attempt at all, and stays as it was.
+- **Starting answers the same for every address**, and the message is sent whether the address is another account's or nobody's. That it is another account's is said only when the change ends (`address_in_use`), to whoever typed the code that was sent there. The account's own address is refused at once (`invalid_address`): it tells the asker nothing.
+- **Limits.** An account asks five times an hour (`too_many_requests`). An address is sent five messages an hour, counted together with sign-in messages, and one over that is dropped without a word. An address that took ten wrong codes today is sent no code until a day passes: here there is no link to fall back on, and a six-digit code must not be guessed without limit by someone who wants an address that is not theirs.
+- **How the account moves.** The pointer from an address is one entry, written only where none is or in the place of the one that was read: it is what keeps two accounts from having one address. The move takes four steps. (1) The record says the account is moving to the new address (`moving_to`), with a name for this move. (2) The pointer from the new address is written, to lead to the account. (3) The record says the new address is the account's, with `address_verified_at` now. (4) The old pointer is deleted, as it was read. The record names the address before the pointer is written, as a sign-up writes its record first, because a pointer that leads to a record which does not bear it out is taken for one that leads nowhere and is replaced by the next sign-up. The pointer is written again even when it leads to the account already, so that whoever read it a moment earlier as leading nowhere does not write over it.
+- **A failure in between** leaves an account that both addresses find (after step 2), or one that only the old address finds: never one that cannot be found, and never an address that finds two accounts. A move that stops is taken back when it can be; when it cannot, the account stays found by both addresses, both of which its person proved, until the change is asked again, which ends it. The entry in the list of accounts does not change: it is kept by the time the account was made.
+- **What else changes.** Every device stays signed in. Mail signs in at the new address and no longer at the old one, which is free: with an invitation it makes another account. Both addresses are told by mail.
+- **No extra proof is asked beyond the session**, as for adding a passkey. Accepted for now: whoever holds a session for a few minutes, and reads the mail of an address of their own, takes the account's address, and with it sign-in by mail. The old address is told, and can only write to support, who can block the account and cannot give it back. What would close it: asking again for a passkey or a code at the old address before a sensitive change, for all of them at once (the address, the ways to sign in, "passkey only", deleting).
+
+### Notices by mail
+
+"By email the user is told only of security and access." Built here are the notices that need only accounts; the ones about connections come with them.
+
+- **Which.** A sign-in from a device that had not signed in to the account before, by whatever way. A change in how the account is signed into: a passkey added or removed, a provider linked or unlinked, "passkey only" turned on or off, recovery codes made anew, a recovery code used. The contact address changed, to the old address and to the new one. Deleting asked or cancelled, by the person or by the operator. The account blocked or unblocked by the operator. They cannot be turned off.
+- **What one holds.** Plain text, in English, from the same sender and through the same `Mailer` as a sign-in message, so the watch of ADR 0021 applies and none leaves while SES would keep a copy. The subject is fixed words. There is no code, no link, no token and no identifier in it, and nothing a person typed: not the name of a passkey, not an address. A notice names the app's host (`app.permaily.com`) and `support@permaily.com`, and says when, and what to do if it was not them. The notice to the old address does not name the new one: whoever reads the old one's mail now is not told where the person went.
+- **What the browser said of itself** is never repeated. Whoever signs in chooses those words, and a sentence with no link in it can still pass for a message from Permaily. The notice of a new device names the browser from fixed words instead, as the list of sessions does: "Firefox on Mac", the browser alone, the system alone, or "not recognised". The names and the order they are tried in are the same in `domain.DeviceName` and in the web app's `describeDevice`, and a test compares them.
+- **A device is known by a cookie of its own**: `__Host-permaily-device`, 32 random bytes, `HttpOnly`, `Secure`, `SameSite=Lax` (it has to come along when a provider sends the browser back), kept a year and set again at each sign-in. It is set when a sign-in ends, stands for nothing and is never logged. The account keeps which devices signed in to it as entries next to its sessions, each named by a hash of the cookie's value made with the account's identifier, signed where it is stored: fifty at most, each for a year from its last sign-in. A browser without the cookie is a new device every time.
+- **The sign-in that makes the account is not a new device**, and a provider that is linked by that same sign-in is not told as a change.
+- **Whoever writes to the table can only cause one notice more or one less**: more by deleting a device's entry, less by putting back one that was dropped. An entry is no session and no way into anything.
+- **A notice never fails what caused it.** It is sent in line, after the change is stored, and holds the answer for five seconds at most; then the sending is given up. One that could not be sent is logged by its kind alone. Thirty-two are sent at a time and one more is dropped, logged as that. Dev mode keeps them in `/dev/outbox` with the other mail.
+- **Details.** A recovery code used from a new device sends two messages, one for each. Asking to delete an account that is closing, or blocking one that is blocked, sends nothing again. A message from Permaily proves nothing by itself (docs/threat-model.md): a notice tells, and the app shows.
 
 ### Two enclaves at once
 
@@ -127,22 +178,31 @@ What holds:
 - **Removing an account** can be done by both at once: every step can be done twice. The pointer from the address is deleted only as it was read, so not the pointer of an account the address made meanwhile.
 - **Deleting asked again in the second it was cancelled** leaves the account in the list of closing accounts: the entry is written again, and the cancel deletes only the entry it read.
 - **Devices signed in at the same time** can leave an account with a few more sessions than it keeps; the next sign-in brings it back.
+- **A change of the contact address**: no two accounts end with one address and none ends where it cannot be found, whatever the order two enclaves do it in, with each other and with a sign-up of the same address (see "Changing the contact address").
+- **Blocking**: every request reads the account's record, so a session made through one enclave in the moment another blocks the account stands for nothing.
 
 What does not:
 
-- **A sign-in that was started is in one enclave's memory**: by mail (the code and the link), a passkey ceremony, a trip to a provider, an address waiting to be confirmed. Ended in the other enclave it fails as a wrong code or a wrong passkey, and the person starts again. Nothing sends the two requests to the same enclave.
-- **Limits are counted by each enclave**, so each is as many times higher as there are enclaves: sign-in messages an hour for an address and for an invitation, wrong codes a day for an address, wrong recovery codes an hour. The five tries of one code are not: they belong to one sign-in.
+- **A sign-in that was started is in one enclave's memory**: by mail (the code and the link), a passkey ceremony, a trip to a provider, an address waiting to be confirmed, a new contact address waiting for its code. Ended in the other enclave it fails as a wrong code or a wrong passkey, and the person starts again. Nothing sends the two requests to the same enclave.
+- **Limits are counted by each enclave**, so each is as many times higher as there are enclaves: sign-in messages an hour for an address and for an invitation, requests for a new address an hour for an account, wrong codes a day for an address, wrong recovery codes an hour. The five tries of one code are not: they belong to one sign-in.
 - **The providers' applications** are read once into memory and written whole (`changeApps`). A secret given through one enclave is not seen by the other until it restarts, and what the other then writes drops it.
 - **One provider account linked to two accounts in the same moment**, through two enclaves, can end listed by both records, with its pointer leading to one. It signs in to that one; the other counts a way in that does not work.
 - **A removal wins over a cancel that lands while it runs.** An enclave that read the account as due removes it; a cancel written in that moment through another enclave, whose clock is a little behind, was answered as kept. One enclave decides this under its lock.
 - **Signing the other devices out when deleting is asked** misses a device that is signing in just then, in one enclave as in two. That session sees only that the account is closing.
 - **The TLS identity** (ADR 0016) is stored with a plain write. Two enclaves hold the same key and each asks the CA for its own certificate; the CA's check reaches whichever enclave the connection lands on, so it can fail, and the certificate saved last is the one a restart finds.
 - **The test mailbox** is made, and its state written, with a plain write. Two enclaves that start together can each make it with a key of its own; the later one stays, and mail sealed under the other cannot be opened.
+- **What the operator did is counted by the enclave that did it**: `admin` on `/status` is one enclave's count, from when it started.
+- **Two sign-ins of one new device at once** send two notices, and one account changing to two addresses at once ends at one of them and tells the other request to ask again.
 - **What `/status` says is one enclave's**: the history of the mail watch (ADR 0021) and of the key policy, the commits it has seen, the trust root it took. Whoever verifies asks one enclave and learns nothing of the other.
 - **A commit added by whoever writes to the bucket**, in the moment between two changes of one account, loses one of them. It is noticed and not prevented (ADR 0016).
+
+## What it rests on, and what is left
 
 - The records whose going back would matter here (ways to sign in, the "passkey only" switch, account state) go through `store.Anchored` (ADR 0016), so an earlier copy of them is refused.
 - A provider that lies about a verified address can take over the account with that address. The "passkey only" mode is the way out for whoever does not accept that.
 - SES starts in a sandbox: production access has to be asked of AWS.
 - Sign-in by mail rests on the person's mail provider, on AWS and, as far as ADR 0021 does not close it, on whoever administers the AWS account. "Passkey only" rests on none of them.
-- To design while building: the operator's tool, rate limits on sign-in and codes, and the exact wording of each message.
+- Whoever holds the admin token can block every account and ask to delete every account: it keeps people out, and lets nobody in. A deletion takes seven days, is told by mail and is counted on `/status`; the count is one enclave's and a restart starts it again.
+- Someone who loses their mail, their passkeys and their recovery codes has lost the account: nobody can give it back.
+- A stolen session changes the contact address with a code sent to an address of the thief's. The old address is told, and nothing undoes it.
+- To design while building: the exact wording of each message, with the designer.

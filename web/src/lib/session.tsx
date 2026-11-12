@@ -29,8 +29,16 @@ export type SessionState =
   | { status: 'signedOut'; byChoice: boolean }
   | { status: 'signedIn'; me: api.Me }
 
-/** Why the sign-in link the app was opened with did not sign anyone in. */
-export type LinkProblem = 'expired' | 'failed'
+/**
+ * Why the sign-in link the app was opened with did not sign anyone in. `blocked` is the server's answer to a
+ * link that proved whose sign-in it is and ended at an account the operator blocked.
+ */
+export type LinkProblem = 'expired' | 'failed' | 'blocked'
+
+/** What a refusal of a link says of it. */
+function linkProblemOf(code: api.ApiErrorCode): LinkProblem {
+  return code === 'invalid_code' ? 'expired' : code === 'account_blocked' ? 'blocked' : 'failed'
+}
 
 /**
  * A sign-in link that waits for the person's word. Opening a link signs nobody in: someone may have started
@@ -68,7 +76,8 @@ type SessionValue = {
    */
   deletedOn: Date | null
   /**
-   * Takes the account as the server answered a change to it: a new name, a deletion asked for or cancelled.
+   * Takes the account as the server answered a change to it: a new name, a new contact address, a deletion
+   * asked for or cancelled.
    * Everything that shows the account follows without a reload.
    */
   accountChanged: (account: api.Account) => void
@@ -94,6 +103,7 @@ function sameAccount(a: api.Account, b: api.Account): boolean {
     a.id === b.id &&
     a.state === b.state &&
     a.closes_at === b.closes_at &&
+    a.closing_by === b.closing_by &&
     a.name === b.name &&
     a.address === b.address
   )
@@ -155,7 +165,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           return
         }
         dropLink()
-        setLinkProblem(code === 'invalid_code' ? 'expired' : 'failed')
+        setLinkProblem(linkProblemOf(code))
       }
     } else if (takeBrokenLink()) {
       setLinkProblem('expired')
@@ -240,7 +250,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (code === 'network') throw error
       if (pendingLink() !== link) return
       dropLink()
-      const problem: LinkProblem = code === 'invalid_code' ? 'expired' : 'failed'
+      const problem = linkProblemOf(code)
       const turn = ++epoch.current
       // An earlier try may have signed in and lost its answer on the way: ask before saying it did not work.
       try {

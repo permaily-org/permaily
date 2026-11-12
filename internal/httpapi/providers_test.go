@@ -105,6 +105,9 @@ func (a *app) back(query string) (*httptest.ResponseRecorder, string) {
 		if a.trip != nil {
 			r.AddCookie(a.trip)
 		}
+		if a.device != nil {
+			r.AddCookie(a.device) // Lax, like the trip's
+		}
 	})
 	if a.cookie == nil {
 		a.cookie = session // a navigation drops no session it did not carry
@@ -535,7 +538,7 @@ func (b brokenProviders) StartProviderConfirm(context.Context, string, contracts
 	return nil, b.err
 }
 
-func (b brokenProviders) FinishProviderConfirm(context.Context, string, contracts.ProviderConfirm, string) (*contracts.Me, string, error) {
+func (b brokenProviders) FinishProviderConfirm(context.Context, string, contracts.ProviderConfirm, accounts.Browser) (*contracts.Me, string, error) {
 	return nil, "", b.err
 }
 

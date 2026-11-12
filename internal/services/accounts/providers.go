@@ -167,8 +167,10 @@ func (s *Service) linked(ctx context.Context, p idp.Provider, subject string) (*
 // link makes a provider account sign in to an account: the pointer first,
 // then the record. A pointer whose record was not written leads nowhere and
 // is replaced by the next try. Linking what is linked already only writes the
-// pointer again, should it be missing.
-func (s *Service) link(ctx context.Context, accountID string, p idp.Provider, subject string) (*accountDoc, error) {
+// pointer again, should it be missing. The person is told by mail of a way
+// to sign in that is new, unless the account was made by this very sign-in
+// (made).
+func (s *Service) link(ctx context.Context, accountID string, p idp.Provider, subject string, made bool) (*accountDoc, error) {
 	var kept accountDoc
 	doc, err := s.change(ctx, accountID, func(doc *accountDoc) error {
 		i := doc.provider(p)
@@ -192,6 +194,9 @@ func (s *Service) link(ctx context.Context, accountID string, p idp.Provider, su
 		return nil, err
 	}
 	s.cfg.Log.Info("accounts: provider linked", "provider", string(p))
+	if !made {
+		s.notify(ctx, noticeProviderLinked, providerMail(doc.Address, s.rp.ID, s.now(), p, true))
+	}
 	return doc, nil
 }
 
@@ -293,8 +298,9 @@ type ProviderAnswer struct {
 	// no, or the provider did. Its words are not read.
 	Refused bool
 	// Browser is the value of the cookie the start gave this browser.
-	Browser   string
-	UserAgent string
+	Browser string
+	// From is what the browser says of itself, and its device cookie.
+	From Browser
 }
 
 // ProviderDone is how a trip to a provider ended.
@@ -322,6 +328,8 @@ type ProviderDone struct {
 var providerReasons = []*contracts.Error{
 	contracts.ErrProviderFailed, contracts.ErrProviderUnavailable, contracts.ErrInvitationNeeded,
 	contracts.ErrInvalidInvitation, contracts.ErrProviderInUse, contracts.ErrProviderLinked, contracts.ErrAccountClosing,
+	// Said only to whoever the provider vouched for as the account's person.
+	contracts.ErrAccountBlocked,
 }
 
 // providerReason is the reason code of a failure: one of the fixed set,
@@ -399,6 +407,7 @@ func (s *Service) arrived(ctx context.Context, t *trip, in ProviderAnswer) (*Pro
 		return s.linkSignedIn(ctx, t, who)
 	}
 	doc, err := s.linked(ctx, t.provider, who.Subject)
+	made := false
 	switch {
 	case err != nil:
 		return nil, err
@@ -410,11 +419,13 @@ func (s *Service) arrived(ctx context.Context, t *trip, in ProviderAnswer) (*Pro
 		if !ok {
 			return s.confirmLater(t, who), nil
 		}
-		if doc, err = s.firstTime(ctx, t, who.Subject, address); err != nil {
+		if doc, made, err = s.firstTime(ctx, t, who.Subject, address); err != nil {
 			return nil, err
 		}
 	}
-	_, cookie, err := s.newSession(ctx, doc.ID, in.UserAgent)
+	// The provider said who it is: an account the operator blocked is told
+	// so here (enter), and never before.
+	_, cookie, err := s.enter(ctx, doc, wayProvider(t.provider), in.From, made)
 	if err != nil {
 		return nil, err
 	}
@@ -447,23 +458,31 @@ func vouched(who *idp.Identity) (string, bool) {
 // firstTime is a provider account that signs in to no account yet, with an
 // address the provider vouches for: it is linked to the account that has the
 // address, or to a new one made with the invitation given at the start.
-func (s *Service) firstTime(ctx context.Context, t *trip, subject, address string) (*accountDoc, error) {
+//
+// It reports whether the account was made here.
+func (s *Service) firstTime(ctx context.Context, t *trip, subject, address string) (*accountDoc, bool, error) {
 	doc, stale, err := s.lookup(ctx, address)
+	made := false
 	switch {
 	case err != nil:
-		return nil, err
+		return nil, false, err
 	case doc == nil && t.invitation == "":
-		return nil, contracts.ErrInvitationNeeded
+		return nil, false, contracts.ErrInvitationNeeded
 	case doc == nil:
-		if doc, err = s.signUp(ctx, address, t.invitation, stale); err != nil {
-			return nil, err
+		if doc, made, err = s.signUp(ctx, address, t.invitation, stale); err != nil {
+			return nil, false, err
 		}
 	case doc.PasskeyOnly:
-		return nil, contracts.ErrProviderFailed
+		return nil, false, contracts.ErrProviderFailed
+	case doc.blocked():
+		// The provider vouched for the address, which is the account's:
+		// nothing is linked to an account that lets nobody in.
+		return nil, false, contracts.ErrAccountBlocked
 	}
 	// An account that was just made and is not linked here, because the
 	// storage failed, is the address's all the same: the next sign-in links it.
-	return s.link(ctx, doc.ID, t.provider, subject)
+	doc, err = s.link(ctx, doc.ID, t.provider, subject, made)
+	return doc, made, err
 }
 
 // linkSignedIn ends a trip that Settings started: the provider account is
@@ -487,7 +506,7 @@ func (s *Service) linkSignedIn(ctx context.Context, t *trip, who *idp.Identity) 
 			return nil, contracts.ErrProviderInUse
 		}
 	}
-	if _, err := s.link(ctx, t.account, t.provider, who.Subject); err != nil {
+	if _, err := s.link(ctx, t.account, t.provider, who.Subject, false); err != nil {
 		return nil, err
 	}
 	return &ProviderDone{Path: cmp.Or(t.returnTo, settingsScreen)}, nil
@@ -574,14 +593,16 @@ func (s *Service) StartProviderConfirm(ctx context.Context, browser string, in c
 // code of the message: the address is the person's, so the provider account
 // is linked to its account, or to a new one, and the device is signed in. A
 // wrong code leaves it waiting, with the tries a sign-in by email takes.
-func (s *Service) FinishProviderConfirm(ctx context.Context, browser string, in contracts.ProviderConfirm, userAgent string) (*contracts.Me, string, error) {
+func (s *Service) FinishProviderConfirm(ctx context.Context, browser string, in contracts.ProviderConfirm, from Browser) (*contracts.Me, string, error) {
 	u, err := s.waitingIn(browser)
 	if err != nil {
 		return nil, "", err
 	}
 	// The code, typed where the trip was made. The link of the same message
 	// signs in by mail and links nothing.
-	doc, err := s.proved(ctx, contracts.EmailFinish{Attempt: in.Attempt, Code: in.Code})
+	// An account the operator blocked is refused there, with the code that
+	// proved the address: nothing is linked to it.
+	doc, made, err := s.proved(ctx, contracts.EmailFinish{Attempt: in.Attempt, Code: in.Code})
 	if err != nil {
 		return nil, "", err
 	}
@@ -589,14 +610,10 @@ func (s *Service) FinishProviderConfirm(ctx context.Context, browser string, in 
 	s.mu.Lock()
 	delete(s.unconfirmed, browserKey(browser))
 	s.mu.Unlock()
-	if doc, err = s.link(ctx, doc.ID, u.provider, u.subject); err != nil {
+	if doc, err = s.link(ctx, doc.ID, u.provider, u.subject, made); err != nil {
 		return nil, "", err
 	}
-	session, cookie, err := s.newSession(ctx, doc.ID, userAgent)
-	if err != nil {
-		return nil, "", err
-	}
-	return &contracts.Me{Account: doc.view(), Session: *session}, cookie, nil
+	return s.enter(ctx, doc, wayProvider(u.provider), from, made)
 }
 
 // ---- settings ----
@@ -619,7 +636,7 @@ func (s *Service) LinkedProviders(ctx context.Context, who *Authenticated) (*con
 // nobody in from then on. It is refused for the only way left to sign in.
 func (s *Service) UnlinkProvider(ctx context.Context, who *Authenticated, provider string) error {
 	p := idp.Provider(provider)
-	_, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
+	doc, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
 		i := doc.provider(p)
 		if i < 0 {
 			return contracts.ErrNotFound
@@ -645,6 +662,7 @@ func (s *Service) UnlinkProvider(ctx context.Context, who *Authenticated, provid
 		return err
 	}
 	s.cfg.Log.Info("accounts: provider unlinked", "provider", provider)
+	s.notify(ctx, noticeProviderUnlinked, providerMail(doc.Address, s.rp.ID, s.now(), p, false))
 	return nil
 }
 
@@ -806,6 +824,7 @@ func (s *Service) SetProviderApp(ctx context.Context, provider string, in contra
 		return nil, err
 	}
 	s.cfg.Log.Info("accounts: a provider's application was set", "provider", provider)
+	s.acted(ActionProviderAppSet, 1)
 	return &contracts.ProviderApp{Provider: provider, ClientID: set.ClientID, SetAt: set.SetAt}, nil
 }
 
@@ -825,6 +844,7 @@ func (s *Service) RemoveProviderApp(ctx context.Context, provider string) error 
 	})
 	if err == nil && removed {
 		s.cfg.Log.Info("accounts: a provider's application was removed", "provider", provider)
+		s.acted(ActionProviderAppRemove, 1)
 	}
 	return err
 }

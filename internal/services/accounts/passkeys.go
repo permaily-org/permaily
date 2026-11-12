@@ -165,7 +165,7 @@ func (s *Service) FinishPasskey(ctx context.Context, who *Authenticated, in cont
 		return nil, contracts.ErrInvalidPasskey
 	}
 	p := passkeyDoc{ID: made.ID, PublicKey: made.PublicKey, Name: name, CreatedAt: s.now(), Synced: made.Synced}
-	_, err = s.change(ctx, who.AccountID, func(doc *accountDoc) error {
+	doc, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
 		if doc.passkey(p.ID) >= 0 {
 			return contracts.ErrInvalidPasskey
 		}
@@ -179,6 +179,7 @@ func (s *Service) FinishPasskey(ctx context.Context, who *Authenticated, in cont
 		return nil, err
 	}
 	s.cfg.Log.Info("accounts: passkey made")
+	s.noticeChange(ctx, doc, noticePasskeyAdded)
 	view := p.view()
 	return &view, nil
 }
@@ -240,7 +241,7 @@ func (s *Service) RemovePasskey(ctx context.Context, who *Authenticated, id stri
 	if err != nil {
 		return err
 	}
-	_, err = s.change(ctx, who.AccountID, func(doc *accountDoc) error {
+	doc, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
 		i := doc.passkey(credential)
 		if i < 0 {
 			return contracts.ErrNotFound
@@ -255,6 +256,7 @@ func (s *Service) RemovePasskey(ctx context.Context, who *Authenticated, id stri
 		return err
 	}
 	s.cfg.Log.Info("accounts: passkey removed")
+	s.noticeChange(ctx, doc, noticePasskeyRemoved)
 	return nil
 }
 
@@ -275,7 +277,7 @@ func (s *Service) StartPasskeySignIn(_ context.Context) (*contracts.PasskeyReque
 // device in as signing in by mail does. A ceremony that ended, an account or
 // a passkey that is not there and an answer that does not check are all the
 // same error. An account that cannot be read is not: that is a failure.
-func (s *Service) FinishPasskeySignIn(ctx context.Context, in contracts.PasskeySignIn, userAgent string) (*contracts.Me, string, error) {
+func (s *Service) FinishPasskeySignIn(ctx context.Context, in contracts.PasskeySignIn, from Browser) (*contracts.Me, string, error) {
 	challenge, ok := s.end(in.Ceremony, "")
 	accountID := string(in.Credential.Response.UserHandle)
 	if !ok || !validID("acc", accountID) {
@@ -297,11 +299,9 @@ func (s *Service) FinishPasskeySignIn(ctx context.Context, in contracts.PasskeyS
 		s.refused("accounts: a sign-in with a passkey was refused", err)
 		return nil, "", contracts.ErrInvalidPasskey
 	}
-	session, cookie, err := s.newSession(ctx, doc.ID, userAgent)
-	if err != nil {
-		return nil, "", err
-	}
-	return &contracts.Me{Account: doc.view(), Session: *session}, cookie, nil
+	// The passkey proved who it is: an account the operator blocked is told
+	// so here (enter), and never before.
+	return s.enter(ctx, doc, wayPasskey, from, false)
 }
 
 // ---- "passkey only" and recovery codes ----
@@ -341,7 +341,7 @@ var errUnchanged = errors.New("accounts: nothing to change")
 // just shown keep working.
 func (s *Service) SetPasskeyOnly(ctx context.Context, who *Authenticated, in contracts.PasskeyOnly) (*contracts.PasskeyOnlyState, error) {
 	out := &contracts.PasskeyOnlyState{PasskeyOnly: in.On, RecoveryCodes: []string{}}
-	_, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
+	doc, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
 		// Codes made on a try that was not written are in no record.
 		out.RecoveryCodes = []string{}
 		if doc.PasskeyOnly == in.On {
@@ -364,6 +364,11 @@ func (s *Service) SetPasskeyOnly(ctx context.Context, who *Authenticated, in con
 		return nil, err
 	}
 	s.cfg.Log.Info("accounts: passkey only changed", "on", in.On)
+	if in.On {
+		s.noticeChange(ctx, doc, noticePasskeyOnlyOn)
+	} else {
+		s.noticeChange(ctx, doc, noticePasskeyOnlyOff)
+	}
 	return out, nil
 }
 
@@ -371,7 +376,7 @@ func (s *Service) SetPasskeyOnly(ctx context.Context, who *Authenticated, in con
 // with passkeys only. The ones it had stop working.
 func (s *Service) NewRecoveryCodes(ctx context.Context, who *Authenticated) (*contracts.RecoveryCodes, error) {
 	out := &contracts.RecoveryCodes{}
-	_, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
+	doc, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
 		if !doc.PasskeyOnly {
 			return contracts.ErrPasskeyOnlyOff
 		}
@@ -381,6 +386,7 @@ func (s *Service) NewRecoveryCodes(ctx context.Context, who *Authenticated) (*co
 	if err != nil {
 		return nil, err
 	}
+	s.noticeChange(ctx, doc, noticeRecoveryCodesNew)
 	return out, nil
 }
 
@@ -407,7 +413,7 @@ func (s *Service) recoveryTry(address string, right bool) bool {
 // once. Every refusal is the same error, the one of a wrong code, whether
 // the address has no account, the account takes no recovery codes, the code
 // is wrong or too many wrong ones were tried.
-func (s *Service) Recover(ctx context.Context, in contracts.Recovery, userAgent string) (*contracts.Me, string, error) {
+func (s *Service) Recover(ctx context.Context, in contracts.Recovery, from Browser) (*contracts.Me, string, error) {
 	address, err := domain.NormalizeAddress(in.Address)
 	code, ok := domain.NormalizeRecoveryCode(in.Code)
 	if err != nil || !ok {
@@ -432,15 +438,22 @@ func (s *Service) Recover(ctx context.Context, in contracts.Recovery, userAgent 
 	}
 	// Of two uses of one code at the same time, here or in two enclaves, the
 	// second finds it gone. A closing account takes the code too: its person
-	// signs in to cancel.
+	// signs in to cancel. A blocked one takes none: the code was right, so
+	// its person is told, and the code stays for when the account is unblocked.
 	doc, err = s.rewrite(ctx, doc.ID, func(doc *accountDoc) error {
 		i := doc.recoveryCode(hash)
-		if i < 0 || !doc.PasskeyOnly || doc.Address != address {
+		if i < 0 || !doc.PasskeyOnly || !doc.has(address) {
 			return contracts.ErrInvalidCode
+		}
+		if doc.blocked() {
+			return contracts.ErrAccountBlocked
 		}
 		doc.RecoveryCodes = slices.Delete(doc.RecoveryCodes, i, i+1)
 		return nil
 	})
+	if errors.Is(err, contracts.ErrAccountBlocked) {
+		return nil, "", err
+	}
 	var known *contracts.Error
 	if errors.As(err, &known) {
 		// Used a moment ago, or the account went away meanwhile: nothing a
@@ -451,9 +464,8 @@ func (s *Service) Recover(ctx context.Context, in contracts.Recovery, userAgent 
 		return nil, "", err
 	}
 	s.cfg.Log.Info("accounts: recovery code used")
-	session, cookie, err := s.newSession(ctx, doc.ID, userAgent)
-	if err != nil {
-		return nil, "", err
-	}
-	return &contracts.Me{Account: doc.view(), Session: *session}, cookie, nil
+	me, cookie, err := s.enter(ctx, doc, wayRecovery, from, false)
+	// Told whether or not the device then got its session: the code is gone.
+	s.noticeChange(ctx, doc, noticeRecoveryCodeUsed)
+	return me, cookie, err
 }

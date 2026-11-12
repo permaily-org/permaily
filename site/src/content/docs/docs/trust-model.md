@@ -19,6 +19,7 @@ The service handling your mail is running the public code, and that code only sh
 - What a connection does with mail after receiving it.
 - That Google or Microsoft can't see your mail. They host it.
 - That traffic patterns are hidden. The operator can see timing, sizes and IP addresses.
+- That the operator was right to block or delete an account, only how many times each kind of action happened since the service last started.
 
 **A bad release by the operator becomes detectable. It doesn't become impossible.** That's still a large improvement over a service where nobody can detect anything at all.
 
@@ -75,6 +76,8 @@ Apple's [Private Cloud Compute](https://security.apple.com/blog/private-cloud-co
 | Database or backup stolen | Ciphertext only. Keys need an approved measurement |
 | Connection asks for too much | Preview at consent, the query in plain words, a cap on what it can fetch, fresh approval to widen, expiry, unused-access revocation |
 | Connection is compromised | Short-lived tokens, per-connection limits, instant revocation, unusual-activity alerts |
+| Operator takes over an account | The code has no way for the operator to sign in as someone, change a contact address, or add or remove a way to sign in. The operator can block and unblock an account, ask to delete it, which takes seven days, and cancel that, and sign its devices out: that keeps people out or lets them back, and lets nobody in. The person is told by mail of a block or a deletion, and each kind of action is counted on `/status` |
+| Someone else signs in to an account | A notice by mail of a sign-in from a device that hadn't signed in to the account before, of a change in how it's signed into, and of a change of its contact address, sent to the old address and the new one |
 | Password reset or login code exposed | Sign-in and security, a rule suggested on every new account that holds this mail back from every connection before any query runs. It uses exact conditions, not a topic. It only protects people who keep it |
 | A rule misses what it should catch | Preview on the person's own mail before saving, alerts on sudden match volume. A missed match is a leak, which is why rules written in words are previewed like any other |
 | A connection learns what a rule protects | Held-back mail looks the same as mail its query didn't match, and no rule name or count leaves Permaily |

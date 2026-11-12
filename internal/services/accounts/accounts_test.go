@@ -60,6 +60,9 @@ func (w *world) service(k Keys) *Service {
 	if err != nil {
 		w.t.Fatal(err)
 	}
+	// A wait for a notice that no test runs out of by accident: the ones
+	// about the wait end it themselves (notices_test.go).
+	svc.noticeWait = time.Hour
 	return svc
 }
 
@@ -111,7 +114,7 @@ func (w *world) signUp(address string) (*contracts.Me, string) {
 	if mail == nil {
 		w.t.Fatal("no message for a sign-up with an invitation")
 	}
-	me, cookie, err := w.svc.FinishEmail(context.Background(), contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, "test browser")
+	me, cookie, err := w.svc.FinishEmail(context.Background(), contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: "test browser"})
 	if err != nil {
 		w.t.Fatal(err)
 	}
@@ -138,7 +141,7 @@ func TestSignUpAndSignIn(t *testing.T) {
 	if mail != nil {
 		t.Fatal("a message for an address without an account or an invitation")
 	}
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: "123456"}, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: "123456"}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("finishing a sign-in that sent nothing: %v", err)
 	}
 
@@ -149,7 +152,7 @@ func TestSignUpAndSignIn(t *testing.T) {
 	if strings.Contains(mail.Subject, code(mail)) {
 		t.Fatal("the code is in the subject")
 	}
-	me, cookie, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, "Mozilla/5.0 (test)")
+	me, cookie, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: "Mozilla/5.0 (test)"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +164,7 @@ func TestSignUpAndSignIn(t *testing.T) {
 		t.Fatalf("session: %+v", me.Session)
 	}
 	// The code worked once.
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("the same code again: %v", err)
 	}
 
@@ -187,11 +190,11 @@ func TestSignUpAndSignIn(t *testing.T) {
 		t.Fatal("no message for an address with an account")
 	}
 	token := linkRE.FindStringSubmatch(mail.Text)[2]
-	again, cookie2, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Token: token}, "another device")
+	again, cookie2, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Token: token}, Browser{UserAgent: "another device"})
 	if err != nil || again.Account != me.Account || again.Session.ID == me.Session.ID || cookie2 == cookie {
 		t.Fatalf("second sign-in: %+v %v", again, err)
 	}
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Token: token}, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Token: token}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("the same link again: %v", err)
 	}
 
@@ -207,7 +210,7 @@ func TestWhatIsStored(t *testing.T) {
 	w := newWorld(t)
 	invitation := w.invite()
 	attempt, mail := w.start("ana@example.org", invitation)
-	me, cookie, err := w.svc.FinishEmail(context.Background(), contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, "test browser")
+	me, cookie, err := w.svc.FinishEmail(context.Background(), contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: "test browser"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,22 +253,22 @@ func TestWrongCodes(t *testing.T) {
 	// Five wrong codes end a sign-in: the right one comes too late.
 	attempt, mail := w.start("ana@example.org", "")
 	for range domain.EmailCodeTries {
-		if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: w.wrongCode(mail)}, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+		if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: w.wrongCode(mail)}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 			t.Fatalf("wrong code: %v", err)
 		}
 	}
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("the right code after five wrong ones: %v", err)
 	}
 	// A wrong link counts as a try too, and an empty answer is wrong.
 	attempt, mail = w.start("ana@example.org", "")
 	for _, in := range []contracts.EmailFinish{{Token: "nope"}, {}, {Code: ""}, {Token: code(mail)}} {
 		in.Attempt = attempt
-		if _, _, err := w.svc.FinishEmail(ctx, in, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+		if _, _, err := w.svc.FinishEmail(ctx, in, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 			t.Fatalf("%+v: %v", in, err)
 		}
 	}
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, ""); err != nil {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); err != nil {
 		t.Fatalf("the right code at the fifth try: %v", err)
 	}
 
@@ -274,18 +277,18 @@ func TestWrongCodes(t *testing.T) {
 	w.now = w.now.Add(2 * time.Hour)
 	attempt, mail = w.start("ana@example.org", "")
 	for range domain.EmailCodeTries {
-		_, _, _ = w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: w.wrongCode(mail)}, "")
+		_, _, _ = w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: w.wrongCode(mail)}, Browser{UserAgent: ""})
 	}
 	attempt, mail = w.start("ana@example.org", "")
 	if mail == nil || code(mail) != "" || !linkRE.MatchString(mail.Text) {
 		t.Fatalf("message after ten wrong codes: %+v", mail)
 	}
 	for _, guess := range []string{"000000", ""} {
-		if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: guess}, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+		if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: guess}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 			t.Fatalf("a code for a sign-in without one: %v", err)
 		}
 	}
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Token: linkRE.FindStringSubmatch(mail.Text)[2]}, ""); err != nil {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Token: linkRE.FindStringSubmatch(mail.Text)[2]}, Browser{UserAgent: ""}); err != nil {
 		t.Fatalf("the link: %v", err)
 	}
 	// A day later codes are back.
@@ -300,17 +303,17 @@ func TestSignInEnds(t *testing.T) {
 	w.signUp("ana@example.org")
 	attempt, mail := w.start("ana@example.org", "")
 	w.now = w.now.Add(domain.EmailCodeLifetime)
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("a code after ten minutes: %v", err)
 	}
 	// A sign-in lives in the enclave that started it: another one, or the
 	// same after a restart, knows nothing of it.
 	attempt, mail = w.start("ana@example.org", "")
 	restarted := w.service(w.svc.cfg.Keys)
-	if _, _, err := restarted.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+	if _, _, err := restarted.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("a code after a restart: %v", err)
 	}
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: "att_unknown", Code: "123456"}, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: "att_unknown", Code: "123456"}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("an unknown sign-in: %v", err)
 	}
 }
@@ -344,7 +347,7 @@ func TestLookAtALink(t *testing.T) {
 	}
 	// Two wrong tokens were tried: they count like wrong codes, and three
 	// more end the sign-in for the right one too.
-	me, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Token: token}, "")
+	me, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Token: token}, Browser{UserAgent: ""})
 	if err != nil || me.Account.Address != "ana@example.org" {
 		t.Fatalf("the link after looking at it: %v", err)
 	}
@@ -416,7 +419,7 @@ func TestMailSystemDown(t *testing.T) {
 	if mail != nil || len(w.svc.attempts) != 0 {
 		t.Fatalf("a sign-in is kept for a message that was not sent (%d)", len(w.svc.attempts))
 	}
-	if _, _, err := w.svc.FinishEmail(context.Background(), contracts.EmailFinish{Attempt: attempt, Code: "123456"}, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+	if _, _, err := w.svc.FinishEmail(context.Background(), contracts.EmailFinish{Attempt: attempt, Code: "123456"}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatal(err)
 	}
 	// What the mail system answered is not logged: it names the address.
@@ -440,15 +443,15 @@ func TestInvitations(t *testing.T) {
 	// Two people with the same invitation: only one gets the account.
 	first, mail1 := w.start("ana@example.org", inv.Invitations[0])
 	second, mail2 := w.start("eve@example.org", inv.Invitations[0])
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: first, Code: code(mail1)}, ""); err != nil {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: first, Code: code(mail1)}, Browser{UserAgent: ""}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: second, Code: code(mail2)}, ""); !errors.Is(err, contracts.ErrInvalidInvitation) {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: second, Code: code(mail2)}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidInvitation) {
 		t.Fatalf("the second use of an invitation: %v", err)
 	}
 	// Someone with an account who types an invitation keeps it unused.
 	attempt, mail := w.start("ana@example.org", inv.Invitations[1])
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, ""); err != nil {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); err != nil {
 		t.Fatal(err)
 	}
 	if _, mail := w.start("eve@example.org", inv.Invitations[1]); mail == nil {
@@ -491,7 +494,7 @@ func TestSessions(t *testing.T) {
 	// Used every day, it still ends at thirty.
 	w.now = start.Add(14 * day)
 	attempt, mail := w.start("ana@example.org", "")
-	_, cookie, err = w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, "laptop")
+	_, cookie, err = w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: "laptop"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,10 +512,10 @@ func TestSessions(t *testing.T) {
 
 	// Listed, the one last used first, and closed one by one.
 	attempt, mail = w.start("ana@example.org", "")
-	_, phone, _ := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, "phone")
+	_, phone, _ := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: "phone"})
 	w.now = w.now.Add(2 * time.Hour)
 	attempt, mail = w.start("ana@example.org", "")
-	_, laptop, _ := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, "laptop")
+	_, laptop, _ := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: "laptop"})
 	who, _ = w.svc.Authenticate(ctx, laptop)
 	list, err := w.svc.Sessions(ctx, who)
 	if err != nil || len(list.Sessions) != 2 || list.Sessions[0].Device != "laptop" || !list.Sessions[0].Current || list.Sessions[1].Device != "phone" || list.Sessions[1].Current {
@@ -871,7 +874,7 @@ func TestFailures(t *testing.T) {
 		w, f := setup(t)
 		attempt, mail := w.start("ana@example.org", w.invite())
 		f.fail[op] = down
-		if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, ""); !errors.Is(err, down) && op != "get record" {
+		if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, down) && op != "get record" {
 			t.Errorf("%s down: finish: %v", op, err)
 		}
 		if op == "put entry" {
@@ -916,7 +919,7 @@ func TestSignUpRace(t *testing.T) {
 	// the first has written its own.
 	racing := &racer{failing: f, w: w, first: contracts.EmailFinish{Attempt: first, Code: code(mail1)}}
 	w.svc.cfg.Entries = racing
-	loser, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: second, Code: code(mail2)}, "")
+	loser, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: second, Code: code(mail2)}, Browser{UserAgent: ""})
 	if err != nil || racing.winner == nil || loser.Account.ID != racing.winner.Account.ID {
 		t.Fatalf("the sign-up that ended second: %+v, the first %+v, %v", loser, racing.winner, err)
 	}
@@ -926,7 +929,7 @@ func TestSignUpRace(t *testing.T) {
 	w.svc.cfg.Entries = f
 	attempt, mail := w.start("eve@example.org", w.invite())
 	f.fail["put "+loginKey] = store.ErrExists
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, ""); err == nil {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); err == nil {
 		t.Fatal("signed in to an account no address leads to")
 	}
 }
@@ -943,7 +946,7 @@ type racer struct {
 func (r *racer) PutEntry(ctx context.Context, e *store.Entry) error {
 	if e.Key == loginKey && r.winner == nil {
 		r.w.svc.cfg.Entries = r.failing
-		me, _, err := r.w.svc.FinishEmail(ctx, r.first, "")
+		me, _, err := r.w.svc.FinishEmail(ctx, r.first, Browser{UserAgent: ""})
 		if err != nil {
 			r.w.t.Fatal(err)
 		}

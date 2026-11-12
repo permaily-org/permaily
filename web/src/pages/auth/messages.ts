@@ -3,6 +3,12 @@ import type { ProviderReason } from '../../lib/arrival.ts'
 import { providerNames } from '../../lib/providers.ts'
 import type { LinkProblem } from '../../lib/session.tsx'
 
+/** Where a person writes to ask about their account. The app sends nothing there: it is a `mailto:` link. */
+export const supportAddress = 'support@permaily.com'
+
+/** The headline of a sign-in that proved who it is and ended at an account the operator blocked. */
+export const blockedTitle = 'That account is blocked'
+
 /** What to tell a person for each way the API can fail, in words they can act on. */
 const messages: Record<ApiErrorCode, string> = {
   invalid_address: "Permaily can't use that address. Check it for typos.",
@@ -30,6 +36,8 @@ const messages: Record<ApiErrorCode, string> = {
   invitation_needed:
     'There is no Permaily account for your address yet. An invitation is needed to make one.',
   last_way_in: 'That is the only way left to sign in to this account. Add another first.',
+  account_blocked: `That account is blocked. To ask about it, write to ${supportAddress}.`,
+  address_in_use: 'That address belongs to another Permaily account. Use another address.',
   other: 'Something went wrong on our side. Try again in a moment.',
 }
 
@@ -41,6 +49,7 @@ export function messageFor(code: ApiErrorCode): string {
 export const linkHeadlines: Record<LinkProblem, string> = {
   expired: 'That link no longer works',
   failed: "That link couldn't sign you in",
+  blocked: blockedTitle,
 }
 
 /**
@@ -55,6 +64,9 @@ export const recoveryRefused =
  * what its reason says and no more: `provider_failed` covers a provider that said no, an answer that came too
  * late or to another browser, and an account that takes no providers, and the server does not say which.
  * The two about invitations are said on the sign-up screen, where the invitation is typed.
+ *
+ * `account_blocked` is also what a sign-in by mail, with a passkey or with a recovery code ends with: it is
+ * said only after the proof, names nobody, and offers nothing to try again, since that would fail the same.
  *
  * The provider is named when the server said which it was, which it does while it still knows the trip.
  * Both the reason and the provider are words of the address, which anyone can write: each is one of a fixed
@@ -102,6 +114,12 @@ export function providerProblem(
         title: 'That account is being deleted',
         text: 'Nothing was linked to it, and nobody was signed in. Sign in another way to cancel the deletion.',
       }
+    case 'account_blocked':
+      // The sign-in screen writes these words with the address as a link (Blocked.tsx).
+      return {
+        title: blockedTitle,
+        text: `Nobody was signed in. To ask about it, write to ${supportAddress}.`,
+      }
     default:
       return {
         title: name ? `Signing in with ${name} didn't work` : "That sign-in didn't work",
@@ -134,6 +152,8 @@ export function linkProblem(reason: ProviderReason, provider?: Provider): string
       return name
         ? `Nothing was linked: this account has another ${name} account linked already. Unlink it first.`
         : 'Nothing was linked: this account has an account of that provider linked already. Unlink it first.'
+    case 'account_blocked':
+      return `Nothing was linked: that account is blocked. To ask about it, write to ${supportAddress}.`
     default:
       return name
         ? `Nothing was linked: signing in with ${name} didn't work. Try again.`

@@ -68,6 +68,8 @@ describe('how a failure reads', () => {
     'provider_linked',
     'invitation_needed',
     'last_way_in',
+    'account_blocked',
+    'address_in_use',
   ])('keeps the code %s the server answered', async (code) => {
     server.on('GET /api/v1/me', refused(400, code))
     expect(await failure(api.me())).toBe(code)
@@ -176,6 +178,30 @@ describe('the account', () => {
       server.on('PATCH /api/v1/account', ok(answer))
       expect(await failure(api.renameAccount('Ana'))).toBe('other')
     }
+  })
+
+  it('asks to change the contact address, and takes the change only from an account', async () => {
+    server.on('POST /api/v1/account/address/start', ok({ attempt: 'att_1', expires_in: 600 }))
+    expect(await api.startAddressChange('ana@new.example')).toEqual({
+      attempt: 'att_1',
+      expires_in: 600,
+    })
+    server.on(
+      'POST /api/v1/account/address/finish',
+      ok({ ...account, address: 'ana@new.example', name: 'Ana' }),
+    )
+    expect(await api.finishAddressChange('att_1', '123456')).toMatchObject({
+      id: 'acc_1',
+      address: 'ana@new.example',
+    })
+    expect(server.calls.map((call) => call.body)).toEqual([
+      { address: 'ana@new.example' },
+      { attempt: 'att_1', code: '123456' },
+    ])
+    server.on('POST /api/v1/account/address/finish', ok({ address: 'ana@new.example' }))
+    expect(await failure(api.finishAddressChange('att_1', '123456'))).toBe('other')
+    server.on('POST /api/v1/account/address/finish', refused(409, 'address_in_use'))
+    expect(await failure(api.finishAddressChange('att_1', '123456'))).toBe('address_in_use')
   })
 
   it('asks to delete and to cancel without a body', async () => {

@@ -6,6 +6,7 @@ import {
   arrivedInvitation,
   dropInvitation,
   dropProviderArrival,
+  signInBlocked,
   useProviderArrival,
 } from '../../lib/arrival.ts'
 import { formatFullDay } from '../../lib/closing.ts'
@@ -20,6 +21,7 @@ import { useProvidersOn } from '../../lib/providers.ts'
 import { useSession } from '../../lib/session.tsx'
 import { passkeysSupported } from '../../lib/webauthn.ts'
 import { AuthLayout } from './AuthLayout.tsx'
+import { BlockedWords } from './Blocked.tsx'
 import { CodeStep, type Sent, sentTo } from './CodeStep.tsx'
 import { Field } from './Field.tsx'
 import { Address } from './LinkConfirmation.tsx'
@@ -42,8 +44,9 @@ const badInvitation = 'An invitation has 12 letters and digits. Check it against
  * Signing in also takes a passkey, which needs no address (PasskeySignIn.tsx), and for someone who lost
  * theirs, a recovery code (RecoveryStep.tsx). Both screens offer the providers that are on
  * (ProviderSignIn.tsx), and this is where a sign-in with one comes back to when it did not sign anyone in:
- * with a reason, or to confirm an address first (ProviderConfirm.tsx). Nothing typed here is kept beyond
- * this page's memory.
+ * with a reason, or to confirm an address first (ProviderConfirm.tsx). A sign-in that ends at an account the
+ * operator blocked, whichever way it was proved, leads back to the first step, which says so (Blocked.tsx).
+ * Nothing typed here is kept beyond this page's memory.
  */
 export function SignInPage({ mode }: { mode: Mode }) {
   const [started, setStarted] = useState<Started | null>(null)
@@ -78,10 +81,32 @@ export function SignInPage({ mode }: { mode: Mode }) {
   ) {
     return <Navigate to="/sign-up" replace state={location.state} />
   }
+  // That an account is blocked is said on the sign-in screen, where another account can sign in.
+  if (
+    mode === 'sign-up' &&
+    arrived?.screen === 'sign-in' &&
+    arrived.kind === 'failed' &&
+    arrived.reason === 'account_blocked'
+  ) {
+    return <Navigate to="/sign-in" replace state={location.state} />
+  }
+
+  /** The sign-in proved who it is, and the account is blocked: the first step says so, with nothing typed. */
+  function blocked() {
+    signInBlocked()
+    setAddress('')
+    setRecovering(false)
+    setStarted(null)
+  }
 
   if (recovering && mode === 'sign-in') {
     return (
-      <RecoveryStep address={address} onAddress={setAddress} onBack={() => setRecovering(false)} />
+      <RecoveryStep
+        address={address}
+        onAddress={setAddress}
+        onBack={() => setRecovering(false)}
+        onBlocked={blocked}
+      />
     )
   }
   if (started) {
@@ -91,6 +116,7 @@ export function SignInPage({ mode }: { mode: Mode }) {
         started={started}
         onReplaced={setStarted}
         onBack={() => setStarted(null)}
+        onBlocked={blocked}
         onInvitationRefused={(message) => {
           setInvitationError(message)
           setStarted(null)
@@ -163,13 +189,13 @@ function AddressStep({
   // The first thing to fill in takes focus: the invitation when it was refused or is what is missing, the
   // address otherwise.
   const opened = useRef(false)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: when the step opens, and when a provider's answer arrives
+  // biome-ignore lint/correctness/useExhaustiveDependencies: when the step opens, and with every answer that arrives, also one that says the same as the one before
   useEffect(() => {
     if (opened.current && !reason) return
     opened.current = true
     if (invitationError || (signUp && reason)) invitationRef.current?.focus()
     else addressRef.current?.focus()
-  }, [reason])
+  }, [failed])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs after each change of the invitation
   useLayoutEffect(() => {
@@ -234,12 +260,20 @@ function AddressStep({
   const problem = signUp || reason ? null : linkProblem
   // An invitation the server refused is said in its field, like one refused before the browser left.
   const refused = said && reason === 'invalid_invitation' ? said.text : undefined
-  const told = said && !refused ? said : null
+  // A sign-in that ended at a blocked account, by a provider, a code, a passkey or the link of a message.
+  const blocked = reason === 'account_blocked' || problem === 'blocked'
+  const told = said && !refused && !blocked ? said : null
   // An account seen closing in this browser, whose day has passed: why there is no session to come back to.
   // It names nobody, since whoever reads this may not be whose account it was.
   const deleted = signUp ? null : deletedOn
   const described = [
-    problem ? 'link-problem' : told && !signUp ? 'provider-problem' : null,
+    blocked
+      ? 'account-blocked'
+      : problem
+        ? 'link-problem'
+        : told && !signUp
+          ? 'provider-problem'
+          : null,
     deleted ? 'deleted-account' : null,
   ]
     .filter(Boolean)
@@ -260,7 +294,12 @@ function AddressStep({
           {told.text}
         </p>
       )}
-      {problem && (
+      {blocked && (
+        <p id="account-blocked" className="mt-3 text-body text-ink-2">
+          <BlockedWords /> You can still sign in to another account.
+        </p>
+      )}
+      {problem && !blocked && (
         <p id="link-problem" className="mt-3 text-body text-ink-2">
           {problem === 'expired'
             ? 'A link works once, and for a short time. Enter your address to ask for a new one.'
@@ -380,12 +419,15 @@ function MailCodeStep({
   started,
   onReplaced,
   onBack,
+  onBlocked,
   onInvitationRefused,
 }: {
   mode: Mode
   started: Started
   onReplaced: (started: Started) => void
   onBack: () => void
+  /** The code was right, and the account is blocked. */
+  onBlocked: () => void
   onInvitationRefused: (message: string) => void
 }) {
   const session = useSession()
@@ -408,6 +450,10 @@ function MailCodeStep({
         session.signedIn(who)
       }}
       ended={(failed) => {
+        if (failed === 'account_blocked') {
+          onBlocked()
+          return true
+        }
         if (failed !== 'invalid_invitation') return false
         onInvitationRefused(messageFor(failed))
         return true

@@ -32,6 +32,7 @@ export const providerReasons = [
   'provider_in_use',
   'provider_linked',
   'account_closing',
+  'account_blocked',
 ] as const
 
 export type ProviderReason = (typeof providerReasons)[number]
@@ -205,6 +206,15 @@ export function dropInvitation(): void {
  */
 export function providerEnded(reason: ProviderReason, named?: Provider): void {
   setProvider({ screen: 'sign-in', kind: 'failed', reason, ...(named ? { provider: named } : {}) })
+}
+
+/**
+ * Says that a sign-in proved who it is and ended at an account the operator blocked: by mail, with a passkey
+ * or with a recovery code. The sign-in screen then says it in the same fixed words as when a provider's
+ * answer ends that way.
+ */
+export function signInBlocked(): void {
+  providerEnded('account_blocked')
 }
 
 /**

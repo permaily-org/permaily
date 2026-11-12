@@ -100,6 +100,18 @@ describe('coming back to the tab', () => {
     await waitFor(() =>
       expect(seen.now.state).toMatchObject({ me: { account: { state: 'closing' } } }),
     )
+    // Who asked for the deletion shows too, when the server says so after the fact.
+    server.signedIn({ ...closing, closing_by: 'operator' })
+    window.dispatchEvent(new Event('focus'))
+    await waitFor(() =>
+      expect(seen.now.state).toMatchObject({ me: { account: { closing_by: 'operator' } } }),
+    )
+    // And a contact address changed from another device.
+    server.signedIn({ ...ana, address: 'ana@new.example' })
+    window.dispatchEvent(new Event('focus'))
+    await waitFor(() =>
+      expect(seen.now.state).toMatchObject({ me: { account: { address: 'ana@new.example' } } }),
+    )
     server.on('GET /api/v1/me', refused(401, 'unauthorized'))
     window.dispatchEvent(new Event('focus'))
     await settled('signedOut')

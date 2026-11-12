@@ -12,15 +12,20 @@ import { messageFor, recoveryRefused } from './messages.ts'
  * The way in for someone who lost every passkey of an account that signs in with passkeys only: the account's
  * address and one recovery code. The code is typed with or without dashes, in any case, and lives only in this
  * step's memory. Every refusal reads the same, so the screen never says whether an address has an account.
+ * The one answer that reads differently comes only after the address and the code were right: that the
+ * account is blocked.
  */
 export function RecoveryStep({
   address,
   onAddress,
   onBack,
+  onBlocked,
 }: {
   address: string
   onAddress: (address: string) => void
   onBack: () => void
+  /** The address and the code were right, and the account is blocked. */
+  onBlocked: () => void
 }) {
   const session = useSession()
   const [code, setCode] = useState('')
@@ -70,6 +75,11 @@ export function RecoveryStep({
     } catch (failure) {
       setPending(false)
       const failed = errorCode(failure)
+      // Said only after the proof: the address and the code were the account's own. Nothing else is.
+      if (failed === 'account_blocked') {
+        onBlocked()
+        return
+      }
       // The server refuses a wrong code, a used one, an address without an account and too many tries alike.
       const refused = failed !== 'network' && failed !== 'other' && failed !== 'unauthorized'
       setErrors({ form: refused ? recoveryRefused : messageFor(failed) })

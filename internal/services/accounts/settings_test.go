@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func (w *world) signIn(address string) (*contracts.Me, string) {
 	if mail == nil {
 		w.t.Fatalf("no sign-in message for %s", address)
 	}
-	me, cookie, err := w.svc.FinishEmail(context.Background(), contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, "another device")
+	me, cookie, err := w.svc.FinishEmail(context.Background(), contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: "another device"})
 	if err != nil {
 		w.t.Fatal(err)
 	}
@@ -308,6 +309,28 @@ func TestDeletingAnAccount(t *testing.T) {
 
 // An account that signs in with passkeys only and lost them is still let in
 // by a recovery code while it is closing: its person may want to cancel.
+// A sign-in that was started for an account that is gone by the time it
+// ends signs nobody in, and makes no account: there was no invitation.
+func TestASignInForAnAccountThatWentAway(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	me, cookie := w.signUp("ana@example.org")
+	if _, err := w.svc.StartDeletion(ctx, w.who(cookie)); err != nil {
+		t.Fatal(err)
+	}
+	w.now = w.now.Add(domain.AccountClosing - time.Minute)
+	attempt, mail := w.start("ana@example.org", "")
+	if mail == nil {
+		t.Fatal("no message for an account that is closing")
+	}
+	w.now = w.now.Add(time.Minute)
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{}); !errors.Is(err, contracts.ErrInvalidCode) {
+		t.Fatalf("a sign-in for an account that went away: %v", err)
+	}
+	if w.doc(me.Account.ID) != nil || w.accounts() != 0 {
+		t.Fatal("the account is there, or another was made")
+	}
+}
+
 func TestRecoveryWhileClosing(t *testing.T) {
 	w, ctx := newWorld(t), context.Background()
 	_, cookie := w.signUp("ana@example.org")
@@ -605,7 +628,7 @@ func TestARemovedAccountDoesNotComeBack(t *testing.T) {
 		in.Credential.RawID = key.ID
 		r := &in.Credential.Response
 		r.ClientDataJSON, r.AuthenticatorData, r.Signature, r.UserHandle = auth.Get(started.Options.RPID, testOrigin, started.Options.Challenge, key.ID)
-		if me, c, err := svc.FinishPasskeySignIn(ctx, in, ""); !errors.Is(err, contracts.ErrInvalidPasskey) || me != nil || c != "" {
+		if me, c, err := svc.FinishPasskeySignIn(ctx, in, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidPasskey) || me != nil || c != "" {
 			t.Fatalf("a passkey of the account: %v", err)
 		}
 	}
@@ -1164,9 +1187,9 @@ func TestTheOperatorsTool(t *testing.T) {
 	want := contracts.AccountRecord{
 		ID: made[0].Account.ID, State: contracts.AccountActive, Address: "ana@example.org", Language: "en",
 		CreatedAt: made[0].Account.CreatedAt, AddressVerifiedAt: made[0].Account.CreatedAt,
-		Passkeys: 2, PasskeyOnly: true, Sessions: 1,
+		Passkeys: 2, PasskeyOnly: true, Providers: []string{}, Sessions: 1,
 	}
-	if err != nil || *rec != want {
+	if err != nil || !reflect.DeepEqual(*rec, want) {
 		t.Fatalf("an account: %+v %v, want %+v", rec, err, want)
 	}
 	for _, id := range []string{"", "acc_x", "acc_" + strings.Repeat("a", 26), "../" + made[0].Account.ID, made[0].Session.ID} {
@@ -1196,7 +1219,7 @@ func TestTheOperatorsTool(t *testing.T) {
 			t.Fatalf("account %d of the list: %+v", i, r)
 		}
 	}
-	if seen[0] != want || seen[1].Name != "Bea" || seen[1].Sessions != 2 || seen[1].Passkeys != 0 || seen[1].PasskeyOnly {
+	if !reflect.DeepEqual(seen[0], want) || seen[1].Name != "Bea" || seen[1].Sessions != 2 || seen[1].Passkeys != 0 || seen[1].PasskeyOnly {
 		t.Fatalf("the list: %+v", seen[:2])
 	}
 	if seen[2].State != contracts.AccountClosing || !seen[2].ClosesAt.Equal(closing.ClosesAt) || !seen[3].ClosesAt.IsZero() {
@@ -1297,7 +1320,7 @@ func TestASignUpThatFailsLeavesNothing(t *testing.T) {
 		w.svc.cfg.Records, w.svc.cfg.Entries, w.svc.cfg.Keys = f, f, f
 		attempt, mail := w.start("ana@example.org", w.invite())
 		f.fail[name] = down
-		if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, ""); !errors.Is(err, down) {
+		if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, down) {
 			t.Fatalf("%s down: %v", name, err)
 		}
 		delete(f.fail, name)

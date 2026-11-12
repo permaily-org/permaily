@@ -110,6 +110,9 @@ const (
 	// maxCeremonies is how many passkey ceremonies wait for their answer.
 	maxCeremonies = 10000
 	maxSending    = 32
+	// maxNoticing is how many notices are being sent at once; one more is
+	// dropped, and logged as that.
+	maxNoticing = 32
 	// maxSessions is how many devices an account stays signed in on; the one
 	// used longest ago goes when another signs in.
 	maxSessions = 50
@@ -120,6 +123,9 @@ const (
 	// stays at a few tries a day whatever the number of sign-ins started.
 	wrongCodesPerDay = 10
 	sendTimeout      = 30 * time.Second
+	// noticeTimeout is the longest a notice by mail holds back the answer to
+	// what caused it (notices.go).
+	noticeTimeout = 5 * time.Second
 )
 
 // Service implements accounts and sign-in.
@@ -142,6 +148,10 @@ type Service struct {
 	wrong      map[string][]time.Time
 	recoveries map[string][]time.Time
 	swept      time.Time
+	// since is when this enclave started counting what the operator does
+	// through it, and actions how many of each kind it did (operator.go).
+	since   time.Time
+	actions map[string]int
 
 	// changing is held while an account's record is read, changed and
 	// written, and while an account is removed. It is not what keeps two
@@ -159,12 +169,21 @@ type Service struct {
 	appsRead bool
 
 	sending chan struct{}
-	work    sync.WaitGroup
+	// noticing bounds the notices being sent, and noticeWait is how long one
+	// holds back the answer to what caused it.
+	noticing   chan struct{}
+	noticeWait time.Duration
+	work       sync.WaitGroup
 }
 
 // attempt is a sign-in that was started and whose message was sent.
 type attempt struct {
 	address string
+	// account is whose contact address the attempt changes (address.go);
+	// empty for a sign-in. An attempt works for what it was started for and
+	// for nothing else: one of an account signs nobody in, and a sign-in
+	// changes no address.
+	account string
 	// invitation is the entry of the invitation the sign-up will use, if the
 	// address has no account when the sign-in ends.
 	invitation string
@@ -191,7 +210,8 @@ func New(cfg Config) (*Service, error) {
 		return nil, errors.New("accounts: the app's URL has no host")
 	}
 	return &Service{
-		cfg: cfg,
+		cfg: cfg, since: cfg.Now().UTC(), actions: map[string]int{},
+		noticing: make(chan struct{}, maxNoticing), noticeWait: noticeTimeout,
 		// The port is part of the origin and not of who the passkeys are for.
 		rp:         webauthn.RelyingParty{ID: app.Hostname(), Origins: []string{app.Scheme + "://" + app.Host}},
 		attempts:   map[string]*attempt{},
@@ -209,7 +229,7 @@ func (s *Service) Wait() { s.work.Wait() }
 
 func (s *Service) now() time.Time { return s.cfg.Now().UTC() }
 
-// Identifiers are random and say what they name: acc_…, ses_…, att_…, cer_….
+// Identifiers are random and say what they name: acc_…, ses_…, att_…, cer_…, inv_….
 var idEncoding = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPadding(base32.NoPadding)
 
 const idLength = 26 // 16 bytes in base32
@@ -247,7 +267,7 @@ func randomString(alphabet string, n int) string {
 
 // identifiers are taken out of the errors this package logs: logs leave the
 // enclave, and a store's error names the record it was about.
-var identifiers = regexp.MustCompile(`\b(acc|ses|att|cer)_[a-z2-7]{26}`)
+var identifiers = regexp.MustCompile(`\b(acc|ses|att|cer|inv)_[a-z2-7]{26}`)
 
 func scrub(err error) string { return identifiers.ReplaceAllString(err.Error(), "${1}_…") }
 
@@ -281,15 +301,47 @@ type accountDoc struct {
 	// Providers are the provider accounts that sign in to the account. One
 	// that is not here signs nobody in, wherever its pointer leads.
 	Providers []providerDoc `json:"providers,omitempty"`
-	// ClosesAt is when a closing account is removed.
-	ClosesAt time.Time `json:"closes_at,omitzero"`
+	// ClosesAt is when a closing account is removed, and ClosingBy who asked
+	// for that: contracts.ClosingByOperator, or the person (also when empty,
+	// as in the records written before the operator could ask).
+	ClosesAt  time.Time `json:"closes_at,omitzero"`
+	ClosingBy string    `json:"closing_by,omitempty"`
+	// BlockedAt is when the operator blocked the account. While it is set
+	// nobody signs in to the account and no session of it stands for anything.
+	BlockedAt time.Time `json:"blocked_at,omitzero"`
+	// MovingTo is the contact address the account is changing to, between the
+	// record saying so and the record saying it is done, and MovingClaim names
+	// the change that set it (address.go). The pointer from that address is
+	// written in between, and leads here from then on.
+	MovingTo    string `json:"moving_to,omitempty"`
+	MovingClaim string `json:"moving_claim,omitempty"`
 }
 
 func (d *accountDoc) view() contracts.Account {
 	return contracts.Account{
 		ID: d.ID, State: d.State, Address: d.Address, Name: d.Name, Language: d.Language,
-		CreatedAt: d.CreatedAt, ClosesAt: d.ClosesAt,
+		CreatedAt: d.CreatedAt, ClosesAt: d.ClosesAt, ClosingBy: d.closingBy(),
 	}
+}
+
+// closingBy says who asked to delete a closing account, "" for one that is not.
+func (d *accountDoc) closingBy() string {
+	switch {
+	case d.State != contracts.AccountClosing:
+		return ""
+	case d.ClosingBy == contracts.ClosingByOperator:
+		return contracts.ClosingByOperator
+	}
+	return contracts.ClosingByPerson
+}
+
+// blocked reports whether the operator blocked the account.
+func (d *accountDoc) blocked() bool { return !d.BlockedAt.IsZero() }
+
+// has reports whether address is the account's: its contact address, or the
+// one it is changing to, which its person proved to be theirs already.
+func (d *accountDoc) has(address string) bool {
+	return d.Address == address || (d.MovingTo != "" && d.MovingTo == address)
 }
 
 // due reports whether the account's person asked to delete it and the days
@@ -399,22 +451,28 @@ func (s *Service) putAccountAt(ctx context.Context, doc *accountDoc, at store.Ma
 	return s.cfg.Records.PutRecordAt(ctx, rec, at)
 }
 
-// own returns the account behind a session.
+// own returns the account behind a session. A session of an account that
+// the operator blocked stands for nothing, like one of no account.
 func (s *Service) own(ctx context.Context, who *Authenticated) (*accountDoc, error) {
 	doc, err := s.account(ctx, who.AccountID)
 	if err != nil {
 		return nil, err
 	}
-	if doc == nil {
+	if doc == nil || doc.blocked() {
 		return nil, contracts.ErrUnauthorized
 	}
 	return doc, nil
 }
 
-// change is rewrite for everything a closing account refuses: all but
-// cancelling, and a recovery code used to sign in.
+// change is rewrite for what a person changes of their own account. A
+// blocked account takes none of it, as if its session were not there, and a
+// closing one refuses everything but cancelling, and a recovery code used to
+// sign in.
 func (s *Service) change(ctx context.Context, id string, edit func(*accountDoc) error) (*accountDoc, error) {
 	return s.rewrite(ctx, id, func(doc *accountDoc) error {
+		if doc.blocked() {
+			return contracts.ErrUnauthorized
+		}
 		if doc.State == contracts.AccountClosing {
 			return contracts.ErrAccountClosing
 		}
@@ -535,7 +593,7 @@ const loginKey = "account"
 // and the pointer that was found, which a sign-up replaces when it leads
 // nowhere.
 func (s *Service) lookup(ctx context.Context, address string) (*accountDoc, *store.Entry, error) {
-	return s.follow(ctx, loginPartition(address), func(doc *accountDoc) bool { return doc.Address == address })
+	return s.follow(ctx, loginPartition(address), func(doc *accountDoc) bool { return doc.has(address) })
 }
 
 // follow returns the account a pointer leads to, when the account's own
@@ -568,8 +626,10 @@ func (s *Service) follow(ctx context.Context, partition string, owns func(*accou
 }
 
 // create makes the account of address, which just proved to be the person's.
-// stale is the pointer that led nowhere, if there was one.
-func (s *Service) create(ctx context.Context, address string, stale *store.Entry) (*accountDoc, error) {
+// stale is the pointer that led nowhere, if there was one. It reports whether
+// the account it returns was made here: not when another sign-up of the same
+// address ended first.
+func (s *Service) create(ctx context.Context, address string, stale *store.Entry) (*accountDoc, bool, error) {
 	now := s.now()
 	doc := &accountDoc{
 		V: 1, ID: newID("acc"), State: contracts.AccountActive, Address: address,
@@ -578,11 +638,11 @@ func (s *Service) create(ctx context.Context, address string, stale *store.Entry
 	// The entry in the list of accounts goes in before the record: one without
 	// a record lists nothing, where an account without one would never be shown.
 	if err := s.point(ctx, accountsPartition, listKey(doc), doc.ID, 0); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err := s.makeAccount(ctx, doc); err != nil {
 		_ = s.forget(ctx, accountsPartition, listKey(doc))
-		return nil, err
+		return nil, false, err
 	}
 	version := uint64(0)
 	if stale != nil {
@@ -600,24 +660,28 @@ func (s *Service) create(ctx context.Context, address string, stale *store.Entry
 		// the address's.
 		winner, _, err := s.lookup(ctx, address)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if winner == nil {
-			return nil, errors.New("accounts: the pointer of an address keeps changing")
+			return nil, false, errors.New("accounts: the pointer of an address keeps changing")
 		}
-		return winner, nil
+		return winner, false, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	s.cfg.Log.Info("accounts: account created")
-	return doc, nil
+	return doc, true, nil
 }
 
 // ---- invitations ----
 
 type invitationDoc struct {
-	V         int       `json:"v"`
+	V int `json:"v"`
+	// ID names the invitation for the operator (operator.go). It is random:
+	// the code cannot be had from it. The invitations made before there was a
+	// list have none.
+	ID        string    `json:"id,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -629,7 +693,8 @@ func invitationPartition(code string) string {
 const invitationKey = "invitation"
 
 // CreateInvitations makes single-use sign-up codes. They are returned once:
-// only their hash is kept.
+// only their hash is kept. Each is also listed for the operator under an
+// identifier of its own, which says nothing of the code (operator.go).
 func (s *Service) CreateInvitations(ctx context.Context, count int) (*contracts.Invitations, error) {
 	if count < 1 || count > MaxInvitations {
 		return nil, &contracts.Error{Code: "invalid_count", Message: fmt.Sprintf("count must be 1-%d", MaxInvitations)}
@@ -640,17 +705,28 @@ func (s *Service) CreateInvitations(ctx context.Context, count int) (*contracts.
 	}
 	now := s.now()
 	out := &contracts.Invitations{ExpiresAt: now.Add(domain.InvitationLifetime)}
-	raw, _ := json.Marshal(invitationDoc{V: 1, CreatedAt: now})
+	// The ones made before a failure are made all the same.
+	defer func() { s.acted(ActionInvitationsMade, len(out.Invitations)) }()
 	for range count {
-		code := randomString(domain.InvitationAlphabet, domain.InvitationLength)
-		e := &store.Entry{Partition: invitationPartition(code), Key: invitationKey, ExpiresAt: out.ExpiresAt, UpdatedAt: now}
-		if e.Value, err = envelope.Sign(key, raw, entryAAD(e.Partition, e.Key)); err != nil {
-			return nil, err
+		code, id := randomString(domain.InvitationAlphabet, domain.InvitationLength), newID("inv")
+		partition := invitationPartition(code)
+		// The entry of the list goes in first: one without an invitation lists
+		// nothing, where an invitation without one could never be revoked.
+		listed, _ := json.Marshal(invitedDoc{V: 1, ID: id, Invitation: partition, CreatedAt: now})
+		raw, _ := json.Marshal(invitationDoc{V: 1, ID: id, CreatedAt: now})
+		for _, e := range []*store.Entry{
+			{Partition: invitationsPartition, Key: id, Value: listed},
+			{Partition: partition, Key: invitationKey, Value: raw},
+		} {
+			e.ExpiresAt, e.UpdatedAt = out.ExpiresAt, now
+			if e.Value, err = envelope.Sign(key, e.Value, entryAAD(e.Partition, e.Key)); err != nil {
+				return nil, err
+			}
+			if err := s.cfg.Entries.PutEntry(ctx, e); err != nil {
+				return nil, err
+			}
 		}
-		if err := s.cfg.Entries.PutEntry(ctx, e); err != nil {
-			return nil, err
-		}
-		out.Invitations = append(out.Invitations, domain.FormatInvitation(code))
+		out.Invitations, out.IDs = append(out.Invitations, domain.FormatInvitation(code)), append(out.IDs, id)
 	}
 	return out, nil
 }
@@ -845,17 +921,23 @@ func signInMail(to, appURL, attempt, code, token string) Mail {
 // take ends a sign-in with the code or the token of its message, and returns
 // what it was started for. Every failure is the same error.
 func (s *Service) take(in contracts.EmailFinish) (*attempt, error) {
-	return s.match(in, true)
+	return s.match(in, "", true)
 }
 
-// match finds the sign-in that the code or the token of in belongs to. With
-// use it ends it: a sign-in works once. Without, it is only looked at, and a
-// wrong token counts against it all the same.
-func (s *Service) match(in contracts.EmailFinish, use bool) (*attempt, error) {
+// match finds the attempt that the code or the token of in belongs to, among
+// the sign-ins (account "") or among the changes of that account's address.
+// With use it ends it: an attempt works once. Without, it is only looked at,
+// and a wrong token counts against it all the same.
+func (s *Service) match(in contracts.EmailFinish, account string, use bool) (*attempt, error) {
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a := s.attempts[in.Attempt]
+	if a != nil && a.account != account {
+		// Started for something else, or for another account: here it is no
+		// attempt at all, and nothing of it changes.
+		return nil, contracts.ErrInvalidCode
+	}
 	if a == nil || !a.expires.After(now) {
 		delete(s.attempts, in.Attempt)
 		return nil, contracts.ErrInvalidCode
@@ -888,49 +970,49 @@ func (s *Service) match(in contracts.EmailFinish, use bool) (*attempt, error) {
 // FinishEmail ends a sign-in by email: it signs the device in, to the
 // address's account or, with an invitation, to a new one. It returns the
 // account and the value of the session's cookie.
-func (s *Service) FinishEmail(ctx context.Context, in contracts.EmailFinish, userAgent string) (*contracts.Me, string, error) {
-	doc, err := s.proved(ctx, in)
+func (s *Service) FinishEmail(ctx context.Context, in contracts.EmailFinish, from Browser) (*contracts.Me, string, error) {
+	doc, made, err := s.proved(ctx, in)
 	if err != nil {
 		return nil, "", err
 	}
-	session, cookie, err := s.newSession(ctx, doc.ID, userAgent)
-	if err != nil {
-		return nil, "", err
-	}
-	return &contracts.Me{Account: doc.view(), Session: *session}, cookie, nil
+	return s.enter(ctx, doc, wayMail, from, made)
 }
 
 // proved ends a sign-in by email with the code or the token of its message,
 // and returns the account of the address that so proved to be the person's:
-// the one it has or, with an invitation, a new one.
-func (s *Service) proved(ctx context.Context, in contracts.EmailFinish) (*accountDoc, error) {
+// the one it has or, with an invitation, a new one, and whether it was made
+// here. An account the operator blocked is ErrAccountBlocked: said here, to
+// whoever proved the address, and never before.
+func (s *Service) proved(ctx context.Context, in contracts.EmailFinish) (*accountDoc, bool, error) {
 	a, err := s.take(in)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	doc, stale, err := s.lookup(ctx, a.address)
 	switch {
 	case err != nil:
-		return nil, err
+		return nil, false, err
 	case doc != nil && doc.PasskeyOnly:
 		// "Passkey only" was turned on after the message was sent.
-		return nil, contracts.ErrInvalidCode
+		return nil, false, contracts.ErrInvalidCode
+	case doc != nil && doc.blocked():
+		return nil, false, contracts.ErrAccountBlocked
 	case doc != nil:
-		return doc, nil
+		return doc, false, nil
 	case a.invitation == "":
-		return nil, contracts.ErrInvalidCode
+		return nil, false, contracts.ErrInvalidCode
 	}
 	return s.signUp(ctx, a.address, a.invitation, stale)
 }
 
 // signUp makes the account of an address that proved to be the person's and
 // has none. The invitation is used up here, by whoever deletes it first.
-func (s *Service) signUp(ctx context.Context, address, invitation string, stale *store.Entry) (*accountDoc, error) {
+func (s *Service) signUp(ctx context.Context, address, invitation string, stale *store.Entry) (*accountDoc, bool, error) {
 	if err := s.cfg.Entries.DeleteEntry(ctx, invitation, invitationKey); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, contracts.ErrInvalidInvitation
+			return nil, false, contracts.ErrInvalidInvitation
 		}
-		return nil, err
+		return nil, false, err
 	}
 	return s.create(ctx, address, stale)
 }
@@ -945,7 +1027,7 @@ func (s *Service) LookEmail(_ context.Context, in contracts.EmailLook) (*contrac
 		// A code is typed where the sign-in was asked for; only a link travels.
 		return nil, contracts.ErrInvalidCode
 	}
-	a, err := s.match(contracts.EmailFinish{Attempt: in.Attempt, Token: in.Token}, false)
+	a, err := s.match(contracts.EmailFinish{Attempt: in.Attempt, Token: in.Token}, "", false)
 	if err != nil {
 		return nil, err
 	}

@@ -19,9 +19,11 @@
 - Terms, DPA and subprocessors need a lawyer before the site accepts sign-ups.
 - When terms exist, a `TERMS_VERSION` constant is checked by a test against the published page, and accounts record the version they accepted. A material change (data use, pricing, liability) is announced before it takes effect.
 - The subprocessor list comes from [data.md](data.md); a new subprocessor is added there first.
+- The privacy page names every cookie the app sets, every kind of mail the service sends to a person, and what the operator can and cannot do to an account, as [data.md](data.md) and ADR 0017 say. A change to any of them updates the page in the same pull request.
 - The GPL-2.0 kernel and `nsm.ko` shipped inside the enclave image are distributed unmodified with a pointer to AWS's source (`third-party-notices.md`).
 
 ## TODO
 
 - [ ] Lawyer review of the license, CLA and trademark policy.
 - [ ] Terms, DPA and subprocessor pages, replacing the placeholders tracked by `site/tests/content.test.ts`.
+- [ ] Lawyer review of the cookies: whether the device cookie (`__Host-permaily-device`), kept a year only to tell a person of a sign-in from a new device, needs consent under the ePrivacy rules, or counts as needed for the security of the service the person asked for.

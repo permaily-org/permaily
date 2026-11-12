@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -39,6 +40,9 @@ type app struct {
 	// (providers_test.go).
 	trip *http.Cookie
 	idp  *providers
+	// device is the cookie that names this browser to the accounts it signs
+	// in to.
+	device *http.Cookie
 	// mem is the storage, for a test to write to by hand, and ahead is how
 	// far the service's clock runs ahead of the real one.
 	mem   *store.Memory
@@ -84,6 +88,9 @@ func (a *app) call(method, path, body string, edit func(*http.Request)) *httptes
 	if a.trip != nil {
 		req.AddCookie(a.trip)
 	}
+	if a.device != nil {
+		req.AddCookie(a.device)
+	}
 	if edit != nil {
 		edit(req)
 	}
@@ -99,6 +106,9 @@ func (a *app) call(method, path, body string, edit func(*http.Request)) *httptes
 			if a.trip = c; c.MaxAge < 0 {
 				a.trip = nil
 			}
+		}
+		if c.Name == httpapi.DeviceCookie {
+			a.device = c
 		}
 	}
 	return rec
@@ -288,8 +298,8 @@ func TestInvitationsAPI(t *testing.T) {
 	if rec := do(h, "POST", "/v1/admin/invitations", "", `{"count":2}`); rec.Code != 401 {
 		t.Fatalf("without the operator's token: %d", rec.Code)
 	}
-	if rec := do(h, "GET", "/v1/admin/invitations", token, ""); rec.Code != 405 || rec.Header().Get("Allow") != "POST" {
-		t.Fatalf("GET: %d", rec.Code)
+	if rec := do(h, "PUT", "/v1/admin/invitations", token, ""); rec.Code != 405 || rec.Header().Get("Allow") != "GET, POST" {
+		t.Fatalf("PUT: %d", rec.Code)
 	}
 	rec := do(h, "POST", "/v1/admin/invitations", token, `{"count":2}`)
 	var out contracts.Invitations
@@ -336,11 +346,11 @@ func (b broken) StartPasskeySignIn(context.Context) (*contracts.PasskeyRequest, 
 	return nil, b.err
 }
 
-func (b broken) FinishPasskeySignIn(context.Context, contracts.PasskeySignIn, string) (*contracts.Me, string, error) {
+func (b broken) FinishPasskeySignIn(context.Context, contracts.PasskeySignIn, accounts.Browser) (*contracts.Me, string, error) {
 	return nil, "", b.err
 }
 
-func (b broken) Recover(context.Context, contracts.Recovery, string) (*contracts.Me, string, error) {
+func (b broken) Recover(context.Context, contracts.Recovery, accounts.Browser) (*contracts.Me, string, error) {
 	return nil, "", b.err
 }
 
@@ -839,7 +849,7 @@ func TestAccountsAdminAPI(t *testing.T) {
 			t.Fatalf("account %d of the list: %+v", i, r)
 		}
 	}
-	if !strings.Contains(rec.Body.String(), `"passkeys":0,"passkey_only":false,"sessions":1}`) || strings.Count(rec.Body.String(), "closes_at") != 1 {
+	if !strings.Contains(rec.Body.String(), `"passkeys":0,"passkey_only":false,"providers":[],"sessions":1}`) || strings.Count(rec.Body.String(), "closes_at") != 1 {
 		t.Fatalf("the list: %s", rec.Body)
 	}
 	if cho := list.Accounts[2]; cho.State != contracts.AccountClosing || cho.Name != "Cho" || cho.ClosesAt.IsZero() || list.Accounts[0].State != contracts.AccountActive {
@@ -869,7 +879,7 @@ func TestAccountsAdminAPI(t *testing.T) {
 	// One account.
 	rec = do(h, "GET", one, token, "")
 	var got contracts.AccountRecord
-	if read(t, rec, 200, &got); got != list.Accounts[0] {
+	if read(t, rec, 200, &got); !reflect.DeepEqual(got, list.Accounts[0]) {
 		t.Fatalf("an account: %s", rec.Body)
 	}
 	for _, path := range []string{"/v1/admin/accounts/acc_" + strings.Repeat("a", 26), "/v1/admin/accounts/x", "/v1/admin/accounts/", "/v1/admin/accounts/" + made[0].Account.ID + "/sessions", "/v1/admin/nothing"} {
