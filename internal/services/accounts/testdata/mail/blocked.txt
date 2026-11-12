@@ -1,0 +1,8 @@
+To: ada@example.com
+Subject: Your Permaily account was blocked
+
+Permaily's operator blocked your Permaily account. Every device was signed out of it, and nobody can sign in to it while it is blocked.
+
+    When: 12 November 2026, 09:30 UTC
+
+To ask why, or to ask for it to be unblocked, write to support@permaily.com.

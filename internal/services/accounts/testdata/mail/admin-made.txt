@@ -1,0 +1,8 @@
+To: ada@example.com
+Subject: Your Permaily account is now an admin
+
+Your Permaily account was made an admin of Permaily. It can manage the accounts and the invitations of the service in the admin panel at app.permaily.com, while it signs in with passkeys only.
+
+    When: 12 November 2026, 09:30 UTC
+
+If you did not expect this, write to support@permaily.com.

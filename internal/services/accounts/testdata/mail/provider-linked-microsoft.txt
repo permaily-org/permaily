@@ -1,0 +1,10 @@
+To: ada@example.com
+Subject: A change to how you sign in to Permaily
+
+Signing in with Microsoft was added to your Permaily account. It signs in to the account from now on.
+
+    When: 12 November 2026, 09:30 UTC
+
+If it was you, there is nothing to do.
+
+If it was not you, sign in at app.permaily.com, open Settings, sign out the devices you do not know and remove every way of signing in that is not yours. If you cannot sign in, write to support@permaily.com.
