@@ -167,7 +167,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			// An account's ways to sign in must not come back (ADR 0017).
 			return nil, errors.New("-mail-from needs -anchor-bucket")
 		}
-		identity = &tlsacme.Sealed{Records: records, Keys: p.keys, Name: "tls-" + directory.Host}
+		identity = &tlsacme.Sealed{Records: records, Keys: p.keys, Challenges: awsStore, Name: "tls-" + directory.Host}
 	}
 	if p.certs, err = tlsacme.New(hosts.All(), cfg.acmeDirectory, egress, identity, log); err != nil {
 		return nil, err
