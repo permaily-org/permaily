@@ -32,13 +32,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          path-to-document: https://github.com/permaily-org/permaily/blob/c0ee83ea360625608f8ca84b2fea41c47975e683/docs/contributing.md#contributor-license-agreement-cla
+          path-to-document: https://github.com/permaily-org/permaily/blob/1925b40fc057873d4cd6882c3395c96684715db8/docs/contributing.md#contributor-license-agreement-cla
           path-to-signatures: signatures/cla-1.2.json
           branch: cla-signatures
           # The licensors (license.md) do not sign the CLA.
           allowlist: leynier,tonyrbf96,dependabot[bot],github-actions[bot]
           custom-notsigned-prcomment: >-
             Thanks for your contribution. Before it can be merged, please read the
-            [Contributor License Agreement](https://github.com/permaily-org/permaily/blob/c0ee83ea360625608f8ca84b2fea41c47975e683/docs/contributing.md#contributor-license-agreement-cla)
+            [Contributor License Agreement](https://github.com/permaily-org/permaily/blob/1925b40fc057873d4cd6882c3395c96684715db8/docs/contributing.md#contributor-license-agreement-cla)
             and sign it by commenting below with the exact sentence that follows.
           lock-pullrequest-aftermerge: false
