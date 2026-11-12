@@ -7,6 +7,5 @@
 # before handing it the root secret; remove one to delete its key once no
 # rollback to it is planned. Never remove the release that is running.
 release_keys = {
-  "v0.9.0"  = "a2fa342ffde5a62519c8bfaff9f0d5ada401942754d51e7e757d3859fafb4ce586ab9c9c8e708c4a20251d305c7fadc6"
   "v0.10.0" = "c2999bd871d98ddd75e2c505b5e15cf6d978c227aa9fde535568641026149d5982b4200af66191d5759dffc25d2a5bbb"
 }
