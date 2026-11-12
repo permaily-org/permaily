@@ -185,11 +185,11 @@ func scansAndParts(t *testing.T, s partsStore, setNow func(time.Time), s3c *s3.C
 		}
 		for _, c := range []struct{ before, prefix, want string }{
 			{"", "txt#", `[txt#5 txt#3 txt#1] read 3 last "txt#1"`},
-			{"txt#3", "txt#", `[txt#1] read 1 last "txt#1"`},     // before itself is not read
+			{"txt#3", "txt#", `[txt#1] read 1 last "txt#1"`},       // before itself is not read
 			{"txt#4", "txt#", `[txt#3 txt#1] read 2 last "txt#1"`}, // a key nothing is at
 			{"txt#", "txt#", `[] read 0 last ""`},
 			{"tz", "txt#", `[txt#5 txt#3 txt#1] read 3 last "txt#1"`}, // past every key with the prefix
-			{"b", "txt#", `[] read 0 last ""`},                         // below every key with the prefix
+			{"b", "txt#", `[] read 0 last ""`},                        // below every key with the prefix
 			{"", "", `[u txt#5 txt#3 txt#1 a] read 5 last "a"`},
 			{"txt#3", "", `[txt#1 a] read 2 last "a"`},
 		} {
@@ -659,4 +659,74 @@ func TestS16AConflictIsNotAnObjectThatExists(t *testing.T) {
 	if err == nil || errors.Is(err, ErrExists) {
 		t.Fatalf("got %v", err)
 	}
+}
+
+// brokenS3 is S3 that fails every request it is asked, or whose answers fail
+// while they are read.
+type brokenS3 struct {
+	S3API
+	err     error
+	badBody bool
+	deletes int
+}
+
+func (b *brokenS3) PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	return nil, b.err
+}
+
+func (b *brokenS3) GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	if b.badBody {
+		return &s3.GetObjectOutput{Body: io.NopCloser(io.MultiReader(bytes.NewReader([]byte("part")), iotestErr{b.err}))}, nil
+	}
+	return nil, b.err
+}
+
+func (b *brokenS3) DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+	b.deletes++
+	return nil, b.err
+}
+
+type iotestErr struct{ err error }
+
+func (e iotestErr) Read([]byte) (int, error) { return 0, e.err }
+
+// A message's parts on storage that fails: an error, never an answer that
+// there is nothing, and a delete that fails at the raw object leaves the
+// item for the next try.
+func TestAWSPartsFailures(t *testing.T) {
+	ctx := context.Background()
+	down := errors.New("unreachable")
+	db := &brokenDB{put: down, delete: errors.New("the item must not be deleted before the raw object")}
+	s3b := &brokenS3{err: down}
+	s := &AWS{DB: db, S3: s3b, Table: "t", Bucket: "b"}
+	m := &Message{MailboxID: "m", ID: "1", RetentionDays: 7}
+	if err := s.PutRaw(ctx, m, []byte("raw")); !errors.Is(err, down) || errors.Is(err, ErrExists) {
+		t.Errorf("put raw: %v", err)
+	}
+	if err := s.PutItem(ctx, m); !errors.Is(err, down) {
+		t.Errorf("put item: %v", err)
+	}
+	if _, err := s.ReadRaw(ctx, "m", "1", 10); !errors.Is(err, down) || errors.Is(err, ErrNotFound) {
+		t.Errorf("read raw: %v", err)
+	}
+	s3b.badBody = true
+	if _, err := s.ReadRaw(ctx, "m", "1", 10); !errors.Is(err, down) {
+		t.Errorf("read raw, failing while read: %v", err)
+	}
+	if err := s.DeleteMessage(ctx, "m", "1"); !errors.Is(err, down) || s3b.deletes != 1 {
+		t.Errorf("delete: %v, %d raw deletes", err, s3b.deletes)
+	}
+	s.DB = &failingGets{DynamoAPI: db, err: down}
+	if _, err := s.Item(ctx, "m", "1"); !errors.Is(err, down) || errors.Is(err, ErrNotFound) {
+		t.Errorf("item: %v", err)
+	}
+}
+
+type failingGets struct {
+	DynamoAPI
+	err error
+}
+
+func (f *failingGets) GetItem(context.Context, *dynamodb.GetItemInput, ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
+	return nil, f.err
 }

@@ -15,7 +15,7 @@ github.com/permaily-org/permaily/internal/keys 89
 github.com/permaily-org/permaily/internal/inbox 86
 github.com/permaily-org/permaily/internal/msgauth 86
 github.com/permaily-org/permaily/internal/smtpd 92
-github.com/permaily-org/permaily/internal/store 96
+github.com/permaily-org/permaily/internal/store 97
 github.com/permaily-org/permaily/internal/tlsacme 91
 github.com/permaily-org/permaily/internal/enclave 87
 github.com/permaily-org/permaily/internal/contracts 100

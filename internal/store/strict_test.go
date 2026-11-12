@@ -58,13 +58,13 @@ func forked(t *testing.T, w *strictWorld, name string, mark store.Mark, enclaves
 		_, err := e.GetRecord(ctx, name)
 		_, _, errAt := e.GetRecordAt(ctx, name)
 		for what, err := range map[string]error{
-			"GetRecord":   err,
-			"GetRecordAt": errAt,
-			"PutRecordAt": e.PutRecordAt(ctx, rec(name, "after the fork"), mark),
-			"PutRecord":   e.PutRecord(ctx, rec(name, "after the fork"), false),
-			"create":      e.PutRecord(ctx, rec(name, "after the fork"), true),
+			"GetRecord":    err,
+			"GetRecordAt":  errAt,
+			"PutRecordAt":  e.PutRecordAt(ctx, rec(name, "after the fork"), mark),
+			"PutRecord":    e.PutRecord(ctx, rec(name, "after the fork"), false),
+			"create":       e.PutRecord(ctx, rec(name, "after the fork"), true),
 			"RemoveRecord": e.RemoveRecord(ctx, name),
-			"CreateNew":   e.CreateNew(ctx, rec(name, "after the fork")),
+			"CreateNew":    e.CreateNew(ctx, rec(name, "after the fork")),
 		} {
 			if !errors.Is(err, store.ErrForked) || errors.Is(err, store.ErrNotFound) {
 				t.Fatalf("enclave %d, %s of a forked record: %v", i, what, err)
@@ -715,5 +715,68 @@ func TestHistoryFailures(t *testing.T) {
 	a := &store.Anchored{Records: store.NewMemory(), Commits: c, Strict: true}
 	if _, err := a.GetRecord(ctx, "tls"); !errors.Is(err, waiting) || errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("strict read: %v", err)
+	}
+}
+
+// takingCommits is a store of commits where something that is not a commit
+// lands at the version of the next append, once, just before it.
+type takingCommits struct {
+	*store.MemoryCommits
+	taken bool
+}
+
+func (c *takingCommits) Append(ctx context.Context, commit store.Commit) (*store.Commit, error) {
+	if !c.taken {
+		c.taken = true
+		c.Take(commit.Name, commit.Version)
+	}
+	return c.MemoryCommits.Append(ctx, commit)
+}
+
+// failingPlain is a table whose read of a record's plain name fails.
+type failingPlain struct {
+	store.RecordTable
+	err error
+}
+
+func (f failingPlain) GetRecord(ctx context.Context, name string) (*store.Record, error) {
+	if !strings.Contains(name, "@") {
+		return nil, f.err
+	}
+	return f.RecordTable.GetRecord(ctx, name)
+}
+
+// CreateNew when something that is not a commit takes its version under it:
+// it makes the record after it, and leaves nothing of the first try. When the
+// plain name cannot be read, it makes nothing.
+func TestCreateNewAroundWhatIsNotACommit(t *testing.T) {
+	ctx := context.Background()
+	records := store.NewMemory()
+	commits := &takingCommits{MemoryCommits: store.NewMemoryCommits()}
+	a := &store.Anchored{Records: records, Commits: commits, Strict: true}
+	if err := a.CreateNew(ctx, rec("mailbox-1", "made")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := a.GetRecord(ctx, "mailbox-1"); err != nil || string(got.Value) != "made" {
+		t.Fatalf("read %+v, %v", got, err)
+	}
+	if stored := names(t, records, "mailbox-1"); len(stored) != 1 || !strings.Contains(stored[0], "@00000000000000000002-") {
+		t.Fatalf("stored %q", stored)
+	}
+
+	down := errors.New("table unreachable")
+	b := &store.Anchored{Records: failingPlain{RecordTable: records, err: down}, Commits: store.NewMemoryCommits(), Strict: true}
+	if err := b.CreateNew(ctx, rec("mailbox-2", "made")); !errors.Is(err, down) {
+		t.Fatalf("a plain name that cannot be read: %v", err)
+	}
+	if stored := names(t, records, "mailbox-2"); len(stored) != 0 {
+		t.Fatalf("stored %q", stored)
+	}
+
+	// A copy of a version without a commit adds nothing.
+	m := store.NewMemoryCommits()
+	m.Copy("nothing", 1, false)
+	if h, err := m.History(ctx, "nothing"); err != nil || h.Head != nil || len(h.Unlocked) != 0 {
+		t.Fatalf("history %+v, %v", h, err)
 	}
 }

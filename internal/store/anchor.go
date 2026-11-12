@@ -603,12 +603,7 @@ type MemoryCommits struct {
 	taken map[string]map[uint64]bool
 	// copies are commits written again at their version, and whether each
 	// copy is locked.
-	copies map[string][]memoryCopy
-}
-
-type memoryCopy struct {
-	commit Commit
-	locked bool
+	copies map[string][]commitCopy
 }
 
 // NewMemoryCommits returns an empty MemoryCommits.
@@ -620,6 +615,12 @@ func NewMemoryCommits() *MemoryCommits {
 func (m *MemoryCommits) Head(_ context.Context, name string) (*Commit, uint64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	latest, next := m.head(name)
+	return latest, next, nil
+}
+
+// head is Head with m.mu held.
+func (m *MemoryCommits) head(name string) (*Commit, uint64) {
 	var latest *Commit
 	used := map[uint64]bool{}
 	for _, c := range m.commits[name] {
@@ -640,7 +641,7 @@ func (m *MemoryCommits) Head(_ context.Context, name string) (*Commit, uint64, e
 	for used[next] {
 		next++
 	}
-	return latest, next, nil
+	return latest, next
 }
 
 // Append implements Commits.
@@ -689,20 +690,15 @@ func (m *MemoryCommits) Forget(name string) {
 
 // History implements HistoryReader: every commit of name, its forks and the
 // versions whose commit has no locked copy.
-func (m *MemoryCommits) History(ctx context.Context, name string) (*History, error) {
-	head, next, err := m.Head(ctx, name)
-	if err != nil {
-		return nil, err
-	}
+func (m *MemoryCommits) History(_ context.Context, name string) (*History, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	head, next := m.head(name)
 	copies := make([]commitCopy, 0, len(m.commits[name])+len(m.copies[name]))
 	for _, c := range m.commits[name] {
 		copies = append(copies, commitCopy{c, true})
 	}
-	for _, c := range m.copies[name] {
-		copies = append(copies, commitCopy{c.commit, c.locked})
-	}
+	copies = append(copies, m.copies[name]...)
 	h := history(copies)
 	h.Head, h.Next = head, next
 	return h, nil
@@ -740,9 +736,9 @@ func (m *MemoryCommits) Copy(name string, version uint64, locked bool) {
 		return
 	}
 	if m.copies == nil {
-		m.copies = map[string][]memoryCopy{}
+		m.copies = map[string][]commitCopy{}
 	}
-	m.copies[name] = append(m.copies[name], memoryCopy{*found, locked})
+	m.copies[name] = append(m.copies[name], commitCopy{*found, locked})
 }
 
 // commitCopy is one copy of a commit as a history reads it: the commit, and
