@@ -27,6 +27,9 @@ func checkAnchors(a *attestation.AnchorStatus, now time.Time) error {
 		case r.Fork:
 			return fmt.Errorf("a %s record has two commits of different digests at version %d (seen at %s): whoever writes to the store of commits hid one while the enclave wrote the other. The enclave refuses that record",
 				r.Name, r.Found, r.At.UTC().Format(time.RFC3339))
+		case r.Lost:
+			return fmt.Errorf("a %s record's newest commit, at version %d, names a value the table no longer holds (seen at %s): whoever writes to the table deleted or changed it. The enclave refuses that record",
+				r.Name, r.Found, r.At.UTC().Format(time.RFC3339))
 		case r.Unlocked:
 			return fmt.Errorf("a %s record has a commit at version %d that S3 does not keep locked (seen at %s): the store of commits did not keep a lock the enclave took, so whoever runs the storage could remove it",
 				r.Name, r.Found, r.At.UTC().Format(time.RFC3339))

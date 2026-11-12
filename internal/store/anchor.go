@@ -95,6 +95,11 @@ type Regression struct {
 	// Append locks one (History.Unlocked): Found is the lowest such version.
 	// The commit is counted all the same; it is recorded once per record.
 	Unlocked bool
+	// Lost marks a strict record whose newest commit names a value that is
+	// not stored (ErrLost): Found is that commit's version. Whoever writes to
+	// the table deleted or changed it; the record is refused, never taken
+	// for none. It is recorded once per record.
+	Lost bool
 }
 
 // Anchored is Records whose values cannot be put back to an earlier one. The
@@ -231,12 +236,15 @@ func (a *Anchored) strictHead(ctx context.Context, name string) (*Commit, uint64
 	return head, h.Next, nil
 }
 
-// alarm records a fork or an unlocked commit of a strict record, once per
-// record and kind. The caller holds a.mu.
+// alarm records a fork, an unlocked commit or a lost value of a strict
+// record, once per record and kind. The caller holds a.mu.
 func (a *Anchored) alarm(r Regression) {
 	kind := "unlocked\x00"
-	if r.Fork {
+	switch {
+	case r.Fork:
 		kind = "fork\x00"
+	case r.Lost:
+		kind = "lost\x00"
 	}
 	if a.alarmed[kind+r.Name] {
 		return
@@ -337,6 +345,11 @@ func (a *Anchored) GetRecordAt(ctx context.Context, name string) (*Record, Mark,
 			return nil, at, ErrNotFound
 		}
 		if missing != nil && head.Version == missing.Version && head.Digest == missing.Digest {
+			if a.Strict {
+				a.mu.Lock()
+				a.alarm(Regression{Name: name, Had: head.Version, Found: head.Version, Lost: true})
+				a.mu.Unlock()
+			}
 			return nil, at, ErrLost
 		}
 		rec, err := a.committed(ctx, head)

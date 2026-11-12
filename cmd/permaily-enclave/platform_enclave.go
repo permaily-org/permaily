@@ -247,7 +247,7 @@ func anchorStatus(a, ofAccounts, ofMailboxes *store.Anchored, bucket string, ret
 	}
 	if ofMailboxes != nil {
 		for _, r := range ofMailboxes.Regressions() {
-			st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: mailboxRecord, Had: r.Had, Found: r.Found, At: r.At, Fork: r.Fork, Unlocked: r.Unlocked})
+			st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: mailboxRecord, Had: r.Had, Found: r.Found, At: r.At, Fork: r.Fork, Unlocked: r.Unlocked, Lost: r.Lost})
 		}
 	}
 	return st

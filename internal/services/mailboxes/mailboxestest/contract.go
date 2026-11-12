@@ -43,7 +43,12 @@ type Subject struct {
 	Accounts *Accounts
 	Notices  *Notices
 	// SetNow sets the clock the service reads.
-	SetNow     func(time.Time)
+	SetNow func(time.Time)
+	// Sweep does what the sweep's last pass does to every mailbox that was
+	// disconnected: after it, nothing of one is left, and it cannot be told
+	// from a mailbox never made (ADR 0026, "Disconnecting"). The service's
+	// runs its sweep past SweepGrace; the fake forgets them.
+	Sweep      func(t *testing.T)
 	MakeLost   func(t *testing.T, id string)
 	MakeForked func(t *testing.T, id string)
 }
@@ -56,6 +61,7 @@ func FakeSubject(*testing.T) *Subject {
 	return &Subject{
 		Service: f, Accounts: f.Accounts, Notices: f.Notices,
 		SetNow:     func(t time.Time) { now = t },
+		Sweep:      func(*testing.T) { f.Sweep() },
 		MakeLost:   func(_ *testing.T, id string) { f.MakeLost(id) },
 		MakeForked: func(_ *testing.T, id string) { f.MakeForked(id) },
 	}
@@ -65,7 +71,7 @@ func FakeSubject(*testing.T) *Subject {
 var contractStart = time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
 
 // Contract runs the cases of ADR 0026's seams that every implementation of
-// Service must pass, numbered C1 to C16 as the ADR lists them ("The fakes,
+// Service must pass, numbered C1 to C18 as the ADR lists them ("The fakes,
 // and the contract they share"). Each case gets a new Subject.
 func Contract(t *testing.T, newSubject func(t *testing.T) *Subject) {
 	for _, c := range contractCases {
@@ -420,6 +426,36 @@ var contractCases = []contractCase{
 		late := mailboxes.Caller{Account: me.Account, ConfirmedUntil: contractStart.Add(mailboxes.Period + time.Hour)}
 		_, err = s.Service.Open(ctx, late, m.ID, mailboxes.AccessReadMessage)
 		is(t, "open a paused one", err, nil)
+	}},
+	{"C17 disconnecting twice succeeds until the sweep's last pass, and is not_found after", func(t *testing.T, s *Subject) {
+		me, other := caller("acc_me"), caller("acc_other")
+		m := create(t, s, me)
+		is(t, "first", s.Service.Disconnect(ctx, me, m.ID), nil)
+		is(t, "before the sweep", s.Service.Disconnect(ctx, me, m.ID), nil)
+		is(t, "a stranger before the sweep", s.Service.Disconnect(ctx, other, m.ID), contracts.ErrNotFound)
+		s.SetNow(contractStart.Add(mailboxes.SweepGrace + time.Minute))
+		s.Sweep(t)
+		is(t, "the owner after the sweep", s.Service.Disconnect(ctx, me, m.ID), contracts.ErrNotFound)
+		is(t, "a stranger after the sweep", s.Service.Disconnect(ctx, other, m.ID), contracts.ErrNotFound)
+		if n, err := s.Service.Total(ctx); err != nil || n != 0 {
+			t.Errorf("total after the sweep: %d %v", n, err)
+		}
+	}},
+	{"C18 ten changes of a mailbox's settings a minute", func(t *testing.T, s *Subject) {
+		me := caller("acc_me")
+		m := create(t, s, me)
+		for i := range 10 {
+			days := contracts.MailboxRetentionDays[i%len(contracts.MailboxRetentionDays)]
+			if _, err := s.Service.Update(ctx, me, m.ID, contracts.MailboxUpdate{RetentionDays: &days}); err != nil {
+				t.Fatalf("change %d: %v", i+1, err)
+			}
+		}
+		days := contracts.MailboxRetentionDefault
+		_, err := s.Service.Update(ctx, me, m.ID, contracts.MailboxUpdate{RetentionDays: &days})
+		is(t, "the eleventh", err, contracts.ErrTooManyRequests)
+		s.SetNow(contractStart.Add(time.Minute))
+		_, err = s.Service.Update(ctx, me, m.ID, contracts.MailboxUpdate{RetentionDays: &days})
+		is(t, "a minute later", err, nil)
 	}},
 	{"C16 changing the settings", func(t *testing.T, s *Subject) {
 		me := caller("acc_me")

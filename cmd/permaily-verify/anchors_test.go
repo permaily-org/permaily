@@ -44,6 +44,9 @@ func TestCheckAnchors(t *testing.T) {
 		"a commit S3 does not keep locked (ADR 0026)": {func(a *attestation.AnchorStatus) {
 			a.Regressions = []attestation.AnchorRegression{{Name: "mailbox", Found: 1, At: now, Unlocked: true}}
 		}, "a mailbox record has a commit at version 1 that S3 does not keep locked"},
+		"a strict record whose value is lost (PR #91's review)": {func(a *attestation.AnchorStatus) {
+			a.Regressions = []attestation.AnchorRegression{{Name: "mailbox", Had: 3, Found: 3, At: now, Lost: true}}
+		}, "a mailbox record's newest commit, at version 3, names a value the table no longer holds"},
 	} {
 		a := good()
 		c.change(a)

@@ -12,12 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/envelope"
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/keys"
@@ -146,11 +146,9 @@ func validMailboxID(id string) bool {
 	return err == nil
 }
 
-// identifiers are taken out of what this package logs: logs leave the
-// enclave. Its own errors hold none; a store's might.
-var identifiers = regexp.MustCompile(`\b(acc|mbx)_[a-z2-7]{26}|\b[0-9a-f]{32}\b|\b[0-9a-f]{64}\b`)
-
-func scrub(err error) string { return identifiers.ReplaceAllString(err.Error(), "…") }
+// scrub is what this package logs of an error (domain.Redacted): logs leave
+// the enclave. Its own errors hold no identifier; a store's might.
+func scrub(err error) string { return domain.Redacted(err) }
 
 func recordName(id string) string    { return "mailbox-" + id }
 func listName(account string) string { return "mailboxes-" + account }
@@ -412,7 +410,11 @@ func (l *listDoc) without(id string) []listEntry {
 	return out
 }
 
-// loadList reads an account's list: store.ErrNotFound when it has none.
+// errListLost is an account's list whose committed value is gone.
+var errListLost = errors.New("mailboxes: an account's list is lost")
+
+// loadList reads an account's list: store.ErrNotFound when it has none,
+// errListLost when its value is gone, store.ErrForked when it is forked.
 func (s *Service) loadList(ctx context.Context, account string) (*listDoc, store.Mark, error) {
 	name := listName(account)
 	rec, at, err := s.cfg.Records.GetRecordAt(ctx, name)
@@ -420,7 +422,7 @@ func (s *Service) loadList(ctx context.Context, account string) (*listDoc, store
 	case errors.Is(err, store.ErrLost):
 		// Never taken for no list (which ErrLost would pass for): an account
 		// whose list is gone is refused, not given an empty one.
-		return nil, store.Mark{}, errors.New("mailboxes: an account's list is lost")
+		return nil, store.Mark{}, errListLost
 	case errors.Is(err, store.ErrNotFound):
 		return nil, at, store.ErrNotFound
 	case err != nil:

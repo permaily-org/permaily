@@ -31,6 +31,12 @@ func (s *Service) Accept(ctx context.Context, rcpt string) (string, error) {
 	if l == nil || !l.doc.PausedAt.IsZero() {
 		return "", ErrNoSuchMailbox
 	}
+	switch err := s.listed(ctx, l); {
+	case errors.Is(err, errNotAccepting):
+		return "", ErrNoSuchMailbox
+	case err != nil:
+		return "", err
+	}
 	if !s.room(l.id) {
 		return "", ErrSlowDown
 	}
@@ -68,7 +74,7 @@ func (s *Service) count(id string, n int) {
 // tried in turn.
 func (s *Service) Deliver(ctx context.Context, from string, ids []string, raw []byte) error {
 	auth := s.cfg.Auth(ctx, raw)
-	p := inbox.Parse(raw)
+	p := inbox.Parse(ctx, raw)
 	p.Meta.EnvelopeFrom = from
 	for _, a := range auth {
 		p.Meta.Auth = append(p.Meta.Auth, contracts.AuthCheck{Method: a.Method, Domain: a.Domain, Result: a.Result})
@@ -120,6 +126,10 @@ func (s *Service) deliver(ctx context.Context, id, from string, p *inbox.Parsed,
 	}
 	if l.state != stActive || !l.doc.PausedAt.IsZero() {
 		return errNotAccepting
+	}
+	// And its account's list: open and naming it.
+	if err := s.listed(ctx, l); err != nil {
+		return err
 	}
 	// 2. The key and the retention.
 	key, err := s.mailboxKey(ctx, l)
@@ -180,6 +190,31 @@ func (s *Service) deliver(ctx context.Context, id, from string, p *inbox.Parsed,
 		return err
 	}
 	s.count(id, len(raw))
+	return nil
+}
+
+// listed reads the account's list of an active mailbox and checks that it is
+// open and names the mailbox: a list that is not there, lost, forked or
+// closed (the account was removed, though a write of the record failed) is
+// errNotAccepting, and so is one that does not name it. Any other failure of
+// the read is an error (a temporary failure). A blocked account and one in
+// its seven days of closing keep an open list and still receive (ADR 0026,
+// "Accounts removed, closing and blocked"). It is one more strict read per
+// recipient, at RCPT TO and again before storing.
+func (s *Service) listed(ctx context.Context, l *loaded) error {
+	list, _, err := s.loadList(ctx, l.doc.Account)
+	switch {
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, errListLost), errors.Is(err, store.ErrForked):
+		return errNotAccepting
+	case err != nil:
+		return err
+	}
+	if list.State != listOpen {
+		return errNotAccepting
+	}
+	if _, ok := list.find(l.id); !ok {
+		return errNotAccepting
+	}
 	return nil
 }
 

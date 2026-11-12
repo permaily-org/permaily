@@ -282,7 +282,7 @@ func (o *onlyOnce) Do(f func()) {
 
 var errStopped = errors.New("stopped by the test")
 
-// The contract every implementation keeps (C1 to C16), on the service over
+// The contract every implementation keeps (C1 to C18), on the service over
 // store.Memory with its own strict Anchored.
 func TestTheServiceKeepsTheContract(t *testing.T) {
 	mailboxestest.Contract(t, func(t *testing.T) *mailboxestest.Subject {
@@ -290,6 +290,14 @@ func TestTheServiceKeepsTheContract(t *testing.T) {
 		e := w.enclave()
 		return &mailboxestest.Subject{
 			Service: e, Accounts: w.accounts, Notices: w.notices, SetNow: w.clock.set,
+			Sweep: func(t *testing.T) {
+				t.Helper()
+				for range 2 {
+					if err := e.Sweep(ctx); err != nil {
+						t.Fatal(err)
+					}
+				}
+			},
 			MakeLost: func(_ *testing.T, id string) { w.lose(id) }, MakeForked: func(_ *testing.T, id string) { w.fork(id) },
 		}
 	})
