@@ -22,13 +22,16 @@ import (
 func (w *world) confirmByMail(svc *Service, cookie string) *Authenticated {
 	w.t.Helper()
 	who := w.who(cookie)
+	before := len(w.out.Sent())
 	started, err := svc.StartConfirmEmail(context.Background(), who)
 	if err != nil {
 		w.t.Fatalf("starting to confirm: %v", err)
 	}
-	svc.Wait()
-	sent := w.out.Sent()
-	if _, err := svc.FinishConfirmEmail(context.Background(), who, contracts.ConfirmFinish{Attempt: started.Attempt, Code: code(&sent[len(sent)-1])}); err != nil {
+	mail := w.mailTo(svc, before, w.doc(who.AccountID).Address, confirmSubject)
+	if mail == nil {
+		w.t.Fatal("no message to confirm")
+	}
+	if _, err := svc.FinishConfirmEmail(context.Background(), who, contracts.ConfirmFinish{Attempt: started.Attempt, Code: code(mail)}); err != nil {
 		w.t.Fatalf("confirming: %v", err)
 	}
 	return w.who(cookie)
@@ -256,26 +259,28 @@ func TestAnAttemptMadeToConfirmSignsNobodyInAndChangesNoAddress(t *testing.T) {
 	w.later()
 	who, other, beaWho := w.who(cookie), w.who(otherCookie), w.who(beaCookie)
 
+	before := len(w.out.Sent())
 	started, err := w.svc.StartConfirmEmail(ctx, who)
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.svc.Wait()
-	sent := w.out.Sent()
-	m := sent[len(sent)-1]
+	m := w.mailTo(w.svc, before, "ana@example.org", confirmSubject)
+	if m == nil {
+		t.Fatal("no message to confirm")
+	}
 	sessions, _ := w.svc.sessions(ctx, me.Account.ID, nil)
-	finish := contracts.EmailFinish{Attempt: started.Attempt, Code: code(&m)}
+	finish := contracts.EmailFinish{Attempt: started.Attempt, Code: code(m)}
 	if got, cookie, err := w.svc.FinishEmail(ctx, finish, Browser{UserAgent: "x"}); !errors.Is(err, contracts.ErrInvalidCode) || got != nil || cookie != "" {
 		t.Fatalf("signing in with it: %+v %v", got, err)
 	}
 	if _, err := w.svc.LookEmail(ctx, contracts.EmailLook{Attempt: started.Attempt, Token: "x"}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("looking at it: %v", err)
 	}
-	if got, err := w.svc.FinishAddressChange(ctx, w.fresh(who), contracts.AddressFinish{Attempt: started.Attempt, Code: code(&m)}); !errors.Is(err, contracts.ErrInvalidCode) || got != nil {
+	if got, err := w.svc.FinishAddressChange(ctx, w.fresh(who), contracts.AddressFinish{Attempt: started.Attempt, Code: code(m)}); !errors.Is(err, contracts.ErrInvalidCode) || got != nil {
 		t.Fatalf("changing the address with it: %+v %v", got, err)
 	}
 	for _, s := range []*Authenticated{other, beaWho} {
-		if got, err := w.svc.FinishConfirmEmail(ctx, s, contracts.ConfirmFinish{Attempt: started.Attempt, Code: code(&m)}); !errors.Is(err, contracts.ErrInvalidCode) || got != nil {
+		if got, err := w.svc.FinishConfirmEmail(ctx, s, contracts.ConfirmFinish{Attempt: started.Attempt, Code: code(m)}); !errors.Is(err, contracts.ErrInvalidCode) || got != nil {
 			t.Fatalf("confirming another session with it: %+v %v", got, err)
 		}
 	}
@@ -286,7 +291,7 @@ func TestAnAttemptMadeToConfirmSignsNobodyInAndChangesNoAddress(t *testing.T) {
 		t.Fatal("another session was confirmed")
 	}
 	// It still confirms its own session.
-	if _, err := w.svc.FinishConfirmEmail(ctx, who, contracts.ConfirmFinish{Attempt: started.Attempt, Code: code(&m)}); err != nil {
+	if _, err := w.svc.FinishConfirmEmail(ctx, who, contracts.ConfirmFinish{Attempt: started.Attempt, Code: code(m)}); err != nil {
 		t.Fatalf("its own session: %v", err)
 	}
 
@@ -386,14 +391,17 @@ func TestConfirmingByMailIsBounded(t *testing.T) {
 	w.now = w.now.Add(time.Hour + time.Second)
 	who = w.who(cookie)
 	for range wrongCodesPerDay / domain.EmailCodeTries {
+		before := len(w.out.Sent())
 		started, err := w.svc.StartConfirmEmail(ctx, who)
 		if err != nil {
 			t.Fatal(err)
 		}
-		w.svc.Wait()
-		sent := w.out.Sent()
+		m := w.mailTo(w.svc, before, "ana@example.org", confirmSubject)
+		if m == nil {
+			t.Fatal("no message to confirm")
+		}
 		for range domain.EmailCodeTries {
-			_, _ = w.svc.FinishConfirmEmail(ctx, who, contracts.ConfirmFinish{Attempt: started.Attempt, Code: w.wrongCode(&sent[len(sent)-1])})
+			_, _ = w.svc.FinishConfirmEmail(ctx, who, contracts.ConfirmFinish{Attempt: started.Attempt, Code: w.wrongCode(m)})
 		}
 	}
 	if _, err := w.svc.StartConfirmEmail(ctx, who); !errors.Is(err, contracts.ErrTooManyRequests) {

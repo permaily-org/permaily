@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/idp/idptest"
 	"github.com/permaily-org/permaily/internal/webauthn/webauthntest"
@@ -239,7 +240,7 @@ func TestAccountsEndToEnd(t *testing.T) {
 	if code, _ := call("GET", app+"/api/v1/me", "", ""); code != 401 {
 		t.Fatalf("me before signing in: %d", code)
 	}
-	code, body = call("POST", app+"/api/v1/auth/email/start", "", `{"address":"ana@example.org","invitation":"`+made.Invitations[0]+`"}`)
+	code, body = call("POST", app+"/api/v1/auth/email/start", "", `{"address":"ana@example.org","invitation":"`+made.Invitations[0]+`","terms":"`+domain.TermsVersion+`"}`)
 	var started struct {
 		Attempt string `json:"attempt"`
 	}
@@ -409,7 +410,7 @@ func TestAccountsEndToEnd(t *testing.T) {
 		if code != 200 || json.Unmarshal([]byte(body), &made) != nil || len(made.Invitations) != 1 {
 			t.Fatalf("invitations: %d %s", code, body)
 		}
-		code, body = call("POST", app+"/api/v1/auth/email/start", "", `{"address":"`+address+`","invitation":"`+made.Invitations[0]+`"}`)
+		code, body = call("POST", app+"/api/v1/auth/email/start", "", `{"address":"`+address+`","invitation":"`+made.Invitations[0]+`","terms":"`+domain.TermsVersion+`"}`)
 		var started struct {
 			Attempt string `json:"attempt"`
 		}
@@ -622,7 +623,7 @@ func TestAccountsEndToEnd(t *testing.T) {
 
 	// Pat signs up with Google, which vouches for the address.
 	providers.SignInAs(idp.Google, idptest.Person{Subject: "g-e2e-700100200300", Address: "pat@example.org", Verified: true, Name: "Pat E2E"})
-	callback, patState := trip("/api/v1/auth/provider/start", `{"provider":"google","invitation":"`+invite()+`","return_to":"/connections"}`)
+	callback, patState := trip("/api/v1/auth/provider/start", `{"provider":"google","invitation":"`+invite()+`","return_to":"/connections","terms":"`+domain.TermsVersion+`"}`)
 	// The answer of the provider in a browser that did not start the trip
 	// signs nobody in, and ends the trip.
 	stranger, _ := cookiejar.New(nil)
@@ -636,7 +637,7 @@ func TestAccountsEndToEnd(t *testing.T) {
 		t.Fatalf("me after a trip that failed: %d", code)
 	}
 	// Again, in the browser that starts it.
-	callback, _ = trip("/api/v1/auth/provider/start", `{"provider":"google","invitation":"`+invite()+`","return_to":"/connections"}`)
+	callback, _ = trip("/api/v1/auth/provider/start", `{"provider":"google","invitation":"`+invite()+`","return_to":"/connections","terms":"`+domain.TermsVersion+`"}`)
 	if to := arrive(jar, callback); to != "/connections" {
 		t.Fatalf("signing up with Google: %q", to)
 	}
@@ -875,7 +876,11 @@ func TestOperatorEndToEnd(t *testing.T) {
 	// signIn signs the browser in by mail and returns the answer.
 	signIn := func(address, invitation string) (int, string) {
 		t.Helper()
-		code, body := call("POST", app+"/api/v1/auth/email/start", "", `{"address":"`+address+`","invitation":"`+invitation+`"}`)
+		terms := ""
+		if invitation != "" {
+			terms = `,"terms":"` + domain.TermsVersion + `"`
+		}
+		code, body := call("POST", app+"/api/v1/auth/email/start", "", `{"address":"`+address+`","invitation":"`+invitation+`"`+terms+`}`)
 		var started struct {
 			Attempt string `json:"attempt"`
 		}

@@ -164,12 +164,16 @@ export function InvitationsPage() {
                   Revoke
                   <span className="sr-only">
                     {' '}
-                    invitation made {formatWhen(invitation.created_at)}
+                    invitation {invitation.id}, made {formatWhen(invitation.created_at)}
                   </span>
                 </TextAction>
               }
             >
               <span className="block">Made {formatWhen(invitation.created_at)}</span>
+              {/* The identifier matches the row to the code shown when it was made, and to Activity. */}
+              <span className="block wrap-anywhere font-mono text-small text-ink-2">
+                {invitation.id}
+              </span>
               <span className="block text-small text-ink-2">
                 Works until {formatDay(invitation.expires_at)}
               </span>
@@ -185,7 +189,7 @@ export function InvitationsPage() {
         id="revoke-invitation"
         open={revoking !== null}
         title="Revoke this invitation?"
-        subject={revoking ? `Made ${formatWhen(revoking.created_at)}` : undefined}
+        subject={revoking ? `${revoking.id}, made ${formatWhen(revoking.created_at)}` : undefined}
         error={revokeError}
         pending={pending}
         action="Revoke invitation"
@@ -248,9 +252,17 @@ function MadeCodes({ made, onDone }: { made: api.InvitationsMade; onDone: () => 
         Copy {count === 1 ? 'it' : 'them'} now. Each one makes one account
         {until ? `, until ${until}` : ''}.
       </p>
-      <ol className="mt-5 grid grid-cols-1 gap-x-8 gap-y-1 border-y border-rule py-3 font-mono text-body sm:grid-cols-2">
-        {made.invitations.map((code) => (
-          <li key={code}>{code}</li>
+      <p className="mt-3 text-small text-ink-2">
+        Next to each code is its identifier, which the list of unused invitations and Activity show.
+      </p>
+      <ol className="mt-3 flex flex-col gap-1 border-y border-rule py-3 font-mono">
+        {made.invitations.map((code, n) => (
+          <li key={code} className="flex flex-wrap items-baseline gap-x-4">
+            <span className="text-body">{code}</span>
+            {made.ids[n] && (
+              <span className="wrap-anywhere text-small text-ink-2">{made.ids[n]}</span>
+            )}
+          </li>
         ))}
       </ol>
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">

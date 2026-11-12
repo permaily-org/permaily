@@ -279,6 +279,19 @@ func TestDeviceName(t *testing.T) {
 	}
 }
 
+// The web app sends the version of the terms a person agrees to when they
+// make an account: it is the server's, or nobody could sign up.
+func TestTermsVersionMatchesTheWebApp(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "web", "src", "lib", "terms.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^export const TERMS_VERSION = '([^']+)'$`).FindStringSubmatch(string(src))
+	if m == nil || m[1] != TermsVersion {
+		t.Fatalf("web/src/lib/terms.ts says %v, the server %s", m, TermsVersion)
+	}
+}
+
 // The web app names a session's browser with the same tables, so the screen
 // and a notice say the same thing: they are read from its source and compared.
 func TestDeviceNameMatchesTheWebApp(t *testing.T) {

@@ -4,10 +4,11 @@
 // confirmed yet; docs/legal.md lists each one. A visitor never sees the marker.
 
 // The version of the terms of service, the date it was published. Change it
-// whenever the terms change; site/tests/content.test.ts checks that the page
-// shows it. Accounts do not record the version they accepted yet: that is the
-// first engineering item in docs/legal.md, and the pages must not say they do
-// until it is built.
+// whenever the terms change, together with the service's domain.TermsVersion
+// (internal/domain) and the web app's (web/src/lib/terms.ts):
+// site/tests/content.test.ts checks that the page shows it and that it is the
+// service's. The service records on each account the version its person
+// agreed to and when (ADR 0017, "Agreeing to the terms").
 export const TERMS_VERSION = '2026-11-12';
 
 // The date shown at the top of every legal page, which is also the date the

@@ -60,8 +60,10 @@ ask() {
   fi
 }
 
-# What is shown of a time: to the minute, in UTC.
-when='def when: if . == null then "-" else .[0:16] | sub("T"; " ") end;'
+# What is shown of a time: to the minute, in UTC. A field an older release
+# does not send is said to be unknown, never taken for "none".
+when='def when: if . == null then "-" else .[0:16] | sub("T"; " ") end;
+  def unsaid: "not said by this server (an older release)";'
 
 # show prints one account, from a file that holds its record.
 show() {
@@ -75,8 +77,10 @@ show() {
     ["Created", "\(.created_at | when) UTC"],
     ["Address verified", "\(.address_verified_at | when) UTC"],
     ["Passkeys", "\(.passkeys)\(if .passkey_only then ", and nothing else signs in (passkey only)" else "" end)"],
-    ["Providers", (if (.providers // []) == [] then "-" else .providers | join(", ") end)],
-    ["Sessions", "\(.sessions)"]
+    ["Providers", (if has("providers") | not then unsaid elif .providers == [] then "none" else .providers | join(", ") end)],
+    ["Sessions", (if has("sessions") then "\(.sessions)" else unsaid end)],
+    ["Admin", (if .admin == "super" then "the super admin" elif .admin == "admin" then "an admin" else "no, or \(unsaid)" end)],
+    ["Terms", (if .terms then "agreed to \(.terms.version), on \(.terms.at | when) UTC" else "none agreed, or \(unsaid)" end)]
     | "\(.[0] + ":" | . + " " * (18 - length))\(.[1])"' "$1"
 }
 
@@ -190,7 +194,7 @@ case $action in
       ["  and closing", n(.blocked_at != null and .state == "closing")],
       ["Passkey only", n(.passkey_only)],
       ["With a passkey", n(.passkeys > 0)],
-      ["With a provider", n((.providers // []) != [])],
+      ["With a provider", (if all(.[]; has("providers")) then n(.providers != []) else "not said by this server (an older release)" end)],
       ["Signed in somewhere", n(.sessions > 0)]
       | "\(.[0] + ":" | . + " " * (26 - length))\(.[1])"' "$work/accounts.jsonl"
     echo "Counted at $api from the enclave's signed records, a page at a time. Blocked is apart from the state: a blocked account is also active or closing." >&2

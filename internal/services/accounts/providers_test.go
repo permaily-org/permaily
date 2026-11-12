@@ -136,7 +136,11 @@ func (w *world) comeBackTo(svc *Service, state, cookie string, who idp.Identity)
 // through makes the whole trip to sign in.
 func (w *world) through(who idp.Identity, invitation string) (*ProviderDone, error) {
 	w.t.Helper()
-	state, cookie := w.leave(nil, contracts.ProviderStart{Provider: string(who.Provider), Invitation: invitation})
+	in := contracts.ProviderStart{Provider: string(who.Provider), Invitation: invitation}
+	if invitation != "" {
+		in.Terms = w.terms
+	}
+	state, cookie := w.leave(nil, in)
 	return w.comeBack(state, cookie, who)
 }
 
@@ -200,7 +204,7 @@ func TestProviderSignUpAndSignIn(t *testing.T) {
 
 	// With an invitation the account is made, with the provider linked.
 	invitation := w.invite()
-	state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: invitation, ReturnTo: "/connections?new=1"})
+	state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: invitation, ReturnTo: "/connections?new=1", Terms: w.terms})
 	done, err = w.comeBack(state, cookie, ana)
 	if err != nil || done.Path != "/connections?new=1" || done.Browser != "" {
 		t.Fatalf("signing up: %+v %v", done, err)
@@ -270,7 +274,7 @@ func TestProviderSignUpAndSignIn(t *testing.T) {
 
 	// An invitation that someone else used while the person was away.
 	shared := w.invite()
-	state, cookie = w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: shared})
+	state, cookie = w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: shared, Terms: w.terms})
 	attempt, mail := w.start("first@example.org", shared)
 	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); err != nil {
 		t.Fatal(err)
@@ -449,16 +453,11 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 	// who is not Ana, never sees its code, and guessing takes five tries.
 	confirm := func(browser, address string) (string, *Mail) {
 		t.Helper()
-		before := len(w.out.Sent())
 		started, err := w.svc.StartProviderConfirm(ctx, browser, contracts.ProviderConfirmStart{Address: address})
 		if err != nil || !validID("att", started.Attempt) || started.ExpiresIn != 600 {
 			t.Fatalf("asking for the message: %+v %v", started, err)
 		}
-		w.svc.Wait()
-		if sent := w.out.Sent(); len(sent) > before {
-			return started.Attempt, &sent[len(sent)-1]
-		}
-		return started.Attempt, nil
+		return started.Attempt, w.mailOf(w.svc, started.Attempt)
 	}
 	attempt, mail := confirm(malloryBrowser, " ANA@example.org ")
 	if mail == nil || mail.To != "ana@example.org" {
@@ -564,16 +563,11 @@ func TestProviderConfirmRefusals(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		before := len(w.out.Sent())
 		started, err := w.svc.StartProviderConfirm(ctx, done.Browser, contracts.ProviderConfirmStart{Address: address})
 		if err != nil {
 			t.Fatal(err)
 		}
-		w.svc.Wait()
-		if sent := w.out.Sent(); len(sent) > before {
-			mail = &sent[len(sent)-1]
-		}
-		return done.Browser, started.Attempt, mail
+		return done.Browser, started.Attempt, w.mailOf(w.svc, started.Attempt)
 	}
 	finish := func(browser, attempt string, mail *Mail) error {
 		_, cookie, err := w.svc.FinishProviderConfirm(ctx, browser, contracts.ProviderConfirm{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""})
@@ -1072,7 +1066,7 @@ func TestProviderReasons(t *testing.T) {
 	if counted.gets != 0 {
 		t.Fatalf("starting read the storage %d times", counted.gets)
 	}
-	w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite()})
+	w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite(), Terms: w.terms})
 	if counted.gets != 1 {
 		t.Fatalf("starting with an invitation read the storage %d times, not the invitation alone", counted.gets)
 	}
@@ -1417,7 +1411,7 @@ func TestProviderFailures(t *testing.T) {
 	// Each step of a sign-up through a provider.
 	for _, op := range []string{"get entry", "delete entry", "put entry", "put record", "get record", "list entries", "derive", "put " + providerPartition(idp.Google, "g-sub-nina")} {
 		w, f := setup(t)
-		state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite()})
+		state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite(), Terms: w.terms})
 		f.fail[op] = down
 		done, err := w.comeBack(state, cookie, nina)
 		if !errors.Is(err, down) || done.Session != "" || done.Path != "/sign-in#provider_error=provider_unavailable" {
@@ -1470,8 +1464,7 @@ func TestProviderFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		w.svc.Wait()
-		sent := w.out.Sent()
+		mail := w.mailOf(w.svc, started.Attempt)
 		before := sessions()
 
 		f.fail[op] = down
@@ -1493,7 +1486,7 @@ func TestProviderFailures(t *testing.T) {
 				t.Fatalf("%s down, linking: %+v %v", op, done, err)
 			}
 		}
-		_, session, err := w.svc.FinishProviderConfirm(ctx, waiting.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(&sent[len(sent)-1])}, Browser{UserAgent: ""})
+		_, session, err := w.svc.FinishProviderConfirm(ctx, waiting.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(mail)}, Browser{UserAgent: ""})
 		if (err == nil) != (session != "") {
 			t.Fatalf("%s down, confirming: a session %v with %v", op, session != "", err)
 		}
@@ -1532,12 +1525,12 @@ func TestProviderFailures(t *testing.T) {
 		fmt.Errorf("%w: no answer from the token endpoint", idp.ErrUnreachable): contracts.ErrProviderUnavailable,
 		fmt.Errorf("%w: the nonce is another", idp.ErrInvalid):                  contracts.ErrProviderFailed,
 	} {
-		state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite()})
+		state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite(), Terms: w.terms})
 		w.idp.err = err
 		done, got := w.comeBack(state, cookie, nina)
 		w.refusedWith(err.Error(), done, got, want, "/sign-in#provider_error="+want.Code)
 	}
-	state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite()})
+	state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite(), Terms: w.terms})
 	w.idp.err = errors.New("boom: client_secret=" + appSecret(idp.Google) + " for nina@example.org")
 	done, err := w.comeBack(state, cookie, nina)
 	var known *contracts.Error
@@ -1700,10 +1693,9 @@ func TestProviderFailuresWhileLinking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.svc.Wait()
-	sent := w.out.Sent()
+	mail := w.mailOf(w.svc, started.Attempt)
 	f.fail["list entries"] = down
-	if me, session, err := w.svc.FinishProviderConfirm(ctx, waiting.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(&sent[len(sent)-1])}, Browser{UserAgent: ""}); !errors.Is(err, down) || me != nil || session != "" {
+	if me, session, err := w.svc.FinishProviderConfirm(ctx, waiting.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, down) || me != nil || session != "" {
 		t.Fatalf("confirming with no session to be made: %+v %v", me, err)
 	}
 

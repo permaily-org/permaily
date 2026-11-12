@@ -109,6 +109,25 @@ func (s *Service) operate(ctx context.Context, id string, guard, edit func(*acco
 	return doc, true, nil
 }
 
+// mayAct refuses an admin an account they may not act on (guard), and then a
+// change without a fresh proof: whoever may not act is told so before being
+// asked to confirm it's them, which would be for nothing. The guard runs
+// again inside the change, on the record as it is then.
+func (s *Service) mayAct(ctx context.Context, by *acting, id, kind string) error {
+	if by != nil && validID("acc", id) {
+		doc, err := s.read(ctx, id)
+		if err != nil {
+			return err
+		}
+		if doc != nil {
+			if err := by.guard(s, kind)(doc); err != nil {
+				return err
+			}
+		}
+	}
+	return by.changing()
+}
+
 // BlockAccount blocks an account: from now nobody signs in to it, by any way,
 // and every device is signed out. Its record says so with the time. Blocking
 // is apart from deleting: a blocked account can be closing, and stays blocked
@@ -118,7 +137,7 @@ func (s *Service) BlockAccount(ctx context.Context, id string) (*contracts.Accou
 }
 
 func (s *Service) block(ctx context.Context, by *acting, id string) (*contracts.AccountRecord, error) {
-	if err := by.changing(); err != nil {
+	if err := s.mayAct(ctx, by, id, ActionBlock); err != nil {
 		return nil, err
 	}
 	at := s.now().Truncate(time.Second)
@@ -136,7 +155,7 @@ func (s *Service) block(ctx context.Context, by *acting, id string) (*contracts.
 		return nil, err
 	}
 	s.acted(ActionBlock, 1)
-	s.logged(ctx, by, ActionBlock, doc.ID, "")
+	s.logged(ctx, by, logDoc{Kind: ActionBlock, Account: doc.ID})
 	// Also when it was blocked already: an earlier try may have failed here.
 	// A session written after this stands for nothing all the same: every
 	// request reads the record, which says it was made before the block.
@@ -155,7 +174,7 @@ func (s *Service) UnblockAccount(ctx context.Context, id string) (*contracts.Acc
 }
 
 func (s *Service) unblock(ctx context.Context, by *acting, id string) (*contracts.AccountRecord, error) {
-	if err := by.changing(); err != nil {
+	if err := s.mayAct(ctx, by, id, ActionUnblock); err != nil {
 		return nil, err
 	}
 	doc, changed, err := s.operate(ctx, id, by.guard(s, ActionUnblock), func(doc *accountDoc) error {
@@ -169,7 +188,7 @@ func (s *Service) unblock(ctx context.Context, by *acting, id string) (*contract
 		return nil, err
 	}
 	s.acted(ActionUnblock, 1)
-	s.logged(ctx, by, ActionUnblock, doc.ID, "")
+	s.logged(ctx, by, logDoc{Kind: ActionUnblock, Account: doc.ID})
 	if changed {
 		s.notify(ctx, noticeUnblocked, blockedMail(doc.Address, s.rp.ID, s.now(), false))
 	}
@@ -186,7 +205,7 @@ func (s *Service) DeleteAccount(ctx context.Context, id string) (*contracts.Acco
 }
 
 func (s *Service) deleteAccount(ctx context.Context, by *acting, id string) (*contracts.AccountRecord, error) {
-	if err := by.changing(); err != nil {
+	if err := s.mayAct(ctx, by, id, ActionDelete); err != nil {
 		return nil, err
 	}
 	doc, changed, err := s.operate(ctx, id, by.guard(s, ActionDelete), s.closing(ctx, contracts.ClosingByOperator))
@@ -194,7 +213,7 @@ func (s *Service) deleteAccount(ctx context.Context, by *acting, id string) (*co
 		return nil, err
 	}
 	s.acted(ActionDelete, 1)
-	s.logged(ctx, by, ActionDelete, doc.ID, "")
+	s.logged(ctx, by, logDoc{Kind: ActionDelete, Account: doc.ID})
 	if changed {
 		s.cfg.Log.Info("accounts: account closing")
 		s.notify(ctx, noticeDeletionAsked, deletionAskedMail(doc, s.rp.ID, s.now()))
@@ -210,7 +229,7 @@ func (s *Service) KeepAccount(ctx context.Context, id string) (*contracts.Accoun
 }
 
 func (s *Service) keepAccount(ctx context.Context, by *acting, id string) (*contracts.AccountRecord, error) {
-	if err := by.changing(); err != nil {
+	if err := s.mayAct(ctx, by, id, ActionDeleteCancel); err != nil {
 		return nil, err
 	}
 	if !validID("acc", id) {
@@ -224,7 +243,7 @@ func (s *Service) keepAccount(ctx context.Context, by *acting, id string) (*cont
 		return nil, err
 	}
 	s.acted(ActionDeleteCancel, 1)
-	s.logged(ctx, by, ActionDeleteCancel, doc.ID, "")
+	s.logged(ctx, by, logDoc{Kind: ActionDeleteCancel, Account: doc.ID})
 	return s.record(ctx, doc)
 }
 
@@ -234,7 +253,7 @@ func (s *Service) CloseAccountSessions(ctx context.Context, id string) (*contrac
 }
 
 func (s *Service) closeAccountSessions(ctx context.Context, by *acting, id string) (*contracts.AccountRecord, error) {
-	if err := by.changing(); err != nil {
+	if err := s.mayAct(ctx, by, id, ActionSessionsClose); err != nil {
 		return nil, err
 	}
 	// The record says every session made before now stands for nothing, so a
@@ -247,7 +266,7 @@ func (s *Service) closeAccountSessions(ctx context.Context, by *acting, id strin
 		return nil, err
 	}
 	s.acted(ActionSessionsClose, 1)
-	s.logged(ctx, by, ActionSessionsClose, doc.ID, "")
+	s.logged(ctx, by, logDoc{Kind: ActionSessionsClose, Account: doc.ID})
 	if err := s.closeSessions(ctx, id, ""); err != nil {
 		return nil, err
 	}
@@ -449,7 +468,7 @@ func (s *Service) revokeInvitation(ctx context.Context, by *acting, id string) e
 	revoked := err == nil
 	if revoked {
 		s.acted(ActionInvitationRevoked, 1)
-		s.logged(ctx, by, ActionInvitationRevoked, "", id)
+		s.logged(ctx, by, logDoc{Kind: ActionInvitationRevoked, Invitation: id})
 	}
 	if err := s.forget(ctx, invitationsPartition, id); err != nil {
 		return err

@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/webauthn/webauthntest"
 )
 
@@ -108,7 +109,7 @@ func TestAdminPanelEndToEnd(t *testing.T) {
 		_, body := operator.call("POST", api+"/v1/admin/invitations", token, `{"count":1}`)
 		var made struct{ Invitations []string }
 		_ = json.Unmarshal([]byte(body), &made)
-		_, body = b.call("POST", app+"/api/v1/auth/email/start", "", `{"address":"`+address+`","invitation":"`+made.Invitations[0]+`"}`)
+		_, body = b.call("POST", app+"/api/v1/auth/email/start", "", `{"address":"`+address+`","invitation":"`+made.Invitations[0]+`","terms":"`+domain.TermsVersion+`"}`)
 		var started struct{ Attempt string }
 		_ = json.Unmarshal([]byte(body), &started)
 		var m mail

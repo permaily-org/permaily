@@ -19,7 +19,7 @@ Everything here is research by non-lawyers against primary sources (the law itse
 
 | Document | Where | Status |
 |---|---|---|
-| Terms of service | `site/src/pages/terms.astro` (`/terms/`); `TERMS_VERSION` in `site/src/config/legal.ts` | Rewritten 2026-11-12 for the decisions above. Nobody has accepted them in a way the service records (engineering item 1) |
+| Terms of service | `site/src/pages/terms.astro` (`/terms/`); `TERMS_VERSION` in `site/src/config/legal.ts` | Rewritten 2026-11-12 for the decisions above. Acceptance is recorded by the service since 2026-11-12 (engineering item 1, done; not released yet): the sign-up screen asks for it and the account's record keeps the version and the time (ADR 0017, "Agreeing to the terms") |
 | Privacy policy | `site/src/pages/privacy.astro` (`/privacy/`) | Rewritten 2026-11-12 from [data.md](data.md), ADR 0017 to 0022 and the code; with a section for people in Europe and what OpenAI keeps |
 | Data processing | `site/src/pages/data-processing.astro` (`/data-processing/`) | No DPA is offered; the page says so and why |
 | Subprocessors | `site/src/pages/subprocessors.astro` (`/subprocessors/`) | From [data.md](data.md) and `deploy/tofu` |
@@ -34,7 +34,7 @@ Everything here is research by non-lawyers against primary sources (the law itse
 
 - The legal pages say only what is true of the code and of [data.md](data.md) today, and label what is planned as planned. A change to what is stored, sent, logged, kept in the browser or kept after deletion updates the privacy page, and `/data-deletion/` where it applies, in the same pull request.
 - No unconditional guarantee: where the design has a documented exception ([threat-model.md](threat-model.md)), the pages name it.
-- `TERMS_VERSION` changes whenever the terms change, and `site/tests/content.test.ts` checks that the page shows it. No page says accounts record the accepted version until engineering item 1 is built.
+- `TERMS_VERSION` changes whenever the terms change, together with the service's `domain.TermsVersion` and the web app's (`web/src/lib/terms.ts`). `site/tests/content.test.ts` checks that the page shows it and that it is the service's; the web app's tests and `TestTermsVersionMatchesTheWebApp` check the app's. No page says accounts record the accepted version until the release that records it runs in production.
 - A new subprocessor is added to [data.md](data.md) first, then to `/subprocessors/`, before it receives data.
 - The legal pages say once that they were written without a lawyer.
 
@@ -49,7 +49,7 @@ Places that depend on something not confirmed. Each is a comment in the code, ne
 
 Each needs code that is not this document's. Blocking ones first.
 
-1. **Blocking, before anyone else signs up:** before an account is made (by mail, passkey or a provider's first sign-in), the screen links the terms and the privacy page and asks for an affirmative acceptance, and the account's record keeps the `TERMS_VERSION` accepted and the time; a material change asks for acceptance again before the next use, and the record keeps that too.
+1. **Done (2026-11-12, not released yet):** before an account is made (by mail or a provider's first sign-in; a passkey makes no account), the screen links the terms and the privacy page and asks for an affirmative acceptance, and the account's record keeps the `TERMS_VERSION` accepted and the time; a new version asks for acceptance again before the next use, and the record keeps that too (ADR 0017, "Agreeing to the terms"). It stays blocking in this sense: nobody else signs up before the release that has it runs in production.
 2. **Blocking, before connections or models touch real mail:** each disclosure of mail content (to a connection, to OpenAI) runs only on a consent the person gave for that connection or rule, recorded in the sealed store with what was shown, its version and its time, so the consent exception of 18 U.S.C. 2702(b)(3) can be shown.
 3. **The image in earlier releases:** v0.1.0 to v0.10.0 publish `permaily.eif`, which holds AWS's Linux kernel and `nsm.ko` (GPL-2.0) and its `init`, with the GNU C Library linked in (LGPL-2.1), without their source or a written offer valid three years (GPL-2.0 section 3(a) or (b)); a link to AWS's repository is not enough (3(c) covers only noncommercial redistribution of an offer received), and AWS does not publish the exact source of that kernel or C library. Releases since ADR 0023 publish the image's measurements and not the image; whoever needs the image builds it and gets those programs from AWS. Left: whether to remove `permaily.eif` from those eleven releases, and asking AWS for the source. Building the kernel and `init` from source is what would let a release publish the image again.
 4. A way to preserve named records without reading them: hold an account's record, sessions and admin-log entries out of removal and TTL for a set time, and put an S3 legal hold on its anchors, with a notice to nobody, for 18 U.S.C. 2703(f) requests and 2258A(h).
@@ -174,16 +174,16 @@ Conditions to meet first, not things done. "Europe" means the EU, the EEA, Switz
 
 ### The terms of service
 
-- **Liability.** Data loss is not necessarily "consequential" loss, so it is no longer listed as an example of excluded damage; the cap of $100 stands for what the contract governs, and binds only someone who accepted the terms (engineering item 1). Carve-outs: fraud, intent, gross negligence, personal injury, and rights that cannot be waived where the person lives.
+- **Liability.** Data loss is not necessarily "consequential" loss, so it is no longer listed as an example of excluded damage; the cap of $100 stands for what the contract governs, and binds only someone who accepted the terms (recorded since engineering item 1). Carve-outs: fraud, intent, gross negligence, personal injury, and rights that cannot be waived where the person lives.
 - **Venue.** Florida law and the state and federal courts in Florida, with a person's non-waivable home-state rights kept; the first draft let every consumer anywhere sue at home. No arbitration and no class waiver, as decided. Whether a Florida forum clause binds a consumer from another state depends on that state's law and on how acceptance was recorded; not researched here.
-- **Change and shutdown.** No reacceptance is promised until it is built (item 1); the 30 days before a shutdown are an aim, with the reasons it may be shorter.
+- **Change and shutdown.** No reacceptance is promised on the page; the service asks for it at the next visit since item 1 was built; the 30 days before a shutdown are an aim, with the reasons it may be shorter.
 
 ## Residual risks the maintainers accept by publishing
 
 Largest first.
 
 1. **Personal, unlimited liability of one person.** The operator is a natural person with no company and no insurance, holding other people's account data and, soon, mail; any claim reaches personal assets, and Microsoft's API Terms add an indemnity.
-2. **Terms nobody has accepted in a recorded way.** Until engineering item 1, the cap, the venue and the eligibility rules may not bind anyone, and a change of terms has no record of acceptance.
+2. **Terms accepted before acceptance was recorded.** The accounts made before engineering item 1 (one in production) have no record of acceptance, and the cap, the venue and the eligibility rules may not bind them until they agree at their next visit, which the service asks of them. Since item 1, every account made records the version and the time.
 3. **Releases already published without the GPL source or a valid offer** for the kernel and `nsm.ko` (v0.1.0 to v0.10.0) until item 3; later releases publish no image (ADR 0023).
 4. Florida is assumed, not confirmed: the governing law, courts and breach procedure may be wrong.
 5. **Real mail to OpenAI before zero data retention**, decided against the review's advice (ADR 0020). Once rules and connections open, OpenAI keeps the text it is sent up to 30 days, and flagged text and a sample of requests for a time it does not state; a breach there, or a demand made to OpenAI, reaches mail that the operator itself cannot read. Disclosed on the privacy page and on `/subprocessors/`, not avoided.

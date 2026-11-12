@@ -65,6 +65,8 @@ For admins:
 - `GET stats` counts at most 1000 accounts, read from their signed records, and the invitations as their list shows them (1000 at most). `complete` is false when there were more, or when a record could not be read.
 - Pages of the log take `limit` 1 to 100 (50 without one) and `after`, the `next` of the page before.
 - Dev mode takes the super admin's address from `-super-admin`, `admin@permaily.test` by default.
+- Found when the panel met the server (2026-11-12): the dialog that asks to confirm says why in words of its own for an admin action ("This is an admin action, so Permaily asks you to show it's you again. It counts for the next 10 minutes."), not that the change decides who gets into the person's account. Invitations made together are told apart by their identifier (`inv_…`), shown in the list of unused ones and next to each code in the dialog that shows the codes once, so a row matches a code and an entry of Activity. The entry of a provider's application set or removed names the provider (`provider`), and Activity says it by name. An admin who may not act on an account (another admin's to an admin who is not the super admin, the super admin's to anyone who would block, delete or remove it) is told `super_admin_only` before being asked to confirm: the account is read first, and the limit is checked again inside the change.
+- An admin whose person has not agreed to the terms in force gets 400 `terms_needed` on every route of the panel (ADR 0017, "Agreeing to the terms"); someone who is not an admin still gets 404 first.
 
 ## What it rests on, and what is left
 

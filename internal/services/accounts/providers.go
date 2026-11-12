@@ -57,8 +57,10 @@ type tripDoc struct {
 	// Browser is the hash of the value of the cookie the browser was given:
 	// the provider's answer ends the trip only where that cookie is.
 	Browser []byte `json:"browser"`
-	// Invitation is the entry of the invitation a sign-up will use.
-	Invitation string `json:"invitation,omitempty"`
+	// Invitation is the entry of the invitation a sign-up will use, and
+	// Agreed the agreement to the terms given with it (terms.go).
+	Invitation string   `json:"invitation,omitempty"`
+	Agreed     termsDoc `json:"agreed,omitzero"`
 	// Account and Session are whose Settings started it, to link a provider
 	// to that account and to no other; empty for a sign-in.
 	Account string `json:"account,omitempty"`
@@ -79,9 +81,10 @@ type unconfirmedDoc struct {
 	Subject  string       `json:"subject"`
 	// Address is what the provider gave, to offer in the form. It is never
 	// used for anything else.
-	Address    string `json:"address,omitempty"`
-	Invitation string `json:"invitation,omitempty"`
-	ReturnTo   string `json:"return_to,omitempty"`
+	Address    string   `json:"address,omitempty"`
+	Invitation string   `json:"invitation,omitempty"`
+	Agreed     termsDoc `json:"agreed,omitzero"`
+	ReturnTo   string   `json:"return_to,omitempty"`
 	pendingTimes
 }
 
@@ -182,7 +185,9 @@ func (d *accountDoc) claims(p idp.Provider, subject string, now time.Time) bool 
 func (s *Service) link(ctx context.Context, accountID string, p idp.Provider, subject string, made bool) (*accountDoc, error) {
 	claim := newSecret()
 	var already *accountDoc
-	_, err := s.change(ctx, accountID, func(doc *accountDoc) error {
+	// A sign-in links, or the end of a link that Settings started, which was
+	// asked of the terms at its start: neither asks again.
+	_, err := s.changeAgreed(ctx, accountID, false, func(doc *accountDoc) error {
 		already = nil
 		i := doc.provider(p)
 		switch {
@@ -207,7 +212,7 @@ func (s *Service) link(ctx context.Context, accountID string, p idp.Provider, su
 		return nil, err
 	}
 	partition := providerPartition(p, subject)
-	doc, err := s.change(ctx, accountID, func(doc *accountDoc) error {
+	doc, err := s.changeAgreed(ctx, accountID, false, func(doc *accountDoc) error {
 		l := doc.Linking
 		// Half of linkingFor: another enclave, whose clock may be ahead, takes
 		// the pointer only once the whole of it is over.
@@ -385,6 +390,9 @@ func (s *Service) StartProvider(ctx context.Context, who *Authenticated, in cont
 		if doc.State == contracts.AccountClosing {
 			return nil, "", contracts.ErrAccountClosing
 		}
+		if !doc.agreed(s.terms()) {
+			return nil, "", contracts.ErrTermsChanged
+		}
 		if doc.provider(p) >= 0 {
 			return nil, "", contracts.ErrProviderLinked
 		}
@@ -396,6 +404,9 @@ func (s *Service) StartProvider(ctx context.Context, who *Authenticated, in cont
 		}
 		if t.Invitation == "" {
 			return nil, "", contracts.ErrInvalidInvitation
+		}
+		if t.Agreed, err = s.agreement(t.Invitation, in.Terms); err != nil {
+			return nil, "", err
 		}
 	}
 	state, browser := newSecret(), newSecret()
@@ -601,7 +612,7 @@ func (s *Service) firstTime(ctx context.Context, t *tripDoc, subject, address st
 	case doc == nil && t.Invitation == "":
 		return nil, false, contracts.ErrInvitationNeeded
 	case doc == nil:
-		if doc, made, err = s.signUp(ctx, address, t.Invitation, stale); err != nil {
+		if doc, made, err = s.signUp(ctx, address, t.Invitation, t.Agreed, stale); err != nil {
 			return nil, false, err
 		}
 	case doc.PasskeyOnly:
@@ -679,7 +690,7 @@ func (s *Service) confirmLater(ctx context.Context, t *tripDoc, who *idp.Identit
 	// Offered in the form when it can be an address at all, and never trusted.
 	address, _ := domain.NormalizeAddress(who.Address)
 	u := &unconfirmedDoc{
-		V: 1, Provider: t.Provider, Subject: who.Subject, Address: address, Invitation: t.Invitation,
+		V: 1, Provider: t.Provider, Subject: who.Subject, Address: address, Invitation: t.Invitation, Agreed: t.Agreed,
 		ReturnTo: t.ReturnTo, pendingTimes: pendingTimes{Made: now, Expires: now.Add(domain.ProviderConfirmLifetime)},
 	}
 	if err := s.stash(ctx, unconfirmedPartition(browser), u); err != nil {
@@ -737,7 +748,7 @@ func (s *Service) StartProviderConfirm(ctx context.Context, browser string, in c
 	if err != nil {
 		return nil, err
 	}
-	return s.startEmail(ctx, address, u.Invitation)
+	return s.startEmail(ctx, address, u.Invitation, u.Agreed)
 }
 
 // FinishProviderConfirm ends the sign-in that waits in a browser with the
@@ -1014,7 +1025,7 @@ func (s *Service) setProviderApp(ctx context.Context, by *acting, provider strin
 	}
 	s.cfg.Log.Info("accounts: a provider's application was set", "provider", provider)
 	s.acted(ActionProviderAppSet, 1)
-	s.logged(ctx, by, ActionProviderAppSet, "", "")
+	s.logged(ctx, by, logDoc{Kind: ActionProviderAppSet, Provider: provider})
 	return &contracts.ProviderApp{Provider: provider, ClientID: set.ClientID, SetAt: set.SetAt}, nil
 }
 
@@ -1042,7 +1053,7 @@ func (s *Service) removeProviderApp(ctx context.Context, by *acting, provider st
 	if err == nil && removed {
 		s.cfg.Log.Info("accounts: a provider's application was removed", "provider", provider)
 		s.acted(ActionProviderAppRemove, 1)
-		s.logged(ctx, by, ActionProviderAppRemove, "", "")
+		s.logged(ctx, by, logDoc{Kind: ActionProviderAppRemove, Provider: provider})
 	}
 	return err
 }

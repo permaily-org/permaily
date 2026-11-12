@@ -163,7 +163,12 @@ describe('an account that is closing', () => {
 
   it('signs out on request', async () => {
     at('2026-11-11T15:00:00Z')
-    server.signedIn(closing).on('POST /api/v1/auth/sign-out', ok())
+    server
+      .signedIn(closing)
+      .on('POST /api/v1/auth/sign-out', ok())
+      // The sign-in screen that follows asks which providers are on, maybe before the test says it is signed
+      // out: the answer is there from the start.
+      .on('GET /api/v1/auth/providers', ok({ providers: [] }))
     const { user } = await open('/rules')
     await user.click(await screen.findByRole('button', { name: 'Sign out' }))
     server.signedOut()
@@ -299,7 +304,12 @@ describe('after the day of a deletion', () => {
   it('works with storage unavailable: no note, and nothing fails', async () => {
     at('2026-11-11T15:00:00Z')
     blockStorage('localStorage')
-    server.signedIn(closing).on('POST /api/v1/auth/sign-out', ok())
+    server
+      .signedIn(closing)
+      .on('POST /api/v1/auth/sign-out', ok())
+      // The sign-in screen that follows asks which providers are on, maybe before the test says it is signed
+      // out: the answer is there from the start.
+      .on('GET /api/v1/auth/providers', ok({ providers: [] }))
     const { user } = await open('/')
     await screen.findByRole('heading', { name: 'Your account is being deleted' })
     vi.setSystemTime(Date.parse('2026-11-20T09:00:00Z'))

@@ -29,13 +29,15 @@ import (
 // and its message.
 func (e *enclave) mailed(address, invitation string) (string, *Mail) {
 	e.w.t.Helper()
-	res, err := e.svc.StartEmail(context.Background(), contracts.EmailStart{Address: address, Invitation: invitation})
+	res, err := e.svc.StartEmail(context.Background(), contracts.EmailStart{Address: address, Invitation: invitation, Terms: e.w.terms})
 	if err != nil {
 		e.w.t.Fatal(err)
 	}
-	e.svc.Wait()
-	sent := e.w.out.Sent()
-	return res.Attempt, &sent[len(sent)-1]
+	mail := e.w.mailOf(e.svc, res.Attempt)
+	if mail == nil {
+		e.w.t.Fatalf("no sign-in message for %s", address)
+	}
+	return res.Attempt, mail
 }
 
 // quiet keeps an enclave's log out of the world's, for the tests that run two
@@ -146,14 +148,14 @@ func TestATripToAProviderStartedThroughOneEnclaveEndsThroughTheOther(t *testing.
 	w.on(idp.Google, idp.Meta)
 	one, two := w.enclave(), w.enclave()
 	// A sign-up through a provider that vouches for the address.
-	state, cookie := w.leaveFrom(one.svc, nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite()})
+	state, cookie := w.leaveFrom(one.svc, nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite(), Terms: w.terms})
 	done, err := w.comeBackTo(two.svc, state, cookie, person(idp.Google, "g-sub-nina", "nina@example.org", true))
 	if err != nil || done.Session == "" {
 		t.Fatalf("a trip ended through another enclave: %+v %v", done, err)
 	}
 	// One that does not: the sign-in waits for its address through one, the
 	// message is asked through the other, and the code ends it through the first.
-	state, cookie = w.leaveFrom(two.svc, nil, contracts.ProviderStart{Provider: "meta", Invitation: w.invite()})
+	state, cookie = w.leaveFrom(two.svc, nil, contracts.ProviderStart{Provider: "meta", Invitation: w.invite(), Terms: w.terms})
 	done, err = w.comeBackTo(one.svc, state, cookie, person(idp.Meta, "77007700770099", "", false))
 	if err != nil || done.Browser == "" {
 		t.Fatalf("a trip that waits for its address: %+v %v", done, err)
@@ -397,7 +399,7 @@ func TestWhatTheTableShowsOfASignInInProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, browser := w.leave(nil, contracts.ProviderStart{Provider: "meta", Invitation: w.invite()})
+	state, browser := w.leave(nil, contracts.ProviderStart{Provider: "meta", Invitation: w.invite(), Terms: w.terms})
 	waiting, err := w.through(person(idp.Meta, "77007700770055", "omar@example.org", false), "")
 	if err != nil {
 		t.Fatal(err)

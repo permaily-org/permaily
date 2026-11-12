@@ -1,4 +1,4 @@
-import { act, cleanup, render } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BrowserRouter } from 'react-router'
 import { expect, vi } from 'vitest'
@@ -125,4 +125,18 @@ export async function settle(): Promise<void> {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
   })
+}
+
+/** The box of the agreement to the terms on the sign-up screen, and on the screen that asks again. */
+export function termsBox(): HTMLInputElement {
+  return screen.getByRole('checkbox', { name: /^I agree to Permaily's terms of service/ })
+}
+
+/**
+ * Ticks the box of the agreement to the terms, where the screen has one and it is not ticked: the person's own
+ * act, which a sign-up needs. The sign-in screen has none, and nothing is done there.
+ */
+export async function agree(user: ReturnType<typeof userEvent.setup>) {
+  const box = screen.queryByRole('checkbox', { name: /^I agree to Permaily's terms of service/ })
+  if (box && !(box as HTMLInputElement).checked) await user.click(box)
 }

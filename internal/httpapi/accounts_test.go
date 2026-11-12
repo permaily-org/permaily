@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/httpapi"
 	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/keys"
@@ -116,6 +117,44 @@ func (a *app) call(method, path, body string, edit func(*http.Request)) *httptes
 
 var sentCode = regexp.MustCompile(`\n    (\d{6})\n`)
 
+// mailOf waits for what the service is sending and returns the sign-in
+// message of attempt, found by the link it carries. Not the newest message:
+// the service sends its messages in the background and Wait waits for all of
+// them, so a message a test started earlier and did not wait for can be sent
+// after this one.
+func (a *app) mailOf(attempt string) accounts.Mail {
+	a.t.Helper()
+	a.svc.Wait()
+	var found []accounts.Mail
+	for _, m := range a.out.Sent() {
+		if g := sentLink.FindStringSubmatch(m.Text); g != nil && g[1] == attempt {
+			found = append(found, m)
+		}
+	}
+	if len(found) != 1 {
+		a.t.Fatalf("%d sign-in messages for the attempt %s", len(found), attempt)
+	}
+	return found[0]
+}
+
+// mailTo waits for what the service is sending and returns the message to
+// address with subject sent since there were n, nil when none was; it fails
+// when there are more. Not the newest message, for the reason mailOf gives.
+func (a *app) mailTo(n int, address, subject string) *accounts.Mail {
+	a.t.Helper()
+	a.svc.Wait()
+	var found *accounts.Mail
+	for _, m := range a.out.Sent()[n:] {
+		if m.To == address && m.Subject == subject {
+			if found != nil {
+				a.t.Fatalf("two messages %q to %s", subject, address)
+			}
+			found = &m
+		}
+	}
+	return found
+}
+
 // signIn signs the browser in to address, making the account if it is new.
 func (a *app) signIn(address string) contracts.Me {
 	a.t.Helper()
@@ -123,14 +162,12 @@ func (a *app) signIn(address string) contracts.Me {
 	if err != nil {
 		a.t.Fatal(err)
 	}
-	rec := a.call("POST", "/api/v1/auth/email/start", `{"address":"`+address+`","invitation":"`+inv.Invitations[0]+`"}`, nil)
+	rec := a.call("POST", "/api/v1/auth/email/start", `{"address":"`+address+`","invitation":"`+inv.Invitations[0]+`","terms":"`+domain.TermsVersion+`"}`, nil)
 	var started contracts.EmailStarted
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &started) != nil || started.Attempt == "" || started.ExpiresIn != 600 {
 		a.t.Fatalf("start: %d %s", rec.Code, rec.Body)
 	}
-	a.svc.Wait()
-	sent := a.out.Sent()
-	code := sentCode.FindStringSubmatch(sent[len(sent)-1].Text)[1]
+	code := sentCode.FindStringSubmatch(a.mailOf(started.Attempt).Text)[1]
 	rec = a.call("POST", "/api/v1/auth/email/finish", `{"attempt":"`+started.Attempt+`","code":"`+code+`"}`, nil)
 	var me contracts.Me
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &me) != nil || me.Account.Address != address {
@@ -147,12 +184,11 @@ func TestLookAtALinkAPI(t *testing.T) {
 	a := newApp(t)
 	a.signIn("ana@example.org")
 	a.call("POST", "/api/v1/auth/sign-out", "", nil)
-	if rec := a.call("POST", "/api/v1/auth/email/start", `{"address":"ana@example.org"}`, nil); rec.Code != 200 {
+	var started contracts.EmailStarted
+	if rec := a.call("POST", "/api/v1/auth/email/start", `{"address":"ana@example.org"}`, nil); rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &started) != nil {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body)
 	}
-	a.svc.Wait()
-	sent := a.out.Sent()
-	link := sentLink.FindStringSubmatch(sent[len(sent)-1].Text)
+	link := sentLink.FindStringSubmatch(a.mailOf(started.Attempt).Text)
 	body := `{"attempt":"` + link[1] + `","token":"` + link[2] + `"}`
 
 	rec := a.call("POST", "/api/v1/auth/email/look", body, nil)
@@ -317,7 +353,7 @@ func TestInvitationsAPI(t *testing.T) {
 		}
 	}
 	// An invitation made here signs someone up.
-	rec = a.call("POST", "/api/v1/auth/email/start", `{"address":"ana@example.org","invitation":"`+out.Invitations[0]+`"}`, nil)
+	rec = a.call("POST", "/api/v1/auth/email/start", `{"address":"ana@example.org","invitation":"`+out.Invitations[0]+`","terms":"`+domain.TermsVersion+`"}`, nil)
 	a.svc.Wait()
 	if rec.Code != 200 || len(a.out.Sent()) != 1 {
 		t.Fatalf("signing up with it: %d %s", rec.Code, rec.Body)
@@ -851,7 +887,7 @@ func TestAccountsAdminAPI(t *testing.T) {
 			t.Fatalf("account %d of the list: %+v", i, r)
 		}
 	}
-	if !strings.Contains(rec.Body.String(), `"passkeys":0,"passkey_only":false,"providers":[],"sessions":1}`) || strings.Count(rec.Body.String(), "closes_at") != 1 {
+	if !strings.Contains(rec.Body.String(), `"passkeys":0,"passkey_only":false,"providers":[],"sessions":1,"terms":{"version":"`+domain.TermsVersion+`","at":"`) || strings.Count(rec.Body.String(), "closes_at") != 1 {
 		t.Fatalf("the list: %s", rec.Body)
 	}
 	if cho := list.Accounts[2]; cho.State != contracts.AccountClosing || cho.Name != "Cho" || cho.ClosesAt.IsZero() || list.Accounts[0].State != contracts.AccountActive {
@@ -956,5 +992,46 @@ func TestAccountsAdminAPIShowsTheSignedRecords(t *testing.T) {
 		if strings.Contains(logs.String(), secret) {
 			t.Fatalf("the logs hold %q:\n%s", secret, logs)
 		}
+	}
+}
+
+// Signing up takes the agreement to the terms in force; GET me says which the
+// account agreed to and which are in force; agreeing names the version.
+func TestTermsAPI(t *testing.T) {
+	a := newApp(t)
+	inv, err := a.svc.CreateInvitations(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var e httpapi.APIError
+	for _, terms := range []string{``, `,"terms":"2020-01-01"`} {
+		if read(t, a.call("POST", "/api/v1/auth/email/start", `{"address":"ana@example.org","invitation":"`+inv.Invitations[0]+`"`+terms+`}`, nil), 400, &e); e.Error.Code != "terms_needed" {
+			t.Fatalf("signing up with %q: %+v", terms, e)
+		}
+	}
+	if read(t, a.call("POST", "/api/v1/account/terms", `{"version":"`+domain.TermsVersion+`"}`, nil), 401, &e); e.Error.Code != "unauthorized" {
+		t.Fatalf("agreeing signed out: %+v", e)
+	}
+	a.signIn("ana@example.org")
+	rec := a.call("GET", "/api/v1/me", "", nil)
+	if read(t, rec, 200, nil); !strings.Contains(rec.Body.String(), `"terms":"`+domain.TermsVersion+`"}`) || !strings.Contains(rec.Body.String(), `"passkey_only":false,"terms":"`+domain.TermsVersion+`"}`) {
+		t.Fatalf("me: %s", rec.Body)
+	}
+	for body, code := range map[string]string{
+		`{"version":"2020-01-01"}`: "terms_needed",
+		`{}`:                       "terms_needed",
+		`{"version":"x","at":"y"}`: "invalid_body",
+	} {
+		if read(t, a.call("POST", "/api/v1/account/terms", body, nil), 400, &e); e.Error.Code != code {
+			t.Errorf("%s: %+v", body, e)
+		}
+	}
+	var agreed contracts.Account
+	if read(t, a.call("POST", "/api/v1/account/terms", `{"version":"`+domain.TermsVersion+`"}`, nil), 200, &agreed); agreed.Terms != domain.TermsVersion {
+		t.Fatalf("agreeing: %+v", agreed)
+	}
+	evil := func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") }
+	if read(t, a.call("POST", "/api/v1/account/terms", `{"version":"`+domain.TermsVersion+`"}`, evil), 403, &e); e.Error.Code != "forbidden" {
+		t.Fatalf("from another origin: %+v", e)
 	}
 }

@@ -22,6 +22,8 @@ export function ProviderSignIn({
   askAgain,
   invitation,
   onInvitationRefused,
+  terms,
+  onTermsRefused,
   returnTo,
 }: {
   /** What comes before the providers in their group: signing in with a passkey. */
@@ -37,6 +39,10 @@ export function ProviderSignIn({
   invitation?: () => string | null | undefined
   /** The server refused the invitation before the browser left. */
   onInvitationRefused?: (message: string) => void
+  /** On the sign-up screen: the version of the terms the person agreed to, sent with an invitation. */
+  terms?: string
+  /** The server refused the agreement before the browser left. */
+  onTermsRefused?: (message: string) => void
   /** The path of the app the person was going to. */
   returnTo?: string
 }) {
@@ -73,6 +79,7 @@ export function ProviderSignIn({
     try {
       const { url } = await startProvider(provider, {
         invitation: code,
+        terms,
         returnTo: returnTo && returnTo !== '/' ? returnTo : undefined,
       })
       // The page is about to go, and its memory with it. An invitation crosses the trip in the tab's own
@@ -87,6 +94,8 @@ export function ProviderSignIn({
       const failed = errorCode(failure)
       if (failed === 'invalid_invitation' && onInvitationRefused) {
         onInvitationRefused(messageFor(failed))
+      } else if (failed === 'terms_needed' && onTermsRefused) {
+        onTermsRefused(messageFor(failed))
       } else if (failed === 'provider_off') {
         // Turned off since the screen was drawn: it is no longer offered.
         setError(

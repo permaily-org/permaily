@@ -1,6 +1,7 @@
 import { screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { current, expectNotKept, open } from '../../helpers/app.tsx'
+import { TERMS_VERSION } from '../../../src/lib/terms.ts'
+import { agree, current, expectNotKept, open } from '../../helpers/app.tsx'
 import { expectAccessible } from '../../helpers/axe.ts'
 import { meOf, network, ok, refused, server } from '../../helpers/server.ts'
 
@@ -11,6 +12,7 @@ const started = ok({ attempt: 'att_secret_1', expires_in: 600 })
 /** Fills in the address and asks for the message. */
 async function ask(user: User, address = 'ana@example.org') {
   await user.type(await screen.findByLabelText('Email address'), address)
+  await agree(user)
   await user.click(screen.getByRole('button', { name: 'Continue' }))
 }
 
@@ -175,6 +177,7 @@ describe('signing up', () => {
     await user.type(invitation, 'abcd2345efgh')
     expect(invitation.value).toBe('ABCD-2345-EFGH')
     await expectAccessible()
+    await agree(user)
     await user.click(screen.getByRole('button', { name: 'Continue' }))
     await screen.findByRole('heading', { name: 'Check your mail' })
     expect(screen.getByText(/A message is on its way to/).textContent).toBe(
@@ -183,6 +186,7 @@ describe('signing up', () => {
     expect(server.asked('POST /api/v1/auth/email/start')[0].body).toEqual({
       address: 'ana@example.org',
       invitation: 'abcd2345efgh',
+      terms: TERMS_VERSION,
     })
     server.on('POST /api/v1/auth/email/finish', ok(meOf()))
     await user.type(screen.getByLabelText('Code from the message'), '123456')

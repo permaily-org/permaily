@@ -1,6 +1,8 @@
 import { act, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { TERMS_VERSION } from '../../../src/lib/terms.ts'
 import {
+  agree,
   blockStorage,
   current,
   expectNotKept,
@@ -192,7 +194,9 @@ describe('starting with a provider from the sign-up screen', () => {
     watchLeaving()
     server.on('POST /api/v1/auth/provider/start', ok({ url: away, expires_in: 600 }))
     const { user } = await open('/sign-up')
-    await user.click(await screen.findByRole('button', { name: 'Continue with Google' }))
+    await screen.findByRole('button', { name: 'Continue with Google' })
+    await agree(user)
+    await user.click(screen.getByRole('button', { name: 'Continue with Google' }))
     await waitFor(() => expect(server.asked('POST /api/v1/auth/provider/start')).toHaveLength(1))
     expect(server.asked('POST /api/v1/auth/provider/start')[0].body).toEqual({ provider: 'google' })
     expect({ ...sessionStorage }).toEqual({})
@@ -203,6 +207,7 @@ describe('starting with a provider from the sign-up screen', () => {
     const assign = watchLeaving()
     const { user } = await open('/sign-up')
     await user.type(await screen.findByLabelText('Invitation'), 'abcd')
+    await agree(user)
     await user.click(screen.getByRole('button', { name: 'Continue with Google' }))
     await screen.findByText(
       'An invitation has 12 letters and digits. Check it against the one you got.',
@@ -231,6 +236,7 @@ describe('an invitation across the trip to a provider', () => {
     await screen.findByRole('button', { name: 'Continue with Google' })
     // Not before the browser is about to leave.
     expect({ ...sessionStorage }).toEqual({})
+    await agree(user)
     await user.click(screen.getByRole('button', { name: 'Continue with Google' }))
     await waitFor(() =>
       expect({ ...sessionStorage }).toEqual({ 'permaily-invitation': 'abcd2345efgh' }),
@@ -239,6 +245,7 @@ describe('an invitation across the trip to a provider', () => {
     expect(server.asked('POST /api/v1/auth/provider/start')[0].body).toEqual({
       provider: 'google',
       invitation: 'abcd2345efgh',
+      terms: TERMS_VERSION,
     })
 
     // The provider's account has no Permaily account yet, and the invitation was used meanwhile or lost:
@@ -273,7 +280,9 @@ describe('an invitation across the trip to a provider', () => {
     watchLeaving()
     server.on('POST /api/v1/auth/provider/start', ok({ url: away, expires_in: 600 }))
     const { user } = await open('/sign-up?invitation=ABCD-2345-EFGH')
-    await user.click(await screen.findByRole('button', { name: 'Continue with Google' }))
+    await screen.findByRole('button', { name: 'Continue with Google' })
+    await agree(user)
+    await user.click(screen.getByRole('button', { name: 'Continue with Google' }))
     await waitFor(() => expect(sessionStorage.length).toBe(1))
     // It signed the person in: the app opens, and nothing is left behind.
     server.signedIn()
@@ -288,7 +297,9 @@ describe('an invitation across the trip to a provider', () => {
     watchLeaving()
     server.on('POST /api/v1/auth/provider/start', ok({ url: away, expires_in: 600 }))
     const { user } = await open('/sign-up?invitation=ABCD-2345-EFGH')
-    await user.click(await screen.findByRole('button', { name: 'Continue with Google' }))
+    await screen.findByRole('button', { name: 'Continue with Google' })
+    await agree(user)
+    await user.click(screen.getByRole('button', { name: 'Continue with Google' }))
     await waitFor(() => expect(sessionStorage.length).toBe(1))
     act(() => {
       window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }))
@@ -304,7 +315,9 @@ describe('an invitation across the trip to a provider', () => {
     blockStorage('sessionStorage')
     server.on('POST /api/v1/auth/provider/start', ok({ url: away, expires_in: 600 }))
     const { user } = await open('/sign-up?invitation=ABCD-2345-EFGH')
-    await user.click(await screen.findByRole('button', { name: 'Continue with Google' }))
+    await screen.findByRole('button', { name: 'Continue with Google' })
+    await agree(user)
+    await user.click(screen.getByRole('button', { name: 'Continue with Google' }))
     await waitFor(() => expect(assign).toHaveBeenCalledWith(away))
   })
 })

@@ -476,7 +476,7 @@ func TestSignOutsAndRecordsFailures(t *testing.T) {
 	}
 	// A record that cannot be stored after the pointers of the list.
 	f.fail["put record"] = down
-	if _, _, err := w.svc.create(ctx, "new@example.org", nil); !errors.Is(err, down) {
+	if _, _, err := w.svc.create(ctx, "new@example.org", termsDoc{Version: w.terms, At: w.now}, nil); !errors.Is(err, down) {
 		t.Fatalf("a record that cannot be stored: %v", err)
 	}
 }

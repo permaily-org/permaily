@@ -2,6 +2,7 @@ package accounts
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"log/slog"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain"
+	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/webauthn/webauthntest"
 )
@@ -131,6 +133,7 @@ func (w *world) enclaveAt(ahead time.Duration) *enclave {
 	e.svc, err = New(Config{
 		Records: e.records, Entries: e.entries, Keys: w.svc.cfg.Keys, Mailer: w.out, Providers: w.idp,
 		AppURL: "https://app.permaily.test", SuperAdmin: superAdmin, Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: now,
+		Terms: func() string { return w.terms },
 	})
 	if err != nil {
 		w.t.Fatal(err)
@@ -156,13 +159,15 @@ func (e *enclave) passkey(who *Authenticated, name string) (*contracts.Passkey, 
 // start starts a sign-in through this enclave, and returns what ends it.
 func (e *enclave) start(address, invitation string) contracts.EmailFinish {
 	e.w.t.Helper()
-	res, err := e.svc.StartEmail(context.Background(), contracts.EmailStart{Address: address, Invitation: invitation})
+	res, err := e.svc.StartEmail(context.Background(), contracts.EmailStart{Address: address, Invitation: invitation, Terms: e.w.terms})
 	if err != nil {
 		e.w.t.Fatal(err)
 	}
-	e.svc.Wait()
-	sent := e.w.out.Sent()
-	return contracts.EmailFinish{Attempt: res.Attempt, Code: code(&sent[len(sent)-1])}
+	mail := e.w.mailOf(e.svc, res.Attempt)
+	if mail == nil {
+		e.w.t.Fatalf("no sign-in message for %s", address)
+	}
+	return contracts.EmailFinish{Attempt: res.Attempt, Code: code(mail)}
 }
 
 // doc reads an account's record through an enclave that was just started.
@@ -791,13 +796,16 @@ func TestASessionConfirmedThroughOneEnclaveChangesThroughTheOther(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	before := len(w.out.Sent())
 	started, err := one.svc.StartConfirmEmail(ctx, who)
 	if err != nil {
 		t.Fatal(err)
 	}
-	one.svc.Wait()
-	sent := w.out.Sent()
-	if _, err := one.svc.FinishConfirmEmail(ctx, who, contracts.ConfirmFinish{Attempt: started.Attempt, Code: code(&sent[len(sent)-1])}); err != nil {
+	mail := w.mailTo(one.svc, before, "ana@example.org", confirmSubject)
+	if mail == nil {
+		t.Fatal("no message to confirm")
+	}
+	if _, err := one.svc.FinishConfirmEmail(ctx, who, contracts.ConfirmFinish{Attempt: started.Attempt, Code: code(mail)}); err != nil {
 		t.Fatal(err)
 	}
 	// The next request lands on the other.
@@ -860,5 +868,145 @@ func TestAnAdminMadeThroughOneEnclaveActsThroughTheOther(t *testing.T) {
 	}
 	if _, err := other.svc.Admin(ctx, w.fresh(anaWho)); !errors.Is(err, contracts.ErrNotFound) {
 		t.Fatalf("ana through the other after: %v", err)
+	}
+}
+
+// Agreeing to the terms through one enclave counts through the other: the
+// agreement is in the account's record, changed through change and read
+// with it. An enclave of a newer release asks again, whichever enclave the
+// account last agreed through.
+func TestAnAgreementThroughOneEnclaveCountsThroughTheOther(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	me, cookie := w.signUp("ana@example.org")
+	w.terms = newTerms
+	one, other := w.enclave(), w.enclave()
+	name := "Ana"
+	whoOther, _ := other.svc.Authenticate(ctx, cookie)
+	if _, err := other.svc.UpdateAccount(ctx, whoOther, contracts.AccountUpdate{Name: &name}); !errors.Is(err, contracts.ErrTermsChanged) {
+		t.Fatalf("before agreeing: %v", err)
+	}
+	whoOne, _ := one.svc.Authenticate(ctx, cookie)
+	if _, err := one.svc.AgreeTerms(ctx, whoOne, contracts.TermsAgree{Version: newTerms}); err != nil {
+		t.Fatal(err)
+	}
+	if account, err := other.svc.UpdateAccount(ctx, whoOther, contracts.AccountUpdate{Name: &name}); err != nil || account.Terms != newTerms {
+		t.Fatalf("through the other after: %+v %v", account, err)
+	}
+	if doc := w.doc(me.Account.ID); doc.Terms == nil || doc.Terms.Version != newTerms || doc.Name != name {
+		t.Fatalf("the record: %+v", doc)
+	}
+}
+
+// A sign-up by mail started through one enclave and ended through the other
+// makes the account with the agreement given at its start: the version, and
+// the time it was given, which travel sealed in the attempt and nowhere else.
+func TestASignUpByMailStartedThroughOneEnclaveKeepsItsAgreementThroughTheOther(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	one, two := w.enclave(), w.enclave()
+	agreed := w.now
+	finish := one.start("ana@example.org", w.invite())
+	w.now = w.now.Add(3 * time.Minute)
+	me, _, err := two.svc.FinishEmail(ctx, finish, Browser{})
+	if err != nil || me.Account.Terms != domain.TermsVersion {
+		t.Fatalf("ended through the other enclave: %+v %v", me, err)
+	}
+	if doc := w.doc(me.Account.ID); doc.Terms == nil || doc.Terms.Version != domain.TermsVersion || !doc.Terms.At.Equal(agreed) {
+		t.Fatalf("the record: %+v", doc.Terms)
+	}
+}
+
+// The same with a provider: the trip carries the agreement from the enclave
+// that sent the browser away to the one it comes back to, and so does the
+// sign-in that waits for its address, from the enclave that keeps it to the
+// one that sends its message and the one that ends it.
+func TestASignUpWithAProviderStartedThroughOneEnclaveKeepsItsAgreementThroughTheOther(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	w.on(idp.Google, idp.Meta)
+	one, two := w.enclave(), w.enclave()
+
+	// A provider that vouches for the address: one trip, two enclaves.
+	agreed := w.now
+	state, cookie := w.leaveFrom(one.svc, nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite(), Terms: w.terms})
+	w.now = w.now.Add(2 * time.Minute)
+	if done, err := w.comeBackTo(two.svc, state, cookie, person(idp.Google, "g-nina", "nina@example.org", true)); err != nil || done.Session == "" {
+		t.Fatalf("a trip ended through the other enclave: %+v %v", done, err)
+	}
+	if got := w.agreedTo(w.find("nina@example.org")); got == nil || got.Version != domain.TermsVersion || !got.At.Equal(agreed) {
+		t.Fatalf("nina agreed to %+v", got)
+	}
+
+	// One that does not: started through two, back through one, the message
+	// asked through two and the code ending it through one.
+	agreed = w.now
+	state, cookie = w.leaveFrom(two.svc, nil, contracts.ProviderStart{Provider: "meta", Invitation: w.invite(), Terms: w.terms})
+	w.now = w.now.Add(time.Minute)
+	done, err := w.comeBackTo(one.svc, state, cookie, person(idp.Meta, "m-omar", "", false))
+	if err != nil || done.Browser == "" {
+		t.Fatalf("a trip that waits for its address: %+v %v", done, err)
+	}
+	w.now = w.now.Add(time.Minute)
+	started, err := two.svc.StartProviderConfirm(ctx, done.Browser, contracts.ProviderConfirmStart{Address: "omar@example.org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	me, _, err := one.svc.FinishProviderConfirm(ctx, done.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(w.mailOf(two.svc, started.Attempt))}, Browser{})
+	if err != nil || me.Account.Terms != domain.TermsVersion {
+		t.Fatalf("an address confirmed through the other enclave: %+v %v", me, err)
+	}
+	if got := w.agreedTo(me.Account.ID); got == nil || got.Version != domain.TermsVersion || !got.At.Equal(agreed) {
+		t.Fatalf("omar agreed to %+v", got)
+	}
+}
+
+// A sign-up without the agreement makes no account through either enclave:
+// one asked without it is refused where it starts; one whose sealed attempt
+// carries none (as one sealed by an enclave that did not ask) is refused
+// where it ends; and one that agreed to a version no longer in force by then
+// is refused by the other enclave too. Each answers terms_needed, and the
+// invitation stays unused.
+func TestASignUpWithoutAgreeingMakesNoAccountThroughEitherEnclave(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	w.on(idp.Google)
+	one, two := w.enclave(), w.enclave()
+	invitation := w.invite()
+	n := w.count()
+	if _, err := one.svc.StartEmail(ctx, contracts.EmailStart{Address: "ana@example.org", Invitation: invitation}); !errors.Is(err, contracts.ErrTermsNeeded) {
+		t.Fatalf("by mail without the agreement: %v", err)
+	}
+	if _, _, err := two.svc.StartProvider(ctx, nil, contracts.ProviderStart{Provider: "google", Invitation: invitation}); !errors.Is(err, contracts.ErrTermsNeeded) {
+		t.Fatalf("with a provider without the agreement: %v", err)
+	}
+	one.svc.Wait()
+	if w.count() != n {
+		t.Fatal("a message was sent")
+	}
+
+	// An attempt sealed with no agreement, through one; ended through two.
+	entry, err := one.svc.invitation(ctx, invitation)
+	if err != nil || entry == "" {
+		t.Fatalf("the invitation: %q %v", entry, err)
+	}
+	id, sum := newID("att"), sha256.Sum256([]byte("123456"))
+	a := &attemptDoc{V: 1, Address: "ana@example.org", Invitation: entry, Code: sum[:], pendingTimes: pendingTimes{Made: w.now, Expires: w.now.Add(domain.EmailCodeLifetime)}}
+	if err := one.svc.stash(ctx, pendingPartition(kindAttempt, id), a); err != nil {
+		t.Fatal(err)
+	}
+	if me, cookie, err := two.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: id, Code: "123456"}, Browser{}); !errors.Is(err, contracts.ErrTermsNeeded) || me != nil || cookie != "" {
+		t.Fatalf("an attempt without the agreement: %+v %v", me, err)
+	}
+
+	// Agreed to through one, the terms changed (a new release), ended
+	// through two.
+	finish := one.start("bea@example.org", invitation)
+	w.terms = newTerms
+	if me, cookie, err := two.svc.FinishEmail(ctx, finish, Browser{}); !errors.Is(err, contracts.ErrTermsNeeded) || me != nil || cookie != "" {
+		t.Fatalf("an agreement to terms no longer in force: %+v %v", me, err)
+	}
+	if w.accounts() != 0 {
+		t.Fatalf("accounts: %d", w.accounts())
+	}
+	// The invitation was not used.
+	if entry, err := two.svc.invitation(ctx, invitation); err != nil || entry == "" {
+		t.Fatalf("the invitation after: %q %v", entry, err)
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/idp/idptest"
 	"github.com/permaily-org/permaily/internal/inbox"
@@ -70,6 +71,19 @@ type platform struct {
 var devAhead atomic.Int64
 
 func devClock() time.Time { return time.Now().Add(time.Duration(devAhead.Load())) }
+
+// devTerms is the version of the terms in force in dev mode, the compiled one
+// until POST /dev/terms?version=<v> changes it: then every account that
+// agreed to another is asked to agree again, as after a release that changes
+// the terms. The enclave build cannot change it.
+var devTerms atomic.Pointer[string]
+
+func devTermsVersion() string {
+	if v := devTerms.Load(); v != nil {
+		return *v
+	}
+	return domain.TermsVersion
+}
 
 // devProviders plays Google, GitHub, Meta and Microsoft in dev mode: a local
 // server that signs anybody in, as idptest.Default says or as the test of the
@@ -176,7 +190,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	if p.accounts, err = accounts.New(accounts.Config{
 		// As in the enclave: only the newest version of an account's record is kept.
 		Records: &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Now: devClock}, Entries: mem,
-		Keys: local, Mailer: outbox, AppURL: appURL, SuperAdmin: cfg.superAdmin, Log: log, Now: devClock,
+		Keys: local, Mailer: outbox, AppURL: appURL, SuperAdmin: cfg.superAdmin, Log: log, Now: devClock, Terms: devTermsVersion,
 		Providers: &idp.Client{HTTP: &http.Client{}, RedirectURL: appURL + providerCallback, Now: devClock, Endpoints: providers.Endpoints()},
 	}); err != nil {
 		return nil, err
@@ -195,6 +209,15 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	p.devRoutes = map[string]http.Handler{"/dev/outbox": http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(outbox.Sent())
+	}), "/dev/terms": http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			if v := r.URL.Query().Get("version"); v != "" {
+				devTerms.Store(&v)
+			} else {
+				devTerms.Store(nil)
+			}
+		}
+		_, _ = io.WriteString(w, devTermsVersion()+"\n")
 	})}
 	if cfg.mailboxID != "" {
 		port := cfg.smtpPort

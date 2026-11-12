@@ -62,9 +62,14 @@ export function asAdmin(account: Account = boss) {
     )
 }
 
-/** Confirms with the code of the message, in the dialog that asks for it. */
+/** What the dialog says of why it asks, for an admin action: not that it decides who gets into the account. */
+export const adminReason =
+  "This is an admin action, so Permaily asks you to show it's you again. It counts for the next 10 minutes."
+
+/** Confirms with the code of the message, in the dialog that asks for it, which says it is an admin action. */
 export async function confirm(user: User) {
   const dialog = within(await screen.findByRole('dialog', { name: "Confirm it's you" }))
+  expect(dialog.getByText(adminReason)).toBeTruthy()
   await user.click(await dialog.findByRole('button', { name: 'Email me a code' }))
   await user.type(await dialog.findByLabelText('Code from the message'), '123456')
   await user.click(dialog.getByRole('button', { name: 'Confirm' }))
@@ -74,6 +79,7 @@ export async function confirm(user: User) {
 /** Cancels the dialog that asks the person to confirm. */
 export async function cancelConfirm(user: User) {
   const dialog = within(await screen.findByRole('dialog', { name: "Confirm it's you" }))
+  expect(dialog.getByText(adminReason)).toBeTruthy()
   await user.click(await dialog.findByRole('button', { name: 'Cancel' }))
   await waitFor(() => expect(screen.queryByRole('dialog', { name: "Confirm it's you" })).toBeNull())
 }

@@ -1,5 +1,5 @@
 import { Check, ChevronDown, Search, X } from 'lucide-react'
-import type { InputHTMLAttributes, ReactNode } from 'react'
+import type { ComponentProps, InputHTMLAttributes, ReactNode } from 'react'
 import { cx, focusRing } from '../../lib/styles.ts'
 
 /** Segmented choice between views, such as Whole inbox and Only shared. */
@@ -87,11 +87,22 @@ export function SearchField({
 export function Checkbox({
   label,
   className,
+  top,
   ...props
-}: InputHTMLAttributes<HTMLInputElement> & { label: ReactNode }) {
+}: ComponentProps<'input'> & {
+  label: ReactNode
+  /** The box sits by the first line of a label that may wrap, instead of its middle. */
+  top?: boolean
+}) {
   return (
-    <label className={cx('inline-flex cursor-pointer items-center gap-2.5', className)}>
-      <span className="relative inline-flex size-[18px] shrink-0">
+    <label
+      className={cx(
+        'inline-flex cursor-pointer gap-2.5',
+        top ? 'items-start' : 'items-center',
+        className,
+      )}
+    >
+      <span className={cx('relative inline-flex size-[18px] shrink-0', top && 'mt-0.5')}>
         <input
           type="checkbox"
           {...props}

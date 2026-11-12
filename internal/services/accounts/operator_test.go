@@ -197,8 +197,7 @@ func TestABlockedAccountSignsInByNoWay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	all, _ := w.sent(0)
-	_, _, err = w.svc.FinishProviderConfirm(ctx, done.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(&all[len(all)-1])}, Browser{})
+	_, _, err = w.svc.FinishProviderConfirm(ctx, done.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(w.mailOf(w.svc, started.Attempt))}, Browser{})
 	blocked("confirming an address for a provider", err)
 	// With a recovery code: the right one is told, and is not used up.
 	_, _, err = w.recover("bea@example.org", codes[0])
@@ -616,6 +615,7 @@ func TestTheOperatorFindsAnAddress(t *testing.T) {
 			ID: ana.Account.ID, State: contracts.AccountActive, Address: "ana@example.org", Language: "en",
 			CreatedAt: ana.Account.CreatedAt, AddressVerifiedAt: ana.Account.CreatedAt,
 			Passkeys: 1, Providers: []string{"google"}, Sessions: 1,
+			Terms: &contracts.TermsAgreement{Version: domain.TermsVersion, At: ana.Account.CreatedAt},
 		}
 		if !reflect.DeepEqual(rec, want) {
 			t.Fatalf("%q: %+v, want %+v", address, rec, want)

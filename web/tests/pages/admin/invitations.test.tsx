@@ -40,14 +40,17 @@ describe('invitations', () => {
     await invitations()
     await unused().findByText('Made 10 Nov 2026, 09:00 UTC')
     expect(unused().getByText('Works until 10 Dec 2026')).toBeTruthy()
+    // Each row says its identifier, which matches it to the code shown when it was made, and to Activity.
+    expect(unused().getByText('inv_1')).toBeTruthy()
+    expect(unused().getByText('inv_2')).toBeTruthy()
     expect(unused().getByText('Not every unused invitation is listed here.')).toBeTruthy()
     expect(
       unused()
         .getAllByRole('button')
         .map((one) => one.textContent),
     ).toEqual([
-      'Revoke invitation made 10 Nov 2026, 09:00 UTC',
-      'Revoke invitation made 11 Nov 2026, 15:30 UTC',
+      'Revoke invitation inv_1, made 10 Nov 2026, 09:00 UTC',
+      'Revoke invitation inv_2, made 11 Nov 2026, 15:30 UTC',
     ])
     await expectAccessible()
   })
@@ -110,7 +113,11 @@ describe('invitations', () => {
     expect(shown.getByText("These codes won't be shown again.").parentElement?.textContent).toBe(
       "These codes won't be shown again. Copy them now. Each one makes one account, until 12 Dec 2026.",
     )
-    expect(shown.getAllByRole('listitem').map((one) => one.textContent)).toEqual(codes)
+    // Each code with its identifier, so a row of the list and an entry of Activity can be matched to it.
+    expect(shown.getAllByRole('listitem').map((one) => one.textContent)).toEqual([
+      `${codes[0]}inv_3`,
+      `${codes[1]}inv_4`,
+    ])
     await waitFor(() =>
       expect(document.activeElement).toBe(
         shown.getByRole('heading', { name: 'Your 2 new invitations' }),
@@ -189,10 +196,10 @@ describe('invitations', () => {
       .on('DELETE /api/v1/admin/invitations/inv_1', once(confirmationNeeded, ok()))
     const { user } = await invitations()
     await user.click(
-      await unused().findByRole('button', { name: /^Revoke\s*invitation made 10 Nov/ }),
+      await unused().findByRole('button', { name: /^Revoke\s*invitation inv_1, made 10 Nov/ }),
     )
     const question = within(screen.getByRole('dialog', { name: 'Revoke this invitation?' }))
-    expect(question.getByText('Made 10 Nov 2026, 09:00 UTC')).toBeTruthy()
+    expect(question.getByText('inv_1, made 10 Nov 2026, 09:00 UTC')).toBeTruthy()
     expect(
       question.getByText('Whoever has its code can no longer make an account with it.'),
     ).toBeTruthy()
@@ -214,7 +221,7 @@ describe('invitations', () => {
       .on('DELETE /api/v1/admin/invitations/inv_1', refused(404, 'not_found'))
     const { user } = await invitations()
     await user.click(
-      await unused().findByRole('button', { name: /^Revoke\s*invitation made 10 Nov/ }),
+      await unused().findByRole('button', { name: /^Revoke\s*invitation inv_1, made 10 Nov/ }),
     )
     server.on(list, reading.answer)
     const question = within(screen.getByRole('dialog', { name: 'Revoke this invitation?' }))

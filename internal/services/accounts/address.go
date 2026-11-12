@@ -40,6 +40,8 @@ func (s *Service) StartAddressChange(ctx context.Context, who *Authenticated, in
 	switch {
 	case doc.State == contracts.AccountClosing:
 		return nil, contracts.ErrAccountClosing
+	case !doc.agreed(s.terms()):
+		return nil, contracts.ErrTermsChanged
 	case doc.Address == address:
 		// Nothing to change to. It is the asker's own address: it tells nothing.
 		return nil, contracts.ErrInvalidAddress

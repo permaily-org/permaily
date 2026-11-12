@@ -221,7 +221,7 @@ func TestASignInFromANewDeviceIsTold(t *testing.T) {
 	// A provider signing up makes an account: not a new device.
 	n = w.count()
 	done, err := w.svc.FinishProvider(ctx, func() ProviderAnswer {
-		state, trip := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite()})
+		state, trip := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite(), Terms: w.terms})
 		return ProviderAnswer{State: state, Code: w.idp.approve(person(idp.Google, "g-bea", "bea@example.org", true)), Browser: trip, From: Browser{Device: device(20)}}
 	}())
 	if err != nil || done.Session == "" {

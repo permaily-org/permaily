@@ -109,6 +109,17 @@ describe('legal pages', () => {
     expect(TERMS_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
+  it('match the version the service records', () => {
+    // docs/legal.md: the service records the version an account agreed to (domain.TermsVersion).
+    const dir = join(import.meta.dirname, '../../internal/domain');
+    const source = readdirSync(dir)
+      .filter((f) => f.endsWith('.go') && !f.endsWith('_test.go'))
+      .map((f) => readFileSync(join(dir, f), 'utf8'))
+      .join('\n');
+    const match = source.match(/\bTermsVersion\s*(?:string\s*)?=\s*"([^"]+)"/);
+    expect(match?.[1]).toBe(TERMS_VERSION);
+  });
+
   it('are linked from every page', () => {
     for (const file of all) {
       if (!file.startsWith(join(dist, 'docs')) && !file.endsWith('404.html')) {

@@ -4,6 +4,7 @@ import { Button, Dialog, TextAction } from '../../../components/ui/index.ts'
 import * as api from '../../../lib/api.ts'
 import { isCancelled } from '../../../lib/cancelled.ts'
 import { describeDevice } from '../../../lib/device.ts'
+import { providerNames } from '../../../lib/providers.ts'
 import { actionClass, cx } from '../../../lib/styles.ts'
 import {
   credentialId,
@@ -19,9 +20,24 @@ import { formatDay, maxName, passkeyName, type SignInSection } from './shared.ts
 
 const badName = 'Give it a name of 1 to 64 characters, on one line.'
 
+/**
+ * How an account without passkeys signs in: by mail, and with each provider linked to it that is on, by name.
+ * An account without passkeys cannot be "passkey only", so mail always signs in.
+ */
+export function waysWithoutPasskeys(on: api.Provider[], linked: api.LinkedProvider[]): string {
+  const names = linked
+    .filter((link) => on.includes(link.provider))
+    .map((link) => providerNames[link.provider])
+  const mail = 'You sign in with a message sent to your email address'
+  if (names.length === 0) return `${mail}.`
+  return `${mail}, or with ${new Intl.ListFormat('en', { type: 'disjunction' }).format(names)}.`
+}
+
 /** The account's passkeys, each with its name, when it was made and whether it is synced, and the form to add one. */
 export function Passkeys({
   list,
+  on,
+  linked,
   supported,
   adding,
   onAddingDone,
@@ -29,6 +45,9 @@ export function Passkeys({
   section,
 }: {
   list: api.PasskeyList
+  /** The providers that are on, and the ones linked to the account: other ways in, said when there is no passkey. */
+  on: api.Provider[]
+  linked: api.LinkedProvider[]
   /** Whether this browser can make a passkey. */
   supported: boolean
   adding: boolean
@@ -43,7 +62,7 @@ export function Passkeys({
       {list.passkeys.length === 0 && (
         <SettingRow label="Passkey">
           <span className="text-ink-2">
-            None. You sign in with a message sent to your email address.
+            None. {waysWithoutPasskeys(on, linked)}
             {!supported && " This browser can't make passkeys."}
           </span>
         </SettingRow>

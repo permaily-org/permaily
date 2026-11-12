@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/permaily-org/permaily/internal/domain"
 )
 
 // Two enclaves of one deployment, over one storage: a sign-up by mail started
@@ -82,7 +84,7 @@ func TestASignInStartedThroughOneEnclaveEndsThroughTheOther(t *testing.T) {
 	if code != 200 || json.Unmarshal([]byte(body), &made) != nil || len(made.Invitations) != 1 {
 		t.Fatalf("invitations: %d %s", code, body)
 	}
-	code, body = call(0, "POST", "https://app.permaily.test/api/v1/auth/email/start", "", `{"address":"ana@example.org","invitation":"`+made.Invitations[0]+`"}`)
+	code, body = call(0, "POST", "https://app.permaily.test/api/v1/auth/email/start", "", `{"address":"ana@example.org","invitation":"`+made.Invitations[0]+`","terms":"`+domain.TermsVersion+`"}`)
 	var started struct {
 		Attempt string `json:"attempt"`
 	}
@@ -106,7 +108,9 @@ func TestASignInStartedThroughOneEnclaveEndsThroughTheOther(t *testing.T) {
 	if code != 200 || !strings.Contains(body, `"address":"ana@example.org"`) {
 		t.Fatalf("finished through the other enclave: %d %s", code, body)
 	}
-	if code, body := call(0, "GET", "https://app.permaily.test/api/v1/me", "", ""); code != 200 || !strings.Contains(body, `"address":"ana@example.org"`) {
+	// The agreement to the terms given through the first was kept with the
+	// sign-in, and the account made through the second records it.
+	if code, body := call(0, "GET", "https://app.permaily.test/api/v1/me", "", ""); code != 200 || !strings.Contains(body, `"address":"ana@example.org"`) || !strings.Contains(body, `"terms":"`+domain.TermsVersion+`"`) {
 		t.Fatalf("the session through the first enclave: %d %s", code, body)
 	}
 	// It worked once: the same code through the first is refused.
