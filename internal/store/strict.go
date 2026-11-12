@@ -8,18 +8,10 @@ import (
 )
 
 // Strict records (ADR 0026, "The store"; ADR 0016). A record kind is strict
-// when its Anchored is: pull request 0 adds the field
-//
-//	// Strict reads every version of a record's commits, not only the
-//	// newest, and refuses the record (ErrForked) wherever two commits of
-//	// different digests share a version.
-//	Strict bool
-//
-// next to OnlyNewest. Mailboxes and accounts' lists of mailboxes are strict;
-// what production stores before them (accounts, the TLS identity, the
-// providers' applications) is not, and is read and written exactly as
-// before. Nothing below is implemented before pull request 0: these are the
-// declarations the later pull requests code against.
+// when its Anchored is (Anchored.Strict, next to OnlyNewest). Mailboxes and
+// accounts' lists of mailboxes are strict; what production stores before
+// them (accounts, the TLS identity, the providers' applications) is not, and
+// is read and written exactly as before.
 
 // ErrForked means a strict record has a fork (Fork) at some version of its
 // history. A commit is written only where nothing is (S3Commits.Append
@@ -77,8 +69,10 @@ const MinCommitLock = 24 * time.Hour
 const MaxHistoryReads = 500
 
 // HistoryReader reads a record's whole history. S3Commits and MemoryCommits
-// implement it from pull request 0, which adds it to Commits; Anchored with
-// Strict reads through it instead of Head.
+// implement it; Anchored with Strict reads through it instead of Head, and
+// refuses a strict record whose Commits does not implement it. It is not part
+// of Commits: a store of commits for records that are not strict needs only
+// Head and Append.
 type HistoryReader interface {
 	History(ctx context.Context, name string) (*History, error)
 }

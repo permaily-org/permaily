@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -86,6 +87,14 @@ type Regression struct {
 	// store answered with afterwards (0 for none).
 	Had, Found uint64
 	At         time.Time
+	// Fork marks a strict record with two commits of different digests at
+	// one version (ErrForked): Found is the lowest such version, and Had the
+	// version this enclave knew (0 for none). It is recorded once per record.
+	Fork bool
+	// Unlocked marks a strict record with a commit that has no copy locked as
+	// Append locks one (History.Unlocked): Found is the lowest such version.
+	// The commit is counted all the same; it is recorded once per record.
+	Unlocked bool
 }
 
 // Anchored is Records whose values cannot be put back to an earlier one. The
@@ -99,13 +108,20 @@ type Anchored struct {
 	// storage (an account: a name or a passkey that was removed). Without it
 	// every version stays, as the TLS identity's do (ADR 0016).
 	OnlyNewest bool
-	Now        func() time.Time
+	// Strict reads every version of a record's commits, not only the newest,
+	// and refuses the record (ErrForked) wherever two commits of different
+	// digests share a version (ADR 0026, "The store"). Commits must then be a
+	// HistoryReader. A strict record is made only with CreateNew.
+	Strict bool
+	Now    func() time.Time
 
 	mu sync.Mutex
 	// seen is the newest commit of each record this enclave read or made: what
 	// the store of commits must still answer with, at least.
 	seen        map[string]Commit
 	regressions []Regression
+	// alarmed are the strict records already reported as forked or unlocked.
+	alarmed map[string]bool
 }
 
 // maxRegressions bounds what is remembered of a store that keeps going back.
@@ -143,6 +159,9 @@ func (a *Anchored) now() time.Time {
 // head reads the newest commit of name and checks that the store of commits
 // did not go back from what this enclave knows.
 func (a *Anchored) head(ctx context.Context, name string) (*Commit, uint64, error) {
+	if a.Strict {
+		return a.strictHead(ctx, name)
+	}
 	head, next, err := a.Commits.Head(ctx, name)
 	if err != nil {
 		return nil, 0, fmt.Errorf("store: commits of %s: %w", name, err)
@@ -163,6 +182,66 @@ func (a *Anchored) head(ctx context.Context, name string) (*Commit, uint64, erro
 		a.remember(*head)
 	}
 	return head, next, nil
+}
+
+// strictHead is head for a strict record: the whole history is read, a fork
+// at any version refuses the record before anything else, a commit without
+// its lock is reported, and then the store of commits must not have gone back
+// from what this enclave knows, as for every record.
+func (a *Anchored) strictHead(ctx context.Context, name string) (*Commit, uint64, error) {
+	reader, ok := a.Commits.(HistoryReader)
+	if !ok {
+		return nil, 0, fmt.Errorf("store: commits of %s: a strict record needs a store of commits that reads its history", name)
+	}
+	h, err := reader.History(ctx, name)
+	if err != nil {
+		return nil, 0, fmt.Errorf("store: commits of %s: %w", name, err)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	had := a.seen[name]
+	if len(h.Forks) > 0 {
+		a.alarm(Regression{Name: name, Had: had.Version, Found: h.Forks[0].Version, Fork: true})
+		return nil, 0, fmt.Errorf("%w: %s at version %d", ErrForked, name, h.Forks[0].Version)
+	}
+	if len(h.Unlocked) > 0 {
+		a.alarm(Regression{Name: name, Had: had.Version, Found: h.Unlocked[0], Unlocked: true})
+	}
+	head := h.Head
+	if _, ok := a.seen[name]; ok && (head == nil || head.Version < had.Version || (head.Version == had.Version && head.Digest != had.Digest)) {
+		found := uint64(0)
+		if head != nil {
+			found = head.Version
+		}
+		if len(a.regressions) < maxRegressions {
+			a.regressions = append(a.regressions, Regression{Name: name, Had: had.Version, Found: found, At: a.now().UTC()})
+		}
+		return nil, 0, fmt.Errorf("%w: %s was at version %d, and the store answers %d", ErrRolledBack, name, had.Version, found)
+	}
+	if head != nil {
+		a.remember(*head)
+	}
+	return head, h.Next, nil
+}
+
+// alarm records a fork or an unlocked commit of a strict record, once per
+// record and kind. The caller holds a.mu.
+func (a *Anchored) alarm(r Regression) {
+	kind := "unlocked\x00"
+	if r.Fork {
+		kind = "fork\x00"
+	}
+	if a.alarmed[kind+r.Name] {
+		return
+	}
+	if a.alarmed == nil {
+		a.alarmed = map[string]bool{}
+	}
+	a.alarmed[kind+r.Name] = true
+	r.At = a.now().UTC()
+	if len(a.regressions) < maxRegressions {
+		a.regressions = append(a.regressions, r)
+	}
 }
 
 func (a *Anchored) remember(c Commit) {
@@ -305,6 +384,17 @@ func (a *Anchored) PutRecordAt(ctx context.Context, r *Record, at Mark) error {
 	if at.next == 0 || at.name != r.Name {
 		return errors.New("store: a record is stored at the mark it was read at")
 	}
+	if a.Strict {
+		// Read the history again: nothing is appended to a forked record, nor
+		// over a commit made since the mark.
+		_, next, err := a.head(ctx, r.Name)
+		if err != nil {
+			return err
+		}
+		if next != at.next {
+			return ErrChanged
+		}
+	}
 	c, err := a.commit(ctx, r, at.next)
 	if errors.Is(err, ErrExists) {
 		a.discard(ctx, c)
@@ -376,6 +466,51 @@ func (a *Anchored) PutRecord(ctx context.Context, r *Record, create bool) error 
 			return ErrExists
 		}
 		// Another enclave took that version: write after it.
+	}
+	return fmt.Errorf("store: the commits of %s keep changing", r.Name)
+}
+
+// CreateNew makes a strict record only if no commit of this deployment was
+// ever made for its name and nothing is stored under its plain name from
+// before commits existed, so a name once made (and removed, or lost) is never
+// made again. In that order: ErrForked when its history has a fork,
+// ErrRolledBack when the store went back from what this enclave saw, then
+// ErrExists for any commit (a removal included, and one whose value is lost)
+// or a value under the plain name. Two enclaves that make one record at once
+// make it once: the other is told ErrExists.
+func (a *Anchored) CreateNew(ctx context.Context, r *Record) error {
+	if !a.Strict {
+		return errors.New("store: CreateNew is for strict records")
+	}
+	for range maxChanges {
+		head, next, err := a.head(ctx, r.Name)
+		if err != nil {
+			return err
+		}
+		if head != nil {
+			return ErrExists
+		}
+		if _, err := a.Records.GetRecord(ctx, r.Name); err == nil {
+			return ErrExists
+		} else if !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		c, err := a.commit(ctx, r, next)
+		if !errors.Is(err, ErrExists) {
+			return err
+		}
+		// Something took the version meanwhile: another enclave's commit, or
+		// something that is not a commit, after which this one goes on.
+		head, _, err = a.head(ctx, r.Name)
+		if err != nil {
+			return err
+		}
+		if head != nil {
+			a.discard(ctx, c)
+			return ErrExists
+		}
+		// Nobody reads the value stored for a version that holds no commit.
+		_ = a.Records.DeleteRecord(ctx, versioned(c))
 	}
 	return fmt.Errorf("store: the commits of %s keep changing", r.Name)
 }
@@ -456,13 +591,24 @@ func (a *Anchored) Seen() []Commit {
 	return out
 }
 
-// MemoryCommits is Commits in memory, for dev mode and tests.
+// MemoryCommits is Commits in memory, for dev mode and tests. It is also a
+// HistoryReader, and holds what S3 can: two commits at one version (Fork) and
+// copies of a commit, locked or not (Copy). Every commit Append or Fork makes
+// is locked, as Append's are in S3.
 type MemoryCommits struct {
 	mu      sync.Mutex
 	commits map[string][]Commit
 	// taken are versions where something that is not a commit of this
 	// deployment sits, as anyone who can write to the real store can leave.
 	taken map[string]map[uint64]bool
+	// copies are commits written again at their version, and whether each
+	// copy is locked.
+	copies map[string][]memoryCopy
+}
+
+type memoryCopy struct {
+	commit Commit
+	locked bool
 }
 
 // NewMemoryCommits returns an empty MemoryCommits.
@@ -477,7 +623,9 @@ func (m *MemoryCommits) Head(_ context.Context, name string) (*Commit, uint64, e
 	var latest *Commit
 	used := map[uint64]bool{}
 	for _, c := range m.commits[name] {
-		if latest == nil || c.Version > latest.Version {
+		// Of two commits at one version, the one with the smaller digest, as
+		// S3Commits.Head answers.
+		if latest == nil || c.Version > latest.Version || (c.Version == latest.Version && bytes.Compare(c.Digest[:], latest.Digest[:]) < 0) {
 			latest = &c
 		}
 		used[c.Version] = true
@@ -537,4 +685,119 @@ func (m *MemoryCommits) Forget(name string) {
 	if newest >= 0 {
 		m.commits[name] = append(list[:newest:newest], list[newest+1:]...)
 	}
+}
+
+// History implements HistoryReader: every commit of name, its forks and the
+// versions whose commit has no locked copy.
+func (m *MemoryCommits) History(ctx context.Context, name string) (*History, error) {
+	head, next, err := m.Head(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copies := make([]commitCopy, 0, len(m.commits[name])+len(m.copies[name]))
+	for _, c := range m.commits[name] {
+		copies = append(copies, commitCopy{c, true})
+	}
+	for _, c := range m.copies[name] {
+		copies = append(copies, commitCopy{c.commit, c.locked})
+	}
+	h := history(copies)
+	h.Head, h.Next = head, next
+	return h, nil
+}
+
+// Fork adds a second commit at a version of name, with another digest: what
+// a delete marker over the first lets an enclave write in S3. Nothing
+// refuses it.
+func (m *MemoryCommits) Fork(name string, version uint64, digest [sha256.Size]byte) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	at := time.Now().UTC().Truncate(time.Second)
+	for _, c := range m.commits[name] {
+		if c.Version == version {
+			at = c.At
+		}
+	}
+	m.commits[name] = append(m.commits[name], Commit{Name: name, Version: version, Digest: digest, At: at})
+}
+
+// Copy adds a copy of the commit at a version of name (the one with the
+// smaller digest, at a fork), locked or not: what anyone who writes to the
+// bucket can do by writing a commit's bytes again at its key. It is the same
+// commit. A version without a commit gets nothing.
+func (m *MemoryCommits) Copy(name string, version uint64, locked bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var found *Commit
+	for _, c := range m.commits[name] {
+		if c.Version == version && (found == nil || bytes.Compare(c.Digest[:], found.Digest[:]) < 0) {
+			found = &c
+		}
+	}
+	if found == nil {
+		return
+	}
+	if m.copies == nil {
+		m.copies = map[string][]memoryCopy{}
+	}
+	m.copies[name] = append(m.copies[name], memoryCopy{*found, locked})
+}
+
+// commitCopy is one copy of a commit as a history reads it: the commit, and
+// whether this copy is locked as Append locks one.
+type commitCopy struct {
+	commit Commit
+	locked bool
+}
+
+// history groups copies of commits by version and digest: the forks, the
+// versions whose commit has no locked copy, and the head (the highest
+// version; of a fork, the smaller digest; of copies, the best locked one).
+// Next is left to the caller.
+func history(copies []commitCopy) *History {
+	type digest struct {
+		commit Commit
+		locked bool
+	}
+	byVersion := map[uint64]map[[sha256.Size]byte]*digest{}
+	for _, c := range copies {
+		if byVersion[c.commit.Version] == nil {
+			byVersion[c.commit.Version] = map[[sha256.Size]byte]*digest{}
+		}
+		d := byVersion[c.commit.Version][c.commit.Digest]
+		if d == nil {
+			d = &digest{commit: c.commit}
+			byVersion[c.commit.Version][c.commit.Digest] = d
+		}
+		d.locked = d.locked || c.locked
+		if c.commit.LockedUntil.After(d.commit.LockedUntil) {
+			d.commit = c.commit
+		}
+	}
+	versions := make([]uint64, 0, len(byVersion))
+	for v := range byVersion {
+		versions = append(versions, v)
+	}
+	slices.Sort(versions)
+	h := &History{}
+	for _, v := range versions {
+		digests := make([][sha256.Size]byte, 0, len(byVersion[v]))
+		unlocked := false
+		for d, c := range byVersion[v] {
+			digests = append(digests, d)
+			unlocked = unlocked || !c.locked
+		}
+		slices.SortFunc(digests, func(x, y [sha256.Size]byte) int { return bytes.Compare(x[:], y[:]) })
+		if len(digests) > 1 {
+			h.Forks = append(h.Forks, Fork{Version: v, Digests: digests})
+		}
+		if unlocked {
+			h.Unlocked = append(h.Unlocked, v)
+		}
+		head := byVersion[v][digests[0]].commit
+		h.Head = &head
+	}
+	return h
 }

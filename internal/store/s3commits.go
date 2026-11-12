@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -45,6 +46,15 @@ type S3Commits struct {
 	// Retention is how long S3 keeps each commit from when it is written.
 	Retention time.Duration
 	Now       func() time.Time
+
+	// known is what History read of each object version (by record, key and
+	// version id): a commit, or nil for what is not one. S3 never changes the
+	// bytes of a version, and a lock can only be extended, so what was read
+	// is read again from here; every decision is still made from the full
+	// listing of each read. The oldest are dropped past maxKnownObjects.
+	mu         sync.Mutex
+	known      map[string]*Commit
+	knownOrder []string
 }
 
 // S3CommitsAPI is the subset of the S3 client used by S3Commits.
@@ -61,6 +71,10 @@ const (
 	maxCommitObjects = 10000
 	maxCommitReads   = 500
 	maxCommitSize    = 4 << 10
+	// historyFetches is how many objects History reads at once, and
+	// maxKnownObjects how many it keeps in memory.
+	historyFetches  = 16
+	maxKnownObjects = 100000
 )
 
 // commitPrefix is where the commits of a record are. The record's name is
@@ -252,4 +266,134 @@ func (s *S3Commits) Append(ctx context.Context, c Commit) (*Commit, error) {
 		return nil, fmt.Errorf("store: write commit: %w", err)
 	}
 	return &c, nil
+}
+
+// historyObject is one object version listed where the commits of a record
+// are.
+type historyObject struct {
+	version uint64
+	key, id string
+}
+
+func knownKey(name string, o historyObject) string { return name + "\x00" + o.key + "\x00" + o.id }
+
+// History implements HistoryReader. Every object version under the record's
+// prefix is listed, as Head lists them; each one this enclave has not read
+// before is read (at most MaxHistoryReads in one call, historyFetches at
+// once) and verified as Head verifies it; and the commits are grouped by
+// version and digest. A commit is locked when one of its copies is in
+// compliance mode until no earlier than its time plus MinCommitLock.
+func (s *S3Commits) History(ctx context.Context, name string) (*History, error) {
+	key, err := s.Key(ctx)
+	if err != nil {
+		return nil, err
+	}
+	prefix := commitPrefix(name)
+	var objects []historyObject
+	used := map[uint64]bool{}
+	in := &s3.ListObjectVersionsInput{Bucket: aws.String(s.Bucket), Prefix: aws.String(prefix)}
+	for {
+		out, err := s.S3.ListObjectVersions(ctx, in)
+		if err != nil {
+			return nil, fmt.Errorf("store: list commits: %w", err)
+		}
+		for _, v := range out.Versions {
+			k := aws.ToString(v.Key)
+			n, err := strconv.ParseUint(strings.TrimPrefix(k, prefix), 10, 64)
+			if err != nil || k != prefix+fmt.Sprintf("%020d", n) || n == 0 {
+				continue
+			}
+			objects = append(objects, historyObject{n, k, aws.ToString(v.VersionId)})
+			used[n] = true
+		}
+		if len(objects) > maxCommitObjects {
+			return nil, fmt.Errorf("store: more than %d objects where the commits of a record are", maxCommitObjects)
+		}
+		if !aws.ToBool(out.IsTruncated) {
+			break
+		}
+		in.KeyMarker, in.VersionIdMarker = out.NextKeyMarker, out.NextVersionIdMarker
+	}
+
+	var unread []historyObject
+	s.mu.Lock()
+	for _, o := range objects {
+		if _, ok := s.known[knownKey(name, o)]; !ok {
+			unread = append(unread, o)
+		}
+	}
+	s.mu.Unlock()
+	if len(unread) > MaxHistoryReads {
+		if err := s.fetch(ctx, key, name, unread[:MaxHistoryReads]); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("store: more than %d objects of a record not read yet; the next read goes on", MaxHistoryReads)
+	}
+	if err := s.fetch(ctx, key, name, unread); err != nil {
+		return nil, err
+	}
+
+	copies := make([]commitCopy, 0, len(objects))
+	s.mu.Lock()
+	for _, o := range objects {
+		if c := s.known[knownKey(name, o)]; c != nil {
+			locked := !c.LockedUntil.IsZero() && !c.LockedUntil.Before(c.At.Add(MinCommitLock))
+			copies = append(copies, commitCopy{*c, locked})
+		}
+	}
+	s.mu.Unlock()
+	h := history(copies)
+	next := uint64(1)
+	if h.Head != nil {
+		next = h.Head.Version + 1
+	}
+	for used[next] {
+		next++
+	}
+	h.Next = next
+	return h, nil
+}
+
+// fetch reads objects, historyFetches at once, and keeps what each is.
+func (s *S3Commits) fetch(ctx context.Context, key []byte, name string, objects []historyObject) error {
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, historyFetches)
+	errs := make([]error, len(objects))
+	for i, o := range objects {
+		slots <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer func() { <-slots; wg.Done() }()
+			c, err := s.read(ctx, key, name, o.version, o.key, o.id)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			s.keep(knownKey(name, o), c)
+		}()
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *S3Commits) keep(k string, c *Commit) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.known == nil {
+		s.known = map[string]*Commit{}
+	}
+	if _, ok := s.known[k]; ok {
+		return
+	}
+	s.known[k] = c
+	s.knownOrder = append(s.knownOrder, k)
+	if len(s.knownOrder) > maxKnownObjects {
+		delete(s.known, s.knownOrder[0])
+		s.knownOrder = s.knownOrder[1:]
+	}
 }
