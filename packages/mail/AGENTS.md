@@ -5,7 +5,7 @@ React Email components that write the HTML templates of the mail the enclave sen
 ## Rules
 
 - One component for each kind of block in `src/blocks.tsx`, and a kind is added in Go (`mail.Kind`, `mail.Text`) and here together. Values are markers (`@@.Name@@`), control flow our own elements (`<pm-range>`, `<pm-if>`, `<pm-else>`), turned into `html/template` actions in `src/templates.tsx`.
-- Nothing remote: no image (the wordmark is text), font, stylesheet, script, `url(...)` or `@import`. No words beyond the text's: no preheader, footer of other words, marketing or unsubscribe link. Only the action block links. `internal/domain/mail`'s tests fail on each of these.
+- Nothing remote: no image (the wordmark is text), font, stylesheet, script, `url(...)` or `@import`. No words beyond the text's but the wordmark and the action's button label (`actionLabel`, "Sign in"): no preheader, footer of other words, marketing or unsubscribe link. Only the action block links, once: its button; the address under it is text. `internal/domain/mail`'s tests fail on each of these.
 - Colours come from `packages/ui/colors.css` through `src/tokens.ts`, never written here; `scripts/check-design-system.ts` checks the templates. Black and the highlight are not used.
 - The build is deterministic: commit the templates it writes, and `bun run check` must pass (CI's `repo` job).
 - Own `bun.lock`, built with the bun of `flake.lock` (1.3.13); exact versions, at least two weeks old. Nothing of this package is in the image or the web app.

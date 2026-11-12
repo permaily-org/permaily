@@ -50,11 +50,18 @@ type element struct {
 	attrs map[string]string
 }
 
+// link is an <a href> and the words it shows.
+type link struct {
+	href  string
+	words []string
+}
+
 // parsed is what a mail client would read of a message's HTML.
 type parsed struct {
 	elements []element
 	// words is the visible text of the body, in order.
 	words    []string
+	links    []link
 	styles   []string
 	comments int
 }
@@ -68,6 +75,8 @@ func parse(t *testing.T, html string) parsed {
 	d.Entity = xml.HTMLEntity
 	var p parsed
 	var open []string
+	// inLink is the depth of the <a href> being read, or 0.
+	inLink := 0
 	for {
 		tok, err := d.Token()
 		if errors.Is(err, io.EOF) {
@@ -88,7 +97,14 @@ func parse(t *testing.T, html string) parsed {
 			}
 			p.elements = append(p.elements, e)
 			open = append(open, e.name)
+			if href, ok := e.attrs["href"]; ok && e.name == "a" && inLink == 0 {
+				p.links = append(p.links, link{href: href})
+				inLink = len(open)
+			}
 		case xml.EndElement:
+			if len(open) == inLink {
+				inLink = 0
+			}
 			if len(open) > 0 {
 				open = open[:len(open)-1]
 			}
@@ -98,6 +114,10 @@ func parse(t *testing.T, html string) parsed {
 				p.styles = append(p.styles, string(tok))
 			case slices.Contains(open, "body"):
 				p.words = append(p.words, words(string(tok))...)
+				if inLink != 0 {
+					l := &p.links[len(p.links)-1]
+					l.words = append(l.words, words(string(tok))...)
+				}
 			}
 		case xml.Comment:
 			p.comments++
@@ -190,15 +210,55 @@ func TestEveryLinkIsOneTheTextHas(t *testing.T) {
 	}
 }
 
+// wordmark and label are the only words the HTML has that the text does not:
+// the wordmark before every message, and the label of the button of an action,
+// both fixed in the templates.
+var (
+	wordmark = []string{"Permaily"}
+	label    = []string{"Sign", "in"}
+)
+
 // TestTheHTMLSaysWhatTheTextSays: the visible words of the HTML are the
-// text's, in the same order, with the wordmark before them and nothing else.
+// text's, in the same order, with the wordmark before them, the label of the
+// button before the address of each action, and nothing else.
 func TestTheHTMLSaysWhatTheTextSays(t *testing.T) {
+	actions := 0
 	for _, m := range messages(t) {
 		got := parse(t, HTML(m.Subject, m.Blocks)).words
-		want := append([]string{"Permaily"}, words(Text(m.Blocks))...)
-		if !slices.Equal(got, want) {
-			t.Errorf("%s: the HTML says\n%q\nthe text says\n%q", m.Name, got, want)
+		want := slices.Clone(wordmark)
+		var text []string
+		for _, b := range m.Blocks {
+			if b.Kind == KindAction {
+				want = append(want, label...)
+				actions++
+			}
+			want = append(want, words(Text([]Block{b}))...)
+			text = append(text, words(Text([]Block{b}))...)
 		}
+		if !slices.Equal(text, words(Text(m.Blocks))) {
+			t.Fatalf("%s: the words of the blocks one by one are not the text's", m.Name)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: the HTML says\n%q\nthe text and the label say\n%q", m.Name, got, want)
+		}
+	}
+	if actions == 0 {
+		t.Error("no message has an action: the label is never checked")
+	}
+}
+
+// TestTheLinkIsTheButton: each action is one link, its button, which shows
+// the label alone; the address in full is under it, as text that is no link.
+func TestTheLinkIsTheButton(t *testing.T) {
+	url := "https://app.example.org/auth/email/open#token=abc&x=1"
+	p := parse(t, HTML("s", []Block{Paragraph("Open it:"), Action(url), Note("Small.")}))
+	if len(p.links) != 1 || p.links[0].href != url || !slices.Equal(p.links[0].words, label) {
+		t.Fatalf("links %+v: want one, to %q, that says %q", p.links, url, label)
+	}
+	want := append(append(append(slices.Clone(wordmark), "Open", "it"), label...), words(url)...)
+	want = append(want, "Small")
+	if !slices.Equal(p.words, want) {
+		t.Errorf("the HTML says %q, want %q", p.words, want)
 	}
 }
 
@@ -240,13 +300,16 @@ func TestNothingIdentifyingIsInTheMarkup(t *testing.T) {
 }
 
 // TestEverythingInsertedIsEscaped puts hostile values in every place a value
-// goes: the subject, each kind of block, a link, a fact.
+// goes: the subject, each kind of block, the button's link and the address
+// under it, a fact.
 func TestEverythingInsertedIsEscaped(t *testing.T) {
 	hostile := `<script>alert(1)</script>"'><img src=x onerror=alert(1)>`
 	for name, link := range map[string]string{
 		"javascript": "javascript:alert(1)",
 		"data":       "data:text/html,<script>alert(1)</script>",
 		"quotes":     `https://app.example.org/"><script>alert(1)</script>`,
+		"single":     `https://app.example.org/' onmouseover='alert(1)`,
+		"script":     "https://app.example.org/<script>alert(1)</script>",
 		"vbscript":   "vbscript:msgbox(1)",
 	} {
 		html := HTML(hostile, []Block{
@@ -256,7 +319,13 @@ func TestEverythingInsertedIsEscaped(t *testing.T) {
 		if html == "" {
 			t.Fatalf("%s: no HTML", name)
 		}
-		for _, e := range parse(t, html).elements {
+		p := parse(t, html)
+		if len(p.links) != 1 || !slices.Equal(p.links[0].words, label) {
+			t.Errorf("%s: links %+v, want the button alone", name, p.links)
+		} else if href := p.links[0].href; strings.ContainsAny(href, `"'<> `) {
+			t.Errorf("%s: the button's href=%q is not escaped", name, href)
+		}
+		for _, e := range p.elements {
 			if e.name == "script" || e.name == "img" {
 				t.Errorf("%s: <%s> got through", name, e.name)
 			}

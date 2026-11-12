@@ -21,11 +21,11 @@ Fonts are Instrument Sans for text and JetBrains Mono for machine facts, both bu
 The messages the enclave sends (sign-in, codes, notices) look like the app: paper, ink and hairlines, 2px corners, no shadow, a single left-aligned column of 560px at most that works from 320px. The wordmark is text. Each message is a few blocks (ADR 0025): a lead in semibold, paragraphs at 16px, a code, a link, facts and small print in `--ink-2`.
 
 - The code of a sign-in or a confirmation is the reason the message exists: monospace, 40px (34px on a phone), on `--sunken`, on one line that never wraps.
-- The link is an outlined box that shows the address itself, in monospace, as the plain text does; it is not filled, since black means withheld and the highlight means shared, and neither is used in mail.
+- The link is a button labelled "Sign in", the app's primary button: `--ink` filled, its label in `--paper`, 16px medium, 48px tall, as wide as its label and left-aligned. Ink is the colour of text and turns light in the dark theme, so it is not the black of the bars; neither the bars nor the highlight are used in mail. It stays lighter than the code above it. Under it is the address in full, in monospace at 13px in `--ink-2`, breaking anywhere so it never overflows: text to read or copy, not a second link.
 - Facts (when, how, which browser) are rows between hairlines, the label in `--ink-2`; a time is in monospace.
 - Fonts are the system stacks the tokens fall back to, and nothing is fetched: mail clients load no web font, and an image would tell the sender the message was opened.
 - Light values are inline, so a client that ignores styles shows the light theme; the dark values are in a `prefers-color-scheme` rule for the clients that read it. Every pair is AA in both (the lowest is `--ink-2` on `--paper`, 6.3:1).
-- No words beyond the text's: no preheader, footer, marketing, illustrations, social links or unsubscribe link.
+- No words beyond the text's but the wordmark and the button's label: no preheader, footer, marketing, illustrations, social links or unsubscribe link.
 
 The components are in `packages/mail`, and the templates they make are in `internal/domain/mail/templates`. Mail clients have no CSS variables, so the values are copied there from `packages/ui/colors.css`, and `scripts/check-design-system.ts` fails on one that is no longer a token's.
 

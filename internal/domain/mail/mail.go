@@ -33,7 +33,9 @@ const (
 	KindNote Kind = "note"
 	// KindCode is a code to type, indented on a line of its own.
 	KindCode Kind = "code"
-	// KindAction is a link, indented on a line of its own.
+	// KindAction is a link, indented on a line of its own. In the HTML it is
+	// a button labelled "Sign in", fixed in the template, with the address
+	// under it as text.
 	KindAction Kind = "action"
 	// KindFacts is a list of facts, one a line, indented: "Label: value".
 	KindFacts Kind = "facts"

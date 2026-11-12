@@ -5,13 +5,13 @@
 import type { CSSProperties, ReactNode } from 'react'
 import {
   Body,
+  Button,
   Column,
   Container,
   Head,
   Heading,
   Hr,
   Html,
-  Link,
   Row,
   Section,
   Text,
@@ -101,38 +101,61 @@ export function Code({ text: code }: { text: string }) {
   )
 }
 
+/** The label of an action's button, the one word of chrome beside the wordmark: the only action is to sign in. */
+export const actionLabel = 'Sign in'
+
 /**
- * A link, as a button that shows where it leads: its label is the address itself, as in the plain text. It
- * is outlined, not filled: black means withheld and the highlight means shared. The outline is the cell's,
- * which every client draws, Outlook too; the whole box is the link where clients let a link be a block.
+ * A link: a button that says what it does, and under it the address in full, in small type, as the plain text
+ * shows it, to read where it leads or to copy. The button is the app's primary one, filled with ink (the colour of
+ * text, which turns light in the dark theme), not with the black of the bars, which means withheld. It is no wider
+ * than its label and lighter than the code above it. The fill is the cell's, which Outlook draws. Outlook ignores the
+ * link's padding and, the build having dropped React Email's conditional comments, keeps only its mso-text-raise,
+ * which lifts the label by the bottom padding: so the cell gives Outlook the rest (mso-padding-alt, no bottom).
+ * Elsewhere the padding is the link's, so the whole button is the link. The address is text, not a second link:
+ * the message has one link, the button's.
  */
 export function Action({ url }: { url: string }) {
   return (
     <Section style={{ margin: '0 0 24px' }}>
-      <table role="presentation" width="100%" border={0} cellPadding={0} cellSpacing={0}>
+      <table role="presentation" border={0} cellPadding={0} cellSpacing={0}>
         <tbody>
           <tr>
-            <td className="pm-line" style={{ border: `1px solid ${t.ink}`, borderRadius: '2px' }}>
-              <Link
+            <td
+              className="pm-fill"
+              style={{ backgroundColor: t.ink, borderRadius: '2px', msoPaddingAlt: '14px 24px 0' }}
+            >
+              <Button
                 href={url}
-                className="pm-ink"
+                className="pm-on-fill"
                 style={{
-                  display: 'block',
-                  padding: '14px 16px',
-                  color: t.ink,
-                  fontFamily: mono,
-                  fontSize: '14px',
+                  color: t.paper,
+                  fontFamily: sans,
+                  fontSize: '16px',
+                  fontWeight: 500,
                   lineHeight: '20px',
-                  textDecoration: 'none',
-                  wordBreak: 'break-all',
+                  padding: '14px 24px',
                 }}
               >
-                {url}
-              </Link>
+                {actionLabel}
+              </Button>
             </td>
           </tr>
         </tbody>
       </table>
+      <Text
+        className="pm-ink-2"
+        style={{
+          fontFamily: mono,
+          fontSize: '13px',
+          lineHeight: '19px',
+          color: t.ink2,
+          margin: '12px 0 0',
+          wordBreak: 'break-all',
+          overflowWrap: 'anywhere',
+        }}
+      >
+        {url}
+      </Text>
     </Section>
   )
 }
@@ -201,7 +224,8 @@ export const stylesheet = [
   `.pm-ink{color:${dark.ink}!important}`,
   `.pm-ink-2{color:${dark.ink2}!important}`,
   `.pm-rule{border-color:${dark.rule}!important}`,
-  `.pm-line{border-color:${dark.ink}!important}`,
+  `.pm-fill{background-color:${dark.ink}!important}`,
+  `.pm-on-fill{color:${dark.paper}!important}`,
   '}',
   '@media (max-width:480px){',
   '.pm-frame{padding:24px 16px!important}',
