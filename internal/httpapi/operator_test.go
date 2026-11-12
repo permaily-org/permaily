@@ -333,7 +333,13 @@ func TestTheOperatorsRoutesCannotChangeAnAddressOrAWayIn(t *testing.T) {
 			t.Fatalf("the record %s as it is", name)
 		}
 	}
-	if len(was) == 0 || !reflect.DeepEqual(was, is) {
+	// Blocking also counted that every device was signed out (sign_outs).
+	var wasDoc, isDoc map[string]json.RawMessage
+	if json.Unmarshal(was["doc"], &wasDoc) != nil || json.Unmarshal(is["doc"], &isDoc) != nil || string(isDoc["sign_outs"]) != "1" {
+		t.Fatalf("the record changed:\n%s\n%s", was, is)
+	}
+	delete(isDoc, "sign_outs")
+	if len(wasDoc) == 0 || !reflect.DeepEqual(wasDoc, isDoc) {
 		t.Fatalf("the record changed:\n%s\n%s", was, is)
 	}
 	// And the ways in still work, for their person: the passkey and a

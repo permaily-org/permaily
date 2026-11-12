@@ -21,9 +21,11 @@ import (
 // account and what it has, signing out and signing a device out, confirming
 // it's them, agreeing, and deleting the account or cancelling that.
 //
-// The agreement given at the start of a sign-up travels with its invitation:
-// in the attempt, the trip or the sign-in that waits for an address, and is
-// written into the record when the account is made.
+// The agreement given at the start of a sign-up travels with its invitation,
+// sealed in the storage with the sign-in in progress (Agreed in attemptDoc,
+// tripDoc and unconfirmedDoc, pending.go) and never in one enclave's memory,
+// so whichever enclave ends the sign-up writes it into the record when the
+// account is made.
 
 // termsDoc is, in an account's record, the terms its person agreed to.
 type termsDoc struct {

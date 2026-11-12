@@ -16,10 +16,10 @@ import (
 // message at the new address; its code proves the address is theirs, and then
 // the account moves to it.
 //
-// The message is a sign-in message without the link: the same attempts in
-// memory, the same tries, the same limits for an address. The attempt belongs
-// to the account that started it and to this enclave: it signs nobody in, and
-// no sign-in changes an address (match).
+// The message is a sign-in message without the link: the same attempts in the
+// storage, the same tries, the same limits for an address. The attempt belongs
+// to the account that started it: it signs nobody in, and no sign-in changes
+// an address (match). It can be ended through any enclave (pending.go).
 
 // StartAddressChange sends a code to a new contact address for the account
 // behind a session. The answer is the same, and the message is sent, whether
@@ -76,27 +76,16 @@ func (s *Service) deliverCode(ctx context.Context, id, accountID, address string
 	if !s.allow(address, now) {
 		return
 	}
-	code := randomString("0123456789", domain.EmailCodeDigits)
-	a := &attempt{address: address, account: accountID, code: sha256.Sum256([]byte(code)), withCode: true, expires: now.Add(domain.EmailCodeLifetime)}
 	s.mu.Lock()
-	if len(s.attempts) >= maxAttempts {
-		s.mu.Unlock()
-		s.cfg.Log.Warn("accounts: too many sign-ins waiting, one was dropped")
-		return
-	}
-	if s.wrong[address] = recent(s.wrong[address], now, 24*time.Hour); len(s.wrong[address]) >= wrongCodesPerDay {
-		s.mu.Unlock()
-		return
-	}
-	s.attempts[id] = a
+	tooWrong := len(recent(s.wrong[address], now, 24*time.Hour)) >= wrongCodesPerDay
 	s.mu.Unlock()
-	if err := s.cfg.Mailer.Send(ctx, addressCodeMail(address, code)); err != nil {
-		// Not the error: a mail system's errors carry the address.
-		s.cfg.Log.Warn("accounts: a message to prove an address could not be sent")
-		s.mu.Lock()
-		delete(s.attempts, id)
-		s.mu.Unlock()
+	if tooWrong {
+		return
 	}
+	code := randomString("0123456789", domain.EmailCodeDigits)
+	sum := sha256.Sum256([]byte(code))
+	a := &attemptDoc{V: 1, Address: address, Account: accountID, Code: sum[:], pendingTimes: pendingTimes{Made: now, Expires: now.Add(domain.EmailCodeLifetime)}}
+	s.send(ctx, id, a, addressCodeMail(address, code), "accounts: a message to prove an address could not be sent")
 }
 
 // addressCodeMail writes the message that proves a new contact address. It
@@ -120,11 +109,11 @@ func (s *Service) FinishAddressChange(ctx context.Context, who *Authenticated, i
 	if doc.State == contracts.AccountClosing {
 		return nil, contracts.ErrAccountClosing
 	}
-	a, err := s.match(contracts.EmailFinish{Attempt: in.Attempt, Code: in.Code}, doc.ID, true)
+	a, err := s.match(ctx, contracts.EmailFinish{Attempt: in.Attempt, Code: in.Code}, doc.ID, true)
 	if err != nil {
 		return nil, err
 	}
-	moved, from, err := s.move(ctx, doc.ID, a.address)
+	moved, from, err := s.move(ctx, doc.ID, a.Address)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +212,7 @@ func (s *Service) claimAddress(ctx context.Context, id, address string) error {
 	}
 	partition := loginPartition(address)
 	for range maxRewrites {
-		version := uint64(0)
+		var old *store.Entry
 		e, err := s.cfg.Entries.GetEntry(ctx, partition, loginKey)
 		switch {
 		case errors.Is(err, store.ErrNotFound):
@@ -240,9 +229,9 @@ func (s *Service) claimAddress(ctx context.Context, id, address string) error {
 					return contracts.ErrAddressInUse
 				}
 			}
-			version = e.Version
+			old = e
 		}
-		err = s.point(ctx, partition, loginKey, id, version)
+		err = s.repoint(ctx, partition, id, old)
 		if !errors.Is(err, store.ErrExists) && !errors.Is(err, store.ErrConflict) {
 			return err
 		}

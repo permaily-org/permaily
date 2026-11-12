@@ -83,31 +83,33 @@ func closingKey(doc *accountDoc) string { return timedKey(doc.ClosesAt, doc.ID) 
 // StartDeletion is the person asking to delete their account. It is closing
 // from now and removed in seven days; until then they can sign in and cancel,
 // and nothing else of it changes. Every other device is signed out. Asking
-// again changes nothing: the day stays, and so does who asked first.
+// again keeps the day, and who asked first, and signs the others out again.
 func (s *Service) StartDeletion(ctx context.Context, who *Authenticated) (*contracts.Account, error) {
 	if err := s.confirmed(who); err != nil {
 		return nil, err
 	}
-	var same accountDoc
+	changed := false
 	edit := s.closing(ctx, contracts.ClosingByPerson)
 	doc, err := s.rewrite(ctx, who.AccountID, func(doc *accountDoc) error {
-		if doc.blocked() {
+		if doc.blocked() || !doc.stands(&sessionDoc{ID: who.Session.ID, SignOuts: who.signOuts}) {
 			return contracts.ErrUnauthorized // its session stands for nothing
 		}
-		same = *doc
-		return edit(doc)
+		err := edit(doc)
+		if changed = err == nil; err != nil && !errors.Is(err, errUnchanged) {
+			return err
+		}
+		// In the same change: a device that signs in through another enclave
+		// meanwhile was signed in before it, and is signed out with the rest.
+		doc.signOut(who.Session.ID)
+		return nil
 	})
-	changed := err == nil
-	if errors.Is(err, errUnchanged) {
-		doc, err = &same, nil
-	}
 	if err != nil {
 		return nil, err
 	}
 	if changed {
 		s.cfg.Log.Info("accounts: account closing")
 	}
-	// Also when it was closing already: an earlier try may have failed here.
+	// The record says they stand for nothing; their entries go too.
 	err = s.closeOthers(ctx, who)
 	if changed {
 		s.notify(ctx, noticeDeletionAsked, deletionAskedMail(doc, s.rp.ID, s.now()))
@@ -270,9 +272,30 @@ func (s *Service) keep(ctx context.Context, id, by string, guard func(*accountDo
 func (s *Service) remove(ctx context.Context, id string) error {
 	s.changing.Lock()
 	defer s.changing.Unlock()
-	doc, err := s.read(ctx, id)
-	if err != nil || doc == nil || !doc.due(s.now()) {
-		return err // nil when another request removed it first
+	for range maxRewrites {
+		doc, at, err := s.readAt(ctx, id)
+		if err != nil || doc == nil || !doc.due(s.now()) {
+			return err // nil when another request removed it first
+		}
+		if err := s.removeAt(ctx, doc, at); !errors.Is(err, store.ErrChanged) {
+			return err
+		}
+	}
+	return errors.New("accounts: an account's record keeps changing")
+}
+
+// removeAt removes an account that is due, read at a mark, with changing
+// held. The record first says it is being removed (Removing), at the mark it
+// was read at: a cancel that another enclave wrote since makes that write
+// fail with store.ErrChanged, and the caller reads again and decides again.
+// Once it says so nothing takes it back, so a cancel that comes after it is
+// not answered as kept: it finds the account due, and removes it too.
+func (s *Service) removeAt(ctx context.Context, doc *accountDoc, at store.Mark) error {
+	if !doc.Removing {
+		doc.Removing = true
+		if err := s.putAccountAt(ctx, doc, at); err != nil {
+			return err
+		}
 	}
 	return s.removeLocked(ctx, doc)
 }
@@ -297,7 +320,8 @@ func (s *Service) removeLocked(ctx context.Context, doc *accountDoc) error {
 	}
 	// The pointer is deleted only if it still leads here: the address may
 	// have signed up again after an earlier try got this far. The pointers
-	// from the provider accounts go the same way.
+	// from the provider accounts go the same way, and the one of a link that
+	// stopped halfway.
 	if err := s.unpoint(ctx, key, loginPartition(doc.Address), doc.ID); err != nil {
 		return err
 	}
@@ -310,6 +334,11 @@ func (s *Service) removeLocked(ctx context.Context, doc *accountDoc) error {
 	}
 	for _, p := range doc.Providers {
 		if err := s.unpoint(ctx, key, providerPartition(p.Provider, p.Subject), doc.ID); err != nil {
+			return err
+		}
+	}
+	if l := doc.Linking; l != nil {
+		if err := s.unpoint(ctx, key, providerPartition(l.Provider, l.Subject), doc.ID); err != nil {
 			return err
 		}
 	}
@@ -432,28 +461,33 @@ pages:
 func (s *Service) settle(ctx context.Context, id, entry string) error {
 	s.changing.Lock()
 	defer s.changing.Unlock()
-	doc, err := s.read(ctx, id)
-	switch {
-	case err != nil:
-		return err
-	case doc == nil:
-		// Removed already. A removal that failed after the record was
-		// committed as gone left the rest for now.
-		return s.clear(ctx, id, entry)
-	case doc.State != contracts.AccountClosing || closingKey(doc) != entry:
-		// The person cancelled, or asked again later: the entry is of no day.
-		return s.forget(ctx, closingPartition, entry)
-	case !doc.due(s.now()):
-		return nil
+	for range maxRewrites {
+		doc, at, err := s.readAt(ctx, id)
+		switch {
+		case err != nil:
+			return err
+		case doc == nil:
+			// Removed already. A removal that failed after the record was
+			// committed as gone left the rest for now.
+			return s.clear(ctx, id, entry)
+		case doc.State != contracts.AccountClosing || closingKey(doc) != entry:
+			// The person cancelled, or asked again later: the entry is of no day.
+			return s.forget(ctx, closingPartition, entry)
+		case !doc.due(s.now()):
+			return nil
+		}
+		if err := s.removeAt(ctx, doc, at); !errors.Is(err, store.ErrChanged) {
+			return err
+		}
 	}
-	return s.removeLocked(ctx, doc)
+	return errors.New("accounts: an account's record keeps changing")
 }
 
 // ---- the operator's tool ----
 
 // record is an account as the operator's tool shows it.
 func (s *Service) record(ctx context.Context, doc *accountDoc) (*contracts.AccountRecord, error) {
-	sessions, err := s.sessions(ctx, doc.ID)
+	sessions, err := s.sessions(ctx, doc.ID, doc)
 	if err != nil {
 		return nil, err
 	}

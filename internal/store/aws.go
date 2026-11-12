@@ -109,25 +109,46 @@ func (s *AWS) GetMailbox(ctx context.Context, id string) (*Mailbox, error) {
 		WrappedKey:    getB(out.Item, "wrapped_key"),
 		RetentionDays: int(getN(out.Item, "retention_days")),
 		State:         getB(out.Item, "state"),
-		UpdatedAt:     time.Unix(getN(out.Item, "updated_at"), 0).UTC(),
+		// A mailbox stored before versions existed has none: it is version 1.
+		Version:   uint64(max(getN(out.Item, "version"), 1)), //nolint:gosec // a count of writes
+		UpdatedAt: time.Unix(getN(out.Item, "updated_at"), 0).UTC(),
 	}, nil
 }
 
 // PutMailbox implements Store.
 func (s *AWS) PutMailbox(ctx context.Context, m *Mailbox) error {
-	_, err := s.DB.PutItem(ctx, &dynamodb.PutItemInput{
+	in := &dynamodb.PutItemInput{
 		TableName: aws.String(s.Table),
 		Item: map[string]ddb.AttributeValue{
 			"pk": pk(m.ID), "sk": str("mailbox"),
 			"wrapped_key":    bin(m.WrappedKey),
 			"retention_days": num(int64(m.RetentionDays)),
 			"state":          bin(m.State),
+			"version":        num(int64(m.Version + 1)), //nolint:gosec // a count of writes
 			"updated_at":     num(m.UpdatedAt.Unix()),
 		},
-	})
-	if err != nil {
+		ExpressionAttributeValues: map[string]ddb.AttributeValue{":version": num(int64(m.Version))}, //nolint:gosec // a count of writes
+	}
+	switch m.Version {
+	case 0:
+		in.ConditionExpression = aws.String("attribute_not_exists(pk)")
+		in.ExpressionAttributeValues = nil
+	case 1:
+		in.ConditionExpression = aws.String("attribute_exists(pk) AND (attribute_not_exists(version) OR version = :version)")
+	default:
+		in.ConditionExpression = aws.String("version = :version")
+	}
+	if _, err := s.DB.PutItem(ctx, in); err != nil {
+		var failed *ddb.ConditionalCheckFailedException
+		if errors.As(err, &failed) {
+			if m.Version == 0 {
+				return ErrExists
+			}
+			return ErrConflict
+		}
 		return fmt.Errorf("store: put mailbox: %w", err)
 	}
+	m.Version++
 	return nil
 }
 

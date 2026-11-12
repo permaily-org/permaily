@@ -30,10 +30,12 @@ Approximate cost: 53 USD/month for the instance plus 3.6 USD/month for the publi
 ## Deploying an image
 
 ```sh
-nix build .#eif --out-link result-eif               # or download a release: permaily.eif, pcrs.json
+nix build .#eif --out-link result-eif               # the working tree's image
 nix build .#permaily-host --out-link result-host
 scripts/deploy.sh result-eif result-host/bin/permaily-host
 ```
+
+Releases do not publish the image (ADR 0023). To deploy a release, build its image with `scripts/release-image.sh <tag> <dir>`, which refuses unless the image's measurements are the release's attested `pcrs.json`, and run `scripts/deploy.sh <dir> <dir>/permaily-host-linux-arm64` ([operations.md](operations.md)).
 
 The script uploads both files to S3, then over SSM the instance downloads them, checks their SHA-256, installs them in `/opt/permaily` and restarts `permaily-host` and `permaily-enclave`. On boot, the enclave obtains its certificate with TLS-ALPN-01 (a few seconds). Then verify:
 

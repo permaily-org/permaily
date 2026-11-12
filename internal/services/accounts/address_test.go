@@ -430,14 +430,11 @@ func TestAddressChangeLimits(t *testing.T) {
 	for range maxSending {
 		<-w.svc.sending
 	}
-	w.svc.mu.Lock()
-	for range maxAttempts {
-		w.svc.attempts[newID("att")] = &attempt{expires: w.now.Add(time.Hour)}
-	}
-	w.svc.mu.Unlock()
+	w.svc.cfg.Entries = &failing{Entries: w.mem, fail: map[string]error{"put " + pendingKey: errors.New("down")}}
 	if _, mail := w.askFor(w.svc, beaWho, "full@example.org"); mail != nil {
-		t.Fatalf("a message with too many attempts waiting: %+v", mail)
+		t.Fatalf("a message for an attempt that was not kept: %+v", mail)
 	}
+	w.svc.cfg.Entries = w.mem
 	w.quiet("ana@", "bea@", "example.org", unsent)
 }
 
@@ -523,10 +520,11 @@ func TestAnAddressAttemptSignsNobodyIn(t *testing.T) {
 			t.Fatalf("the sign-in for %s after being tried as a change: %v", in[0], err)
 		}
 	}
-	// An attempt lives in the enclave that started it.
+	// An attempt ends through another enclave, for the account that started it.
+	other := w.enclave()
 	attempt, mail := w.askFor(w.svc, who, "elsewhere@example.org")
-	if _, err := w.enclave().svc.FinishAddressChange(ctx, who, contracts.AddressFinish{Attempt: attempt, Code: code(mail)}); !errors.Is(err, contracts.ErrInvalidCode) {
-		t.Fatalf("an attempt ended in another enclave: %v", err)
+	if got, err := other.svc.FinishAddressChange(ctx, who, contracts.AddressFinish{Attempt: attempt, Code: code(mail)}); err != nil || got.Address != "elsewhere@example.org" {
+		t.Fatalf("an attempt ended in another enclave: %+v %v", got, err)
 	}
 	w.onePerAddress()
 }
@@ -957,7 +955,7 @@ func TestAChangeOfAddressThatStopsHalfway(t *testing.T) {
 		again(t, w, f, who)
 	})
 	t.Run("the old pointer cannot be deleted", func(t *testing.T) {
-		for _, op := range []string{"get " + loginPartition("ana@example.org"), "delete " + loginPartition("ana@example.org"), "derive 7"} {
+		for _, op := range []string{"get " + loginPartition("ana@example.org"), "delete " + loginPartition("ana@example.org"), "derive 8"} {
 			w, f, who, finish := setup(t)
 			if times, counted := strings.CutPrefix(op, "derive "); counted {
 				// Everything before the old pointer is read has the key.

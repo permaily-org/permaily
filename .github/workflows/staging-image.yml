@@ -2,7 +2,8 @@ name: staging-image
 
 # Builds the staging enclave image (nix build .#eif-staging) of a branch named
 # staging/<anything> and attests its build provenance, the way release.yml does
-# for releases.
+# for releases. Like a release, its artifact holds the measurements, not the
+# image; scripts/release-image.sh --staging builds the image (ADR 0023).
 #
 # A staging image is a deployment of its own, for tests: its root secret can
 # only be handed to images this workflow built on a staging/ branch, and a
@@ -38,7 +39,7 @@ jobs:
           nix build .#permaily-host --out-link host
           nix build .#permaily-verify --out-link verify
           mkdir dist
-          cp eif/permaily.eif eif/pcrs.json dist/
+          cp eif/pcrs.json dist/
           cp host/bin/permaily-host dist/permaily-host-linux-arm64
           cp verify/bin/permaily-verify dist/permaily-verify-linux-arm64
           (cd dist && sha256sum * > SHA256SUMS)

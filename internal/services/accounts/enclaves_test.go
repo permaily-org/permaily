@@ -2,6 +2,7 @@ package accounts
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"log/slog"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain"
+	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/webauthn/webauthntest"
 )
@@ -27,6 +29,8 @@ type between struct {
 	meanwhile func()
 	always    bool
 	writes    int
+	// onRecord, when set, is given each record before it is written.
+	onRecord func(*store.Record)
 }
 
 func (b *between) run() {
@@ -40,11 +44,17 @@ func (b *between) run() {
 }
 
 func (b *between) PutRecord(ctx context.Context, r *store.Record, create bool) error {
+	if b.onRecord != nil {
+		b.onRecord(r)
+	}
 	b.run()
 	return b.Anchored.PutRecord(ctx, r, create)
 }
 
 func (b *between) PutRecordAt(ctx context.Context, r *store.Record, at store.Mark) error {
+	if b.onRecord != nil {
+		b.onRecord(r)
+	}
 	b.run()
 	return b.Anchored.PutRecordAt(ctx, r, at)
 }
@@ -106,15 +116,23 @@ type enclave struct {
 
 func (w *world) enclave() *enclave {
 	w.t.Helper()
+	return w.enclaveAt(0)
+}
+
+// enclaveAt is an enclave whose clock is ahead of the world's by ahead, or
+// behind it.
+func (w *world) enclaveAt(ahead time.Duration) *enclave {
+	w.t.Helper()
+	now := func() time.Time { return w.now.Add(ahead) }
 	e := &enclave{
 		w:       w,
-		records: &between{Anchored: &store.Anchored{Records: w.mem, Commits: w.commits, OnlyNewest: true, Now: func() time.Time { return w.now }}},
+		records: &between{Anchored: &store.Anchored{Records: w.mem, Commits: w.commits, OnlyNewest: true, Now: now}},
 		entries: &watched{Entries: w.mem},
 	}
 	var err error
 	e.svc, err = New(Config{
 		Records: e.records, Entries: e.entries, Keys: w.svc.cfg.Keys, Mailer: w.out, Providers: w.idp,
-		AppURL: "https://app.permaily.test", SuperAdmin: superAdmin, Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: func() time.Time { return w.now },
+		AppURL: "https://app.permaily.test", SuperAdmin: superAdmin, Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: now,
 		Terms: func() string { return w.terms },
 	})
 	if err != nil {
@@ -255,7 +273,7 @@ func TestTwoEnclavesChangeOneAccount(t *testing.T) {
 		if doc := w.doc(who.AccountID); len(doc.RecoveryCodes) != domain.RecoveryCodes-1 {
 			t.Fatalf("%d codes left", len(doc.RecoveryCodes))
 		}
-		if list, _ := w.svc.sessions(ctx, who.AccountID); len(list) != 2 {
+		if list, _ := w.svc.sessions(ctx, who.AccountID, nil); len(list) != 2 {
 			t.Fatalf("%d sessions: one code signed in twice", len(list))
 		}
 		// The use that lost is not a wrong code.
@@ -625,15 +643,15 @@ func TestSessionsOverTheBoundGoBack(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if list, _ := w.svc.sessions(ctx, me.Account.ID); len(list) != maxSessions+3 {
+	if list, _ := w.svc.sessions(ctx, me.Account.ID, nil); len(list) != maxSessions+3 {
 		t.Fatalf("%d sessions", len(list))
 	}
 	w.now = w.now.Add(time.Minute)
-	newest, _, err := w.enclave().svc.newSession(ctx, me.Account.ID, "device")
+	newest, _, err := w.enclave().svc.newSession(ctx, w.doc(me.Account.ID), "device")
 	if err != nil {
 		t.Fatal(err)
 	}
-	list, _ := w.svc.sessions(ctx, me.Account.ID)
+	list, _ := w.svc.sessions(ctx, me.Account.ID, nil)
 	if len(list) != maxSessions {
 		t.Fatalf("%d sessions kept", len(list))
 	}
@@ -748,15 +766,15 @@ func TestChangeFailures(t *testing.T) {
 		w, f, me, _ := setup(t)
 		for range maxSessions {
 			w.now = w.now.Add(time.Minute)
-			if _, _, err := w.svc.newSession(ctx, me.Account.ID, "device"); err != nil {
+			if _, _, err := w.svc.newSession(ctx, w.doc(me.Account.ID), "device"); err != nil {
 				t.Fatal(err)
 			}
 		}
 		f.fail["delete "+accountPartition(me.Account.ID)] = down
-		if _, _, err := w.svc.newSession(ctx, me.Account.ID, "device"); !errors.Is(err, down) {
+		if _, _, err := w.svc.newSession(ctx, w.doc(me.Account.ID), "device"); !errors.Is(err, down) {
 			t.Fatalf("got %v", err)
 		}
-		if list, _ := w.svc.sessions(ctx, me.Account.ID); len(list) != maxSessions {
+		if list, _ := w.svc.sessions(ctx, me.Account.ID, nil); len(list) != maxSessions {
 			t.Fatalf("%d sessions", len(list))
 		}
 	})
@@ -876,5 +894,119 @@ func TestAnAgreementThroughOneEnclaveCountsThroughTheOther(t *testing.T) {
 	}
 	if doc := w.doc(me.Account.ID); doc.Terms == nil || doc.Terms.Version != newTerms || doc.Name != name {
 		t.Fatalf("the record: %+v", doc)
+	}
+}
+
+// A sign-up by mail started through one enclave and ended through the other
+// makes the account with the agreement given at its start: the version, and
+// the time it was given, which travel sealed in the attempt and nowhere else.
+func TestASignUpByMailStartedThroughOneEnclaveKeepsItsAgreementThroughTheOther(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	one, two := w.enclave(), w.enclave()
+	agreed := w.now
+	finish := one.start("ana@example.org", w.invite())
+	w.now = w.now.Add(3 * time.Minute)
+	me, _, err := two.svc.FinishEmail(ctx, finish, Browser{})
+	if err != nil || me.Account.Terms != domain.TermsVersion {
+		t.Fatalf("ended through the other enclave: %+v %v", me, err)
+	}
+	if doc := w.doc(me.Account.ID); doc.Terms == nil || doc.Terms.Version != domain.TermsVersion || !doc.Terms.At.Equal(agreed) {
+		t.Fatalf("the record: %+v", doc.Terms)
+	}
+}
+
+// The same with a provider: the trip carries the agreement from the enclave
+// that sent the browser away to the one it comes back to, and so does the
+// sign-in that waits for its address, from the enclave that keeps it to the
+// one that sends its message and the one that ends it.
+func TestASignUpWithAProviderStartedThroughOneEnclaveKeepsItsAgreementThroughTheOther(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	w.on(idp.Google, idp.Meta)
+	one, two := w.enclave(), w.enclave()
+
+	// A provider that vouches for the address: one trip, two enclaves.
+	agreed := w.now
+	state, cookie := w.leaveFrom(one.svc, nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite(), Terms: w.terms})
+	w.now = w.now.Add(2 * time.Minute)
+	if done, err := w.comeBackTo(two.svc, state, cookie, person(idp.Google, "g-nina", "nina@example.org", true)); err != nil || done.Session == "" {
+		t.Fatalf("a trip ended through the other enclave: %+v %v", done, err)
+	}
+	if got := w.agreedTo(w.find("nina@example.org")); got == nil || got.Version != domain.TermsVersion || !got.At.Equal(agreed) {
+		t.Fatalf("nina agreed to %+v", got)
+	}
+
+	// One that does not: started through two, back through one, the message
+	// asked through two and the code ending it through one.
+	agreed = w.now
+	state, cookie = w.leaveFrom(two.svc, nil, contracts.ProviderStart{Provider: "meta", Invitation: w.invite(), Terms: w.terms})
+	w.now = w.now.Add(time.Minute)
+	done, err := w.comeBackTo(one.svc, state, cookie, person(idp.Meta, "m-omar", "", false))
+	if err != nil || done.Browser == "" {
+		t.Fatalf("a trip that waits for its address: %+v %v", done, err)
+	}
+	w.now = w.now.Add(time.Minute)
+	started, err := two.svc.StartProviderConfirm(ctx, done.Browser, contracts.ProviderConfirmStart{Address: "omar@example.org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	me, _, err := one.svc.FinishProviderConfirm(ctx, done.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(w.mailOf(two.svc, started.Attempt))}, Browser{})
+	if err != nil || me.Account.Terms != domain.TermsVersion {
+		t.Fatalf("an address confirmed through the other enclave: %+v %v", me, err)
+	}
+	if got := w.agreedTo(me.Account.ID); got == nil || got.Version != domain.TermsVersion || !got.At.Equal(agreed) {
+		t.Fatalf("omar agreed to %+v", got)
+	}
+}
+
+// A sign-up without the agreement makes no account through either enclave:
+// one asked without it is refused where it starts; one whose sealed attempt
+// carries none (as one sealed by an enclave that did not ask) is refused
+// where it ends; and one that agreed to a version no longer in force by then
+// is refused by the other enclave too. Each answers terms_needed, and the
+// invitation stays unused.
+func TestASignUpWithoutAgreeingMakesNoAccountThroughEitherEnclave(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	w.on(idp.Google)
+	one, two := w.enclave(), w.enclave()
+	invitation := w.invite()
+	n := w.count()
+	if _, err := one.svc.StartEmail(ctx, contracts.EmailStart{Address: "ana@example.org", Invitation: invitation}); !errors.Is(err, contracts.ErrTermsNeeded) {
+		t.Fatalf("by mail without the agreement: %v", err)
+	}
+	if _, _, err := two.svc.StartProvider(ctx, nil, contracts.ProviderStart{Provider: "google", Invitation: invitation}); !errors.Is(err, contracts.ErrTermsNeeded) {
+		t.Fatalf("with a provider without the agreement: %v", err)
+	}
+	one.svc.Wait()
+	if w.count() != n {
+		t.Fatal("a message was sent")
+	}
+
+	// An attempt sealed with no agreement, through one; ended through two.
+	entry, err := one.svc.invitation(ctx, invitation)
+	if err != nil || entry == "" {
+		t.Fatalf("the invitation: %q %v", entry, err)
+	}
+	id, sum := newID("att"), sha256.Sum256([]byte("123456"))
+	a := &attemptDoc{V: 1, Address: "ana@example.org", Invitation: entry, Code: sum[:], pendingTimes: pendingTimes{Made: w.now, Expires: w.now.Add(domain.EmailCodeLifetime)}}
+	if err := one.svc.stash(ctx, pendingPartition(kindAttempt, id), a); err != nil {
+		t.Fatal(err)
+	}
+	if me, cookie, err := two.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: id, Code: "123456"}, Browser{}); !errors.Is(err, contracts.ErrTermsNeeded) || me != nil || cookie != "" {
+		t.Fatalf("an attempt without the agreement: %+v %v", me, err)
+	}
+
+	// Agreed to through one, the terms changed (a new release), ended
+	// through two.
+	finish := one.start("bea@example.org", invitation)
+	w.terms = newTerms
+	if me, cookie, err := two.svc.FinishEmail(ctx, finish, Browser{}); !errors.Is(err, contracts.ErrTermsNeeded) || me != nil || cookie != "" {
+		t.Fatalf("an agreement to terms no longer in force: %+v %v", me, err)
+	}
+	if w.accounts() != 0 {
+		t.Fatalf("accounts: %d", w.accounts())
+	}
+	// The invitation was not used.
+	if entry, err := two.svc.invitation(ctx, invitation); err != nil || entry == "" {
+		t.Fatalf("the invitation after: %q %v", entry, err)
 	}
 }

@@ -146,6 +146,9 @@ func (s *Service) block(ctx context.Context, by *acting, id string) (*contracts.
 			return errUnchanged
 		}
 		doc.BlockedAt = at
+		// In the same change: no session made before it stands again when the
+		// account is unblocked, also one made through another enclave meanwhile.
+		doc.signOut("")
 		return nil
 	})
 	if err != nil {
@@ -155,7 +158,7 @@ func (s *Service) block(ctx context.Context, by *acting, id string) (*contracts.
 	s.logged(ctx, by, logDoc{Kind: ActionBlock, Account: doc.ID})
 	// Also when it was blocked already: an earlier try may have failed here.
 	// A session written after this stands for nothing all the same: every
-	// request reads the record.
+	// request reads the record, which says it was made before the block.
 	if err := s.closeSessions(ctx, id, ""); err != nil {
 		return nil, err
 	}
@@ -253,7 +256,12 @@ func (s *Service) closeAccountSessions(ctx context.Context, by *acting, id strin
 	if err := s.mayAct(ctx, by, id, ActionSessionsClose); err != nil {
 		return nil, err
 	}
-	doc, _, err := s.operate(ctx, id, by.guard(s, ActionSessionsClose), func(*accountDoc) error { return errUnchanged })
+	// The record says every session made before now stands for nothing, so a
+	// device that signs in through another enclave meanwhile is signed out too.
+	doc, _, err := s.operate(ctx, id, by.guard(s, ActionSessionsClose), func(doc *accountDoc) error {
+		doc.signOut("")
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}

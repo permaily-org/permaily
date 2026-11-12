@@ -252,7 +252,9 @@ func TestDeletingAnAccount(t *testing.T) {
 
 	// Asking again, a day later, keeps the day and signs the others out again.
 	w.now = w.now.Add(24 * time.Hour)
-	if same, err := w.svc.StartDeletion(ctx, w.fresh(who)); err != nil || *same != *got || w.version(ana.Account.ID) != written {
+	// The record is written again: it says the devices signed in until now
+	// stand for nothing.
+	if same, err := w.svc.StartDeletion(ctx, w.fresh(who)); err != nil || *same != *got || w.version(ana.Account.ID) != written+1 {
 		t.Fatalf("asked again: %+v %v", same, err)
 	}
 	if _, err := w.svc.Authenticate(ctx, tablet); !errors.Is(err, contracts.ErrUnauthorized) {
@@ -1100,15 +1102,15 @@ func TestSettingsFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	delete(f.fail, "put record")
-	// The record says closing and the other devices cannot be signed out:
-	// asking again does it.
+	// The record says closing, and that the other devices stand for nothing,
+	// though their entries cannot be deleted: asking again deletes them.
 	for _, name := range []string{"list entries", "delete " + accountPartition(me.Account.ID)} {
 		f.fail[name] = down
 		if _, err := w.svc.StartDeletion(ctx, w.fresh(who)); !errors.Is(err, down) {
 			t.Fatalf("%s down: asking: %v", name, err)
 		}
 		delete(f.fail, name)
-		if rec, err := w.svc.AccountRecord(ctx, me.Account.ID); err != nil || rec.State != contracts.AccountClosing || rec.Sessions != 2 {
+		if rec, err := w.svc.AccountRecord(ctx, me.Account.ID); err != nil || rec.State != contracts.AccountClosing || rec.Sessions != 1 {
 			t.Fatalf("%s down: the account afterwards: %+v %v", name, rec, err)
 		}
 	}

@@ -268,7 +268,7 @@ func TestAnAttemptMadeToConfirmSignsNobodyInAndChangesNoAddress(t *testing.T) {
 	if m == nil {
 		t.Fatal("no message to confirm")
 	}
-	sessions, _ := w.svc.sessions(ctx, me.Account.ID)
+	sessions, _ := w.svc.sessions(ctx, me.Account.ID, nil)
 	finish := contracts.EmailFinish{Attempt: started.Attempt, Code: code(m)}
 	if got, cookie, err := w.svc.FinishEmail(ctx, finish, Browser{UserAgent: "x"}); !errors.Is(err, contracts.ErrInvalidCode) || got != nil || cookie != "" {
 		t.Fatalf("signing in with it: %+v %v", got, err)
@@ -284,7 +284,7 @@ func TestAnAttemptMadeToConfirmSignsNobodyInAndChangesNoAddress(t *testing.T) {
 			t.Fatalf("confirming another session with it: %+v %v", got, err)
 		}
 	}
-	if now, _ := w.svc.sessions(ctx, me.Account.ID); len(now) != len(sessions) || w.doc(me.Account.ID).Address != "ana@example.org" {
+	if now, _ := w.svc.sessions(ctx, me.Account.ID, nil); len(now) != len(sessions) || w.doc(me.Account.ID).Address != "ana@example.org" {
 		t.Fatalf("something changed: %d sessions", len(now))
 	}
 	if w.who(otherCookie).Session.ConfirmedUntil.After(w.now) || w.who(beaCookie).Session.ConfirmedUntil.After(w.now) {
@@ -506,7 +506,7 @@ func (t *touching) PutEntry(ctx context.Context, e *store.Entry) error {
 // answering is an answer to a ceremony that confirms the session behind who,
 // as far as it gets before the account is read.
 func (w *world) answering(who *Authenticated) contracts.PasskeySignIn {
-	id, _ := w.svc.begin(confirmFor(who))
+	id, _, _ := w.svc.begin(context.Background(), confirmFor(who))
 	in := contracts.PasskeySignIn{Ceremony: id}
 	in.Credential.Response.UserHandle = []byte(who.AccountID)
 	return in
@@ -550,8 +550,8 @@ func TestConfirmingByMailWhenItCannotBeSent(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.svc.Wait()
-	if len(w.svc.attempts) != 0 || !strings.Contains(w.logs.String(), "a message to confirm a session could not be sent") || strings.Contains(w.logs.String(), "ana@") {
-		t.Fatalf("attempts %d, logs:\n%s", len(w.svc.attempts), w.logs)
+	if w.pending(kindAttempt) != 0 || !strings.Contains(w.logs.String(), "a message to confirm a session could not be sent") || strings.Contains(w.logs.String(), "ana@") {
+		t.Fatalf("attempts %d, logs:\n%s", w.pending(kindAttempt), w.logs)
 	}
 	if _, err := w.svc.FinishConfirmEmail(ctx, who, contracts.ConfirmFinish{Attempt: started.Attempt, Code: "123456"}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatal(err)
@@ -568,19 +568,16 @@ func TestConfirmingByMailWhenItCannotBeSent(t *testing.T) {
 	if got, _ := w.sent(n); len(got) != 0 {
 		t.Fatalf("sent over the address's limit: %+v", got)
 	}
-	// Too many waiting in memory, and too many being sent.
+	// The storage cannot keep the attempt, and too many are being sent.
 	w.now = w.now.Add(time.Hour + time.Second)
 	who = w.who(cookie)
-	w.svc.mu.Lock()
-	for range maxAttempts {
-		w.svc.attempts[newID("att")] = &attempt{expires: w.now.Add(time.Hour)}
-	}
-	w.svc.mu.Unlock()
+	w.svc.cfg.Entries = &failing{Entries: w.mem, fail: map[string]error{"put " + pendingKey: errors.New("down")}}
 	if _, err := w.svc.StartConfirmEmail(ctx, who); err != nil {
 		t.Fatal(err)
 	}
 	w.svc.Wait()
-	if !strings.Contains(w.logs.String(), "too many sign-ins waiting") {
+	w.svc.cfg.Entries = w.mem
+	if !strings.Contains(w.logs.String(), "a sign-in in progress could not be kept") {
 		t.Fatalf("logs:\n%s", w.logs)
 	}
 	for range maxSending {

@@ -95,9 +95,19 @@ func (s *Service) dataKey(ctx context.Context) ([]byte, error) {
 	if s.key != nil {
 		return s.key, nil
 	}
-	mb, err := s.store.GetMailbox(ctx, s.cfg.MailboxID)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
+	for range 2 {
+		mb, err := s.store.GetMailbox(ctx, s.cfg.MailboxID)
+		switch {
+		case err == nil:
+			k, err := s.keys.Unwrap(ctx, mb.WrappedKey, s.keyContext())
+			if err != nil {
+				return nil, err
+			}
+			s.key = k
+			return s.key, nil
+		case !errors.Is(err, store.ErrNotFound):
+			return nil, err
+		}
 		dk, err := s.keys.NewDataKey(ctx, s.keyContext())
 		if err != nil {
 			return nil, err
@@ -106,22 +116,19 @@ func (s *Service) dataKey(ctx context.Context) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Made once: of two enclaves that start together, one makes it and
+		// the other uses what it made.
 		mb = &store.Mailbox{ID: s.cfg.MailboxID, WrappedKey: dk.Wrapped, RetentionDays: store.DefaultRetentionDays, State: state, UpdatedAt: s.now()}
-		if err := s.store.PutMailbox(ctx, mb); err != nil {
+		switch err := s.store.PutMailbox(ctx, mb); {
+		case err == nil:
+			s.log.Info("inbox: mailbox created")
+			s.key = dk.Plaintext
+			return s.key, nil
+		case !errors.Is(err, store.ErrExists):
 			return nil, err
 		}
-		s.log.Info("inbox: mailbox created")
-		s.key = dk.Plaintext
-	case err != nil:
-		return nil, err
-	default:
-		k, err := s.keys.Unwrap(ctx, mb.WrappedKey, s.keyContext())
-		if err != nil {
-			return nil, err
-		}
-		s.key = k
 	}
-	return s.key, nil
+	return nil, errors.New("inbox: the mailbox keeps changing")
 }
 
 func (s *Service) stateAAD() []byte { return envelope.AAD("mailbox-state", s.cfg.MailboxID) }
@@ -169,12 +176,33 @@ func (s *Service) loadMailbox(ctx context.Context) (*store.Mailbox, mailboxState
 	return mb, st, key, nil
 }
 
-func (s *Service) saveMailbox(ctx context.Context, mb *store.Mailbox, st mailboxState, key []byte) error {
-	sealed, err := envelope.Seal(key, mustJSON(st), s.stateAAD())
-	if err != nil {
-		return err
+// maxWrites bounds how many times a change of the mailbox is made again
+// because another enclave wrote it in between.
+const maxWrites = 3
+
+// update reads the mailbox, applies change to it and writes it back at the
+// version read, again from a fresh read when another enclave wrote it in
+// between: two enclaves never undo each other. It returns the mailbox as
+// written.
+func (s *Service) update(ctx context.Context, change func(mb *store.Mailbox, st *mailboxState)) (*store.Mailbox, error) {
+	for range maxWrites {
+		mb, st, key, err := s.loadMailbox(ctx)
+		if err != nil {
+			return nil, err
+		}
+		change(mb, &st)
+		sealed, err := envelope.Seal(key, mustJSON(st), s.stateAAD())
+		if err != nil {
+			return nil, err
+		}
+		mb.State = sealed
+		mb.UpdatedAt = s.now()
+		switch err := s.store.PutMailbox(ctx, mb); {
+		case err == nil:
+			return mb, nil
+		case !errors.Is(err, store.ErrConflict):
+			return nil, err
+		}
 	}
-	mb.State = sealed
-	mb.UpdatedAt = s.now()
-	return s.store.PutMailbox(ctx, mb)
+	return nil, errors.New("inbox: the mailbox keeps changing")
 }

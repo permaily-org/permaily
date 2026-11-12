@@ -96,7 +96,13 @@ func (w *world) on(providers ...idp.Provider) {
 // returns its state and the value of the browser's cookie.
 func (w *world) leave(who *Authenticated, in contracts.ProviderStart) (state, cookie string) {
 	w.t.Helper()
-	started, cookie, err := w.svc.StartProvider(context.Background(), w.fresh(who), in)
+	return w.leaveFrom(w.svc, who, in)
+}
+
+// leaveFrom is leave through one enclave.
+func (w *world) leaveFrom(svc *Service, who *Authenticated, in contracts.ProviderStart) (state, cookie string) {
+	w.t.Helper()
+	started, cookie, err := svc.StartProvider(context.Background(), w.fresh(who), in)
 	if err != nil {
 		w.t.Fatalf("starting with %s: %v", in.Provider, err)
 	}
@@ -111,7 +117,13 @@ func (w *world) leave(who *Authenticated, in contracts.ProviderStart) (state, co
 // at the provider.
 func (w *world) comeBack(state, cookie string, who idp.Identity) (*ProviderDone, error) {
 	w.t.Helper()
-	done, err := w.svc.FinishProvider(context.Background(), ProviderAnswer{State: state, Code: w.idp.approve(who), Browser: cookie, From: Browser{UserAgent: "provider device"}})
+	return w.comeBackTo(w.svc, state, cookie, who)
+}
+
+// comeBackTo is comeBack through one enclave.
+func (w *world) comeBackTo(svc *Service, state, cookie string, who idp.Identity) (*ProviderDone, error) {
+	w.t.Helper()
+	done, err := svc.FinishProvider(context.Background(), ProviderAnswer{State: state, Code: w.idp.approve(who), Browser: cookie, From: Browser{UserAgent: "provider device"}})
 	if done == nil || !strings.HasPrefix(done.Path, "/") || strings.HasPrefix(done.Path, "//") {
 		w.t.Fatalf("the browser is sent nowhere in the app: %+v %v", done, err)
 	}
@@ -366,12 +378,10 @@ func TestProviderAnswerInAnotherBrowser(t *testing.T) {
 	if done, err := w.comeBack(state, cookie, mallory); err != nil || w.who(done.Session).AccountID != ana.Account.ID {
 		t.Fatalf("in the browser that started it: %+v %v", done, err)
 	}
-	// Only the hash of the cookie's value is kept.
-	_, cookie = w.leave(nil, contracts.ProviderStart{Provider: "google"})
-	for _, kept := range w.svc.trips {
-		if strings.Contains(fmt.Sprintf("%+v", *kept), cookie) {
-			t.Fatal("the value of the cookie is kept")
-		}
+	// Nothing of the cookie's value, or of the state, can be read in the storage.
+	state, cookie = w.leave(nil, contracts.ProviderStart{Provider: "google"})
+	if got := w.stored(cookie, state); len(got) != 0 || w.pending(kindTrip) == 0 {
+		t.Fatalf("the cookie or the state is kept: %q", got)
 	}
 }
 
@@ -420,13 +430,9 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 	if list, _ := w.svc.Sessions(ctx, w.who(anaCookie)); len(list.Sessions) != 1 {
 		t.Fatalf("a session was made: %+v", list)
 	}
-	// Only the hash of the cookie's value is kept.
-	for key := range w.svc.unconfirmed {
-		for _, b := range browsers {
-			if key == b {
-				t.Fatal("the value of the cookie is kept")
-			}
-		}
+	// Nothing of the cookie's value can be read in the storage.
+	if got := w.stored(browsers...); len(got) != 0 || w.pending(kindUnconfirmed) != len(browsers) {
+		t.Fatalf("the value of the cookie is kept: %q", got)
 	}
 	malloryBrowser, withInvitation, nobody := browsers[0], browsers[1], browsers[3]
 
@@ -715,7 +721,9 @@ func TestProviderLinkFromSettings(t *testing.T) {
 			t.Fatalf("linking the same provider account twice: %+v %v", done, err)
 		}
 	}
-	if l := w.providers(eve.Account.ID); len(l) != 1 || w.version(eve.Account.ID) != written+2 {
+	// The unlink, and the two steps of one link: the record says it is being
+	// linked, then lists it.
+	if l := w.providers(eve.Account.ID); len(l) != 1 || w.version(eve.Account.ID) != written+3 {
 		t.Fatalf("eve %+v, written %d times more", l, w.version(eve.Account.ID)-written)
 	}
 
@@ -1468,7 +1476,12 @@ func TestProviderFailures(t *testing.T) {
 			}
 		}
 		done, err = w.comeBack(linkState, linkCookie, person(idp.Meta, "77007700770011", "", false))
-		if !errors.Is(err, down) || done.Path != "/settings#provider_error=provider_unavailable" {
+		// A trip that cannot be read is not known to be one of Settings.
+		screen := "/settings"
+		if op == "get entry" || op == "derive" {
+			screen = "/sign-in"
+		}
+		if !errors.Is(err, down) || done.Path != screen+"#provider_error=provider_unavailable" {
 			if op != "list entries" || err != nil {
 				t.Fatalf("%s down, linking: %+v %v", op, done, err)
 			}
@@ -1477,7 +1490,9 @@ func TestProviderFailures(t *testing.T) {
 		if (err == nil) != (session != "") {
 			t.Fatalf("%s down, confirming: a session %v with %v", op, session != "", err)
 		}
-		if err := w.svc.UnlinkProvider(ctx, w.fresh(who), "google"); !errors.Is(err, down) && op != "list entries" && op != "put entry" {
+		// The record is written before the pointer goes: a pointer that cannot
+		// be read or deleted is left, and leads nowhere.
+		if err := w.svc.UnlinkProvider(ctx, w.fresh(who), "google"); !errors.Is(err, down) && op != "list entries" && op != "put entry" && op != "get entry" {
 			t.Fatalf("%s down, unlinking: %v", op, err)
 		}
 		if _, err := w.svc.LinkedProviders(ctx, who); !errors.Is(err, down) && op == "get record" {
@@ -1524,7 +1539,7 @@ func TestProviderFailures(t *testing.T) {
 	}
 	w.idp.err = nil
 	w.idp.beginErr = errors.New("boom: client_secret=" + appSecret(idp.Google))
-	if _, cookie, err := w.svc.StartProvider(ctx, nil, contracts.ProviderStart{Provider: "google"}); err == nil || cookie != "" || strings.Contains(err.Error(), "boom") || len(w.svc.trips) != 0 {
+	if _, cookie, err := w.svc.StartProvider(ctx, nil, contracts.ProviderStart{Provider: "google"}); err == nil || cookie != "" || strings.Contains(err.Error(), "boom") || w.pending(kindTrip) != 0 {
 		t.Fatalf("a start the provider's client refused: %v", err)
 	}
 	if w.accounts() != 0 {
@@ -1583,7 +1598,7 @@ func TestProviderFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restarted.appsRead = false
+	restarted.appsRead = time.Time{}
 	f.fail = map[string]error{"get record": down}
 	u, _ := url.Parse(started.URL)
 	done, err = restarted.FinishProvider(ctx, ProviderAnswer{State: u.Query().Get("state"), Code: w.idp.approve(nina), Browser: cookie})
@@ -1709,57 +1724,39 @@ func TestProviderFailuresWhileLinking(t *testing.T) {
 	}
 }
 
-// What waits in memory is bounded: the oldest goes, and what ended is
-// forgotten.
-func TestProvidersAreBounded(t *testing.T) {
+// A trip and a sign-in that waits for its address end once, and not after
+// their time; what an enclave remembers of them is forgotten once they ended.
+func TestProvidersInProgressEnd(t *testing.T) {
 	w, ctx := newWorld(t), context.Background()
 	w.on(idp.Meta)
-	first, firstCookie := w.leave(nil, contracts.ProviderStart{Provider: "meta"})
-	w.now = w.now.Add(time.Second)
-	second, secondCookie := w.leave(nil, contracts.ProviderStart{Provider: "meta"})
-	for i := range maxTrips - 2 {
-		w.svc.trips[fmt.Sprint("filler ", i)] = &trip{expires: w.now.Add(time.Hour)}
-	}
-	// One more than is kept: the one that ends first goes, and the new one
-	// is kept. Refusing new ones would let anyone keep everybody out.
-	third, thirdCookie := w.leave(nil, contracts.ProviderStart{Provider: "meta"})
-	if len(w.svc.trips) != maxTrips {
-		t.Fatalf("%d trips kept", len(w.svc.trips))
-	}
 	who := person(idp.Meta, "1", "", false)
+	first, firstCookie := w.leave(nil, contracts.ProviderStart{Provider: "meta"})
+	late, lateCookie := w.leave(nil, contracts.ProviderStart{Provider: "meta"})
 	done, err := w.comeBack(first, firstCookie, who)
-	w.refusedWith("the trip that was dropped", done, err, contracts.ErrProviderFailed, "/sign-in#provider_error=provider_failed")
-	var browsers []string
-	for _, trip := range [][2]string{{second, secondCookie}, {third, thirdCookie}} {
-		done, err := w.comeBack(trip[0], trip[1], who)
-		if err != nil || done.Browser == "" {
-			t.Fatalf("a trip that was kept: %+v %v", done, err)
-		}
-		browsers = append(browsers, done.Browser)
-		w.now = w.now.Add(time.Second)
+	if err != nil || done.Browser == "" {
+		t.Fatalf("a trip: %+v %v", done, err)
 	}
-	for i := range maxUnconfirmed - 2 {
-		w.svc.unconfirmed[fmt.Sprint("filler ", i)] = &unconfirmed{expires: w.now.Add(time.Hour)}
+	again, err := w.comeBack(first, firstCookie, who)
+	w.refusedWith("a trip ended twice", again, err, contracts.ErrProviderFailed, "/sign-in#provider_error=provider_failed")
+	if _, err := w.svc.PendingProvider(ctx, done.Browser); err != nil {
+		t.Fatalf("what waits: %v", err)
 	}
-	state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "meta"})
-	if done, err = w.comeBack(state, cookie, who); err != nil || len(w.svc.unconfirmed) != maxUnconfirmed {
-		t.Fatalf("one more waiting: %+v %v, %d kept", done, err, len(w.svc.unconfirmed))
+	w.now = w.now.Add(domain.ProviderLifetime)
+	again, err = w.comeBack(late, lateCookie, who)
+	w.refusedWith("a trip after its time", again, err, contracts.ErrProviderFailed, "/sign-in#provider_error=provider_failed")
+	w.now = w.now.Add(domain.ProviderConfirmLifetime)
+	if _, err := w.svc.PendingProvider(ctx, done.Browser); !errors.Is(err, contracts.ErrProviderFailed) {
+		t.Fatalf("what waited past its time: %v", err)
 	}
-	if _, err := w.svc.PendingProvider(ctx, browsers[0]); !errors.Is(err, contracts.ErrProviderFailed) {
-		t.Fatalf("the one that was dropped: %v", err)
+	if w.pending(kindTrip) != 0 || w.pending(kindUnconfirmed) != 0 {
+		t.Fatalf("kept after they ended: %d trips, %d waiting", w.pending(kindTrip), w.pending(kindUnconfirmed))
 	}
-	for _, kept := range []string{browsers[1], done.Browser} {
-		if _, err := w.svc.PendingProvider(ctx, kept); err != nil {
-			t.Fatalf("one that was kept: %v", err)
-		}
-	}
-	// What ended is forgotten.
-	w.now = w.now.Add(2 * time.Hour)
+	w.now = w.now.Add(time.Hour)
 	w.svc.mu.Lock()
 	w.svc.sweep(w.now)
 	w.svc.mu.Unlock()
-	if len(w.svc.trips) != 0 || len(w.svc.unconfirmed) != 0 {
-		t.Fatalf("kept after they ended: %d trips, %d waiting", len(w.svc.trips), len(w.svc.unconfirmed))
+	if len(w.svc.marks) != 0 {
+		t.Fatalf("%d remembered after they ended", len(w.svc.marks))
 	}
 }
 

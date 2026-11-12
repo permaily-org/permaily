@@ -37,7 +37,11 @@ type Mailbox struct {
 	WrappedKey    []byte
 	RetentionDays int
 	State         []byte
-	UpdatedAt     time.Time
+	// Version counts the writes, as Entry.Version does: PutMailbox creates
+	// at 0 and otherwise replaces only the version the mailbox was read at.
+	// A mailbox stored before versions existed reads as version 1.
+	Version   uint64
+	UpdatedAt time.Time
 }
 
 // Message is a stored message. Meta is sealed with the mailbox data key; the
@@ -130,6 +134,10 @@ type Entries interface {
 // Store is the persistence interface used by the inbox.
 type Store interface {
 	GetMailbox(ctx context.Context, id string) (*Mailbox, error)
+	// PutMailbox stores m and sets m.Version to the version stored. With
+	// Version 0 the mailbox must be new (ErrExists), so two enclaves cannot
+	// both make it; otherwise it must still be at m.Version (ErrConflict), so
+	// two writers never undo each other.
 	PutMailbox(ctx context.Context, m *Mailbox) error
 	// PutMessage stores the record and its sealed raw message.
 	PutMessage(ctx context.Context, m *Message, raw []byte) error

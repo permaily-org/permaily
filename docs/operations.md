@@ -7,15 +7,15 @@ Runbooks for production. Setup from scratch is in [deploy.md](deploy.md). Every 
 The running enclave hands the root secret to the next release, then the next release is started (ADR 0013). Nothing in AWS is edited to let a release in: each release has a KMS key of its own that only its image can use.
 
 ```sh
-old=v0.8.0 new=v0.9.0
-mkdir -p /tmp/permaily-$new && cd /tmp/permaily-$new
-gh release download $new --repo permaily-org/permaily
-gh attestation verify permaily.eif --repo permaily-org/permaily --signer-workflow permaily-org/permaily/.github/workflows/release.yml --source-ref refs/heads/main
-sha256sum -c SHA256SUMS --ignore-missing
-mkdir eif && mv permaily.eif pcrs.json eif/
+old=v0.8.0 new=v0.9.0 dir=/tmp/permaily-v0.9.0
+# 0. The image. Releases publish its measurements, not the image (ADR 0023):
+#    this builds it from the tag (Nix, or Docker) and refuses unless its
+#    measurements are the release's pcrs.json, whose build provenance it checks,
+#    as it does the host program's. It leaves the three files in $dir.
+scripts/release-image.sh $new $dir
 
 # 1. The key of the new image. deploy/tofu/production.auto.tfvars:
-#      release_keys = { "v0.8.0" = "<its PCR0>", "v0.9.0" = "<jq -r .PCR0 eif/pcrs.json>" }
+#      release_keys = { "v0.8.0" = "<its PCR0>", "v0.9.0" = "<jq -r .PCR0 $dir/pcrs.json>" }
 tofu -chdir=deploy/tofu apply          # creates one KMS key and its alias; then `tofu plan` must show no changes
 
 # 2. The running enclave gives the root secret to the new release. The script
@@ -23,7 +23,7 @@ tofu -chdir=deploy/tofu apply          # creates one KMS key and its alias; then
 scripts/handoff.sh $old $new
 
 # 3. Start the new image and verify.
-scripts/deploy.sh eif permaily-host-linux-arm64
+scripts/deploy.sh $dir $dir/permaily-host-linux-arm64
 scripts/verify.sh $new                 # from a server with outbound port 25, add -require-smtp
 ```
 
@@ -36,7 +36,7 @@ Then delete the key of the previous release (below), and open the pull request t
 
 ## Roll back
 
-Deploy the previous release again with `scripts/deploy.sh`. Its record and its key are still there, and everything stored since is sealed under the same root secret, so it reads it. A handoff back to an older release is refused on purpose: a rollback only works while the old release's key exists.
+Build the previous release's image again (`scripts/release-image.sh <tag> <dir>`) and deploy it with `scripts/deploy.sh`. Its record and its key are still there, and everything stored since is sealed under the same root secret, so it reads it. A handoff back to an older release is refused on purpose: a rollback only works while the old release's key exists.
 
 ## Delete the key of an old release
 
@@ -53,8 +53,8 @@ If the instance is lost, nothing is: create it again with OpenTofu and deploy th
 A staging image (`.#eif-staging`) is a deployment of its own on the same instance and names: Let's Encrypt staging, the table `permaily-mail-staging`, and a root secret that only staging images can receive. Production is down while a staging image runs.
 
 ```sh
-git push origin HEAD:refs/heads/staging/<name>     # the staging-image workflow builds and attests it
-gh run download <run id> --name staging-image --dir /tmp/stg-a
+git push origin HEAD:refs/heads/staging/<name>     # the staging-image workflow builds and attests its pcrs.json
+scripts/release-image.sh --staging <run id> /tmp/stg-a   # builds the image of that run's commit, refuses other measurements
 # release_keys: add "staging-a" = "<its PCR0>", without committing; acme_account_uris: see Certificates below
 tofu -chdir=deploy/tofu apply
 scripts/deploy.sh /tmp/stg-a /tmp/stg-a/permaily-host-linux-arm64
@@ -72,6 +72,23 @@ The TLS identity is read by its newest commit in the bucket `permaily-anchors-<a
 - **The verifier fails with `the store of commits went back`**: the enclave had seen a commit that the bucket no longer answers with. Nobody in the account can remove one, so treat it as an incident: find out what happened to the bucket (CloudTrail, `aws s3api list-object-versions`) before restarting the enclave, which forgets what it saw.
 - **The verifier warns that a lock ends within 30 days**: the newest commit of a record is ten years old. Make the record change (for the TLS identity, a renewal does) so that it gets a new commit.
 - The enclave's role can list, read and write in that bucket and cannot delete. Nothing needs to be cleaned there: a commit is a few hundred bytes.
+
+## Two enclaves
+
+Not deployed: one enclave runs today. The code is ready for two behind one address (ADR 0017, ADR 0024). What the operator would see:
+
+- **The TLS identity.** One enclave logs `acme: certificate obtained`, the other `acme: certificate installed` within ten minutes. Both serve one key. While one orders, the identity holds its claim; the other waits up to the end of that claim (eleven minutes, more after failed tries) and then orders itself. Nothing needs doing.
+- **`the stored identity holds another key`** in one enclave's log: the identity was lost and made again by the other enclave. Restart the enclave that logs it, so both serve the new key, and follow "Replace the TLS key" for the CAA records.
+- **The challenges** of an open order are items `pk=acme-challenge#tls-<CA host>` in the table, sealed. They expire with the order and are deleted when it ends; one left behind ends by itself.
+- **The test mailbox** is made once by whichever enclave starts first.
+
+Still needed before two run:
+
+1. A load balancer that passes TCP through on ports 443 and 25 (a Network Load Balancer with TCP listeners, never TLS ones), with health checks that do not end TLS.
+2. The parent instances, or one instance with two enclaves, each with its host proxy, behind it.
+3. A first release with ADR 0024 must run alone before a second enclave is added: a release from before writes the TLS identity without the claim.
+4. A way to roll a release out to two: hand the root secret to the new release once (any enclave of the running release can), then replace the enclaves one at a time. While both releases serve, `permaily-verify -release` fails on connections that land on the older one.
+5. The sign-in state that is still in each enclave's memory moved to the storage (ADR 0017).
 
 ## Look at enclave logs
 
@@ -94,7 +111,7 @@ Debug mode zeroes the PCRs, so verification fails on purpose and the enclave doe
 
 ## Let's Encrypt rate limits
 
-At most 5 certificates per week for the same set of names. Since v0.4.0 the enclave keeps its key and certificate sealed, so a restart or an upgrade issues nothing; only a renewal (every 60 days) or a new TLS key does. If issuance fails with `rateLimited`, wait for the window, and use `.#eif-staging` for tests.
+At most 5 certificates per week for the same set of names. Since v0.4.0 the enclave keeps its key and certificate sealed, so a restart or an upgrade issues nothing; only a renewal (every 60 days) or a new TLS key does. With two enclaves, one asks and the other serves what it stores, so they make no more orders than one (ADR 0024). If issuance fails with `rateLimited`, wait for the window, and use `.#eif-staging` for tests.
 
 ## Rotate the Cloudflare token
 

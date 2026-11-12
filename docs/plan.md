@@ -39,7 +39,7 @@ Each step ends deployed and verified, like the releases so far. The estimates ar
 | Step | What | Weeks |
 |---|---|---|
 | 1 | Layers (`contracts`, `domain`, `services`, adapters) and accounts: passkeys, email and providers, sessions, invitations with the operator's tool, outgoing mail through SES | 3 |
-| 2 | Mailboxes per account, moving the test mailbox into the first account; the inbox in the app | 1.5 |
+| 2 | Mailboxes per account, moving the test mailbox into the first account; the inbox in the app. Made by a write that only creates, and every change written at the version read, never with a plain write: two enclaves may run at once (ADR 0024 did this for the test mailbox) | 1.5 |
 | 3 | The query language: grammar, simplification, whether one formula fits inside another, the sentence, and evaluating exact conditions over stored mail | 2 |
 | 4 | Spike, then the piece that asks OpenAI: `about`, kept decisions, the spending alarm | 1.5 |
 | 5 | Spike of the authorization server (ADR 0007), then connections, the consent screen, the API and MCP | 3.5 |
@@ -65,7 +65,8 @@ After v0.10.0, built on 2026-11-12 and not released yet (ADR 0017):
 - [x] The notices by mail that need only accounts, brought forward from step 9: a sign-in from a new device, a change in how the account is signed into, the address changed, deleting asked or cancelled, blocked and unblocked.
 - [x] Only the person cancels a deletion they asked for; the operator cancels only one the operator asked for (2026-11-12).
 - [x] Confirming again before a sensitive change, and admins in the web app with a super admin named by the image, an admin log and counts (ADR 0022, server side; the screens are in the web app).
-- [ ] Move what sign-in keeps in memory (attempts, ceremonies, trips) to the storage, so that two enclaves can run at once (ADR 0017, "Two enclaves at once").
+- [x] Move what sign-in keeps in memory (attempts, ceremonies, trips) to the storage, so that two enclaves can run at once (ADR 0017, "Two enclaves at once"), with the races of accounts that two enclaves had: the providers' applications, linking and unlinking, a removal against a cancel, signing devices out, and the stale pointer of an address. What `/status` says stays one enclave's.
+- [x] The TLS identity and the test mailbox ready for two enclaves: one order, the CA's check answered by either, the mailbox made once (ADR 0024, 2026-11-12).
 - [ ] A staging image with all of it: the notices through SES, and the counts on `/status` read by `permaily-verify`.
 
 Step 9 keeps the notices about connections (one approved, one about to end), which need step 5, and the wording of every message reviewed with the designer.
