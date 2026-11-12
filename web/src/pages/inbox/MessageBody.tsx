@@ -51,10 +51,13 @@ export function ViewSwitch({
     </button>
   )
   return (
-    <div role="group" aria-label="View" className="inline-flex rounded-sm border border-rule">
+    <fieldset
+      aria-label="View"
+      className="m-0 inline-flex min-w-0 rounded-sm border border-rule p-0"
+    >
       {option('formatted', 'Formatted')}
       {option('text', 'Text')}
-    </div>
+    </fieldset>
   )
 }
 
