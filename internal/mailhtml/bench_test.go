@@ -122,3 +122,25 @@ func BenchmarkFiftyImages(b *testing.B) {
 	in.HTML = []byte(imgs(srcs...))
 	benchRender(b, in, contracts.HTMLShown)
 }
+
+// The amplification case at the largest size that is still shown: the most
+// work the tree bound lets through for this shape (found by bisection).
+func BenchmarkAmplificationShown(b *testing.B) {
+	lo, hi := 4096, contracts.MessageHTMLMaxBytes
+	for hi-lo > 64 {
+		mid := (lo + hi) / 2
+		st, err := Render(context.Background(), input(amplification(mid)), io.Discard)
+		if err == nil && st.Status == contracts.HTMLShown {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	src := amplification(lo)
+	bound, err := treeBound(context.Background(), []byte(src))
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Logf("%d bytes, tree bound %d", len(src), bound)
+	benchRender(b, input(src), contracts.HTMLShown)
+}
