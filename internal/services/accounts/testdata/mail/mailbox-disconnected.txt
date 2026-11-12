@@ -1,0 +1,10 @@
+To: ada@example.com
+Subject: A mailbox was disconnected from your Permaily account
+
+A mailbox was disconnected from your Permaily account. Its address no longer accepts mail, and its mail is being deleted.
+
+Turn forwarding to it off in Gmail, or Gmail will tell you that forwarding fails.
+
+    When: 12 November 2026, 09:30 UTC
+
+If this wasn't you, sign in at app.permaily.com, sign out the devices you don't know, and write to support@permaily.com.

@@ -2,8 +2,13 @@ import { cleanup, configure } from '@testing-library/react'
 import { afterEach, beforeEach, expect, vi } from 'vitest'
 import { server } from './helpers/server.ts'
 
-// A query that finds nothing says so in a line, without the whole page.
-configure({ getElementError: (message) => new Error(message ?? 'not found') })
+// A query that finds nothing says so in a line, without the whole page. A find waits up to five seconds,
+// not one: on a machine busy with other work the screens take longer to come, and a find only waits as
+// long as what it looks for is not there (an absence is checked with a query, which does not wait).
+configure({
+  getElementError: (message) => new Error(message ?? 'not found'),
+  asyncUtilTimeout: 5000,
+})
 
 // jsdom has no layout and no media queries. The app is wide: the sidebar is open.
 function matchMedia(media: string) {

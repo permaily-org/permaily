@@ -7,6 +7,7 @@ import { providerNames } from '../../lib/providers.ts'
 import { SettingRow } from '../settings/rows.tsx'
 import { formatDay } from '../settings/signin/shared.ts'
 import { stateWords } from './AccountsPage.tsx'
+import { MailboxesSection } from './MailboxesSection.tsx'
 import {
   AskDialog,
   adminMessage,
@@ -227,6 +228,9 @@ export function AccountPage() {
         <SettingRow label="Devices">
           {record.sessions === 1 ? '1 signed in' : `${record.sessions} signed in`}
         </SettingRow>
+        <SettingRow label="Mailboxes">
+          {api.accountMailboxes(record) ?? 'Not said by this server'}
+        </SettingRow>
         {record.admin && (
           <SettingRow label="Admin">
             {record.admin === 'super' ? 'Super admin' : 'Admin'}
@@ -282,6 +286,8 @@ export function AccountPage() {
           {said}
         </p>
       </section>
+
+      <MailboxesSection account={record.id} admin={record.admin !== undefined} />
 
       <AskDialog
         id="account-change"

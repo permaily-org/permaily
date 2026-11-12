@@ -210,8 +210,8 @@ Takes effect with the release that builds ADR 0026; until then nothing here appl
 - **TLS-RPT.** The release removes the `_smtp._tls.inbox` record (`tls_rpt_address` is empty by default in `deploy/tofu`). After it is verified: sign in as the super admin, make a mailbox labelled "TLS reports", then set `tls_rpt_address` to its address and apply. Reports arrive there as attachments, read with "Download". This is the one mailbox whose address is public, by design: anyone can send to it, and only its account reads it.
 - **Deleting F1's items, and the keys of the releases before**, once the release is verified and a rollback to v0.11.0 is no longer wanted (after it, v0.11.0 would start with a new, empty test mailbox): in the table every item with `pk=mailbox#test` (`sk=mailbox` and every `sk=msg#…`), and in the mail bucket every object under `raw/test/`. Then remove v0.11.0 and older releases from `release_keys` ("Delete the key of an old release"): until their keys are gone they can still open the root secret, and the test mailbox's mail was readable by them and by the token. This step is required, not tidying: the guarantees of mailboxes assume that releases from before them no longer run against the data (ADR 0026, "The store"). Until it is done, a rollback is possible and those guarantees hold only while this release or a later one runs.
 - **Staging rehearsals** read mail through a mailbox of a signed-in account: sign in to the staging app with an invitation, make one or two mailboxes, send to them from a server with STARTTLS, and read them in the app or with the session's cookie under `/api/v1/mailboxes`.
-- **Pausing a mailbox** for abuse: `scripts/accounts.sh mailbox find <address>`, then `mailbox pause <id>` and later `mailbox resume <id>`; ten changes of one mailbox in thirty days at most. Its person is told by mail; nothing is deleted. The operator cannot disconnect a mailbox or read mail.
-- **A regression marked `fork` in `/status`**, under the name `mailbox`, means two commits of different digests at one version of a mailbox's record or an account's list: someone wrote to the anchors bucket. That mailbox stops for good, for the lock period (ten years): it refuses mail, nobody opens it, its person sees "Can't be read" and cannot disconnect it, and it keeps its slot. Nothing makes it readable again; tell its person through support. One marked `unlocked` means S3 holds a commit without the lock the enclave wrote it with: report it to AWS and look at the bucket's configuration. Accounts and the TLS identity are not strict records: a fork there shows as a regression without the mark, as before (ADR 0016), and the TLS identity's is handled as ADR 0024 says.
+- **Pausing a mailbox** for abuse: `scripts/accounts.sh mailbox find <address>`, then `mailbox pause <id>` and later `mailbox resume <id>`; ten changes of one mailbox in thirty days at most. Its person is told by mail; nothing is deleted. The operator cannot disconnect a mailbox or read mail ("See and manage the accounts", "Mailboxes").
+- **A regression marked `fork` in `/status`**, under the name `mailbox`, means two commits of different digests at one version of a mailbox's record or an account's list: someone wrote to the anchors bucket. That mailbox stops for good, for the lock period (ten years): it refuses mail, nobody opens it, its person sees "Can't be read" and cannot disconnect it, and it keeps its slot. Nothing makes it readable again; tell its person through support. One marked `lost` means the newest commit of a mailbox's record or an account's list names a value the table no longer holds: someone deleted or changed the item in DynamoDB. A lost mailbox refuses mail and nobody opens it; it shows as `unreadable` in `scripts/accounts.sh mailboxes` and in the admin panel, with its identifier and when it was added, and its person can disconnect it, which frees its slot. A lost account list stops delivery to every mailbox of that account. One marked `unlocked` means S3 holds a commit without the lock the enclave wrote it with: report it to AWS and look at the bucket's configuration. Accounts and the TLS identity are not strict records: a fork there shows as a regression without the mark, as before (ADR 0016), and the TLS identity's is handled as ADR 0024 says.
 
 ## Invite someone
 
@@ -233,10 +233,10 @@ An invitation that was used is deleted when it is used, so the list does not sho
 ## See and manage the accounts
 
 ```sh
-scripts/accounts.sh                       # every account: identifier, address, name, state, passkeys, sessions
+scripts/accounts.sh                       # every account: identifier, address, name, state, passkeys, sessions, mailboxes
 scripts/accounts.sh acc_...               # one
 scripts/accounts.sh find ana@example.org  # the account of exactly that address
-scripts/accounts.sh stats                 # how many, by state
+scripts/accounts.sh stats                 # how many, by state, and their mailboxes
 ```
 
 It asks the enclave (`GET /v1/admin/accounts`, with the admin token from `~/.config/permaily/admin-token`), which answers from the signed records: the table in DynamoDB shows what is stored, this shows what the enclave accepts. `unreadable` counts accounts in the list whose record could not be read or does not verify: more than zero means the storage was changed by hand or is failing, and the enclave's log says which kind without naming the account. `stats` reads the whole list a page at a time and counts: active, closing (asked by the person or by the operator), blocked, and a few more.
@@ -259,6 +259,23 @@ scripts/accounts.sh close-sessions <account>   # signs every device out, and not
 What cannot be done, on purpose (ADR 0017): change an account's contact address, add or remove a passkey or a provider, turn "passkey only" off, or sign in as someone. Each would be a way into the account. So someone who lost their mail, their passkeys and their recovery codes cannot be given the account back: support can block it and delete it, and the person signs up again. A person changes their own address in Settings, with a code sent to the new one.
 
 Everything done here is counted by the enclave, by its kind and never by account, on `/status` (`admin`), which `permaily-verify` prints twice an hour for anyone, and is logged by its kind. A restart starts the count again.
+
+### Mailboxes
+
+```sh
+scripts/accounts.sh mailboxes <account>            # its mailboxes: identifier, state, dates, retention, whether Google confirmed it
+scripts/accounts.sh mailbox find <address>         # the mailbox an address leads to, and whose it is
+scripts/accounts.sh mailbox pause mbx_...          # it refuses new mail until resumed; asks for a "yes" unless --yes follows
+scripts/accounts.sh mailbox resume mbx_...         # it accepts mail again
+```
+
+They ask the enclave (`GET /v1/admin/accounts/{id}/mailboxes`, `GET /v1/admin/mailboxes?address=`, `POST /v1/admin/mailboxes/{id}/pause` and `/resume`, with the admin token), which answers from each mailbox's signed record (ADR 0026, "What the operator and admins see and do"). What it shows of a mailbox is its identifier, its account, its state (waiting, receiving, paused or unreadable), when it was added, how long it keeps mail, since when it receives, when it was paused and whether Google confirmed the Gmail account behind it. Never its address, its label, that Gmail account or its mail: the enclave gives none of them to the operator or to an admin. A mailbox whose record is lost or forked ("An unreadable mailbox" in ADR 0026) is shown as unreadable with its identifier, its account (from the signed index) and when it was added, and nothing else: it accepts no mail, nobody can open it, and it cannot be paused or resumed (`not_found`).
+
+- **Find** a mailbox when a report of abuse names its address: the enclave hashes the address as SMTP does, and answers the mailbox it leads to or nothing, the same nothing for an address never made, one disconnected and one that is not an address. It is one exact address a request and tells only whose an address you already know is: what bounds it as a way to test addresses is that an address is 100 random bits, which anyone can test against SMTP as well. The script never prints the address back.
+- **Pause** a mailbox that is flooded, or whose mail harms the service: it refuses new mail at `RCPT TO` with the same answer as an unknown address, keeps everything it holds, and its person can still read, delete and disconnect. They are told by mail ("Permaily paused one of your mailboxes"), and again when it is resumed. A mailbox is paused or resumed ten times in thirty days at most (`too_many_requests` after that), counted in its record, so the limit holds with any number of enclaves.
+- **What cannot be done, on purpose**: read a mailbox, see its address or label, disconnect it, delete its mail, change its label or retention, or move it to another account. Disconnecting destroys what is the person's; pausing stops the harm.
+
+Pausing and resuming are counted on `/status` as `mailbox_paused` and `mailbox_resumed`, never which mailbox, and logged by kind alone. Through the admin panel they also need a fresh proof, a mailbox of an admin's account is the super admin's alone to pause, and each is written in the admin log with the account and the mailbox by identifier.
 
 ## The admin panel
 

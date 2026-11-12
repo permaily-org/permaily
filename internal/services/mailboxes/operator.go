@@ -247,36 +247,43 @@ func (s *Service) Record(ctx context.Context, id string) (*contracts.MailboxReco
 }
 
 // Pause implements accounts.Mailboxes.
-func (s *Service) Pause(ctx context.Context, id string) (*contracts.MailboxRecord, error) {
+func (s *Service) Pause(ctx context.Context, id string) (*contracts.MailboxRecord, bool, error) {
 	return s.pause(ctx, id, true)
 }
 
 // Resume implements accounts.Mailboxes.
-func (s *Service) Resume(ctx context.Context, id string) (*contracts.MailboxRecord, error) {
+func (s *Service) Resume(ctx context.Context, id string) (*contracts.MailboxRecord, bool, error) {
 	return s.pause(ctx, id, false)
 }
 
-func (s *Service) pause(ctx context.Context, id string, on bool) (*contracts.MailboxRecord, error) {
+// pause reads everything its answer needs before it commits: after the
+// commit nothing fails the call, so the call that committed the transition
+// tells its person and says so (changed), and a retry that finds it done
+// tells nobody again.
+func (s *Service) pause(ctx context.Context, id string, on bool) (*contracts.MailboxRecord, bool, error) {
 	if !validMailboxID(id) {
-		return nil, contracts.ErrNotFound
+		return nil, false, contracts.ErrNotFound
 	}
 	for range maxTries {
 		l, err := s.load(ctx, id)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if l.state != stActive {
-			return nil, contracts.ErrNotFound
+			return nil, false, contracts.ErrNotFound
+		}
+		r, err := s.record(ctx, slot{l: l}, l.doc.Account)
+		if err != nil {
+			return nil, false, err
 		}
 		if on == !l.doc.PausedAt.IsZero() {
-			r, err := s.record(ctx, slot{l: l}, l.doc.Account)
-			return &r, err
+			return &r, false, nil
 		}
 		now := s.now()
 		doc := *l.doc
 		doc.StateChanges = slices.DeleteFunc(slices.Clone(doc.StateChanges), func(t time.Time) bool { return now.Sub(t) >= Period })
 		if len(doc.StateChanges) >= MaxStateChangesPerPeriod {
-			return nil, contracts.ErrTooManyRequests
+			return nil, false, contracts.ErrTooManyRequests
 		}
 		doc.StateChanges = append(doc.StateChanges, now)
 		kind := NoticeResumed
@@ -287,15 +294,11 @@ func (s *Service) pause(ctx context.Context, id string, on bool) (*contracts.Mai
 		if err := s.putAt(ctx, l, &doc); errors.Is(err, store.ErrChanged) {
 			continue
 		} else if err != nil {
-			return nil, err
-		}
-		l.doc = &doc
-		r, err := s.record(ctx, slot{l: l}, doc.Account)
-		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		s.notify(ctx, doc.Account, kind, now)
-		return &r, nil
+		r.State, r.PausedAt = stateOf(&doc), doc.PausedAt
+		return &r, true, nil
 	}
-	return nil, errors.New("mailboxes: a mailbox keeps changing")
+	return nil, false, errors.New("mailboxes: a mailbox keeps changing")
 }

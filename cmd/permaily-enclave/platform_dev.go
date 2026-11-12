@@ -225,7 +225,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	// -smtp-port (2525 by default in dev mode).
 	if p.mailboxes, err = mailboxes.New(mailboxes.Config{
 		Records: &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock},
-		Storage: mem, Keys: local, Accounts: p.accounts, Domain: hosts.Inbox, Log: log, Now: devClock,
+		Storage: mem, Keys: local, Accounts: p.accounts, Notifier: p.accounts, Domain: hosts.Inbox, Log: log, Now: devClock,
 		Auth: msgauth.DKIM(net.DefaultResolver.LookupTXT),
 	}); err != nil {
 		return nil, err

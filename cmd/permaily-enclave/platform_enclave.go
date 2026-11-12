@@ -166,7 +166,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 				// (ADR 0026, "The store").
 				mailboxRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true, Strict: true}
 				if p.mailboxes, err = mailboxes.New(mailboxes.Config{
-					Records: mailboxRecords, Storage: awsStore, Keys: root, Accounts: p.accounts, Domain: hosts.Inbox, Log: log,
+					Records: mailboxRecords, Storage: awsStore, Keys: root, Accounts: p.accounts, Notifier: p.accounts, Domain: hosts.Inbox, Log: log,
 					Auth: msgauth.DKIM(msgauth.DoH{Client: egress, Endpoint: cfg.dohEndpoint}.LookupTXT),
 				}); err != nil {
 					return nil, err

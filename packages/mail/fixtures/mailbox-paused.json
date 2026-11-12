@@ -1,0 +1,29 @@
+{
+  "name": "mailbox-paused",
+  "to": "ada@example.com",
+  "subject": "Permaily paused one of your mailboxes",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "Permaily paused one of your mailboxes."
+    },
+    {
+      "kind": "paragraph",
+      "text": "It refuses new mail until Permaily resumes it. The mail it holds stays, and you can read, delete or disconnect it."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "note",
+      "text": "Write to support@permaily.com to ask why."
+    }
+  ]
+}

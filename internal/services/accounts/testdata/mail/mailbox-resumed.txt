@@ -1,0 +1,8 @@
+To: ada@example.com
+Subject: Permaily resumed one of your mailboxes
+
+Permaily resumed one of your mailboxes. It accepts mail again.
+
+    When: 12 November 2026, 09:30 UTC
+
+To ask why it was paused, write to support@permaily.com.

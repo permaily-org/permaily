@@ -33,13 +33,14 @@ export function useAdmin(): AdminPanel {
 }
 
 /** What a refusal is about, for the words that say it. */
-export type About = 'account' | 'invitation' | 'provider' | 'admin'
+export type About = 'account' | 'invitation' | 'provider' | 'admin' | 'mailbox'
 
 const superOnly: Record<About, string> = {
   account: "Only the super admin can act on an admin's account.",
   invitation: 'Only the super admin can do that.',
   provider: 'Only the super admin can set up providers.',
   admin: 'Only the super admin can add or remove admins.',
+  mailbox: "Only the super admin can pause or resume an admin's mailbox.",
 }
 
 const gone: Record<About, string> = {
@@ -47,12 +48,16 @@ const gone: Record<About, string> = {
   invitation: 'That invitation was used, revoked or never made.',
   provider: "That isn't there any more.",
   admin: "That account isn't there any more.",
+  mailbox: "That mailbox isn't there any more.",
 }
 
 /** The fixed words for each refusal of the admin API. */
 export function adminMessage(code: ApiErrorCode, about: About): string {
   if (code === 'super_admin_only') return superOnly[about]
   if (code === 'not_found') return gone[about]
+  if (code === 'too_many_requests' && about === 'mailbox') {
+    return 'This mailbox was paused or resumed 10 times in the last 30 days. Try again later.'
+  }
   return messageFor(code)
 }
 

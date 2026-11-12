@@ -147,6 +147,7 @@ function Stats({
     { label: 'Being deleted', value: stats.accounts.closing },
     { label: 'Blocked', value: stats.accounts.blocked },
     { label: 'Unused invitations', value: stats.invitations.unused },
+    ...(stats.mailboxes ? [{ label: 'Mailboxes', value: stats.mailboxes.total }] : []),
   ]
   return (
     <section aria-label="Numbers" className="mt-4">

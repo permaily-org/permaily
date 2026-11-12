@@ -1,0 +1,29 @@
+{
+  "name": "mailbox-disconnected",
+  "to": "ada@example.com",
+  "subject": "A mailbox was disconnected from your Permaily account",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "A mailbox was disconnected from your Permaily account. Its address no longer accepts mail, and its mail is being deleted."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Turn forwarding to it off in Gmail, or Gmail will tell you that forwarding fails."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "note",
+      "text": "If this wasn't you, sign in at app.permaily.com, sign out the devices you don't know, and write to support@permaily.com."
+    }
+  ]
+}
