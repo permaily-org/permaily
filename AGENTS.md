@@ -16,10 +16,10 @@ Permaily runs an email access broker inside an AWS Nitro Enclave whose image any
 | [docs/acceptance.md](docs/acceptance.md) | When a change adds evidence for a criterion (update its row) |
 | [docs/releasing.md](docs/releasing.md) | Before merging into `main` or changing release workflows |
 | [docs/deploy.md](docs/deploy.md), [docs/operations.md](docs/operations.md) | Before touching infrastructure or production |
-| [docs/design.md](docs/design.md), [docs/web.md](docs/web.md), [docs/site.md](docs/site.md), [docs/accessibility.md](docs/accessibility.md) | Before changing the web app or the public site |
+| [docs/design.md](docs/design.md), [docs/web.md](docs/web.md), [docs/site.md](docs/site.md), [docs/accessibility.md](docs/accessibility.md) | Before changing the web app, the public site or the mail the service sends |
 | [docs/data.md](docs/data.md), [docs/legal.md](docs/legal.md) | Before storing user data or changing legal pages |
 
-Each layer has its own short AGENTS.md: [internal/](internal/AGENTS.md) (enclave service and host), [pkg/attestation/](pkg/attestation/AGENTS.md) (verifier), [web/](web/AGENTS.md) (web app), [site/](site/AGENTS.md) (public site), [packages/ui/](packages/ui/AGENTS.md) (shared tokens), [nix/](nix/AGENTS.md) (image build), [deploy/](deploy/AGENTS.md) (infrastructure).
+Each layer has its own short AGENTS.md: [internal/](internal/AGENTS.md) (enclave service and host), [pkg/attestation/](pkg/attestation/AGENTS.md) (verifier), [web/](web/AGENTS.md) (web app), [site/](site/AGENTS.md) (public site), [packages/ui/](packages/ui/AGENTS.md) (shared tokens), [packages/mail/](packages/mail/AGENTS.md) (the mail's design), [nix/](nix/AGENTS.md) (image build), [deploy/](deploy/AGENTS.md) (infrastructure).
 
 ## Commands
 
@@ -30,6 +30,7 @@ make fuzz                   # short fuzzing of the attestation parser
 nix build .#eif             # enclave image + pcrs.json (x86_64 or arm64 Linux)
 scripts/release-image.sh <tag> <dir>  # build a release's image (releases do not publish it) and check it against its attested pcrs.json
 bun run format              # Biome, whole repo
+cd packages/mail && bun run build  # write the mail's templates into internal/domain/mail/templates (bun run dev previews every message)
 ```
 
 ## Rules

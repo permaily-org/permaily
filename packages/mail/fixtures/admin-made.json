@@ -1,0 +1,25 @@
+{
+  "name": "admin-made",
+  "to": "ada@example.com",
+  "subject": "Your Permaily account is now an admin",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "Your Permaily account was made an admin of Permaily. It can manage the accounts and the invitations of the service in the admin panel at app.permaily.com, while it signs in with passkeys only."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "If you did not expect this, write to support@permaily.com."
+    }
+  ]
+}

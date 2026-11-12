@@ -1,6 +1,8 @@
 package accounts
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
@@ -8,12 +10,14 @@ import (
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/domain/mail"
 	"github.com/permaily-org/permaily/internal/idp"
 )
 
-// update writes the golden files of the messages again, from the code:
+// update writes the golden files of the messages and the fixtures of the
+// mail's preview again, from the code:
 //
-//	go test ./internal/services/accounts -run TestEveryMessageReadsAsItsGoldenText -update
+//	go test ./internal/services/accounts -run 'TestEveryMessageReadsAsItsGoldenText|TestThePreviewShowsWhatTheServiceSends' -update
 var update = flag.Bool("update", false, "write the golden files of the messages again")
 
 // Sample values of the messages: nobody's address, a made-up code and token.
@@ -120,5 +124,65 @@ func TestEveryMessageReadsAsItsGoldenText(t *testing.T) {
 	}
 	if len(files) != len(samples) {
 		t.Errorf("%d golden files for %d messages: remove the ones no message has", len(files), len(samples))
+	}
+}
+
+// fixtures is where the preview of the mail (packages/mail) and the checks of
+// its HTML (internal/domain/mail) read every message the service sends.
+var fixtures = filepath.Join("..", "..", "..", "packages", "mail", "fixtures")
+
+// fixture is a message as the preview reads it.
+type fixture struct {
+	Name    string       `json:"name"`
+	To      string       `json:"to"`
+	Subject string       `json:"subject"`
+	Blocks  []mail.Block `json:"blocks"`
+}
+
+// TestThePreviewShowsWhatTheServiceSends: the fixtures of the preview, and
+// of the checks of the HTML, are every message of sampleMails as the service
+// writes it, and nothing else.
+func TestThePreviewShowsWhatTheServiceSends(t *testing.T) {
+	samples := sampleMails()
+	for _, s := range samples {
+		got, err := json.MarshalIndent(fixture{s.name, s.mail.To, s.mail.Subject, s.mail.Blocks}, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, '\n')
+		path := filepath.Join(fixtures, s.name+".json")
+		if *update {
+			if err := os.WriteFile(path, got, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		want, err := os.ReadFile(path) //nolint:gosec // G304: a fixture of this repository
+		if err != nil {
+			t.Fatalf("%s: %v (write it with -update)", s.name, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s: the fixture is not what the service writes; run the test with -update", s.name)
+		}
+	}
+	files, err := filepath.Glob(filepath.Join(fixtures, "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != len(samples) {
+		t.Errorf("%d fixtures for %d messages: remove the ones no message has", len(files), len(samples))
+	}
+}
+
+// TestEveryMessageIsTextAndHTMLFromItsBlocks: the words of a message are its
+// blocks, and both parts are written from them.
+func TestEveryMessageIsTextAndHTMLFromItsBlocks(t *testing.T) {
+	for _, s := range sampleMails() {
+		if len(s.mail.Blocks) == 0 || s.mail.Text != mail.Text(s.mail.Blocks) {
+			t.Errorf("%s: the text is not its blocks'", s.name)
+		}
+		if s.mail.HTML == "" || s.mail.HTML != mail.HTML(s.mail.Subject, s.mail.Blocks) {
+			t.Errorf("%s: no HTML, or not its blocks'", s.name)
+		}
 	}
 }

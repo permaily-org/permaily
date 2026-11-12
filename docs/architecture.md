@@ -30,7 +30,7 @@ sending MTA ─STARTTLS───▶ EIP:25  ─▶ permaily-host ─────
 
   Every host serves `/attestation?nonce=<hex>`, `/status` (the KMS key that locks the root secret, and the TLS identity) and `/version`.
 - **Mail (F1)**: `internal/smtpd` (MX), `internal/inbox` (parse, Gmail confirmation codes, seal, serve), `internal/msgauth` (DKIM over DoH), `internal/keys` (the root secret that every data key is wrapped under, its handoff to the next release, KMS Recipient and CMS), `internal/envelope` (AES-256-GCM with key commitment), `internal/store` (DynamoDB and S3). Design: [plan.md](plan.md), ADR 0008 and 0009; data: [data.md](data.md).
-- **Accounts (F2)**: `internal/services/accounts` (sign-up by invitation, sign-in by mail, sessions; ADR 0017) and `internal/sesmail`, which sends the sign-in message through SES and reads from SES whether anyone else would be given a copy, sending only while nobody is (ADR 0021). An image whose configuration has no `mail_from` has no accounts.
+- **Accounts (F2)**: `internal/services/accounts` (sign-up by invitation, sign-in by mail, sessions; ADR 0017) and `internal/sesmail`, which sends the sign-in message, as text and HTML written from the same blocks (`internal/domain/mail`, ADR 0025), through SES and reads from SES whether anyone else would be given a copy, sending only while nobody is (ADR 0021). An image whose configuration has no `mail_from` has no accounts.
 - **permaily-host** (`cmd/permaily-host`): forwards TCP 443 and 25 to vsock, exposes an allowlisted HTTP CONNECT proxy on vsock 8000 for the enclave's outbound TLS, and serves the instance role credentials on vsock 8002.
 - **permaily-verify** (`cmd/permaily-verify`, `pkg/attestation`, `pkg/kmspolicy`, `pkg/certwatch`): verifier CLI and libraries. It checks the image, the TLS key, that the KMS key locking the root secret belongs to that image alone for good, how mail gets in, and whether a certificate for the hosts exists outside the enclave.
 - **Records that cannot go back** (`internal/store`, ADR 0016): each change of the TLS identity leaves a commit in an S3 bucket with Object Lock, and the enclave reads the record by its newest commit, so an earlier copy put back in the table is refused.
@@ -46,7 +46,7 @@ What F2 adds is written in four layers, each importing only the ones before it. 
 | Layer | Package | Holds |
 |---|---|---|
 | Contracts | `internal/contracts` | The types and error codes that cross the boundary, defined once for the API, MCP, the command line and the web app. Imports nothing of the service |
-| Domain | `internal/domain` | Rules that need nothing but their arguments: how long a session lasts, what an address or an invitation looks like. Imports only contracts |
+| Domain | `internal/domain` | Rules that need nothing but their arguments: how long a session lasts, what an address or an invitation looks like; and how a message is written, as text and HTML from one list of blocks (`internal/domain/mail`, ADR 0025). Imports only contracts |
 | Services | `internal/services/...` | The use cases: `accounts` (invitations, sign-in by email, sessions, ADR 0017). They reach storage and keys through `internal/store` and `internal/keys`, and know nothing of HTTP |
 | Adapters | `internal/httpapi`, later MCP and the command line; `internal/sesmail` for the mail a service sends | One thin translation each, so they all behave the same |
 

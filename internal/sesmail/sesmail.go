@@ -1,5 +1,5 @@
 // Package sesmail sends the service's own mail (sign-in messages, notices)
-// through Amazon SES. It makes the two calls it needs of the API v2,
+// through Amazon SES, as plain text and HTML in one simple message. It makes the two calls it needs of the API v2,
 // SendEmail and GetEmailIdentity, signed by hand: the whole SES client would
 // be compiled into the image for nothing.
 //
@@ -96,6 +96,9 @@ type sendEmail struct {
 			Subject content `json:"Subject"`
 			Body    struct {
 				Text content `json:"Text"`
+				// Html goes next to Text, and SES sends both as
+				// multipart/alternative. Absent when the message has none.
+				Html *content `json:"Html,omitempty"` //nolint:revive // SES's name
 			} `json:"Body"`
 		} `json:"Simple"`
 	} `json:"Content"`
@@ -116,6 +119,9 @@ func (s *Sender) Send(ctx context.Context, m accounts.Mail) error {
 	in.Destination.ToAddresses = []string{m.To}
 	in.Content.Simple.Subject = content{Data: m.Subject, Charset: "UTF-8"}
 	in.Content.Simple.Body.Text = content{Data: m.Text, Charset: "UTF-8"}
+	if m.HTML != "" {
+		in.Content.Simple.Body.Html = &content{Data: m.HTML, Charset: "UTF-8"}
+	}
 	body, err := json.Marshal(in)
 	if err != nil {
 		return errors.New("sesmail: the message cannot be written as JSON")

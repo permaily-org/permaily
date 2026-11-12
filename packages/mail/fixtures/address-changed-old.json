@@ -1,0 +1,29 @@
+{
+  "name": "address-changed-old",
+  "to": "ada@example.com",
+  "subject": "The contact address of your Permaily account changed",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "The contact address of your Permaily account was changed to another one. This address is no longer the account's: messages about the account, and signing in by email, go to the new address from now on."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "If it was you, there is nothing to do."
+    },
+    {
+      "kind": "paragraph",
+      "text": "If it was not you, write to support@permaily.com from this address as soon as you can."
+    }
+  ]
+}

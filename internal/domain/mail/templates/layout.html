@@ -1,0 +1,60 @@
+{{/* The page around a message. Written by packages/mail (bun run build) from its components: do not edit. */}}
+{{define "message"}}<!DOCTYPE html>
+<html dir="ltr" lang="en">
+  <head>
+    <meta content="text/html; charset=UTF-8" http-equiv="Content-Type" />
+    <meta name="x-apple-disable-message-reformatting" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="supported-color-schemes" content="light dark" />
+    <title>{{.Subject}}</title>
+    <style>
+      :root{color-scheme:light dark;supported-color-schemes:light dark}@media (prefers-color-scheme:dark){.pm-paper,body.pm-paper>table>tbody>tr>td{background-color:#111210!important}.pm-sunken{background-color:#0b0c0b!important}.pm-ink{color:#f1f1ec!important}.pm-ink-2{color:#ababa3!important}.pm-rule{border-color:#2a2b27!important}.pm-line{border-color:#f1f1ec!important}}@media (max-width:480px){.pm-frame{padding:24px 16px!important}.pm-code{font-size:34px!important;letter-spacing:4px!important;padding:16px!important}}
+    </style>
+  </head>
+  <body class="pm-paper" dir="ltr" lang="en" style="background-color:#f6f6f3;margin:0;padding:0">
+    <table
+      border="0"
+      width="100%"
+      cellpadding="0"
+      cellspacing="0"
+      role="presentation"
+      align="center">
+      <tbody>
+        <tr>
+          <td dir="ltr" lang="en" style="background-color:#f6f6f3;margin:0;padding:0">
+            <table
+              align="center"
+              width="100%"
+              class="pm-paper pm-frame"
+              border="0"
+              cellpadding="0"
+              cellspacing="0"
+              role="presentation"
+              style="max-width:560px;background-color:#f6f6f3">
+              <tbody>
+                <tr style="width:100%">
+                  <td style="padding:40px 24px">
+                    <p
+                      class="pm-ink"
+                      style="font-size:17px;line-height:20px;font-family:ui-sans-serif, system-ui, -apple-system, &#x27;Segoe UI&#x27;, Roboto, Helvetica, Arial, sans-serif;font-weight:600;letter-spacing:-0.3px;color:#131312;margin:0 0 20px;margin-top:0;margin-right:0;margin-bottom:20px;margin-left:0">
+                      Permaily
+                    </p>
+                    <hr
+                      class="pm-rule"
+                      style="width:100%;border:none;border-color:transparent;border-top:1px solid #deded8;margin:0 0 28px" />
+                    {{range .Blocks}}{{template "block" .}}{{end}}
+                    <hr
+                      class="pm-rule"
+                      style="width:100%;border:none;border-color:transparent;border-top:1px solid #deded8;margin:8px 0 0" />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </body>
+</html>
+{{end}}
+{{define "block"}}{{if eq .Kind "lead"}}{{template "lead" .}}{{else if eq .Kind "paragraph"}}{{template "paragraph" .}}{{else if eq .Kind "note"}}{{template "note" .}}{{else if eq .Kind "code"}}{{template "code" .}}{{else if eq .Kind "action"}}{{template "action" .}}{{else if eq .Kind "facts"}}{{template "facts" .}}{{end}}{{end}}

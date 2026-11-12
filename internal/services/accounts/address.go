@@ -9,6 +9,7 @@ import (
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain"
+	"github.com/permaily-org/permaily/internal/domain/mail"
 	"github.com/permaily-org/permaily/internal/store"
 )
 
@@ -92,9 +93,10 @@ func (s *Service) deliverCode(ctx context.Context, id, accountID, address string
 // carries a code and no link: the code is typed where the change was asked.
 func addressCodeMail(to, code string) Mail {
 	minutes := int(domain.EmailCodeLifetime / time.Minute)
-	return Mail{To: to, Subject: "Confirm your new address for Permaily", Text: fmt.Sprintf(
-		"Your code to make this the contact address of your Permaily account:\n\n    %s\n\nType it in Settings, where you asked for the change. It works once, for %d minutes. If you did not ask for it, ignore this message: nothing changes without the code.\n",
-		code, minutes)}
+	return compose(to, "Confirm your new address for Permaily",
+		mail.Lead("Your code to make this the contact address of your Permaily account:"),
+		mail.Code(code),
+		mail.Paragraph(fmt.Sprintf("Type it in Settings, where you asked for the change. It works once, for %d minutes. If you did not ask for it, ignore this message: nothing changes without the code.", minutes)))
 }
 
 // FinishAddressChange changes the contact address of the account behind a

@@ -1,0 +1,23 @@
+{
+  "name": "confirm",
+  "to": "ada@example.com",
+  "subject": "Confirm it is you on Permaily",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "Your code to confirm it is you on Permaily:"
+    },
+    {
+      "kind": "code",
+      "text": "428913"
+    },
+    {
+      "kind": "paragraph",
+      "text": "Type it where you were asked for it. It works once, for 10 minutes."
+    },
+    {
+      "kind": "paragraph",
+      "text": "If you did not ask for it, someone may be signed in to your account: sign in at app.permaily.com, open Settings and sign out the devices you do not know. Nothing changes without the code."
+    }
+  ]
+}

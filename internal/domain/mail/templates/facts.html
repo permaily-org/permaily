@@ -1,0 +1,50 @@
+{{/* A block of kind facts. Written by packages/mail (bun run build) from its components: do not edit. */}}
+{{define "facts"}}
+<table
+  align="center"
+  width="100%"
+  border="0"
+  cellpadding="0"
+  cellspacing="0"
+  role="presentation"
+  class="pm-rule"
+  style="border-top:1px solid #deded8;margin:0 0 24px">
+  <tbody>
+    <tr>
+      <td>
+        {{range .Facts}}
+        <table
+          align="center"
+          width="100%"
+          border="0"
+          cellpadding="0"
+          cellspacing="0"
+          role="presentation"
+          class="pm-rule"
+          style="border-bottom:1px solid #deded8">
+          <tbody style="width:100%">
+            <tr style="width:100%">
+              <td
+                class="pm-ink-2"
+                data-id="__react-email-column"
+                style="width:88px;vertical-align:top;padding:10px 12px 10px 0;font-family:ui-sans-serif, system-ui, -apple-system, &#x27;Segoe UI&#x27;, Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:22px;color:#5b5b55">
+                {{.Label}}
+              </td>
+              <td
+                class="pm-ink"
+                data-id="__react-email-column"
+                style="vertical-align:top;padding:10px 0;font-family:ui-sans-serif, system-ui, -apple-system, &#x27;Segoe UI&#x27;, Roboto, Helvetica, Arial, sans-serif;font-size:15px;line-height:22px;color:#131312">
+                {{if .Machine}}<span
+                  style="font-family:ui-monospace, Menlo, Consolas, &#x27;Liberation Mono&#x27;, monospace;font-size:14px"
+                  >{{.Value}}</span
+                >{{else}}{{.Value}}{{end}}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        {{end}}
+      </td>
+    </tr>
+  </tbody>
+</table>
+{{end}}
