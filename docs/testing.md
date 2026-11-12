@@ -64,7 +64,7 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `pkg/provenance` | 99 | 99.4 |
 | `internal/tlsacme` | 91 (with Pebble) | 92.1 (2026-11-12); the test of two enclaves started together moves it by a few tenths, run to run |
 | `internal/router` | 100 | 100.0 |
-| `internal/httpapi` | 97 | 97.5 (2026-11-12, PR #91's review) |
+| `internal/httpapi` | 97 | 97.7 (2026-11-12, with the operator's and admins' mailboxes) |
 | `internal/webui` | 75 | 75.0 |
 | `internal/hostproxy` | 77 | 77.2 (2026-11-12) |
 | `internal/enclave` | 87 | 87.7 |
@@ -77,7 +77,7 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `internal/contracts` | 100 | 100.0 (2026-11-11) |
 | `internal/domain` | 100 | 100.0 (2026-11-11) |
 | `internal/domain/mail` | 100 | 100.0 (2026-11-12) |
-| `internal/services/accounts` | 99 | 99.4 (2026-11-12, PR #91's review) |
+| `internal/services/accounts` | 99 | 99.3 (2026-11-12, with the operator's and admins' mailboxes) |
 | `internal/services/mailboxes` | 95 | 95.8 (2026-11-12, PR #91's review) |
 | `internal/sesmail` | 98 | 98.6 (2026-11-11) |
 | `internal/webauthn` | 99 | 99.4 (2026-11-11) |
