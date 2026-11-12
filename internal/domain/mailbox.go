@@ -70,25 +70,56 @@ func MailboxLabel(s string) bool {
 const AttachmentFilenameMax = 120
 
 // AttachmentFilename is the name an attachment is downloaded as: the name the
-// message gave it without any path, control or format characters, at most
-// AttachmentFilenameMax characters, and attachment-<index> when nothing is
-// left (ADR 0026, "What a message returns").
+// message gave it, which anyone who sends mail chooses, without any path,
+// control, format (bidirectional overrides among them) or line and paragraph
+// separator characters, quotes or the characters file systems refuse
+// (<>:|?*), trimmed of spaces and dots, at most AttachmentFilenameMax
+// characters, and attachment-<index> when nothing is left (ADR 0026, "What a
+// message returns"). A name that Windows reserves for a device (CON, PRN,
+// AUX, NUL, COM1 to COM9 and LPT1 to LPT9, superscript digits included, in
+// any case, with or without an extension) is prefixed with "_". An
+// executable or a double extension ("invoice.pdf.exe") is kept as it is:
+// the name is what the sender wrote, and the download is a file, never
+// opened by the app.
 func AttachmentFilename(name string, index int) string {
 	name = strings.ToValidUTF8(name, "")
 	name = strings.ReplaceAll(name, "\\", "/")
 	name = path.Base(name)
 	name = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '"' || r == '/' {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) || r == utf8.RuneError || strings.ContainsRune(`"/<>:|?*`, r) {
 			return -1
 		}
 		return r
 	}, name)
-	name = strings.TrimSpace(name)
+	name = strings.Trim(name, " .\t")
 	if r := []rune(name); len(r) > AttachmentFilenameMax {
-		name = string(r[:AttachmentFilenameMax])
+		name = strings.Trim(string(r[:AttachmentFilenameMax]), " .\t")
 	}
-	if name == "" || name == "." || name == ".." {
+	if windowsDevice(name) {
+		// After the cut, which can leave a device's name; the "_" stays
+		// when the end is cut again.
+		name = "_" + name
+		if r := []rune(name); len(r) > AttachmentFilenameMax {
+			name = strings.Trim(string(r[:AttachmentFilenameMax]), " .\t")
+		}
+	}
+	if name == "" {
 		return "attachment-" + strconv.Itoa(index)
 	}
 	return name
+}
+
+// windowsDevice reports whether Windows reads name as a device: its part
+// before the first dot, trailing spaces ignored, is a reserved device name.
+func windowsDevice(name string) bool {
+	stem, _, _ := strings.Cut(name, ".")
+	stem = strings.ToUpper(strings.TrimRight(stem, " "))
+	switch stem {
+	case "CON", "PRN", "AUX", "NUL":
+		return true
+	}
+	if r := []rune(stem); len(r) == 4 && (string(r[:3]) == "COM" || string(r[:3]) == "LPT") {
+		return r[3] >= '1' && r[3] <= '9' || r[3] == '¹' || r[3] == '²' || r[3] == '³'
+	}
+	return false
 }

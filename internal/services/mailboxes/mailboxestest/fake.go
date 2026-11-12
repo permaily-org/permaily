@@ -422,6 +422,30 @@ func (f *Fake) Update(ctx context.Context, c mailboxes.Caller, id string, in con
 	return &m, nil
 }
 
+// CheckChange implements httpapi.MailboxesService.
+func (f *Fake) CheckChange(ctx context.Context, c mailboxes.Caller, id string) error {
+	s, err := f.Accounts.Standing(ctx, c.Account)
+	if err != nil {
+		return err
+	}
+	if id == "" {
+		return refuse(s)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, err := f.own(c, id)
+	if err != nil {
+		return err
+	}
+	if err := refuse(s); err != nil {
+		return err
+	}
+	if b.unreadable() {
+		return contracts.ErrMailboxUnreadable
+	}
+	return nil
+}
+
 // Disconnect implements httpapi.MailboxesService.
 func (f *Fake) Disconnect(ctx context.Context, c mailboxes.Caller, id string) error {
 	if _, err := f.Accounts.Standing(ctx, c.Account); err != nil {
