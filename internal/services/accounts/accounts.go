@@ -34,7 +34,6 @@ import (
 	"log/slog"
 	"math/big"
 	"net/url"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -310,11 +309,8 @@ func randomString(alphabet string, n int) string {
 	return string(out)
 }
 
-// identifiers are taken out of the errors this package logs: logs leave the
-// enclave, and a store's error names the record it was about.
-var identifiers = regexp.MustCompile(`\b(acc|ses|att|cer|inv|mbx)_[a-z2-7]{26}`)
-
-func scrub(err error) string { return identifiers.ReplaceAllString(err.Error(), "${1}_…") }
+// scrub is what is logged of an error (domain.Redacted).
+func scrub(err error) string { return domain.Redacted(err) }
 
 func (s *Service) signingKey(ctx context.Context) ([]byte, error) {
 	key, err := s.cfg.Keys.Derive(ctx, signingPurpose)
