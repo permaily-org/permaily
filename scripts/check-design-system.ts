@@ -1,7 +1,8 @@
 // Enforces the design system on the web app (web/) and the public site (site/).
 //
 // Errors fail `make check`:
-//   - raw color values (hex, rgb, hsl, oklch) outside packages/ui/colors.css
+//   - raw color values (hex, rgb, hsl, oklch) outside packages/ui/colors.css and the providers' marks
+//     (the files directly in web/src/components/brands/: their colours are the providers', docs/design.md)
 //   - em dashes used as punctuation in copy ("word — word")
 // Warnings are reported but do not fail yet (TODO in docs/design.md):
 //   - arbitrary Tailwind values such as p-[13px]
@@ -16,6 +17,19 @@ const root = join(import.meta.dir, '..')
 const roots = ['web/src', 'site/src', 'web/index.html']
 const extensions = ['.ts', '.tsx', '.astro', '.css', '.html', '.md', '.mdx']
 const allowColorsIn = ['packages/ui/colors.css']
+// The providers' marks and what their guidelines fix for their sign-in buttons. Only the files directly in
+// this folder, not below it, and nowhere else in the app.
+const brands = 'web/src/components/brands/'
+
+function colorsAllowed(file: string): boolean {
+  if (allowColorsIn.includes(file)) return true
+  return (
+    file.startsWith(brands) &&
+    !file.slice(brands.length).includes('/') &&
+    /\.(tsx|css)$/.test(file) &&
+    !file.includes('..')
+  )
+}
 
 type Finding = { file: string; line: number; rule: string; text: string }
 
@@ -28,7 +42,7 @@ const rules: {
     name: 'raw color (use a token from packages/ui/colors.css)',
     level: 'error',
     test: (line, file) =>
-      !allowColorsIn.includes(file) &&
+      !colorsAllowed(file) &&
       !/\.mdx?$/.test(file) &&
       /(#[0-9a-fA-F]{3,8}\b(?![-\w]))|\b(rgba?|hsla?|oklch|oklab|lab|lch)\(/.test(
         // Ignore URL fragments and anchors such as href="#top".
@@ -51,6 +65,33 @@ const rules: {
     test: (line, file) => file.startsWith('web/') && /style=\{\{/.test(line),
   },
 ]
+
+// The exception for the providers' marks lets nothing else through: these cases run on every check.
+const cases: [file: string, line: string, fails: boolean][] = [
+  ['web/src/components/brands/marks.tsx', '<rect fill="#f25022" />', false],
+  ['web/src/components/brands/brands.css', '  color: #0866ff;', false],
+  ['web/src/components/brands/brands.css', '  fill: light-dark(#000000, #ffffff);', false],
+  ['packages/ui/colors.css', '  --ink: light-dark(#131312, #f1f1ec);', false],
+  ['web/src/components/ui/buttons.tsx', '<span className="text-[#0866ff]">', true],
+  ['web/src/pages/auth/ProviderSignIn.tsx', "const blue = '#0866ff'", true],
+  ['web/src/components/brands/more/marks.tsx', '<rect fill="#f25022" />', true],
+  ['web/src/components/brands/marks.ts.md', '<rect fill="#f25022" />', false],
+  ['web/src/components/brands/../ui/buttons.tsx', '<rect fill="#f25022" />', true],
+  ['web/src/components/brandsx/marks.tsx', '<rect fill="#f25022" />', true],
+  ['site/src/components/brands/marks.tsx', '<rect fill="#f25022" />', true],
+  ['web/src/components/brands/marks.tsx', 'style={{ color: rgb(0 0 0) }}', false],
+  ['web/src/pages/settings/signin/Providers.tsx', 'fill: rgb(0 0 0)', true],
+]
+const color = rules[0]
+const wrong = cases.filter(([file, line, fails]) => color.test(line, file) !== fails)
+if (wrong.length) {
+  for (const [file, line, fails] of wrong) {
+    console.log(
+      `design check: the colour rule ${fails ? 'lets through' : 'refuses'} ${file}: ${line}`,
+    )
+  }
+  process.exit(1)
+}
 
 function walk(path: string, out: string[]) {
   const full = join(root, path)
