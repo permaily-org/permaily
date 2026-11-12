@@ -1,6 +1,6 @@
 # 0022 Admins, and confirming again before a sensitive change
 
-Status: Accepted. Built (2026-11-12), not released yet.
+Status: Accepted. Built (2026-11-12); in production since v0.11.0 (2026-11-12).
 Date: 2026-11-12
 
 ## Context
