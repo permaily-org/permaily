@@ -53,7 +53,7 @@ var urlInputs = []struct {
 	{"https://sub-domain.example.co.uk/path;params?q=1&r=2#frag", false}, {"https://example.com/a//b", false},
 	{"https://example.com/../../a", false}, {"https://example.com/~!$&()*+,;=:@/", false},
 	{"https://shop.example/orders/100-2041?utm_source=email&utm_medium=receipt", false},
-	{"https://example.com/\u0000", false}, {"https://example.com/​", false}, {"https://xn--bcher-kva.example/", false},
+	{"https://example.com/\u0000", false}, {"https://example.com/\u200b", false}, {"https://xn--bcher-kva.example/", false},
 }
 
 func buildURLTable() urlTable {

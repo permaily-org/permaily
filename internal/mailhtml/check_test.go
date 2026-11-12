@@ -102,7 +102,7 @@ func checkElement(n *html.Node, inHead bool) error {
 	switch n.Data {
 	case "html":
 		for _, a := range n.Attr {
-			if a.Key != "lang" && a.Key != "dir" && a.Key != "translate" && !(a.Key == "style" && a.Val == canvasStyle) {
+			if a.Key != "lang" && a.Key != "dir" && a.Key != "translate" && (a.Key != "style" || a.Val != canvasStyle) {
 				return fmt.Errorf("html %s", a.Key)
 			}
 		}

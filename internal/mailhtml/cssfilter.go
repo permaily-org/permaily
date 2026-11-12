@@ -117,7 +117,7 @@ func (b *cssBudget) rules0(nodes []cssNode, out *strings.Builder, depth int) {
 		case !n.isBlock() && n.tok.Kind == cssAtKeyword:
 			// An at-rule: its prelude to a ";" or a {} block.
 			j := i + 1
-			for j < len(nodes) && !(nodes[j].block == cssLBrace) && !(nodes[j].tok.Kind == cssSemicolon && !nodes[j].isBlock()) {
+			for j < len(nodes) && nodes[j].block != cssLBrace && (nodes[j].tok.Kind != cssSemicolon || nodes[j].isBlock()) {
 				j++
 			}
 			prelude := nodes[i+1 : j]
@@ -224,7 +224,7 @@ func (b *cssBudget) declarations(nodes []cssNode, ctx cssContext) []cssDecl {
 	var out []cssDecl
 	for i := 0; i < len(nodes); {
 		j := i
-		for j < len(nodes) && !(nodes[j].tok.Kind == cssSemicolon && !nodes[j].isBlock()) {
+		for j < len(nodes) && (nodes[j].tok.Kind != cssSemicolon || nodes[j].isBlock()) {
 			j++
 		}
 		if d, ok := b.declaration(nodes[i:j], ctx); ok {
@@ -662,10 +662,10 @@ func fontSizeOK(t cssToken) bool {
 }
 
 func lineHeightOK(t cssToken) bool {
-	switch {
-	case t.Kind == cssNumber:
+	switch t.Kind {
+	case cssNumber:
 		return t.Num >= 1 && t.Num <= 3
-	case t.Kind == cssPercentage:
+	case cssPercentage:
 		return t.Num >= 100 && t.Num <= 300
 	}
 	switch strings.ToLower(t.Unit) {

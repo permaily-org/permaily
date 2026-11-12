@@ -143,10 +143,10 @@ func startsIdent(a, b, c rune) bool {
 }
 
 func startsNumber(a, b, c rune) bool {
-	switch {
-	case a == '+' || a == '-':
+	switch a {
+	case '+', '-':
 		return isDigit(b) || b == '.' && isDigit(c)
-	case a == '.':
+	case '.':
 		return isDigit(b)
 	}
 	return isDigit(a)
@@ -263,7 +263,7 @@ func (t *cssTokenizer) escape() rune {
 		if v == 0 || v > utf8.MaxRune || v >= 0xD800 && v <= 0xDFFF {
 			return utf8.RuneError
 		}
-		return rune(v)
+		return rune(v) //nolint:gosec // v is at most utf8.MaxRune, checked above
 	}
 	return c
 }
@@ -371,16 +371,16 @@ func (t *cssTokenizer) string(quote rune) cssToken {
 	var b strings.Builder
 	for {
 		c := t.advance()
-		switch {
-		case c == quote || c == -1:
+		switch c {
+		case quote, -1:
 			return cssToken{Kind: cssString, Value: b.String()}
-		case c == '\n':
+		case '\n':
 			t.i--
 			return cssToken{Kind: cssBadString}
-		case c == '\\':
-			switch p := t.peek(0); {
-			case p == -1:
-			case p == '\n':
+		case '\\':
+			switch t.peek(0) {
+			case -1:
+			case '\n':
 				t.advance()
 			default:
 				b.WriteRune(t.escape())

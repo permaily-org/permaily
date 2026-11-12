@@ -165,10 +165,10 @@ func treeBound(ctx context.Context, b []byte) (int, error) {
 			}
 			bound += 1 + active
 			a := atom.Lookup(name)
-			switch {
-			case a == atom.Svg || a == atom.Math:
+			switch a {
+			case atom.Svg, atom.Math:
 				foreign = true
-			case a == atom.Template:
+			case atom.Template:
 				templates++
 			}
 			// The parse runs with scripting off, where <noscript> holds

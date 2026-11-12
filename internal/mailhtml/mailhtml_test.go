@@ -94,7 +94,7 @@ func TestHostileCorpus(t *testing.T) {
 			// searched as text).
 			for _, v := range attributeValues(t, out) {
 				for _, word := range []string{"evil.example", "phish.example", "javascript", "alert(", "onerror"} {
-					if strings.Contains(strings.ToLower(v), word) && !(name[:2] == "16" && strings.HasPrefix(v, "/inbox/")) {
+					if strings.Contains(strings.ToLower(v), word) && (name[:2] != "16" || !strings.HasPrefix(v, "/inbox/")) {
 						t.Errorf("%q in an attribute: %.80q", word, v)
 					}
 				}
