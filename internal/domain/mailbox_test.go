@@ -75,6 +75,24 @@ func TestAttachmentFilename(t *testing.T) {
 		"line\u2028sep\u2029.txt": "linesep.txt",
 		"trailing. . ":            "trailing",
 		"\ufffdx":                 "x",
+		// Windows' reserved device names, with or without an extension, in
+		// any case; executable and double extensions are kept as they are.
+		"CON":             "_CON",
+		"con.txt":         "_con.txt",
+		"Nul.tar.gz":      "_Nul.tar.gz",
+		"aux":             "_aux",
+		"PRN.pdf":         "_PRN.pdf",
+		"COM1":            "_COM1",
+		"com9.log":        "_com9.log",
+		"LPT1.txt":        "_LPT1.txt",
+		"lpt9":            "_lpt9",
+		"CON .txt":        "_CON .txt",
+		"COM0":            "COM0",
+		"COM10.txt":       "COM10.txt",
+		"CONSOLE.txt":     "CONSOLE.txt",
+		"icon.txt":        "icon.txt",
+		"invoice.pdf.exe": "invoice.pdf.exe",
+		"setup.exe":       "setup.exe",
 	} {
 		if got := AttachmentFilename(in, 3); got != want {
 			t.Errorf("%q: %q, want %q", in, got, want)
