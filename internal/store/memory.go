@@ -102,6 +102,14 @@ func (s *Memory) GetMailbox(_ context.Context, id string) (*Mailbox, error) {
 func (s *Memory) PutMailbox(_ context.Context, m *Mailbox) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	old, ok := s.mailboxes[m.ID]
+	switch {
+	case m.Version == 0 && ok:
+		return ErrExists
+	case m.Version != 0 && (!ok || old.Version != m.Version):
+		return ErrConflict
+	}
+	m.Version++
 	s.mailboxes[m.ID] = *m
 	return nil
 }

@@ -28,3 +28,4 @@ Architecture Decision Records. Each one records the context, the options conside
 | [0021](0021-watch-the-copies-of-outgoing-mail.md) | Watch who else gets a copy of the mail the enclave sends | Accepted |
 | [0022](0022-admins-and-confirming-again.md) | Admins, and confirming again before a sensitive change | Accepted, not released |
 | [0023](0023-releases-publish-the-measurements-not-the-image.md) | Releases publish the image's measurements, not the image | Accepted |
+| [0024](0024-two-enclaves-share-one-tls-identity.md) | Two enclaves share one TLS identity and answer each other's ACME challenge | Accepted, not released |

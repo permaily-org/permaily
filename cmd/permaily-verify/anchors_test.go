@@ -78,3 +78,26 @@ func TestPrintAnchors(t *testing.T) {
 		t.Errorf("warnings:\n%s", out.String())
 	}
 }
+
+// Two enclaves behind one address answer the requests of one run, each from
+// what it read since it started: one may have read the TLS identity at a
+// later version than the other, and the operator's counts differ. Each answer
+// is checked on its own and both pass.
+func TestTwoEnclavesAnswerOneRun(t *testing.T) {
+	now := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+	locked := now.Add(3650 * 24 * time.Hour)
+	tls := &attestation.TLSStatus{SPKISHA256: "cafe", KeyCreatedAt: now.Add(-30 * 24 * time.Hour), Sealed: true, ACMEAccount: "https://acme.test/acct/1"}
+	of := func(version uint64, actions int) *attestation.Status {
+		return &attestation.Status{
+			Commit: "abc", TLS: tls,
+			Anchors: &attestation.AnchorStatus{Bucket: "anchors", RetentionDays: 3650, Records: []attestation.AnchoredRecord{{Name: "tls-acme-v02.api.letsencrypt.org", Version: version, CommittedAt: now, LockedUntil: locked}}},
+			Admin:   &attestation.AdminStatus{Since: now, Actions: map[string]int{"block": actions}},
+		}
+	}
+	host := hostResult{URL: "https://app.permaily.test", SPKIHash: "cafe"}
+	for _, st := range []*attestation.Status{of(7, 0), of(5, 2)} {
+		if r := checkStatus(st, host, "", kmsOptions{now: now}); !r.OK || r.Error != "" {
+			t.Fatalf("one enclave's answer: %+v", r)
+		}
+	}
+}
