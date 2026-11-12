@@ -32,6 +32,7 @@ import (
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/smtpd"
 	"github.com/permaily-org/permaily/internal/webui"
+	"github.com/permaily-org/permaily/pkg/attestation"
 	"github.com/permaily-org/permaily/pkg/provenance"
 )
 
@@ -153,8 +154,11 @@ func run(cfg config, log *slog.Logger) error {
 		}
 		app.Handle("/", webui.Handler())
 		byHost[hosts.App] = app
-		api.Handle("/v1/admin/invitations", httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Invitations(p.accounts, log)))
-		// The operator's tool looks at accounts and changes none.
+		invitations := httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Invitations(p.accounts, log))
+		api.Handle("/v1/admin/invitations", invitations)
+		api.Handle("/v1/admin/invitations/", invitations)
+		// The operator's tool: it looks at accounts, blocks, asks to delete and
+		// signs devices out, and changes no address and no way to sign in.
 		operator := httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Accounts(p.accounts, log))
 		api.Handle("/v1/admin/accounts", operator)
 		api.Handle("/v1/admin/accounts/", operator)
@@ -193,9 +197,18 @@ func run(cfg config, log *slog.Logger) error {
 		}()
 	}
 
+	status := httpapi.StatusSources{Root: p.rootStatus, TLS: p.certs.Status, Sigstore: p.sigstore, Anchors: p.anchors, Mail: p.mail}
+	if p.accounts != nil {
+		// What the operator did to accounts through this enclave: kinds and
+		// counts, never an account.
+		status.Admin = func() *attestation.AdminStatus {
+			since, actions := p.accounts.OperatorActions()
+			return &attestation.AdminStatus{Since: since, Actions: actions}
+		}
+	}
 	common := map[string]http.Handler{
 		"/attestation": httpapi.Attestation(p.attester, p.certs.UserData),
-		"/status":      httpapi.Status(httpapi.StatusSources{Root: p.rootStatus, TLS: p.certs.Status, Sigstore: p.sigstore, Anchors: p.anchors, Mail: p.mail}),
+		"/status":      httpapi.Status(status),
 		"/version":     httpapi.Version(),
 	}
 	srv := &http.Server{

@@ -1,6 +1,10 @@
 /**
  * What to call a browser, from what it says of itself (its User-Agent). The server keeps that text for each
  * session; a person recognises "Firefox on Mac", not the text. Nothing here is exact, and nothing rests on it.
+ *
+ * The notice by mail of a new device names the browser with the same two tables, in Go: `DeviceName` in
+ * internal/domain/accounts.go. Change both together: TestDeviceNameMatchesTheWebApp reads this file and fails
+ * when they differ.
  */
 
 const browsers: Array<[RegExp, string]> = [

@@ -6,6 +6,7 @@
 package domain
 
 import (
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -274,4 +275,109 @@ func AppPath(s string) string {
 		return ""
 	}
 	return s
+}
+
+// MaxInvitationsListed is how many invitations the operator's tool is shown.
+const MaxInvitationsListed = 1000
+
+// AddressChangesPerHour is how many times an account may ask, in an hour, for
+// the message that proves a new contact address.
+const AddressChangesPerHour = 5
+
+// Devices (ADR 0017). A browser that signed in keeps a cookie of its own, and
+// an account keeps which devices signed in to it, to tell its person of a
+// sign-in from one that had not.
+const (
+	// DeviceLifetime is how long a device is known to an account after it
+	// last signed in to it, and how long the browser keeps the cookie.
+	DeviceLifetime = 365 * 24 * time.Hour
+	// MaxDevices is how many devices an account keeps; the one that signed in
+	// longest ago goes when another signs in.
+	MaxDevices = 50
+	// deviceToken is how long the value of a device's cookie is: 32 random
+	// bytes in base64url without padding.
+	deviceToken = 43
+)
+
+// DeviceToken reports whether s can be the value of a device's cookie.
+func DeviceToken(s string) bool {
+	if len(s) != deviceToken {
+		return false
+	}
+	for i := range len(s) {
+		c := s[i]
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+// The names a browser and a system are given, in the order they are tried:
+// the first that matches is the one. They are those of describeDevice in
+// web/src/lib/device.ts, which the list of sessions shows, written the same
+// way (TestDeviceNameMatchesTheWebApp compares them): change both together.
+var (
+	browserNames = []namePattern{
+		{`\bEdg(e|A|iOS)?\/`, "Edge"},
+		{`\b(OPR|OPT)\/`, "Opera"},
+		{`\bSamsungBrowser\/`, "Samsung Internet"},
+		{`\b(Firefox|FxiOS)\/`, "Firefox"},
+		{`\b(Chrome|CriOS|Chromium)\/`, "Chrome"},
+		{`\bSafari\/`, "Safari"},
+	}
+	systemNames = []namePattern{
+		{`\biPhone\b`, "iPhone"},
+		{`\biPad\b`, "iPad"},
+		{`\bAndroid\b`, "Android"},
+		{`\bWindows\b`, "Windows"},
+		{`\bCrOS\b`, "ChromeOS"},
+		{`\b(Macintosh|Mac OS X)\b`, "Mac"},
+		{`\b(Linux|X11)\b`, "Linux"},
+	}
+	browserPatterns = compileNames(browserNames)
+	systemPatterns  = compileNames(systemNames)
+)
+
+// namePattern is a pattern of a User-Agent, written as JavaScript writes it,
+// and the name it stands for.
+type namePattern struct{ pattern, name string }
+
+type compiledName struct {
+	re   *regexp.Regexp
+	name string
+}
+
+func compileNames(table []namePattern) []compiledName {
+	out := make([]compiledName, len(table))
+	for i, n := range table {
+		out[i] = compiledName{regexp.MustCompile(n.pattern), n.name}
+	}
+	return out
+}
+
+func firstName(table []compiledName, userAgent string) string {
+	for _, n := range table {
+		if n.re.MatchString(userAgent) {
+			return n.name
+		}
+	}
+	return ""
+}
+
+// DeviceName names a browser from what it said of itself (its User-Agent),
+// with fixed words only: "Firefox on Mac", the browser alone or the system
+// alone, and "" when neither is recognised. Whoever signs in chooses that
+// text, and a notice by mail goes to the account's person: so nothing of it
+// is repeated, only the name it matches.
+func DeviceName(userAgent string) string {
+	browser, system := firstName(browserPatterns, userAgent), firstName(systemPatterns, userAgent)
+	switch {
+	case browser != "" && system != "":
+		return browser + " on " + system
+	case browser != "":
+		return browser
+	default:
+		return system
+	}
 }

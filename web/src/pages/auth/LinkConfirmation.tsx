@@ -3,6 +3,7 @@ import { Button } from '../../components/ui/index.ts'
 import { errorCode } from '../../lib/api.ts'
 import { useSession } from '../../lib/session.tsx'
 import { AuthLayout } from './AuthLayout.tsx'
+import { BlockedWords } from './Blocked.tsx'
 import { linkHeadlines, messageFor } from './messages.ts'
 
 /** The headline of a screen that appears by itself: it takes focus, so a screen reader starts there. */
@@ -134,8 +135,8 @@ export function LinkConfirmation() {
 }
 
 /**
- * The person said yes, the link had ended meanwhile, and this browser is in another account: it says so
- * instead of opening the app as if the link had worked.
+ * The person said yes, the link had ended meanwhile or its account is blocked, and this browser is in another
+ * account: it says so instead of opening the app as if the link had worked.
  */
 export function LinkEnded() {
   const { state, linkProblem, clearLinkProblem } = useSession()
@@ -153,7 +154,12 @@ export function LinkEnded() {
         {title}
       </FocusedHeadline>
       <p id="link-ended" className="mt-3 text-body text-ink-2">
-        {linkProblem === 'expired' ? 'A link works once, and for a short time. ' : ''}
+        {linkProblem === 'expired' && 'A link works once, and for a short time. '}
+        {linkProblem === 'blocked' && (
+          <>
+            <BlockedWords />{' '}
+          </>
+        )}
         This browser is still signed in as <Address>{state.me.account.address}</Address>.
       </p>
       <Button className="mt-8" onClick={clearLinkProblem}>

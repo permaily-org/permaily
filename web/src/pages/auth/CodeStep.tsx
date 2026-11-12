@@ -25,31 +25,14 @@ export function sentTo(address: string, answer: EmailStarted): Sent {
 
 const codeDigits = 6
 
-/**
- * The step that asks for the six-digit code of a message: for signing in or up by mail, and for confirming
- * an address after a provider that did not vouch for one. What the code ends, and what the screen says of
- * it, come from whoever uses the step. The code lives only in this step's memory.
- */
-export function CodeStep({
-  sent,
-  intro,
-  purpose,
-  hint,
-  footnote,
-  submitLabel,
-  finish,
-  ended,
-  sendAnother,
-  notSent,
-  onBack,
-}: {
+type CodeFormProps = {
   sent: Sent
   /** What was sent and where, before how long it works for. */
   intro: ReactNode
   /** What the code ends, when that is more than signing in by mail. */
   purpose?: string
   /** Under the field: what to do with a message that has no code. */
-  hint: string
+  hint?: string
   /** Under the form: what else the person may need to know. */
   footnote?: ReactNode
   submitLabel: string
@@ -62,7 +45,40 @@ export function CodeStep({
   /** Its own words for why another message was not sent, when the usual ones do not fit. */
   notSent?: (failure: ApiErrorCode) => string | undefined
   onBack: () => void
-}) {
+}
+
+/**
+ * The step that asks for the six-digit code of a message, as a screen of its own: for signing in or up by
+ * mail, and for confirming an address after a provider that did not vouch for one.
+ */
+export function CodeStep(props: CodeFormProps) {
+  return (
+    <AuthLayout title="Check your mail">
+      <Headline size="display-s">Check your mail</Headline>
+      <CodeForm {...props} />
+    </AuthLayout>
+  )
+}
+
+/**
+ * What asks for the six-digit code of a message, under whatever heading it is put: the sign-in screens
+ * (`CodeStep`) and the dialog that changes the contact address in Settings. What the code ends, and what is
+ * said of it, come from whoever uses it. A wrong code, too many tries and a code whose time has passed read
+ * the same everywhere. The code lives only in this form's memory.
+ */
+export function CodeForm({
+  sent,
+  intro,
+  purpose,
+  hint,
+  footnote,
+  submitLabel,
+  finish,
+  ended,
+  sendAnother,
+  notSent,
+  onBack,
+}: CodeFormProps) {
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
@@ -133,8 +149,7 @@ export function CodeStep({
   }
 
   return (
-    <AuthLayout title="Check your mail">
-      <Headline size="display-s">Check your mail</Headline>
+    <>
       <p id="code-intro" className="mt-3 text-body text-ink-2">
         {intro}{' '}
         {expired
@@ -184,6 +199,6 @@ export function CodeStep({
           Use another address
         </TextAction>
       </div>
-    </AuthLayout>
+    </>
   )
 }

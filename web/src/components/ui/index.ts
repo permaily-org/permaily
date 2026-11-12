@@ -1,4 +1,11 @@
-export { Button, ButtonAnchor, ButtonLink, TextAction, TextLink } from './buttons.tsx'
+export {
+  Button,
+  ButtonAnchor,
+  ButtonLink,
+  TextAction,
+  TextAnchor,
+  TextLink,
+} from './buttons.tsx'
 export {
   Checkbox,
   FilterButton,

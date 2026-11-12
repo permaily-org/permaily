@@ -181,18 +181,43 @@ Signing up needs an invitation: a code that works once, for thirty days, for one
 scripts/invite.sh        # one; scripts/invite.sh 5 for five, at most 100 at a time
 ```
 
-It prints each code once (the enclave keeps only its hash) and reads the admin token from `~/.config/permaily/admin-token`. Give the person the code, or the link `https://app.permaily.com/sign-up?invitation=<code>`. Whoever holds the admin token decides who may sign up, and nothing else of an account. An invitation that was not used cannot be taken back; it ends by itself.
-
-## See the accounts
+It prints each code once, on standard output (the enclave keeps only its hash), and reads the admin token from `~/.config/permaily/admin-token`. Give the person the code, or the link `https://app.permaily.com/sign-up?invitation=<code>`. It also prints, on standard error and in the same order, the identifier of each invitation (`inv_...`): what it is listed and revoked by. An identifier is not the code, and the code cannot be had from it.
 
 ```sh
-scripts/accounts.sh               # every account: identifier, address, name, state, passkeys, sessions
-scripts/accounts.sh acc_...       # one
+scripts/invite.sh list                # the ones not used yet: identifier, when made, when it ends
+scripts/invite.sh revoke inv_...      # makes one of no use; asks for a "yes" unless --yes follows
 ```
 
-It asks the enclave (`GET /v1/admin/accounts`, with the admin token from `~/.config/permaily/admin-token`), which answers from the signed records: the table in DynamoDB shows what is stored, this shows what the enclave accepts. It changes nothing. `unreadable` counts accounts in the list whose record could not be read or does not verify: more than zero means the storage was changed by hand or is failing, and the enclave's log says which kind without naming the account.
+An invitation that was used is deleted when it is used, so the list does not show it: the list is what is still waiting. One that is revoked is gone the same way, and a sign-up that was started with it fails. The invitations made by v0.10.0 and earlier have no identifier: they are not listed, cannot be revoked, and end by themselves thirty days after they were made.
 
-A person deletes their own account, from Settings; it is removed seven days later, within ten minutes of the moment it is due, or as soon as it is next used. Until then they can sign in and cancel. There is no way to delete an account for someone, and none to bring one back.
+## See and manage the accounts
+
+```sh
+scripts/accounts.sh                       # every account: identifier, address, name, state, passkeys, sessions
+scripts/accounts.sh acc_...               # one
+scripts/accounts.sh find ana@example.org  # the account of exactly that address
+scripts/accounts.sh stats                 # how many, by state
+```
+
+It asks the enclave (`GET /v1/admin/accounts`, with the admin token from `~/.config/permaily/admin-token`), which answers from the signed records: the table in DynamoDB shows what is stored, this shows what the enclave accepts. `unreadable` counts accounts in the list whose record could not be read or does not verify: more than zero means the storage was changed by hand or is failing, and the enclave's log says which kind without naming the account. `stats` reads the whole list a page at a time and counts: active, closing (asked by the person or by the operator), blocked, and a few more.
+
+```sh
+scripts/accounts.sh block <account>            # nobody signs in to it, and every device is signed out
+scripts/accounts.sh unblock <account>
+scripts/accounts.sh delete <account>           # removed in seven days, unless that is cancelled
+scripts/accounts.sh cancel <account>           # cancels a deletion, whoever asked for it
+scripts/accounts.sh close-sessions <account>   # signs every device out, and nothing else
+```
+
+`<account>` is an identifier or the account's address. Each of these reads the account from the enclave first, says what it will do and to which account (address and identifier), and asks for a `yes`; `--yes` after the account skips the question.
+
+- **Block** when an account is being misused or was taken over. Its person is told by mail, and when they sign in and prove who they are they are told the account is blocked and to write to support@permaily.com. Nothing says so before that proof, so nobody else learns of it. Blocking is apart from deleting: a blocked account stays as it is until it is unblocked or removed.
+- **Delete** is what a person does from Settings, asked for them: the account is closing for seven days and then removed with everything in it, within ten minutes of the moment it is due or as soon as it is next used. The person is told by mail, sees who asked, and can cancel from the app unless the account is blocked. There is no way to bring a removed account back.
+- **Close sessions** when a device was lost: the person signs in again.
+
+What cannot be done, on purpose (ADR 0017): change an account's contact address, add or remove a passkey or a provider, turn "passkey only" off, or sign in as someone. Each would be a way into the account. So someone who lost their mail, their passkeys and their recovery codes cannot be given the account back: support can block it and delete it, and the person signs up again. A person changes their own address in Settings, with a code sent to the new one.
+
+Everything done here is counted by the enclave, by its kind and never by account, on `/status` (`admin`), which `permaily-verify` prints twice an hour for anyone, and is logged by its kind. A restart starts the count again.
 
 ## Sign-in with Google, GitHub, Meta and Microsoft
 

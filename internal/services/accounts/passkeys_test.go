@@ -76,7 +76,7 @@ func (w *world) assert(auth *webauthntest.Authenticator, id []byte) contracts.Pa
 
 func (w *world) signInWith(auth *webauthntest.Authenticator, id []byte) (*contracts.Me, string, error) {
 	w.t.Helper()
-	return w.svc.FinishPasskeySignIn(context.Background(), w.assert(auth, id), "passkey device")
+	return w.svc.FinishPasskeySignIn(context.Background(), w.assert(auth, id), Browser{UserAgent: "passkey device"})
 }
 
 // passkeyOnly turns "passkey only" on and returns the recovery codes.
@@ -90,7 +90,7 @@ func (w *world) passkeyOnly(who *Authenticated) []string {
 }
 
 func (w *world) recover(address, code string) (*contracts.Me, string, error) {
-	return w.svc.Recover(context.Background(), contracts.Recovery{Address: address, Code: code}, "recovered device")
+	return w.svc.Recover(context.Background(), contracts.Recovery{Address: address, Code: code}, Browser{UserAgent: "recovered device"})
 }
 
 // newest returns the name the newest version of an account's record is
@@ -206,7 +206,7 @@ func TestPasskeys(t *testing.T) {
 	}
 	for i, auth := range auths {
 		in := w.assert(auth, made[i].ID)
-		signed, passkeyCookie, err := w.svc.FinishPasskeySignIn(ctx, in, "passkey device")
+		signed, passkeyCookie, err := w.svc.FinishPasskeySignIn(ctx, in, Browser{UserAgent: "passkey device"})
 		if err != nil || signed.Account.ID != me.Account.ID || !signed.Session.Current || signed.Session.Device != "passkey device" {
 			t.Fatalf("signing in with passkey %d: %+v %v", i, signed, err)
 		}
@@ -215,7 +215,7 @@ func TestPasskeys(t *testing.T) {
 			t.Fatalf("the session of passkey %d: %+v", i, got)
 		}
 		// The answer worked once.
-		if _, _, err := w.svc.FinishPasskeySignIn(ctx, in, ""); !errors.Is(err, contracts.ErrInvalidPasskey) {
+		if _, _, err := w.svc.FinishPasskeySignIn(ctx, in, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidPasskey) {
 			t.Fatalf("the same answer again: %v", err)
 		}
 	}
@@ -497,7 +497,7 @@ func TestPasskeyRefusals(t *testing.T) {
 	sessions, _ := w.svc.sessions(ctx, me.Account.ID)
 	for name, make := range assertions {
 		in := make()
-		got, cookie, err := w.svc.FinishPasskeySignIn(ctx, in, "")
+		got, cookie, err := w.svc.FinishPasskeySignIn(ctx, in, Browser{UserAgent: ""})
 		if got != nil || cookie != "" || !errors.Is(err, contracts.ErrInvalidPasskey) || err.Error() != contracts.ErrInvalidPasskey.Error() {
 			t.Errorf("signing in with %s: %+v, %v", name, got, err)
 		}
@@ -512,7 +512,7 @@ func TestPasskeyRefusals(t *testing.T) {
 	wrong2 := right2
 	wrong2.Credential.Response.Signature = []byte("nope")
 	for _, in := range []contracts.PasskeySignIn{wrong2, right2} {
-		if _, _, err := w.svc.FinishPasskeySignIn(ctx, in, ""); !errors.Is(err, contracts.ErrInvalidPasskey) {
+		if _, _, err := w.svc.FinishPasskeySignIn(ctx, in, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidPasskey) {
 			t.Fatalf("a sign-in tried twice: %v", err)
 		}
 	}
@@ -527,7 +527,7 @@ func TestPasskeyRefusals(t *testing.T) {
 	if !strings.Contains(logs, "a passkey that was made was refused") || !strings.Contains(logs, "a sign-in with a passkey was refused") || !strings.Contains(logs, `why="webauthn: answer refused: `) {
 		t.Fatalf("the logs do not say why an answer was refused:\n%s", logs)
 	}
-	line := regexp.MustCompile(`^time=\S+ level=INFO msg="accounts: [a-z -]+"( why="webauthn: answer refused: [a-zA-Z ,'-]+")?$`)
+	line := regexp.MustCompile(`^time=\S+ level=INFO msg="accounts: [a-z -]+"( why="webauthn: answer refused: [a-zA-Z ,'-]+"| kind=[a-z_]+ count=\d+)?$`)
 	for _, l := range strings.Split(strings.TrimSpace(logs), "\n") {
 		if !line.MatchString(l) {
 			t.Errorf("a log line with more than fixed words: %s", l)
@@ -633,7 +633,7 @@ func TestPasskeyOnly(t *testing.T) {
 	}
 
 	// The sign-in that was waiting is refused, with its right code and link.
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("a sign-in by mail started before passkey only: %v", err)
 	}
 	// A new one answers as always and sends nothing, with an invitation or without.
@@ -692,7 +692,7 @@ func TestPasskeyOnly(t *testing.T) {
 	if mail == nil {
 		t.Fatal("no message after passkey only was turned off")
 	}
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, ""); err != nil {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); err != nil {
 		t.Fatalf("signing in by mail again: %v", err)
 	}
 	if err := w.svc.RemovePasskey(ctx, who, second.ID.String()); err != nil {
@@ -993,7 +993,7 @@ func TestPasskeysWrittenByHand(t *testing.T) {
 	earlier := w.assert(auth, removed.ID)
 	earlier.Credential.Response.UserHandle = []byte(strings.TrimPrefix(withIt.Name, "account-"))
 	names := len(w.mem.RecordNames())
-	if me, got, err = w.svc.FinishPasskeySignIn(ctx, earlier, ""); !errors.Is(err, contracts.ErrInvalidPasskey) || me != nil || got != "" || len(w.mem.RecordNames()) != names {
+	if me, got, err = w.svc.FinishPasskeySignIn(ctx, earlier, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidPasskey) || me != nil || got != "" || len(w.mem.RecordNames()) != names {
 		t.Fatalf("an earlier copy of the record named as the account: %v", err)
 	}
 	// With the newest version deleted, the one before it is the last in the table.
@@ -1170,13 +1170,13 @@ func TestPasskeyFailures(t *testing.T) {
 		e := setup(t, false)
 		in, before := e.w.assert(e.auth, e.made.ID), sessions(e)
 		e.f.fail[op] = down
-		me, cookie, err := e.w.svc.FinishPasskeySignIn(ctx, in, "")
+		me, cookie, err := e.w.svc.FinishPasskeySignIn(ctx, in, Browser{UserAgent: ""})
 		if me != nil || cookie != "" || !errors.Is(err, down) || sessions(e) != before {
 			t.Errorf("%s down: signing in with a passkey: %+v %v", op, me, err)
 		}
 		// The ceremony ended with the failure: the same answer is not tried again.
 		e.f.fail = map[string]error{}
-		if _, _, err := e.w.svc.FinishPasskeySignIn(ctx, in, ""); !errors.Is(err, contracts.ErrInvalidPasskey) {
+		if _, _, err := e.w.svc.FinishPasskeySignIn(ctx, in, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidPasskey) {
 			t.Errorf("%s down: the answer again: %v", op, err)
 		}
 	}
@@ -1256,7 +1256,7 @@ func TestPasskeyFailures(t *testing.T) {
 	e = setup(t, false)
 	attempt, mail := e.w.start("ana@example.org", "")
 	e.f.fail["get record"] = down
-	if _, _, err := e.w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, ""); !errors.Is(err, down) {
+	if _, _, err := e.w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, down) {
 		t.Errorf("get record down: finishing a sign-in by mail: %v", err)
 	}
 

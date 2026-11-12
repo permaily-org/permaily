@@ -39,6 +39,7 @@ export type Account = {
   language: string
   created_at: string
   closes_at?: string
+  closing_by?: 'person' | 'operator'
 }
 
 export const ana: Account = {

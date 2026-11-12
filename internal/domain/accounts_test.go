@@ -3,6 +3,10 @@ package domain
 import (
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -193,5 +197,105 @@ func TestProviderWords(t *testing.T) {
 	}
 	if ProviderLifetime != 10*time.Minute || ProviderConfirmLifetime != 20*time.Minute {
 		t.Errorf("a trip to a provider takes %v, confirming %v", ProviderLifetime, ProviderConfirmLifetime)
+	}
+}
+
+func TestDevices(t *testing.T) {
+	if DeviceLifetime != 365*24*time.Hour || MaxDevices != 50 {
+		t.Errorf("a device is known for %v, and an account keeps %d", DeviceLifetime, MaxDevices)
+	}
+	for _, in := range []string{strings.Repeat("a", 43), "AZaz09-_" + strings.Repeat("0", 35)} {
+		if !DeviceToken(in) {
+			t.Errorf("token %q refused", in)
+		}
+	}
+	for _, in := range []string{"", strings.Repeat("a", 42), strings.Repeat("a", 44), strings.Repeat("a", 42) + "=", strings.Repeat("a", 42) + ".", strings.Repeat("a", 42) + " ", strings.Repeat("a", 42) + "\x00", strings.Repeat("a", 42) + "{"} {
+		if DeviceToken(in) {
+			t.Errorf("token %q accepted", in)
+		}
+	}
+}
+
+// A browser is named from fixed words: whatever else it says of itself, which
+// whoever signs in chooses, is not repeated.
+func TestDeviceName(t *testing.T) {
+	for in, want := range map[string]string{
+		// Every row of the two tables.
+		"Edge/1":              "Edge",
+		"Edg/142":             "Edge",
+		"EdgA/142":            "Edge",
+		"EdgiOS/142":          "Edge",
+		"OPR/120":             "Opera",
+		"OPT/5":               "Opera",
+		"SamsungBrowser/28.0": "Samsung Internet",
+		"Firefox/145.0":       "Firefox",
+		"FxiOS/145.0":         "Firefox",
+		"Chrome/142.0.0.0":    "Chrome",
+		"CriOS/142.0":         "Chrome",
+		"Chromium/142.0":      "Chrome",
+		"Safari/605.1.15":     "Safari",
+		"(iPhone)":            "iPhone",
+		"(iPad)":              "iPad",
+		"(Android 14)":        "Android",
+		"(Windows NT 10.0)":   "Windows",
+		"(CrOS x86_64)":       "ChromeOS",
+		"(Macintosh)":         "Mac",
+		"Mac OS X 10_15_7":    "Mac",
+		"(Linux x86_64)":      "Linux",
+		"(X11)":               "Linux",
+		// Browsers as they say it: the first row that matches is the one.
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0":              "Edge on Windows",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36":                            "Chrome on Windows",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 OPR/120.0":            "Opera on Mac",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15":                      "Safari on Mac",
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1":    "Safari on iPhone",
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/142.0 Mobile/15E148 Safari/604.1":     "Chrome on iPhone",
+		"Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/145.0 Mobile/15E148 Safari/605.1.15":           "Firefox on iPad",
+		"Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/28.0 Chrome/130.0.0.0 Mobile Safari/537.36": "Samsung Internet on Android",
+		"Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0":                                                                     "Firefox on Linux",
+		"Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36":                             "Chrome on ChromeOS",
+		// The browser alone, the system alone, neither.
+		"Firefox/145.0 (on a computer of its own)": "Firefox",
+		"curl/8.5.0 (Windows)":                     "Windows",
+		"":                                         "", "test browser": "", "curl/8.5.0": "",
+		"Your account is at risk, call 555 0100":          "",
+		"Visit https://evil.example/now, Firefox/1":       "Firefox",
+		"write to help@evil.example from your iPhone":     "iPhone",
+		"Chromebook/1 Firefoxy/1 MacintoshX iPhones Edge": "",
+	} {
+		if got := DeviceName(in); got != want {
+			t.Errorf("%q: %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The web app names a session's browser with the same tables, so the screen
+// and a notice say the same thing: they are read from its source and compared.
+func TestDeviceNameMatchesTheWebApp(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "web", "src", "lib", "device.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := regexp.MustCompile(`^\[/(.+)/, '([^']+)'\],$`)
+	table := func(name string) []namePattern {
+		_, rest, ok := strings.Cut(string(src), "\nconst "+name+": Array<[RegExp, string]> = [\n")
+		body, _, closed := strings.Cut(rest, "\n]\n")
+		if !ok || !closed {
+			t.Fatalf("no table %s in web/src/lib/device.ts", name)
+		}
+		var out []namePattern
+		for _, line := range strings.Split(body, "\n") {
+			m := row.FindStringSubmatch(strings.TrimSpace(line))
+			if m == nil {
+				t.Fatalf("a row of %s that is not read: %q", name, line)
+			}
+			out = append(out, namePattern{m[1], m[2]})
+		}
+		return out
+	}
+	for name, ours := range map[string][]namePattern{"browsers": browserNames, "systems": systemNames} {
+		if theirs := table(name); !slices.Equal(theirs, ours) {
+			t.Errorf("%s differ:\nweb %v\ngo  %v", name, theirs, ours)
+		}
 	}
 }

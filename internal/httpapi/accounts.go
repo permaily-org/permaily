@@ -18,20 +18,42 @@ import (
 	"github.com/permaily-org/permaily/internal/services/accounts"
 )
 
+// OperatorService is everything the operator's routes can ask of the
+// service about accounts and invitations: look, block and unblock, ask to
+// delete and cancel that, sign devices out, and list and revoke invitations.
+// Nothing here changes a contact address or a way to sign in, turns "passkey
+// only" off or signs anyone in, and the handlers of those routes are given
+// nothing else: what is not in this list they cannot call.
+type OperatorService interface {
+	AccountRecord(ctx context.Context, id string) (*contracts.AccountRecord, error)
+	AccountRecords(ctx context.Context, after string, limit int) (*contracts.AccountList, error)
+	AccountRecordByAddress(ctx context.Context, address string) (*contracts.AccountList, error)
+	BlockAccount(ctx context.Context, id string) (*contracts.AccountRecord, error)
+	UnblockAccount(ctx context.Context, id string) (*contracts.AccountRecord, error)
+	DeleteAccount(ctx context.Context, id string) (*contracts.AccountRecord, error)
+	KeepAccount(ctx context.Context, id string) (*contracts.AccountRecord, error)
+	CloseAccountSessions(ctx context.Context, id string) (*contracts.AccountRecord, error)
+
+	CreateInvitations(ctx context.Context, count int) (*contracts.Invitations, error)
+	Invitations(ctx context.Context) (*contracts.InvitationList, error)
+	RevokeInvitation(ctx context.Context, id string) error
+}
+
 // AccountsService is what the accounts API needs from the service.
 type AccountsService interface {
+	OperatorService
+
 	StartEmail(ctx context.Context, in contracts.EmailStart) (*contracts.EmailStarted, error)
 	LookEmail(ctx context.Context, in contracts.EmailLook) (*contracts.EmailPending, error)
-	FinishEmail(ctx context.Context, in contracts.EmailFinish, userAgent string) (*contracts.Me, string, error)
+	FinishEmail(ctx context.Context, in contracts.EmailFinish, from accounts.Browser) (*contracts.Me, string, error)
 	Authenticate(ctx context.Context, cookie string) (*accounts.Authenticated, error)
 	Me(ctx context.Context, who *accounts.Authenticated) (*contracts.Me, error)
 	Sessions(ctx context.Context, who *accounts.Authenticated) (*contracts.SessionList, error)
 	CloseSession(ctx context.Context, who *accounts.Authenticated, id string) error
-	CreateInvitations(ctx context.Context, count int) (*contracts.Invitations, error)
 
 	StartPasskeySignIn(ctx context.Context) (*contracts.PasskeyRequest, error)
-	FinishPasskeySignIn(ctx context.Context, in contracts.PasskeySignIn, userAgent string) (*contracts.Me, string, error)
-	Recover(ctx context.Context, in contracts.Recovery, userAgent string) (*contracts.Me, string, error)
+	FinishPasskeySignIn(ctx context.Context, in contracts.PasskeySignIn, from accounts.Browser) (*contracts.Me, string, error)
+	Recover(ctx context.Context, in contracts.Recovery, from accounts.Browser) (*contracts.Me, string, error)
 	Passkeys(ctx context.Context, who *accounts.Authenticated) (*contracts.PasskeyList, error)
 	StartPasskey(ctx context.Context, who *accounts.Authenticated) (*contracts.PasskeyCreation, error)
 	FinishPasskey(ctx context.Context, who *accounts.Authenticated, in contracts.PasskeyFinish) (*contracts.Passkey, error)
@@ -43,15 +65,15 @@ type AccountsService interface {
 	UpdateAccount(ctx context.Context, who *accounts.Authenticated, in contracts.AccountUpdate) (*contracts.Account, error)
 	StartDeletion(ctx context.Context, who *accounts.Authenticated) (*contracts.Account, error)
 	CancelDeletion(ctx context.Context, who *accounts.Authenticated) (*contracts.Account, error)
-	AccountRecord(ctx context.Context, id string) (*contracts.AccountRecord, error)
-	AccountRecords(ctx context.Context, after string, limit int) (*contracts.AccountList, error)
+	StartAddressChange(ctx context.Context, who *accounts.Authenticated, in contracts.AddressStart) (*contracts.EmailStarted, error)
+	FinishAddressChange(ctx context.Context, who *accounts.Authenticated, in contracts.AddressFinish) (*contracts.Account, error)
 
 	ProvidersOn(ctx context.Context) (*contracts.ProvidersOn, error)
 	StartProvider(ctx context.Context, who *accounts.Authenticated, in contracts.ProviderStart) (*contracts.ProviderStarted, string, error)
 	FinishProvider(ctx context.Context, in accounts.ProviderAnswer) (*accounts.ProviderDone, error)
 	PendingProvider(ctx context.Context, browser string) (*contracts.ProviderPending, error)
 	StartProviderConfirm(ctx context.Context, browser string, in contracts.ProviderConfirmStart) (*contracts.EmailStarted, error)
-	FinishProviderConfirm(ctx context.Context, browser string, in contracts.ProviderConfirm, userAgent string) (*contracts.Me, string, error)
+	FinishProviderConfirm(ctx context.Context, browser string, in contracts.ProviderConfirm, from accounts.Browser) (*contracts.Me, string, error)
 	LinkedProviders(ctx context.Context, who *accounts.Authenticated) (*contracts.LinkedProviders, error)
 	UnlinkProvider(ctx context.Context, who *accounts.Authenticated, provider string) error
 	ProviderApps(ctx context.Context) (*contracts.ProviderApps, error)
@@ -70,9 +92,16 @@ const SessionCookie = "__Host-permaily-session"
 // would not come along: this one is Lax, and stands for nothing but the trip.
 const ProviderCookie = "__Host-permaily-provider"
 
+// DeviceCookie names the browser to the accounts it signs in to, so that a
+// person is told by mail of a sign-in from a device that had not signed in
+// to their account before. It is random, stands for nothing and signs nobody
+// in. It is Lax, like the provider's cookie: it has to come along when a
+// provider sends the browser back. It is never logged.
+const DeviceCookie = "__Host-permaily-device"
+
 // identifiers are taken out of what is logged: logs leave the enclave, and
 // would say which account did what, and when.
-var identifiers = regexp.MustCompile(`\b(acc|ses|att|cer)_[a-z2-7]{26}`)
+var identifiers = regexp.MustCompile(`\b(acc|ses|att|cer|inv)_[a-z2-7]{26}`)
 
 // failed answers a request with the error of a service. An error a caller
 // can act on goes out with its code; anything else is logged and answered
@@ -92,9 +121,12 @@ func failed(w http.ResponseWriter, log *slog.Logger, err error) {
 		status = http.StatusNotFound
 	case contracts.ErrTooManyRequests.Code:
 		status = http.StatusTooManyRequests
+	case contracts.ErrAccountBlocked.Code:
+		// Who it is was proved, and the account lets nobody in.
+		status = http.StatusForbidden
 	case contracts.ErrLastPasskey.Code, contracts.ErrPasskeyNeeded.Code, contracts.ErrPasskeyOnlyOff.Code, contracts.ErrTooManyPasskeys.Code,
 		contracts.ErrAccountClosing.Code, contracts.ErrProviderOff.Code, contracts.ErrProviderInUse.Code, contracts.ErrProviderLinked.Code,
-		contracts.ErrLastWayIn.Code:
+		contracts.ErrLastWayIn.Code, contracts.ErrAddressInUse.Code:
 		// Well asked, and refused for how the account is now.
 		status = http.StatusConflict
 	}
@@ -166,6 +198,30 @@ func setProvider(w http.ResponseWriter, value string, life time.Duration) {
 	})
 }
 
+// browser is what a sign-in is told of the browser it ends in: what it says
+// of itself, and the value of its device cookie. A browser without one, or
+// with one that cannot be one, is given a new value, which setDevice makes
+// its cookie when the sign-in works.
+func browser(r *http.Request) accounts.Browser {
+	from := accounts.Browser{UserAgent: r.UserAgent()}
+	if c, err := r.Cookie(DeviceCookie); err == nil && domain.DeviceToken(c.Value) {
+		from.Device = c.Value
+	} else {
+		from.Device = accounts.NewDevice()
+	}
+	return from
+}
+
+// setDevice gives the browser its device cookie, for as long as an account
+// knows a device. It is set again at each sign-in, so it lasts while the
+// browser keeps signing in.
+func setDevice(w http.ResponseWriter, from accounts.Browser) {
+	http.SetCookie(w, &http.Cookie{
+		Name: DeviceCookie, Value: from.Device, Path: "/", MaxAge: int(domain.DeviceLifetime / time.Second),
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+	})
+}
+
 // provider is the value of the browser's provider cookie, "" without one.
 func provider(r *http.Request) string {
 	c, err := r.Cookie(ProviderCookie)
@@ -229,12 +285,14 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		if !decode(w, r, &in) {
 			return
 		}
-		me, cookie, err := svc.FinishEmail(r.Context(), in, r.UserAgent())
+		from := browser(r)
+		me, cookie, err := svc.FinishEmail(r.Context(), in, from)
 		if err != nil {
 			failed(w, log, err)
 			return
 		}
 		setSession(w, cookie, int(domain.SessionMax/time.Second))
+		setDevice(w, from)
 		writeJSON(w, me)
 	})
 	mux.HandleFunc("POST /api/v1/auth/sign-out", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
@@ -273,12 +331,13 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 	}))
 	// signedInWith answers a way of signing in that worked: the account, and
 	// the session in its cookie.
-	signedInWith := func(w http.ResponseWriter, me *contracts.Me, cookie string, err error) {
+	signedInWith := func(w http.ResponseWriter, from accounts.Browser, me *contracts.Me, cookie string, err error) {
 		if err != nil {
 			failed(w, log, err)
 			return
 		}
 		setSession(w, cookie, int(domain.SessionMax/time.Second))
+		setDevice(w, from)
 		writeJSON(w, me)
 	}
 	// answer writes what a service gave, or its error.
@@ -298,16 +357,18 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		if !decodeUpTo(w, r, &in, maxPasskeyBody) {
 			return
 		}
-		me, cookie, err := svc.FinishPasskeySignIn(r.Context(), in, r.UserAgent())
-		signedInWith(w, me, cookie, err)
+		from := browser(r)
+		me, cookie, err := svc.FinishPasskeySignIn(r.Context(), in, from)
+		signedInWith(w, from, me, cookie, err)
 	})
 	mux.HandleFunc("POST /api/v1/auth/recovery", func(w http.ResponseWriter, r *http.Request) {
 		var in contracts.Recovery
 		if !decode(w, r, &in) {
 			return
 		}
-		me, cookie, err := svc.Recover(r.Context(), in, r.UserAgent())
-		signedInWith(w, me, cookie, err)
+		from := browser(r)
+		me, cookie, err := svc.Recover(r.Context(), in, from)
+		signedInWith(w, from, me, cookie, err)
 	})
 	mux.HandleFunc("GET /api/v1/passkeys", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		out, err := svc.Passkeys(r.Context(), who)
@@ -369,6 +430,23 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		out, err := svc.CancelDeletion(r.Context(), who)
 		answer(w, out, err)
 	}))
+	// Changing the contact address: a code goes to the new one, and proves it.
+	mux.HandleFunc("POST /api/v1/account/address/start", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		var in contracts.AddressStart
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := svc.StartAddressChange(r.Context(), who, in)
+		answer(w, out, err)
+	}))
+	mux.HandleFunc("POST /api/v1/account/address/finish", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		var in contracts.AddressFinish
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := svc.FinishAddressChange(r.Context(), who, in)
+		answer(w, out, err)
+	}))
 	mux.HandleFunc("GET /api/v1/auth/providers", func(w http.ResponseWriter, r *http.Request) {
 		out, err := svc.ProvidersOn(r.Context())
 		answer(w, out, err)
@@ -396,10 +474,10 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 	// trip, for the screen to name it. What the provider said went wrong is
 	// never read.
 	mux.HandleFunc("GET /api/v1/auth/provider/callback", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
+		q, from := r.URL.Query(), browser(r)
 		done, err := svc.FinishProvider(r.Context(), accounts.ProviderAnswer{
 			State: q.Get("state"), Code: q.Get("code"), Refused: q.Has("error"),
-			Browser: provider(r), UserAgent: r.UserAgent(),
+			Browser: provider(r), From: from,
 		})
 		var known *contracts.Error
 		if err != nil && !errors.As(err, &known) {
@@ -414,6 +492,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		}
 		if done.Session != "" {
 			setSession(w, done.Session, int(domain.SessionMax/time.Second))
+			setDevice(w, from)
 		}
 		to := done.Path
 		// Only ever one of the fixed identifiers: the fragment holds nothing
@@ -441,11 +520,12 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		if !decode(w, r, &in) {
 			return
 		}
-		me, cookie, err := svc.FinishProviderConfirm(r.Context(), provider(r), in, r.UserAgent())
+		from := browser(r)
+		me, cookie, err := svc.FinishProviderConfirm(r.Context(), provider(r), in, from)
 		if err == nil {
 			setProvider(w, "", -time.Second) // it waited for this
 		}
-		signedInWith(w, me, cookie, err)
+		signedInWith(w, from, me, cookie, err)
 	})
 	mux.HandleFunc("GET /api/v1/providers", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		out, err := svc.LinkedProviders(r.Context(), who)
@@ -461,23 +541,31 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	// Anything else under /api/ is not the web app's to answer with a page.
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
-		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
-	})
+	mux.HandleFunc("/api/", noSuchEndpoint)
 	return fromTheApp(mux)
 }
 
-// Invitations returns the handler for POST /v1/admin/invitations, which makes
-// single-use sign-up codes. Put it behind TokenAuth with the operator's
-// token: whoever holds it decides who may sign up, and nothing else of an
-// account.
-func Invitations(svc AccountsService, log *slog.Logger) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", http.MethodPost)
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "use POST")
-			return
-		}
+// refuse answers a method an endpoint does not take.
+func refuse(allow string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", allow)
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "use "+allow)
+	}
+}
+
+func noSuchEndpoint(w http.ResponseWriter, _ *http.Request) {
+	writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
+}
+
+// Invitations returns the handler of the operator's invitations: POST
+// /v1/admin/invitations makes single-use sign-up codes, GET lists the ones
+// not used yet (when made, when they end, and an identifier that is not the
+// code), and DELETE /v1/admin/invitations/{id} revokes one. Put it behind
+// TokenAuth with the operator's token: whoever holds it decides who may sign
+// up.
+func Invitations(svc OperatorService, log *slog.Logger) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/admin/invitations", func(w http.ResponseWriter, r *http.Request) {
 		in := contracts.InvitationRequest{Count: 1}
 		if r.ContentLength != 0 && !decode(w, r, &in) {
 			return
@@ -489,26 +577,62 @@ func Invitations(svc AccountsService, log *slog.Logger) http.Handler {
 		}
 		writeJSON(w, out)
 	})
+	mux.HandleFunc("GET /v1/admin/invitations", func(w http.ResponseWriter, r *http.Request) {
+		out, err := svc.Invitations(r.Context())
+		if err != nil {
+			failed(w, log, err)
+			return
+		}
+		writeJSON(w, out)
+	})
+	mux.HandleFunc("DELETE /v1/admin/invitations/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if err := svc.RevokeInvitation(r.Context(), r.PathValue("id")); err != nil {
+			failed(w, log, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/v1/admin/invitations", refuse("GET, POST"))
+	mux.HandleFunc("/v1/admin/invitations/{id}", refuse(http.MethodDelete))
+	mux.HandleFunc("/", noSuchEndpoint)
+	return mux
 }
 
-// Accounts returns the handler of the operator's tool, which only looks:
-// GET /v1/admin/accounts lists the accounts, the oldest first (limit, and
-// after with the next of the page before), and GET /v1/admin/accounts/{id}
-// shows one. What it answers is read from the accounts' signed records, so it
-// is what the enclave vouches for and not what the table says. Put it behind
-// TokenAuth with the operator's token.
-func Accounts(svc AccountsService, log *slog.Logger) http.Handler {
+// Accounts returns the handler of the operator's tool. GET /v1/admin/accounts
+// lists the accounts, the oldest first (limit, and after with the next of the
+// page before), or with address the account of exactly that address, as a
+// list of none or one; GET /v1/admin/accounts/{id} shows one. What it answers
+// is read from the accounts' signed records, so it is what the enclave
+// vouches for and not what the table says.
+//
+// It changes what an operator may change, each with a POST that takes no body
+// and answers the account after it: /block and /unblock, /delete and
+// /delete/cancel, and /sessions/close. There is nothing else: no route here
+// changes an address or a way to sign in, and the service it is given could
+// not do it (OperatorService). Put it behind TokenAuth with the operator's
+// token.
+func Accounts(svc OperatorService, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/admin/accounts", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Has("address") {
+			out, err := svc.AccountRecordByAddress(r.Context(), q.Get("address"))
+			if err != nil {
+				failed(w, log, err)
+				return
+			}
+			writeJSON(w, out)
+			return
+		}
 		limit := domain.DefaultAccountsPage
-		if v := r.URL.Query().Get("limit"); v != "" {
+		if v := q.Get("limit"); v != "" {
 			var err error
 			if limit, err = strconv.Atoi(v); err != nil {
 				failed(w, log, contracts.ErrInvalidLimit)
 				return
 			}
 		}
-		out, err := svc.AccountRecords(r.Context(), r.URL.Query().Get("after"), limit)
+		out, err := svc.AccountRecords(r.Context(), q.Get("after"), limit)
 		if err != nil {
 			failed(w, log, err)
 			return
@@ -523,16 +647,26 @@ func Accounts(svc AccountsService, log *slog.Logger) http.Handler {
 		}
 		writeJSON(w, out)
 	})
-	// The tool changes nothing: a person deletes their own account.
-	onlyLooks := func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Allow", http.MethodGet)
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "use GET")
+	for path, act := range map[string]func(context.Context, string) (*contracts.AccountRecord, error){
+		"block": svc.BlockAccount, "unblock": svc.UnblockAccount,
+		"delete": svc.DeleteAccount, "delete/cancel": svc.KeepAccount,
+		"sessions/close": svc.CloseAccountSessions,
+	} {
+		mux.HandleFunc("POST /v1/admin/accounts/{id}/"+path, func(w http.ResponseWriter, r *http.Request) {
+			out, err := act(r.Context(), r.PathValue("id"))
+			if err != nil {
+				failed(w, log, err)
+				return
+			}
+			writeJSON(w, out)
+		})
+		mux.HandleFunc("/v1/admin/accounts/{id}/"+path, refuse(http.MethodPost))
 	}
-	mux.HandleFunc("/v1/admin/accounts", onlyLooks)
-	mux.HandleFunc("/v1/admin/accounts/{id}", onlyLooks)
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
-	})
+	// Looking is all these two take: an account is changed by what is above,
+	// and by nothing else.
+	mux.HandleFunc("/v1/admin/accounts", refuse(http.MethodGet))
+	mux.HandleFunc("/v1/admin/accounts/{id}", refuse(http.MethodGet))
+	mux.HandleFunc("/", noSuchEndpoint)
 	return mux
 }
 
@@ -571,16 +705,8 @@ func ProviderApps(svc AccountsService, log *slog.Logger) http.Handler {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	refuse := func(allow string) http.HandlerFunc {
-		return func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Allow", allow)
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "use "+allow)
-		}
-	}
 	mux.HandleFunc("/v1/admin/providers", refuse(http.MethodGet))
 	mux.HandleFunc("/v1/admin/providers/{provider}", refuse("PUT, DELETE"))
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
-	})
+	mux.HandleFunc("/", noSuchEndpoint)
 	return mux
 }

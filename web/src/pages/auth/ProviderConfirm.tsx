@@ -136,10 +136,11 @@ export function ProviderConfirm() {
       failed === 'invalid_invitation' ||
       failed === 'provider_linked' ||
       failed === 'provider_in_use' ||
-      failed === 'account_closing'
+      failed === 'account_closing' ||
+      failed === 'account_blocked'
     ) {
-      // The address was the person's, and the server would not link the provider to its account: the
-      // sign-in screen says why, as it does when a provider's own answer ends that way.
+      // The address was the person's, and the server would not link the provider to its account, or the
+      // account is blocked: the sign-in screen says why, as it does when a provider's own answer ends that way.
       providerEnded(failed, provider)
       leave()
       return true

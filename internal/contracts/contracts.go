@@ -54,6 +54,13 @@ var (
 	ErrAccountClosing = &Error{"account_closing", "this account is being deleted; cancel that to change anything"}
 	ErrInvalidLimit   = &Error{"invalid_limit", "limit must be 1-100"}
 	ErrInvalidCursor  = &Error{"invalid_cursor", "after is not a place in the list; use the next of the answer before"}
+	// ErrAccountBlocked is said to whoever proved who they are and whose
+	// account the operator blocked: never before the proof, so it tells nobody
+	// else that an address has an account, or that it is blocked.
+	ErrAccountBlocked = &Error{"account_blocked", "this account is blocked; write to support@permaily.com"}
+	// ErrAddressInUse refuses a contact address that is another account's. It
+	// is said only after the code proved the address is the asker's.
+	ErrAddressInUse = &Error{"address_in_use", "that address belongs to another account"}
 )
 
 // The failures of signing in with a provider (Google, GitHub, Meta,
@@ -107,7 +114,16 @@ type Account struct {
 	CreatedAt time.Time `json:"created_at"`
 	// ClosesAt is when a closing account is removed; absent otherwise.
 	ClosesAt time.Time `json:"closes_at,omitzero"`
+	// ClosingBy says who asked to delete a closing account: ClosingByPerson
+	// or ClosingByOperator; absent otherwise.
+	ClosingBy string `json:"closing_by,omitempty"`
 }
+
+// Who asked to delete an account.
+const (
+	ClosingByPerson   = "person"
+	ClosingByOperator = "operator"
+)
 
 // AccountUpdate changes what a person may change of their account. What is
 // absent stays as it is.
@@ -129,8 +145,18 @@ type AccountRecord struct {
 	CreatedAt         time.Time `json:"created_at"`
 	AddressVerifiedAt time.Time `json:"address_verified_at"`
 	ClosesAt          time.Time `json:"closes_at,omitzero"`
-	Passkeys          int       `json:"passkeys"`
-	PasskeyOnly       bool      `json:"passkey_only"`
+	// ClosingBy says who asked to delete a closing account: ClosingByPerson
+	// or ClosingByOperator.
+	ClosingBy string `json:"closing_by,omitempty"`
+	// BlockedAt is when the operator blocked the account; absent when it is
+	// not blocked. Nobody signs in to a blocked account.
+	BlockedAt   time.Time `json:"blocked_at,omitzero"`
+	Passkeys    int       `json:"passkeys"`
+	PasskeyOnly bool      `json:"passkey_only"`
+	// Providers are the identifiers of the providers linked to the account
+	// (google, github, meta, microsoft), the oldest first. Never the subject:
+	// which account it is at the provider.
+	Providers []string `json:"providers"`
 	// Sessions is how many devices are signed in.
 	Sessions int `json:"sessions"`
 }
@@ -212,8 +238,40 @@ type InvitationRequest struct {
 
 // Invitations are sign-up codes, shown once: only their hash is kept.
 type Invitations struct {
-	Invitations []string  `json:"invitations"`
-	ExpiresAt   time.Time `json:"expires_at"`
+	Invitations []string `json:"invitations"`
+	// IDs name the invitations for the operator, in the same order: what one
+	// is listed and revoked by. An identifier is not the code, and the code
+	// cannot be had from it.
+	IDs       []string  `json:"ids"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// Invitation is what the operator's tool shows of an invitation that was not
+// used yet: never its code.
+type Invitation struct {
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// InvitationList is the invitations not used yet, the oldest first. One that
+// was used is deleted when it is used, so it is not here.
+type InvitationList struct {
+	Invitations []Invitation `json:"invitations"`
+	// Truncated says there are more than the list holds.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// AddressStart asks for the message that proves a new contact address is the
+// person's.
+type AddressStart struct {
+	Address string `json:"address"`
+}
+
+// AddressFinish changes the contact address with the code of that message.
+type AddressFinish struct {
+	Attempt string `json:"attempt"`
+	Code    string `json:"code"`
 }
 
 // Bytes is a binary value, written in JSON the way WebAuthn writes one:

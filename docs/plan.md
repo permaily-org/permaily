@@ -55,7 +55,16 @@ Step 1, in the order it is built (all of it released in v0.10.0 on 2026-11-11):
 - [x] The sign-in and sign-up screens of the web app, and the app behind a session (2026-11-11). Made without a design of their own: layout and copy are for the designer to review.
 - [x] Passkeys, the "passkey only" switch and recovery codes, with their screens and the real list of sessions in Settings (2026-11-11). Not yet tried with a real authenticator in a real browser: that needs a certificate browsers trust, so it waits for the release.
 - [x] Google, GitHub, Meta and Microsoft, with their screens (2026-11-11). Built and tried against providers played by the tests; not yet against the real ones, which needs an application registered at each (docs/operations.md).
-- [x] Settings: name, sessions per device, deleting the account. The operator's tool to see accounts (`scripts/accounts.sh`) (2026-11-11). The contact address cannot be changed yet.
+- [x] Settings: name, sessions per device, deleting the account. The operator's tool to see accounts (`scripts/accounts.sh`) (2026-11-11).
+
+After v0.10.0, built on 2026-11-12 and not released yet (ADR 0017):
+
+- [x] What the operator can do to an account through the enclave: block and unblock, ask to delete and cancel, sign devices out, find by address, list and revoke invitations (`scripts/accounts.sh`, `scripts/invite.sh`), with every action counted on `/status` and printed by `permaily-verify`. Not what would be a way in: no address, no way to sign in.
+- [x] Changing the contact address, with a code sent to the new one (server side; the screen is in the web app).
+- [x] The notices by mail that need only accounts, brought forward from step 9: a sign-in from a new device, a change in how the account is signed into, the address changed, deleting asked or cancelled, blocked and unblocked.
+- [ ] A staging image with all of it: the notices through SES, and the counts on `/status` read by `permaily-verify`.
+
+Step 9 keeps the notices about connections (one approved, one about to end), which need step 5, and the wording of every message reviewed with the designer.
 
 About sixteen weeks. Steps 3 and 4 do not depend on 1 and 2, and can go first if seeing `about` work early is worth more than having accounts.
 

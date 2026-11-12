@@ -14,6 +14,11 @@ export type Account = {
   created_at: string
   /** When a closing account is removed. There only while it is closing. */
   closes_at?: string
+  /**
+   * Who asked for the deletion, while it is closing: the person, or Permaily's operator. A server from before
+   * says nothing, and anything but `operator` reads as the person. Either way the person can cancel.
+   */
+  closing_by?: 'person' | 'operator'
 }
 
 export type Session = {
@@ -102,6 +107,8 @@ export type ApiErrorCode =
   | 'provider_linked'
   | 'invitation_needed'
   | 'last_way_in'
+  | 'account_blocked'
+  | 'address_in_use'
   | 'network'
   | 'other'
 
@@ -126,6 +133,8 @@ const known: ReadonlySet<string> = new Set([
   'provider_linked',
   'invitation_needed',
   'last_way_in',
+  'account_blocked',
+  'address_in_use',
 ])
 
 export class ApiError extends Error {
@@ -260,6 +269,23 @@ export function deleteAccount(): Promise<Account> {
 /** Keeps an account that was closing: it is active again, as it was. */
 export function cancelDeletion(): Promise<Account> {
   return account(request('POST', '/api/v1/account/delete/cancel'))
+}
+
+/**
+ * Asks to change the account's contact address: the server sends a six-digit code to the new one, and no
+ * link. The answer is the same whether or not the address belongs to someone else. Nothing changes yet.
+ */
+export function startAddressChange(address: string): Promise<EmailStarted> {
+  return request('POST', '/api/v1/account/address/start', { address })
+}
+
+/**
+ * Ends the change with the code of that message. The answer is the account with its new address; the server
+ * tells the old address and the new one. Only here, after the code, does it say that the address belongs
+ * to another account (`address_in_use`).
+ */
+export function finishAddressChange(attempt: string, code: string): Promise<Account> {
+  return account(request('POST', '/api/v1/account/address/finish', { attempt, code }))
 }
 
 /** Starts a sign-in with a passkey. Nothing is asked: the passkey says which account it is for. */

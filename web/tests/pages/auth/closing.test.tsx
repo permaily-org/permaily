@@ -37,6 +37,68 @@ describe('an account that is closing', () => {
     await expectAccessible()
   })
 
+  it('says that the person asked, in no words of its own, also to a server that says nothing of it', async () => {
+    at('2026-11-11T15:00:00Z')
+    // A word this app does not know reads as the person too.
+    for (const by of [undefined, 'person', 'someone else'] as Array<'person' | undefined>) {
+      server.signedIn({ ...closing, ...(by ? { closing_by: by } : {}) })
+      await open('/rules')
+      await screen.findByRole('heading', { name: 'Your account is being deleted' })
+      expect(document.getElementById('closing-when')?.textContent).toContain(
+        'It will be deleted for good on',
+      )
+      await settle()
+      expect(screen.queryByText(/operator/)).toBeNull()
+    }
+  })
+
+  it('says who asked when it was the operator, and keeps the way to cancel', async () => {
+    at('2026-11-11T15:00:00Z')
+    server
+      .signedIn({ ...closing, closing_by: 'operator' })
+      .settings()
+      .on('POST /api/v1/account/delete/cancel', ok(ana))
+    const { user } = await open('/settings')
+    const title = await screen.findByRole('heading', { name: 'Your account is being deleted' })
+    await waitFor(() => expect(document.activeElement).toBe(title))
+    // The headline reads who asked, and the day, with it.
+    expect(title.getAttribute('aria-describedby')).toBe('closing-when')
+    const when = document.getElementById('closing-when')
+    expect(when?.textContent).toContain(
+      "Permaily's operator asked for this account to be deleted on",
+    )
+    expect(when?.textContent).not.toContain('It will be deleted for good on')
+    expect(screen.getByText('Wednesday, 18 November 2026').getAttribute('datetime')).toBe(
+      '2026-11-18T14:32:00.000Z',
+    )
+    expect(screen.getByText('14:32 UTC, in 7 days')).toBeTruthy()
+    expect(
+      screen.getByText('Until then you can cancel, and the account works again as it was.'),
+    ).toBeTruthy()
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'Cancel the deletion',
+      'Sign out',
+    ])
+    await expectAccessible()
+    // Who asked is not kept: only the day is, as for any closing account.
+    await waitFor(() => expect({ ...localStorage }).toEqual(kept))
+    expectNotKept('operator')
+
+    // The person can cancel what the operator asked for, and is back in Settings.
+    await user.click(screen.getByRole('button', { name: 'Cancel the deletion' }))
+    await screen.findByRole('heading', { level: 1, name: 'Settings' })
+    expect(server.asked('POST /api/v1/account/delete/cancel')).toHaveLength(1)
+  })
+
+  it('says who asked when the day is not known either', async () => {
+    server.signedIn({ ...ana, state: 'closing', closing_by: 'operator' })
+    await open('/')
+    await screen.findByText('a day within the next 7 days')
+    expect(document.getElementById('closing-when')?.textContent).toBe(
+      "Permaily's operator asked for this account to be deleted on a day within the next 7 days",
+    )
+  })
+
   it('makes no day up when the server gave none', async () => {
     server.signedIn({ ...ana, state: 'closing' })
     await open('/')
