@@ -21,12 +21,12 @@ import (
 
 	"github.com/permaily-org/permaily/internal/enclave"
 	"github.com/permaily-org/permaily/internal/idp"
-	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/keys"
 	"github.com/permaily-org/permaily/internal/msgauth"
 	"github.com/permaily-org/permaily/internal/nsm"
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/services/accounts"
+	"github.com/permaily-org/permaily/internal/services/mailboxes"
 	"github.com/permaily-org/permaily/internal/sesmail"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
@@ -40,9 +40,9 @@ type platform struct {
 	smtpListener net.Listener
 	attester     nsm.Attester
 	certs        *tlsacme.Manager
-	keys         keys.Service
-	store        store.Store
-	auth         inbox.Authenticator
+	// mailboxes is the mailboxes of accounts (ADR 0026); nil without
+	// accounts.
+	mailboxes *mailboxes.Service
 	// rootStatus describes the key that holds the root secret, and handoff
 	// gives the root secret to the next release; nil without a root secret.
 	rootStatus func(context.Context) (*attestation.RootStatus, error)
@@ -87,11 +87,12 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	}
 	p := &platform{mode: "enclave", listener: ln, attester: att}
 
-	// Without storage (no mailbox) the TLS key lives only in memory.
+	// Without storage (no table) the TLS key lives only in memory, and there
+	// is no SMTP.
 	var identity tlsacme.Persistence
-	if cfg.mailboxID != "" {
-		if cfg.awsAccount == "" || cfg.dynamoTable == "" || cfg.s3Bucket == "" || cfg.mailboxTokenSHA256 == "" {
-			return nil, errors.New("mailbox enabled but -aws-account, -dynamodb-table, -s3-bucket or -mailbox-token-sha256 is missing")
+	if cfg.dynamoTable != "" {
+		if cfg.awsAccount == "" || cfg.s3Bucket == "" {
+			return nil, errors.New("-dynamodb-table needs -aws-account and -s3-bucket")
 		}
 		if p.smtpListener, err = enclave.Listen(cfg.smtpPort); err != nil {
 			return nil, err
@@ -110,7 +111,6 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			Table:  cfg.dynamoTable,
 			Bucket: cfg.s3Bucket,
 		}
-		p.store = awsStore
 		// Sigstore's trust root is compiled into the image, like the policy
 		// that says which builds are releases.
 		trust, err := provenance.PublicGood()
@@ -124,10 +124,9 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 		if err != nil {
 			return nil, err
 		}
-		p.keys, p.rootStatus, p.handoff = root, root.Status, root.HandOff
+		p.rootStatus, p.handoff = root.Status, root.HandOff
 		p.sigstore, p.updateTrust = root.Trust, root.UpdateTrust
 		go root.Run(ctx)
-		p.auth = msgauth.DKIM(msgauth.DoH{Client: egress, Endpoint: cfg.dohEndpoint}.LookupTXT)
 
 		// One identity per CA: a production and a staging image never share
 		// an ACME account.
@@ -153,21 +152,33 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			// Only the newest version of one is kept, so a name or a passkey
 			// that was removed does not stay in the table (ADR 0017); the TLS
 			// identity above keeps every version (ADR 0016).
-			var accountRecords *store.Anchored
+			var accountRecords, mailboxRecords *store.Anchored
 			if cfg.mailFrom != "" {
 				accountRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true}
 				if err := p.signIn(ctx, cfg, hosts, awsCfg, egress, accountRecords, awsStore, root, log); err != nil {
 					return nil, err
 				}
+				// The mailboxes' records and the accounts' lists are strict, and
+				// are read and written through this Anchored alone, which reads
+				// no other name: a fork anywhere in their history refuses them
+				// (ADR 0026, "The store").
+				mailboxRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true, Strict: true}
+				if p.mailboxes, err = mailboxes.New(mailboxes.Config{
+					Records: mailboxRecords, Storage: awsStore, Keys: root, Accounts: p.accounts, Domain: hosts.Inbox, Log: log,
+					Auth: msgauth.DKIM(msgauth.DoH{Client: egress, Endpoint: cfg.dohEndpoint}.LookupTXT),
+				}); err != nil {
+					return nil, err
+				}
+				p.accounts.SetMailboxes(p.mailboxes)
 			}
 			p.anchors = func() *attestation.AnchorStatus {
-				return anchorStatus(anchored, accountRecords, cfg.anchorBucket, cfg.anchorRetentionDays)
+				return anchorStatus(anchored, accountRecords, mailboxRecords, cfg.anchorBucket, cfg.anchorRetentionDays)
 			}
 		} else if cfg.mailFrom != "" {
 			// An account's ways to sign in must not come back (ADR 0017).
 			return nil, errors.New("-mail-from needs -anchor-bucket")
 		}
-		identity = &tlsacme.Sealed{Records: records, Keys: p.keys, Challenges: awsStore, Name: "tls-" + directory.Host}
+		identity = &tlsacme.Sealed{Records: records, Keys: root, Challenges: awsStore, Name: "tls-" + directory.Host}
 	}
 	if p.certs, err = tlsacme.New(hosts.All(), cfg.acmeDirectory, egress, identity, log); err != nil {
 		return nil, err
@@ -213,10 +224,15 @@ func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, a
 // name is the account's identifier, and what /status says is public.
 const accountRecord = "the record of an account"
 
+// mailboxRecord stands, the same way, for a mailbox's record or an account's
+// list of mailboxes, whose names hold identifiers too (ADR 0026).
+const mailboxRecord = "mailbox"
+
 // anchorStatus reports the records an enclave refuses an earlier copy of, as
 // far as it read or wrote them since it started. Of the records of accounts
-// (nil when there are none) it reports only that one went back, never which.
-func anchorStatus(a, ofAccounts *store.Anchored, bucket string, retentionDays int) *attestation.AnchorStatus {
+// and of mailboxes (nil when there are none) it reports only that one went
+// back, was forked or has a commit S3 did not keep locked, never which.
+func anchorStatus(a, ofAccounts, ofMailboxes *store.Anchored, bucket string, retentionDays int) *attestation.AnchorStatus {
 	st := &attestation.AnchorStatus{Bucket: bucket, RetentionDays: retentionDays, Records: []attestation.AnchoredRecord{}}
 	for _, c := range a.Seen() {
 		st.Records = append(st.Records, attestation.AnchoredRecord{Name: c.Name, Version: c.Version, CommittedAt: c.At, LockedUntil: c.LockedUntil})
@@ -227,6 +243,11 @@ func anchorStatus(a, ofAccounts *store.Anchored, bucket string, retentionDays in
 	if ofAccounts != nil {
 		for _, r := range ofAccounts.Regressions() {
 			st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: accountRecord, Had: r.Had, Found: r.Found, At: r.At})
+		}
+	}
+	if ofMailboxes != nil {
+		for _, r := range ofMailboxes.Regressions() {
+			st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: mailboxRecord, Had: r.Had, Found: r.Found, At: r.At, Fork: r.Fork, Unlocked: r.Unlocked, Lost: r.Lost})
 		}
 	}
 	return st

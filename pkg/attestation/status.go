@@ -213,6 +213,17 @@ type AnchorRegression struct {
 	Had   uint64    `json:"had"`
 	Found uint64    `json:"found"`
 	At    time.Time `json:"at"`
+	// Fork says the record has two commits of different digests at one
+	// version (Found): whoever writes to the store of commits hid one while an
+	// enclave wrote the other, and the record is refused (ADR 0026, a strict
+	// record). Unlocked says a commit (at Found) has no copy that S3 keeps
+	// locked: the store did not keep a lock it took. Lost says the newest
+	// commit (at Found) names a value the table no longer holds: whoever
+	// writes to it deleted or changed it, and the record is refused. Each
+	// fails verification, as any regression does.
+	Fork     bool `json:"fork,omitempty"`
+	Unlocked bool `json:"unlocked,omitempty"`
+	Lost     bool `json:"lost,omitempty"`
 }
 
 // SigstoreStatus identifies a trust root that Sigstore published through its

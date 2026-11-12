@@ -47,9 +47,6 @@ let
       "/permaily-enclave"
       "-domain" config.domain
       "-acme-directory" acmeDirectory
-      "-mailbox-id" config.mailbox_id
-      "-mailbox-address" config.mailbox_address
-      "-mailbox-token-sha256" config.mailbox_token_sha256
       "-mta-sts-mode" config.mta_sts_mode
       "-aws-region" config.aws_region
       "-aws-account" config.aws_account_id

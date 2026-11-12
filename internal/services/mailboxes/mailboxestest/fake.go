@@ -143,11 +143,34 @@ type Fake struct {
 	order []string
 	lists map[string]*list
 	made  int
+	// settings are the times of each mailbox's changes of its settings in
+	// the last minute: ten at most, as the service's own budget.
+	settings map[string][]time.Time
+}
+
+// maxSettingsChanges is how many changes of one mailbox's settings are taken
+// in a minute (the service's budget, per enclave).
+const maxSettingsChanges = 10
+
+// Sweep does what the sweep's last pass does: every mailbox that was
+// disconnected is forgotten, and from then on it cannot be told from one
+// never made, by its owner either (ADR 0026, "Disconnecting").
+func (f *Fake) Sweep() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.order = slices.DeleteFunc(f.order, func(id string) bool {
+		if f.boxes[id].state == recordLeaving {
+			delete(f.boxes, id)
+			delete(f.settings, id)
+			return true
+		}
+		return false
+	})
 }
 
 // New returns an empty Fake with its own Accounts and Notices.
 func New() *Fake {
-	return &Fake{Accounts: NewAccounts(), Notices: &Notices{}, boxes: map[string]*box{}, lists: map[string]*list{}}
+	return &Fake{Accounts: NewAccounts(), Notices: &Notices{}, boxes: map[string]*box{}, lists: map[string]*list{}, settings: map[string][]time.Time{}}
 }
 
 func (f *Fake) now() time.Time {
@@ -382,6 +405,13 @@ func (f *Fake) Update(ctx context.Context, c mailboxes.Caller, id string, in con
 	if in.RetentionDays != nil && !slices.Contains(contracts.MailboxRetentionDays, *in.RetentionDays) {
 		return nil, contracts.ErrInvalidRetention
 	}
+	now := f.now()
+	recent := slices.DeleteFunc(f.settings[id], func(t time.Time) bool { return now.Sub(t) >= time.Minute })
+	if len(recent) >= maxSettingsChanges {
+		f.settings[id] = recent
+		return nil, contracts.ErrTooManyRequests
+	}
+	f.settings[id] = append(recent, now)
 	if in.Label != nil {
 		b.mailbox.Label = *in.Label
 	}
@@ -405,7 +435,8 @@ func (f *Fake) Disconnect(ctx context.Context, c mailboxes.Caller, id string) er
 	}
 	if b.state == recordLeaving {
 		f.mu.Unlock()
-		return nil // disconnected already: the same answer
+		// Disconnected already: the same answer, until Sweep forgets it.
+		return nil
 	}
 	now := f.now()
 	if !now.Before(c.ConfirmedUntil) {

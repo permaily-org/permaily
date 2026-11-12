@@ -40,8 +40,14 @@ func DKIM(lookup LookupTXT) inbox.Authenticator {
 		out := make([]inbox.AuthResult, 0, len(verifications))
 		for _, v := range verifications {
 			r := inbox.AuthResult{Method: "dkim", Domain: strings.ToLower(v.Domain), Result: "pass"}
+			for _, k := range v.HeaderKeys {
+				r.Headers = append(r.Headers, strings.ToLower(strings.TrimSpace(k)))
+			}
 			if v.Err != nil {
 				r.Result = "fail: " + v.Err.Error()
+				// go-msgauth refuses a signature with l= (it signs only part
+				// of the body); the check of Gmail's confirmation is told so.
+				r.BodyLimited = strings.Contains(v.Err.Error(), "body length")
 			}
 			out = append(out, r)
 		}
