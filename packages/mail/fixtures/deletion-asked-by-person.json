@@ -1,0 +1,34 @@
+{
+  "name": "deletion-asked-by-person",
+  "to": "ada@example.com",
+  "subject": "Your Permaily account is being deleted",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "You asked to delete your Permaily account. It will be removed, with everything in it, on 19 November 2026, 09:30 UTC."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "Asked",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        },
+        {
+          "label": "Removed",
+          "value": "19 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "Until then you can sign in at app.permaily.com and cancel the deletion."
+    },
+    {
+      "kind": "paragraph",
+      "text": "If it was not you, sign in and cancel it, and then sign out the devices you do not know and remove every way of signing in that is not yours. If you cannot sign in, write to support@permaily.com."
+    }
+  ]
+}

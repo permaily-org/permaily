@@ -29,3 +29,4 @@ Architecture Decision Records. Each one records the context, the options conside
 | [0022](0022-admins-and-confirming-again.md) | Admins, and confirming again before a sensitive change | Accepted, in production since v0.11.0 |
 | [0023](0023-releases-publish-the-measurements-not-the-image.md) | Releases publish the image's measurements, not the image | Accepted |
 | [0024](0024-two-enclaves-share-one-tls-identity.md) | Two enclaves share one TLS identity and answer each other's ACME challenge | Accepted, in production since v0.11.0 (one enclave runs) |
+| [0025](0025-mail-with-a-design-written-once.md) | Mail with a design, written once and sent as text and HTML | Accepted, not released |

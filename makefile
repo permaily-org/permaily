@@ -28,6 +28,7 @@ check-repo:
 	bun scripts/check-skills.ts
 	bun scripts/third-party-notices.ts --check
 	bun test scripts/
+	cd packages/mail && bun install --frozen-lockfile && bun run check && bun run test && bun run typecheck
 	node scripts/check-release-notes.mjs
 
 # Short fuzzing run of the attestation parser (CI runs it too).

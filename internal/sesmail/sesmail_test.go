@@ -23,6 +23,7 @@ const (
 	recipient = "ana@example.com"
 	subject   = "Sign in to Permaily"
 	text      = "Your code to sign in to Permaily:\n\n    123456\n"
+	page      = "<!DOCTYPE html><html><body><p>Your code to sign in to Permaily:</p><p>123456</p></body></html>"
 )
 
 type staticCredentials struct{ err error }
@@ -84,14 +85,14 @@ func sender(t *testing.T, f *ses) (*Sender, *bytes.Buffer) {
 }
 
 func message() accounts.Mail {
-	return accounts.Mail{To: recipient, Subject: subject, Text: text}
+	return accounts.Mail{To: recipient, Subject: subject, Text: text, HTML: page}
 }
 
 // says nothing fails when what is logged or returned names the recipient or
 // holds the message.
 func saysNothing(t *testing.T, what string) {
 	t.Helper()
-	for _, secret := range []string{recipient, "123456", subject} {
+	for _, secret := range []string{recipient, "123456", subject, "<p>"} {
 		if strings.Contains(what, secret) {
 			t.Errorf("%q is in %q", secret, what)
 		}
@@ -131,7 +132,10 @@ func TestSend(t *testing.T) {
 		"Destination":      map[string]any{"ToAddresses": []any{recipient}},
 		"Content": map[string]any{"Simple": map[string]any{
 			"Subject": map[string]any{"Data": subject, "Charset": "UTF-8"},
-			"Body":    map[string]any{"Text": map[string]any{"Data": text, "Charset": "UTF-8"}},
+			"Body": map[string]any{
+				"Text": map[string]any{"Data": text, "Charset": "UTF-8"},
+				"Html": map[string]any{"Data": page, "Charset": "UTF-8"},
+			},
 		}},
 	}
 	a, _ := json.Marshal(got)
@@ -141,6 +145,31 @@ func TestSend(t *testing.T) {
 	}
 	if logs.Len() != 0 {
 		t.Errorf("logged %s", logs)
+	}
+}
+
+// TestAMessageWithoutHTMLGoesAsTextAlone: a message whose HTML could not be
+// written still goes, with no Html part at all rather than an empty one.
+func TestAMessageWithoutHTMLGoesAsTextAlone(t *testing.T) {
+	f := &ses{}
+	s, _ := sender(t, f)
+	m := message()
+	m.HTML = ""
+	if err := s.Send(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Content struct {
+			Simple struct {
+				Body map[string]json.RawMessage
+			}
+		}
+	}
+	if err := json.Unmarshal(f.bodies[0], &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.Content.Simple.Body["Html"]; ok || len(got.Content.Simple.Body) != 1 {
+		t.Errorf("body %s, want Text alone", f.bodies[0])
 	}
 }
 

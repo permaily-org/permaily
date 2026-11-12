@@ -1,0 +1,10 @@
+To: ada@example.com
+Subject: The contact address of your Permaily account changed
+
+The contact address of your Permaily account was changed to another one. This address is no longer the account's: messages about the account, and signing in by email, go to the new address from now on.
+
+    When: 12 November 2026, 09:30 UTC
+
+If it was you, there is nothing to do.
+
+If it was not you, write to support@permaily.com from this address as soon as you can.
