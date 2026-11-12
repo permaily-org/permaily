@@ -1,7 +1,7 @@
 import type { ComponentProps } from 'react'
 import type { Provider } from '../../lib/api.ts'
 import { providerAction } from '../../lib/providers.ts'
-import { buttonVariants, cx, focusRing } from '../../lib/styles.ts'
+import { buttonVariants, cx, focusRing, signInHeight } from '../../lib/styles.ts'
 import { ProviderMark } from './marks.tsx'
 import './brands.css'
 
@@ -32,7 +32,8 @@ export function ProviderButton({
       type="button"
       {...props}
       className={cx(
-        'group inline-flex h-10 items-center justify-center gap-2.5 whitespace-nowrap rounded-sm px-3 font-medium text-body leading-5 disabled:cursor-not-allowed',
+        'group inline-flex items-center justify-center gap-2.5 whitespace-nowrap rounded-sm px-3 font-medium text-body leading-5 disabled:cursor-not-allowed',
+        signInHeight,
         looks[provider],
         focusRing,
         className,
