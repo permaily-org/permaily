@@ -320,6 +320,43 @@ func TestS6AWritePendingAboveAForkDoesNotBuryIt(t *testing.T) {
 	}
 }
 
+// S6, the case it narrows: a strict writer reads the history again before it
+// appends, so it never writes over a commit that a delete marker hides. A
+// writer that read only before would take the hidden version for free, and
+// make the fork itself.
+func TestS6AStrictWriterDoesNotWriteOverAHiddenCommit(t *testing.T) {
+	ctx := context.Background()
+	w := newStrictWorld()
+	a, b := w.enclave(), w.enclave()
+	if err := a.CreateNew(ctx, rec("mailbox-1", "v1")); err != nil {
+		t.Fatal(err)
+	}
+	_, markA, err := a.GetRecordAt(ctx, "mailbox-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, markB, err := b.GetRecordAt(ctx, "mailbox-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.PutRecordAt(ctx, rec("mailbox-1", "B's v2"), markB); err != nil {
+		t.Fatal(err)
+	}
+	w.b.hide(w.last().key)
+	objects, stored := len(w.b.versions), names(t, w.records, "mailbox-1")
+	if err := a.PutRecordAt(ctx, rec("mailbox-1", "A's v2"), markA); !errors.Is(err, store.ErrChanged) {
+		t.Fatalf("a write over a hidden commit: %v", err)
+	}
+	if len(w.b.versions) != objects || fmt.Sprint(names(t, w.records, "mailbox-1")) != fmt.Sprint(stored) {
+		t.Fatal("something was written for a refused write")
+	}
+	for _, e := range []*store.Anchored{a, b, w.enclave()} {
+		if got, err := e.GetRecord(ctx, "mailbox-1"); err != nil || string(got.Value) != "B's v2" {
+			t.Fatalf("read %+v, %v", got, err)
+		}
+	}
+}
+
 // S7 (ADR 0026): a replayed commit. A valid commit's bytes written again at
 // its key, once without a lock and once with a lock in governance mode, are
 // the same commit: no fork, and nothing unlocked since the original is

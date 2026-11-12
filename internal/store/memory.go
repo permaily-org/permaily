@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -11,8 +12,23 @@ import (
 
 // Memory is an in-memory Store for dev mode and tests.
 type Memory struct {
-	mu        sync.Mutex
-	Now       func() time.Time
+	mu  sync.Mutex
+	Now func() time.Time
+	// Interrupt, when set, is called before each read, write and delete with
+	// what it is about to do; an error it returns fails that one, as a
+	// failure of a request to DynamoDB or S3 would, and leaves every earlier
+	// one done. It may block, as a slow request would: the store method
+	// returns ctx.Err() when ctx ends first. PutMessage is two steps (StepRaw,
+	// then StepItem), as it is two requests on AWS; so are GetMessage (two
+	// StepRead) and DeleteMessage (StepDeleteRaw, then StepDeleteItem).
+	//
+	// partition and key name what the request is about, as the table names
+	// it: a record is ("system", "record#<name>"), a message's item and its
+	// raw object ("mailbox#<id>", "msg#<message id>"), F1's mailbox
+	// ("mailbox#<id>", "mailbox"), an entry its own; a listing or a scan
+	// names its partition and its prefix.
+	Interrupt func(ctx context.Context, step Step, partition, key string) error
+
 	mailboxes map[string]Mailbox
 	messages  map[string]map[string]Message
 	raw       map[string][]byte
@@ -32,8 +48,31 @@ func NewMemory() *Memory {
 	}
 }
 
+// step asks Interrupt whether the request may go on.
+func (s *Memory) step(ctx context.Context, step Step, partition, key string) error {
+	interrupt := s.Interrupt
+	if interrupt == nil {
+		return nil
+	}
+	done := make(chan error, 1)
+	go func() { done <- interrupt(ctx, step, partition, key) }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+const memoryRecords = "system"
+
+func messageKey(id string) string { return "msg#" + id }
+
 // GetRecord implements Records.
-func (s *Memory) GetRecord(_ context.Context, name string) (*Record, error) {
+func (s *Memory) GetRecord(ctx context.Context, name string) (*Record, error) {
+	if err := s.step(ctx, StepRead, memoryRecords, "record#"+name); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.records[name]
@@ -44,7 +83,10 @@ func (s *Memory) GetRecord(_ context.Context, name string) (*Record, error) {
 }
 
 // PutRecord implements Records.
-func (s *Memory) PutRecord(_ context.Context, r *Record, create bool) error {
+func (s *Memory) PutRecord(ctx context.Context, r *Record, create bool) error {
+	if err := s.step(ctx, StepRecord, memoryRecords, "record#"+r.Name); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.records[r.Name]; ok && create {
@@ -68,7 +110,10 @@ func (s *Memory) RecordNames() []string {
 }
 
 // ListRecords implements RecordTable.
-func (s *Memory) ListRecords(_ context.Context, prefix string, limit int) ([]string, error) {
+func (s *Memory) ListRecords(ctx context.Context, prefix string, limit int) ([]string, error) {
+	if err := s.step(ctx, StepRead, memoryRecords, "record#"+prefix); err != nil {
+		return nil, err
+	}
 	var names []string
 	for _, name := range s.RecordNames() {
 		if strings.HasPrefix(name, prefix) && len(names) < limit {
@@ -80,7 +125,10 @@ func (s *Memory) ListRecords(_ context.Context, prefix string, limit int) ([]str
 
 // DeleteRecord implements RecordTable. Tests also use it to delete a record
 // the way whoever runs the storage can.
-func (s *Memory) DeleteRecord(_ context.Context, name string) error {
+func (s *Memory) DeleteRecord(ctx context.Context, name string) error {
+	if err := s.step(ctx, StepRecord, memoryRecords, "record#"+name); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.records, name)
@@ -88,7 +136,10 @@ func (s *Memory) DeleteRecord(_ context.Context, name string) error {
 }
 
 // GetMailbox implements Store.
-func (s *Memory) GetMailbox(_ context.Context, id string) (*Mailbox, error) {
+func (s *Memory) GetMailbox(ctx context.Context, id string) (*Mailbox, error) {
+	if err := s.step(ctx, StepRead, "mailbox#"+id, "mailbox"); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, ok := s.mailboxes[id]
@@ -99,7 +150,10 @@ func (s *Memory) GetMailbox(_ context.Context, id string) (*Mailbox, error) {
 }
 
 // PutMailbox implements Store.
-func (s *Memory) PutMailbox(_ context.Context, m *Mailbox) error {
+func (s *Memory) PutMailbox(ctx context.Context, m *Mailbox) error {
+	if err := s.step(ctx, StepRecord, "mailbox#"+m.ID, "mailbox"); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	old, ok := s.mailboxes[m.ID]
@@ -114,20 +168,87 @@ func (s *Memory) PutMailbox(_ context.Context, m *Mailbox) error {
 	return nil
 }
 
-// PutMessage implements Store.
-func (s *Memory) PutMessage(_ context.Context, m *Message, raw []byte) error {
+// PutMessage implements Store: the raw message, then the item, as two steps.
+func (s *Memory) PutMessage(ctx context.Context, m *Message, raw []byte) error {
+	if err := s.step(ctx, StepRaw, "mailbox#"+m.MailboxID, messageKey(m.ID)); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.raw[m.MailboxID+"/"+m.ID] = slices.Clone(raw)
+	s.mu.Unlock()
+	return s.PutItem(ctx, m)
+}
+
+// PutRaw implements MessageParts.
+func (s *Memory) PutRaw(ctx context.Context, m *Message, raw []byte) error {
+	if err := s.step(ctx, StepRaw, "mailbox#"+m.MailboxID, messageKey(m.ID)); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.raw[m.MailboxID+"/"+m.ID]; ok {
+		return ErrExists
+	}
+	s.raw[m.MailboxID+"/"+m.ID] = slices.Clone(raw)
+	return nil
+}
+
+// PutItem implements MessageParts.
+func (s *Memory) PutItem(ctx context.Context, m *Message) error {
+	if err := s.step(ctx, StepItem, "mailbox#"+m.MailboxID, messageKey(m.ID)); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.messages[m.MailboxID] == nil {
 		s.messages[m.MailboxID] = map[string]Message{}
 	}
-	s.messages[m.MailboxID][m.ID] = *m
-	s.raw[m.MailboxID+"/"+m.ID] = slices.Clone(raw)
+	stored := *m
+	stored.Meta = slices.Clone(m.Meta)
+	s.messages[m.MailboxID][m.ID] = stored
 	return nil
 }
 
+// Item implements MessageParts.
+func (s *Memory) Item(ctx context.Context, mailboxID, id string) (*Message, error) {
+	if err := s.step(ctx, StepRead, "mailbox#"+mailboxID, messageKey(id)); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, ok := s.messages[mailboxID][id]
+	if !ok || !m.ExpiresAt.After(s.Now()) {
+		return nil, ErrNotFound
+	}
+	m.Meta = slices.Clone(m.Meta)
+	return &m, nil
+}
+
+// ReadRaw implements MessageParts.
+func (s *Memory) ReadRaw(ctx context.Context, mailboxID, id string, maxBytes int64) ([]byte, error) {
+	if maxBytes < 0 {
+		return nil, fmt.Errorf("store: a raw message bounded by %d bytes", maxBytes)
+	}
+	if err := s.step(ctx, StepRead, "mailbox#"+mailboxID, messageKey(id)); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	raw, ok := s.raw[mailboxID+"/"+id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	if int64(len(raw)) > maxBytes {
+		return nil, ErrTooLarge
+	}
+	return slices.Clone(raw), nil
+}
+
 // ListMessages implements Store.
-func (s *Memory) ListMessages(_ context.Context, mailboxID string, limit int, before string) ([]Message, error) {
+func (s *Memory) ListMessages(ctx context.Context, mailboxID string, limit int, before string) ([]Message, error) {
+	if err := s.step(ctx, StepRead, "mailbox#"+mailboxID, "msg#"); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.Now()
@@ -144,33 +265,118 @@ func (s *Memory) ListMessages(_ context.Context, mailboxID string, limit int, be
 	return out, nil
 }
 
-// GetMessage implements Store.
-func (s *Memory) GetMessage(_ context.Context, mailboxID, id string) (*Message, []byte, error) {
+// GetMessage implements Store: the item, then the raw message.
+func (s *Memory) GetMessage(ctx context.Context, mailboxID, id string) (*Message, []byte, error) {
+	m, err := s.Item(ctx, mailboxID, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.step(ctx, StepRead, "mailbox#"+mailboxID, messageKey(id)); err != nil {
+		return nil, nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	m, ok := s.messages[mailboxID][id]
-	if !ok || !m.ExpiresAt.After(s.Now()) {
-		return nil, nil, ErrNotFound
-	}
-	return &m, slices.Clone(s.raw[mailboxID+"/"+id]), nil
+	return m, slices.Clone(s.raw[mailboxID+"/"+id]), nil
 }
 
-// DeleteMessage implements Store.
-func (s *Memory) DeleteMessage(_ context.Context, mailboxID, id string) error {
+// DeleteMessage implements Store: the raw message first, then the item, so
+// that asking again finishes a delete that stopped between the two. It
+// returns ErrNotFound only when the item was not there.
+func (s *Memory) DeleteMessage(ctx context.Context, mailboxID, id string) error {
+	if err := s.step(ctx, StepDeleteRaw, "mailbox#"+mailboxID, messageKey(id)); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	delete(s.raw, mailboxID+"/"+id)
+	s.mu.Unlock()
+	if err := s.step(ctx, StepDeleteItem, "mailbox#"+mailboxID, messageKey(id)); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.messages[mailboxID][id]; !ok {
 		return ErrNotFound
 	}
 	delete(s.messages[mailboxID], id)
-	delete(s.raw, mailboxID+"/"+id)
+	return nil
+}
+
+// ScanMessagesDown implements Scanner.
+func (s *Memory) ScanMessagesDown(ctx context.Context, mailboxID, before string, maxRead int) (*MessageScan, error) {
+	if err := scanBound(maxRead); err != nil {
+		return nil, err
+	}
+	if err := s.step(ctx, StepRead, "mailbox#"+mailboxID, "msg#"); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var all []Message
+	for _, m := range s.messages[mailboxID] {
+		if before == "" || m.ID < before {
+			all = append(all, m)
+		}
+	}
+	slices.SortFunc(all, func(a, b Message) int { return strings.Compare(b.ID, a.ID) })
+	read := all[:min(maxRead, len(all))]
+	// DynamoDB says there may be more whenever a page reads its limit.
+	out := &MessageScan{Messages: []Message{}, Read: len(read), More: len(read) == maxRead}
+	now := s.Now()
+	for _, m := range read {
+		out.Last = m.ID
+		if m.ExpiresAt.After(now) {
+			m.Meta = slices.Clone(m.Meta)
+			out.Messages = append(out.Messages, m)
+		}
+	}
+	return out, nil
+}
+
+// ScanEntriesDown implements Scanner.
+func (s *Memory) ScanEntriesDown(ctx context.Context, partition, prefix, before string, maxRead int) (*EntryScan, error) {
+	if err := scanBound(maxRead); err != nil {
+		return nil, err
+	}
+	if err := s.step(ctx, StepRead, partition, prefix); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var all []Entry
+	for _, e := range s.entries {
+		if e.Partition == partition && strings.HasPrefix(e.Key, prefix) && (before == "" || e.Key < before) {
+			all = append(all, e)
+		}
+	}
+	slices.SortFunc(all, func(a, b Entry) int { return strings.Compare(b.Key, a.Key) })
+	read := all[:min(maxRead, len(all))]
+	// DynamoDB says there may be more whenever a page reads its limit.
+	out := &EntryScan{Entries: []Entry{}, Read: len(read), More: len(read) == maxRead}
+	now := s.Now()
+	for _, e := range read {
+		out.Last = e.Key
+		if e.ExpiresAt.IsZero() || e.ExpiresAt.After(now) {
+			e.Value = slices.Clone(e.Value)
+			out.Entries = append(out.Entries, e)
+		}
+	}
+	return out, nil
+}
+
+func scanBound(maxRead int) error {
+	if maxRead < 1 || maxRead > MaxScanRead {
+		return fmt.Errorf("store: a scan reads 1 to %d items, not %d", MaxScanRead, maxRead)
+	}
 	return nil
 }
 
 func memoryKey(partition, key string) string { return partition + "\x00" + key }
 
 // GetEntry implements Entries.
-func (s *Memory) GetEntry(_ context.Context, partition, key string) (*Entry, error) {
+func (s *Memory) GetEntry(ctx context.Context, partition, key string) (*Entry, error) {
+	if err := s.step(ctx, StepRead, partition, key); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.entries[memoryKey(partition, key)]
@@ -182,7 +388,10 @@ func (s *Memory) GetEntry(_ context.Context, partition, key string) (*Entry, err
 }
 
 // PutEntry implements Entries.
-func (s *Memory) PutEntry(_ context.Context, e *Entry) error {
+func (s *Memory) PutEntry(ctx context.Context, e *Entry) error {
+	if err := s.step(ctx, StepEntry, e.Partition, e.Key); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	old, ok := s.entries[memoryKey(e.Partition, e.Key)]
@@ -203,7 +412,10 @@ func (s *Memory) PutEntry(_ context.Context, e *Entry) error {
 }
 
 // DeleteEntry implements Entries.
-func (s *Memory) DeleteEntry(_ context.Context, partition, key string) error {
+func (s *Memory) DeleteEntry(ctx context.Context, partition, key string) error {
+	if err := s.step(ctx, StepDeleteEntry, partition, key); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.entries[memoryKey(partition, key)]
@@ -218,7 +430,10 @@ func (s *Memory) DeleteEntry(_ context.Context, partition, key string) error {
 }
 
 // DeleteEntryAt implements Entries.
-func (s *Memory) DeleteEntryAt(_ context.Context, e *Entry) error {
+func (s *Memory) DeleteEntryAt(ctx context.Context, e *Entry) error {
+	if err := s.step(ctx, StepDeleteEntry, e.Partition, e.Key); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	old, ok := s.entries[memoryKey(e.Partition, e.Key)]
@@ -230,7 +445,10 @@ func (s *Memory) DeleteEntryAt(_ context.Context, e *Entry) error {
 }
 
 // ListEntries implements Entries.
-func (s *Memory) ListEntries(_ context.Context, partition, prefix, after string, limit int) ([]Entry, error) {
+func (s *Memory) ListEntries(ctx context.Context, partition, prefix, after string, limit int) ([]Entry, error) {
+	if err := s.step(ctx, StepRead, partition, prefix); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.Now()
@@ -248,14 +466,28 @@ func (s *Memory) ListEntries(_ context.Context, partition, prefix, after string,
 	return out, nil
 }
 
-// DeletePartition implements Entries.
-func (s *Memory) DeletePartition(_ context.Context, partition string) error {
+// DeletePartition implements Entries: the partition is listed, then each
+// entry deleted in the order of its key, a step each.
+func (s *Memory) DeletePartition(ctx context.Context, partition string) error {
+	if err := s.step(ctx, StepRead, partition, ""); err != nil {
+		return err
+	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	for k, e := range s.entries {
+	var keys []string
+	for _, e := range s.entries {
 		if e.Partition == partition {
-			delete(s.entries, k)
+			keys = append(keys, e.Key)
 		}
+	}
+	s.mu.Unlock()
+	slices.Sort(keys)
+	for _, key := range keys {
+		if err := s.step(ctx, StepDeleteEntry, partition, key); err != nil {
+			return err
+		}
+		s.mu.Lock()
+		delete(s.entries, memoryKey(partition, key))
+		s.mu.Unlock()
 	}
 	return nil
 }
