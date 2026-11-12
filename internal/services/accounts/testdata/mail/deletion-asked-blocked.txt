@@ -1,0 +1,9 @@
+To: ada@example.com
+Subject: Your Permaily account is being deleted
+
+Permaily's operator asked to delete your Permaily account. It will be removed, with everything in it, on 19 November 2026, 09:30 UTC.
+
+    Asked: 12 November 2026, 09:30 UTC
+    Removed: 19 November 2026, 09:30 UTC
+
+The account is blocked, so nobody can sign in to cancel the deletion. To ask why, or to ask for the account to be kept, write to support@permaily.com.

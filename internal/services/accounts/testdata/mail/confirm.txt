@@ -1,0 +1,10 @@
+To: ada@example.com
+Subject: Confirm it is you on Permaily
+
+Your code to confirm it is you on Permaily:
+
+    428913
+
+Type it where you were asked for it. It works once, for 10 minutes.
+
+If you did not ask for it, someone may be signed in to your account: sign in at app.permaily.com, open Settings and sign out the devices you do not know. Nothing changes without the code.

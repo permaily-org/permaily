@@ -1,0 +1,25 @@
+{
+  "name": "admin-removed",
+  "to": "ada@example.com",
+  "subject": "Your Permaily account is no longer an admin",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "Your Permaily account is no longer an admin of Permaily. The admin panel is closed to it from now on."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "To ask why, write to support@permaily.com."
+    }
+  ]
+}

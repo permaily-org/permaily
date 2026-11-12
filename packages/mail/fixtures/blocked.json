@@ -1,0 +1,25 @@
+{
+  "name": "blocked",
+  "to": "ada@example.com",
+  "subject": "Your Permaily account was blocked",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "Permaily's operator blocked your Permaily account. Every device was signed out of it, and nobody can sign in to it while it is blocked."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "To ask why, or to ask for it to be unblocked, write to support@permaily.com."
+    }
+  ]
+}

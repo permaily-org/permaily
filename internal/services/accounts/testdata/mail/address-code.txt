@@ -1,0 +1,8 @@
+To: ada.lovelace@example.com
+Subject: Confirm your new address for Permaily
+
+Your code to make this the contact address of your Permaily account:
+
+    428913
+
+Type it in Settings, where you asked for the change. It works once, for 10 minutes. If you did not ask for it, ignore this message: nothing changes without the code.

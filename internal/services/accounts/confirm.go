@@ -9,6 +9,7 @@ import (
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain"
+	"github.com/permaily-org/permaily/internal/domain/mail"
 	"github.com/permaily-org/permaily/internal/store"
 )
 
@@ -177,9 +178,11 @@ func (s *Service) deliverConfirm(ctx context.Context, id, owner, address string)
 // confirmMail writes the message with the code that confirms a session.
 func confirmMail(to, app, code string) Mail {
 	minutes := int(domain.EmailCodeLifetime / time.Minute)
-	return Mail{To: to, Subject: "Confirm it is you on Permaily", Text: fmt.Sprintf(
-		"Your code to confirm it is you on Permaily:\n\n    %s\n\nType it where you were asked for it. It works once, for %d minutes.\n\nIf you did not ask for it, someone may be signed in to your account: sign in at %s, open Settings and sign out the devices you do not know. Nothing changes without the code.\n",
-		code, minutes, app)}
+	return compose(to, "Confirm it is you on Permaily",
+		mail.Lead("Your code to confirm it is you on Permaily:"),
+		mail.Code(code),
+		mail.Paragraph(fmt.Sprintf("Type it where you were asked for it. It works once, for %d minutes.", minutes)),
+		mail.Paragraph("If you did not ask for it, someone may be signed in to your account: sign in at "+app+", open Settings and sign out the devices you do not know. Nothing changes without the code."))
 }
 
 // FinishConfirmEmail confirms the session with the code of its message. The

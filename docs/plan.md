@@ -58,7 +58,7 @@ Step 1, in the order it is built (all of it released in v0.10.0 on 2026-11-11):
 - [x] Agreeing to the terms of service and the privacy policy at sign-up, and again when they change (ADR 0017, 2026-11-12). Needed before the site publishes them.
 - [x] Settings: name, sessions per device, deleting the account. The operator's tool to see accounts (`scripts/accounts.sh`) (2026-11-11).
 
-After v0.10.0, built on 2026-11-12 and not released yet (ADR 0017):
+After v0.10.0, built on 2026-11-12 and released in v0.11.0, in production since 2026-11-12 (ADR 0017):
 
 - [x] What the operator can do to an account through the enclave: block and unblock, ask to delete and cancel, sign devices out, find by address, list and revoke invitations (`scripts/accounts.sh`, `scripts/invite.sh`), with every action counted on `/status` and printed by `permaily-verify`. Not what would be a way in: no address, no way to sign in.
 - [x] Changing the contact address, with a code sent to the new one (server side; the screen is in the web app).

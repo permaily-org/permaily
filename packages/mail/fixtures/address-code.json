@@ -1,0 +1,19 @@
+{
+  "name": "address-code",
+  "to": "ada.lovelace@example.com",
+  "subject": "Confirm your new address for Permaily",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "Your code to make this the contact address of your Permaily account:"
+    },
+    {
+      "kind": "code",
+      "text": "428913"
+    },
+    {
+      "kind": "paragraph",
+      "text": "Type it in Settings, where you asked for the change. It works once, for 10 minutes. If you did not ask for it, ignore this message: nothing changes without the code."
+    }
+  ]
+}

@@ -2,12 +2,11 @@ package accounts
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain"
+	"github.com/permaily-org/permaily/internal/domain/mail"
 	"github.com/permaily-org/permaily/internal/idp"
 )
 
@@ -17,7 +16,7 @@ import (
 // a deletion asked or cancelled, the operator blocking or unblocking the
 // account, and the account made an admin or no longer one. They cannot be turned off.
 //
-// A notice is plain text, from the same sender and through the same Mailer
+// A notice is plain text and its HTML (ADR 0025), from the same sender and through the same Mailer
 // as a sign-in message, so the watch of ADR 0021 applies to it. Its subject
 // is fixed words. It never holds a code, a link, a token or an identifier,
 // and nothing a person typed: not a name, not an address. Not even what the
@@ -127,16 +126,17 @@ func notWho(app string) string {
 
 // noticeMail writes a notice: what happened, the facts of it one a line, and
 // what to do.
-func noticeMail(to, subject, what string, facts [][2]string, after ...string) Mail {
-	var b strings.Builder
-	b.WriteString(what + "\n\n")
-	for _, f := range facts {
-		fmt.Fprintf(&b, "    %s: %s\n", f[0], f[1])
-	}
+func noticeMail(to, subject, what string, facts []mail.Fact, after ...string) Mail {
+	blocks := []mail.Block{mail.Lead(what), mail.Facts(facts...)}
 	for _, p := range after {
-		b.WriteString("\n" + p + "\n")
+		blocks = append(blocks, mail.Paragraph(p))
 	}
-	return Mail{To: to, Subject: subject, Text: b.String()}
+	return compose(to, subject, blocks...)
+}
+
+// at is the fact of when something happened.
+func at(label string, t time.Time) mail.Fact {
+	return mail.Fact{Label: label, Value: when(t), Machine: true}
 }
 
 const itWasYou = "If it was you, there is nothing to do."
@@ -147,14 +147,14 @@ const browserNotRecognised = "not recognised"
 // newDeviceMail tells of a sign-in from a device that had not signed in to
 // the account before: when, how, and which browser, named as the list of
 // sessions names it. Nothing else of what the browser said is repeated.
-func newDeviceMail(to, app string, at time.Time, how way, device string) Mail {
+func newDeviceMail(to, app string, moment time.Time, how way, device string) Mail {
 	browser := domain.DeviceName(device)
 	if browser == "" {
 		browser = browserNotRecognised
 	}
 	return noticeMail(to, "A new device signed in to your Permaily account",
 		"A device that had not signed in to your Permaily account before has just signed in to it.",
-		[][2]string{{"When", when(at)}, {"How", string(how)}, {"Browser", browser}},
+		[]mail.Fact{at("When", moment), {Label: "How", Value: string(how)}, {Label: "Browser", Value: browser}},
 		itWasYou, notWho(app))
 }
 
@@ -169,18 +169,18 @@ var signInChanges = map[string]string{ //nolint:gosec // G101: the words of noti
 }
 
 // signInChangeMail tells of a change in how the account is signed into.
-func signInChangeMail(to, app string, at time.Time, what string) Mail {
+func signInChangeMail(to, app string, moment time.Time, what string) Mail {
 	return noticeMail(to, "A change to how you sign in to Permaily", what,
-		[][2]string{{"When", when(at)}}, itWasYou, notWho(app))
+		[]mail.Fact{at("When", moment)}, itWasYou, notWho(app))
 }
 
 // providerMail tells of a provider linked to the account, or unlinked.
-func providerMail(to, app string, at time.Time, p idp.Provider, linked bool) Mail {
+func providerMail(to, app string, moment time.Time, p idp.Provider, linked bool) Mail {
 	what := "Signing in with " + providerNames[p] + " was removed from your Permaily account. It no longer signs in to the account."
 	if linked {
 		what = "Signing in with " + providerNames[p] + " was added to your Permaily account. It signs in to the account from now on."
 	}
-	return signInChangeMail(to, app, at, what)
+	return signInChangeMail(to, app, moment, what)
 }
 
 // noticeChange sends the notice of a change in how an account is signed into.
@@ -191,9 +191,9 @@ func (s *Service) noticeChange(ctx context.Context, doc *accountDoc, kind string
 // addressMails tell of a change of the contact address: the address it was,
 // and the one it is. Neither names the other: whoever reads the old one's
 // mail now is not told where the person went.
-func addressMails(from, to string, at time.Time) []Mail {
+func addressMails(from, to string, moment time.Time) []Mail {
 	const subject = "The contact address of your Permaily account changed"
-	facts := [][2]string{{"When", when(at)}}
+	facts := []mail.Fact{at("When", moment)}
 	return []Mail{
 		noticeMail(from, subject,
 			"The contact address of your Permaily account was changed to another one. This address is no longer the account's: messages about the account, and signing in by email, go to the new address from now on.",
@@ -215,7 +215,7 @@ func who(by string) string {
 
 // deletionAskedMail tells that the account is closing: who asked, and the day
 // it is removed.
-func deletionAskedMail(doc *accountDoc, app string, at time.Time) Mail {
+func deletionAskedMail(doc *accountDoc, app string, moment time.Time) Mail {
 	by := doc.closingBy()
 	last := "If it was not you, sign in and cancel it, and then sign out the devices you do not know and remove every way of signing in that is not yours. If you cannot sign in, write to " + supportAddress + "."
 	if by == contracts.ClosingByOperator {
@@ -228,23 +228,23 @@ func deletionAskedMail(doc *accountDoc, app string, at time.Time) Mail {
 	}
 	return noticeMail(doc.Address, "Your Permaily account is being deleted",
 		who(by)+" asked to delete your Permaily account. It will be removed, with everything in it, on "+when(doc.ClosesAt)+".",
-		[][2]string{{"Asked", when(at)}, {"Removed", when(doc.ClosesAt)}}, after...)
+		[]mail.Fact{at("Asked", moment), at("Removed", doc.ClosesAt)}, after...)
 }
 
 // deletionCancelledMail tells that the account is kept: who cancelled, and when.
-func deletionCancelledMail(to, app string, at time.Time, by string) Mail {
+func deletionCancelledMail(to, app string, moment time.Time, by string) Mail {
 	last := notWho(app)
 	if by == contracts.ClosingByOperator {
 		last = "To ask why, write to " + supportAddress + "."
 	}
 	return noticeMail(to, "Your Permaily account is no longer being deleted",
 		who(by)+" cancelled the deletion of your Permaily account. The account stays, as it was.",
-		[][2]string{{"When", when(at)}}, last)
+		[]mail.Fact{at("When", moment)}, last)
 }
 
 // blockedMail tells that the operator blocked the account, or unblocked it.
-func blockedMail(to, app string, at time.Time, blocked bool) Mail {
-	facts := [][2]string{{"When", when(at)}}
+func blockedMail(to, app string, moment time.Time, blocked bool) Mail {
+	facts := []mail.Fact{at("When", moment)}
 	if blocked {
 		return noticeMail(to, "Your Permaily account was blocked",
 			"Permaily's operator blocked your Permaily account. Every device was signed out of it, and nobody can sign in to it while it is blocked.",
@@ -257,8 +257,8 @@ func blockedMail(to, app string, at time.Time, blocked bool) Mail {
 
 // adminMail tells that the account was made an admin of Permaily, or stopped
 // being one.
-func adminMail(to, app string, at time.Time, made bool) Mail {
-	facts := [][2]string{{"When", when(at)}}
+func adminMail(to, app string, moment time.Time, made bool) Mail {
+	facts := []mail.Fact{at("When", moment)}
 	if made {
 		return noticeMail(to, "Your Permaily account is now an admin",
 			"Your Permaily account was made an admin of Permaily. It can manage the accounts and the invitations of the service in the admin panel at "+app+", while it signs in with passkeys only.",

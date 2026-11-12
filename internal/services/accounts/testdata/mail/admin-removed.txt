@@ -1,0 +1,8 @@
+To: ada@example.com
+Subject: Your Permaily account is no longer an admin
+
+Your Permaily account is no longer an admin of Permaily. The admin panel is closed to it from now on.
+
+    When: 12 November 2026, 09:30 UTC
+
+To ask why, write to support@permaily.com.

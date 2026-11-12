@@ -1,6 +1,8 @@
-// Enforces the design system on the web app (web/) and the public site (site/).
+// Enforces the design system on the web app (web/), the public site (site/) and the mail (packages/mail/).
 //
 // Errors fail `make check`:
+//   - a colour in the mail's templates (internal/domain/mail/templates) that is not the value of a token of
+//     packages/ui/colors.css: mail clients have no CSS variables, so the values are copied there
 //   - raw color values (hex, rgb, hsl, oklch) outside packages/ui/colors.css and the providers' marks
 //     (the files directly in web/src/components/brands/: their colours are the providers', docs/design.md)
 //   - em dashes used as punctuation in copy ("word — word")
@@ -14,7 +16,13 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 const root = join(import.meta.dir, '..')
-const roots = ['web/src', 'site/src', 'web/index.html']
+const roots = [
+  'web/src',
+  'site/src',
+  'web/index.html',
+  'packages/mail/src',
+  'packages/mail/scripts',
+]
 const extensions = ['.ts', '.tsx', '.astro', '.css', '.html', '.md', '.mdx']
 const allowColorsIn = ['packages/ui/colors.css']
 // The providers' marks and what their guidelines fix for their sign-in buttons. Only the files directly in
@@ -93,6 +101,36 @@ if (wrong.length) {
   process.exit(1)
 }
 
+// The mail's templates are generated from packages/mail/src, which reads the tokens: every colour in them must
+// still be a token's value, light or dark.
+const tokenValues = new Set(
+  [
+    ...readFileSync(join(root, 'packages/ui/colors.css'), 'utf8').matchAll(/#[0-9a-fA-F]{3,8}\b/g),
+  ].map((m) => m[0].toLowerCase()),
+)
+export function mailColorsWrong(line: string): string[] {
+  const found = [
+    ...line.matchAll(/#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|oklch|oklab|lab|lch)\([^)]*\)/g),
+  ].map((m) => m[0].toLowerCase())
+  return found.filter((c) => !tokenValues.has(c))
+}
+const mailCases: [line: string, fails: boolean][] = [
+  ['style="color:#131312;border-top:1px solid #deded8"', false],
+  ['.pm-ink{color:#f1f1ec!important}', false],
+  ['style="color:#000000"', true],
+  ['style="color:#ff0000"', true],
+  ['style="color:rgb(0 0 0)"', true],
+]
+const mailWrong = mailCases.filter(([line, fails]) => mailColorsWrong(line).length > 0 !== fails)
+if (mailWrong.length) {
+  for (const [line, fails] of mailWrong) {
+    console.log(
+      `design check: the mail's colour rule ${fails ? 'lets through' : 'refuses'} ${line}`,
+    )
+  }
+  process.exit(1)
+}
+
 function walk(path: string, out: string[]) {
   const full = join(root, path)
   const st = statSync(full, { throwIfNoEntry: false })
@@ -122,6 +160,25 @@ for (const file of files) {
     }
   })
 }
+
+const mailTemplates = 'internal/domain/mail/templates'
+const mailFiles = readdirSync(join(root, mailTemplates)).filter((f) => f.endsWith('.html'))
+for (const name of mailFiles) {
+  const file = `${mailTemplates}/${name}`
+  readFileSync(join(root, file), 'utf8')
+    .split('\n')
+    .forEach((text, i) => {
+      for (const c of mailColorsWrong(text)) {
+        findings.push({
+          file,
+          line: i + 1,
+          rule: `error: mail colour ${c} is no token of packages/ui/colors.css`,
+          text: text.trim(),
+        })
+      }
+    })
+}
+files.push(...mailFiles)
 
 const errors = findings.filter((f) => f.rule.startsWith('error'))
 const warnings = findings.length - errors.length

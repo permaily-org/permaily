@@ -1,6 +1,6 @@
 # 0024 Two enclaves share one TLS identity and answer each other's ACME challenge
 
-Status: Accepted, built, not released. No deployment runs two enclaves yet.
+Status: Accepted, built, in production since v0.11.0 (2026-11-12). No deployment runs two enclaves yet.
 Date: 2026-11-12
 
 ## Context

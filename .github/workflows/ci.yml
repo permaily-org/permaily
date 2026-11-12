@@ -173,6 +173,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: cd web && bun install --frozen-lockfile
       - run: cd site && bun install --frozen-lockfile
+      - run: cd packages/mail && bun install --frozen-lockfile
       - name: Biome (lint and format)
         run: bun run lint
       - run: bun scripts/check-design-system.ts
@@ -180,6 +181,9 @@ jobs:
       - name: Third-party notices and license allowlist
         run: bun scripts/third-party-notices.ts --check
       - run: bun test scripts/
+      - name: Mail templates are what packages/mail makes, and its tests and types
+        working-directory: packages/mail
+        run: bun run check && bun run test && bun run typecheck
       - name: Release notes render with the configured preset
         run: node scripts/check-release-notes.mjs
 

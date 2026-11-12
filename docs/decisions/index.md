@@ -26,7 +26,8 @@ Architecture Decision Records. Each one records the context, the options conside
 | [0019](0019-connections-queries-rules-and-receipts.md) | Connections, queries, rules and receipts | Accepted, not built |
 | [0020](0020-openai-models-for-meaning.md) | OpenAI's models for what depends on meaning | Accepted, not built |
 | [0021](0021-watch-the-copies-of-outgoing-mail.md) | Watch who else gets a copy of the mail the enclave sends | Accepted |
-| [0022](0022-admins-and-confirming-again.md) | Admins, and confirming again before a sensitive change | Accepted, not released |
+| [0022](0022-admins-and-confirming-again.md) | Admins, and confirming again before a sensitive change | Accepted, in production since v0.11.0 |
 | [0023](0023-releases-publish-the-measurements-not-the-image.md) | Releases publish the image's measurements, not the image | Accepted |
-| [0024](0024-two-enclaves-share-one-tls-identity.md) | Two enclaves share one TLS identity and answer each other's ACME challenge | Accepted, not released |
+| [0024](0024-two-enclaves-share-one-tls-identity.md) | Two enclaves share one TLS identity and answer each other's ACME challenge | Accepted, in production since v0.11.0 (one enclave runs) |
+| [0025](0025-mail-with-a-design-written-once.md) | Mail with a design, written once and sent as text and HTML | Accepted, not released |
 | [0026](0026-mailboxes-per-account-how.md) | Mailboxes per account: how they are built (records, keys, lifecycle, ingest, the inbox, the test mailbox, the API) | Proposed, not built |
