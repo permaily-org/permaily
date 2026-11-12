@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/emersion/go-message"
+	"github.com/emersion/go-message/textproto"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 
@@ -45,44 +46,60 @@ var errWalkStop = errors.New("inbox: walk stopped")
 // walkParts visits the leaf parts of a message in order, depth first. A part
 // is an attachment unless its disposition is inline, or it is text/* (a part
 // with no Content-Type is text/plain) without disposition attachment, as
-// go-message's mail.Reader decides. The walk keeps the limits of ADR 0026
-// ("What a message may hold"): MaxHeaderBytes for the header block of every
-// entity, MaxMIMEDepth levels of nesting and MaxMIMEParts entities, the
-// message itself included; past one it returns errLimit. visit returns false
-// to stop (the walk then returns nil). It checks ctx before every entity.
+// go-message's mail.Reader decides. An attachment is a file: its body is the
+// bytes its sender attached, the transfer encoding (base64,
+// quoted-printable) undone and no charset converted, whatever its type; every
+// other part's body is also converted from its charset to UTF-8, for the
+// text view and search. The walk keeps the limits of ADR 0026 ("What a
+// message may hold"): MaxHeaderBytes for the header block of every entity,
+// MaxMIMEDepth levels of nesting and MaxMIMEParts entities, the message
+// itself included; past one it returns errLimit. visit returns false to stop
+// (the walk then returns nil). It checks ctx before every entity.
 func walkParts(ctx context.Context, raw []byte, visit func(p *message.Entity, attachment bool) (bool, error)) error {
-	e, err := readEntity(raw)
-	if e == nil {
-		return err // a header that is not one: go-message says why
+	h, body, err := readHeader(raw)
+	if err != nil {
+		return err // a header that is not one: textproto says why
 	}
 	parts := 0
-	var walk func(e *message.Entity, depth int) error
-	walk = func(e *message.Entity, depth int) error {
+	var walk func(h message.Header, body io.Reader, depth int) error
+	walk = func(h message.Header, body io.Reader, depth int) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		parts++
-		if parts > MaxMIMEParts || headerSize(e.Header) > MaxHeaderBytes {
+		if parts > MaxMIMEParts || headerSize(h) > MaxHeaderBytes {
 			return errLimit
 		}
-		if mr := e.MultipartReader(); mr != nil {
+		// A multipart entity's body is its parts, never transfer-decoded
+		// (RFC 2045 6.4, as go-message reads it).
+		if t, params, _ := h.ContentType(); strings.HasPrefix(t, "multipart/") {
 			if depth >= MaxMIMEDepth {
 				return errLimit
 			}
+			mr := textproto.NewMultipartReader(body, params["boundary"])
 			for {
 				p, err := mr.NextPart()
 				if errors.Is(err, io.EOF) {
 					return nil
 				}
-				if p == nil || (err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err)) {
+				if err != nil {
 					return err
 				}
-				if err := walk(p, depth+1); err != nil {
+				if err := walk(message.Header{Header: p.Header}, p, depth+1); err != nil {
 					return err
 				}
 			}
 		}
-		more, err := visit(e, isAttachment(e))
+		e := &message.Entity{Header: h}
+		attachment := isAttachment(e)
+		if attachment {
+			e.Body = transferDecoded(h, body)
+		} else {
+			// An unknown charset or transfer encoding still gives a body
+			// to read, as it came.
+			e, _ = message.New(h, body)
+		}
+		more, err := visit(e, attachment)
 		if err != nil {
 			return err
 		}
@@ -91,11 +108,35 @@ func walkParts(ctx context.Context, raw []byte, visit func(p *message.Entity, at
 		}
 		return nil
 	}
-	err = walk(e, 0)
+	err = walk(h, body, 0)
 	if errors.Is(err, errWalkStop) {
 		return nil
 	}
 	return err
+}
+
+// transferDecoded is a body with its transfer encoding undone and nothing
+// else: go-message decodes the encoding of an entity that has no media type
+// and converts no charset for it. An unknown encoding leaves the body as it
+// came.
+func transferDecoded(h message.Header, body io.Reader) io.Reader {
+	var only message.Header
+	if enc := h.Get("Content-Transfer-Encoding"); enc != "" {
+		only.Set("Content-Transfer-Encoding", enc)
+	}
+	e, _ := message.New(only, body)
+	return e.Body
+}
+
+// attachmentBody is what an attachment is listed at and downloaded as: its
+// body (transferDecoded) up to MaxMessageBytes. Delivery measures through it
+// and the reader serves through it, so the two agree byte for byte. Undoing
+// a transfer encoding never makes a body longer than the message it is in,
+// and no message larger than MaxMessageBytes is accepted, so the bound cuts
+// nothing of a delivered message: it keeps the read bounded whatever the
+// input.
+func attachmentBody(p *message.Entity) io.Reader {
+	return io.LimitReader(p.Body, MaxMessageBytes)
 }
 
 // contentType is a part's media type, lower case: text/plain when it has
@@ -189,10 +230,10 @@ func readUpTo(r io.Reader, n int) ([]byte, bool) {
 // the type is application/octet-stream and the parse partial.
 const MaxContentTypeBytes = 255
 
-// attach lists an attachment, its size its decoded bytes, within the limits
+// attach lists an attachment, its size the bytes attachmentBody gives, within the limits
 // of how many are listed, the length of a name and of a content type.
 func (w *walked) attach(p *message.Entity) {
-	n, _ := io.Copy(io.Discard, io.LimitReader(p.Body, MaxMessageBytes+1))
+	n, _ := io.Copy(io.Discard, attachmentBody(p))
 	if len(w.attachments) == MaxAttachmentsListed {
 		w.partial = true
 		return

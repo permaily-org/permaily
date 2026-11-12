@@ -281,9 +281,10 @@ func (r *storeReader) Attachment(ctx context.Context, b Box, id string, index in
 			n++
 			return true, nil
 		}
-		// What decodes, as delivery measured it when it listed the part: a
-		// body whose encoding breaks half way is the bytes before the break.
-		data, _ = io.ReadAll(io.LimitReader(p.Body, int64(len(raw))))
+		// The bytes delivery measured when it listed the part, through the
+		// same bound: a body whose encoding breaks half way is the bytes
+		// before the break, and no charset is converted.
+		data, _ = io.ReadAll(attachmentBody(p))
 		found = true
 		return false, nil
 	})

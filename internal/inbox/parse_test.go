@@ -295,3 +295,26 @@ func FuzzParse(f *testing.F) {
 		_, _, _ = inbox.MessageText(context.Background(), raw, 100)
 	})
 }
+
+// The code review of PR #90: delivery lists an attachment at the size of
+// the bytes its sender attached, transfer decoding undone and no charset
+// converted: 4,096 bytes of windows-1252 0x80 are 4,096 bytes, not the
+// 12,288 of their euro signs in UTF-8.
+func TestParseListsAnAttachmentAsItsSenderAttachedIt(t *testing.T) {
+	raw := "From: a@example.org\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n" +
+		"--b\r\nContent-Type: text/plain; charset=windows-1252\r\n\r\nCaf\xe9\r\n" +
+		"--b\r\nContent-Type: text/plain; charset=windows-1252\r\nContent-Disposition: attachment; filename=euros.txt\r\n\r\n" +
+		strings.Repeat("\x80", 4096) + "\r\n--b--\r\n"
+	p := inbox.Parse(context.Background(), []byte(raw))
+	if len(p.Meta.Attachments) != 1 || p.Meta.Attachments[0].Size != 4096 {
+		t.Fatalf("attachments %+v", p.Meta.Attachments)
+	}
+	if p.Text != "Café" {
+		t.Fatalf("text %q", p.Text)
+	}
+	// A whole message that is the attachment.
+	whole := "From: a@example.org\r\nContent-Type: text/plain; charset=windows-1252\r\nContent-Disposition: attachment; filename=e.txt\r\n\r\n" + strings.Repeat("\x80", 10)
+	if p := inbox.Parse(context.Background(), []byte(whole)); len(p.Meta.Attachments) != 1 || p.Meta.Attachments[0].Size != 10 {
+		t.Fatalf("a message that is an attachment: %+v", p.Meta.Attachments)
+	}
+}

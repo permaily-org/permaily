@@ -597,3 +597,51 @@ func TestDisconnectOnTheRealRoutes(t *testing.T) {
 		t.Fatalf("%d messages left", len(msgs))
 	}
 }
+
+// The code review of PR #90: a text attachment in a legacy charset was
+// listed at the size of its body converted to UTF-8 (each windows-1252 byte
+// 0x80 a three-byte euro sign) and downloaded cut at the size of the raw
+// message. An attachment is a file: it is listed and downloaded as the bytes
+// its sender attached, transfer decoding undone and no charset converted,
+// whatever its type; the text view and search still read converted text.
+func TestAnAttachmentIsTheBytesItsSenderAttached(t *testing.T) {
+	w := newRealWorld(t)
+	a := w.instance()
+	box := a.make("alice", "Work")
+	base := "/api/v1/mailboxes/" + box.ID
+	euros := strings.Repeat("\x80", 4096)
+	qp := strings.Repeat("=80", 1000)
+	raw := "From: Ana <ana@example.org>\r\nTo: " + box.Address + "\r\nSubject: Legacy\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n" +
+		"--b\r\nContent-Type: text/plain; charset=windows-1252\r\n\r\nCaf\xe9 legacy-charset\r\n" +
+		"--b\r\nContent-Type: text/plain; charset=windows-1252\r\nContent-Disposition: attachment; filename=euros.txt\r\n\r\n" + euros + "\r\n" +
+		"--b\r\nContent-Type: text/plain; charset=iso-8859-1\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-Disposition: attachment; filename=qp.txt\r\n\r\n" + qp + "\r\n" +
+		"--b\r\nContent-Type: text/html; charset=windows-1252\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=page.html\r\n\r\n" +
+		base64.StdEncoding.EncodeToString([]byte("<p>\x80\xe9</p>")) + "\r\n" +
+		"--b\r\nContent-Type: message/rfc822\r\n\r\nFrom: x@example.org\r\nContent-Type: text/plain; charset=windows-1252\r\n\r\ninner \x80\r\n" +
+		"--b--\r\n"
+	a.deliver(raw, box.Address)
+	p := a.page("alice", box.ID, "")
+	if len(p.Messages) != 1 {
+		t.Fatalf("%+v", p)
+	}
+	id := p.Messages[0].ID
+	m := messageOf(t, a, "alice", box.ID, id)
+	if m.Text != "Café legacy-charset" {
+		t.Fatalf("the text view: %q", m.Text)
+	}
+	if s := a.page("alice", box.ID, "?q=caf%C3%A9"); len(s.Messages) != 1 {
+		t.Fatalf("search does not read converted text: %+v", s)
+	}
+	want := []string{euros, strings.Repeat("\x80", 1000), "<p>\x80\xe9</p>",
+		"From: x@example.org\r\nContent-Type: text/plain; charset=windows-1252\r\n\r\ninner \x80"}
+	if len(m.Attachments) != len(want) {
+		t.Fatalf("listed %+v", m.Attachments)
+	}
+	for i, at := range m.Attachments {
+		rec := a.call("alice", "GET", fmt.Sprintf("%s/messages/%s/attachments/%d", base, id, at.Index), "")
+		if rec.Code != 200 || int64(rec.Body.Len()) != at.Size || rec.Body.String() != want[i] {
+			t.Errorf("attachment %d (%s): %d, %d bytes served, %d listed, %d attached", at.Index, at.Name, rec.Code, rec.Body.Len(), at.Size, len(want[i]))
+		}
+	}
+}

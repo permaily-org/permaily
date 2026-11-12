@@ -7,9 +7,13 @@
 package inbox
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -18,6 +22,7 @@ import (
 	"github.com/emersion/go-message"
 	_ "github.com/emersion/go-message/charset" // decode non-UTF-8 charsets
 	"github.com/emersion/go-message/mail"
+	"github.com/emersion/go-message/textproto"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 )
@@ -222,9 +227,50 @@ func boundMeta(m *StoredMeta) {
 	}
 }
 
-// readEntity reads a message's header, within MaxHeaderBytes.
+// readEntity reads a message's header, within MaxHeaderBytes, and gives its
+// body decoded (transfer encoding and charset). An unknown charset or
+// encoding still gives an entity, with an error that says so.
 func readEntity(b []byte) (*message.Entity, error) {
-	return message.ReadWithOptions(bytes.NewReader(b), &message.ReadOptions{MaxHeaderBytes: MaxHeaderBytes + 4})
+	h, body, err := readHeader(b)
+	if err != nil {
+		return nil, err
+	}
+	return message.New(h, body)
+}
+
+// readHeader reads a message's header block, within MaxHeaderBytes, and
+// returns it and the rest of the message, its body as it is written.
+func readHeader(b []byte) (message.Header, io.Reader, error) {
+	lr := &headerLimit{r: bytes.NewReader(b), n: MaxHeaderBytes + 4}
+	br := bufio.NewReader(lr)
+	h, err := textproto.ReadHeader(br)
+	if err != nil {
+		return message.Header{}, nil, err
+	}
+	lr.n = math.MaxInt64
+	return message.Header{Header: h}, br, nil
+}
+
+// errHeaderTooLong is a header block past MaxHeaderBytes.
+var errHeaderTooLong = errors.New("inbox: a header longer than its limit")
+
+// headerLimit is io.LimitedReader with an error of its own at the limit, so
+// a header cut there is never read as a header that ended.
+type headerLimit struct {
+	r io.Reader
+	n int64
+}
+
+func (l *headerLimit) Read(p []byte) (int, error) {
+	if l.n <= 0 {
+		return 0, errHeaderTooLong
+	}
+	if int64(len(p)) > l.n {
+		p = p[:l.n]
+	}
+	n, err := l.r.Read(p)
+	l.n -= int64(n)
+	return n, err
 }
 
 // boundHeader returns raw, or, when its header block is longer than
