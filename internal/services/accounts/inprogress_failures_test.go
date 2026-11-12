@@ -397,9 +397,8 @@ func TestLinkingStepsOvertakenOrFailing(t *testing.T) {
 // The record of sessions and accounts when keys or storage fail.
 func TestSignOutsAndRecordsFailures(t *testing.T) {
 	down, ctx := errors.New("down"), context.Background()
-	w, f := failingWorld(t)
-	ana, cookie := w.signUp("ana@example.org")
-	who := w.who(cookie)
+	w, _ := failingWorld(t)
+	ana, _ := w.signUp("ana@example.org")
 	id := ana.Account.ID
 
 	// A record signed for an account that is another.
@@ -412,9 +411,10 @@ func TestSignOutsAndRecordsFailures(t *testing.T) {
 	if _, err := w.svc.read(ctx, id); err == nil {
 		t.Fatal("a record of another account was read as this one")
 	}
-	w, f = failingWorld(t)
-	ana, cookie = w.signUp("ana@example.org")
-	who, id = w.who(cookie), ana.Account.ID
+	w, f := failingWorld(t)
+	ana, cookie := w.signUp("ana@example.org")
+	who := w.who(cookie)
+	id = ana.Account.ID
 
 	// The key that signs: storing a record, a pointer, a session, a device,
 	// invitations; reading sessions and the pointer of a moving address.
