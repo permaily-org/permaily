@@ -121,6 +121,11 @@ type Config struct {
 	// nil, which is what the enclave runs with. Dev mode and the tests change
 	// it, as a new release would.
 	Terms func() string
+	// Mailboxes is the mailboxes of the accounts (ADR 0026), or nil when
+	// the image has none: the mailboxes service is made with accounts as
+	// its Accounts, so cmd/permaily-enclave gives it with SetMailboxes once,
+	// before serving.
+	Mailboxes Mailboxes
 }
 
 // Limits on what one enclave keeps in memory and starts at once.

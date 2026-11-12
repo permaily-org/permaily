@@ -202,6 +202,10 @@ func adminPaths(id string) []struct{ method, path, body string } {
 		{"PUT", "/api/v1/admin/providers/google", `{"client_id":"a","client_secret":"b"}`}, {"DELETE", "/api/v1/admin/providers/google", ""},
 		{"GET", "/api/v1/admin/admins", ""}, {"PUT", "/api/v1/admin/admins/" + id, ""}, {"DELETE", "/api/v1/admin/admins/" + id, ""},
 		{"GET", "/api/v1/admin/log", ""}, {"GET", "/api/v1/admin/stats", ""},
+		// Mailboxes (ADR 0026).
+		{"GET", one + "/mailboxes", ""}, {"GET", "/api/v1/admin/mailboxes?address=x%40inbox.permaily.test", ""},
+		{"POST", "/api/v1/admin/mailboxes/mbx_" + strings.Repeat("a", 26) + "/pause", ""},
+		{"POST", "/api/v1/admin/mailboxes/mbx_" + strings.Repeat("a", 26) + "/resume", ""},
 		{"GET", "/api/v1/admin/nothing", ""}, {"PATCH", "/api/v1/admin/stats", ""}, {"POST", "/api/v1/admin/accounts", ""},
 	}
 }
@@ -240,7 +244,7 @@ func TestSomeoneWhoIsNotAnAdminLearnsNothingFromTheAdminRoutes(t *testing.T) {
 	if me := a.me(); me.Account.Admin != "super" {
 		t.Fatalf("the super admin's me: %+v", me.Account)
 	}
-	for _, r := range adminPaths(ana.Account.ID)[:19] {
+	for _, r := range adminPaths(ana.Account.ID)[:23] {
 		if e := refusal(t, a.call(r.method, r.path, r.body, nil), 403); e.Error.Code != "passkey_only_needed" || e.Error.Message != "turn on passkey only to use the admin panel" {
 			t.Errorf("%s %s: %s", r.method, r.path, e)
 		}
@@ -420,7 +424,10 @@ func TestAnAdminsRoutesCannotChangeAnAddressOrAWayIn(t *testing.T) {
 		"CreateInvitations", "DeleteAccount", "Invitations", "KeepAccount", "MakeAdmin", "ProviderApps", "RemoveAdmin",
 		"RemoveProviderApp", "RevokeInvitation", "SetProviderApp", "Stats", "UnblockAccount",
 	}
-	if !slices.Equal(names, want) || !slices.Equal(has, want) {
+	// An admin is also what the mailbox routes are given (MailboxOperator,
+	// TestTheMailboxRoutesCannotReadMailOrDisconnect): its four, and no more.
+	withMailboxes := slices.Sorted(slices.Values(append(slices.Clone(want), "MailboxRecordByAddress", "MailboxRecords", "PauseMailbox", "ResumeMailbox")))
+	if !slices.Equal(names, want) || !slices.Equal(has, withMailboxes) {
 		t.Fatalf("what the admin panel can ask:\n%v\nwhat an admin can do:\n%v\nwant\n%v", names, has, want)
 	}
 	for i := range ops.NumMethod() {

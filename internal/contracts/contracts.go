@@ -226,6 +226,9 @@ type AccountRecord struct {
 	// Terms is the version of the terms the person agreed to and when;
 	// absent when they agreed to none.
 	Terms *TermsAgreement `json:"terms,omitempty"`
+	// Mailboxes is how many mailboxes the account has (ADR 0026): never
+	// which addresses, labels or mail.
+	Mailboxes int `json:"mailboxes"`
 }
 
 // AccountList is one page of the accounts, the oldest first.
@@ -681,6 +684,9 @@ type LogEntry struct {
 	// Provider is the provider whose application was set or removed; absent
 	// otherwise.
 	Provider string `json:"provider,omitempty"`
+	// Mailbox is the mailbox it was done to, paused or resumed, by its
+	// identifier alone: never an address, a label or mail. Absent otherwise.
+	Mailbox string `json:"mailbox,omitempty"`
 }
 
 // AdminLog is a page of the admin log, the newest first.
@@ -708,6 +714,10 @@ type InvitationCounts struct {
 type Stats struct {
 	Accounts    AccountCounts    `json:"accounts"`
 	Invitations InvitationCounts `json:"invitations"`
+	// Mailboxes counts the deployment's mailboxes, from an index that
+	// proves nothing (ADR 0026): it may be off by a creation or a disconnect
+	// that failed in between.
+	Mailboxes MailboxCounts `json:"mailboxes"`
 	// Complete is false when there were more accounts or invitations than
 	// one request counts, or some could not be read.
 	Complete bool `json:"complete"`

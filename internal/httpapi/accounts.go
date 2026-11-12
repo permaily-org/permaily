@@ -644,6 +644,7 @@ func adminPanel(log *slog.Logger) http.Handler {
 	accountRoutes(mux, prefix, op, log)
 	invitationRoutes(mux, prefix, op, log)
 	providerAppRoutes(mux, prefix, func(r *http.Request) ProviderAppService { return adminOf(r) }, log)
+	adminMailboxRoutes(mux, prefix, log)
 	mux.HandleFunc("GET "+prefix+"/admins", func(w http.ResponseWriter, r *http.Request) {
 		out, err := adminOf(r).Admins(r.Context())
 		answerWith(w, log, out, err)
@@ -766,6 +767,7 @@ func invitationRoutes(mux *http.ServeMux, prefix string, op func(*http.Request) 
 func Accounts(svc OperatorService, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	accountRoutes(mux, "/v1/admin", func(*http.Request) OperatorService { return svc }, log)
+	operatorMailboxRoutes(mux, "/v1/admin", svc, log)
 	mux.HandleFunc("/", noSuchEndpoint)
 	return mux
 }

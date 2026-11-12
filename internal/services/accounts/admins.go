@@ -380,6 +380,9 @@ type logDoc struct {
 	Invitation string    `json:"invitation,omitempty"`
 	// Provider is the provider whose application was set or removed.
 	Provider string `json:"provider,omitempty"`
+	// Mailbox is the mailbox paused or resumed, by its identifier alone:
+	// never its address or its label (mailbox_admin.go).
+	Mailbox string `json:"mailbox,omitempty"`
 }
 
 // logged writes what an admin did in the admin log. The operator with the
@@ -450,7 +453,7 @@ func (s *Service) AdminLog(ctx context.Context, after string, limit int) (*contr
 		if err != nil || json.Unmarshal(raw, &doc) != nil || !validID("acc", doc.Admin) || !doc.At.Add(adminLogLifetime).After(now) {
 			continue
 		}
-		entry := contracts.LogEntry{At: doc.At, Kind: doc.Kind, Admin: contracts.LogAccount{ID: doc.Admin, Address: address(doc.Admin)}, Invitation: doc.Invitation, Provider: doc.Provider}
+		entry := contracts.LogEntry{At: doc.At, Kind: doc.Kind, Admin: contracts.LogAccount{ID: doc.Admin, Address: address(doc.Admin)}, Invitation: doc.Invitation, Provider: doc.Provider, Mailbox: doc.Mailbox}
 		if doc.Account != "" {
 			entry.Account = &contracts.LogAccount{ID: doc.Account, Address: address(doc.Account)}
 		}
@@ -533,6 +536,9 @@ func (s *Service) Stats(ctx context.Context) (*contracts.Stats, error) {
 	}
 	out.Invitations.Unused = len(invitations.Invitations)
 	if invitations.Truncated {
+		out.Complete = false
+	}
+	if !s.countMailboxes(ctx, out) {
 		out.Complete = false
 	}
 	return out, nil

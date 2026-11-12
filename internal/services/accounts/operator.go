@@ -44,13 +44,17 @@ const (
 	// an admin, or made it stop being one (admins.go).
 	ActionAdminMade    = "admin_made"
 	ActionAdminRemoved = "admin_removed"
+	// ActionMailboxPaused and ActionMailboxResumed: a mailbox was made to
+	// refuse new mail, or to take it again (mailbox_admin.go, ADR 0026).
+	ActionMailboxPaused  = "mailbox_paused"
+	ActionMailboxResumed = "mailbox_resumed"
 )
 
 // OperatorActionKinds lists every kind, in the order they are shown.
 var OperatorActionKinds = []string{
 	ActionBlock, ActionUnblock, ActionDelete, ActionDeleteCancel, ActionSessionsClose,
 	ActionInvitationsMade, ActionInvitationRevoked, ActionProviderAppSet, ActionProviderAppRemove,
-	ActionAdminMade, ActionAdminRemoved,
+	ActionAdminMade, ActionAdminRemoved, ActionMailboxPaused, ActionMailboxResumed,
 }
 
 // acted counts n actions of a kind and logs the kind. Never whose account it
