@@ -235,14 +235,26 @@ func TestAnchoredWritesAfterWhatIsNotACommit(t *testing.T) {
 	if head, next, _ := commits.Head(ctx, "tls"); head.Version != 3 || next != 4 {
 		t.Fatalf("head %+v, next %d", head, next)
 	}
+	// What is left above a free version does not move the next commit past
+	// that version: it goes where every enclave that read no later looks.
 	commits.Take("tls", 7)
 	if err := a.PutRecord(ctx, rec("tls", "two"), false); err != nil {
 		t.Fatal(err)
 	}
-	if head, _, _ := commits.Head(ctx, "tls"); head.Version != 8 {
-		t.Fatalf("head %+v", head)
+	if head, next, _ := commits.Head(ctx, "tls"); head.Version != 4 || next != 5 {
+		t.Fatalf("head %+v, next %d", head, next)
 	}
-	if got, err := a.GetRecord(ctx, "tls"); err != nil || string(got.Value) != "two" {
+	// And the commits go on past it when they get there.
+	for _, v := range []string{"three", "four", "five"} {
+		if err := a.PutRecord(ctx, rec("tls", v), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if head, next, _ := commits.Head(ctx, "tls"); head.Version != 8 || next != 9 {
+		t.Fatalf("head %+v, next %d", head, next)
+	}
+	a.OnlyNewest = false
+	if got, err := a.GetRecord(ctx, "tls"); err != nil || string(got.Value) != "five" {
 		t.Fatalf("got %+v, %v", got, err)
 	}
 }

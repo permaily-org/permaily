@@ -14,9 +14,11 @@ import {
   dropProviderArrival,
   hasLink,
   pendingLink,
+  providerArrivalSignedIn,
   takeArrival,
   takeBrokenLink,
 } from './arrival.ts'
+import { forgetClosing, rememberClosing, takeClosed } from './closing.ts'
 
 export type SessionState =
   /** Asking the server who this is. `link` is true while it is also asked whose sign-in a link is. */
@@ -27,8 +29,16 @@ export type SessionState =
   | { status: 'signedOut'; byChoice: boolean }
   | { status: 'signedIn'; me: api.Me }
 
-/** Why the sign-in link the app was opened with did not sign anyone in. */
-export type LinkProblem = 'expired' | 'failed'
+/**
+ * Why the sign-in link the app was opened with did not sign anyone in. `blocked` is the server's answer to a
+ * link that proved whose sign-in it is and ended at an account the operator blocked.
+ */
+export type LinkProblem = 'expired' | 'failed' | 'blocked'
+
+/** What a refusal of a link says of it. */
+function linkProblemOf(code: api.ApiErrorCode): LinkProblem {
+  return code === 'invalid_code' ? 'expired' : code === 'account_blocked' ? 'blocked' : 'failed'
+}
 
 /**
  * A sign-in link that waits for the person's word. Opening a link signs nobody in: someone may have started
@@ -52,13 +62,30 @@ type SessionValue = {
   declineLink: () => void
   /** Asks again after the server could not be reached. */
   retry: () => void
-  /** Takes the account the server answered a finished sign-in with. */
-  signedIn: (me: api.Me) => void
   /**
-   * Takes the account as the server answered a change to it: a new name, a deletion asked for or cancelled.
+   * Takes the account the server answered a finished sign-in with. `how` says when it was with a recovery
+   * code: one was just used up for want of a passkey, and Settings invites the person to add one.
+   */
+  signedIn: (me: api.Me, how?: 'recovery') => void
+  /** True from a sign-in with a recovery code until Settings has said so. */
+  recovered: boolean
+  clearRecovered: () => void
+  /**
+   * The day an account that was seen closing in this browser was to be removed, when that day has passed and
+   * nobody is signed in: the sign-in screen says it once. Whose account it was is not known here.
+   */
+  deletedOn: Date | null
+  /**
+   * Takes the account as the server answered a change to it: a new name, a new contact address, a deletion
+   * asked for or cancelled.
    * Everything that shows the account follows without a reload.
    */
   accountChanged: (account: api.Account) => void
+  /**
+   * Takes the session as the server answered a confirmation: the same account, with the proof fresh until
+   * `confirmed_until`.
+   */
+  confirmed: (me: api.Me) => void
   /**
    * Asks the server again who this is, without a word on screen: what changed elsewhere shows here, and a
    * session that ended leads to the sign-in screen. No answer changes nothing.
@@ -81,9 +108,23 @@ function sameAccount(a: api.Account, b: api.Account): boolean {
     a.id === b.id &&
     a.state === b.state &&
     a.closes_at === b.closes_at &&
+    a.closing_by === b.closing_by &&
     a.name === b.name &&
-    a.address === b.address
+    a.address === b.address &&
+    a.admin === b.admin &&
+    a.passkey_only === b.passkey_only &&
+    a.terms === b.terms
   )
+}
+
+/**
+ * The version of the terms the person has to agree to before anything else, when they agreed to an earlier
+ * one, or to none; null otherwise. A server that says nothing of the terms asks nothing.
+ */
+export function termsToAgree(me: api.Me): string | null {
+  return typeof me.terms === 'string' && me.terms !== '' && me.account.terms !== me.terms
+    ? me.terms
+    : null
 }
 
 /** Whether the person asked to delete this account: the app then shows that, and nothing else. */
@@ -108,10 +149,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }))
   const [linkProblem, setLinkProblem] = useState<LinkProblem | null>(null)
   const [ask, setAsk] = useState<LinkAsk | null>(null)
+  const [recovered, setRecovered] = useState(false)
+  const [deletedOn, setDeletedOn] = useState<Date | null>(null)
   // Counts every change made on purpose, so a slower answer to an earlier question cannot undo it.
   const epoch = useRef(0)
   const status = useRef(state.status)
   status.current = state.status
+  // True while the sign-in screens have been open to someone signed out, until someone is signed in: what a
+  // provider's answer said was said to them there.
+  const guest = useRef(false)
+  if (state.status === 'signedOut') guest.current = true
+  else if (state.status === 'signedIn') guest.current = false
   const asked = useRef(ask)
   asked.current = ask
 
@@ -135,7 +183,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           return
         }
         dropLink()
-        setLinkProblem(code === 'invalid_code' ? 'expired' : 'failed')
+        setLinkProblem(linkProblemOf(code))
       }
     } else if (takeBrokenLink()) {
       setLinkProblem('expired')
@@ -147,6 +195,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setLinkProblem(null)
       // In the account of the link's address already, there is nothing to ask: see `settled` below.
       setAsk(pending)
+      // The app opened on someone who is signed in. A provider's answer that came back to the sign-in screen
+      // is theirs to hear in Settings, unless the sign-in screen said it to them before they signed in.
+      if (guest.current) dropProviderArrival('sign-in')
+      else providerArrivalSignedIn()
       setState({ status: 'signedIn', me: who })
     } catch (error) {
       if (turn !== epoch.current) return
@@ -170,14 +222,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setAsk(null)
   }, [settled])
 
-  // How a sign-in with a provider ended is for the screen it came back to. Someone who is signed in has no
-  // use for the news that one signed nobody in, such as a provider's answer opened again with the Back
-  // button: they just see the app. And what Settings would say is not for someone who is signed out.
+  // How a sign-in with a provider ended is for the screen it came back to. Someone who signed in on the
+  // sign-in screen has no use for what it said before. And what Settings would say is not for someone who
+  // is signed out.
   const standing = state.status
   useEffect(() => {
     if (standing === 'signedIn') dropProviderArrival('sign-in')
     if (standing === 'signedOut') dropProviderArrival('settings')
   }, [standing])
+
+  // The day a closing account is removed is the one thing kept in this browser's storage, and only the day:
+  // once it has passed and nobody is signed in, the sign-in screen says why. An account that works, or a
+  // deletion that was cancelled, forgets it.
+  const closesAt =
+    state.status === 'signedIn' && isClosing(state.me.account) ? state.me.account.closes_at : null
+  useEffect(() => {
+    if (standing === 'signedIn') {
+      setDeletedOn(null)
+      if (closesAt) rememberClosing(closesAt)
+      else if (closesAt === null) forgetClosing()
+    } else if (standing === 'signedOut') {
+      setRecovered(false)
+      const day = takeClosed(Date.now())
+      if (day) setDeletedOn(day)
+    }
+  }, [standing, closesAt])
 
   const acceptLink = useCallback(async () => {
     const link = pendingLink()
@@ -199,7 +268,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (code === 'network') throw error
       if (pendingLink() !== link) return
       dropLink()
-      const problem: LinkProblem = code === 'invalid_code' ? 'expired' : 'failed'
+      const problem = linkProblemOf(code)
       const turn = ++epoch.current
       // An earlier try may have signed in and lost its answer on the way: ask before saying it did not work.
       try {
@@ -232,7 +301,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const arrived = () => {
       takeArrival()
-      if (status.current === 'signedIn') dropProviderArrival('sign-in')
+      if (status.current === 'signedIn') providerArrivalSignedIn()
       if (hasLink()) void load()
     }
     window.addEventListener('hashchange', arrived)
@@ -254,7 +323,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (status.current === 'signedOut') setLinkProblem(null)
       setState((now) =>
         now.status === 'signedOut' ||
-        (now.status === 'signedIn' && !sameAccount(now.me.account, who.account))
+        (now.status === 'signedIn' &&
+          (!sameAccount(now.me.account, who.account) || now.me.terms !== who.terms))
           ? { status: 'signedIn', me: who }
           : now,
       )
@@ -293,11 +363,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => api.onAccountClosing(null)
   }, [load])
 
+  // A request was refused because the terms changed since the app last asked (a new release): the server is
+  // asked again, and its answer leads to the screen that asks for the agreement.
+  useEffect(() => {
+    api.onTermsNeeded(() => {
+      if (status.current === 'signedIn') void load()
+    })
+    return () => api.onTermsNeeded(null)
+  }, [load])
+
   const failed = useCallback(
     (error: unknown) => {
       const code = api.errorCode(error)
-      // The request itself told the session that the account is closing: see above.
+      // The request itself told the session that the account is closing, or that the terms changed: see above.
       if (code === 'account_closing') return null
+      if (code === 'terms_needed' && status.current === 'signedIn') return null
       if (code !== 'unauthorized') return code
       // The session ended, here or from another device. The app asks who this is, and leads to the sign-in screen.
       void load()
@@ -318,17 +398,29 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setAsk(null)
       },
       retry: () => void load(),
-      signedIn: (who) => {
+      signedIn: (who, how) => {
         epoch.current++
         setLinkProblem(null)
+        setRecovered(how === 'recovery')
         setState({ status: 'signedIn', me: who })
       },
+      recovered,
+      clearRecovered: () => setRecovered(false),
+      deletedOn,
       accountChanged: (account) => {
         // A slower answer to an earlier question must not put the account back as it was.
         epoch.current++
         setState((now) =>
           now.status === 'signedIn' && now.me.account.id === account.id
             ? { status: 'signedIn', me: { ...now.me, account } }
+            : now,
+        )
+      },
+      confirmed: (who) => {
+        epoch.current++
+        setState((now) =>
+          now.status === 'signedIn' && now.me.account.id === who.account.id
+            ? { status: 'signedIn', me: who }
             : now,
         )
       },
@@ -346,10 +438,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         dropLink()
         setAsk(null)
         setLinkProblem(null)
+        setRecovered(false)
         setState({ status: 'signedOut', byChoice: true })
       },
     }),
-    [state, linkProblem, ask, settled, load, acceptLink, refresh, failed],
+    [state, linkProblem, ask, settled, recovered, deletedOn, load, acceptLink, refresh, failed],
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

@@ -250,7 +250,9 @@ func TestS3CommitsWithAnAdversary(t *testing.T) {
 	t.Run("an earlier commit copied to a later version", func(t *testing.T) {
 		b, c, written := setup(t)
 		b.add(bucketVersion{key: strings.Replace(written[2].key, "0003", "0009", 1), body: written[0].body})
-		head(t, c, 3, 10)
+		// It is no commit of version 9, and the next commit does not go past
+		// it: version 4 is free, and that is where every enclave writes.
+		head(t, c, 3, 4)
 	})
 	t.Run("another record's commit copied here", func(t *testing.T) {
 		b, c, written := setup(t)
@@ -259,7 +261,17 @@ func TestS3CommitsWithAnAdversary(t *testing.T) {
 		}
 		theirs := b.versions[len(b.versions)-1]
 		b.add(bucketVersion{key: strings.Replace(written[2].key, "0003", "0009", 1), body: theirs.body})
-		head(t, c, 3, 10)
+		head(t, c, 3, 4)
+		// The commits reach what is in the way, and go on after it.
+		for v := uint64(4); v <= 8; v++ {
+			if _, err := c.Append(ctx, commitOf("tls", v, fmt.Sprint("value ", v))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		head(t, c, 8, 10)
+		if _, err := c.Append(ctx, commitOf("tls", 9, "value 9")); !errors.Is(err, store.ErrExists) {
+			t.Fatalf("a commit where something is: %v", err)
+		}
 	})
 	t.Run("things that are not commits", func(t *testing.T) {
 		b, c, written := setup(t)
@@ -413,6 +425,97 @@ func TestAnchoredOverS3Commits(t *testing.T) {
 	fresh := &store.Anchored{Records: records, Commits: s3Commits(b, time.Now())}
 	if _, err := fresh.GetRecord(ctx, "tls"); !errors.Is(err, store.ErrLost) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// Two enclaves over the bucket: the write of the one that read first is
+// refused once the other wrote, by S3's own condition on the commit.
+func TestAnchoredOverS3CommitsWithTwoEnclaves(t *testing.T) {
+	ctx := context.Background()
+	b := &lockedBucket{objectLock: true}
+	records := store.NewMemory()
+	one := &store.Anchored{Records: records, Commits: s3Commits(b, time.Now()), OnlyNewest: true}
+	two := &store.Anchored{Records: records, Commits: s3Commits(b, time.Now()), OnlyNewest: true}
+	if err := one.PutRecord(ctx, rec("account", "made"), true); err != nil {
+		t.Fatal(err)
+	}
+	_, first, err := one.GetRecordAt(ctx, "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, second, err := two.GetRecordAt(ctx, "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := two.PutRecordAt(ctx, rec("account", string(got.Value)+", renamed"), second); err != nil {
+		t.Fatal(err)
+	}
+	if err := one.PutRecordAt(ctx, rec("account", "made, with a passkey"), first); !errors.Is(err, store.ErrChanged) {
+		t.Fatalf("got %v", err)
+	}
+	got, first, err = one.GetRecordAt(ctx, "account")
+	if err != nil || string(got.Value) != "made, renamed" {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	if err := one.PutRecordAt(ctx, rec("account", string(got.Value)+", with a passkey"), first); err != nil {
+		t.Fatal(err)
+	}
+	// A removal by one refuses what the other read before it.
+	_, second, err = two.GetRecordAt(ctx, "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := one.RemoveRecord(ctx, "account"); err != nil {
+		t.Fatal(err)
+	}
+	if err := two.PutRecordAt(ctx, rec("account", "back"), second); !errors.Is(err, store.ErrChanged) {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := two.GetRecord(ctx, "account"); !errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrLost) {
+		t.Fatalf("got %v", err)
+	}
+	if stored := names(t, records, "account"); len(stored) != 0 {
+		t.Fatalf("stored %q", stored)
+	}
+}
+
+// What the condition does not hold against: whoever can write to the bucket.
+// A delete marker makes a version look free to S3, so a commit can be added
+// where there is one, and both enclaves are told they wrote. One of the two
+// commits counts, the same for every reader, and the enclave whose commit does
+// not count refuses the record from its next read and says so (/status): the
+// change is lost, and not in silence.
+func TestAnchoredOverS3CommitsWithADeleteMarkerInBetween(t *testing.T) {
+	ctx := context.Background()
+	b := &lockedBucket{objectLock: true}
+	records := store.NewMemory()
+	one := &store.Anchored{Records: records, Commits: s3Commits(b, time.Now()), OnlyNewest: true}
+	two := &store.Anchored{Records: records, Commits: s3Commits(b, time.Now()), OnlyNewest: true}
+	if err := one.PutRecord(ctx, rec("account", "made"), true); err != nil {
+		t.Fatal(err)
+	}
+	_, first, _ := one.GetRecordAt(ctx, "account")
+	_, second, _ := two.GetRecordAt(ctx, "account")
+	if err := one.PutRecordAt(ctx, rec("account", "made, with a passkey"), first); err != nil {
+		t.Fatal(err)
+	}
+	b.add(bucketVersion{key: b.versions[len(b.versions)-1].key, deleteMarker: true})
+	if err := two.PutRecordAt(ctx, rec("account", "made, renamed"), second); err != nil {
+		t.Fatalf("S3 takes a write over a delete marker: %v", err)
+	}
+	noticed := 0
+	for _, enclave := range []*store.Anchored{one, two} {
+		if _, err := enclave.GetRecord(ctx, "account"); errors.Is(err, store.ErrRolledBack) {
+			noticed++
+			if len(enclave.Regressions()) != 1 {
+				t.Fatalf("regressions %+v", enclave.Regressions())
+			}
+		} else if err != nil && !errors.Is(err, store.ErrLost) {
+			t.Fatalf("got %v", err)
+		}
+	}
+	if noticed != 1 {
+		t.Fatalf("%d enclaves noticed that their commit does not count, want 1", noticed)
 	}
 }
 

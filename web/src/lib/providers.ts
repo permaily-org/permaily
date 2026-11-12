@@ -1,12 +1,25 @@
 import { useCallback, useEffect, useState } from 'react'
 import { type Provider, providersOn } from './api.ts'
 
-/** What each provider is called on screen. Text only: no mark of theirs is drawn or loaded. */
+/**
+ * What each provider is called on screen, and the one place that says so. `meta` is Facebook to a person: the
+ * trip goes to Facebook's sign-in, and Meta's own rules name the action "Continue with Facebook". The
+ * identifier stays `meta` in the API and in the code. Each provider's mark is drawn on its sign-in button only
+ * (components/brands), next to these words and never next to the name alone.
+ */
 export const providerNames: Record<Provider, string> = {
   google: 'Google',
   github: 'GitHub',
-  meta: 'Meta',
+  meta: 'Facebook',
   microsoft: 'Microsoft',
+}
+
+/**
+ * The words of a provider's sign-in button. "Continue with", which Google and Meta name, except Microsoft,
+ * whose rules tie its logo to "Sign in with Microsoft" (docs/web.md, "Each provider's mark").
+ */
+export function providerAction(provider: Provider): string {
+  return `${provider === 'microsoft' ? 'Sign in' : 'Continue'} with ${providerNames[provider]}`
 }
 
 /**

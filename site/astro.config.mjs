@@ -3,6 +3,7 @@ import starlight from '@astrojs/starlight';
 import { ExpressiveCodeTheme } from '@astrojs/starlight/expressive-code';
 import { defineConfig } from 'astro/config';
 import cspInlineHashes from './integrations/csp-inline-hashes.mjs';
+import { LINKS } from './src/config/site.ts';
 
 // Code blocks stay in ink, with comments one step dimmer. Colour carries meaning on this site, so syntax colours would muddy it.
 const codeTheme = (name, type, background, ink, comment) =>
@@ -19,6 +20,11 @@ const codeTheme = (name, type, background, ink, comment) =>
 
 export default defineConfig({
   site: 'https://permaily.com',
+  // Signing up and signing in moved to the web app. Old links to the site's own pages land there.
+  redirects: {
+    '/signup': LINKS.signup,
+    '/login': LINKS.login,
+  },
   // Astro hashes every inline script and style and emits a CSP <meta> per page.
   // frame-ancestors and the other header-only directives are set by the host (amplify.yml).
   security: {

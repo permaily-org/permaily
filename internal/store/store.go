@@ -37,7 +37,11 @@ type Mailbox struct {
 	WrappedKey    []byte
 	RetentionDays int
 	State         []byte
-	UpdatedAt     time.Time
+	// Version counts the writes, as Entry.Version does: PutMailbox creates
+	// at 0 and otherwise replaces only the version the mailbox was read at.
+	// A mailbox stored before versions existed reads as version 1.
+	Version   uint64
+	UpdatedAt time.Time
 }
 
 // Message is a stored message. Meta is sealed with the mailbox data key; the
@@ -112,6 +116,12 @@ type Entries interface {
 	// DeleteEntry returns ErrNotFound when there was nothing to delete: of
 	// two callers, only one deletes.
 	DeleteEntry(ctx context.Context, partition, key string) error
+	// DeleteEntryAt deletes e only if it is still as it was read, the same
+	// version and the same value, and fails with ErrConflict when it changed
+	// or is gone. The value counts because versions start over: an entry that
+	// was deleted and made again by another writer is at the version the one
+	// before was read at, and it stays.
+	DeleteEntryAt(ctx context.Context, e *Entry) error
 	// ListEntries returns up to limit entries of a partition whose key starts
 	// with prefix and comes after the key after ("" for the first ones), in
 	// the order of their keys, without the expired ones.
@@ -124,6 +134,10 @@ type Entries interface {
 // Store is the persistence interface used by the inbox.
 type Store interface {
 	GetMailbox(ctx context.Context, id string) (*Mailbox, error)
+	// PutMailbox stores m and sets m.Version to the version stored. With
+	// Version 0 the mailbox must be new (ErrExists), so two enclaves cannot
+	// both make it; otherwise it must still be at m.Version (ErrConflict), so
+	// two writers never undo each other.
 	PutMailbox(ctx context.Context, m *Mailbox) error
 	// PutMessage stores the record and its sealed raw message.
 	PutMessage(ctx context.Context, m *Message, raw []byte) error

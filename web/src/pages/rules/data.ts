@@ -14,13 +14,161 @@ export { joinNames } from '../../data/sample.ts'
 
 /* Rule editor */
 
-/** about and text run on a model inside the verified service. The rest match on the email's own fields. */
-export type GroupKind = 'about' | 'text' | 'type' | 'sender' | 'subject' | 'label'
+/** The part of an email a condition looks at. */
+export type Field = 'message' | 'subject' | 'sender' | 'kind' | 'label'
 
-export type ConditionGroup = { id: string; kind: GroupKind; label: string; chips: string[] }
+/** How a condition compares that part with its values. A negative one matches mail that has none of them. */
+export type Operator =
+  | 'about'
+  | 'notAbout'
+  | 'mentions'
+  | 'notMentions'
+  | 'contains'
+  | 'notContains'
+  | 'is'
+  | 'isNot'
 
-/** Groups inside a block must all match. Blocks are joined by "or". */
-export type ConditionBlock = ConditionGroup[]
+/** One condition: a field, how it's compared, and the values. A positive condition matches mail that has any of them. */
+export type Criterion = { id: string; field: Field; operator: Operator; values: string[] }
+
+/** Criteria: a set of conditions people can name. Mail meets it when it meets every condition, and a rule when it meets any of its criteria. */
+export type CriteriaGroup = { id: string; name: string; criteria: Criterion[] }
+
+export const operators: Record<Operator, { label: string; negative: boolean }> = {
+  about: { label: 'is about', negative: false },
+  notAbout: { label: "isn't about", negative: true },
+  mentions: { label: 'mentions', negative: false },
+  notMentions: { label: "doesn't mention", negative: true },
+  contains: { label: 'contains', negative: false },
+  notContains: { label: "doesn't contain", negative: true },
+  is: { label: 'is', negative: false },
+  isNot: { label: "isn't", negative: true },
+}
+
+/** Every field, in the order the editor lists them, with the operators it takes. */
+export const fields: { field: Field; label: string; operators: Operator[] }[] = [
+  {
+    field: 'message',
+    label: 'Message',
+    operators: ['about', 'notAbout', 'mentions', 'notMentions', 'contains', 'notContains'],
+  },
+  { field: 'subject', label: 'Subject', operators: ['contains', 'notContains'] },
+  { field: 'sender', label: 'Sender', operators: ['is', 'isNot'] },
+  { field: 'kind', label: 'Kind', operators: ['is', 'isNot'] },
+  { field: 'label', label: 'Label', operators: ['is', 'isNot'] },
+]
+
+export function fieldLabel(field: Field): string {
+  return fields.find((f) => f.field === field)?.label ?? field
+}
+
+/** The conditions people usually start from, with a value each could take. Any of them can be turned negative after. */
+export const starters: { field: Field; operator: Operator; example: string }[] = [
+  { field: 'message', operator: 'about', example: 'my car' },
+  { field: 'message', operator: 'mentions', example: 'my home address' },
+  { field: 'message', operator: 'contains', example: 'Calle Falsa 123' },
+  { field: 'subject', operator: 'contains', example: 'invoice' },
+  { field: 'sender', operator: 'is', example: 'mapfre.es' },
+  { field: 'kind', operator: 'is', example: 'password reset' },
+  { field: 'label', operator: 'is', example: 'Family' },
+]
+
+/** Kinds of mail "Kind is" suggests as people type. */
+export const mailTypes = [
+  'password reset',
+  'login link',
+  'one-time code',
+  'security alert',
+  'invoice',
+  'receipt',
+  'bank statement',
+  'bill',
+  'order',
+  'delivery',
+  'reservation',
+  'newsletter',
+]
+
+/**
+ * What a condition's values are like. Topics and things described in words are checked by a model inside the verified
+ * service. Exact strings, such as addresses and words, are set in monospace. Topics aren't.
+ */
+export function valueStyle({ field, operator }: Pick<Criterion, 'field' | 'operator'>): {
+  placeholder: string
+  literal: boolean
+  model: boolean
+  suggestions?: string[]
+} {
+  switch (field) {
+    case 'message':
+      if (operator === 'about' || operator === 'notAbout')
+        return { placeholder: 'a topic, in your words', literal: false, model: true }
+      if (operator === 'mentions' || operator === 'notMentions')
+        return { placeholder: 'something, in your words', literal: false, model: true }
+      return { placeholder: 'word or phrase', literal: true, model: true }
+    case 'subject':
+      return { placeholder: 'word or phrase', literal: true, model: false }
+    case 'sender':
+      return { placeholder: 'domain or address', literal: true, model: false }
+    case 'kind':
+      return { placeholder: 'kind of mail', literal: true, model: false, suggestions: mailTypes }
+    case 'label':
+      return { placeholder: 'Gmail label', literal: true, model: false }
+  }
+}
+
+/** A field changed under a condition keeps its operator when it can, or the first one of the same sign. */
+export function withField(criterion: Criterion, field: Field): Criterion {
+  const allowed = fields.find((f) => f.field === field)?.operators ?? []
+  if (allowed.includes(criterion.operator)) return { ...criterion, field }
+  const negative = operators[criterion.operator].negative
+  return {
+    ...criterion,
+    field,
+    operator:
+      allowed.find((o) => operators[o].negative === negative) ?? allowed[0] ?? criterion.operator,
+  }
+}
+
+/* What a partial rule takes out */
+
+/** A part of an email a partial rule can take out. Attachments and data take a list of what to look for. */
+export type Part = 'subject' | 'body' | 'attachments' | 'data' | 'thread' | 'sender' | 'cc'
+
+export const parts: { part: Part; label: string; tip?: string }[] = [
+  { part: 'subject', label: 'Subject' },
+  { part: 'body', label: 'Body' },
+  { part: 'attachments', label: 'Attachments' },
+  { part: 'data', label: 'Data' },
+  { part: 'thread', label: 'Thread', tip: 'The earlier messages quoted under a reply.' },
+  { part: 'sender', label: 'Sender' },
+  { part: 'cc', label: 'CC' },
+]
+
+/** What a partial rule takes out: whole parts, the attachments described (all of them when none are), and data described in words. */
+export type Removal = { parts: Part[]; attachments: string[]; data: string[] }
+
+export const noRemoval: Removal = { parts: [], attachments: [], data: [] }
+
+/** Data people often take out, suggested as they describe it. */
+export const dataSuggestions = [
+  'Home address',
+  'Personal phone number',
+  'Credit card numbers',
+  'Bank account numbers',
+  'ID numbers',
+  'Date of birth',
+  "Children's names",
+  'Health details',
+]
+
+/** Kinds of attachment suggested as people describe which ones to take out. */
+export const attachmentSuggestions = ['PDFs', 'Images', 'Invoices', 'ID documents', 'Spreadsheets']
+
+/** A partial rule needs something to take out, and data needs at least one thing described. */
+export function removalComplete(removal: Removal): boolean {
+  return removal.parts.length > 0 && (!removal.parts.includes('data') || removal.data.length > 0)
+}
 
 /**
  * A sample email. keys are what it can match on besides its sender. Square brackets in the snippet
@@ -40,15 +188,16 @@ export type RuleSeed = {
   name: string
   description: string
   effect: RuleEffect
-  removes: string
+  /** What a partial rule takes out. */
+  removal: Removal
   appliesTo: AppliesTo
   /** Matches with the conditions as loaded. */
   count: number
   /** How many of those the saved rule didn't match yet. */
   newCount: number
-  blocks: ConditionBlock[]
-  butNot: string[]
-  /** Positive chips the saved rule didn't have, so they count as part of this edit. */
+  /** Mail that meets every condition of any one group matches. */
+  groups: CriteriaGroup[]
+  /** Values the saved rule didn't have, so they count as part of this edit. */
   unsaved: string[]
   rows: PreviewMail[]
 }
@@ -221,15 +370,26 @@ const carRows = newestFirst([
   ...otherMail,
 ])
 
-const signInBlocks = (): ConditionBlock[] => [
-  [
-    {
-      id: 'type',
-      kind: 'type',
-      label: 'is a',
-      chips: ['password reset', 'login link', 'one-time code', 'security alert'],
-    },
-  ],
+/** Criteria of one condition, as most saved rules have. */
+const group = (
+  id: string,
+  name: string,
+  field: Field,
+  operator: Operator,
+  values: string[],
+): CriteriaGroup => ({
+  id,
+  name,
+  criteria: [{ id: `${id}-1`, field, operator, values }],
+})
+
+const signInGroups = (): CriteriaGroup[] => [
+  group('kinds', 'Sign-in mail', 'kind', 'is', [
+    'password reset',
+    'login link',
+    'one-time code',
+    'security alert',
+  ]),
 ]
 
 /** A slice of the inbox for new rules. Nothing matches until a condition is added. */
@@ -249,66 +409,52 @@ const inboxRows: PreviewMail[] = newestFirst([
 function ruleFields(id: string) {
   const rule = rules.find((r) => r.id === id)
   if (!rule) throw new Error(`Unknown rule ${id}`)
-  const { name, matches, effect, removes, appliesTo } = rule
-  return {
-    name,
-    count: matches,
-    newCount: 0,
-    effect,
-    removes: removes ?? '',
-    appliesTo,
-    butNot: [],
-    unsaved: [],
-  }
+  const { name, matches, effect, appliesTo } = rule
+  return { name, count: matches, newCount: 0, effect, removal: noRemoval, appliesTo, unsaved: [] }
 }
 
 const ruleSeeds: Record<string, () => RuleSeed> = {
   'sign-in-and-security': () => ({
     ...ruleFields('sign-in-and-security'),
     description: 'Mail that could let someone into my accounts',
-    blocks: signInBlocks(),
+    groups: signInGroups(),
     rows: signInRows,
   }),
   private: () => ({
     ...ruleFields('private'),
     description: 'My doctor, my bank and family',
-    blocks: [
-      [
-        {
-          id: 'from',
-          kind: 'sender',
-          label: 'is from',
-          chips: ['e.vidal@clinic.example', 'bbva.es'],
-        },
-      ],
-      [{ id: 'label', kind: 'label', label: 'has label', chips: ['Family'] }],
+    groups: [
+      group('from', 'My doctor and my bank', 'sender', 'is', ['e.vidal@clinic.example', 'bbva.es']),
+      group('label', 'Family', 'label', 'is', ['Family']),
     ],
     rows: privateRows,
   }),
   'home-address': () => ({
     ...ruleFields('home-address'),
     description: 'My home address, wherever it appears',
-    blocks: [
-      [{ id: 'about', kind: 'about', label: 'mentions', chips: ['my home address'] }],
-      [{ id: 'text', kind: 'text', label: 'has the words', chips: ['Calle Falsa 123', '28000'] }],
+    removal: { parts: ['data'], attachments: [], data: ['Home address'] },
+    groups: [
+      group('mentions', 'Mentions of my address', 'message', 'mentions', ['my home address']),
+      group('words', 'The address itself', 'message', 'contains', ['Calle Falsa 123', '28000']),
     ],
     rows: homeAddressRows,
   }),
   children: () => ({
     ...ruleFields('children'),
     description: "My children's names",
-    blocks: [
-      [{ id: 'about', kind: 'about', label: 'mentions', chips: ['my children'] }],
-      [{ id: 'text', kind: 'text', label: 'has the words', chips: ['Leo', 'Alba'] }],
+    removal: { parts: ['data'], attachments: [], data: ["Children's names"] },
+    groups: [
+      group('mentions', 'Mentions of my children', 'message', 'mentions', ['my children']),
+      group('words', 'Their names', 'message', 'contains', ['Leo', 'Alba']),
     ],
     rows: childrenRows,
   }),
   car: () => ({
     ...ruleFields('car'),
     description: 'Anything about my car',
-    blocks: [
-      [{ id: 'about', kind: 'about', label: 'is about', chips: ['my car'] }],
-      [{ id: 'from', kind: 'sender', label: 'is from', chips: ['mapfre.es', 'dgt.es'] }],
+    groups: [
+      group('about', 'About my car', 'message', 'about', ['my car']),
+      group('from', 'My insurer and the DGT', 'sender', 'is', ['mapfre.es', 'dgt.es']),
     ],
     rows: carRows,
   }),
@@ -324,12 +470,11 @@ function suggestedSeed(): RuleSeed {
     name: suggestedRule.name,
     description: 'Mail that could let someone into my accounts',
     effect: 'hold',
-    removes: '',
+    removal: noRemoval,
     appliesTo: everyConnection,
     count,
     newCount: count,
-    blocks: signInBlocks(),
-    butNot: [],
+    groups: signInGroups(),
     unsaved: [],
     rows: signInRows,
   }
@@ -340,15 +485,12 @@ function newRuleSeed(): RuleSeed {
     name: 'New rule',
     description: '',
     effect: 'hold',
-    removes: '',
+    removal: noRemoval,
     appliesTo: everyConnection,
     count: 0,
     newCount: 0,
-    blocks: [
-      [{ id: 'about', kind: 'about', label: 'is about', chips: [] }],
-      [{ id: 'from', kind: 'sender', label: 'is from', chips: [] }],
-    ],
-    butNot: [],
+    // A new rule starts with no conditions: people add the ones they need.
+    groups: [],
     unsaved: [],
     rows: inboxRows,
   }
@@ -360,22 +502,31 @@ function sameSender(address: string, entry: string): boolean {
   return a === e || a.split('@')[1] === e
 }
 
-/** Adds a sender to the rule's first sender group as an unsaved change, such as from a receipt. */
+/**
+ * Adds a sender to the rule as an unsaved change, such as from a receipt, so mail from it matches on its own: into a
+ * group that's only "Sender is", or as a new group of its own.
+ */
 function withSender(seed: RuleSeed, sender: string): RuleSeed {
   const value = sender.trim().toLowerCase()
-  const bi = seed.blocks.findIndex((block) => block.some((g) => g.kind === 'sender'))
-  if (!value || bi < 0) return seed
-  const group = seed.blocks[bi]!.find((g) => g.kind === 'sender')!
-  if (group.chips.some((c) => c.toLowerCase() === value)) return seed
-  const hits = seed.rows.filter((r) => sameSender(r.address, value)).length
-  const blocks = seed.blocks.map((block, b) =>
-    b !== bi
-      ? block
-      : block.map((g) => (g.id === group.id ? { ...g, chips: [value, ...g.chips] } : g)),
+  if (!value) return seed
+  const senders = seed.groups.find(
+    (g) =>
+      g.criteria.length === 1 &&
+      g.criteria[0]!.field === 'sender' &&
+      g.criteria[0]!.operator === 'is',
   )
+  if (senders?.criteria[0]?.values.some((v) => v.toLowerCase() === value)) return seed
+  const hits = seed.rows.filter((r) => sameSender(r.address, value)).length
+  const groups = senders
+    ? seed.groups.map((g) =>
+        g === senders
+          ? { ...g, criteria: [{ ...g.criteria[0]!, values: [value, ...g.criteria[0]!.values] }] }
+          : g,
+      )
+    : [group('from', 'Senders', 'sender', 'is', [value]), ...seed.groups]
   return {
     ...seed,
-    blocks,
+    groups,
     unsaved: [...seed.unsaved, value],
     count: seed.count + hits,
     newCount: seed.newCount + hits,

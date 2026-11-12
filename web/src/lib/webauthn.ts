@@ -30,7 +30,7 @@ export class PasskeyError extends Error {
 export function passkeysSupported(): boolean {
   return (
     typeof window !== 'undefined' &&
-    window.isSecureContext &&
+    window.isSecureContext === true &&
     typeof window.PublicKeyCredential === 'function' &&
     typeof navigator.credentials?.create === 'function' &&
     typeof navigator.credentials?.get === 'function'
@@ -126,6 +126,65 @@ function answer(credential: PublicKeyCredential): unknown {
       userHandle: used.userHandle ? toBase64url(used.userHandle) : undefined,
     },
   }
+}
+
+/** A text as base64url without padding, the way the server writes the bytes of an account's id. */
+function textToBase64url(text: string): string {
+  return toBase64url(new TextEncoder().encode(text).buffer as ArrayBuffer)
+}
+
+/** The relying party of this page's passkeys: the server makes them for the app's own host. */
+function relyingParty(): string {
+  return window.location.hostname
+}
+
+/**
+ * Runs one of the browser's signals to authenticators, where it has it. They are a courtesy to the person's
+ * password manager: a browser without them, or one that refuses, changes nothing and says nothing.
+ */
+function signal(name: 'signalUnknownCredential' | 'signalAllAcceptedCredentials', options: object) {
+  try {
+    if (typeof window === 'undefined' || typeof window.PublicKeyCredential !== 'function') return
+    const tell = (
+      window.PublicKeyCredential as unknown as Record<
+        string,
+        ((options: object) => Promise<void>) | undefined
+      >
+    )[name]
+    if (typeof tell !== 'function') return
+    void Promise.resolve(tell.call(window.PublicKeyCredential, options)).catch(() => {})
+  } catch {
+    // Not for the person to hear about.
+  }
+}
+
+/** The identifier of a passkey in what the browser answered when it was made, or null when it has none. */
+export function credentialId(credential: unknown): string | null {
+  const id = (credential as { id?: unknown } | null)?.id
+  return typeof id === 'string' && id !== '' ? id : null
+}
+
+/**
+ * Tells the authenticator that the server does not have a passkey, so it stops offering it: one the server
+ * refused when it was made, or one the person removed in Settings. Only for a passkey the server is known
+ * not to have: a sign-in that failed says no such thing, since the wait may just have been too long.
+ */
+export function forgetPasskey(id: string | null, rpId: string = relyingParty()): void {
+  if (!id) return
+  signal('signalUnknownCredential', { rpId, credentialId: id })
+}
+
+/**
+ * Tells the authenticator which passkeys the account has, as the server just listed them, so it stops
+ * offering the ones removed from another device. `accountId` is the account's id, which is what the server
+ * gives the browser as the user of a passkey.
+ */
+export function acceptedPasskeys(accountId: string, ids: string[]): void {
+  signal('signalAllAcceptedCredentials', {
+    rpId: relyingParty(),
+    userId: textToBase64url(accountId),
+    allAcceptedCredentialIds: ids,
+  })
 }
 
 /** What went wrong, from what the browser threw. Its text is not kept: it is for developers, not for people. */

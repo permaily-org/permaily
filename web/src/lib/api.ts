@@ -14,6 +14,26 @@ export type Account = {
   created_at: string
   /** When a closing account is removed. There only while it is closing. */
   closes_at?: string
+  /**
+   * Who asked for the deletion, while it is closing: the person, or Permaily's operator. A server from before
+   * says nothing, and anything but `operator` reads as the person. Either way the person can cancel.
+   */
+  closing_by?: 'person' | 'operator'
+  /**
+   * Whether the account is one of the service's admins: `super` for the one super admin, `admin` for the ones
+   * it made. There also while the account is not "passkey only", when the admin panel does not work.
+   */
+  admin?: 'super' | 'admin'
+  /**
+   * Mail no longer signs in to the account: passkeys do, and recovery codes. The admin panel works only while
+   * it is on. A server from before says nothing, which reads as off.
+   */
+  passkey_only?: boolean
+  /**
+   * The version of the terms of service and the privacy policy the person agreed to. Absent when they agreed
+   * to none, as an account made before there were terms.
+   */
+  terms?: string
 }
 
 export type Session = {
@@ -23,9 +43,22 @@ export type Session = {
   expires_at: string
   device: string
   current: boolean
+  /**
+   * Until when the person's proof of who they are is fresh: a sign-in, a passkey or a code by mail, for ten
+   * minutes. Absent when it is not. The changes that decide who gets into an account need it.
+   */
+  confirmed_until?: string
 }
 
-export type Me = { account: Account; session: Session }
+export type Me = {
+  account: Account
+  session: Session
+  /**
+   * The version of the terms in force. When the account's is another, the person agrees to this one before
+   * anything else of the app. A server from before says nothing, and nothing is asked.
+   */
+  terms?: string
+}
 
 export type Passkey = {
   /** The credential's identifier, as the browser names it: base64url without padding. */
@@ -102,6 +135,15 @@ export type ApiErrorCode =
   | 'provider_linked'
   | 'invitation_needed'
   | 'last_way_in'
+  | 'account_blocked'
+  | 'address_in_use'
+  | 'confirmation_needed'
+  | 'passkey_required'
+  | 'passkey_only_needed'
+  | 'super_admin_only'
+  | 'not_cancellable'
+  | 'invalid_provider_app'
+  | 'terms_needed'
   | 'network'
   | 'other'
 
@@ -126,6 +168,15 @@ const known: ReadonlySet<string> = new Set([
   'provider_linked',
   'invitation_needed',
   'last_way_in',
+  'account_blocked',
+  'address_in_use',
+  'confirmation_needed',
+  'passkey_required',
+  'passkey_only_needed',
+  'super_admin_only',
+  'not_cancellable',
+  'invalid_provider_app',
+  'terms_needed',
 ])
 
 export class ApiError extends Error {
@@ -153,11 +204,21 @@ export function onAccountClosing(listener: (() => void) | null) {
   closingHeard = listener
 }
 
+let termsHeard: (() => void) | null = null
+
+/**
+ * Whom to tell that a request of someone signed in was refused because the terms changed and they did not
+ * agree to the new ones yet: the session, which asks again and shows the screen that asks for the agreement.
+ */
+export function onTermsNeeded(listener: (() => void) | null) {
+  termsHeard = listener
+}
+
 /** How long a request may take before it counts as no answer. */
 const timeout = 20_000
 
 async function request<T>(
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,
 ): Promise<T> {
@@ -192,6 +253,7 @@ async function request<T>(
     // An answer that is not the API's own, such as a proxy's error page.
   }
   if (code === 'account_closing') closingHeard?.()
+  if (code === 'terms_needed' && response.status === 400) termsHeard?.()
   if (typeof code === 'string' && known.has(code)) throw new ApiError(code as ApiErrorCode)
   if (response.status === 401) throw new ApiError('unauthorized')
   if (response.status === 404) throw new ApiError('not_found')
@@ -199,12 +261,19 @@ async function request<T>(
   throw new ApiError('other')
 }
 
-/** Asks for the sign-in message. The answer is the same whether the address has an account or not. */
-export function startEmail(address: string, invitation?: string): Promise<EmailStarted> {
+/**
+ * Asks for the sign-in message. The answer is the same whether the address has an account or not. With an
+ * invitation it is a sign-up, which carries the version of the terms the person agreed to.
+ */
+export function startEmail(
+  address: string,
+  invitation?: string,
+  terms?: string,
+): Promise<EmailStarted> {
   return request(
     'POST',
     '/api/v1/auth/email/start',
-    invitation ? { address, invitation } : { address },
+    invitation ? { address, invitation, ...(terms ? { terms } : {}) } : { address },
   )
 }
 
@@ -257,9 +326,31 @@ export function deleteAccount(): Promise<Account> {
   return account(request('POST', '/api/v1/account/delete'))
 }
 
+/** Agrees to the terms in force, by the version the person was shown. */
+export function agreeTerms(version: string): Promise<Account> {
+  return account(request('POST', '/api/v1/account/terms', { version }))
+}
+
 /** Keeps an account that was closing: it is active again, as it was. */
 export function cancelDeletion(): Promise<Account> {
   return account(request('POST', '/api/v1/account/delete/cancel'))
+}
+
+/**
+ * Asks to change the account's contact address: the server sends a six-digit code to the new one, and no
+ * link. The answer is the same whether or not the address belongs to someone else. Nothing changes yet.
+ */
+export function startAddressChange(address: string): Promise<EmailStarted> {
+  return request('POST', '/api/v1/account/address/start', { address })
+}
+
+/**
+ * Ends the change with the code of that message. The answer is the account with its new address; the server
+ * tells the old address and the new one. Only here, after the code, does it say that the address belongs
+ * to another account (`address_in_use`).
+ */
+export function finishAddressChange(attempt: string, code: string): Promise<Account> {
+  return account(request('POST', '/api/v1/account/address/finish', { attempt, code }))
 }
 
 /** Starts a sign-in with a passkey. Nothing is asked: the passkey says which account it is for. */
@@ -385,13 +476,14 @@ function started(answer: Partial<ProviderStarted> | null): ProviderStarted {
  */
 export async function startProvider(
   provider: Provider,
-  how: { invitation?: string; returnTo?: string } = {},
+  how: { invitation?: string; returnTo?: string; terms?: string } = {},
 ): Promise<ProviderStarted> {
   return started(
     await request('POST', '/api/v1/auth/provider/start', {
       provider,
       ...(how.invitation ? { invitation: how.invitation } : {}),
       ...(how.returnTo ? { return_to: how.returnTo } : {}),
+      ...(how.invitation && how.terms ? { terms: how.terms } : {}),
     }),
   )
 }
@@ -454,4 +546,257 @@ export async function linkProvider(
 /** Takes a provider account out of the account. The server refuses the only way left to sign in. */
 export function unlinkProvider(provider: Provider): Promise<void> {
   return request('DELETE', `/api/v1/providers/${encodeURIComponent(provider)}`)
+}
+
+/** A way the account can show it is the person's again: one of its passkeys, or a code sent to its address. */
+export type ConfirmWay = 'passkey' | 'email'
+
+export type ConfirmWays = {
+  /** The ways this account can confirm now, a passkey first. */
+  ways: ConfirmWay[]
+  /** Until when the proof is fresh, when it is. */
+  confirmed_until?: string
+}
+
+/** How the account that is signed in can show again that it is the person's. */
+export async function confirmWays(): Promise<ConfirmWays> {
+  const answer = await request<{ ways?: unknown; confirmed_until?: unknown } | null>(
+    'GET',
+    '/api/v1/auth/confirm',
+  )
+  if (!Array.isArray(answer?.ways)) throw new ApiError('other')
+  const ways: unknown[] = answer.ways
+  return {
+    ways: (['passkey', 'email'] as const).filter((way) => ways.includes(way)),
+    ...(typeof answer.confirmed_until === 'string'
+      ? { confirmed_until: answer.confirmed_until }
+      : {}),
+  }
+}
+
+/** Starts confirming with one of the account's own passkeys. `passkey_needed` when it has none. */
+export function startConfirmPasskey(): Promise<
+  PasskeyCeremony<PublicKeyCredentialRequestOptionsJSON>
+> {
+  return request('POST', '/api/v1/auth/confirm/passkey/start')
+}
+
+/** Ends confirming with the browser's answer. The session is confirmed for ten minutes. */
+export function finishConfirmPasskey(ceremony: string, credential: unknown): Promise<Me> {
+  return request('POST', '/api/v1/auth/confirm/passkey/finish', { ceremony, credential })
+}
+
+/** Sends a six-digit code to the account's address. `passkey_required` when the account confirms with a passkey. */
+export function startConfirmEmail(): Promise<EmailStarted> {
+  return request('POST', '/api/v1/auth/confirm/email/start')
+}
+
+/** Ends confirming with the code of that message. */
+export function finishConfirmEmail(attempt: string, code: string): Promise<Me> {
+  return request('POST', '/api/v1/auth/confirm/email/finish', { attempt, code })
+}
+
+/** An account as the admin panel sees it. Nothing of its mail, and nothing that signs in to it. */
+export type AccountRecord = {
+  id: string
+  state: 'active' | 'closing'
+  address: string
+  name: string
+  language: string
+  created_at: string
+  address_verified_at: string
+  closes_at?: string
+  closing_by?: 'person' | 'operator'
+  /** Since when the operator blocks the account. There only while it is blocked. */
+  blocked_at?: string
+  passkeys: number
+  passkey_only: boolean
+  sessions: number
+  providers: Provider[]
+  admin?: 'super' | 'admin'
+}
+
+export type AccountPage = {
+  accounts: AccountRecord[]
+  /** Accounts the server has and could not read. */
+  unreadable: number
+  /** Where the next page starts. Absent on the last one. */
+  next?: string
+}
+
+/** What an admin can do to an account, by the end of its path. */
+export type AccountAction = 'block' | 'unblock' | 'delete' | 'delete/cancel' | 'sessions/close'
+
+function accountPage(answer: Partial<AccountPage> | null): AccountPage {
+  if (!Array.isArray(answer?.accounts)) throw new ApiError('other')
+  return {
+    accounts: answer.accounts,
+    unreadable: typeof answer.unreadable === 'number' ? answer.unreadable : 0,
+    ...(typeof answer.next === 'string' && answer.next !== '' ? { next: answer.next } : {}),
+  }
+}
+
+/** The accounts, the oldest first, a page at a time. */
+export async function adminAccounts(after?: string, limit = 50): Promise<AccountPage> {
+  const query = new URLSearchParams({ limit: String(limit) })
+  if (after) query.set('after', after)
+  return accountPage(await request('GET', `/api/v1/admin/accounts?${query}`))
+}
+
+/** The account of exactly this address: none or one. */
+export async function adminFindAccount(address: string): Promise<AccountPage> {
+  const query = new URLSearchParams({ address })
+  return accountPage(await request('GET', `/api/v1/admin/accounts?${query}`))
+}
+
+export function adminAccount(id: string): Promise<AccountRecord> {
+  return request('GET', `/api/v1/admin/accounts/${encodeURIComponent(id)}`)
+}
+
+/** Does something to an account. The answer is the account after it. */
+export function adminAccountAction(id: string, action: AccountAction): Promise<AccountRecord> {
+  return request('POST', `/api/v1/admin/accounts/${encodeURIComponent(id)}/${action}`)
+}
+
+/** An invitation not used yet. Its code is never answered again. */
+export type InvitationRecord = { id: string; created_at: string; expires_at: string }
+
+export async function adminInvitations(): Promise<{
+  invitations: InvitationRecord[]
+  truncated: boolean
+}> {
+  const answer = await request<{ invitations?: unknown; truncated?: unknown } | null>(
+    'GET',
+    '/api/v1/admin/invitations',
+  )
+  if (!Array.isArray(answer?.invitations)) throw new ApiError('other')
+  return { invitations: answer.invitations, truncated: answer.truncated === true }
+}
+
+export type InvitationsMade = { invitations: string[]; ids: string[]; expires_at: string }
+
+/** Makes invitations. Their codes are in this answer and nowhere else, ever. */
+export async function makeInvitations(count: number): Promise<InvitationsMade> {
+  const answer = await request<Partial<InvitationsMade> | null>(
+    'POST',
+    '/api/v1/admin/invitations',
+    { count },
+  )
+  if (!Array.isArray(answer?.invitations) || answer.invitations.length === 0) {
+    throw new ApiError('other')
+  }
+  return {
+    invitations: answer.invitations,
+    ids: Array.isArray(answer.ids) ? answer.ids : [],
+    expires_at: typeof answer.expires_at === 'string' ? answer.expires_at : '',
+  }
+}
+
+export function revokeInvitation(id: string): Promise<void> {
+  return request('DELETE', `/api/v1/admin/invitations/${encodeURIComponent(id)}`)
+}
+
+/** A provider's application that is set. Its secret is never answered. */
+export type ProviderApp = { provider: Provider; client_id: string }
+
+export async function providerApps(): Promise<ProviderApp[]> {
+  const answer = await request<{ providers?: unknown } | null>('GET', '/api/v1/admin/providers')
+  if (!Array.isArray(answer?.providers)) throw new ApiError('other')
+  return (answer.providers as Array<Partial<ProviderApp> | null>).filter(
+    (app): app is ProviderApp => isProvider(app?.provider) && typeof app.client_id === 'string',
+  )
+}
+
+export function setProviderApp(
+  provider: Provider,
+  clientId: string,
+  clientSecret: string,
+): Promise<void> {
+  return request('PUT', `/api/v1/admin/providers/${provider}`, {
+    client_id: clientId,
+    client_secret: clientSecret,
+  })
+}
+
+export function removeProviderApp(provider: Provider): Promise<void> {
+  return request('DELETE', `/api/v1/admin/providers/${provider}`)
+}
+
+export type AdminRecord = {
+  id: string
+  address: string
+  name: string
+  super: boolean
+  since?: string
+}
+
+/** The admins, as the server answered them: the list, or after a change the list as it is now. */
+async function adminList(answer: Promise<{ admins?: unknown } | null>): Promise<AdminRecord[]> {
+  const got = await answer
+  if (!Array.isArray(got?.admins)) throw new ApiError('other')
+  return got.admins
+}
+
+export function admins(): Promise<AdminRecord[]> {
+  return adminList(request('GET', '/api/v1/admin/admins'))
+}
+
+/** Makes an account an admin, and answers the admins after the change. */
+export function makeAdmin(id: string): Promise<AdminRecord[]> {
+  return adminList(request('PUT', `/api/v1/admin/admins/${encodeURIComponent(id)}`))
+}
+
+/** Makes an admin an account like any other, and answers the admins after the change. */
+export function removeAdmin(id: string): Promise<AdminRecord[]> {
+  return adminList(request('DELETE', `/api/v1/admin/admins/${encodeURIComponent(id)}`))
+}
+
+/** One thing an admin did. `kind` may be one this app does not know yet. */
+export type LogEntry = {
+  at: string
+  kind: string
+  admin: { id: string; address: string }
+  /** The account it was done to, when it was done to one. Its address is gone with the account. */
+  account?: { id: string; address?: string }
+  /** The invitation it was about, made or revoked: its identifier, which says nothing of its code. */
+  invitation?: string
+  /** The provider whose application was set or removed. A server from before says nothing. */
+  provider?: string
+}
+
+export async function adminLog(
+  after?: string,
+  limit = 50,
+): Promise<{
+  entries: LogEntry[]
+  next?: string
+}> {
+  const query = new URLSearchParams({ limit: String(limit) })
+  if (after) query.set('after', after)
+  const answer = await request<{ entries?: unknown; next?: unknown } | null>(
+    'GET',
+    `/api/v1/admin/log?${query}`,
+  )
+  if (!Array.isArray(answer?.entries)) throw new ApiError('other')
+  return {
+    entries: answer.entries,
+    ...(typeof answer.next === 'string' && answer.next !== '' ? { next: answer.next } : {}),
+  }
+}
+
+export type AdminStats = {
+  accounts: { active: number; closing: number; blocked: number; total: number }
+  invitations: { unused: number }
+  /** False when some accounts could not be read: the numbers are at least these. */
+  complete: boolean
+}
+
+export async function adminStats(): Promise<AdminStats> {
+  const answer = await request<Partial<AdminStats> | null>('GET', '/api/v1/admin/stats')
+  if (typeof answer?.accounts !== 'object' || answer.accounts === null) throw new ApiError('other')
+  return {
+    accounts: answer.accounts,
+    invitations: { unused: answer.invitations?.unused ?? 0 },
+    complete: answer.complete !== false,
+  }
 }

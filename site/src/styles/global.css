@@ -283,10 +283,6 @@ textarea {
   font-size: var(--text-lead);
 }
 
-.btn.full {
-  width: 100%;
-}
-
 .actions {
   display: flex;
   flex-wrap: wrap;

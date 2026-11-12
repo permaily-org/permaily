@@ -3,6 +3,8 @@
 // Starlight builds the docs under this path, from src/content/docs/docs/.
 const DOCS = '/docs';
 const SOURCE = 'https://github.com/permaily-org/permaily';
+// Signing up and signing in happen in the web app, not on this site.
+const APP = 'https://app.permaily.com';
 
 export const SITE = {
   name: 'Permaily',
@@ -14,8 +16,8 @@ export const SITE = {
 };
 
 export const LINKS = {
-  signup: '/signup/',
-  login: '/login/',
+  signup: `${APP}/sign-up`,
+  login: `${APP}/sign-in`,
   docs: `${DOCS}/`,
   queries: `${DOCS}/queries/`,
   selfHosting: `${DOCS}/self-hosting/`,
@@ -24,10 +26,11 @@ export const LINKS = {
   source: SOURCE,
   releaseLog: `${SOURCE}/releases`,
   vulnerability: 'mailto:security@permaily.com',
-  // These pages aren't written yet. They need legal review first.
-  terms: '#terms',
-  dataProcessing: '#data-processing',
-  subprocessors: '#subprocessors',
+  privacy: '/privacy/',
+  terms: '/terms/',
+  dataProcessing: '/data-processing/',
+  subprocessors: '/subprocessors/',
+  dataDeletion: '/data-deletion/',
 };
 
 export const NAV = [

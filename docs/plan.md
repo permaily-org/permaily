@@ -39,7 +39,7 @@ Each step ends deployed and verified, like the releases so far. The estimates ar
 | Step | What | Weeks |
 |---|---|---|
 | 1 | Layers (`contracts`, `domain`, `services`, adapters) and accounts: passkeys, email and providers, sessions, invitations with the operator's tool, outgoing mail through SES | 3 |
-| 2 | Mailboxes per account, moving the test mailbox into the first account; the inbox in the app | 1.5 |
+| 2 | Mailboxes per account, moving the test mailbox into the first account; the inbox in the app. Made by a write that only creates, and every change written at the version read, never with a plain write: two enclaves may run at once (ADR 0024 did this for the test mailbox) | 1.5 |
 | 3 | The query language: grammar, simplification, whether one formula fits inside another, the sentence, and evaluating exact conditions over stored mail | 2 |
 | 4 | Spike, then the piece that asks OpenAI: `about`, kept decisions, the spending alarm | 1.5 |
 | 5 | Spike of the authorization server (ADR 0007), then connections, the consent screen, the API and MCP | 3.5 |
@@ -48,20 +48,34 @@ Each step ends deployed and verified, like the releases so far. The estimates ar
 | 8 | Receipts chained and anchored, and the activity screen | 1 |
 | 9 | Notices by mail, the threat model and the public pages brought up to date, a round of tests with staging images | 1 |
 
-Step 1, in the order it is built:
+Step 1, in the order it is built (all of it released in v0.10.0 on 2026-11-11):
 
 - [x] The layers, and the core of accounts: invitations made by the operator (`scripts/invite.sh`), signing up and signing in by email with a code or a link, sessions. On in dev mode only (2026-11-11).
 - [x] Outgoing mail through SES, which turns accounts on in the image: the SES identity and its DNS records, the host's allowlist, the watch on who else gets a copy of what is sent (ADR 0021), the threat model, a staging image (2026-11-11). Asking AWS to leave the sandbox is under "Before real users".
 - [x] The sign-in and sign-up screens of the web app, and the app behind a session (2026-11-11). Made without a design of their own: layout and copy are for the designer to review.
 - [x] Passkeys, the "passkey only" switch and recovery codes, with their screens and the real list of sessions in Settings (2026-11-11). Not yet tried with a real authenticator in a real browser: that needs a certificate browsers trust, so it waits for the release.
-- [x] Google, GitHub, Meta and Microsoft, with their screens (2026-11-11). Built and tried against providers played by the tests; not yet against the real ones, which needs an application registered at each (docs/operations.md).
-- [x] Settings: name, sessions per device, deleting the account. The operator's tool to see accounts (`scripts/accounts.sh`) (2026-11-11). The contact address cannot be changed yet.
+- [x] Google, GitHub, Meta and Microsoft, with their screens (2026-11-11). Built and tried against providers played by the tests. Tried against the real Google and GitHub in production on 2026-11-12 (v0.10.0): sign-up with Google by invitation, linking GitHub from Settings, signing in with each to the same account, the Back button at Google and opening a used answer again. Not against Meta and Microsoft, which have no application registered (docs/operations.md); cancelling at GitHub could not be tried, since GitHub sends a browser that authorized the application straight back.
+- [x] Agreeing to the terms of service and the privacy policy at sign-up, and again when they change (ADR 0017, 2026-11-12). Needed before the site publishes them.
+- [x] Settings: name, sessions per device, deleting the account. The operator's tool to see accounts (`scripts/accounts.sh`) (2026-11-11).
+
+After v0.10.0, built on 2026-11-12 and not released yet (ADR 0017):
+
+- [x] What the operator can do to an account through the enclave: block and unblock, ask to delete and cancel, sign devices out, find by address, list and revoke invitations (`scripts/accounts.sh`, `scripts/invite.sh`), with every action counted on `/status` and printed by `permaily-verify`. Not what would be a way in: no address, no way to sign in.
+- [x] Changing the contact address, with a code sent to the new one (server side; the screen is in the web app).
+- [x] The notices by mail that need only accounts, brought forward from step 9: a sign-in from a new device, a change in how the account is signed into, the address changed, deleting asked or cancelled, blocked and unblocked.
+- [x] Only the person cancels a deletion they asked for; the operator cancels only one the operator asked for (2026-11-12).
+- [x] Confirming again before a sensitive change, and admins in the web app with a super admin named by the image, an admin log and counts (ADR 0022, server side; the screens are in the web app).
+- [x] Move what sign-in keeps in memory (attempts, ceremonies, trips) to the storage, so that two enclaves can run at once (ADR 0017, "Two enclaves at once"), with the races of accounts that two enclaves had: the providers' applications, linking and unlinking, a removal against a cancel, signing devices out, and the stale pointer of an address. What `/status` says stays one enclave's.
+- [x] The TLS identity and the test mailbox ready for two enclaves: one order, the CA's check answered by either, the mailbox made once (ADR 0024, 2026-11-12).
+- [ ] A staging image with all of it: the notices through SES, and the counts on `/status` read by `permaily-verify`.
+
+Step 9 keeps the notices about connections (one approved, one about to end), which need step 5, and the wording of every message reviewed with the designer.
 
 About sixteen weeks. Steps 3 and 4 do not depend on 1 and 2, and can go first if seeing `about` work early is worth more than having accounts.
 
 ### Before real users
 
-- Zero data retention approved by OpenAI for the organization (ADR 0020).
+- ~~Zero data retention approved by OpenAI for the organization (ADR 0020).~~ Not a condition for real users: decided on 2026-11-12 that real mail goes to OpenAI before it is approved, under OpenAI's ordinary retention, disclosed on the privacy page; zero data retention is asked for and stays a residual risk until approved (docs/legal.md).
 - ~~SES out of its sandbox (ADR 0017).~~ Done on 2026-11-11: AWS granted production access in `us-east-2`, 50,000 messages a day and 14 a second.
 - The mailbox's state and every record of F2 whose going back matters stored through `store.Anchored` (ADR 0016).
 - Whoever can merge into `main` decides what the enclave accepts: require two-factor sign-in in the GitHub organization and a second person's review (docs/threat-model.md).

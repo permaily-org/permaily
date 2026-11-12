@@ -391,6 +391,18 @@ func TestCheckCertificates(t *testing.T) {
 			t.Fatalf("older certificates valid until %s, want %s", r.OlderUntil, want)
 		}
 	})
+	t.Run("two enclaves renewing: two valid certificates with the attested key", func(t *testing.T) {
+		// Two enclaves serve one key. While one renews, the other serves the
+		// certificate before for up to refreshEvery of tlsacme, and both stay
+		// valid in the logs until the earlier one ends.
+		f := newCertFixture(t)
+		renewed := f.issuances[2]
+		renewed.ID, renewed.NotBefore, renewed.NotAfter = "5", renewed.NotBefore.Add(19*24*time.Hour), renewed.NotAfter.Add(19*24*time.Hour)
+		f.issuances = append(f.issuances, renewed)
+		if r := f.check(); !r.OK || r.Own != 2 || len(r.Foreign) != 0 || r.Warning != "" {
+			t.Fatalf("result %+v", r)
+		}
+	})
 	t.Run("the enclave's certificate is not in the logs yet", func(t *testing.T) {
 		f := newCertFixture(t)
 		f.issuances = f.issuances[:2]

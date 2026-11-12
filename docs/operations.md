@@ -7,15 +7,15 @@ Runbooks for production. Setup from scratch is in [deploy.md](deploy.md). Every 
 The running enclave hands the root secret to the next release, then the next release is started (ADR 0013). Nothing in AWS is edited to let a release in: each release has a KMS key of its own that only its image can use.
 
 ```sh
-old=v0.8.0 new=v0.9.0
-mkdir -p /tmp/permaily-$new && cd /tmp/permaily-$new
-gh release download $new --repo permaily-org/permaily
-gh attestation verify permaily.eif --repo permaily-org/permaily --signer-workflow permaily-org/permaily/.github/workflows/release.yml --source-ref refs/heads/main
-sha256sum -c SHA256SUMS --ignore-missing
-mkdir eif && mv permaily.eif pcrs.json eif/
+old=v0.8.0 new=v0.9.0 dir=/tmp/permaily-v0.9.0
+# 0. The image. Releases publish its measurements, not the image (ADR 0023):
+#    this builds it from the tag (Nix, or Docker) and refuses unless its
+#    measurements are the release's pcrs.json, whose build provenance it checks,
+#    as it does the host program's. It leaves the three files in $dir.
+scripts/release-image.sh $new $dir
 
 # 1. The key of the new image. deploy/tofu/production.auto.tfvars:
-#      release_keys = { "v0.8.0" = "<its PCR0>", "v0.9.0" = "<jq -r .PCR0 eif/pcrs.json>" }
+#      release_keys = { "v0.8.0" = "<its PCR0>", "v0.9.0" = "<jq -r .PCR0 $dir/pcrs.json>" }
 tofu -chdir=deploy/tofu apply          # creates one KMS key and its alias; then `tofu plan` must show no changes
 
 # 2. The running enclave gives the root secret to the new release. The script
@@ -23,7 +23,7 @@ tofu -chdir=deploy/tofu apply          # creates one KMS key and its alias; then
 scripts/handoff.sh $old $new
 
 # 3. Start the new image and verify.
-scripts/deploy.sh eif permaily-host-linux-arm64
+scripts/deploy.sh $dir $dir/permaily-host-linux-arm64
 scripts/verify.sh $new                 # from a server with outbound port 25, add -require-smtp
 ```
 
@@ -36,7 +36,7 @@ Then delete the key of the previous release (below), and open the pull request t
 
 ## Roll back
 
-Deploy the previous release again with `scripts/deploy.sh`. Its record and its key are still there, and everything stored since is sealed under the same root secret, so it reads it. A handoff back to an older release is refused on purpose: a rollback only works while the old release's key exists.
+Build the previous release's image again (`scripts/release-image.sh <tag> <dir>`) and deploy it with `scripts/deploy.sh`. Its record and its key are still there, and everything stored since is sealed under the same root secret, so it reads it. A handoff back to an older release is refused on purpose: a rollback only works while the old release's key exists.
 
 ## Delete the key of an old release
 
@@ -53,8 +53,8 @@ If the instance is lost, nothing is: create it again with OpenTofu and deploy th
 A staging image (`.#eif-staging`) is a deployment of its own on the same instance and names: Let's Encrypt staging, the table `permaily-mail-staging`, and a root secret that only staging images can receive. Production is down while a staging image runs.
 
 ```sh
-git push origin HEAD:refs/heads/staging/<name>     # the staging-image workflow builds and attests it
-gh run download <run id> --name staging-image --dir /tmp/stg-a
+git push origin HEAD:refs/heads/staging/<name>     # the staging-image workflow builds and attests its pcrs.json
+scripts/release-image.sh --staging <run id> /tmp/stg-a   # builds the image of that run's commit, refuses other measurements
 # release_keys: add "staging-a" = "<its PCR0>", without committing; acme_account_uris: see Certificates below
 tofu -chdir=deploy/tofu apply
 scripts/deploy.sh /tmp/stg-a /tmp/stg-a/permaily-host-linux-arm64
@@ -72,6 +72,23 @@ The TLS identity is read by its newest commit in the bucket `permaily-anchors-<a
 - **The verifier fails with `the store of commits went back`**: the enclave had seen a commit that the bucket no longer answers with. Nobody in the account can remove one, so treat it as an incident: find out what happened to the bucket (CloudTrail, `aws s3api list-object-versions`) before restarting the enclave, which forgets what it saw.
 - **The verifier warns that a lock ends within 30 days**: the newest commit of a record is ten years old. Make the record change (for the TLS identity, a renewal does) so that it gets a new commit.
 - The enclave's role can list, read and write in that bucket and cannot delete. Nothing needs to be cleaned there: a commit is a few hundred bytes.
+
+## Two enclaves
+
+Not deployed: one enclave runs today. The code is ready for two behind one address (ADR 0017, ADR 0024). What the operator would see:
+
+- **The TLS identity.** One enclave logs `acme: certificate obtained`, the other `acme: certificate installed` within ten minutes. Both serve one key. While one orders, the identity holds its claim; the other waits up to the end of that claim (eleven minutes, more after failed tries) and then orders itself. Nothing needs doing.
+- **`the stored identity holds another key`** in one enclave's log: the identity was lost and made again by the other enclave. Restart the enclave that logs it, so both serve the new key, and follow "Replace the TLS key" for the CAA records.
+- **The challenges** of an open order are items `pk=acme-challenge#tls-<CA host>` in the table, sealed. They expire with the order and are deleted when it ends; one left behind ends by itself.
+- **The test mailbox** is made once by whichever enclave starts first.
+
+Still needed before two run:
+
+1. A load balancer that passes TCP through on ports 443 and 25 (a Network Load Balancer with TCP listeners, never TLS ones), with health checks that do not end TLS.
+2. The parent instances, or one instance with two enclaves, each with its host proxy, behind it.
+3. A first release with ADR 0024 must run alone before a second enclave is added: a release from before writes the TLS identity without the claim.
+4. A way to roll a release out to two: hand the root secret to the new release once (any enclave of the running release can), then replace the enclaves one at a time. While both releases serve, `permaily-verify -release` fails on connections that land on the older one.
+5. The sign-in state that is still in each enclave's memory moved to the storage (ADR 0017).
 
 ## Look at enclave logs
 
@@ -94,7 +111,7 @@ Debug mode zeroes the PCRs, so verification fails on purpose and the enclave doe
 
 ## Let's Encrypt rate limits
 
-At most 5 certificates per week for the same set of names. Since v0.4.0 the enclave keeps its key and certificate sealed, so a restart or an upgrade issues nothing; only a renewal (every 60 days) or a new TLS key does. If issuance fails with `rateLimited`, wait for the window, and use `.#eif-staging` for tests.
+At most 5 certificates per week for the same set of names. Since v0.4.0 the enclave keeps its key and certificate sealed, so a restart or an upgrade issues nothing; only a renewal (every 60 days) or a new TLS key does. With two enclaves, one asks and the other serves what it stores, so they make no more orders than one (ADR 0024). If issuance fails with `rateLimited`, wait for the window, and use `.#eif-staging` for tests.
 
 ## Rotate the Cloudflare token
 
@@ -181,18 +198,54 @@ Signing up needs an invitation: a code that works once, for thirty days, for one
 scripts/invite.sh        # one; scripts/invite.sh 5 for five, at most 100 at a time
 ```
 
-It prints each code once (the enclave keeps only its hash) and reads the admin token from `~/.config/permaily/admin-token`. Give the person the code, or the link `https://app.permaily.com/sign-up?invitation=<code>`. Whoever holds the admin token decides who may sign up, and nothing else of an account. An invitation that was not used cannot be taken back; it ends by itself.
-
-## See the accounts
+It prints each code once, on standard output (the enclave keeps only its hash), and reads the admin token from `~/.config/permaily/admin-token`. Give the person the code, or the link `https://app.permaily.com/sign-up?invitation=<code>`. It also prints, on standard error and in the same order, the identifier of each invitation (`inv_...`): what it is listed and revoked by. An identifier is not the code, and the code cannot be had from it.
 
 ```sh
-scripts/accounts.sh               # every account: identifier, address, name, state, passkeys, sessions
-scripts/accounts.sh acc_...       # one
+scripts/invite.sh list                # the ones not used yet: identifier, when made, when it ends
+scripts/invite.sh revoke inv_...      # makes one of no use; asks for a "yes" unless --yes follows
 ```
 
-It asks the enclave (`GET /v1/admin/accounts`, with the admin token from `~/.config/permaily/admin-token`), which answers from the signed records: the table in DynamoDB shows what is stored, this shows what the enclave accepts. It changes nothing. `unreadable` counts accounts in the list whose record could not be read or does not verify: more than zero means the storage was changed by hand or is failing, and the enclave's log says which kind without naming the account.
+An invitation that was used is deleted when it is used, so the list does not show it: the list is what is still waiting. One that is revoked is gone the same way, and a sign-up that was started with it fails. The invitations made by v0.10.0 and earlier have no identifier: they are not listed, cannot be revoked, and end by themselves thirty days after they were made.
 
-A person deletes their own account, from Settings; it is removed seven days later, within ten minutes of the moment it is due, or as soon as it is next used. Until then they can sign in and cancel. There is no way to delete an account for someone, and none to bring one back.
+## See and manage the accounts
+
+```sh
+scripts/accounts.sh                       # every account: identifier, address, name, state, passkeys, sessions
+scripts/accounts.sh acc_...               # one
+scripts/accounts.sh find ana@example.org  # the account of exactly that address
+scripts/accounts.sh stats                 # how many, by state
+```
+
+It asks the enclave (`GET /v1/admin/accounts`, with the admin token from `~/.config/permaily/admin-token`), which answers from the signed records: the table in DynamoDB shows what is stored, this shows what the enclave accepts. `unreadable` counts accounts in the list whose record could not be read or does not verify: more than zero means the storage was changed by hand or is failing, and the enclave's log says which kind without naming the account. `stats` reads the whole list a page at a time and counts: active, closing (asked by the person or by the operator), blocked, and a few more.
+
+```sh
+scripts/accounts.sh block <account>            # nobody signs in to it, and every device is signed out
+scripts/accounts.sh unblock <account>
+scripts/accounts.sh delete <account>           # removed in seven days, unless that is cancelled
+scripts/accounts.sh cancel <account>           # cancels a deletion the operator asked for
+scripts/accounts.sh close-sessions <account>   # signs every device out, and nothing else
+```
+
+`<account>` is an identifier or the account's address. Each of these reads the account from the enclave first, says what it will do and to which account (address and identifier), and asks for a `yes`; `--yes` after the account skips the question.
+
+- **Block** when an account is being misused or was taken over. Its person is told by mail, and when they sign in and prove who they are they are told the account is blocked and to write to support@permaily.com. Nothing says so before that proof, so nobody else learns of it. Blocking is apart from deleting: a blocked account stays as it is until it is unblocked or removed.
+- **Delete** is what a person does from Settings, asked for them: the account is closing for seven days and then removed with everything in it, within ten minutes of the moment it is due or as soon as it is next used. The person is told by mail, sees who asked, and can cancel from the app unless the account is blocked. There is no way to bring a removed account back.
+- **Cancel** only a deletion the operator asked for. One the person asked for is theirs to cancel: the enclave answers `not_cancellable` and changes nothing, and the script says so before asking. To keep the account of a blocked person who asked to delete it, unblock it: they sign in and cancel.
+- **Close sessions** when a device was lost: the person signs in again.
+
+What cannot be done, on purpose (ADR 0017): change an account's contact address, add or remove a passkey or a provider, turn "passkey only" off, or sign in as someone. Each would be a way into the account. So someone who lost their mail, their passkeys and their recovery codes cannot be given the account back: support can block it and delete it, and the person signs up again. A person changes their own address in Settings, with a code sent to the new one.
+
+Everything done here is counted by the enclave, by its kind and never by account, on `/status` (`admin`), which `permaily-verify` prints twice an hour for anyone, and is logged by its kind. A restart starts the count again.
+
+## The admin panel
+
+Admins manage the same things from the web app, signed in to their own accounts, under `/api/v1/admin/` on the app's host (ADR 0022). The super admin is the account whose contact address is `super_admin` in `deploy/enclave.json` (`hello@permaily.com`); it makes and removes the other admins there. The token and the scripts above stay, for the first invitation and for automation, and cannot make admins.
+
+1. Sign up `hello@permaily.com` with an invitation from `scripts/invite.sh`, from the mailbox of that address.
+2. Add a passkey and turn "passkey only" on at once: until then whoever reads that mailbox is the super admin, and the panel refuses everything (`passkey_only_needed`).
+3. Make the other admins from the panel. Each is told by mail, and needs "passkey only" too.
+
+Every change in the panel asks the admin to confirm with a passkey when their last proof is older than ten minutes. An admin who is not the super admin acts on no admin's account and does not touch the providers' applications. Nobody blocks or deletes the super admin's account there. Every action is in the panel's log (400 days, read by admins) and counted on `/status` with the token's. Whoever writes to the table can delete entries of the log; the counts on `/status` are what is public.
 
 ## Sign-in with Google, GitHub, Meta and Microsoft
 

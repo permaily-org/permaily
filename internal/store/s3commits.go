@@ -113,7 +113,7 @@ func (s *S3Commits) Head(ctx context.Context, name string) (*Commit, uint64, err
 		key, id string
 	}
 	var objects []object
-	next := uint64(1)
+	used := map[uint64]bool{}
 	in := &s3.ListObjectVersionsInput{Bucket: aws.String(s.Bucket), Prefix: aws.String(prefix)}
 	for {
 		out, err := s.S3.ListObjectVersions(ctx, in)
@@ -128,7 +128,7 @@ func (s *S3Commits) Head(ctx context.Context, name string) (*Commit, uint64, err
 				continue
 			}
 			objects = append(objects, object{n, k, aws.ToString(v.VersionId)})
-			next = max(next, n+1)
+			used[n] = true
 		}
 		if len(objects) > maxCommitObjects {
 			return nil, 0, fmt.Errorf("store: more than %d objects where the commits of a record are", maxCommitObjects)
@@ -166,6 +166,17 @@ func (s *S3Commits) Head(ctx context.Context, name string) (*Commit, uint64, err
 		if c != nil && (head == nil || bytes.Compare(c.Digest[:], head.Digest[:]) < 0) {
 			head = c
 		}
+	}
+	// The next commit goes at the lowest version above the head that nothing
+	// is at, not after everything that is there: an object left above a free
+	// version must not make one enclave write past the version another is
+	// about to write (Commits.Head).
+	next := uint64(1)
+	if head != nil {
+		next = head.Version + 1
+	}
+	for used[next] {
+		next++
 	}
 	return head, next, nil
 }

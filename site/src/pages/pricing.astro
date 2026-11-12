@@ -10,26 +10,28 @@ const questions = [
   {
     question: 'Is Personal really free?',
     answer:
-      'Yes. Developers and companies pay for Permaily, and we don’t sell, mine or advertise on email.',
+      'Yes. Paid plans for developers and companies are planned to pay for it, and we don’t sell, mine or advertise on email.',
   },
   {
-    question: 'Can companies pay monthly?',
-    answer: 'Yes. It’s $12 per seat on a yearly plan, or $15 on a monthly one.',
+    question: 'Can companies sign up?',
+    answer:
+      'Not yet. The Companies plan is planned, at the prices shown; for now Permaily is only for people using it for their own mail.',
   },
   {
     question: 'What happens to my data if I leave?',
     answer:
-      'Revoking, exporting and deleting are free on every plan, and deleting your account deletes your data.',
+      'Revoking and deleting are free, and deleting your account removes your data as Deleting your data describes. An export is planned; until then, ask us for a copy.',
   },
   {
     question: 'Which payment methods do you accept?',
-    answer: 'Cards, and invoices on yearly Companies plans.',
+    answer:
+      'None yet: there’s nothing to pay for. Cards, and invoices on yearly Companies plans, are planned.',
   },
 ];
 ---
 
-<Base title="Pricing" description="Free for people. Developers pay for what they extract, and companies pay per seat.">
-  <PageHead intro="Developers pay for what they extract, and companies pay per seat. That’s how we stay in business, so we don’t sell, mine or advertise on email.">
+<Base title="Pricing" description="Free for people, by invitation. Paid plans for developers and companies are planned, not available yet.">
+  <PageHead intro="Personal is free, by invitation. Developers paying for what they extract, and companies paying per seat, are planned, and are how we mean to stay in business without selling, mining or advertising on email.">
     Free for people <br class="keep" /><span class="dim">Never paid for with your mail</span>
   </PageHead>
 
@@ -41,7 +43,7 @@ const questions = [
           price="$0"
           unit="forever"
           note="No card needed"
-          description="For everyday people connecting their own tools."
+          description="For people in the United States connecting their own tools. By invitation; what’s below is being built and opens as it’s ready."
           items={[
             'Your own mailboxes',
             'Any app or AI agent you approve',
@@ -49,14 +51,14 @@ const questions = [
             'Rules in your own words, such as “my car”',
             'A receipt for every email shared',
           ]}
-          action={{ label: 'Get started free', href: LINKS.signup }}
+          action={{ label: 'Sign up by invitation', href: LINKS.signup }}
           primary
         />
         <PlanCard
           name="Companies"
           price="$12"
           unit="per seat, per month"
-          note="Billed yearly, or $15 monthly"
+          note="Planned, not available yet. Billed yearly, or $15 monthly"
           description="One central plan for your company’s inboxes."
           items={[
             'Google Workspace and Microsoft 365',
@@ -65,10 +67,10 @@ const questions = [
             'Audit export',
             'Priority support',
           ]}
-          action={{ label: 'Talk to us', href: '/contact/' }}
+          action={{ label: 'Tell us you’re interested', href: '/contact/' }}
         />
       </div>
-      <p class="plan-dev">Building a product that reads email? Developers pay per token. <a class="link" href="/developers/#pricing">See developer pricing</a></p>
+      <p class="plan-dev">Building a product that reads email? Developer pricing per token is planned. <a class="link" href="/developers/#pricing">See developer pricing</a></p>
     </div>
   </section>
 
@@ -76,11 +78,11 @@ const questions = [
     <div class="wrap routes">
       <div class="route">
         <h3>Leaving is never a paid feature</h3>
-        <p>Revoking access, exporting your data, deleting your account and checking the proof are free on every plan.</p>
+        <p>Revoking access, deleting your account and checking the proof are free, and exporting your data will be too.</p>
       </div>
       <div class="route">
         <h3>Or run it yourself</h3>
-        <p>The same public code, in your own AWS account. You hold the keys. Companies pay to self-host.</p>
+        <p>The same public code, in your own AWS account. You hold the keys. Organisations need a commercial license to self-host.</p>
         <a class="go link guide" href={LINKS.selfHosting}>Read the self-hosting guide</a>
       </div>
     </div>
@@ -95,8 +97,8 @@ const questions = [
 
   <Cta
     title="Personal is free"
-    body="Connect your inbox in about three minutes. No card needed, and nothing is shared until you approve it."
-    primary={{ label: 'Get started free', href: LINKS.signup }}
+    body="Free, by invitation. Today you can make an account; mailboxes and connections come next, and nothing is shared until you approve it."
+    primary={{ label: 'Sign up by invitation', href: LINKS.signup }}
     secondary={{ label: 'Talk to us', href: '/contact/' }}
   />
 </Base>

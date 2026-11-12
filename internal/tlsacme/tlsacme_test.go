@@ -110,8 +110,8 @@ func TestSealedKeepsTheIdentity(t *testing.T) {
 	mem, k := store.NewMemory(), localKeys(t)
 
 	first := newSealed(t, mem, k)
-	if err := first.Save(ctx, &Identity{}); err == nil {
-		t.Fatal("Save before Load must fail")
+	if err := first.Write(ctx, &Identity{}, Version{}); err == nil {
+		t.Fatal("Write before Load must fail")
 	}
 	id, err := first.Load(ctx)
 	if err != nil {
@@ -135,7 +135,7 @@ func TestSealedKeepsTheIdentity(t *testing.T) {
 
 	// After a restart (a new Sealed over the same store and KMS) the keys are the same.
 	id.AccountURI, id.Chain = "https://ca.test/acct/1", [][]byte{{9}}
-	if err := first.Save(ctx, id); err != nil {
+	if err := first.Write(ctx, id, Version{}); err != nil {
 		t.Fatal(err)
 	}
 	again, err := newSealed(t, mem, k).Load(ctx)
@@ -221,7 +221,7 @@ func TestSealedRejects(t *testing.T) {
 			t.Fatal(err)
 		}
 		s.Now = nil // also covers the default clock
-		if err := s.put(ctx, &Identity{}, false); err == nil {
+		if err := s.put(ctx, &Identity{}, Version{}, false); err == nil {
 			t.Fatal("stored an identity without keys")
 		}
 	})
@@ -376,10 +376,15 @@ func TestManagerSurvivesRestart(t *testing.T) {
 	if !first.load(ctx) {
 		t.Fatal("load")
 	}
-	renewAt, err := first.ensure(ctx)
+	next, err := first.ensure(ctx)
 	if err != nil || ca.calls != 1 {
 		t.Fatalf("first certificate: %v, calls %d", err, ca.calls)
 	}
+	// It looks at the storage again well before the certificate is due.
+	if !next.Equal(now.Add(refreshEvery)) {
+		t.Fatalf("looks again at %s, want %s", next, now.Add(refreshEvery))
+	}
+	renewAt, _ := first.install()
 	if want := now.Add(-time.Minute).Add(60 * 24 * time.Hour); !renewAt.Equal(want) {
 		t.Fatalf("renew at %s, want two thirds of the lifetime (%s)", renewAt, want)
 	}
@@ -475,7 +480,8 @@ func TestManagerRejectsUnusableCertificates(t *testing.T) {
 	})
 }
 
-// flaky fails to load a few times, like KMS or DynamoDB being unreachable at boot.
+// flaky fails to load a few times, like KMS or DynamoDB being unreachable at
+// boot, and can fail to store a certificate (a write that ends a claim).
 type flaky struct {
 	Persistence
 	failures int
@@ -490,11 +496,11 @@ func (f *flaky) Load(ctx context.Context) (*Identity, error) {
 	return f.Persistence.Load(ctx)
 }
 
-func (f *flaky) Save(ctx context.Context, id *Identity) error {
-	if f.saveErr != nil {
+func (f *flaky) Write(ctx context.Context, id *Identity, v Version) error {
+	if f.saveErr != nil && id.Order == nil {
 		return f.saveErr
 	}
-	return f.Persistence.Save(ctx, id)
+	return f.Persistence.Write(ctx, id, v)
 }
 
 func TestManagerWaitsForItsIdentity(t *testing.T) {
@@ -548,7 +554,7 @@ func TestObtainAgainstACME(t *testing.T) {
 	defer cancel()
 	mem, k := store.NewMemory(), localKeys(t)
 	start := func() *Manager {
-		m, err := New(hosts, directory, client, &Sealed{Records: mem, Keys: k, Name: "tls-pebble"}, quiet)
+		m, err := New(hosts, directory, client, &Sealed{Records: mem, Keys: k, Challenges: mem, Name: "tls-pebble"}, quiet)
 		if err != nil {
 			t.Fatal(err)
 		}

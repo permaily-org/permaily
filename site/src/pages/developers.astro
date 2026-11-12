@@ -93,7 +93,7 @@ const questions = [
   <PageHead intro="Ask for the mail you need, not a whole inbox. Permaily runs your query and returns typed, structured data, so your LLM doesn't have to read the emails.">
     Stop paying your LLM <br />to read the whole inbox
     <Fragment slot="actions">
-      <a class="btn lg" href={LINKS.signup}>Create an app</a>
+      <a class="btn lg" href={LINKS.signup}>Sign up by invitation</a>
       <a class="btn lg sec-b" href={LINKS.docs}>Read the docs</a>
     </Fragment>
   </PageHead>
@@ -120,14 +120,14 @@ const questions = [
     <div class="wrap">
       <div class="sec-head">
         <h2 class="h-l">Pay for what you extract</h2>
-        <p class="intro">A token is one processed unit of an email. Basic info costs 1 token per email. Ask for more, and each email costs more.</p>
+        <p class="intro">Planned, not available yet. A token will be one processed unit of an email. Basic info will cost 1 token per email. Ask for more, and each email will cost more.</p>
       </div>
       <TokensDemo />
       <PlanCard
         name="Developer"
         price="$0.01"
         unit="per 1M tokens"
-        note="Pay as you go"
+        note="Planned, not available yet. Pay as you go"
         description="For products that read email with consent."
         items={[
           'Typed, structured output from your query',
@@ -136,7 +136,7 @@ const questions = [
           'Sandbox mailboxes',
           'Email support',
         ]}
-        action={{ label: 'Create an app', href: LINKS.signup }}
+        action={{ label: 'Sign up by invitation', href: LINKS.signup }}
         primary
         split
       />
@@ -195,7 +195,7 @@ const questions = [
   <Cta
     title="Ask for less"
     body="Create an app, run your first query in the sandbox, and see what comes back."
-    primary={{ label: 'Create an app', href: LINKS.signup }}
+    primary={{ label: 'Sign up by invitation', href: LINKS.signup }}
     secondary={{ label: 'Read the docs', href: LINKS.docs }}
   />
 </Base>

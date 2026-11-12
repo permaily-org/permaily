@@ -1,6 +1,7 @@
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'react'
 import { Button, Headline, TextAction } from '../../components/ui/index.ts'
 import { type ApiErrorCode, type EmailStarted, errorCode } from '../../lib/api.ts'
+import { isCancelled } from '../../lib/cancelled.ts'
 import { AuthLayout } from './AuthLayout.tsx'
 import { Field } from './Field.tsx'
 import { messageFor } from './messages.ts'
@@ -25,31 +26,14 @@ export function sentTo(address: string, answer: EmailStarted): Sent {
 
 const codeDigits = 6
 
-/**
- * The step that asks for the six-digit code of a message: for signing in or up by mail, and for confirming
- * an address after a provider that did not vouch for one. What the code ends, and what the screen says of
- * it, come from whoever uses the step. The code lives only in this step's memory.
- */
-export function CodeStep({
-  sent,
-  intro,
-  purpose,
-  hint,
-  footnote,
-  submitLabel,
-  finish,
-  ended,
-  sendAnother,
-  notSent,
-  onBack,
-}: {
+type CodeFormProps = {
   sent: Sent
   /** What was sent and where, before how long it works for. */
   intro: ReactNode
   /** What the code ends, when that is more than signing in by mail. */
   purpose?: string
   /** Under the field: what to do with a message that has no code. */
-  hint: string
+  hint?: string
   /** Under the form: what else the person may need to know. */
   footnote?: ReactNode
   submitLabel: string
@@ -62,7 +46,46 @@ export function CodeStep({
   /** Its own words for why another message was not sent, when the usual ones do not fit. */
   notSent?: (failure: ApiErrorCode) => string | undefined
   onBack: () => void
-}) {
+  /** The words of the action that goes back, when it is not to another address. */
+  backLabel?: string
+  /** The id of the code field, for a form that may be on the page with another one. */
+  id?: string
+}
+
+/**
+ * The step that asks for the six-digit code of a message, as a screen of its own: for signing in or up by
+ * mail, and for confirming an address after a provider that did not vouch for one.
+ */
+export function CodeStep(props: CodeFormProps) {
+  return (
+    <AuthLayout title="Check your mail">
+      <Headline size="display-s">Check your mail</Headline>
+      <CodeForm {...props} />
+    </AuthLayout>
+  )
+}
+
+/**
+ * What asks for the six-digit code of a message, under whatever heading it is put: the sign-in screens
+ * (`CodeStep`) and the dialog that changes the contact address in Settings. What the code ends, and what is
+ * said of it, come from whoever uses it. A wrong code, too many tries and a code whose time has passed read
+ * the same everywhere. The code lives only in this form's memory.
+ */
+export function CodeForm({
+  sent,
+  intro,
+  purpose,
+  hint,
+  footnote,
+  submitLabel,
+  finish,
+  ended,
+  sendAnother,
+  notSent,
+  onBack,
+  backLabel = 'Use another address',
+  id = 'code',
+}: CodeFormProps) {
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
@@ -123,19 +146,21 @@ export function CodeStep({
       setCode('')
       setNote('Asked for another message. Use the code or the link of the newest one.')
     } catch (failure) {
-      const failed = errorCode(failure)
-      const own = notSent?.(failed)
-      if (!own && ended?.(failed)) return
-      setFormError(own ?? messageFor(failed))
+      // The person chose not to confirm it's them, when sending needed it: nothing was sent, and that is all.
+      if (!isCancelled(failure)) {
+        const failed = errorCode(failure)
+        const own = notSent?.(failed)
+        if (!own && ended?.(failed)) return
+        setFormError(own ?? messageFor(failed))
+      }
     }
     setPending(false)
     codeRef.current?.focus()
   }
 
   return (
-    <AuthLayout title="Check your mail">
-      <Headline size="display-s">Check your mail</Headline>
-      <p id="code-intro" className="mt-3 text-body text-ink-2">
+    <>
+      <p id={`${id}-intro`} className="mt-3 text-body text-ink-2">
         {intro}{' '}
         {expired
           ? 'It has expired by now.'
@@ -145,7 +170,7 @@ export function CodeStep({
 
       <form noValidate onSubmit={submit} className="mt-8 flex flex-col gap-5">
         <Field
-          id="code"
+          id={id}
           label="Code from the message"
           type="text"
           name="code"
@@ -162,7 +187,7 @@ export function CodeStep({
           onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, codeDigits))}
           hint={hint}
           error={error}
-          describedBy="code-intro"
+          describedBy={`${id}-intro`}
         />
         <p role="alert" className="text-small text-danger empty:hidden">
           {formError}
@@ -181,9 +206,9 @@ export function CodeStep({
           Send another message
         </TextAction>
         <TextAction onClick={onBack} disabled={pending}>
-          Use another address
+          {backLabel}
         </TextAction>
       </div>
-    </AuthLayout>
+    </>
   )
 }

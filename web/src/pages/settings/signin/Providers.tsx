@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useConfirmed } from '../../../components/Confirm.tsx'
 import { Button, Dialog, TextAction } from '../../../components/ui/index.ts'
 import * as api from '../../../lib/api.ts'
 import { dropProviderArrival, useProviderArrival } from '../../../lib/arrival.ts'
+import { isCancelled } from '../../../lib/cancelled.ts'
 import { leaveFor, providerNames, useCameBack } from '../../../lib/providers.ts'
 import { useSession } from '../../../lib/session.tsx'
 import { cx } from '../../../lib/styles.ts'
@@ -32,6 +34,7 @@ export function Providers({
   section: SignInSection
 }) {
   const { refresh: askSession } = useSession()
+  const confirmed = useConfirmed()
   const arrived = useProviderArrival()
   const [outcome, setOutcome] = useState<Outcome | null>(null)
   const [leaving, setLeaving] = useState<api.Provider | null>(null)
@@ -67,7 +70,7 @@ export function Providers({
         return
       }
       cameBack.current = true
-      setOutcome({ quiet: false, text: linkProblem(arrived.reason) })
+      setOutcome({ quiet: false, text: linkProblem(arrived.reason, arrived.provider) })
     }
   }, [arrived])
 
@@ -87,11 +90,15 @@ export function Providers({
     setOutcome(null)
     setLeaving(provider)
     try {
-      const { url } = await api.linkProvider(provider, `/settings#linked=${provider}`)
+      // Confirming it's the person, when the server asks for it, happens here, before the page is left.
+      const { url } = await confirmed(() =>
+        api.linkProvider(provider, `/settings#linked=${provider}`),
+      )
       // The actions stay as they are while the browser leaves.
       if (!leaveFor(url)) throw new api.ApiError('other')
     } catch (failure) {
       setLeaving(null)
+      if (isCancelled(failure)) return
       const code = section.failed(failure)
       if (!code) return
       const name = providerNames[provider]
@@ -117,8 +124,13 @@ export function Providers({
     setUnlinkError(null)
     setPending(true)
     try {
-      await api.unlinkProvider(provider)
+      await confirmed(() => api.unlinkProvider(provider))
     } catch (failure) {
+      // The person chose not to confirm it's them: the question stays, as it was.
+      if (isCancelled(failure)) {
+        setPending(false)
+        return
+      }
       const code = section.failed(failure)
       if (!code) return
       // Unlinked already, from another device, is what was wanted.
@@ -152,7 +164,7 @@ export function Providers({
               key={provider}
               label={name}
               action={
-                <TextAction disabled={leaving !== null} onClick={() => link(provider)}>
+                <TextAction aria-disabled={leaving !== null} onClick={() => link(provider)}>
                   Link<span className="sr-only"> {name}</span>
                 </TextAction>
               }

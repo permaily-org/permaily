@@ -2,8 +2,9 @@ import { KeyRound } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '../../components/ui/index.ts'
 import { errorCode, finishPasskeySignIn, startPasskeySignIn } from '../../lib/api.ts'
+import { signInBlocked } from '../../lib/arrival.ts'
 import { useSession } from '../../lib/session.tsx'
-import { cx } from '../../lib/styles.ts'
+import { cx, signInHeight } from '../../lib/styles.ts'
 import { getPasskey, PasskeyError, type PasskeyProblem } from '../../lib/webauthn.ts'
 import { messageFor } from './messages.ts'
 
@@ -60,6 +61,12 @@ export function PasskeySignIn() {
         return
       }
       const code = errorCode(failure)
+      if (code === 'account_blocked') {
+        // The passkey was a good one, and its account is blocked: the screen says so above, and here
+        // nothing invites another try.
+        signInBlocked()
+        return
+      }
       setOutcome({
         quiet: false,
         text:
@@ -72,7 +79,13 @@ export function PasskeySignIn() {
 
   return (
     <>
-      <Button ref={buttonRef} variant="secondary" disabled={pending} onClick={signIn}>
+      <Button
+        ref={buttonRef}
+        variant="secondary"
+        className={signInHeight}
+        disabled={pending}
+        onClick={signIn}
+      >
         <KeyRound aria-hidden size={16} />
         Sign in with a passkey
       </Button>

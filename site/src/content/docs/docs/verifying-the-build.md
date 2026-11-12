@@ -26,6 +26,8 @@ result         matches public code
 - **The release log.** Every approved build is listed publicly, before it goes live, and the running one has to be there.
 - **The fingerprint.** Rebuild the public code and you get the same fingerprint. The running service signs its own, and the two have to be equal.
 
+The command also prints what the operator did to accounts through the service since it last started: how many times each kind of action, such as blocking an account or asking to delete one, never which account. It doesn't fail on these counts. It shows that something happened, not whether it was right.
+
 ## Why a web page isn't enough
 
 A browser can't confirm the page it just loaded came from the verified service. The command checks the connection itself, and rogue certificates would show up in public logs. The [Security page](/security/) can show you the two fingerprints, but only the command can check them.

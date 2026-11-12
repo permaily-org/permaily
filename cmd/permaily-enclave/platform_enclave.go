@@ -62,6 +62,10 @@ type platform struct {
 	mail func() *attestation.MailStatus
 }
 
+// defaultSuperAdmin is empty in the enclave: the super admin's address is
+// compiled into the image (-super-admin, from deploy/enclave.json).
+const defaultSuperAdmin = ""
+
 // logOutput writes to the console and, when a log port is set, to the parent
 // instance over vsock.
 func logOutput(cfg config) io.Writer {
@@ -163,7 +167,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			// An account's ways to sign in must not come back (ADR 0017).
 			return nil, errors.New("-mail-from needs -anchor-bucket")
 		}
-		identity = &tlsacme.Sealed{Records: records, Keys: p.keys, Name: "tls-" + directory.Host}
+		identity = &tlsacme.Sealed{Records: records, Keys: p.keys, Challenges: awsStore, Name: "tls-" + directory.Host}
 	}
 	if p.certs, err = tlsacme.New(hosts.All(), cfg.acmeDirectory, egress, identity, log); err != nil {
 		return nil, err
@@ -195,7 +199,7 @@ func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, a
 		// The providers are asked who signed in over TLS that ends here, through
 		// the host's proxy, and send the browser back to the app's own host.
 		Providers: &idp.Client{HTTP: egress, RedirectURL: "https://" + hosts.App + providerCallback},
-		AppURL:    "https://" + hosts.App, Log: log,
+		AppURL:    "https://" + hosts.App, SuperAdmin: cfg.superAdmin, Log: log,
 	})
 	if err != nil {
 		return err

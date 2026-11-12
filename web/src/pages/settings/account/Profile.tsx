@@ -5,6 +5,7 @@ import { useSession } from '../../../lib/session.tsx'
 import { actionClass } from '../../../lib/styles.ts'
 import { messageFor } from '../../auth/messages.ts'
 import { field, SettingRow } from '../rows.tsx'
+import { ContactAddress } from './ContactAddress.tsx'
 
 /** The most characters the server keeps of an account's name. */
 const maxName = 80
@@ -41,7 +42,7 @@ function languageName(tag: string): string {
 
 /**
  * The account's own facts, as the server has them: the name, which the person changes or takes away, the
- * contact address, which cannot be changed yet, and the language.
+ * contact address, which is changed with a code sent to the new one (ContactAddress.tsx), and the language.
  */
 export function Profile() {
   const { state, accountChanged, failed } = useSession()
@@ -198,10 +199,7 @@ export function Profile() {
           </span>
         </SettingRow>
       )}
-      <SettingRow label="Contact email">
-        <span className="block wrap-anywhere font-mono text-small">{account.address}</span>
-        <span className="block text-small text-ink-2">It can't be changed yet.</span>
-      </SettingRow>
+      <ContactAddress account={account} />
       <SettingRow label="Language">{languageName(account.language)}</SettingRow>
       <p role="status" className="sr-only">
         {said}

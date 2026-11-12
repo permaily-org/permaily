@@ -54,6 +54,39 @@ var (
 	ErrAccountClosing = &Error{"account_closing", "this account is being deleted; cancel that to change anything"}
 	ErrInvalidLimit   = &Error{"invalid_limit", "limit must be 1-100"}
 	ErrInvalidCursor  = &Error{"invalid_cursor", "after is not a place in the list; use the next of the answer before"}
+	// ErrAccountBlocked is said to whoever proved who they are and whose
+	// account the operator blocked: never before the proof, so it tells nobody
+	// else that an address has an account, or that it is blocked.
+	ErrAccountBlocked = &Error{"account_blocked", "this account is blocked; write to support@permaily.com"}
+	// ErrAddressInUse refuses a contact address that is another account's. It
+	// is said only after the code proved the address is the asker's.
+	ErrAddressInUse = &Error{"address_in_use", "that address belongs to another account"}
+	// ErrNotCancellable refuses the operator, or an admin, cancelling a
+	// deletion the account's person asked for: only the person does.
+	ErrNotCancellable = &Error{"not_cancellable", "only the person can cancel a deletion they asked for"}
+	// ErrConfirmationNeeded refuses a change that decides who gets into an
+	// account while the session's proof of who the person is is not fresh.
+	ErrConfirmationNeeded = &Error{"confirmation_needed", "confirm it is you to continue"}
+	// ErrPasskeyRequired refuses confirming by mail for an account that
+	// signs in with passkeys only.
+	ErrPasskeyRequired = &Error{"passkey_required", "this account confirms with a passkey"}
+	// ErrPasskeyOnlyNeeded refuses an admin whose account is not "passkey
+	// only": whoever reads their mail must not be an admin.
+	ErrPasskeyOnlyNeeded = &Error{"passkey_only_needed", "turn on passkey only to use the admin panel"}
+	// ErrSuperAdminOnly refuses an admin what only the super admin does.
+	ErrSuperAdminOnly = &Error{"super_admin_only", "only the super admin can do that"}
+	// ErrSuperAdminKept has the code of ErrSuperAdminOnly: nobody, the super
+	// admin included, blocks or deletes the super admin's account through
+	// the admin panel.
+	ErrSuperAdminKept = &Error{"super_admin_only", "the super admin's account is not blocked or deleted here"}
+	// ErrTermsNeeded refuses making an account without the person's agreement
+	// to the terms of service and the privacy policy in force, and an
+	// agreement to a version that is not that one.
+	ErrTermsNeeded = &Error{"terms_needed", "agree to the terms of service and the privacy policy to make an account"}
+	// ErrTermsChanged has the code of ErrTermsNeeded: an account whose person
+	// agreed to an earlier version, or to none, changes nothing until they
+	// agree to the one in force.
+	ErrTermsChanged = &Error{"terms_needed", "the terms changed; agree to them to go on"}
 )
 
 // The failures of signing in with a provider (Google, GitHub, Meta,
@@ -107,7 +140,46 @@ type Account struct {
 	CreatedAt time.Time `json:"created_at"`
 	// ClosesAt is when a closing account is removed; absent otherwise.
 	ClosesAt time.Time `json:"closes_at,omitzero"`
+	// ClosingBy says who asked to delete a closing account: ClosingByPerson
+	// or ClosingByOperator; absent otherwise.
+	ClosingBy string `json:"closing_by,omitempty"`
+	// Admin is AdminSuper or AdminRole when the account is an admin's,
+	// also while "passkey only" is off; absent otherwise.
+	Admin string `json:"admin,omitempty"`
+	// PasskeyOnly says the account signs in with passkeys only, which the
+	// admin panel needs.
+	PasskeyOnly bool `json:"passkey_only"`
+	// Terms is the version of the terms the person agreed to; absent when
+	// they agreed to none, as the accounts made before there were terms.
+	Terms string `json:"terms,omitempty"`
 }
+
+// TermsAgreement is which version of the terms a person agreed to, and when.
+type TermsAgreement struct {
+	Version string    `json:"version"`
+	At      time.Time `json:"at"`
+}
+
+// TermsAgree is a person agreeing to the terms in force: Version is the one
+// they were shown.
+type TermsAgree struct {
+	Version string `json:"version"`
+}
+
+// What an account is in the admin panel.
+const (
+	// AdminSuper is the account whose contact address is the one compiled
+	// into the image: it makes and removes the other admins.
+	AdminSuper = "super"
+	// AdminRole is an account the super admin made an admin.
+	AdminRole = "admin"
+)
+
+// Who asked to delete an account.
+const (
+	ClosingByPerson   = "person"
+	ClosingByOperator = "operator"
+)
 
 // AccountUpdate changes what a person may change of their account. What is
 // absent stays as it is.
@@ -129,10 +201,26 @@ type AccountRecord struct {
 	CreatedAt         time.Time `json:"created_at"`
 	AddressVerifiedAt time.Time `json:"address_verified_at"`
 	ClosesAt          time.Time `json:"closes_at,omitzero"`
-	Passkeys          int       `json:"passkeys"`
-	PasskeyOnly       bool      `json:"passkey_only"`
+	// ClosingBy says who asked to delete a closing account: ClosingByPerson
+	// or ClosingByOperator.
+	ClosingBy string `json:"closing_by,omitempty"`
+	// BlockedAt is when the operator blocked the account; absent when it is
+	// not blocked. Nobody signs in to a blocked account.
+	BlockedAt   time.Time `json:"blocked_at,omitzero"`
+	Passkeys    int       `json:"passkeys"`
+	PasskeyOnly bool      `json:"passkey_only"`
+	// Providers are the identifiers of the providers linked to the account
+	// (google, github, meta, microsoft), the oldest first. Never the subject:
+	// which account it is at the provider.
+	Providers []string `json:"providers"`
 	// Sessions is how many devices are signed in.
 	Sessions int `json:"sessions"`
+	// Admin is AdminSuper or AdminRole for an admin's account; absent
+	// otherwise.
+	Admin string `json:"admin,omitempty"`
+	// Terms is the version of the terms the person agreed to and when;
+	// absent when they agreed to none.
+	Terms *TermsAgreement `json:"terms,omitempty"`
 }
 
 // AccountList is one page of the accounts, the oldest first.
@@ -155,6 +243,32 @@ type Session struct {
 	Device string `json:"device"`
 	// Current is true for the session that asked.
 	Current bool `json:"current"`
+	// ConfirmedUntil is when the proof of who the person is, made with this
+	// session, stops being fresh; absent once it is not, and on every
+	// session but the one that asked.
+	ConfirmedUntil time.Time `json:"confirmed_until,omitzero"`
+}
+
+// ConfirmWays says how the person behind a session can confirm it is them
+// now, and until when the session's last proof is fresh.
+type ConfirmWays struct {
+	// Ways is ConfirmPasskey when the account has a passkey, and
+	// ConfirmEmail unless it signs in with passkeys only.
+	Ways           []string  `json:"ways"`
+	ConfirmedUntil time.Time `json:"confirmed_until,omitzero"`
+}
+
+// The ways a person confirms it is them.
+const (
+	ConfirmPasskey = "passkey"
+	ConfirmEmail   = "email"
+)
+
+// ConfirmFinish confirms with the code of the message sent to the contact
+// address.
+type ConfirmFinish struct {
+	Attempt string `json:"attempt"`
+	Code    string `json:"code"`
 }
 
 // EmailStart asks for a sign-in message. Invitation is needed only by an
@@ -162,6 +276,9 @@ type Session struct {
 type EmailStart struct {
 	Address    string `json:"address"`
 	Invitation string `json:"invitation,omitempty"`
+	// Terms is the version of the terms the person agreed to, needed with an
+	// invitation: an account is made only with it.
+	Terms string `json:"terms,omitempty"`
 }
 
 // EmailStarted answers EmailStart, whether a message was sent or not.
@@ -198,6 +315,9 @@ type EmailPending struct {
 type Me struct {
 	Account Account `json:"account"`
 	Session Session `json:"session"`
+	// Terms is the version of the terms in force. When the account's is
+	// another, the person agrees to this one before changing anything.
+	Terms string `json:"terms"`
 }
 
 // SessionList is the sessions of an account.
@@ -212,8 +332,40 @@ type InvitationRequest struct {
 
 // Invitations are sign-up codes, shown once: only their hash is kept.
 type Invitations struct {
-	Invitations []string  `json:"invitations"`
-	ExpiresAt   time.Time `json:"expires_at"`
+	Invitations []string `json:"invitations"`
+	// IDs name the invitations for the operator, in the same order: what one
+	// is listed and revoked by. An identifier is not the code, and the code
+	// cannot be had from it.
+	IDs       []string  `json:"ids"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// Invitation is what the operator's tool shows of an invitation that was not
+// used yet: never its code.
+type Invitation struct {
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// InvitationList is the invitations not used yet, the oldest first. One that
+// was used is deleted when it is used, so it is not here.
+type InvitationList struct {
+	Invitations []Invitation `json:"invitations"`
+	// Truncated says there are more than the list holds.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// AddressStart asks for the message that proves a new contact address is the
+// person's.
+type AddressStart struct {
+	Address string `json:"address"`
+}
+
+// AddressFinish changes the contact address with the code of that message.
+type AddressFinish struct {
+	Attempt string `json:"attempt"`
+	Code    string `json:"code"`
 }
 
 // Bytes is a binary value, written in JSON the way WebAuthn writes one:
@@ -318,6 +470,9 @@ type RequestOptions struct {
 	Timeout          int    `json:"timeout"`
 	RPID             string `json:"rpId"`
 	UserVerification string `json:"userVerification"`
+	// AllowCredentials names the passkeys that may answer: only when a
+	// signed-in person confirms it is them, with one of their account's.
+	AllowCredentials []CredentialDescriptor `json:"allowCredentials,omitempty"`
 }
 
 // CreatedCredential is what PublicKeyCredential.toJSON() gives after
@@ -414,6 +569,9 @@ type ProviderStart struct {
 	Provider   string `json:"provider"`
 	Invitation string `json:"invitation,omitempty"`
 	ReturnTo   string `json:"return_to,omitempty"`
+	// Terms is the version of the terms the person agreed to, needed with an
+	// invitation, as for EmailStart.
+	Terms string `json:"terms,omitempty"`
 }
 
 // ProviderStarted answers ProviderStart: where the browser goes, and for how
@@ -478,4 +636,74 @@ type ProviderApp struct {
 // ProviderApps is the providers that have an application set.
 type ProviderApps struct {
 	Providers []ProviderApp `json:"providers"`
+}
+
+// AdminEntry is one admin in the admin panel's list.
+type AdminEntry struct {
+	ID      string `json:"id"`
+	Address string `json:"address"`
+	Name    string `json:"name"`
+	// Super is true for the super admin, who is listed first.
+	Super bool `json:"super"`
+	// Since is when the super admin made the account an admin; absent for
+	// the super admin.
+	Since time.Time `json:"since,omitzero"`
+}
+
+// AdminList is the admins: the super admin first, then the others, the
+// oldest first.
+type AdminList struct {
+	Admins []AdminEntry `json:"admins"`
+}
+
+// LogAccount names an account in the admin log. Address is the account's
+// contact address now; absent when the account is gone.
+type LogAccount struct {
+	ID      string `json:"id"`
+	Address string `json:"address,omitempty"`
+}
+
+// LogEntry is one thing an admin did through the admin panel.
+type LogEntry struct {
+	At    time.Time  `json:"at"`
+	Kind  string     `json:"kind"`
+	Admin LogAccount `json:"admin"`
+	// Account is the account it was done to; absent when it was not about one.
+	Account *LogAccount `json:"account,omitempty"`
+	// Invitation is the invitation it was about, made or revoked; absent
+	// otherwise.
+	Invitation string `json:"invitation,omitempty"`
+	// Provider is the provider whose application was set or removed; absent
+	// otherwise.
+	Provider string `json:"provider,omitempty"`
+}
+
+// AdminLog is a page of the admin log, the newest first.
+type AdminLog struct {
+	Entries []LogEntry `json:"entries"`
+	// Next is what to ask the following page with; absent on the last one.
+	Next string `json:"next,omitempty"`
+}
+
+// AccountCounts counts the accounts by state. Blocked is apart from the
+// state: a blocked account is also active or closing.
+type AccountCounts struct {
+	Active  int `json:"active"`
+	Closing int `json:"closing"`
+	Blocked int `json:"blocked"`
+	Total   int `json:"total"`
+}
+
+// InvitationCounts counts the invitations not used yet.
+type InvitationCounts struct {
+	Unused int `json:"unused"`
+}
+
+// Stats is what the admin panel's first page counts.
+type Stats struct {
+	Accounts    AccountCounts    `json:"accounts"`
+	Invitations InvitationCounts `json:"invitations"`
+	// Complete is false when there were more accounts or invitations than
+	// one request counts, or some could not be read.
+	Complete bool `json:"complete"`
 }

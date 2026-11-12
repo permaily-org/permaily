@@ -1,8 +1,11 @@
 name: cla
 
 # Contributors sign the CLA in docs/contributing.md by commenting on their pull
-# request. Signatures are stored in signatures/cla.json on the cla-signatures
-# branch. pull_request_target is required to comment on PRs from forks; this
+# request. The links name the CLA's text at a fixed commit, and each version's
+# signatures go to their own file on the cla-signatures branch, so the file a
+# signature is in says which version was signed. A new version of the CLA
+# changes both: the commit in the two links and the file name.
+# pull_request_target is required to comment on PRs from forks; this
 # workflow never checks out or runs the PR's code.
 
 on:
@@ -29,13 +32,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          path-to-document: https://github.com/permaily-org/permaily/blob/develop/docs/contributing.md#contributor-license-agreement-cla
-          path-to-signatures: signatures/cla.json
+          path-to-document: https://github.com/permaily-org/permaily/blob/1925b40fc057873d4cd6882c3395c96684715db8/docs/contributing.md#contributor-license-agreement-cla
+          path-to-signatures: signatures/cla-1.2.json
           branch: cla-signatures
           # The licensors (license.md) do not sign the CLA.
           allowlist: leynier,tonyrbf96,dependabot[bot],github-actions[bot]
           custom-notsigned-prcomment: >-
             Thanks for your contribution. Before it can be merged, please read the
-            [Contributor License Agreement](https://github.com/permaily-org/permaily/blob/develop/docs/contributing.md#contributor-license-agreement-cla)
+            [Contributor License Agreement](https://github.com/permaily-org/permaily/blob/1925b40fc057873d4cd6882c3395c96684715db8/docs/contributing.md#contributor-license-agreement-cla)
             and sign it by commenting below with the exact sentence that follows.
           lock-pullrequest-aftermerge: false

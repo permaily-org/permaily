@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"slices"
 	"strings"
@@ -101,6 +102,14 @@ func (s *Memory) GetMailbox(_ context.Context, id string) (*Mailbox, error) {
 func (s *Memory) PutMailbox(_ context.Context, m *Mailbox) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	old, ok := s.mailboxes[m.ID]
+	switch {
+	case m.Version == 0 && ok:
+		return ErrExists
+	case m.Version != 0 && (!ok || old.Version != m.Version):
+		return ErrConflict
+	}
+	m.Version++
 	s.mailboxes[m.ID] = *m
 	return nil
 }
@@ -205,6 +214,18 @@ func (s *Memory) DeleteEntry(_ context.Context, partition, key string) error {
 	if !e.ExpiresAt.IsZero() && !e.ExpiresAt.After(s.Now()) {
 		return ErrNotFound
 	}
+	return nil
+}
+
+// DeleteEntryAt implements Entries.
+func (s *Memory) DeleteEntryAt(_ context.Context, e *Entry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old, ok := s.entries[memoryKey(e.Partition, e.Key)]
+	if !ok || old.Version != e.Version || !bytes.Equal(old.Value, e.Value) {
+		return ErrConflict
+	}
+	delete(s.entries, memoryKey(e.Partition, e.Key))
 	return nil
 }
 

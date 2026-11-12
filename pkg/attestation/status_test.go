@@ -163,3 +163,24 @@ func TestMailStatusJSON(t *testing.T) {
 		t.Fatalf("got %s", got)
 	}
 }
+
+func TestAdminStatusJSON(t *testing.T) {
+	at := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	got, err := json.Marshal(attestation.Status{Commit: "abc", Admin: &attestation.AdminStatus{
+		Since: at, Actions: map[string]int{attestation.AdminBlock: 2, attestation.AdminInvitationsMade: 0},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"commit":"abc","admin":{"since":"2026-11-11T12:00:00Z","actions":{"block":2,"invitations_made":0}}}`; string(got) != want {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+	// A kind this package does not know is kept: a later image may count more.
+	var st attestation.Status
+	if err := json.Unmarshal([]byte(`{"commit":"abc","admin":{"since":"2026-11-11T12:00:00Z","actions":{"block":1,"something_new":3}}}`), &st); err != nil || st.Admin.Actions["something_new"] != 3 || !st.Admin.Since.Equal(at) {
+		t.Fatalf("%+v %v", st.Admin, err)
+	}
+	if len(attestation.AdminActions) != 11 {
+		t.Fatalf("%d kinds", len(attestation.AdminActions))
+	}
+}

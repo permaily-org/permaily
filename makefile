@@ -16,7 +16,7 @@ check-go:
 	go test -tags dev ./cmd/permaily-enclave
 
 check-web:
-	cd web && bun install --frozen-lockfile && bun run build
+	cd web && bun install --frozen-lockfile && bun run build && bun run test
 
 check-site:
 	cd site && bun install --frozen-lockfile && bun run check && bun run build && bun run test
@@ -27,6 +27,7 @@ check-repo:
 	bun scripts/check-design-system.ts
 	bun scripts/check-skills.ts
 	bun scripts/third-party-notices.ts --check
+	bun test scripts/
 	node scripts/check-release-notes.mjs
 
 # Short fuzzing run of the attestation parser (CI runs it too).

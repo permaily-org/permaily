@@ -30,10 +30,12 @@ Approximate cost: 53 USD/month for the instance plus 3.6 USD/month for the publi
 ## Deploying an image
 
 ```sh
-nix build .#eif --out-link result-eif               # or download a release: permaily.eif, pcrs.json
+nix build .#eif --out-link result-eif               # the working tree's image
 nix build .#permaily-host --out-link result-host
 scripts/deploy.sh result-eif result-host/bin/permaily-host
 ```
+
+Releases do not publish the image (ADR 0023). To deploy a release, build its image with `scripts/release-image.sh <tag> <dir>`, which refuses unless the image's measurements are the release's attested `pcrs.json`, and run `scripts/deploy.sh <dir> <dir>/permaily-host-linux-arm64` ([operations.md](operations.md)).
 
 The script uploads both files to S3, then over SSM the instance downloads them, checks their SHA-256, installs them in `/opt/permaily` and restarts `permaily-host` and `permaily-enclave`. On boot, the enclave obtains its certificate with TLS-ALPN-01 (a few seconds). Then verify:
 
@@ -61,6 +63,7 @@ The site in `site/` is hosted on AWS Amplify, outside the enclave, managed by Op
 - Repository access: the Amplify GitHub App for us-east-2 is installed on `permaily-org`, limited to this repository. Creating the app once needed a GitHub token with `admin:repo_hook` (`TF_VAR_github_access_token`); Amplify does not store it and later applies run without it.
 - Certificate: an ACM certificate for exactly `permaily.com`, `www.` and `beta.` (`aws_acm_certificate.site`, in `us-east-1`, which is where CloudFront takes certificates from), not Amplify's managed one, which also covers `*.permaily.com`.
 - DNS in Cloudflare (DNS only): CNAMEs for the apex, `www` and `beta`, the three ACM validation records, and CAA at the apex: `issue` for Amazon and `issuewild ";"`, so nobody can issue a wildcard for the domain. The enclave subdomains keep their own CAA (`letsencrypt.org`).
+- A TXT record `google-site-verification=…` at the apex (`google.tf`) proves to Google Search Console that the account owning the Google sign-in application owns the domain; Google shows the name "Permaily" on its sign-in page only for a verified brand. Removing it unverifies the domain.
 - The footer shows the latest release's PCR0, read at build time. A release is published after `main` was built, so `release.yml` calls an Amplify webhook (`aws_amplify_webhook.release`, URL in the `AMPLIFY_RELEASE_WEBHOOK` secret) to rebuild `main` once `pcrs.json` exists.
 - `.github/workflows/site-smoke.yml` checks the live site after each push to `main`.
 

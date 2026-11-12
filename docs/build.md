@@ -11,7 +11,7 @@
 | `nix build .#web` | SPA `dist/` |
 | `nix develop` | shell with Go, bun, OpenTofu, AWS CLI, jq |
 
-Supported build systems: `x86_64-linux` and `aarch64-linux`. Without a local Nix, run it in Docker (`nixos/nix`), as `scripts/verify.sh` does.
+Supported build systems: `x86_64-linux` and `aarch64-linux`. Without a local Nix, run it in Docker (`nixos/nix`), as `scripts/verify.sh` and `scripts/release-image.sh` do.
 
 ## Why the image is reproducible
 
@@ -21,6 +21,18 @@ Supported build systems: `x86_64-linux` and `aarch64-linux`. Without a local Nix
 - **Image**: AWS prebuilt kernel, init and nsm.ko for aarch64; a flat rootfs with only `/permaily-enclave`; cpio archives with fixed timestamps and ownership; `eif_build` with a fixed build time.
 
 CI builds the image on x86_64 and arm64 runners and fails if any byte differs. Locally, `nix build .#eif --rebuild` checks determinism on one machine.
+
+## Third-party programs in the image
+
+The image contains, unmodified, AWS's kernel and `nsm.ko` (GPL-2.0) and AWS's `init`, which links the GNU C Library (LGPL-2.1) statically. Permaily does not distribute the image ([ADR 0023](decisions/0023-releases-publish-the-measurements-not-the-image.md)): a release publishes its measurements, and whoever needs the image builds it, getting those programs from AWS.
+
+- `nix/aws-blobs.nix` pins the blobs (aws-nitro-enclaves-cli `v1.5.2`, `blobs/aarch64`).
+- `nix/aws-blobs.json` is the inventory: each program, where it is in the image, the SHA-256 of its binary, its license, where its source is and how sure that is (`exact`, `aws-stated`, `unavailable`). `scripts/third-party-notices.ts` takes the image's AWS entries from it.
+- `bun scripts/image-inventory.ts <permaily.eif>...` checks an image against the inventory: the kernel and every file of the boot ramdisk have the SHA-256 it gives, and nothing in the image is unaccounted for besides Permaily's entry point, environment and root filesystem. CI runs it on the production and staging images it builds.
+
+Updating the AWS blobs means updating `aws-blobs.json` in the same change, with where the new binaries' source is.
+
+TODO: build the kernel, `nsm.ko` and `init` from source in the flake (ADR 0023, option 2), which would let a release publish the image again.
 
 ## Updating dependencies
 

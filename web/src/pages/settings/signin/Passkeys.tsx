@@ -1,9 +1,18 @@
 import { type FormEvent, type RefObject, useEffect, useRef, useState } from 'react'
+import { useConfirmed } from '../../../components/Confirm.tsx'
 import { Button, Dialog, TextAction } from '../../../components/ui/index.ts'
 import * as api from '../../../lib/api.ts'
+import { isCancelled } from '../../../lib/cancelled.ts'
 import { describeDevice } from '../../../lib/device.ts'
+import { providerNames } from '../../../lib/providers.ts'
 import { actionClass, cx } from '../../../lib/styles.ts'
-import { makePasskey, PasskeyError, type PasskeyProblem } from '../../../lib/webauthn.ts'
+import {
+  credentialId,
+  forgetPasskey,
+  makePasskey,
+  PasskeyError,
+  type PasskeyProblem,
+} from '../../../lib/webauthn.ts'
 import { solidDanger } from '../../accounts/styles.ts'
 import { messageFor } from '../../auth/messages.ts'
 import { field, SettingRow } from '../rows.tsx'
@@ -11,9 +20,24 @@ import { formatDay, maxName, passkeyName, type SignInSection } from './shared.ts
 
 const badName = 'Give it a name of 1 to 64 characters, on one line.'
 
+/**
+ * How an account without passkeys signs in: by mail, and with each provider linked to it that is on, by name.
+ * An account without passkeys cannot be "passkey only", so mail always signs in.
+ */
+export function waysWithoutPasskeys(on: api.Provider[], linked: api.LinkedProvider[]): string {
+  const names = linked
+    .filter((link) => on.includes(link.provider))
+    .map((link) => providerNames[link.provider])
+  const mail = 'You sign in with a message sent to your email address'
+  if (names.length === 0) return `${mail}.`
+  return `${mail}, or with ${new Intl.ListFormat('en', { type: 'disjunction' }).format(names)}.`
+}
+
 /** The account's passkeys, each with its name, when it was made and whether it is synced, and the form to add one. */
 export function Passkeys({
   list,
+  on,
+  linked,
   supported,
   adding,
   onAddingDone,
@@ -21,6 +45,9 @@ export function Passkeys({
   section,
 }: {
   list: api.PasskeyList
+  /** The providers that are on, and the ones linked to the account: other ways in, said when there is no passkey. */
+  on: api.Provider[]
+  linked: api.LinkedProvider[]
   /** Whether this browser can make a passkey. */
   supported: boolean
   adding: boolean
@@ -35,7 +62,7 @@ export function Passkeys({
       {list.passkeys.length === 0 && (
         <SettingRow label="Passkey">
           <span className="text-ink-2">
-            None. You sign in with a message sent to your email address.
+            None. {waysWithoutPasskeys(on, linked)}
             {!supported && " This browser can't make passkeys."}
           </span>
         </SettingRow>
@@ -75,6 +102,7 @@ function PasskeyRow({
   last: boolean
   section: SignInSection
 }) {
+  const confirmed = useConfirmed()
   const [draft, setDraft] = useState<string | null>(null)
   const [removing, setRemoving] = useState(false)
   const [pending, setPending] = useState(false)
@@ -137,8 +165,13 @@ function PasskeyRow({
     setRemoveError(null)
     setPending(true)
     try {
-      await api.removePasskey(passkey.id)
+      await confirmed(() => api.removePasskey(passkey.id))
     } catch (failure) {
+      // The person chose not to confirm it's them: the question stays, as it was.
+      if (isCancelled(failure)) {
+        setPending(false)
+        return
+      }
       const code = section.failed(failure)
       if (!code) return
       if (code !== 'not_found') {
@@ -149,6 +182,8 @@ function PasskeyRow({
         return
       }
     }
+    // The server no longer has it: the authenticator is told, where the browser can, so it stops offering it.
+    forgetPasskey(passkey.id)
     // The row goes with its passkey, so focus moves to the section it was in.
     setRemoving(false)
     section.announce(`Passkey removed: ${passkey.name}`)
@@ -314,6 +349,7 @@ function AddPasskey({
   onDone: () => void
   section: SignInSection
 }) {
+  const confirmed = useConfirmed()
   const [name, setName] = useState(() => suggestedName(taken))
   const [pending, setPending] = useState(false)
   const [outcome, setOutcome] = useState<{ quiet: boolean; text: string } | null>(null)
@@ -321,7 +357,7 @@ function AddPasskey({
   const leaving = useRef<AbortController | null>(null)
   // The browser's answer, while the server has not taken it: a name it refuses, or no network, asks for the
   // same answer again and not for another passkey.
-  const made = useRef<{ ceremony: string; credential: unknown } | null>(null)
+  const made = useRef<{ ceremony: string; credential: unknown; rpId?: string } | null>(null)
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -350,8 +386,13 @@ function AddPasskey({
     const signal = leaving.current?.signal
     try {
       if (!made.current) {
-        const { ceremony, options } = await api.startPasskey()
-        made.current = { ceremony, credential: await makePasskey(options, signal) }
+        // Confirming it's the person, when the server asks for it, comes before the browser's prompt.
+        const { ceremony, options } = await confirmed(() => api.startPasskey())
+        made.current = {
+          ceremony,
+          credential: await makePasskey(options, signal),
+          rpId: options.rp?.id,
+        }
       }
       const passkey = await api.finishPasskey(made.current.ceremony, clean, made.current.credential)
       made.current = null
@@ -361,12 +402,23 @@ function AddPasskey({
     } catch (failure) {
       if (signal?.aborted) return
       setPending(false)
+      if (isCancelled(failure)) return
       if (failure instanceof PasskeyError) {
         setOutcome(problems[failure.kind])
         return
       }
+      const refusal = api.errorCode(failure)
+      // The server said no to the passkey itself, so it does not have it, and the authenticator made it
+      // all the same: it is told, where the browser can, so it stops offering a passkey that signs nobody
+      // in. A failure of the server's own says nothing of whether it kept the passkey, and tells nothing.
+      if (made.current && !['invalid_name', 'network', 'other'].includes(refusal)) {
+        forgetPasskey(credentialId(made.current.credential), made.current.rpId)
+      }
       const code = section.failed(failure)
-      if (!code) return
+      if (!code) {
+        made.current = null
+        return
+      }
       // Only a name to fix, or no answer at all, leaves the browser's answer worth sending again.
       if (code !== 'invalid_name' && code !== 'network') made.current = null
       setOutcome({
@@ -402,7 +454,8 @@ function AddPasskey({
           aria-describedby="new-passkey-outcome"
           className={field}
         />
-        <button type="submit" disabled={pending} className={actionClass()}>
+        {/* Not disabled while it waits: confirming it's you may open meanwhile, and focus comes back here. */}
+        <button type="submit" aria-disabled={pending} className={actionClass()}>
           Continue
         </button>
         <TextAction disabled={pending} onClick={onDone}>

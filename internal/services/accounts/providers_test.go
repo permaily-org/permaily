@@ -96,7 +96,13 @@ func (w *world) on(providers ...idp.Provider) {
 // returns its state and the value of the browser's cookie.
 func (w *world) leave(who *Authenticated, in contracts.ProviderStart) (state, cookie string) {
 	w.t.Helper()
-	started, cookie, err := w.svc.StartProvider(context.Background(), who, in)
+	return w.leaveFrom(w.svc, who, in)
+}
+
+// leaveFrom is leave through one enclave.
+func (w *world) leaveFrom(svc *Service, who *Authenticated, in contracts.ProviderStart) (state, cookie string) {
+	w.t.Helper()
+	started, cookie, err := svc.StartProvider(context.Background(), w.fresh(who), in)
 	if err != nil {
 		w.t.Fatalf("starting with %s: %v", in.Provider, err)
 	}
@@ -111,7 +117,13 @@ func (w *world) leave(who *Authenticated, in contracts.ProviderStart) (state, co
 // at the provider.
 func (w *world) comeBack(state, cookie string, who idp.Identity) (*ProviderDone, error) {
 	w.t.Helper()
-	done, err := w.svc.FinishProvider(context.Background(), ProviderAnswer{State: state, Code: w.idp.approve(who), Browser: cookie, UserAgent: "provider device"})
+	return w.comeBackTo(w.svc, state, cookie, who)
+}
+
+// comeBackTo is comeBack through one enclave.
+func (w *world) comeBackTo(svc *Service, state, cookie string, who idp.Identity) (*ProviderDone, error) {
+	w.t.Helper()
+	done, err := svc.FinishProvider(context.Background(), ProviderAnswer{State: state, Code: w.idp.approve(who), Browser: cookie, From: Browser{UserAgent: "provider device"}})
 	if done == nil || !strings.HasPrefix(done.Path, "/") || strings.HasPrefix(done.Path, "//") {
 		w.t.Fatalf("the browser is sent nowhere in the app: %+v %v", done, err)
 	}
@@ -124,7 +136,11 @@ func (w *world) comeBack(state, cookie string, who idp.Identity) (*ProviderDone,
 // through makes the whole trip to sign in.
 func (w *world) through(who idp.Identity, invitation string) (*ProviderDone, error) {
 	w.t.Helper()
-	state, cookie := w.leave(nil, contracts.ProviderStart{Provider: string(who.Provider), Invitation: invitation})
+	in := contracts.ProviderStart{Provider: string(who.Provider), Invitation: invitation}
+	if invitation != "" {
+		in.Terms = w.terms
+	}
+	state, cookie := w.leave(nil, in)
 	return w.comeBack(state, cookie, who)
 }
 
@@ -188,7 +204,7 @@ func TestProviderSignUpAndSignIn(t *testing.T) {
 
 	// With an invitation the account is made, with the provider linked.
 	invitation := w.invite()
-	state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: invitation, ReturnTo: "/connections?new=1"})
+	state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: invitation, ReturnTo: "/connections?new=1", Terms: w.terms})
 	done, err = w.comeBack(state, cookie, ana)
 	if err != nil || done.Path != "/connections?new=1" || done.Browser != "" {
 		t.Fatalf("signing up: %+v %v", done, err)
@@ -258,9 +274,9 @@ func TestProviderSignUpAndSignIn(t *testing.T) {
 
 	// An invitation that someone else used while the person was away.
 	shared := w.invite()
-	state, cookie = w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: shared})
+	state, cookie = w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: shared, Terms: w.terms})
 	attempt, mail := w.start("first@example.org", shared)
-	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, ""); err != nil {
+	if _, _, err := w.svc.FinishEmail(ctx, contracts.EmailFinish{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); err != nil {
 		t.Fatal(err)
 	}
 	done, err = w.comeBack(state, cookie, person(idp.Google, "g-sub-late", "late@example.org", true))
@@ -362,12 +378,10 @@ func TestProviderAnswerInAnotherBrowser(t *testing.T) {
 	if done, err := w.comeBack(state, cookie, mallory); err != nil || w.who(done.Session).AccountID != ana.Account.ID {
 		t.Fatalf("in the browser that started it: %+v %v", done, err)
 	}
-	// Only the hash of the cookie's value is kept.
-	_, cookie = w.leave(nil, contracts.ProviderStart{Provider: "google"})
-	for _, kept := range w.svc.trips {
-		if strings.Contains(fmt.Sprintf("%+v", *kept), cookie) {
-			t.Fatal("the value of the cookie is kept")
-		}
+	// Nothing of the cookie's value, or of the state, can be read in the storage.
+	state, cookie = w.leave(nil, contracts.ProviderStart{Provider: "google"})
+	if got := w.stored(cookie, state); len(got) != 0 || w.pending(kindTrip) == 0 {
+		t.Fatalf("the cookie or the state is kept: %q", got)
 	}
 }
 
@@ -379,7 +393,9 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 	w.on(idp.Meta, idp.Microsoft)
 	ana, anaCookie := w.signUp("ana@example.org")
 	written := w.version(ana.Account.ID)
-	mallory := person(idp.Meta, "770011", "Ana@Example.org", false)
+	// Numeric subjects are long in these tests: a short one is found by
+	// chance in the hashes the storage holds, which made w.stored flaky.
+	mallory := person(idp.Meta, "77007700770011", "Ana@Example.org", false)
 
 	// The answer is the same whether the address has an account or not, with
 	// an invitation or without, and whatever the provider gave for one.
@@ -391,9 +407,9 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 	}{
 		{mallory, "", "ana@example.org"},
 		{mallory, w.invite(), "ana@example.org"},
-		{person(idp.Meta, "770012", "nobody@example.org", false), "", "nobody@example.org"},
-		{person(idp.Meta, "770013", "nobody@example.org", false), w.invite(), "nobody@example.org"},
-		{person(idp.Meta, "770014", "", false), "", ""},
+		{person(idp.Meta, "77007700770012", "nobody@example.org", false), "", "nobody@example.org"},
+		{person(idp.Meta, "77007700770013", "nobody@example.org", false), w.invite(), "nobody@example.org"},
+		{person(idp.Meta, "77007700770014", "", false), "", ""},
 		{person(idp.Microsoft, "ms-sub-1", "not an address", false), "", ""},
 		// Vouched for, and not an address accounts are found by.
 		{person(idp.Microsoft, "ms-sub-2", "aña@example.org", true), w.invite(), ""},
@@ -408,19 +424,15 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 		}
 		browsers = append(browsers, done.Browser)
 	}
-	if w.accounts() != 1 || w.version(ana.Account.ID) != written || len(w.stored("7700", "ms-sub-")) != 0 {
-		t.Fatalf("linked or made without the code: %d accounts, stored %q", w.accounts(), w.stored("7700", "ms-sub-"))
+	if w.accounts() != 1 || w.version(ana.Account.ID) != written || len(w.stored("770077007700", "ms-sub-")) != 0 {
+		t.Fatalf("linked or made without the code: %d accounts, stored %q", w.accounts(), w.stored("770077007700", "ms-sub-"))
 	}
 	if list, _ := w.svc.Sessions(ctx, w.who(anaCookie)); len(list.Sessions) != 1 {
 		t.Fatalf("a session was made: %+v", list)
 	}
-	// Only the hash of the cookie's value is kept.
-	for key := range w.svc.unconfirmed {
-		for _, b := range browsers {
-			if key == b {
-				t.Fatal("the value of the cookie is kept")
-			}
-		}
+	// Nothing of the cookie's value can be read in the storage.
+	if got := w.stored(browsers...); len(got) != 0 || w.pending(kindUnconfirmed) != len(browsers) {
+		t.Fatalf("the value of the cookie is kept: %q", got)
 	}
 	malloryBrowser, withInvitation, nobody := browsers[0], browsers[1], browsers[3]
 
@@ -432,7 +444,7 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 		if _, err := w.svc.StartProviderConfirm(ctx, other, contracts.ProviderConfirmStart{Address: "ana@example.org"}); !errors.Is(err, contracts.ErrProviderFailed) {
 			t.Fatalf("another browser asks for the message: %v", err)
 		}
-		if _, _, err := w.svc.FinishProviderConfirm(ctx, other, contracts.ProviderConfirm{Attempt: "att_x", Code: "123456"}, ""); !errors.Is(err, contracts.ErrProviderFailed) {
+		if _, _, err := w.svc.FinishProviderConfirm(ctx, other, contracts.ProviderConfirm{Attempt: "att_x", Code: "123456"}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrProviderFailed) {
 			t.Fatalf("another browser confirms: %v", err)
 		}
 	}
@@ -441,27 +453,22 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 	// who is not Ana, never sees its code, and guessing takes five tries.
 	confirm := func(browser, address string) (string, *Mail) {
 		t.Helper()
-		before := len(w.out.Sent())
 		started, err := w.svc.StartProviderConfirm(ctx, browser, contracts.ProviderConfirmStart{Address: address})
 		if err != nil || !validID("att", started.Attempt) || started.ExpiresIn != 600 {
 			t.Fatalf("asking for the message: %+v %v", started, err)
 		}
-		w.svc.Wait()
-		if sent := w.out.Sent(); len(sent) > before {
-			return started.Attempt, &sent[len(sent)-1]
-		}
-		return started.Attempt, nil
+		return started.Attempt, w.mailOf(w.svc, started.Attempt)
 	}
 	attempt, mail := confirm(malloryBrowser, " ANA@example.org ")
 	if mail == nil || mail.To != "ana@example.org" {
 		t.Fatalf("the message: %+v", mail)
 	}
 	for range domain.EmailCodeTries {
-		if _, _, err := w.svc.FinishProviderConfirm(ctx, malloryBrowser, contracts.ProviderConfirm{Attempt: attempt, Code: w.wrongCode(mail)}, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+		if _, _, err := w.svc.FinishProviderConfirm(ctx, malloryBrowser, contracts.ProviderConfirm{Attempt: attempt, Code: w.wrongCode(mail)}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 			t.Fatalf("a wrong code: %v", err)
 		}
 	}
-	if _, _, err := w.svc.FinishProviderConfirm(ctx, malloryBrowser, contracts.ProviderConfirm{Attempt: attempt, Code: code(mail)}, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+	if _, _, err := w.svc.FinishProviderConfirm(ctx, malloryBrowser, contracts.ProviderConfirm{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("the right code after five wrong ones: %v", err)
 	}
 	if len(w.providers(ana.Account.ID)) != 0 || w.version(ana.Account.ID) != written {
@@ -484,7 +491,7 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 		t.Fatal(err)
 	}
 	attempt, mail = confirm(done.Browser, "ana@example.org")
-	me, cookie, err := w.svc.FinishProviderConfirm(ctx, done.Browser, contracts.ProviderConfirm{Attempt: attempt, Code: code(mail)}, "ana's phone")
+	me, cookie, err := w.svc.FinishProviderConfirm(ctx, done.Browser, contracts.ProviderConfirm{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: "ana's phone"})
 	if err != nil || me.Account.ID != ana.Account.ID || !me.Session.Current || me.Session.Device != "ana's phone" || w.who(cookie).AccountID != ana.Account.ID {
 		t.Fatalf("confirming: %+v %v", me, err)
 	}
@@ -495,7 +502,7 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 	if _, err := w.svc.PendingProvider(ctx, done.Browser); !errors.Is(err, contracts.ErrProviderFailed) {
 		t.Fatalf("what was confirmed still waits: %v", err)
 	}
-	if _, _, err := w.svc.FinishProviderConfirm(ctx, done.Browser, contracts.ProviderConfirm{Attempt: attempt, Code: code(mail)}, ""); !errors.Is(err, contracts.ErrProviderFailed) {
+	if _, _, err := w.svc.FinishProviderConfirm(ctx, done.Browser, contracts.ProviderConfirm{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrProviderFailed) {
 		t.Fatalf("confirming twice: %v", err)
 	}
 	// From now on her Meta account signs in with nothing else asked.
@@ -511,14 +518,14 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 	}
 	// The link of the message signs in by mail, in whatever browser, and
 	// links nothing: a link can be sent on.
-	if _, _, err := w.svc.FinishProviderConfirm(ctx, nobody, contracts.ProviderConfirm{Attempt: attempt, Code: linkRE.FindStringSubmatch(mail.Text)[2]}, ""); !errors.Is(err, contracts.ErrInvalidCode) {
+	if _, _, err := w.svc.FinishProviderConfirm(ctx, nobody, contracts.ProviderConfirm{Attempt: attempt, Code: linkRE.FindStringSubmatch(mail.Text)[2]}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("the token of the link as a code: %v", err)
 	}
-	me, _, err = w.svc.FinishProviderConfirm(ctx, nobody, contracts.ProviderConfirm{Attempt: attempt, Code: code(mail)}, "")
+	me, _, err = w.svc.FinishProviderConfirm(ctx, nobody, contracts.ProviderConfirm{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""})
 	if err != nil || me.Account.Address != "nobody@example.org" || me.Account.ID == ana.Account.ID {
 		t.Fatalf("signing up by confirming: %+v %v", me, err)
 	}
-	if l := w.providers(me.Account.ID); len(l) != 1 || l[0].Subject != "770013" {
+	if l := w.providers(me.Account.ID); len(l) != 1 || l[0].Subject != "77007700770013" {
 		t.Fatalf("what the new record lists: %+v", l)
 	}
 
@@ -526,7 +533,7 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 	// invitation: he confirms an address of his own and gets an account of
 	// his own. What the provider said of Ana's address was only offered.
 	attempt, mail = confirm(withInvitation, "mallory@example.net")
-	me, _, err = w.svc.FinishProviderConfirm(ctx, withInvitation, contracts.ProviderConfirm{Attempt: attempt, Code: code(mail)}, "")
+	me, _, err = w.svc.FinishProviderConfirm(ctx, withInvitation, contracts.ProviderConfirm{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""})
 	if err != nil || me.Account.Address != "mallory@example.net" || len(w.providers(ana.Account.ID)) != 1 {
 		t.Fatalf("confirming another address: %+v %v", me, err)
 	}
@@ -540,7 +547,7 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 	if _, err := w.svc.PendingProvider(ctx, malloryBrowser); !errors.Is(err, contracts.ErrProviderFailed) {
 		t.Fatalf("after twenty minutes: %v", err)
 	}
-	w.quiet("ana@", "example.org", "example.net", "7700", "880022", "ms-sub-", ana.Account.ID, malloryBrowser, nobody)
+	w.quiet("ana@", "example.org", "example.net", "770077007700", "880022", "ms-sub-", ana.Account.ID, malloryBrowser, nobody)
 }
 
 // What confirming an address refuses once the address is the person's: the
@@ -556,19 +563,14 @@ func TestProviderConfirmRefusals(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		before := len(w.out.Sent())
 		started, err := w.svc.StartProviderConfirm(ctx, done.Browser, contracts.ProviderConfirmStart{Address: address})
 		if err != nil {
 			t.Fatal(err)
 		}
-		w.svc.Wait()
-		if sent := w.out.Sent(); len(sent) > before {
-			mail = &sent[len(sent)-1]
-		}
-		return done.Browser, started.Attempt, mail
+		return done.Browser, started.Attempt, w.mailOf(w.svc, started.Attempt)
 	}
 	finish := func(browser, attempt string, mail *Mail) error {
-		_, cookie, err := w.svc.FinishProviderConfirm(ctx, browser, contracts.ProviderConfirm{Attempt: attempt, Code: code(mail)}, "")
+		_, cookie, err := w.svc.FinishProviderConfirm(ctx, browser, contracts.ProviderConfirm{Attempt: attempt, Code: code(mail)}, Browser{UserAgent: ""})
 		if err != nil && cookie != "" {
 			t.Fatal("a refusal signed someone in")
 		}
@@ -588,10 +590,10 @@ func TestProviderConfirmRefusals(t *testing.T) {
 	// linked to the first that confirms.
 	eve, _ := w.signUp("eve@example.org")
 	w.now = w.now.Add(time.Hour + time.Minute) // an address is sent five messages an hour
-	if err := w.svc.UnlinkProvider(ctx, w.who(anaCookie), "meta"); err != nil {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(w.who(anaCookie)), "meta"); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.svc.UnlinkProvider(ctx, w.who(anaCookie), "meta"); !errors.Is(err, contracts.ErrNotFound) {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(w.who(anaCookie)), "meta"); !errors.Is(err, contracts.ErrNotFound) {
 		t.Fatalf("unlinking twice: %v", err)
 	}
 	b1, a1, m1 = waits("990003", "eve@example.org")
@@ -609,7 +611,7 @@ func TestProviderConfirmRefusals(t *testing.T) {
 	// passkeys only gets no message at all.
 	w.now = w.now.Add(time.Hour + time.Minute)
 	b1, a1, m1 = waits("990004", "ana@example.org")
-	if _, err := w.svc.StartDeletion(ctx, w.who(anaCookie)); err != nil {
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(w.who(anaCookie))); err != nil {
 		t.Fatal(err)
 	}
 	if err := finish(b1, a1, m1); !errors.Is(err, contracts.ErrAccountClosing) {
@@ -664,10 +666,10 @@ func TestProviderLinkFromSettings(t *testing.T) {
 	if err != nil || done.Path != "/settings/sign-in" || done.Session != "" || done.Browser != "" {
 		t.Fatalf("linking: %+v %v", done, err)
 	}
-	if done, err = w.linkFrom(anaWho, person(idp.GitHub, "5150", "ana@example.org", true)); err != nil || done.Path != "/settings" {
+	if done, err = w.linkFrom(anaWho, person(idp.GitHub, "515051505150", "ana@example.org", true)); err != nil || done.Path != "/settings" {
 		t.Fatalf("linking with her own address: %+v %v", done, err)
 	}
-	if done, err = w.linkFrom(anaWho, person(idp.Meta, "6160", "eve@example.org", false)); err != nil {
+	if done, err = w.linkFrom(anaWho, person(idp.Meta, "616061606160", "eve@example.org", false)); err != nil {
 		t.Fatalf("linking with an address that is not vouched for: %+v %v", done, err)
 	}
 	list, err = w.svc.LinkedProviders(ctx, anaWho)
@@ -678,7 +680,7 @@ func TestProviderLinkFromSettings(t *testing.T) {
 		t.Fatalf("eve %+v, %d accounts", w.providers(eve.Account.ID), w.accounts())
 	}
 	// Each signs in to Ana's account from now on, with no invitation.
-	for _, who := range []idp.Identity{person(idp.Google, "g-sub-ana", "", false), person(idp.GitHub, "5150", "eve@example.org", true), person(idp.Meta, "6160", "", false)} {
+	for _, who := range []idp.Identity{person(idp.Google, "g-sub-ana", "", false), person(idp.GitHub, "515051505150", "eve@example.org", true), person(idp.Meta, "616061606160", "", false)} {
 		if done, err := w.through(who, ""); err != nil || w.who(done.Session).AccountID != ana.Account.ID {
 			t.Fatalf("signing in with %s: %+v %v", who.Provider, done, err)
 		}
@@ -697,7 +699,7 @@ func TestProviderLinkFromSettings(t *testing.T) {
 
 	// One of each provider: told at the start, and at the end when two trips
 	// were on their way.
-	if _, _, err := w.svc.StartProvider(ctx, anaWho, contracts.ProviderStart{Provider: "google"}); !errors.Is(err, contracts.ErrProviderLinked) {
+	if _, _, err := w.svc.StartProvider(ctx, w.fresh(anaWho), contracts.ProviderStart{Provider: "google"}); !errors.Is(err, contracts.ErrProviderLinked) {
 		t.Fatalf("a second account of one provider: %v", err)
 	}
 	s1, c1 := w.leave(eveWho, contracts.ProviderStart{Provider: "google"})
@@ -709,7 +711,7 @@ func TestProviderLinkFromSettings(t *testing.T) {
 	w.refusedWith("the second of two trips", done, err, contracts.ErrProviderLinked, "/settings#provider_error=provider_linked")
 	// Linking what is linked already changes nothing.
 	written := w.version(eve.Account.ID)
-	if err := w.svc.UnlinkProvider(ctx, eveWho, "google"); err != nil {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(eveWho), "google"); err != nil {
 		t.Fatal(err)
 	}
 	s1, c1 = w.leave(eveWho, contracts.ProviderStart{Provider: "google"})
@@ -719,7 +721,9 @@ func TestProviderLinkFromSettings(t *testing.T) {
 			t.Fatalf("linking the same provider account twice: %+v %v", done, err)
 		}
 	}
-	if l := w.providers(eve.Account.ID); len(l) != 1 || w.version(eve.Account.ID) != written+2 {
+	// The unlink, and the two steps of one link: the record says it is being
+	// linked, then lists it.
+	if l := w.providers(eve.Account.ID); len(l) != 1 || w.version(eve.Account.ID) != written+3 {
 		t.Fatalf("eve %+v, written %d times more", l, w.version(eve.Account.ID)-written)
 	}
 
@@ -730,20 +734,20 @@ func TestProviderLinkFromSettings(t *testing.T) {
 	if err := w.svc.CloseSession(ctx, eveWho, w.who(second).Session.ID); err != nil {
 		t.Fatal(err)
 	}
-	done, err = w.comeBack(state, cookie, person(idp.GitHub, "7170", "", false))
+	done, err = w.comeBack(state, cookie, person(idp.GitHub, "717071707170", "", false))
 	w.refusedWith("a session closed meanwhile", done, err, contracts.ErrProviderFailed, "/settings#provider_error=provider_failed")
 	// A closing account links nothing: told at the start, and at the end
 	// when it was asked meanwhile.
 	state, cookie = w.leave(eveWho, contracts.ProviderStart{Provider: "github"})
-	if _, err := w.svc.StartDeletion(ctx, eveWho); err != nil {
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(eveWho)); err != nil {
 		t.Fatal(err)
 	}
-	done, err = w.comeBack(state, cookie, person(idp.GitHub, "7170", "", false))
+	done, err = w.comeBack(state, cookie, person(idp.GitHub, "717071707170", "", false))
 	w.refusedWith("an account closing meanwhile", done, err, contracts.ErrAccountClosing, "/settings#provider_error=account_closing")
-	if _, _, err := w.svc.StartProvider(ctx, eveWho, contracts.ProviderStart{Provider: "github"}); !errors.Is(err, contracts.ErrAccountClosing) {
+	if _, _, err := w.svc.StartProvider(ctx, w.fresh(eveWho), contracts.ProviderStart{Provider: "github"}); !errors.Is(err, contracts.ErrAccountClosing) {
 		t.Fatalf("starting from a closing account: %v", err)
 	}
-	if err := w.svc.UnlinkProvider(ctx, eveWho, "google"); !errors.Is(err, contracts.ErrAccountClosing) {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(eveWho), "google"); !errors.Is(err, contracts.ErrAccountClosing) {
 		t.Fatalf("unlinking from a closing account: %v", err)
 	}
 	// It still signs in with the provider it has, to cancel.
@@ -754,17 +758,17 @@ func TestProviderLinkFromSettings(t *testing.T) {
 	if got, err := w.svc.CancelDeletion(ctx, w.who(done.Session)); err != nil || got.State != contracts.AccountActive {
 		t.Fatalf("cancelling: %+v %v", got, err)
 	}
-	if len(w.providers(eve.Account.ID)) != 1 || len(w.stored("7170")) != 0 {
-		t.Fatalf("eve %+v, stored %q", w.providers(eve.Account.ID), w.stored("7170"))
+	if len(w.providers(eve.Account.ID)) != 1 || len(w.stored("717071707170")) != 0 {
+		t.Fatalf("eve %+v, stored %q", w.providers(eve.Account.ID), w.stored("717071707170"))
 	}
 	ghost := &Authenticated{AccountID: "acc_" + strings.Repeat("a", 26)}
-	if _, _, err := w.svc.StartProvider(ctx, ghost, contracts.ProviderStart{Provider: "google"}); !errors.Is(err, contracts.ErrUnauthorized) {
+	if _, _, err := w.svc.StartProvider(ctx, w.fresh(ghost), contracts.ProviderStart{Provider: "google"}); !errors.Is(err, contracts.ErrUnauthorized) {
 		t.Fatalf("starting for an account that is not there: %v", err)
 	}
 	if _, err := w.svc.LinkedProviders(ctx, ghost); !errors.Is(err, contracts.ErrUnauthorized) {
 		t.Fatalf("the providers of an account that is not there: %v", err)
 	}
-	w.quiet("ana@", "example.org", "g-sub-", "5150", "6160", "7170", ana.Account.ID, eve.Account.ID)
+	w.quiet("ana@", "example.org", "g-sub-", "515051505150", "616061606160", "717071707170", ana.Account.ID, eve.Account.ID)
 }
 
 // "Passkey only" turns providers off for the account, a closing account
@@ -794,7 +798,7 @@ func TestProviderRulesThatCarryOver(t *testing.T) {
 		t.Fatalf("a session was made: %+v", list)
 	}
 	// Turned off again, the provider she linked signs in.
-	if _, err := w.svc.SetPasskeyOnly(ctx, anaWho, contracts.PasskeyOnly{On: false}); err != nil {
+	if _, err := w.svc.SetPasskeyOnly(ctx, w.fresh(anaWho), contracts.PasskeyOnly{On: false}); err != nil {
 		t.Fatal(err)
 	}
 	if done, err := w.through(mine, ""); err != nil || w.who(done.Session).AccountID != ana.Account.ID {
@@ -804,7 +808,7 @@ func TestProviderRulesThatCarryOver(t *testing.T) {
 	// A provider that is off, and a name that is no provider.
 	for _, name := range []string{"github", "meta", "microsoft", "", "Google", "nope", "google "} {
 		for _, who := range []*Authenticated{nil, anaWho} {
-			if out, cookie, err := w.svc.StartProvider(ctx, who, contracts.ProviderStart{Provider: name}); !errors.Is(err, contracts.ErrProviderOff) || out != nil || cookie != "" {
+			if out, cookie, err := w.svc.StartProvider(ctx, w.fresh(who), contracts.ProviderStart{Provider: name}); !errors.Is(err, contracts.ErrProviderOff) || out != nil || cookie != "" {
 				t.Errorf("%q started: %+v %v", name, out, err)
 			}
 		}
@@ -853,18 +857,18 @@ func TestUnlinkProvider(t *testing.T) {
 	w.on(idp.Google, idp.GitHub)
 	ana, anaCookie := w.signUp("ana@example.org")
 	anaWho := w.who(anaCookie)
-	hers := person(idp.GitHub, "5150", "elsewhere@example.net", false)
+	hers := person(idp.GitHub, "515051505150", "elsewhere@example.net", false)
 	for _, who := range []idp.Identity{person(idp.Google, "g-sub-ana", "", false), hers} {
 		if _, err := w.linkFrom(anaWho, who); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, name := range []string{"meta", "nope", "", "GitHub"} {
-		if err := w.svc.UnlinkProvider(ctx, anaWho, name); !errors.Is(err, contracts.ErrNotFound) {
+		if err := w.svc.UnlinkProvider(ctx, w.fresh(anaWho), name); !errors.Is(err, contracts.ErrNotFound) {
 			t.Errorf("unlinking %q: %v", name, err)
 		}
 	}
-	if err := w.svc.UnlinkProvider(ctx, anaWho, "github"); err != nil {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(anaWho), "github"); err != nil {
 		t.Fatal(err)
 	}
 	if l := w.providers(ana.Account.ID); len(l) != 1 || l[0].Provider != idp.Google {
@@ -872,7 +876,7 @@ func TestUnlinkProvider(t *testing.T) {
 	}
 	// Nothing of it stays in the storage, and it signs nobody in: it is a
 	// provider account nobody knows, whose address is to be confirmed.
-	if left := w.stored("5150"); len(left) != 0 {
+	if left := w.stored("515051505150"); len(left) != 0 {
 		t.Fatalf("left in the storage: %q", left)
 	}
 	done, err := w.through(hers, "")
@@ -894,7 +898,7 @@ func TestUnlinkProvider(t *testing.T) {
 	if _, err := w.svc.change(ctx, ana.Account.ID, alone); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.svc.UnlinkProvider(ctx, anaWho, "google"); !errors.Is(err, contracts.ErrLastWayIn) {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(anaWho), "google"); !errors.Is(err, contracts.ErrLastWayIn) {
 		t.Fatalf("unlinking the only way in: %v", err)
 	}
 	if l := w.providers(ana.Account.ID); len(l) != 1 {
@@ -907,10 +911,10 @@ func TestUnlinkProvider(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.svc.UnlinkProvider(ctx, anaWho, "google"); err != nil {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(anaWho), "google"); err != nil {
 		t.Fatalf("unlinking with a passkey left: %v", err)
 	}
-	w.quiet("5150", "g-sub-ana", "example.net", ana.Account.ID)
+	w.quiet("515051505150", "g-sub-ana", "example.net", ana.Account.ID)
 }
 
 // Whoever writes to the storage cannot link a provider account to an
@@ -991,7 +995,7 @@ func TestProvidersWrittenByHand(t *testing.T) {
 
 	// Ana links a provider account and unlinks it. Everything the storage
 	// held while it was linked is put back: it stays unlinked.
-	hers := person(idp.GitHub, "5150", "other@example.net", false)
+	hers := person(idp.GitHub, "515051505150", "other@example.net", false)
 	if _, err := w.linkFrom(anaWho, hers); err != nil {
 		t.Fatal(err)
 	}
@@ -999,8 +1003,8 @@ func TestProvidersWrittenByHand(t *testing.T) {
 		t.Fatalf("while linked: %+v %v", done, err)
 	}
 	while := w.snapshot()
-	oldPointer, _ := w.mem.GetEntry(ctx, providerPartition(idp.GitHub, "5150"), loginKey)
-	if err := w.svc.UnlinkProvider(ctx, anaWho, "github"); err != nil {
+	oldPointer, _ := w.mem.GetEntry(ctx, providerPartition(idp.GitHub, "515051505150"), loginKey)
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(anaWho), "github"); err != nil {
 		t.Fatal(err)
 	}
 	w.putBack(while)
@@ -1035,7 +1039,7 @@ func TestProvidersWrittenByHand(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.mem.SetEntry(*oldPointer)
-	done, err = w.through(person(idp.GitHub, "5150", "eve@example.org", true), "")
+	done, err = w.through(person(idp.GitHub, "515051505150", "eve@example.org", true), "")
 	if notAna("a pointer from before", done, err); err != nil || w.who(done.Session).AccountID != eve.Account.ID {
 		t.Fatalf("a pointer from before: %+v %v", done, err)
 	}
@@ -1062,7 +1066,7 @@ func TestProviderReasons(t *testing.T) {
 	if counted.gets != 0 {
 		t.Fatalf("starting read the storage %d times", counted.gets)
 	}
-	w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite()})
+	w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite(), Terms: w.terms})
 	if counted.gets != 1 {
 		t.Fatalf("starting with an invitation read the storage %d times, not the invitation alone", counted.gets)
 	}
@@ -1070,7 +1074,7 @@ func TestProviderReasons(t *testing.T) {
 
 	fixed := map[string]bool{
 		"provider_failed": true, "provider_unavailable": true, "invitation_needed": true, "invalid_invitation": true,
-		"provider_in_use": true, "provider_linked": true, "account_closing": true,
+		"provider_in_use": true, "provider_linked": true, "account_closing": true, "account_blocked": true,
 	}
 	if len(providerReasons) != len(fixed) {
 		t.Fatalf("%d reasons", len(providerReasons))
@@ -1120,9 +1124,33 @@ func TestProviderReasons(t *testing.T) {
 	// The same failure answers the same on the two screens.
 	done, err := w.svc.FinishProvider(ctx, ProviderAnswer{State: "unknown", Code: "x", Browser: "y"})
 	w.refusedWith("a state nobody started", done, err, contracts.ErrProviderFailed, "/sign-in#provider_error=provider_failed")
+	// A trip the service does not know names no provider.
+	if done.Provider != "" {
+		t.Fatalf("a state nobody started names %q", done.Provider)
+	}
 	state, cookie := w.leave(w.who(eveCookie), contracts.ProviderStart{Provider: "google"})
 	done, err = w.svc.FinishProvider(ctx, ProviderAnswer{State: state, Refused: true, Browser: cookie})
 	w.refusedWith("refused at the provider, from Settings", done, err, contracts.ErrProviderFailed, "/settings#provider_error=provider_failed")
+	// A trip that failed names the provider it was started with, and one
+	// tried again, or in a browser that did not start it, names none.
+	if done.Provider != idp.Google {
+		t.Fatalf("a trip that failed names %q", done.Provider)
+	}
+	if done, _ = w.svc.FinishProvider(ctx, ProviderAnswer{State: state, Refused: true, Browser: cookie}); done.Provider != "" {
+		t.Fatalf("the same state again names %q", done.Provider)
+	}
+	state, _ = w.leave(nil, contracts.ProviderStart{Provider: "meta"})
+	if done, _ = w.svc.FinishProvider(ctx, ProviderAnswer{State: state, Code: "x", Browser: "another-browser"}); done.Provider != "" {
+		t.Fatalf("an answer in another browser names %q", done.Provider)
+	}
+	state, cookie = w.leave(nil, contracts.ProviderStart{Provider: "meta"})
+	if done, _ = w.svc.FinishProvider(ctx, ProviderAnswer{State: state, Refused: true, Browser: cookie}); done.Provider != idp.Meta || done.Path != "/sign-in#provider_error=provider_failed" {
+		t.Fatalf("a sign-in that failed: %+v", done)
+	}
+	// A trip that worked names none: there is nothing to say of it.
+	if done, err = w.through(person(idp.Google, "named-1", "ana@example.org", true), ""); err != nil || done.Provider != "" {
+		t.Fatalf("a trip that worked: %+v %v", done, err)
+	}
 }
 
 // Where the browser goes after the callback is a path of the app, whatever
@@ -1383,7 +1411,7 @@ func TestProviderFailures(t *testing.T) {
 	// Each step of a sign-up through a provider.
 	for _, op := range []string{"get entry", "delete entry", "put entry", "put record", "get record", "list entries", "derive", "put " + providerPartition(idp.Google, "g-sub-nina")} {
 		w, f := setup(t)
-		state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite()})
+		state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite(), Terms: w.terms})
 		f.fail[op] = down
 		done, err := w.comeBack(state, cookie, nina)
 		if !errors.Is(err, down) || done.Session != "" || done.Path != "/sign-in#provider_error=provider_unavailable" {
@@ -1436,8 +1464,7 @@ func TestProviderFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		w.svc.Wait()
-		sent := w.out.Sent()
+		mail := w.mailOf(w.svc, started.Attempt)
 		before := sessions()
 
 		f.fail[op] = down
@@ -1448,23 +1475,30 @@ func TestProviderFailures(t *testing.T) {
 				t.Fatalf("%s down, signing in: %+v %v", op, done, err)
 			}
 		}
-		done, err = w.comeBack(linkState, linkCookie, person(idp.Meta, "770011", "", false))
-		if !errors.Is(err, down) || done.Path != "/settings#provider_error=provider_unavailable" {
+		done, err = w.comeBack(linkState, linkCookie, person(idp.Meta, "77007700770011", "", false))
+		// A trip that cannot be read is not known to be one of Settings.
+		screen := "/settings"
+		if op == "get entry" || op == "derive" {
+			screen = "/sign-in"
+		}
+		if !errors.Is(err, down) || done.Path != screen+"#provider_error=provider_unavailable" {
 			if op != "list entries" || err != nil {
 				t.Fatalf("%s down, linking: %+v %v", op, done, err)
 			}
 		}
-		_, session, err := w.svc.FinishProviderConfirm(ctx, waiting.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(&sent[len(sent)-1])}, "")
+		_, session, err := w.svc.FinishProviderConfirm(ctx, waiting.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(mail)}, Browser{UserAgent: ""})
 		if (err == nil) != (session != "") {
 			t.Fatalf("%s down, confirming: a session %v with %v", op, session != "", err)
 		}
-		if err := w.svc.UnlinkProvider(ctx, who, "google"); !errors.Is(err, down) && op != "list entries" && op != "put entry" {
+		// The record is written before the pointer goes: a pointer that cannot
+		// be read or deleted is left, and leads nowhere.
+		if err := w.svc.UnlinkProvider(ctx, w.fresh(who), "google"); !errors.Is(err, down) && op != "list entries" && op != "put entry" && op != "get entry" {
 			t.Fatalf("%s down, unlinking: %v", op, err)
 		}
 		if _, err := w.svc.LinkedProviders(ctx, who); !errors.Is(err, down) && op == "get record" {
 			t.Fatalf("%s down, listing: %v", op, err)
 		}
-		if _, _, err := w.svc.StartProvider(ctx, who, contracts.ProviderStart{Provider: "microsoft"}); err == nil {
+		if _, _, err := w.svc.StartProvider(ctx, w.fresh(who), contracts.ProviderStart{Provider: "microsoft"}); err == nil {
 			t.Fatalf("%s down: a provider that is off was started", op)
 		}
 		if op == "get entry" || op == "derive" {
@@ -1491,12 +1525,12 @@ func TestProviderFailures(t *testing.T) {
 		fmt.Errorf("%w: no answer from the token endpoint", idp.ErrUnreachable): contracts.ErrProviderUnavailable,
 		fmt.Errorf("%w: the nonce is another", idp.ErrInvalid):                  contracts.ErrProviderFailed,
 	} {
-		state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite()})
+		state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite(), Terms: w.terms})
 		w.idp.err = err
 		done, got := w.comeBack(state, cookie, nina)
 		w.refusedWith(err.Error(), done, got, want, "/sign-in#provider_error="+want.Code)
 	}
-	state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite()})
+	state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "google", Invitation: w.invite(), Terms: w.terms})
 	w.idp.err = errors.New("boom: client_secret=" + appSecret(idp.Google) + " for nina@example.org")
 	done, err := w.comeBack(state, cookie, nina)
 	var known *contracts.Error
@@ -1505,7 +1539,7 @@ func TestProviderFailures(t *testing.T) {
 	}
 	w.idp.err = nil
 	w.idp.beginErr = errors.New("boom: client_secret=" + appSecret(idp.Google))
-	if _, cookie, err := w.svc.StartProvider(ctx, nil, contracts.ProviderStart{Provider: "google"}); err == nil || cookie != "" || strings.Contains(err.Error(), "boom") || len(w.svc.trips) != 0 {
+	if _, cookie, err := w.svc.StartProvider(ctx, nil, contracts.ProviderStart{Provider: "google"}); err == nil || cookie != "" || strings.Contains(err.Error(), "boom") || w.pending(kindTrip) != 0 {
 		t.Fatalf("a start the provider's client refused: %v", err)
 	}
 	if w.accounts() != 0 {
@@ -1564,7 +1598,7 @@ func TestProviderFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restarted.appsRead = false
+	restarted.appsRead = time.Time{}
 	f.fail = map[string]error{"get record": down}
 	u, _ := url.Parse(started.URL)
 	done, err = restarted.FinishProvider(ctx, ProviderAnswer{State: u.Query().Get("state"), Code: w.idp.approve(nina), Browser: cookie})
@@ -1659,10 +1693,9 @@ func TestProviderFailuresWhileLinking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.svc.Wait()
-	sent := w.out.Sent()
+	mail := w.mailOf(w.svc, started.Attempt)
 	f.fail["list entries"] = down
-	if me, session, err := w.svc.FinishProviderConfirm(ctx, waiting.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(&sent[len(sent)-1])}, ""); !errors.Is(err, down) || me != nil || session != "" {
+	if me, session, err := w.svc.FinishProviderConfirm(ctx, waiting.Browser, contracts.ProviderConfirm{Attempt: started.Attempt, Code: code(mail)}, Browser{UserAgent: ""}); !errors.Is(err, down) || me != nil || session != "" {
 		t.Fatalf("confirming with no session to be made: %+v %v", me, err)
 	}
 
@@ -1673,7 +1706,7 @@ func TestProviderFailuresWhileLinking(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.fail["derive"], f.skip["derive"] = down, 1
-	err = w.svc.UnlinkProvider(ctx, who, "google")
+	err = w.svc.UnlinkProvider(ctx, w.fresh(who), "google")
 	f.fail, f.skip = map[string]error{}, map[string]int{}
 	if !errors.Is(err, down) || len(w.providers(ana.Account.ID)) != 1 {
 		t.Fatalf("unlinking without the key: %v", err)
@@ -1691,57 +1724,39 @@ func TestProviderFailuresWhileLinking(t *testing.T) {
 	}
 }
 
-// What waits in memory is bounded: the oldest goes, and what ended is
-// forgotten.
-func TestProvidersAreBounded(t *testing.T) {
+// A trip and a sign-in that waits for its address end once, and not after
+// their time; what an enclave remembers of them is forgotten once they ended.
+func TestProvidersInProgressEnd(t *testing.T) {
 	w, ctx := newWorld(t), context.Background()
 	w.on(idp.Meta)
-	first, firstCookie := w.leave(nil, contracts.ProviderStart{Provider: "meta"})
-	w.now = w.now.Add(time.Second)
-	second, secondCookie := w.leave(nil, contracts.ProviderStart{Provider: "meta"})
-	for i := range maxTrips - 2 {
-		w.svc.trips[fmt.Sprint("filler ", i)] = &trip{expires: w.now.Add(time.Hour)}
-	}
-	// One more than is kept: the one that ends first goes, and the new one
-	// is kept. Refusing new ones would let anyone keep everybody out.
-	third, thirdCookie := w.leave(nil, contracts.ProviderStart{Provider: "meta"})
-	if len(w.svc.trips) != maxTrips {
-		t.Fatalf("%d trips kept", len(w.svc.trips))
-	}
 	who := person(idp.Meta, "1", "", false)
+	first, firstCookie := w.leave(nil, contracts.ProviderStart{Provider: "meta"})
+	late, lateCookie := w.leave(nil, contracts.ProviderStart{Provider: "meta"})
 	done, err := w.comeBack(first, firstCookie, who)
-	w.refusedWith("the trip that was dropped", done, err, contracts.ErrProviderFailed, "/sign-in#provider_error=provider_failed")
-	var browsers []string
-	for _, trip := range [][2]string{{second, secondCookie}, {third, thirdCookie}} {
-		done, err := w.comeBack(trip[0], trip[1], who)
-		if err != nil || done.Browser == "" {
-			t.Fatalf("a trip that was kept: %+v %v", done, err)
-		}
-		browsers = append(browsers, done.Browser)
-		w.now = w.now.Add(time.Second)
+	if err != nil || done.Browser == "" {
+		t.Fatalf("a trip: %+v %v", done, err)
 	}
-	for i := range maxUnconfirmed - 2 {
-		w.svc.unconfirmed[fmt.Sprint("filler ", i)] = &unconfirmed{expires: w.now.Add(time.Hour)}
+	again, err := w.comeBack(first, firstCookie, who)
+	w.refusedWith("a trip ended twice", again, err, contracts.ErrProviderFailed, "/sign-in#provider_error=provider_failed")
+	if _, err := w.svc.PendingProvider(ctx, done.Browser); err != nil {
+		t.Fatalf("what waits: %v", err)
 	}
-	state, cookie := w.leave(nil, contracts.ProviderStart{Provider: "meta"})
-	if done, err = w.comeBack(state, cookie, who); err != nil || len(w.svc.unconfirmed) != maxUnconfirmed {
-		t.Fatalf("one more waiting: %+v %v, %d kept", done, err, len(w.svc.unconfirmed))
+	w.now = w.now.Add(domain.ProviderLifetime)
+	again, err = w.comeBack(late, lateCookie, who)
+	w.refusedWith("a trip after its time", again, err, contracts.ErrProviderFailed, "/sign-in#provider_error=provider_failed")
+	w.now = w.now.Add(domain.ProviderConfirmLifetime)
+	if _, err := w.svc.PendingProvider(ctx, done.Browser); !errors.Is(err, contracts.ErrProviderFailed) {
+		t.Fatalf("what waited past its time: %v", err)
 	}
-	if _, err := w.svc.PendingProvider(ctx, browsers[0]); !errors.Is(err, contracts.ErrProviderFailed) {
-		t.Fatalf("the one that was dropped: %v", err)
+	if w.pending(kindTrip) != 0 || w.pending(kindUnconfirmed) != 0 {
+		t.Fatalf("kept after they ended: %d trips, %d waiting", w.pending(kindTrip), w.pending(kindUnconfirmed))
 	}
-	for _, kept := range []string{browsers[1], done.Browser} {
-		if _, err := w.svc.PendingProvider(ctx, kept); err != nil {
-			t.Fatalf("one that was kept: %v", err)
-		}
-	}
-	// What ended is forgotten.
-	w.now = w.now.Add(2 * time.Hour)
+	w.now = w.now.Add(time.Hour)
 	w.svc.mu.Lock()
 	w.svc.sweep(w.now)
 	w.svc.mu.Unlock()
-	if len(w.svc.trips) != 0 || len(w.svc.unconfirmed) != 0 {
-		t.Fatalf("kept after they ended: %d trips, %d waiting", len(w.svc.trips), len(w.svc.unconfirmed))
+	if len(w.svc.marks) != 0 {
+		t.Fatalf("%d remembered after they ended", len(w.svc.marks))
 	}
 }
 
@@ -1760,12 +1775,12 @@ func TestRemovingAnAccountWithProviders(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One whose pointer now leads elsewhere, by hand: it is left alone.
-	if _, err := c.linkFrom(c.who, person(idp.GitHub, "5150", "", false)); err != nil {
+	if _, err := c.linkFrom(c.who, person(idp.GitHub, "515051505150", "", false)); err != nil {
 		t.Fatal(err)
 	}
 	moved, _ := c.mem.GetEntry(ctx, loginPartition("eve@example.org"), loginKey)
-	c.mem.SetEntry(store.Entry{Partition: providerPartition(idp.GitHub, "5150"), Key: loginKey, Value: moved.Value, Version: 9})
-	got, err := c.svc.StartDeletion(ctx, c.who)
+	c.mem.SetEntry(store.Entry{Partition: providerPartition(idp.GitHub, "515051505150"), Key: loginKey, Value: moved.Value, Version: 9})
+	got, err := c.svc.StartDeletion(ctx, c.fresh(c.who))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1779,7 +1794,7 @@ func TestRemovingAnAccountWithProviders(t *testing.T) {
 	if left := c.stored("g-sub-closing-ana", c.ana.Account.ID); len(left) != 0 {
 		t.Fatalf("left in the storage: %q", left)
 	}
-	if e, err := c.mem.GetEntry(ctx, providerPartition(idp.GitHub, "5150"), loginKey); err != nil || e.Version != 9 {
+	if e, err := c.mem.GetEntry(ctx, providerPartition(idp.GitHub, "515051505150"), loginKey); err != nil || e.Version != 9 {
 		t.Fatalf("a pointer that led elsewhere: %+v %v", e, err)
 	}
 	done, err := c.through(hers, "")
@@ -1798,7 +1813,7 @@ func TestRemovingAnAccountWithProviders(t *testing.T) {
 	if _, err := c2.linkFrom(c2.who, hers); err != nil {
 		t.Fatal(err)
 	}
-	got, err = c2.svc.StartDeletion(ctx, c2.who)
+	got, err = c2.svc.StartDeletion(ctx, c2.fresh(c2.who))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -40,52 +40,47 @@ func (d *accountDoc) passkey(id []byte) int {
 
 // ---- ceremonies ----
 
-// ceremony is a passkey being made or used, between the options sent to the
-// browser and its answer. Like a sign-in by mail it is kept only in memory.
-type ceremony struct {
-	challenge []byte
-	// account is whose passkey is being made; empty for a sign-in, which
-	// learns the account from the answer.
-	account string
-	expires time.Time
+// ceremonyDoc is a passkey being made or used, between the options sent to
+// the browser and its answer. Like a sign-in by mail it is kept sealed in the
+// storage, and ended once, through any enclave (pending.go).
+type ceremonyDoc struct {
+	V         int    `json:"v"`
+	Challenge []byte `json:"challenge"`
+	// Account is whose passkey is being made; empty for a sign-in, which
+	// learns the account from the answer; confirmFor of a session for a
+	// ceremony that confirms that session (confirm.go).
+	Account string `json:"account,omitempty"`
+	pendingTimes
 }
 
 // begin starts a ceremony and returns its identifier and its challenge.
-func (s *Service) begin(account string) (string, []byte) {
+func (s *Service) begin(ctx context.Context, account string) (string, []byte, error) {
 	now := s.now()
-	c := &ceremony{challenge: make([]byte, 32), account: account, expires: now.Add(domain.PasskeyCeremonyLifetime)}
-	_, _ = rand.Read(c.challenge) // crypto/rand does not fail
+	c := &ceremonyDoc{V: 1, Challenge: make([]byte, 32), Account: account, pendingTimes: pendingTimes{Made: now, Expires: now.Add(domain.PasskeyCeremonyLifetime)}}
+	_, _ = rand.Read(c.Challenge) // crypto/rand does not fail
 	id := newID("cer")
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sweep(now)
-	if len(s.ceremonies) >= maxCeremonies {
-		// Anyone can start one, so refusing here would let anyone keep
-		// everybody from signing in. The one waiting longest goes instead.
-		oldest := ""
-		for other, waiting := range s.ceremonies {
-			if oldest == "" || waiting.expires.Before(s.ceremonies[oldest].expires) {
-				oldest = other
-			}
-		}
-		delete(s.ceremonies, oldest)
+	if err := s.stash(ctx, pendingPartition(kindCeremony, id), c); err != nil {
+		return "", nil, err
 	}
-	s.ceremonies[id] = c
-	return id, c.challenge
+	return id, c.Challenge, nil
 }
 
 // end returns the challenge of a ceremony that was started for account and
 // is still running. The ceremony is over either way: an answer is tried once.
-func (s *Service) end(id, account string) ([]byte, bool) {
-	now := s.now()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c := s.ceremonies[id]
-	delete(s.ceremonies, id)
-	if c == nil || !c.expires.After(now) || c.account != account {
-		return nil, false
+func (s *Service) end(ctx context.Context, id, account string) ([]byte, bool, error) {
+	if !validID("cer", id) {
+		return nil, false, nil
 	}
-	return c.challenge, true
+	var c ceremonyDoc
+	e, err := s.unstash(ctx, pendingPartition(kindCeremony, id), &c)
+	if err != nil || e == nil {
+		return nil, false, err
+	}
+	ok, err := s.claim(ctx, e, c.Expires)
+	if err != nil || !ok || c.Account != account {
+		return nil, false, err
+	}
+	return c.Challenge, true, nil
 }
 
 // refused logs why the WebAuthn checks refused an answer. Their errors are
@@ -106,6 +101,9 @@ const (
 // StartPasskey starts making a passkey for the account behind a session, and
 // returns what the browser needs to make it.
 func (s *Service) StartPasskey(ctx context.Context, who *Authenticated) (*contracts.PasskeyCreation, error) {
+	if err := s.confirmed(who); err != nil {
+		return nil, err
+	}
 	doc, err := s.own(ctx, who)
 	if err != nil {
 		return nil, err
@@ -114,10 +112,16 @@ func (s *Service) StartPasskey(ctx context.Context, who *Authenticated) (*contra
 		// Told now, and not after the person made the passkey.
 		return nil, contracts.ErrAccountClosing
 	}
+	if err := s.agreeing(doc); err != nil {
+		return nil, err
+	}
 	if len(doc.Passkeys) >= domain.MaxPasskeys {
 		return nil, contracts.ErrTooManyPasskeys
 	}
-	id, challenge := s.begin(doc.ID)
+	id, challenge, err := s.begin(ctx, doc.ID)
+	if err != nil {
+		return nil, err
+	}
 	out := &contracts.PasskeyCreation{Ceremony: id, Options: contracts.CreationOptions{
 		RP: contracts.RelyingParty{ID: s.rp.ID, Name: "Permaily"},
 		// The identifier is what the passkey answers with when it signs in:
@@ -151,7 +155,10 @@ func (s *Service) FinishPasskey(ctx context.Context, who *Authenticated, in cont
 	if err != nil {
 		return nil, err
 	}
-	challenge, ok := s.end(in.Ceremony, who.AccountID)
+	challenge, ok, err := s.end(ctx, in.Ceremony, who.AccountID)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, contracts.ErrInvalidPasskey
 	}
@@ -165,7 +172,7 @@ func (s *Service) FinishPasskey(ctx context.Context, who *Authenticated, in cont
 		return nil, contracts.ErrInvalidPasskey
 	}
 	p := passkeyDoc{ID: made.ID, PublicKey: made.PublicKey, Name: name, CreatedAt: s.now(), Synced: made.Synced}
-	_, err = s.change(ctx, who.AccountID, func(doc *accountDoc) error {
+	doc, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
 		if doc.passkey(p.ID) >= 0 {
 			return contracts.ErrInvalidPasskey
 		}
@@ -179,6 +186,7 @@ func (s *Service) FinishPasskey(ctx context.Context, who *Authenticated, in cont
 		return nil, err
 	}
 	s.cfg.Log.Info("accounts: passkey made")
+	s.noticeChange(ctx, doc, noticePasskeyAdded)
 	view := p.view()
 	return &view, nil
 }
@@ -236,11 +244,14 @@ func (s *Service) RenamePasskey(ctx context.Context, who *Authenticated, id stri
 // then on. The last one stays while the account signs in with passkeys only,
 // or nothing but recovery codes would lead into it.
 func (s *Service) RemovePasskey(ctx context.Context, who *Authenticated, id string) error {
+	if err := s.confirmed(who); err != nil {
+		return err
+	}
 	credential, err := passkeyID(id)
 	if err != nil {
 		return err
 	}
-	_, err = s.change(ctx, who.AccountID, func(doc *accountDoc) error {
+	doc, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
 		i := doc.passkey(credential)
 		if i < 0 {
 			return contracts.ErrNotFound
@@ -255,6 +266,7 @@ func (s *Service) RemovePasskey(ctx context.Context, who *Authenticated, id stri
 		return err
 	}
 	s.cfg.Log.Info("accounts: passkey removed")
+	s.noticeChange(ctx, doc, noticePasskeyRemoved)
 	return nil
 }
 
@@ -263,8 +275,11 @@ func (s *Service) RemovePasskey(ctx context.Context, who *Authenticated, id stri
 // StartPasskeySignIn starts a sign-in with a passkey. Nothing is asked: the
 // passkey says which account it is for, so the answer is the same for
 // everybody and tells nobody who has an account.
-func (s *Service) StartPasskeySignIn(_ context.Context) (*contracts.PasskeyRequest, error) {
-	id, challenge := s.begin("")
+func (s *Service) StartPasskeySignIn(ctx context.Context) (*contracts.PasskeyRequest, error) {
+	id, challenge, err := s.begin(ctx, "")
+	if err != nil {
+		return nil, err
+	}
 	return &contracts.PasskeyRequest{Ceremony: id, Options: contracts.RequestOptions{
 		Challenge: challenge, Timeout: int(domain.PasskeyCeremonyLifetime / time.Millisecond),
 		RPID: s.rp.ID, UserVerification: passkeyRequired,
@@ -275,8 +290,11 @@ func (s *Service) StartPasskeySignIn(_ context.Context) (*contracts.PasskeyReque
 // device in as signing in by mail does. A ceremony that ended, an account or
 // a passkey that is not there and an answer that does not check are all the
 // same error. An account that cannot be read is not: that is a failure.
-func (s *Service) FinishPasskeySignIn(ctx context.Context, in contracts.PasskeySignIn, userAgent string) (*contracts.Me, string, error) {
-	challenge, ok := s.end(in.Ceremony, "")
+func (s *Service) FinishPasskeySignIn(ctx context.Context, in contracts.PasskeySignIn, from Browser) (*contracts.Me, string, error) {
+	challenge, ok, err := s.end(ctx, in.Ceremony, "")
+	if err != nil {
+		return nil, "", err
+	}
 	accountID := string(in.Credential.Response.UserHandle)
 	if !ok || !validID("acc", accountID) {
 		return nil, "", contracts.ErrInvalidPasskey
@@ -297,11 +315,9 @@ func (s *Service) FinishPasskeySignIn(ctx context.Context, in contracts.PasskeyS
 		s.refused("accounts: a sign-in with a passkey was refused", err)
 		return nil, "", contracts.ErrInvalidPasskey
 	}
-	session, cookie, err := s.newSession(ctx, doc.ID, userAgent)
-	if err != nil {
-		return nil, "", err
-	}
-	return &contracts.Me{Account: doc.view(), Session: *session}, cookie, nil
+	// The passkey proved who it is: an account the operator blocked is told
+	// so here (enter), and never before.
+	return s.enter(ctx, doc, wayPasskey, from, false)
 }
 
 // ---- "passkey only" and recovery codes ----
@@ -340,8 +356,13 @@ var errUnchanged = errors.New("accounts: nothing to change")
 // dropped. Asking for what is already so changes nothing: codes that were
 // just shown keep working.
 func (s *Service) SetPasskeyOnly(ctx context.Context, who *Authenticated, in contracts.PasskeyOnly) (*contracts.PasskeyOnlyState, error) {
+	if err := s.confirmed(who); err != nil {
+		return nil, err
+	}
 	out := &contracts.PasskeyOnlyState{PasskeyOnly: in.On, RecoveryCodes: []string{}}
-	_, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
+	doc, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
+		// Codes made on a try that was not written are in no record.
+		out.RecoveryCodes = []string{}
 		if doc.PasskeyOnly == in.On {
 			return errUnchanged
 		}
@@ -362,14 +383,22 @@ func (s *Service) SetPasskeyOnly(ctx context.Context, who *Authenticated, in con
 		return nil, err
 	}
 	s.cfg.Log.Info("accounts: passkey only changed", "on", in.On)
+	if in.On {
+		s.noticeChange(ctx, doc, noticePasskeyOnlyOn)
+	} else {
+		s.noticeChange(ctx, doc, noticePasskeyOnlyOff)
+	}
 	return out, nil
 }
 
 // NewRecoveryCodes makes ten new recovery codes for an account that signs in
 // with passkeys only. The ones it had stop working.
 func (s *Service) NewRecoveryCodes(ctx context.Context, who *Authenticated) (*contracts.RecoveryCodes, error) {
+	if err := s.confirmed(who); err != nil {
+		return nil, err
+	}
 	out := &contracts.RecoveryCodes{}
-	_, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
+	doc, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
 		if !doc.PasskeyOnly {
 			return contracts.ErrPasskeyOnlyOff
 		}
@@ -379,6 +408,7 @@ func (s *Service) NewRecoveryCodes(ctx context.Context, who *Authenticated) (*co
 	if err != nil {
 		return nil, err
 	}
+	s.noticeChange(ctx, doc, noticeRecoveryCodesNew)
 	return out, nil
 }
 
@@ -391,7 +421,7 @@ func (s *Service) recoveryTry(address string, right bool) bool {
 	defer s.mu.Unlock()
 	s.sweep(now)
 	list := recent(s.recoveries[address], now, time.Hour)
-	if len(list) >= domain.RecoveryTriesPerHour || (len(list) == 0 && len(s.recoveries) >= maxAttempts) {
+	if len(list) >= domain.RecoveryTriesPerHour || (len(list) == 0 && len(s.recoveries) >= maxRecoveryCounts) {
 		return false
 	}
 	if !right {
@@ -405,7 +435,7 @@ func (s *Service) recoveryTry(address string, right bool) bool {
 // once. Every refusal is the same error, the one of a wrong code, whether
 // the address has no account, the account takes no recovery codes, the code
 // is wrong or too many wrong ones were tried.
-func (s *Service) Recover(ctx context.Context, in contracts.Recovery, userAgent string) (*contracts.Me, string, error) {
+func (s *Service) Recover(ctx context.Context, in contracts.Recovery, from Browser) (*contracts.Me, string, error) {
 	address, err := domain.NormalizeAddress(in.Address)
 	code, ok := domain.NormalizeRecoveryCode(in.Code)
 	if err != nil || !ok {
@@ -428,16 +458,24 @@ func (s *Service) Recover(ctx context.Context, in contracts.Recovery, userAgent 
 	if !doc.PasskeyOnly || !s.recoveryTry(address, right) || !right {
 		return nil, "", contracts.ErrInvalidCode
 	}
-	// Of two uses of one code at the same time, the second finds it gone. A
-	// closing account takes the code too: its person signs in to cancel.
-	_, err = s.rewrite(ctx, doc.ID, func(doc *accountDoc) error {
+	// Of two uses of one code at the same time, here or in two enclaves, the
+	// second finds it gone. A closing account takes the code too: its person
+	// signs in to cancel. A blocked one takes none: the code was right, so
+	// its person is told, and the code stays for when the account is unblocked.
+	doc, err = s.rewrite(ctx, doc.ID, func(doc *accountDoc) error {
 		i := doc.recoveryCode(hash)
-		if i < 0 || !doc.PasskeyOnly || doc.Address != address {
+		if i < 0 || !doc.PasskeyOnly || !doc.has(address) {
 			return contracts.ErrInvalidCode
+		}
+		if doc.blocked() {
+			return contracts.ErrAccountBlocked
 		}
 		doc.RecoveryCodes = slices.Delete(doc.RecoveryCodes, i, i+1)
 		return nil
 	})
+	if errors.Is(err, contracts.ErrAccountBlocked) {
+		return nil, "", err
+	}
 	var known *contracts.Error
 	if errors.As(err, &known) {
 		// Used a moment ago, or the account went away meanwhile: nothing a
@@ -448,9 +486,8 @@ func (s *Service) Recover(ctx context.Context, in contracts.Recovery, userAgent 
 		return nil, "", err
 	}
 	s.cfg.Log.Info("accounts: recovery code used")
-	session, cookie, err := s.newSession(ctx, doc.ID, userAgent)
-	if err != nil {
-		return nil, "", err
-	}
-	return &contracts.Me{Account: doc.view(), Session: *session}, cookie, nil
+	me, cookie, err := s.enter(ctx, doc, wayRecovery, from, false)
+	// Told whether or not the device then got its session: the code is gone.
+	s.noticeChange(ctx, doc, noticeRecoveryCodeUsed)
+	return me, cookie, err
 }

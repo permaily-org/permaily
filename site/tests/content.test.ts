@@ -5,6 +5,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { type HTMLElement, parse } from 'node-html-parser';
 import { describe, expect, it } from 'vitest';
+import { TERMS_VERSION } from '../src/config/legal';
 
 const dist = join(import.meta.dirname, '..', 'dist');
 
@@ -16,12 +17,11 @@ function pages(dir = dist): string[] {
   });
 }
 
-const all = existsSync(dist) ? pages() : [];
+// Redirects for old addresses (astro.config.mjs) are not pages of the site; tests/links.test.ts checks them.
+const isRedirect = (file: string) => readFileSync(file, 'utf8').includes('http-equiv="refresh"');
+const all = existsSync(dist) ? pages().filter((file) => !isRedirect(file)) : [];
 const load = (file: string): HTMLElement => parse(readFileSync(file, 'utf8'));
 const name = (file: string) => `/${relative(dist, file)}`;
-
-// Links that point at pages still waiting for legal review (TODO in docs/legal.md).
-const PLACEHOLDER_LINKS = new Set(['#terms', '#data-processing', '#subprocessors']);
 
 describe('built site', () => {
   it('has been built', () => {
@@ -70,11 +70,11 @@ describe('built site', () => {
         }
       });
 
-      it('has no placeholder links other than the known legal ones', () => {
+      it('has no placeholder links', () => {
         for (const a of doc.querySelectorAll('a[href^="#"]')) {
           const href = a.getAttribute('href') ?? '';
           if (href === '#' || href === '#main' || doc.getElementById(href.slice(1))) continue;
-          expect(PLACEHOLDER_LINKS.has(href), `${href} in ${name(file)}`).toBe(true);
+          expect.fail(`${href} in ${name(file)} leads nowhere`);
         }
       });
     });
@@ -96,5 +96,44 @@ describe('home page', () => {
     const footer = home.querySelector('.foot-end')?.text ?? '';
     expect(footer).not.toContain('7f3a');
     expect(footer).toMatch(/no public release yet|PCR0 [0-9a-f]{4}…[0-9a-f]{4}/);
+  });
+});
+
+describe('legal pages', () => {
+  const page = (path: string) => (all.length ? load(join(dist, path, 'index.html')) : parse(''));
+
+  it('publish the current terms version', () => {
+    // docs/legal.md: TERMS_VERSION changes with the terms, and the page shows it.
+    const shown = page('terms').querySelector('[data-terms-version]')?.text.trim();
+    expect(shown).toBe(TERMS_VERSION);
+    expect(TERMS_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('match the version the service records', () => {
+    // docs/legal.md: the service records the version an account agreed to (domain.TermsVersion).
+    const dir = join(import.meta.dirname, '../../internal/domain');
+    const source = readdirSync(dir)
+      .filter((f) => f.endsWith('.go') && !f.endsWith('_test.go'))
+      .map((f) => readFileSync(join(dir, f), 'utf8'))
+      .join('\n');
+    const match = source.match(/\bTermsVersion\s*(?:string\s*)?=\s*"([^"]+)"/);
+    expect(match?.[1]).toBe(TERMS_VERSION);
+  });
+
+  it('are linked from every page', () => {
+    for (const file of all) {
+      if (!file.startsWith(join(dist, 'docs')) && !file.endsWith('404.html')) {
+        const hrefs = load(file)
+          .querySelectorAll('footer a[href]')
+          .map((a) => a.getAttribute('href'));
+        expect(hrefs, name(file)).toEqual(expect.arrayContaining(['/privacy/', '/terms/']));
+      }
+    }
+  });
+
+  it('exist for each legal link', () => {
+    for (const path of ['privacy', 'terms', 'data-processing', 'subprocessors', 'data-deletion']) {
+      expect(page(path).querySelector('h1')?.text.trim(), path).toBeTruthy();
+    }
   });
 });

@@ -44,6 +44,63 @@ type Status struct {
 	// messages) and what SES would do with it besides delivering it; nil in
 	// images older than this field or that send no mail.
 	Mail *MailStatus `json:"mail,omitempty"`
+	// Admin counts what the operator did to accounts through the enclave; nil
+	// in images older than this field or without accounts.
+	Admin *AdminStatus `json:"admin,omitempty"`
+}
+
+// AdminStatus is what the enclave reports of what its operator did to
+// accounts through it, with the admin token: blocking and unblocking one,
+// asking to delete one and cancelling that, signing its devices out, making
+// and revoking invitations, and setting or removing a provider's application.
+// It says how many of each kind, and never which account: this is public.
+//
+// The operator cannot do through the enclave what would be a way into an
+// account (change its contact address or how it is signed into), so there is
+// no count of that. What is done to the storage by hand is not seen here.
+type AdminStatus struct {
+	// Since is when this enclave started counting: when it started. A restart
+	// starts the count again.
+	Since time.Time `json:"since"`
+	// Actions is how many of each kind the enclave did since then, by the
+	// name of the kind. Every kind the enclave knows is there, also at zero.
+	Actions map[string]int `json:"actions"`
+}
+
+// The kinds of what an operator does to accounts through the enclave
+// (AdminStatus.Actions). A later image may count kinds that are not here.
+const (
+	// AdminBlock: an account was blocked, so nobody signs in to it.
+	AdminBlock = "block"
+	// AdminUnblock: an account was unblocked.
+	AdminUnblock = "unblock"
+	// AdminDelete: the operator asked to delete an account, which is removed
+	// seven days later unless that is cancelled.
+	AdminDelete = "delete"
+	// AdminDeleteCancel: the operator cancelled the deletion of an account.
+	AdminDeleteCancel = "delete_cancel"
+	// AdminSessionsClose: every device of an account was signed out.
+	AdminSessionsClose = "sessions_close"
+	// AdminInvitationsMade counts invitations, not requests for them.
+	AdminInvitationsMade = "invitations_made"
+	// AdminInvitationRevoked: an invitation that was not used was revoked.
+	AdminInvitationRevoked = "invitation_revoked"
+	// AdminProviderAppSet and AdminProviderAppRemoved: the application the
+	// enclave signs people in with at Google, GitHub, Meta or Microsoft was
+	// given to it, or taken away.
+	AdminProviderAppSet     = "provider_app_set"
+	AdminProviderAppRemoved = "provider_app_removed"
+	// AdminMade and AdminRemoved: the super admin made an account an admin
+	// of the service, or made it stop being one.
+	AdminMade    = "admin_made"
+	AdminRemoved = "admin_removed"
+)
+
+// AdminActions lists the kinds this package knows, in the order they are shown.
+var AdminActions = []string{
+	AdminBlock, AdminUnblock, AdminDelete, AdminDeleteCancel, AdminSessionsClose,
+	AdminInvitationsMade, AdminInvitationRevoked, AdminProviderAppSet, AdminProviderAppRemoved,
+	AdminMade, AdminRemoved,
 }
 
 // What SES says about an identity, a domain or an address mail is sent from

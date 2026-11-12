@@ -11,6 +11,7 @@
   "anchor_retention_days": 3650,
   "aws_account_id": "209207235911",
   "mail_from": "no-reply@mail.permaily.com",
+  "super_admin": "hello@permaily.com",
   "admin_token_sha256": "0b7a4632524b910de0467a1a4094912b785489b9cb938028552098328f32d6e7",
   "release_repository": "permaily-org/permaily",
   "release_repository_id": "1448574502",
