@@ -1,227 +1,430 @@
 # 0026 Mailboxes per account: how they are built
 
-Status: Proposed. Designed on 2026-11-12 for step 2 of F2 (docs/plan.md); not built. The owner decided its open choices on 2026-11-12 (listed in "What it rests on, and what is left"), among them that messages are shown as HTML from the start ("Showing a message's HTML").
+Status: Proposed. Designed on 2026-11-12 for step 2 of F2 (docs/plan.md); not built. The owner decided its open choices on 2026-11-12 (listed in "What it rests on, and what is left"), among them that messages are shown as HTML from the start ("Showing a message's HTML"). Revised the same day after an adversarial review; what changed is listed in the pull request that proposes it.
 Date: 2026-11-12
 
 ## Context
 
-ADR 0018 decided what mailboxes are: forwarding only, several per account, nothing from before the forwarding started, retention as F1 has it, a full inbox in the app, disconnecting deletes the mail and destroys the key, and which account is behind a mailbox is verified for Gmail by Google's signed confirmation. This record says how, exactly enough that the server and the web app can be built at the same time by different people (see "Implementation pull requests").
+ADR 0018 decided what mailboxes are: forwarding only, several per account, nothing from before the forwarding started, retention as F1 has it, a full inbox in the app, disconnecting deletes the mail, and which account is behind a mailbox is verified for Gmail by Google's signed confirmation. This record says how, exactly enough that the store, the server, the web app and the operator's side can be built at the same time by different people against interfaces that are already in the repository (see "Implementation pull requests").
 
-It builds on: the F1 test mailbox (ADR 0009) and its message format, which stays; the records that refuse an earlier copy, `store.Anchored` (ADR 0016); the patterns of accounts (ADR 0017): signed records changed only at the version read, pointers that prove nothing, sealed entries, limits counted per enclave; two enclaves at once (ADR 0017, ADR 0024); confirming again (ADR 0022); public logs (ADR 0015); mail only over TLS (ADR 0011).
+It builds on: the records that refuse an earlier copy, `store.Anchored` (ADR 0016), which it changes ("Changes to the store"); the patterns of accounts (ADR 0017): signed records changed only at the version read, pointers that prove nothing, sealed entries, limits; two enclaves at once (ADR 0017, ADR 0024); confirming again and the admins (ADR 0022); public logs (ADR 0015); mail only over TLS (ADR 0011). The F1 test mailbox (ADR 0009) is retired, not moved ("The test mailbox: retired").
 
-The rules this design keeps, from the maintainer: nothing that decides anything lives only in one enclave's memory; the operator and admins can see that mailboxes exist and how many, and cannot read mail or enter an account; logs never hold an address, a subject, a sender, content, a token, or an account, mailbox or message identifier; whoever writes to the table or the bucket cannot read mail, move a mailbox to another account, make a disconnected mailbox accept mail again, or put a mailbox back to an earlier state where that matters.
+The rules this design keeps, from the maintainer: nothing that decides anything lives only in one enclave's memory; the operator and admins can see that mailboxes exist and how many, and cannot read mail or enter an account; logs never hold an address, a subject, a sender, content, a token, or an account, mailbox or message identifier; whoever writes to the table or the bucket cannot read mail, move a mailbox to another account, make a disconnected mailbox accept mail again, or put a mailbox back to an earlier state where that matters; mail that a sender was told is delivered is stored.
 
 ## Decision in short
 
-- **A mailbox is an anchored record, readable and signed, with a sealed part.** `mailbox-<id>` holds who owns it, its state, its retention, when it started receiving, whether Google vouched for its Gmail account, and its data key wrapped under the root secret. The address, the label and the Gmail account are sealed under the mailbox's own key: the operator does not see them.
-- **An account's mailboxes are listed in one anchored record**, `mailboxes-<account id>`. The limit (five, decided by the owner) is checked and written there at the version read, so it holds with two enclaves.
-- **An address finds its mailbox through a pointer named by an HMAC of the address**, `rcpt#<hex>`: one read, no scan, and the table does not show the addresses. The pointer proves nothing; the record must bear it out and say the mailbox accepts mail.
-- **One random data key per mailbox**, wrapped under the root secret as F1's is, never cached across requests. Disconnecting writes a version of the record without it, and removing the record deletes every stored version: no enclave of the deployment unwraps that key again, whatever copy of the table is put back.
-- **Disconnecting** stops the address at once on both enclaves (one write of the record), then frees the slot and deletes the pointer; a sweep that either enclave runs deletes the mail.
-- **Ingest** reads the pointer and the record at `RCPT TO` and again before storing; a message is stored once per mailbox (a mark of what was seen); retention is still done by DynamoDB and S3, not by a sweep.
-- **The inbox** lists, opens, deletes one or a hundred, and searches by scanning sealed copies of sender, subject and text inside the enclave, 2,000 messages a page at most. A message is shown formatted, its HTML cleaned inside the enclave and drawn in a sandboxed frame that runs nothing and fetches nothing remote, or as text at the person's choice; attachments are downloaded as files.
-- **The test mailbox** becomes a mailbox of the account named in the image (`legacy_mailbox_owner`), with its address, its key and its mail, at the first start of the release; `/v1/mailbox` answers 410 and its token goes.
-- **The operator and admins** see counts and the readable part of each record, never an address; they can pause and resume a mailbox, never disconnect or read it.
-- **Notices by mail**: a mailbox added, forwarding confirmed by Google (once a mailbox), a mailbox disconnected, paused, resumed.
-- **Confirming again**: disconnecting needs the fresh proof of ADR 0022; nothing else of a mailbox does.
+- **A mailbox is an anchored record**, readable and signed, with a sealed part: who owns it, its state, when it started receiving, whether Google confirmed its Gmail account, its data key wrapped under the root secret, and sealed inside it the address and the Gmail account. What a person edits freely (the label, the retention) is a signed, versioned entry next to it that is not anchored.
+- **An account's mailboxes are listed in one anchored record**, which also fences creation and removal: identifiers are reserved there, a record is made only where no commit was ever made for its name, and the list is closed before an account's mailboxes are removed. The limit of five holds with any number of enclaves.
+- **An address finds its mailbox through a pointer** named by an HMAC of the address, holding only the mailbox's identifier. Ownership and state are read only from the record.
+- **One random data key per mailbox**, never cached across requests. Disconnecting writes the record without it: from then on no request of any enclave opens the mailbox, and its mail is deleted by a sweep. That is a refusal enforced by approved code, not destruction proof against a later theft of the root secret ("What disconnecting does to the key").
+- **Delivery never loses mail.** A message is claimed per mailbox before it is stored, stored under the identifier of the claim so that a retry writes the same items, and marked stored only after every part of it is; `250` only when every accepted mailbox holds it. Memory is bounded before anything is buffered.
+- **A record whose commits were forked** by whoever writes to the bucket fails closed on every enclave and after every restart, instead of one of the two commits being chosen.
+- **The inbox** lists, opens, deletes and searches one mailbox at a time, each page reading a bounded number of stored items, and shows a message formatted in a sandboxed frame or as text.
+- **The test mailbox is retired**: the release that builds this has no code that reads it, its token goes, and its address answers like any unknown one.
+- **The operator and admins** see counts and the readable part of each record, never an address; they can pause and resume a mailbox, never disconnect or read it; an admin does so through the actor-bound admin facade of accounts.
+- **A closing account** can read, search and download its mail and disconnect mailboxes; **an account that has not agreed to changed terms** can download its mail and disconnect mailboxes. The server enforces it route by route.
 
 ## Records and layout
 
-All in the one DynamoDB table (`permaily-mail`) and the mail bucket, as F1 and accounts are.
+All in the one DynamoDB table (`permaily-mail`), the mail bucket and the anchors bucket, as F1 and accounts are. "Signed" is `envelope.Sign` with a key derived from the root secret for mailboxes (`Derive("permaily mailboxes sign v1")`), bound to where the value is stored; "sealed" is `envelope.Seal` or `SealText` under the mailbox's data key, bound to the mailbox (and message) by `envelope.AAD`.
 
-| What | Where | Treatment | Versions and writes |
+| What | Where | Treatment | Written how |
 |---|---|---|---|
-| A mailbox | Record `mailbox-<mailbox id>` (`pk=system`, `sk=record#mailbox-<id>@<version>-<hash>`), its commits in the anchors bucket | Signed (`envelope.Sign`, the signing key of accounts). Readable: `v`, `id`, `account`, `state` (`active`, `disconnecting`), `rcpt` (the HMAC of the address, hex), `created_at`, `retention_days`, `receiving_since`, `verified_at`, `paused_at`, `disconnected_at`, `disconnected_by` (`person`, `account_removed`). Sealed inside it as `sealed` (`envelope.SealText` under the mailbox data key, bound to `mailbox-private` and the id): the address, the label, the Gmail account Google vouched for. The data key, wrapped under the root secret, is the record's `WrappedKey` | `store.Anchored` with `OnlyNewest`: made with `PutRecord(create)`, changed only with `GetRecordAt` and `PutRecordAt`, removed with `RemoveRecord` |
-| An account's mailboxes | Record `mailboxes-<account id>` | Signed: `{v, account, mailboxes: [{id, added_at}]}`, identifiers only | Anchored, `OnlyNewest`; made with `PutRecord(create)`, changed at the version read, removed with the account |
-| The pointer from an address | Entry `pk=rcpt#<hex HMAC-SHA-256 of the local part>`, `sk=mailbox` | Signed with where it is stored: `{mailbox, account, write}` | Written once, at version 0; deleted as it was read (`DeleteEntryAt`) when the mailbox is disconnected; never moved |
-| A message (as in F1) | Entry `pk=mailbox#<id>`, `sk=msg#<message id>`; raw in S3 `raw/<mailbox id>/<message id>`, tagged with its retention | Sealed under the mailbox key (meta, raw); plain identifiers, sizes, times | Written once; DynamoDB's TTL and the S3 lifecycle rule of its tag delete it |
-| What search reads of a message (new) | Entry `pk=mailbox#<id>`, `sk=txt#<message id>` | Sealed under the mailbox key: the senders' names and addresses, the subject, the first 16 KiB of the text | Written with the message, the same expiry |
-| That a message was stored (new) | Entry `pk=mailbox#<id>`, `sk=seen#<hex HMAC of the Message-ID, the envelope sender and the size, under a key derived from the mailbox key>` | Plain, holds nothing (`{}`) | Written only where none is (version 0); seven days (TTL) |
-| A forwarding confirmation (moved out of F1's sealed state) | Entry `pk=mailbox#<id>`, `sk=confirm#<message id>` | Sealed under the mailbox key: code, requester, when, verified, message | Written once; thirty days (TTL); the ten newest shown |
-| The mailboxes being disconnected | Entry `pk=mailboxes-disconnecting`, `sk=<disconnected at, RFC 3339>#<mailbox id>` | Signed; it proves nothing, the record does | Written before the record says `disconnecting`; deleted as it was read when nothing of the mailbox is left |
+| A mailbox | Record `mailbox-<id>` (`pk=system`, `sk=record#mailbox-<id>@<version>-<hash>`), its commits in the anchors bucket | Signed, readable: `v`, `id`, `account`, `state` (`active`, `disconnecting`, `cancelled`), `rcpt` (the address's HMAC, hex), `created_at`, `receiving_since`, `verified_at`, `paused_at`, `state_changes` (times of the last ten pauses and resumes), `disconnected_at`, `disconnected_by` (`person`, `account_removed`). Sealed inside it as `sealed` (bound to `mailbox-private` and the id): the address, and the Gmail account Google confirmed. The data key, wrapped under the root secret, is the record's `WrappedKey` | `store.Anchored` with `OnlyNewest`: made with `CreateNew`, changed with `GetRecordAt` and `PutRecordAt`, removed with `RemoveRecord` ("State machines") |
+| An account's mailboxes | Record `mailboxes-<account id>` | Signed: `{v, account, state: open or closed, mailboxes: [{id, added_at}], made: [times of the last ten creations]}`, identifiers only | Anchored, `OnlyNewest`: made with `CreateNew`, changed at the version read, removed with the account |
+| A mailbox's settings | Entry `pk=mailbox#<id>`, `sk=settings` | Signed with where it is stored: `{v, retention_days, label}`, the label sealed (`SealText`, bound to `mailbox-label` and the id) | `PutEntry` at version 0, then at the version read; absent means 90 days and no label |
+| The pointer from an address | Entry `pk=rcpt#<hex HMAC-SHA-256 of the local part>`, `sk=mailbox` | Signed with where it is stored: `{mailbox, write}` (`write` random per write, as accounts' pointers) | `PutEntry` at version 0; deleted as it was read (`DeleteEntryAt`); never moved or rewritten |
+| The index of mailboxes, for counts | Entry `pk=mailboxes`, `sk=<mailbox id>` | Signed: `{account}`. It proves nothing and is only counted | Written after the record is made; deleted when the record is removed |
+| A message (F1's format) | Item `pk=mailbox#<id>`, `sk=msg#<message id>`; raw in S3 `raw/<mailbox id>/<message id>`, tagged with its retention | Meta (`inbox.StoredMeta`) sealed (`message-meta`); raw sealed (`message-raw`); plain identifiers, sizes, times | Written by a delivery under its claim's identifier: a retry writes the same keys. DynamoDB's TTL and the S3 lifecycle rule of its tag delete it |
+| What search reads of a message | Entry `pk=mailbox#<id>`, `sk=txt#<message id>` | Sealed (`message-search`): `inbox.SearchEntry`, the senders, the subject, the first 16 KiB of the text, when it arrived | `PutEntry` at version 0 (`ErrExists` from an earlier try of the same delivery is success); the message's expiry |
+| A delivery's claim, then its mark | Entry `pk=mailbox#<id>`, `sk=seen#<hex HMAC, under a key derived from the mailbox key, of the envelope sender and the SHA-256 of the raw message>` | Sealed (`message-seen`): `inbox.SeenEntry`, `{stored, message, at}` | Version 0 to claim, at the version read to take a stale claim over or to mark it stored; seven days (TTL) |
+| A forwarding confirmation | Entry `pk=mailbox#<id>`, `sk=confirm#<message id>` | Sealed (`message-confirm`): `inbox.ConfirmEntry`, code, requester, when, verified, for another address, when it stops being shown | `PutEntry` at version 0; thirty days, read from the sealed `ends` |
+| The mailboxes being disconnected | Entry `pk=mailboxes-disconnecting`, `sk=<disconnected_at, RFC 3339>#<mailbox id>` | Signed: `{mailbox}`. It proves nothing: the record does | Version 0, by whoever finds a record `disconnecting` without one; deleted as it was read when nothing of the mailbox is left |
 
-- **Identifiers.** A mailbox is `mbx_` and 26 base32 characters (16 random bytes), made as accounts make theirs; the test mailbox keeps `test`, which its mail is sealed with. Message identifiers stay F1's: 32 hex characters, time first. `scrub` learns `mbx_`, and no message identifier goes in a log line or in an error that is logged.
-- **Why the record is readable and signed, with a sealed part.** The operator needs the state, the owner and the dates to give support and to count; none of it is the person's mail. The address is what lets anyone put mail into the person's inbox (and, from step 5, in front of their agents); the label is typed by the person and may be anything; the Gmail account is a second address of theirs. Those three are sealed. ADR 0017's table listed the forwarding address as readable; this changes it.
-- **Why a record of its own for the list**, and not a list inside the account's record: a mailbox's life (made, confirmed, receiving, paused, disconnected) has nothing to do with who gets into the account, and the account's record changes only through `change`, with the checks of sign-in. Kept apart, the mailboxes service never writes `accountDoc` and accounts never learn a mailbox's format.
+- **Identifiers.** A mailbox is `mbx_` and 26 base32 characters (16 random bytes), made as accounts make theirs, and never reused. Message identifiers stay F1's: 32 hex characters, time first. `scrub` learns `mbx_`, and no message identifier goes in a log line or a logged error.
+- **Why the record is readable and signed, with a sealed part.** The operator needs the state, the owner and the dates to give support and to count; none of it is the person's mail. The address is what lets anyone put mail into the person's inbox (and, from step 5, in front of their agents); the Gmail account is a second address of theirs; the label is typed by the person and may be anything. Those are sealed. ADR 0017's table listed the forwarding address as readable; this changes it.
+- **Why a record of its own for the list**, not a field of the account's record: a mailbox's life has nothing to do with who gets into the account, and the account's record changes only through `change`, with the checks of sign-in. Kept apart, the mailboxes service never writes `accountDoc` and accounts never learn a mailbox's format.
 
-**Rejected.** A pointer named by the address in plain text: the table would list every address. A scan of mailboxes at `RCPT TO`: the cost grows with the number of mailboxes, and a refused address costs as much as a hit. The address readable, as ADR 0017 listed it: the operator would hold every person's way in for mail. The list as entries: an earlier copy put back would hide a mailbox from its person while it went on receiving.
+**Rejected.** A pointer named by the address in plain text: the table would list every address. A scan of mailboxes at `RCPT TO`: the cost grows with the number of mailboxes. The address readable, as ADR 0017 listed it. The list as entries: an earlier copy put back would hide a mailbox from its person while it went on receiving. The label and retention in the anchored record: every rename would be a commit that can never be deleted ("What is anchored, and what is not").
 
 ## The address
 
-- **Made of** twenty characters of `abcdefghijkmnpqrstuvwxyz23456789` (32 letters and digits, without `l`, `o`, `0` and `1`), drawn with `crypto/rand`, at `inbox.permaily.com`: 100 bits. `domain.NewMailboxAddress` makes one. The test mailbox's `u-9b393600758a2985dae3` keeps working: it gets a pointer like any other.
+- **Made of** twenty characters of `abcdefghijkmnpqrstuvwxyz23456789` (32 letters and digits, without `l`, `o`, `0` and `1`), drawn with `crypto/rand`, at `inbox.permaily.com`: 100 bits. `domain.NewMailboxAddress` makes one.
 - **Collisions** are found by the pointer's write at version 0 (`ErrExists`): a new address is drawn, three times at most. With a million mailboxes the chance of one is about one in 10^18.
-- **Guessing.** With a million mailboxes a made-up address finds one with a chance of one in 10^24, so `RCPT TO` is not limited per sender. Every refusal is the same `550 5.1.1 No such mailbox`: an address never made, one disconnected, one paused, one of another domain. An address that exists costs two reads more than one that does not, which tells only someone who guessed it already.
+- **Guessing.** With a million mailboxes a made-up address finds one with a chance of one in 10^24, so `RCPT TO` is not limited per sender. Every refusal is the same `550 5.1.1 No such mailbox`: an address never made, one disconnected, one paused, one whose record cannot be read, one of another domain. An address that exists costs two reads more than one that does not, which tells only someone who guessed it already.
 - **What is compared.** The local part, lowercased, at most 64 bytes; one with a `+tag` is refused (Gmail forwards to the exact address it was given). The domain must be the inbox host, compared without case.
 - **The HMAC key** is `Derive("permaily mailbox addresses v1")` from the root secret: the same in every enclave of the deployment, unknown outside.
+- **What the pointer says.** Only which mailbox. Whose it is and whether it accepts mail are read from the record, whose `rcpt` must be the HMAC the pointer is named by: a pointer copied under another name, or put back after a disconnect, leads to a record that refuses.
 
 ## Keys
 
-- **One data key per mailbox**: 32 random bytes from `keys.Root.NewDataKey`, wrapped under the root secret with the context `{purpose: mailbox, mailbox: <id>}`, exactly F1's, so the test mailbox's key moves as it is. No KMS call: wrapping and unwrapping are AES-GCM under a key the enclave holds.
-- **Not derived.** A key derived from the root secret and the mailbox identifier could not be destroyed short of destroying the root secret.
-- **Not cached.** Every request that opens mail reads the mailbox's record anyway (to check its owner and state), and unwrapping costs microseconds, so the key is unwrapped from the record just read, used and dropped. No enclave keeps a key the other one just destroyed.
-- **What "the key is destroyed" means.** (1) Disconnecting writes the next version of the record without `WrappedKey`, at the version read; `OnlyNewest` then deletes the version before, which held it. (2) When the mail is gone the record is removed (`RemoveRecord`): a commit says it is gone, and every stored version left, also one whose deletion failed in (1), is deleted. From (1) on, no enclave of the deployment unwraps the key: every read goes through the newest commit, which has no key, and later says the record is gone. An earlier copy of the record put back in the table is refused (ADR 0016). The old wrapped key cannot be moved into another record either: the wrap is bound to the mailbox identifier, and records are signed and committed.
-- **What it does not mean.** The wrapped key was in the table, under the root secret. Someone who kept a copy of the table from before and later obtains the root secret could unwrap it and read that copy's mail. The root secret exists only inside enclaves of public releases and in records locked by their KMS keys (ADR 0013), so that takes breaking an enclave or KMS. A KMS key per mailbox would close it, at the cost of a key per mailbox and a seven-day wait to delete one; not done. Said in docs/threat-model.md.
+- **One data key per mailbox**: 32 random bytes from `keys.Root.NewDataKey`, wrapped under the root secret with the context `{purpose: mailbox, mailbox: <id>}`. No KMS call: wrapping and unwrapping are AES-GCM under a key the enclave holds.
+- **Not derived.** A key derived from the root secret and the identifier could not be taken away short of losing the root secret.
+- **Not cached.** Every request that opens mail reads the record anyway (owner and state), and unwrapping costs microseconds, so the key is unwrapped from the record just read, put in the request's `inbox.Box`, and dropped with the request.
 
-## Lifecycle
+### What disconnecting does to the key, and what it does not
+
+- **What it does.** Disconnecting writes the next version of the record without `WrappedKey`, at the version read; `OnlyNewest` then deletes the version before, which held it. When the mail is gone the record is removed (`RemoveRecord`): a commit says it is gone, and every stored version left is deleted. From the first write on, every read of the record by any enclave of the deployment goes through the newest commit, which has no key and later says the record is gone, so the approved code never unwraps that key again. An earlier copy of the record put back in the table is refused (ADR 0016). The wrapped key cannot be moved into another record: the wrap is bound to the mailbox identifier, and records are signed and committed.
+- **What it does not.** It is a refusal enforced by the code of public releases, not cryptographic destruction. The wrapped key was in the table under the root secret: a saved copy of the table from before the disconnect, together with the root secret, decrypts a saved copy of the mail. The root secret exists only inside enclaves of public releases and in records locked by their KMS keys (ADR 0013), so that takes breaking an enclave or KMS; and every release whose KMS key still exists can open the root secret, so an old release with a flaw stays part of the boundary until its key is deleted (docs/operations.md, "Delete the key of an old release"). A request that unwrapped the key before the disconnect keeps it until it ends (at most a minute, "Disconnecting"). A KMS key per mailbox would make destruction real, at the cost of a key per mailbox and seven days to delete one; not done.
+- **What stays.** The anchored commits of the record and of the account's list: the record's name (which holds the mailbox identifier), versions, times, hashes and authentication codes, for the lock period: ten years in production, then S3 may delete them. Never a key, an address or a value of a record.
+- The app, the notice by mail, docs/data.md, docs/threat-model.md and ADR 0018 say exactly this and nothing stronger.
+
+## State machines
+
+Each machine says its states, the writes that move between them and how each is written: **create-only** (`CreateNew` for records, `PutEntry` at version 0 for entries), **at the version read** (`PutRecordAt` after `GetRecordAt`; `PutEntry` at the version read; `DeleteEntryAt` as read), or **removal** (`RemoveRecord`). Every write that fails because another enclave wrote first (`ErrChanged`, `ErrExists`, `ErrConflict`) reads again and decides again, four times at most, then fails.
+
+### A mailbox's record
+
+| From | To | When | Write |
+|---|---|---|---|
+| none | `active` | Making a mailbox, its identifier reserved in an open list | `CreateNew` |
+| none | `cancelled` | A reader of the list found the identifier reserved more than ten minutes ago with no record, or the account is being removed | `CreateNew`: a tombstone `{account, state: cancelled, cancelled_at}`, no key |
+| `active` | `active` | `verified_at` and the sealed Gmail account (once), `receiving_since` (once), `paused_at` set or cleared (ten in thirty days) | At the version read |
+| `active` | `disconnecting` | The person disconnects, or the account is removed | At the version read: `disconnected_at`, `disconnected_by`, no key, no sealed part |
+| `disconnecting`, `cancelled` | gone | Nothing of the mailbox is left (the sweep) | `RemoveRecord` |
+| any | forked or lost | Whoever writes to the bucket or the table broke it | None: every read fails closed (`store.ErrForked`, `store.ErrLost`); shown as `unreadable` |
+
+Because a record is made only with `CreateNew`, which fails wherever any commit of this deployment was ever made for its name, a removal included, nothing turns a cancelled or removed mailbox back into one that accepts mail. The fence of a reservation is the record itself: whoever reclaims writes the tombstone, and the creator's own `CreateNew` then fails.
+
+### An account's list
+
+| From | To | When | Write |
+|---|---|---|---|
+| none | `open` | The first mailbox of the account | `CreateNew` |
+| `open` | `open` | An identifier added (a reservation, with its time in `made`), or taken out (its record is `disconnecting`, `cancelled` or gone) | At the version read |
+| `open` | `closed` | The account is being removed | At the version read |
+| `closed` | `closed` | Identifiers taken out by cleanup | At the version read |
+| `closed` | gone | Every mailbox it names is `disconnecting`, `cancelled` or gone | `RemoveRecord` |
+
+Nothing is added to a closed list. Creation reads the list at its version and writes it at that version, so a close that happens in between fails the creation's write, and the reread sees `closed`.
+
+### An identifier in the list (a reservation)
+
+| State | What it is | What any reader of the list does |
+|---|---|---|
+| reserved | In the list; no commit for `mailbox-<id>` | Counts it while younger than ten minutes; older, writes the tombstone (`CreateNew`; `ErrExists` means the record was made: read it) and takes the identifier out |
+| active | The record is `active` | Counts it |
+| unreadable | The record is forked or lost | Counts it; shows it as `unreadable`; only disconnecting it frees the slot |
+| leaving | The record is `disconnecting` or `cancelled`, or gone | Does not count it; puts the disconnect entry back for a `disconnecting` record that has none (create-only); takes the identifier out of the list at the version read |
+
+"Any reader of the list" is listing the mailboxes, making one, disconnecting one, `Count`, `Records`, `RemoveAccount` and the sweep. The queue of disconnects is an optimisation: a slot is never counted for a mailbox that is leaving, whether or not its cleanup ran, and the next reader finishes it.
+
+### Invariants, and why they hold
+
+1. **Every `active` record's identifier is in an open list of its account.** A record is made only after its identifier is in the list (making, step 2), and an identifier leaves the list only when its record is `disconnecting`, `cancelled` or gone, or after the tombstone was written, which stops the record ever being `active`.
+2. **An account never has more than five mailboxes that count**, with any number of enclaves: the count is made from the list and the records it names, and the new identifier is written at the version the count was made at.
+3. **Nothing is added to an account being removed**: the list is closed at its version before its mailboxes are enumerated, and a reservation older than the close is fenced by a tombstone.
+4. **From the commit of `disconnecting`, no new request opens the mailbox and no new mail is accepted for it**, on any enclave: every request and every delivery reads the record, and nothing caches it.
+5. **A slot is never kept by a mailbox that is leaving**: it does not count, whatever its cleanup did.
 
 ### Making a mailbox
 
-`POST mailboxes {label}`, by a person whose account may change (not closing, terms agreed: `Accounts.MayChange`). In this order:
+`POST mailboxes {label}`, by an account that is open and agreed (`Standing`).
 
-1. Read `mailboxes-<account>` at its version (none: it is made). Identifiers added more than ten minutes ago whose record does not exist are dropped (a creation that stopped). Five left already: `too_many_mailboxes`. Otherwise the new identifier is added with `added_at` and written at the version read; `ErrChanged` reads again, four times at most.
-2. Draw the address and write its pointer at version 0, leading to the new identifier and the account. `ErrExists`: draw again.
-3. Make the record with `PutRecord(create)`: `active`, no `receiving_since`, the default retention (90), a new data key, the sealed address and label.
-4. Send the notice "a mailbox was added". Answer 201 with the mailbox.
+1. Read `mailboxes-<account>` at its version (none: `CreateNew` it `open`, empty). `closed`: `account_closing`. Read the record of each identifier and do what the reservation table says. Ten creations in the last thirty days (`made`): `too_many_requests`. Five that count: `too_many_mailboxes`.
+2. Add the new identifier with `added_at`, and the time to `made` (the last ten kept), and write the list at the version read.
+3. Draw the address and write its pointer at version 0 (`ErrExists`: draw again).
+4. `CreateNew` the record: `active`, the account, `rcpt`, a new data key, the sealed address. `ErrExists` means a reader cancelled the reservation (step 2 took longer than ten minutes): delete the pointer as written, answer an internal error; the identifier leaves the list with its tombstone.
+5. Write the settings entry at version 0 (retention 90, the sealed label) and the index entry. A failure here leaves a mailbox with the default settings, shown in the list; the answer is an error and the person can rename it.
+6. Send the notice "a mailbox was added". Answer 201.
 
-A failure after 1 holds a slot for ten minutes; after 2 it leaves a pointer to a record that does not exist, which refuses mail like no pointer. Nothing half made receives mail or shows an address.
+A failure after 2 holds a slot for ten minutes; after 3 leaves a pointer to a record that does not exist, which refuses mail like no pointer and is never handed to anyone. Nothing half made receives mail or shows an address.
 
 ### Label and retention
 
-`PATCH mailboxes/{id}`: the record is read at its version, changed and written with `PutRecordAt`, four tries. The label is one printable line of at most 64 characters (`domain.MailboxLabel`), may be empty, and is sealed. A new retention applies to mail received afterwards, as in F1: each message's expiry is fixed when it is stored. Neither needs a fresh proof.
+`PATCH mailboxes/{id}`: the record is read (it must be `active` and the caller's), then the settings entry is read and written at its version, four tries. The label is one printable line of at most 64 characters (`domain.MailboxLabel`), may be empty, and is sealed. A new retention applies to mail received afterwards: each message's expiry is fixed when it is stored. Neither needs a fresh proof; both need an open, agreed account.
 
 ### Gmail's forwarding confirmation
 
-- **Detected** at ingest as F1 does it (sender `forwarding-noreply@google.com`, the code in the subject or the body), and stored as a message of the inbox like any other, marked `confirmation`.
-- **Kept** as a sealed entry `confirm#<message id>` for thirty days, so the forwarding set-up shows the code without opening the inbox. The record is not written for it: a flood of fake confirmations writes no commits.
-- **What the person is shown**: the code, with Copy; the Gmail account that asked, as the message says; when it came; and "Signed by Google", or "Not signed by Google: if you didn't ask Gmail to forward here, ignore it". The link in the message is not shown, and the enclave never follows it (ADR 0009): Gmail's settings take the code.
-- **The verified Gmail account** is recorded once: the first confirmation signed by `google.com` (DKIM pass, `d=google.com`) that arrives while the mailbox is `waiting` writes `verified_at` (readable) and the requester (sealed) into the record, at the version read, and sends the notice "Gmail asked to forward". Later confirmations, from another Gmail account or after mail started arriving, are listed and change nothing: someone who learns the address can make Gmail send one, and must not change which account the app names. To change it, the person makes another mailbox.
-- **For a mailbox that was disconnected** the confirmation is refused at `RCPT TO` like any mail to it, and Gmail tells its account the address does not accept mail. Nothing is stored.
+What Gmail sends, from what the repository holds and from Google's message: `From: forwarding-noreply@google.com`, `To:` the forwarding address it was asked to use, `Subject: (#<code>) Gmail Forwarding Confirmation - Receive Mail from <requester>`, and a body that says the requester "has requested to automatically forward mail to your email address" (naming it, in Google's message), with the code and a link. Google signs it with DKIM for `google.com`. The repository's fixture (`internal/inbox/inbox_test.go`, `gmailConfirmation`) is written by hand: its body does not name the destination, and it carries no signature. Pull request 1 adds a real one, captured in a staging rehearsal with the DNS record of its key, so that the checks below are tested on what Google sends.
+
+- **Detected** at ingest as F1 does (sender `forwarding-noreply@google.com`, the code in the subject or the body), stored as a message of the inbox like any other, marked `confirmation`, and kept as a sealed `confirm#` entry for thirty days so the set-up shows the code without opening the inbox. A flood of fake confirmations writes no commit.
+- **Verified** (`ConfirmEntry.Verified`) only when all of this holds: a DKIM signature with `d=google.com` passes; its `h=` covers `From`, `To` and `Subject`; it has no `l=` (the whole body is covered); `To` holds exactly one address and it is this mailbox's; and when the body names the address mail will be forwarded to, that is this mailbox's too. `msgauth` returns, for each signature, the header fields it covers and whether it limits the body (`inbox.AuthResult` gains `Headers []string` and `BodyLimited bool`, never stored). The requester and the code are read from the signed subject.
+- **For another address** (`ForAnotherAddress`): Google signed it, and the address it names is another one. Someone sent here a genuine confirmation meant for an address they control. It is shown without its code ("Gmail sent this for another address; it says nothing about this mailbox") and changes nothing.
+- **What "verified" means, everywhere it is said**: Google confirms that this Gmail account asked to forward to this mailbox. Not that forwarding is on, and not that later mail comes from it.
+- **The verified Gmail account of the mailbox** (`Mailbox.source`) is the first verified confirmation that arrives while the mailbox is waiting (no `receiving_since`): written once into the record at the version read, with `verified_at`, and the notice "Gmail asked to forward" sent. Later verified confirmations, from the same or another Gmail account, are listed in `confirmations` with their requester and change nothing. Someone who learns the address can ask Gmail to forward their own account to it, and win the first arrival: the app then shows their Gmail address, with its code, as the one Google confirmed. That statement is true. Forwarding starts only when someone types the code into Gmail's settings of the requesting account; Permaily never follows the link, and the person sees which Gmail account asked before they copy anything. The set-up says so: "Copy this code into Gmail only if <requester> is your account."
+- **For a mailbox that was disconnected or paused** the confirmation is refused at `RCPT TO` like any mail, and Gmail tells its account the address does not accept mail.
 
 ### Mail starts arriving
 
-The first message that is not a confirmation sets `receiving_since` in the record (one write at the version read; when another enclave set it first, the earlier time stays). The state shown is `waiting` without it, `receiving` with it, and `paused` while `paused_at` is set.
+The first message that is not a confirmation sets `receiving_since` in the record (at the version read; when another enclave set it first, the earlier time stays). The state shown is `waiting` without it, `receiving` with it, `paused` while `paused_at` is set, and `unreadable` when the record cannot be read.
 
 ### Disconnecting
 
-`DELETE mailboxes/{id}`, with a fresh proof (ADR 0022). Allowed while the terms are not agreed (it only removes data, like deleting the account); refused while the account is closing (`account_closing`), whose removal does it. In this order:
+`DELETE mailboxes/{id}`, with a fresh proof (ADR 0022), in every standing: an account closing or that has not agreed to changed terms can leave.
 
-1. Read the list and the record at their versions. A mailbox not in the list, or not the account's, is `not_found`.
-2. Write the entry `mailboxes-disconnecting/<now>#<id>`.
-3. Write the record at its version: `disconnecting`, `disconnected_at`, `disconnected_by: person`, no `WrappedKey`, no sealed part. `ErrChanged`: read again; when another request disconnected it, the answer is the same (204). From this write on neither enclave accepts mail for it (each reads the record at `RCPT TO` and before storing) or opens its mail.
-4. Take the identifier out of the list at its version, so the slot is free.
-5. Delete the pointer as it was read.
+1. Read the list and find the identifier (not there: `not_found`). Read the record at its version. Not the caller's account: `not_found`. Already `disconnecting`, `cancelled` or gone: finish what the reservation table says, answer 204. Forked or lost: go to "An unreadable mailbox".
+2. Write the disconnect entry at version 0 (`ErrExists`: there already).
+3. Write the record at its version: `disconnecting`, `disconnected_at`, `disconnected_by: person`, no key, no sealed part. `ErrChanged`: read again; another request disconnected it, the answer is the same (204). This is the moment of invariant 4.
+4. Take the identifier out of the list at its version.
+5. Delete the pointer as it was read, if it names this mailbox.
 6. Send the notice "a mailbox was disconnected". Answer 204.
 
-**The sweep** (`mailboxes.Sweep`), run by every enclave every ten minutes and once right after a disconnect, goes through the entries of `mailboxes-disconnecting` and reads each record. A record `disconnecting`: delete its messages a page of 100 at a time (the S3 object, then the item; `ErrNotFound` counts as done); redo 4 and 5 if they did not happen; when a listing finds nothing and two minutes have passed since `disconnected_at` (longer than an ingest may take, one minute), delete the rest of the partition (`txt#`, `seen#`, `confirm#` and F1's `sk=mailbox` item), remove the record (`RemoveRecord`) and delete the entry as it was read. A record that is gone: delete the entry. A record still `active` an hour after its entry: the disconnect failed at 3; delete the entry.
+**What it promises, exactly.** From the commit of step 3: no new request opens the mailbox and no new mail is accepted, on any enclave. A request that read the record before it finishes within its own deadline and is not cut short: a read of the inbox at most one minute from its start (`mailboxes.ReadDeadline`, the HTTP server's write timeout, after which nothing is sent), a delivery at most one minute from the end of `DATA` (`mailboxes.IngestDeadline`). What a late delivery leaves is ciphertext under a key no record holds any more: the sweep's last pass waits it out (below), and anything later still, on storage that misbehaves, expires with DynamoDB's TTL and the S3 lifecycle rule (at most 365 days, the longest retention). The design does not claim the mail is physically gone at the answer.
 
-**A failure in between** leaves, after 2, a mailbox exactly as it was, and the person sees an error and asks again; after 3, a mailbox that accepts nothing and that nobody can read, whose slot, pointer and mail the sweep frees and deletes. Never a mailbox that receives mail nobody can see, and never mail that can be read after the answer said it was deleted. A message stored by an ingest that read the record just before 3 is sealed under the key that is gone, and the sweep's last pass, two minutes later, deletes it. If whoever writes to the table deletes the entry of step 2, what is left is unreadable and expires with its retention.
+**The sweep** (`mailboxes.Service.Sweep`) is run by every enclave every ten minutes and once right after a disconnect. It goes through the disconnect entries, the oldest first, and for each reads the record:
+
+- `disconnecting`: make sure the identifier is out of the list and the pointer is gone; delete the mailbox's messages, a page at a time (the raw object, then the item), then every other item of its partition (`txt#`, `seen#`, `confirm#`, `settings`) and its index entry; when a pass finds nothing left and `disconnected_at` is at least three minutes old (`mailboxes.SweepGrace`: the ingest deadline, the clock difference two enclaves may have, and a minute), make one more pass, remove the record (`RemoveRecord`) and delete the entry as it was read.
+- gone: delete the entry.
+- `active` an hour after the entry was written: the disconnect failed before step 3; delete the entry.
+- forked or lost: as "An unreadable mailbox".
+
+Every deletion can be done twice, by two enclaves at once; `ErrNotFound` counts as done. A raw object written by a delivery after the last pass has no item and is deleted by the lifecycle rule of its tag.
+
+**A failure in between** leaves, after 2, a mailbox exactly as it was, and the person sees an error and asks again; after 3, a mailbox that accepts nothing and that nobody can open, whose slot, pointer and mail the next reader of the list and the sweep free and delete, even when the disconnect entry was deleted by hand (the next reader puts it back). Never a mailbox that receives mail nobody can see, and never mail that can be opened after the answer said the mailbox was disconnected.
+
+### An unreadable mailbox
+
+A record that is forked (`store.ErrForked`) or whose newest value is gone (`store.ErrLost`) cannot be read by any enclave: it refuses mail (`550 5.1.1`), its mail cannot be opened, and it is listed as `unreadable` with its identifier and when it was added. It counts against the five. The person can disconnect it: since the record cannot say whose it is, the account's list, which is anchored too, is the proof; the disconnect entry is written, the identifier taken out of the list, and the sweep deletes the partition and the raw objects of its messages (it needs no key to delete) but never removes the record, which stays refused. The pointer cannot be found without the address and is left; it leads to the refused record. The operator sees it in `/status` (a regression marked `fork`) and in the account's records. Nothing makes it readable again: a fork is evidence that someone wrote to the bucket of commits, and it stays there for the lock period.
 
 ### Accounts removed, closing and blocked
 
-- **Removed.** `accounts.removeLocked` calls `Mailboxes.RemoveAccount(ctx, id)` before it removes the account's record: every mailbox of the list is disconnected as above (`disconnected_by: account_removed`, no notice), then the list record is removed. Every step can be done twice, and a failure fails the removal, which the account's loop tries again (ADR 0017).
-- **Closing** (the seven days): mailboxes go on receiving, and the person can read them. Changes are refused (`account_closing`), as everything else is.
-- **Blocked** by the operator (decided by the owner): mailboxes go on receiving and storing. A block keeps the person out; it says nothing about their mail, Gmail keeps its own copy, and refusing would make Gmail tell the person their forwarding fails. Nobody reads it while the account is blocked: every request reads the account's record.
+- **Removed.** `accounts.removeLocked` calls `Mailboxes.RemoveAccount(ctx, id)` before it removes the account's record: the list is closed at its version; every identifier in it is handled as the reservation table says, with `active` ones disconnected as above (steps 2 and 3, `disconnected_by: account_removed`, no notice) and reserved ones fenced by a tombstone; then the list is removed. The sweep deletes the mail afterwards. Every step can be done twice; a failure fails the removal, which the account's loop tries again (ADR 0017).
+- **Closing** (the seven days): mailboxes go on receiving. The person can read, search and download their mail and disconnect mailboxes; they cannot make a mailbox, change one or delete messages (`account_closing`).
+- **Terms not agreed** (changed terms): mailboxes go on receiving. The person can list their mailboxes and messages, download messages and attachments, and disconnect mailboxes; nothing else (`terms_needed`). Leaving never requires agreeing.
+- **Blocked** by the operator (decided by the owner): mailboxes go on receiving and storing. Nobody reads them while the account is blocked: every request reads the account's record (`Standing`), and a blocked account's sessions are signed out.
 
 ### Paused by the operator
 
-For abuse (an address flooded, or mail that harms the service); decided by the owner. `paused_at` is written in the record at the version read: the mailbox refuses mail at `RCPT TO` with the same `550 5.1.1` as an address that does not exist and keeps everything it holds; the person reads, deletes and disconnects as before, sees "Paused by Permaily", and is told by mail. Resuming clears it. The operator cannot disconnect a mailbox or delete mail: that destroys what is the person's, and pausing stops the harm.
+For abuse (an address flooded, or mail that harms the service); decided by the owner. `paused_at` is written in the record at the version read, and the time added to `state_changes`; past ten changes in thirty days the operator gets `too_many_requests`. A paused mailbox refuses mail at `RCPT TO` with the same `550 5.1.1`, keeps everything it holds; the person reads, deletes and disconnects as before, sees "Paused by Permaily", and is told by mail. Resuming clears it. The operator cannot disconnect a mailbox or delete mail: that destroys what is the person's, and pausing stops the harm.
+
+### Interleavings the tests cover
+
+Two enclaves, A and B, share one store, as `enclaves_test.go` in `services/accounts` sets them up. Each case is a test of the pull request named; "S" cases are the store's (pull request 0), "M" the mailboxes service's (pull request 1).
+
+- **S1.** A and B read a record at one version. A writes the next version. A delete marker hides A's commit; B writes the same version, and S3 takes it; the marker is removed. Every later read and write of the record, through A, through B and through a third enclave started afterwards, fails with `ErrForked`; `RemoveRecord` and `CreateNew` too. A and B record a regression marked `fork`.
+- **S2.** S1 on an `Anchored` with `ForkIsLost` (the TLS identity): a read is lost; A and B both make a new identity; one commit wins at the version above the fork, and both then read it.
+- **S3.** A delete marker over the newest commit, and nothing written: the record reads as before.
+- **S4.** `CreateNew` through A and B at once: one succeeds, the other is `ErrExists`. `CreateNew` after `RemoveRecord`, and over a record written before commits existed: `ErrExists`.
+- **S5.** A partition with 300 expired entries above one that is not: `ScanEntriesDown` with `maxRead` 100 answers `Read` 100, no entry and a `Next`, three times, then the entry. The same for `ScanMessagesDown`.
+- **M1.** An account with four mailboxes makes one through A and one through B at once: exactly one succeeds, the other is `too_many_mailboxes`.
+- **M2.** A reserves an identifier and stops before its record. Eleven minutes later B lists the mailboxes: B writes the tombstone and frees the slot, and makes another mailbox. A resumes: its `CreateNew` fails, its pointer is deleted, it answers an error. The account has five mailboxes, all listed, and only listed ones accept mail.
+- **M3.** M2, but A's `CreateNew` lands just before B's tombstone: B's is `ErrExists`, B reads the record and keeps the identifier.
+- **M4.** A reserves and stops; the account is removed through B (the list closed, the reservation fenced); A resumes: its `CreateNew` fails.
+- **M5.** A reads the list to make a mailbox; B closes it to remove the account; A's write is `ErrChanged`, and A's reread answers `account_closing`.
+- **M6.** A has accepted a recipient at `RCPT TO`; B disconnects the mailbox; A's `DATA` reads the record again: not stored, `451`; the retry is refused at `RCPT TO` with `550`.
+- **M7.** A has read the record for delivery and is writing; B disconnects and its sweep runs: the sweep's last pass waits `SweepGrace` after `disconnected_at`, and deletes what A wrote. A write made after that (a store that held it) is a raw object without its item, under a key no record holds.
+- **M8.** A and B disconnect one mailbox at once: one write of `disconnecting` wins; both answer 204; one notice.
+- **M9.** A disconnects while B pauses: whichever writes second reads again; a pause of a `disconnecting` mailbox is `not_found`, a disconnect of a paused one goes on.
+- **M10.** A disconnect stops after step 3; the disconnect entry is deleted by hand. B lists the mailboxes: the mailbox is not listed, the slot is free, the entry is back, and the sweep deletes the mail.
+- **M11.** A and B sweep one mailbox at once: every item deleted once, the record removed once, the entry deleted once.
+- **M12.** One message delivered through A and B at once: one claim wins; the other answers `451`; the sender's retry finds the mark and answers `250`; one copy.
+- **M13.** A claims a message, stores part of it and stops. Within two minutes B's retry answers `451`; after, B takes the claim over with the same message identifier, writes the same keys, marks it; one copy, complete.
+- **M14.** A message for X and Y; Y is paused between `RCPT TO` and the end of `DATA`: X stored, the answer `451`; on the retry X is found stored and Y refused at `RCPT TO`; X holds one copy.
+- **M15.** Two confirmations signed by Google arrive through A and B at once for a waiting mailbox: one `verified_at`, one notice.
+- **M16.** The record put back by hand to its `active` version after a disconnect: refused, as ADR 0016's tests show; the mailbox stays disconnected.
+- **M17.** The pointer put back after a disconnect, or copied under the HMAC of another address: `550`.
+- **M18.** A pauses; mail through B: `550`. B resumes; mail through A: accepted.
+- **M19.** A and B change the settings at once: neither undoes the other.
+- **M20.** A and B remove one account at once: every mailbox disconnected once, the list removed once.
+- **M21.** A mailbox's record forked: `RCPT TO` refuses it, the list shows it `unreadable` and counts it, disconnecting frees the slot and the sweep deletes its partition.
+- **M22.** A confirmation arrives through A while the set-up reads through B: B shows it.
+
+## Delivery
+
+Both enclaves listen on port 25 behind one address, and a connection lands on either.
+
+### Admission, before anything is buffered
+
+The enclave has 2 GiB (`enclave_memory_mib`), and the Go runtime is held under 1,536 MiB (`GOMEMLIMIT`, `nix/eif.nix`). What can grow with what senders do is bounded per enclave, by counted semaphores that wait a bounded time:
+
+| Budget | Value | When it is taken | Over it |
+|---|---|---|---|
+| SMTP sessions at once | 64 | When a connection is accepted | `421 4.3.2 Too busy, try again later`, and the connection closes |
+| Bytes of `DATA` admitted at once | 128 MiB | At `MAIL FROM`: the declared `SIZE`, or 25 MiB without one | Waits at most 10 seconds, then `452 4.3.1 Insufficient system storage, try again later` |
+| Bytes of mail open for reading at once (a message, an attachment, a download, the HTML frame) | 128 MiB | Before a raw message is read from the bucket: its size | Waits at most 10 seconds, then 429 `too_many_requests` |
+| Searches at once | 4 | Before a search page | Waits at most 10 seconds, then 429 |
+
+A message held for delivery takes about three times its size at its peak (the buffer, its sealed copy, what parsing and DKIM keep), and an opened one about the same (the sealed object, the raw message, the HTML document of at most 9 MiB): 128 MiB each, so at most about 384 MiB for each side, plus four search pages of about 2 MiB, under 800 MiB in all, with the rest of 1,536 MiB for the runtime, TLS and everything else. A `DATA` larger than its `SIZE`, or than 25 MiB, is cut at that size and answered `552 5.3.4`; a `DATA` that takes more than ten minutes is answered `451 4.4.2` and frees its bytes. These are per enclave by nature: two enclaves have twice the memory. How many sessions come from one remote address is limited by the host's proxy (8), since the enclave sees connections over vsock without the sender's address; that limit is about fairness, which the host can break anyway by refusing connections, and the enclave's own budgets hold whatever it does.
+
+### What a message may hold
+
+Parsing (`inbox`) stops reading what is past these, and the message is still stored whole, with `StoredMeta.Partial`: the header block 256 KiB; one header field 16 KiB decoded; 100 addresses in one of `From`, `To`, `Cc`, `Reply-To`; the subject 2 KiB decoded; MIME nesting 16 deep; 500 parts; 100 attachments listed (the rest are in the raw message); an attachment's name 255 bytes before it is cleaned. Mail is never refused for its content: a sender told `250` must find it stored.
+
+### The sequence, and what each failure leaves
+
+1. **`RCPT TO`** (at most 10 recipients): normalise the address; refuse another domain or a `+tag`; compute the HMAC; read the pointer and check its signature; read the record; check that its `rcpt` is the pointer's name, that it is `active` and `paused_at` is unset; check this enclave's counts for the mailbox (600 messages an hour, 2 GiB a day). Two recipients of one mailbox are one.
+2. **The end of `DATA`**: from here a context of one minute (`mailboxes.IngestDeadline`). Verify DKIM (at most 15 seconds, inside the minute) and parse once. Then for each accepted mailbox, one after the other:
+   1. Read the record again. No longer `active`, or paused: this mailbox is **not stored**; go on with the next.
+   2. Unwrap the key; read the settings for the retention.
+   3. Read `seen#<digest>`. Marked stored: this mailbox is **done**. Claimed less than two minutes ago (`mailboxes.ClaimStale`): another delivery of the same message is storing it; **not stored**. Claimed longer ago: take the claim over at the version read, keeping its message identifier. None: claim it at version 0 with a new identifier. `ErrExists` or `ErrConflict`: read once more and decide again; still contended: **not stored**.
+   4. Store, under the claim's identifier: the raw object (S3, which replaces what an earlier try wrote at that key), the message item (replaced the same way), the `txt#` entry and, for a confirmation, the `confirm#` entry (version 0; `ErrExists` is an earlier try's, the same message).
+   5. For a verified confirmation of a waiting mailbox with no source, `verified_at` and the requester; for the first other mail, `receiving_since`: each at the version read, decided again on `ErrChanged`.
+   6. Mark `seen#<digest>` stored at the version of the claim. `ErrConflict`: read it; whoever took it over writes the same identifier, and step 4 is complete either way, so this mailbox is **done**.
+   Any error in 1 to 6 makes this mailbox **not stored** and the next one is tried.
+3. **The answer**: every accepted mailbox done: `250 2.0.0`; otherwise `451 4.3.0 Temporary failure, try again later`. The admitted bytes are given back.
+
+| Interrupted after | What it leaves | What the sender's retry does |
+|---|---|---|
+| 2.3, the claim | A claim, nothing stored | Within two minutes, `451` again; after, takes it over, same identifier |
+| part of 2.4 | A raw object, maybe the item, maybe the search entry | Takes the claim over and writes the same keys again: one message, complete |
+| 2.4, before the mark | The message, complete, unmarked | The same: written again over itself, then marked |
+| 2.6, before the answer | The message, marked | Finds the mark: `250`, nothing written |
+| Never retried (the sender gave up) | A claim that ends after seven days; at most a message without its search entry (found by the list, not by a search), or a raw object without its item (shown nowhere), each expiring with its retention | — |
+
+So a crash never loses a message and never stores it twice: the store is idempotent because the claim decides the keys of the message's items. A message is stored twice only when a sender changes its bytes between tries (another `Received` line it adds, a new signature), when the `seen#` entry is deleted by whoever writes to the table, or when it is sent again after seven days.
+
+### The answers, all of them
+
+| Situation | Where | Answer |
+|---|---|---|
+| No TLS | `MAIL FROM` | `530 5.7.0` |
+| `SIZE` over 25 MiB | `MAIL FROM` | `552 5.3.4` |
+| Sessions over 64 | Connection | `421 4.3.2` |
+| Bytes of `DATA` not admitted within 10 seconds | `MAIL FROM` | `452 4.3.1` |
+| An address never made, disconnected, paused, cancelled, unreadable, of another domain, or with a `+tag` | `RCPT TO` | `550 5.1.1 No such mailbox` |
+| The mailbox over 600 messages this hour or 2 GiB today, in this enclave | `RCPT TO` | `451 4.7.1` |
+| An error reading the pointer or the record | `RCPT TO` | `451 4.3.0` |
+| An eleventh recipient | `RCPT TO` | `452 4.5.3` |
+| No recipient accepted | `DATA` | `554 5.5.1` |
+| More than its `SIZE` or 25 MiB | During `DATA` | `552 5.3.4` |
+| `DATA` over ten minutes | During `DATA` | `451 4.4.2` |
+| Every accepted mailbox holds it, now or from an earlier try | End of `DATA` | `250 2.0.0` |
+| Some stored, one stopped accepting meanwhile | End of `DATA` | `451 4.3.0`; the retry finds the others stored and that one refused at `RCPT TO`, so the sender bounces only that one |
+| One being stored by another delivery of the same message | End of `DATA` | `451 4.3.0` |
+| A storage error, or the minute passed | End of `DATA` | `451 4.3.0` |
+| The connection lost | Anywhere | Nothing is marked; the sender tries again |
+
+Retention is DynamoDB's TTL and the S3 lifecycle rule of the object's tag, as in F1: nothing in the enclave sweeps expired mail. Reads leave out what has expired.
+
+What it costs: a refused address is one DynamoDB read. An accepted one is two anchored reads of the record (each an S3 listing of its commits, its newest commit and one DynamoDB read), one or two reads and writes of the claim, two item writes, one or two entry writes and one S3 write.
 
 ## Limits
 
 | Limit | Value | Kept | With two enclaves |
 |---|---|---|---|
-| Mailboxes an account has (decided by the owner) | 5 | In `mailboxes-<account>`, written at the version read | Exactly 5 |
-| Mailboxes made an hour by an account | 10 | Each enclave's memory | 20 |
+| Mailboxes an account has (decided by the owner) | 5 | The account's list and the records it names | Exactly 5 |
+| Mailboxes an account makes | 10 in any thirty days | `made` in the account's list | Exactly 10 |
+| Pauses and resumes of one mailbox | 10 in any thirty days | `state_changes` in its record | Exactly 10 |
 | Size of a message | 25 MiB (SMTP `SIZE`, as F1) | Compiled in | The same |
 | Recipients of a message | 10 (as F1) | Compiled in | The same |
-| Messages an hour into a mailbox | 600; one more is `451 4.7.1` and the sender tries again later | Each enclave's memory, by mailbox | 1,200 |
-| Bytes a day into a mailbox | 2 GiB, the same answer | Each enclave's memory | 4 GiB |
-| Messages or bytes stored | None (ADR 0019: no limits per person in the first version; retention bounds it and the spending alarm watches it) | | |
+| Messages an hour into a mailbox | 600 | Each enclave's memory | 1,200 |
+| Bytes a day into a mailbox | 2 GiB | Each enclave's memory | 4 GiB |
+| Settings changes of a mailbox | 10 a minute | Each enclave's memory | 20 |
+| Messages or bytes stored | None (ADR 0019: none per person in the first version; retention bounds it and the spending alarm watches it) | | |
 | Messages deleted in one request | 100 | Compiled in | The same |
-| Messages a search page looks at | 2,000 | Compiled in | The same |
-| Search pages an account asks a minute | 30 | Each enclave's memory | 60 |
-| Raw messages open at once (a message, an attachment, a download) | 8; one more waits | Each enclave's memory | 8 each |
+| Items a list page reads | 500 | Compiled in | The same |
+| Entries a search page reads | 2,000 | Compiled in | The same |
+| Search pages an account asks | 30 a minute | Each enclave's memory | 60 |
+| Memory and sessions | "Admission" | Each enclave's memory | Each its own |
 
-Counts in memory follow ADR 0017: one in the storage could be set back by whoever writes to it. None of these is dangerous at twice its value.
+The limits in memory follow ADR 0017: a count in the storage could be set back by whoever writes to it, and none is dangerous at twice its value. The three kept in anchored records cannot be set back, and are there because each change they count is a commit that nobody can delete.
 
-## Ingest with two enclaves
+## What is anchored, and what is not
 
-Both enclaves listen on port 25 behind the same address, and a connection lands on either.
+**Anchored** (`store.Anchored`, an earlier copy refused, a fork refused): the mailbox's record, for what going back would matter: its owner, its state (a disconnected or paused mailbox accepting mail again, a cancelled reservation coming alive), its key (a removed key coming back), its `rcpt`, `verified_at` and the Gmail account (undoing which account Google confirmed); and the account's list (going back would hide a mailbox from its person while it received, give back a slot, or reopen a closed list).
 
-1. **`RCPT TO`**: normalise, compute the HMAC, read the pointer (one item), check its signature, read the record (anchored), check that its `rcpt` and `account` are the pointer's, that it is `active` and `paused_at` is unset, and that this enclave's counts for the mailbox are under the limits. Otherwise `550 5.1.1` (or `451 4.7.1` for a limit). A second `RCPT TO` of the same mailbox in one message is taken once.
-2. **`DATA`**, once the message is read: for each mailbox, read the record again; one that stopped accepting meanwhile is skipped (all skipped: `550 5.1.1`). Unwrap the key. Write the `seen#` mark at version 0; when it is there already, the message was stored before (a sender that sent again after losing the answer, or the same message through the other enclave) and is not stored again. Seal and store the meta, the `txt#` entry and the raw message (`inbox.Deliver`). Then, for a confirmation, its `confirm#` entry and perhaps `verified_at`; for the first mail, `receiving_since`. `250` only once everything of every mailbox is stored; any failure is `451 4.3.0`, and the sender tries again, which the mark makes safe. A message without a `Message-ID` has no mark and may be stored twice.
-3. **Retention** is DynamoDB's TTL and the S3 lifecycle rule of the object's tag, as in F1: nothing in the enclave sweeps expired mail, so there is nothing for two enclaves to do twice. Reads filter what has expired.
-4. **Counters** are only the limits above, in memory. `receiving_since` and `verified_at` are each written once, at the version read.
+**How many commits that is.** S3 keeps every commit for the lock period, and `Head` refuses a record with more than 10,000 objects (`maxCommitObjects`), so ordinary use must stay far below. A mailbox's record gets at most: one when made, one for `verified_at`, one for `receiving_since`, ten pauses and resumes in thirty days, one at disconnect, one at removal: at the maximum rate, 10,000 commits last about 1,000 periods of thirty days, about 82 years. An account's list gets at most: one when made, ten reservations and ten departures in thirty days, one close and one removal: about 500 periods, 41 years. Both outlast the ten-year lock, after which ADR 0016's "The lock has an end" applies to them as to every record. Moving a record's head to a new name when its commits grow ("head rollover") is future work of the store.
 
-What it costs: a refused address is one DynamoDB read. A message for a mailbox is two anchored reads (each an S3 listing of the record's commits, its newest commit and one DynamoDB read; a mailbox's record gets few commits: made, a label, a retention, `verified_at`, `receiving_since`, a pause), one conditional write, two item writes and one S3 write: about what a signed-in request costs today.
+**Not anchored**, and what putting back an earlier copy, or deleting one, gives whoever writes to the table:
 
-## Two enclaves: every record and flow
-
-| What | How it holds | Test (named for the implementer; the set-up of `enclaves_test.go` in `services/accounts` and `inbox`) |
+| Record | Put back or deleted | What it gives |
 |---|---|---|
-| Making a mailbox | The list is written at the version read, so two creations through two enclaves cannot pass the limit; the pointer at version 0; the record by a write that only creates | `TestTwoEnclavesMakeMailboxesUpToTheLimit`, `TestAMailboxMadeThroughOneEnclaveReceivesThroughTheOther` |
-| Label and retention | `PutRecordAt` on the record, four tries | `TestTwoEnclavesChangingAMailboxDoNotUndoEachOther` |
-| Mail after a disconnect | Each enclave reads the record at `RCPT TO` and before storing; nothing is cached | `TestADisconnectThroughOneEnclaveStopsMailThroughTheOther` |
-| Disconnecting twice at once | One write of `disconnecting` wins; the other reads it and answers the same | `TestTwoEnclavesDisconnectOneMailbox` |
-| A disconnect against an ingest | The ingest that read `active` stores under a key that is gone; the sweep's last pass deletes it | `TestMailStoredWhileAMailboxIsDisconnectedIsDeleted` |
-| A disconnect against a change of label | One `PutRecordAt` is refused; the change reads `disconnecting` and answers `not_found` | `TestAChangeDoesNotBringADisconnectedMailboxBack` |
-| The sweep run by both | Every deletion can be done twice; entries are deleted as read | `TestTwoEnclavesSweepOneMailbox` |
-| One message delivered through both | The `seen#` mark at version 0 | `TestAMessageDeliveredThroughTwoEnclavesIsStoredOnce` |
-| The verified Gmail account | Written once at the version read; the first confirmation wins | `TestTwoConfirmationsAtOnceVerifyOneAccount` |
-| The test mailbox moved by both at the first start | Every step is a create or a write at the version read, skipped when done | `TestTwoEnclavesMoveTheTestMailboxOnce` |
-| Removing an account with mailboxes, by both | Disconnecting each can be done twice; the list record goes last | `TestTwoEnclavesRemoveAnAccountWithMailboxes` |
-| Pause and resume | `PutRecordAt` at the version read | `TestAPauseThroughOneEnclaveRefusesMailThroughTheOther` |
-| A forwarding set-up whose confirmation arrives through one and is read through the other | Everything is in the storage | `TestAConfirmationReceivedThroughOneEnclaveShowsThroughTheOther` |
+| The settings (label, retention) | An earlier label, an earlier retention | The old label shown. An older retention applied to mail received afterwards: shorter, mail expires sooner; longer, it stays longer. Whoever writes to the table already controls when mail is deleted (the TTL, the lifecycle rules, deleting items), so it gives nothing they lack |
+| The pointer | Put back after a disconnect, or copied under another address's name | Nothing: the record refuses it |
+| A message, its `txt#`, its raw object | Deleted, or put back after the person deleted it | A message lost or shown again, until the audit log of ADR 0019 (accepted by ADR 0018). Nothing moves between mailboxes or accounts: each is sealed under its mailbox's key, bound to its mailbox and message |
+| A `confirm#` entry | Put back after it ended | Nothing: the sealed `ends` hides it |
+| A `seen#` entry | Deleted | A message sent again is stored twice |
+| A `seen#` entry | An old mark put back | A message sent again with exactly the same bytes is not stored again: dropping mail, which whoever runs the host can do anyway by dropping connections |
+| A disconnect entry | Deleted | Nothing lasting: the next reader of the list puts it back while the identifier is in the list; after that, ciphertext under a key no record holds expires with its retention |
+| The index of mailboxes | Anything | Wrong counts in the admin panel |
 
-What stays one enclave's: the limits above, and nothing else.
+## Changes to the store
 
-## What goes through store.Anchored, and why
+Built first, in pull request 0, with their tests (S1 to S5) and ADR 0016 updated. The types and the interface below are already in `internal/store/scan.go`.
 
-- **The mailbox record.** Its going back would make a disconnected or paused mailbox accept mail again, bring back a destroyed key, set a shorter retention back to a longer one, or undo `verified_at`. Read with `GetRecordAt`, written with `PutRecordAt`. `store.ErrLost` (the committed version is gone) is an error and never "no such mailbox": the mailbox refuses mail, its person is told it cannot be read, and nothing makes it again.
-- **The list of an account's mailboxes.** Its going back would hide a mailbox from its person while it went on receiving, or give back a slot. `ErrLost` is an error: the person cannot make or list mailboxes until the operator looks.
-- **Not the pointer**: it proves nothing, the record must bear it out. One put back after a disconnect leads to a record that is `disconnecting` or gone.
-- **Not messages, `txt#`, `confirm#` or `seen#`**: a message removed or put back by whoever writes to the table is the audit log's job (ADR 0018, ADR 0019); a confirmation put back shows an old code; a mark deleted lets one message be stored twice. None of it moves mail between accounts or opens it: each is sealed under its mailbox's key and bound to its mailbox and message.
-- **Not the list of mailboxes being disconnected**: an entry deleted by hand leaves unreadable mail to expire with its retention.
+**The fork rule.** A commit object is written only if nothing is at its key (`IfNoneMatch: "*"` since the store of commits was built, in #51), so two commits of this deployment at one version can only be there if whoever writes to the bucket hid the first behind a delete marker while an enclave wrote the second (`TestAnchoredOverS3CommitsWithADeleteMarkerInBetween`). No legitimate race leaves two: two enclaves that write the same version get one `ErrExists`. So the rule that chose the commit with the smaller digest goes:
+
+- `S3Commits.Head` reads every object at the highest version that has a commit of this deployment (within `maxCommitReads`), and when two or more are commits, the same digest or not, returns `store.ErrForked`. `MemoryCommits` gains `Fork(name, version, digest)` for tests.
+- `Anchored` passes it on from every method that reads the head: `GetRecord`, `GetRecordAt`, `PutRecord`, `RemoveRecord` and `CreateNew` fail with `ErrForked`, which is not an `ErrNotFound`. `PutRecordAt` with a mark from before the fork writes at the forked version, gets `ErrExists`, answers `ErrChanged`, and the reread fails with `ErrForked`. Nothing writes past a fork, so a fork stays the newest version, and every enclave, after every restart, finds it: both commits stay in the bucket, which nobody can delete from, for the lock period.
+- A fork found is recorded as a `Regression` with `Fork: true` (once per record and enclave), and `/status` reports it as an `AnchorRegression` with `fork: true` (`pkg/attestation`), on which `permaily-verify` fails as on any regression. The names of mailbox records, which hold identifiers, are reported as `mailbox`, as accounts' are as `account`.
+- Records stored before this rule have no fork unless someone made one: the rule needs no migration. An older release that runs again (a rollback) chooses by digest as before.
+
+**What it does to the TLS identity.** Failing closed there would leave the service without its certificate key until a new deployment. So `Anchored` gains `ForkIsLost bool`, set only on the TLS identity's: a forked record then reads as lost (`ErrLost`, wrapping `ErrForked`), and `PutRecord` with create makes it again as the version above the fork. That is what ADR 0024 already does with a lost identity: a new key made inside the enclave, nothing old comes back, the CAA records and the certificate history follow "Replace the TLS key". Whoever can fork could deny service anyway; with this they cost the deployment one new key and one certificate, and are seen in `/status`. Accounts and mailboxes do not set it: a forked account or mailbox is an error, never "none".
+
+**`CreateNew(ctx, r) error`.** Makes a record only if no commit of this deployment was ever made for its name, a removal included, and nothing is stored under its plain name from before commits existed: `ErrExists` otherwise (`ErrForked` counts as a commit). `PutRecord(create)` stays as it is for the TLS identity and accounts, which may make a removed or lost name again; mailboxes and lists use only `CreateNew`, so a name once made is never made again. Added to `mailboxes.Records`, which `*store.Anchored` then satisfies.
+
+**`store.Scanner`**, implemented by `*Memory` and `*AWS`:
+
+```go
+ScanEntriesDown(ctx context.Context, partition, prefix, before string, maxRead int) (*EntryScan, error)
+ScanMessagesDown(ctx context.Context, mailboxID, before string, maxRead int) (*MessageScan, error)
+```
+
+Each reads at most `maxRead` items (1 to `store.MaxScanRead`, 100) of the partition whose key starts with the prefix and is strictly below `before` (`""` for from the greatest), greatest key first, with consistent reads, and returns the ones not expired, with `Read` (items read, expired included) and `Next` (the key of the last item read when it stopped at `maxRead`, `""` when nothing is left). The AWS one is a DynamoDB `Query` with `ScanIndexForward: false` and `Limit: maxRead`, which counts items evaluated, not returned; it never reads a second page. `ListEntries` and `ListMessages` stay as they are for accounts and F1's callers.
+
+ADR 0016 and ADR 0024 change with it (in this pull request): the fork rule replaces the smallest digest and "noticed, not prevented"; `CreateNew` and `ForkIsLost` are described there.
+
+## Access while an account is closing or has not agreed
+
+Decided by the orchestrator of the review on 2026-11-12; the owner is told. The server enforces it, through `mailboxes.Accounts.Standing` and `mailboxes.Access` (`internal/services/mailboxes/mailboxes.go`); the web app shows only what the server allows.
+
+| Route | Agreed, open | Closing | Terms not agreed |
+|---|---|---|---|
+| `GET mailboxes`, `GET mailboxes/{id}` | Yes | Yes | Yes |
+| `POST mailboxes` | Yes | 409 `account_closing` | 400 `terms_needed` |
+| `PATCH mailboxes/{id}` | Yes | 409 `account_closing` | 400 `terms_needed` |
+| `DELETE mailboxes/{id}` (fresh proof) | Yes | Yes | Yes |
+| `GET .../messages` without `q` | Yes | Yes | Yes, to find what to download |
+| `GET .../messages?q=` | Yes | Yes | 400 `terms_needed` |
+| `GET .../messages/{message}`, `.../html`, `.../links/{n}` | Yes | Yes | 400 `terms_needed` |
+| `GET .../raw`, `GET .../attachments/{index}` | Yes | Yes | Yes |
+| `DELETE .../messages/{message}`, `POST .../messages/delete` | Yes | 409 `account_closing` | 400 `terms_needed` |
+
+An account both closing and not agreed may do what both columns allow; a refusal is `account_closing` when the closing column refuses, otherwise `terms_needed`. A blocked account, or one that is gone, is 401 everywhere. The admin panel's and the operator's routes are not the person's and do not depend on the person's standing.
 
 ## The inbox
 
 ### What a message returns
 
-- **Text, always.** The text/plain part (the first, decoded); with none, text the enclave takes out of the text/html part with `golang.org/x/net/html`'s tokenizer (already in the module graph through `go-message`, so no new module): text nodes, a line break for each block element, nothing of `script`, `style` or `head`, entities decoded, and each link's target written after its text in brackets, so nothing is hidden behind words. With neither, nothing (`text_from: none`). At most 256 KiB; `text_truncated` past it. The text view and search use it.
-- **And HTML, formatted.** A message with a text/html part is shown formatted by default: `Message.html` says whether it can be and what was removed, and the frame loads the cleaned document from its own route. In the text view no link is made clickable, as before; in the formatted view a link opens, in a new tab, a page of the app that shows where it really leads before the person goes there.
-- **How the HTML is made harmless** (the frame, its headers, the sanitiser, links, images, limits, tests): "Showing a message's HTML", at the end of this record. Nothing of it is stored.
-- **Attachments** are listed by index, name, type and size, and downloaded only as files: `GET .../attachments/{index}` answers `Content-Type: application/octet-stream` whatever the message said, `Content-Disposition: attachment` with the name cleaned (`domain.AttachmentFilename`: no path, no control characters, at most 120 characters, `attachment-<n>` when nothing is left; `filename*` in UTF-8 and an ASCII `filename`), `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'`, `Cross-Origin-Resource-Policy: same-origin` and `Cache-Control: no-store`. The raw message the same way, as `message/rfc822`, as F1 does.
+- **Text, always.** The text/plain part (the first, decoded); with none, text the enclave takes out of the text/html part with `golang.org/x/net/html`'s tokenizer (already in the module graph through `go-message`): text nodes, a line break for each block element, nothing of `script`, `style` or `head`, entities decoded, and each link's target written after its text in brackets. With neither, nothing (`text_from: none`). At most 256 KiB; `text_truncated` past it. The text view and search use it; `inbox.MessageText(raw []byte, max int) (text, from string, truncated bool)` makes it, at delivery for the search entry and at read for `Get`.
+- **And HTML, formatted**, as "Showing a message's HTML" says.
+- **Attachments** are listed by index, name, type and size, and downloaded only as files: `GET .../attachments/{index}` answers `Content-Type: application/octet-stream` whatever the message said, `Content-Disposition: attachment` with the name cleaned (`domain.AttachmentFilename`: no path, no control characters, at most 120 characters, `attachment-<n>` when nothing is left; `filename*` in UTF-8 and an ASCII `filename`), `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'`, `Cross-Origin-Resource-Policy: same-origin` and `Cache-Control: no-store`. The raw message the same way, as `message/rfc822`.
 - **Who sent it**: the DKIM results are returned (`auth`), and the app says "Signed by <domain>" or nothing; it never says a sender is who they claim to be.
 
 ### Listing and paging
 
-Newest first; `limit` 1 to 100 (50 without one); `after` is the `next` of the page before, a message identifier (32 hex characters, otherwise `invalid_cursor`). `next` is absent on the last page. Expired messages are left out, as in F1.
+Newest first; `limit` 1 to 100 (50 without one); `after` is the `next` of the page before, a message identifier (32 hex characters, otherwise `invalid_cursor`). A page reads at most 500 message items (`ScanMessagesDown` in steps of 100) and stops at `limit` messages or 500 read. `next` is the identifier of the last item read, set whenever the scan stopped before the partition's end; absent on the last page. So a page may hold fewer than `limit` messages, or none, and still have `next`: the app offers "Older" whenever `next` is there. Expired items are read and left out; they count toward the 500.
 
 ### Searching
 
 - **What**: the senders' names and addresses, the subject and the text (its first 16 KiB). The query is split on spaces; each part must appear in one of them, without regard to case. No operators, no phrases.
-- **How**: inside the enclave, by reading the mailbox's `txt#` entries newest first, opening each and matching, until `limit` matches or 2,000 entries looked at. The page answers what it found, `searched_to` (when the oldest entry it looked at arrived) and `next` to go on from there. Messages stored before `txt#` existed (the test mailbox's) are matched on what their meta holds: sender, subject and snippet.
-- **Cost, at most, per page**: 2,000 entries of about 18 KiB, so about 36 MiB read from DynamoDB in pages of 1 MB, about 4,600 read units (a thousandth of a dollar on demand), about a second, and one page of entries in memory at a time. At the forty messages a day the forwarding screens expect, ninety days are 3,600 messages: two pages search a whole mailbox.
-- **Rejected: a sealed index** (an HMAC per word, kept per mailbox). It would answer in one read, but it shows whoever reads the table how often each hidden word appears and when, it has to be kept right as messages are deleted or expire, and the scan is fast enough at the sizes ADR 0018 expects. To be revisited when a mailbox holds more than about 20,000 messages.
+- **How**: `ScanEntriesDown` over the `txt#` entries from below `after`, a hundred at a time, opening each and matching, until `limit` matches or 2,000 entries read. What counts toward the 2,000: every item read under `txt#`, an expired one and one that does not open under the key included. A match whose message item is gone is left out (it counted). `next` is the message identifier of the last entry read, whether it matched or not, set whenever the scan stopped before the end; `searched_to` is when the last entry read arrived (`SearchEntry.received_at`, or the time in the identifier of one that does not open). A page with no match has `messages: []`, `searched_to` and, unless nothing older is left, `next`: the app says "Searched mail back to <searched_to>" and offers "Search older mail". With no migration (the test mailbox is retired) every message has its `txt#` entry; one whose delivery stopped before writing it is found by the list, not by a search.
+- **Cost, at most, per page**: 2,000 entries of about 18 KiB, so about 36 MiB read from DynamoDB in twenty queries, about 4,600 read units (a thousandth of a dollar on demand), about a second, and 2 MiB in memory at a time. At the forty messages a day the forwarding screens expect, ninety days are 3,600 messages: two pages search a whole mailbox.
+- **Rejected: a sealed index** (an HMAC per word). It would answer in one read, but it shows whoever reads the table how often each hidden word appears and when, and it has to be kept right as messages are deleted or expire. To be revisited when a mailbox holds more than about 20,000 messages.
 
 ### Deleting
 
-One (`DELETE .../messages/{id}`, 204, `not_found` when it is not there) or up to 100 (`POST .../messages/delete`, answering how many were there). Each deletes the S3 object, then the item, then its `txt#` and `confirm#` entries. No fresh proof: a session that can read a message can delete it, as in any mail app.
+One (`DELETE .../messages/{id}`, 204, `not_found` when it is not there) or up to 100 (`POST .../messages/delete`, answering how many were there). Each deletes the raw object, then the item, then its `txt#` and `confirm#` entries. No fresh proof: a session that can read a message can delete it, as in any mail app.
 
-## The test mailbox
+## The test mailbox: retired
 
-Production has one real account (the owner's) and the test mailbox `test`, `u-9b393600758a2985dae3@inbox.permaily.com`, read with a token by the owner and in docs/operations.md, and the address TLS-RPT reports go to (`deploy/tofu/mail.tf`). The verifier only checks that port 25 answers STARTTLS with the attested key: no address is part of it.
+Production has the test mailbox `test`, `u-9b393600758a2985dae3@inbox.permaily.com`, read with a token by the owner (docs/operations.md, "Read the test mailbox"), and the address TLS-RPT reports go to (`deploy/tofu/mail.tf`). The verifier only checks that port 25 answers STARTTLS with the attested key: no address is part of it. It is not moved into an account: moving it would keep a key that the operator's token and every release up to v0.11.0 can read, and a release that can still read F1's items could bring it back.
 
-**What happens.** The release that builds this moves the test mailbox into an account at its first start, with its address, its key and its mail, and removes the token:
+**What the release that builds this does.** It has no code that reads F1's mailbox item, its key or its mail. Its address has no pointer, so it answers `550 5.1.1` like any unknown address. Gone with it: `internal/inbox/inbox.go` and `messages.go` (F1's service), `internal/httpapi/mailbox.go` and its tests, the flags `-mailbox-id`, `-mailbox-address` and `-mailbox-token-sha256` and their lines in `nix/eif.nix`, the keys `mailbox_id`, `mailbox_address` and `mailbox_token_sha256` in `deploy/enclave.json`, the rule for the token's hash in `.gitleaks.toml`, and `TokenAuth` if nothing else uses it. Storage and SMTP are on whenever the image names a table (`dynamodb_table`), and mailboxes whenever accounts are on (`mail_from`).
 
-- `deploy/enclave.json` keeps `mailbox_id` and `mailbox_address` (now: the mailbox to move; `mail.tf` still reads the address for TLS-RPT) and gains `legacy_mailbox_owner`, the contact address of the account that receives it (decided by the owner: `hello@permaily.com`, the super admin). `mailbox_token_sha256` and `-mailbox-token-sha256` go. Storage and SMTP are on whenever the image names a table (`dynamodb_table`), no longer because it has a mailbox.
-- **The move** (`mailboxes.MoveLegacy`) is run by every enclave at start and then every ten minutes until it is done; each step is skipped when done, and is a create or a write at the version read:
-  1. If the record `mailbox-test` does not exist: read F1's item (`pk=mailbox#test`, `sk=mailbox`) and open its state with its key. No item: there is nothing to move (a new deployment). Make the record with `PutRecord(create)`: the same `WrappedKey`, the retention and the address from before, `account` empty, `active`, `receiving_since` when its oldest message arrived, the label "Test mailbox", and `verified_at` with the requester when one of its confirmations was signed by Google. `ErrExists`: another enclave made it.
-  2. Write the pointer from the address at version 0 (`ErrExists` from a pointer that leads to `test`: done). Its confirmations become `confirm#` entries.
-  3. Find the account of `legacy_mailbox_owner` (`Accounts.AccountID`). None yet: stop and try again in ten minutes; the mailbox receives mail meanwhile and nobody reads it. Found: add `test` to its list (not counted against the limit), then write `account` in the record at its version. Only this step ever writes the `account` of a record that has none, and nothing else writes `account`.
-- **F1's item stays** where it is, unread by the new release, so v0.11.0 can still run after a rollback (it would see the retention and the codes from before the move, and every message). A later release deletes it (docs/plan.md).
-- **`/v1/mailbox` answers 410 `mailbox_moved`** on every path, without looking at a token: the token reads nothing from this release on, and the route goes in the release after. The owner reads the mailbox in the app, like any person: the operator's token reads nobody's mail.
-- **What changes for whoever used it.** docs/operations.md's "Read the test mailbox" becomes "in the app, signed in as the owner". `cmd/permaily-enclave/main_dev_test.go` sends mail to a mailbox made through the API. TLS-RPT reports keep arriving at the same address, now in the owner's inbox. Dev mode takes `-mailbox-owner` (by default the super admin, `admin@permaily.test`).
+**`/v1/mailbox` goes without a 410.** What calls it: the owner's `curl` in docs/operations.md, `cmd/permaily-enclave/main_dev_test.go` and `internal/httpapi/mailbox_test.go`; no script, workflow or verifier (searched on 2026-11-12). A path under it answers 404, as any unknown path of the API host.
+
+**TLS-RPT.** `deploy/tofu/mail.tf` reads the address from a variable, `tls_rpt_address`, empty by default, and writes the `_smtp._tls` record only when it is set. The release's pull request removes the record (the variable is empty). After the release, the super admin makes a mailbox in the app ("TLS reports"), and the operator sets `tls_rpt_address` to its address and applies (docs/operations.md). Until then senders find no TLS-RPT record and send no reports; nothing else depends on it.
+
+**F1's items** stay where they are until the release is verified and a rollback to v0.11.0 is no longer wanted. Then the operator deletes (docs/operations.md): in the table, every item with `pk=mailbox#test` (the mailbox, `sk=mailbox`, and its messages, `sk=msg#…`); in the mail bucket, every object under `raw/test/`. A rollback to v0.11.0 before that reads the test mailbox as it was (and receives at its address again); after it, v0.11.0 would make a new, empty test mailbox. Deleting the KMS key of v0.11.0 and of the releases before (docs/operations.md, "Delete the key of an old release") ends their ability to open the root secret.
+
+**What it does not undo.** Mail the test mailbox ever received was readable with the operator's token, and by every release up to v0.11.0. Nothing makes it unreadable in retrospect except deleting it and retiring those releases' KMS keys. Said in docs/threat-model.md.
+
+**What tests, dev mode and staging use instead.** Dev mode makes mailboxes through the API like everyone: `TestMailEndToEnd` (`main_dev_test.go`) signs up an account (the dev outbox holds the code), makes two mailboxes through `/api/v1/mailboxes`, sends mail to both over SMTP with STARTTLS, reads it through the API with the session, disconnects one, and checks the log holds no address, subject, identifier or code. The F1 dev command in internal/AGENTS.md goes. Staging rehearsals sign in to the staging app with an account of the owner's, make a mailbox (two, when a test needs a second readable address), send to it and read it in the app or through the API with the session (docs/operations.md, "Test with staging images").
 
 ## What the operator and admins see and do
 
-- **Counts and records, never addresses.** `AccountRecord` gains `mailboxes` (how many the account has), `Stats` gains `mailboxes: {total}`, and an account's mailboxes are listed as `MailboxRecord`s: identifier, account, state, created, retention, receiving since, paused at, verified or not. No address, label or Gmail account: the operator does not need them to help, and with them could put mail into anyone's inbox.
-- **Finding a mailbox by its address**, for an abuse report that names one: the address is hashed as `RCPT TO` hashes it and the pointer followed, and the answer is a list of none or one `MailboxRecord`. It tells the operator which account owns an address they know already, as finding an account by its address does.
-- **Pause and resume**, counted on `/status` as `mailbox_paused` and `mailbox_resumed` (added to `attestation.AdminActions` and printed by `permaily-verify`), logged by kind alone, and written in the admin log when done through the panel. Through the panel they need a fresh proof, as every admin change does.
+- **Counts and records, never addresses.** `AccountRecord` gains `mailboxes` (how many the account has), `Stats` gains `mailboxes: {total}` (from the index), and an account's mailboxes are listed as `MailboxRecord`s: identifier, account, state, created, retention, receiving since, paused at, verified or not. No address, label or Gmail account.
+- **Finding a mailbox by its address**, for an abuse report that names one: the address is hashed as `RCPT TO` hashes it, the pointer followed and the record must bear it out; a list of none or one. It tells the operator which account owns an address they know already.
+- **Pause and resume**, counted on `/status` as `mailbox_paused` and `mailbox_resumed` (added to `attestation.AdminActions` and printed by `permaily-verify`), logged by kind alone, and, through the panel, written in the admin log with the account and the mailbox.
 - **Not**: reading, disconnecting, deleting mail, changing a label or a retention, moving a mailbox.
 - **`/status` shows no count of mailboxes**: it is public, and one enclave's.
 - **`scripts/accounts.sh`** prints the count with each account, and gains `mailboxes <account id>`, `mailbox find <address>`, `mailbox pause <id>` and `mailbox resume <id>`.
-- **The narrow interface stays narrow.** The operator's routes get a second interface, `httpapi.MailboxOperator`, with four methods, each taking an identifier or an address to look up: `MailboxRecords(accountID)`, `MailboxByAddress(address)`, `PauseMailbox(id)`, `ResumeMailbox(id)`. `TestTheOperatorsRoutesCannotChangeAnAddressOrAWayIn` names them too.
+- **Who acts, and what it checks.** The mailboxes service exposes the operator's half to accounts alone (`accounts.Mailboxes`): capabilities without an actor, never given to an adapter. Accounts wraps it twice, as it wraps its own (`operator.go`, `admins.go`), and both are `httpapi.MailboxOperator`:
+  - `*accounts.Service`, for the operator with the admin token: nothing limits whom it acts on; each change counted (`acted`) and logged by kind.
+  - `*accounts.Admin`, for an admin: a change needs a fresh proof (`changing`); the owner of the mailbox is read from its record (`Mailboxes.Record`), then its account, and `guard` applies as for accounts: a mailbox of an admin's account is acted on by the super admin alone, and nobody else acts on the super admin's; each change counted, logged by kind, and written with `logged` (kinds `mailbox_paused`, `mailbox_resumed`, with the account and the mailbox). Looking needs no proof and writes no log, as for accounts.
+  `TestTheOperatorsRoutesCannotChangeAnAddressOrAWayIn` names the four methods.
 
 ## Notices by mail
 
@@ -230,8 +433,8 @@ To the account's contact address, through `notify` (ADR 0017: after the change i
 | Kind | Subject | Blocks |
 |---|---|---|
 | `mailbox_added` | A mailbox was added to your Permaily account | Lead "A mailbox was added to your Permaily account." Paragraph "Mail forwarded to it is kept in your account, and only you can read it, in the app." Facts: When. Note "If this wasn't you, sign in at app.permaily.com, disconnect it, and write to support@permaily.com." |
-| `forwarding_asked` (once a mailbox: the first confirmation signed by Google) | Gmail asked to forward to your Permaily mailbox | Lead "Gmail asked to forward mail to one of your Permaily mailboxes, and Google signed the request." Paragraph "Open Accounts in the app to see which Gmail account asked, and the code that turns forwarding on." Facts: When. Note "If you didn't ask, do nothing: no mail is forwarded until the code is entered in Gmail." |
-| `mailbox_disconnected` | A mailbox was disconnected from your Permaily account | Lead "A mailbox was disconnected from your Permaily account, and its mail deleted." Paragraph "Its address no longer accepts mail. Turn forwarding to it off in Gmail, or Gmail will tell you that forwarding fails." Facts: When. Note: the support line |
+| `forwarding_asked` (once a mailbox: the first verified confirmation) | Gmail asked to forward to your Permaily mailbox | Lead "Google confirmed that a Gmail account asked to forward its mail to one of your Permaily mailboxes." Paragraph "Open Accounts in the app to see which Gmail account asked. Enter the code in Gmail only if that account is yours." Facts: When. Note "If you didn't ask, do nothing: no mail is forwarded until the code is entered in Gmail." |
+| `mailbox_disconnected` | A mailbox was disconnected from your Permaily account | Lead "A mailbox was disconnected from your Permaily account. Its address no longer accepts mail, and its mail is being deleted." Paragraph "Turn forwarding to it off in Gmail, or Gmail will tell you that forwarding fails." Facts: When. Note: the support line |
 | `mailbox_paused` | Permaily paused one of your mailboxes | Lead "Permaily paused one of your mailboxes." Paragraph "It refuses new mail until Permaily resumes it. The mail it holds stays, and you can read, delete or disconnect it." Facts: When. Note "Write to support@permaily.com to ask why." |
 | `mailbox_resumed` | Permaily resumed one of your mailboxes | Lead "Permaily resumed one of your mailboxes. It accepts mail again." Facts: When. Note: the support line |
 
@@ -243,27 +446,27 @@ Disconnecting a mailbox needs the fresh proof of ADR 0022 (403 `confirmation_nee
 
 ## The web app
 
-Screens, routes and states are in docs/web.md ("Mailboxes and the inbox"). In short: Accounts lists the real mailboxes; connecting makes one and opens its forwarding set-up, which shows the address to copy, the Gmail steps, and Gmail's confirmation code as soon as it arrives (asking `GET mailboxes/{id}` every five seconds while that step shows, for fifteen minutes at most); a mailbox shows "Verified: <Gmail account>" or "Not verified"; disconnecting asks, says the mail is deleted, and confirms it's the person. A new Inbox section lists, searches, opens and deletes the messages of one mailbox at a time, and says that nothing from before `receiving_since` is there. What stays sample: which connections use a mailbox (step 5) and connecting with a Google account (F3). The sample's Gmail filter step goes, since ADR 0018 forwards all mail (decided by the owner).
+Screens, routes, states and words are in docs/web.md ("Mailboxes and the inbox"). In short: Accounts lists the real mailboxes; connecting makes one and opens its forwarding set-up, which shows the address to copy, the Gmail steps, and Gmail's confirmation code as soon as it arrives (asking `GET mailboxes/{id}` every five seconds while that step shows, for fifteen minutes at most); a mailbox shows "Google confirmed: <Gmail account>" or "Not confirmed by Google"; disconnecting asks, in the exact words of docs/web.md, and confirms it's the person. A new Inbox section lists, searches, opens and deletes the messages of one mailbox at a time, and says that nothing from before `receiving_since` is there. `RequireSession` lets a closing account, and one that has not agreed, reach Accounts and the Inbox in a limited form that offers only what the table above allows. What stays sample: which connections use a mailbox (step 5) and connecting with a Google account (F3). The sample's Gmail filter step goes, since ADR 0018 forwards all mail (decided by the owner).
 
 ## The API
 
-The web app's own API: under `/api/v1/` on the app's host, JSON, the session cookie, same origin for every request that changes something (ADR 0017). Errors are `{"error": {"code", "message"}}`. Every route answers 401 `unauthorized` without a session and 404 `not_found` for a mailbox or a message that is not the account's. Changes answer 400 `terms_needed` while the terms are not agreed (disconnecting excepted) and 409 `account_closing` while the account is closing. Types: `internal/contracts/mailboxes.go`; the same shapes in `web/src/lib/api.ts`.
+The web app's own API: under `/api/v1/` on the app's host, JSON, the session cookie, same origin for every request that changes something (ADR 0017). Errors are `{"error": {"code", "message"}}`. Every route answers 401 `unauthorized` without a session and 404 `not_found` for a mailbox or a message that is not the account's; what each route allows by the account's standing is the table of "Access while an account is closing or has not agreed". Types: `internal/contracts/mailboxes.go`; the same shapes in `web/src/lib/api.ts`. `too_many_mailboxes` and `mailbox_unreadable` are 409, as `account_closing` is.
 
 | Request | Needs | Answers | Errors besides the above |
 |---|---|---|---|
 | `GET mailboxes` | a session | 200 `MailboxList`: `{mailboxes: [Mailbox], limit}`, the oldest first, without the ones being disconnected | |
-| `POST mailboxes` `{label}` | a session | 201 `Mailbox` | 400 `invalid_label`, `invalid_body`; 409 `too_many_mailboxes`; 429 `too_many_requests` |
+| `POST mailboxes` `{label}` | a session | 201 `Mailbox` | 400 `invalid_label`, `invalid_body`; 409 `too_many_mailboxes`; 429 `too_many_requests` (ten in thirty days) |
 | `GET mailboxes/{id}` | a session | 200 `Mailbox` | |
-| `PATCH mailboxes/{id}` `{label?, retention_days?}` | a session | 200 `Mailbox` | 400 `invalid_label`, `invalid_retention`, `invalid_body` |
+| `PATCH mailboxes/{id}` `{label?, retention_days?}` | a session | 200 `Mailbox` | 400 `invalid_label`, `invalid_retention`, `invalid_body`; 409 `mailbox_unreadable`; 429 |
 | `DELETE mailboxes/{id}` | a session and a fresh proof | 204 | 403 `confirmation_needed` |
-| `GET mailboxes/{id}/messages?limit=&after=&q=` | a session | 200 `MessagePage`; with `q`, a page of what a search found, with `searched_to` | 400 `invalid_limit` (1 to 100), `invalid_cursor`, `invalid_query` (1 to 200 characters); 429 `too_many_requests` (searches) |
+| `GET mailboxes/{id}/messages?limit=&after=&q=` | a session | 200 `MessagePage`; with `q`, a page of what a search found, with `searched_to` | 400 `invalid_limit` (1 to 100), `invalid_cursor`, `invalid_query` (1 to 200 characters); 409 `mailbox_unreadable`; 429 `too_many_requests` |
 | `GET mailboxes/{id}/messages/{message}` | a session | 200 `Message`; its HTML and its links have routes of their own ("Showing a message's HTML", "Routes") | |
-| `GET mailboxes/{id}/messages/{message}/raw` | a session | 200 `message/rfc822`, as a file `<message>.eml` | |
-| `GET mailboxes/{id}/messages/{message}/attachments/{index}` | a session | 200 `application/octet-stream`, as a file with the attachment's cleaned name | 404 for an index that is not one |
+| `GET mailboxes/{id}/messages/{message}/raw` | a session | 200 `message/rfc822`, as a file `<message>.eml` | 429 |
+| `GET mailboxes/{id}/messages/{message}/attachments/{index}` | a session | 200 `application/octet-stream`, as a file with the attachment's cleaned name | 404 for an index that is not one; 429 |
 | `DELETE mailboxes/{id}/messages/{message}` | a session | 204 | |
 | `POST mailboxes/{id}/messages/delete` `{ids}` | a session | 200 `MessagesDeleted`: `{deleted}`, how many were there | 400 `too_many_messages` (more than 100), `invalid_body` |
 
-A `Mailbox` is `{id, address, label, state: waiting|receiving|paused, created_at, retention_days, retention_options, receiving_since?, paused_at?, source?: {provider: gmail, address, verified_at}, confirmations: [{code, requester?, received_at, verified, message?}]}`. A `MessageSummary` is `{id, received_at, expires_at, size, from: [{name?, address}], subject, snippet, attachments, confirmation}`; a `MessagePage` `{messages, next?, searched_to?}`; a `Message` `{id, received_at, expires_at, size, from, to, cc, reply_to, subject, date, text, text_from: plain|html|none, text_truncated, attachments: [{index, name, type, size}], auth: [{method, domain, result}], confirmation, unparsed}`. Lists are always lists, never null; absent fields are left out. `Message` also has `html?: {status: shown|too_large|unreadable, remote_images, remote_other, inline_images, inline_images_omitted, links}`, absent when the message has no HTML part. `TestMailboxShapes` pins the JSON.
+A `Mailbox` is `{id, address, label, state: waiting|receiving|paused|unreadable, created_at, retention_days, retention_options, receiving_since?, paused_at?, source?: {provider: gmail, address, verified_at}, confirmations: [{code, requester?, received_at, verified, for_another_address?, message?}]}`; an `unreadable` one has only its identifier and `created_at`. A `MessageSummary` is `{id, received_at, expires_at, size, from: [{name?, address}], subject, snippet, attachments, confirmation}`; a `MessagePage` `{messages, next?, searched_to?}`; a `Message` `{id, received_at, expires_at, size, from, to, cc, reply_to, subject, date, text, text_from: plain|html|none, text_truncated, attachments: [{index, name, type, size}], auth: [{method, domain, result}], confirmation, unparsed, html?}`. Lists are always lists, never null; absent fields are left out. `TestMailboxShapes` pins the JSON.
 
 The admin panel, under `/api/v1/admin/` (ADR 0022: an admin whose account is "passkey only", 404 for anyone else, a fresh proof for changes):
 
@@ -271,122 +474,106 @@ The admin panel, under `/api/v1/admin/` (ADR 0022: an admin whose account is "pa
 |---|---|
 | `GET admin/accounts/{id}/mailboxes` | `MailboxRecordList` |
 | `GET admin/mailboxes?address=<address>` | `MailboxRecordList` of none or one |
-| `POST admin/mailboxes/{id}/pause`, `POST admin/mailboxes/{id}/resume` | The `MailboxRecord` after it; counted, logged by kind, written in the admin log (`mailbox_paused`, `mailbox_resumed`, with the account) |
+| `POST admin/mailboxes/{id}/pause`, `POST admin/mailboxes/{id}/resume` | The `MailboxRecord` after it; 403 `confirmation_needed`, `super_admin_only`; 429 past ten changes in thirty days |
 
-`AccountRecord` gains `mailboxes` (a number) and `Stats` gains `mailboxes` (`MailboxCounts`, `{total}`), added by the admin pull request.
+`AccountRecord` gains `mailboxes` (a number) and `Stats` gains `mailboxes` (`MailboxCounts`, `{total}`), added by pull request 4.
 
-The operator's tool, with the admin token on the API host: `GET /v1/admin/accounts/{id}/mailboxes`, `GET /v1/admin/mailboxes?address=<address>`, `POST /v1/admin/mailboxes/{id}/pause` and `/resume`, answering as above.
-
-The F1 API: every path under `/v1/mailbox` answers 410 `mailbox_moved`.
+The operator's tool, with the admin token on the API host: `GET /v1/admin/accounts/{id}/mailboxes`, `GET /v1/admin/mailboxes?address=<address>`, `POST /v1/admin/mailboxes/{id}/pause` and `/resume`, answering as above. `/v1/mailbox` is gone.
 
 ## Options considered
 
 - **A list inside the account's record**, or entries: rejected above.
+- **Moving the test mailbox into the owner's account**: a release that reads F1's items could bring back a disconnected test mailbox, and a rollback would keep a reader that ignores disconnection and holds the token. Retired instead.
 - **A cache of mailbox records for ingest** (a minute): one enclave would accept mail for a minute after the other disconnected or paused the mailbox.
+- **Marking a message seen before storing it**: a failure between the two loses mail. The claim, then the mark after, instead.
+- **Choosing one of two commits at a version by digest** (ADR 0016 until now): whoever writes to the bucket decides which change counts. Refused instead.
 - **Refusing the mail of a blocked account**: Gmail would tell the person forwarding fails, and nothing is gained while nobody can read it.
 - **Letting the operator disconnect**: it destroys the person's mail without their word; pausing stops the harm.
-- **Deleting the mail inside the request that disconnects**: up to tens of thousands of objects in one request; removing the key makes it unreadable at once, and the deletion can wait for the sweep.
-- **Text only, HTML deferred** (what this record first proposed): rejected by the owner on 2026-11-12. Text only is the smallest surface, but most mail today is written as HTML (newsletters, receipts, notices from services), its text part is often missing or a poor copy, and a full inbox people can actually read is what ADR 0018 promised. How the risk is held instead: "Showing a message's HTML".
+- **Deleting the mail inside the request that disconnects**: up to tens of thousands of objects in one request; removing the key from the record stops access at once, and the deletion can wait for the sweep.
+- **A KMS key per mailbox**: real destruction of a key, at a key per mailbox and a seven-day wait; not now ("What disconnecting does to the key").
+- **Text only, HTML deferred**: rejected by the owner on 2026-11-12 ("Showing a message's HTML").
 - **One inbox merging every mailbox**: each page would read every mailbox's partition and merge by time. One mailbox at a time first; a merged view needs no change of format later.
-- **Keeping `/v1/mailbox` for the operator**: the operator would read a person's mail.
 
 ## Implementation pull requests
 
-Five. The first four are built at the same time once this merges, each against the contract above and fakes of the others; the fifth, showing HTML, after 2 and 3 have merged ("Its pull request: the fifth", at the end). Merge order: 1 first; 2 and 4 after it, in either order; 3 at any time; 5 last. A release takes all five: the owner decided the inbox shows HTML from the start. Whoever owns a file changes it; the others do not, except where a seam says so.
+Six. Pull request 0 first, alone. Then 1, 2, 3 and 4 are built at the same time against the interfaces and fakes committed with this design; 5 once 2 and 3 have merged. Merge order: 0; 1; then 2 and 4 in either order; 3 at any time after 0; 5 last. A release takes all six: the owner decided the inbox shows HTML from the start. Whoever owns a file changes it; the others do not, except the lines a seam names.
 
-### 1. Server core: records, keys, lifecycle, SMTP, the move
+**Why the store goes first, on its own.** Pull requests 1 and 2 both call what it adds (`CreateNew`, `ErrForked`, `Scanner`), so it must merge before either can merge; it changes how every anchored record already in production is read (the TLS identity, accounts) and what `/status` reports, which docs/verification.md covers, so it deserves a review of its own by someone who reads only it; and it is small enough to merge in days, before the others are done. It can even ship in a release of its own.
 
-- **Owns**: `internal/services/mailboxes/` (new: the records and the list, the address, making, changing, disconnecting, pausing, `RemoveAccount`, ingest for `smtpd`, the sweep, `MoveLegacy`, and their tests with `enclaves_test.go`); `internal/domain/mailbox.go` (the address, the label, the retention, the attachment's filename); `internal/inbox/inbox.go` and `messages.go`, replaced by `deliver.go` (`Box`, `Deliver`, `DeleteAll`, `DeleteMessages`) on today's parsing; `internal/smtpd` (it asks the service per recipient); `internal/store` (`ListMessageIDs`, which includes expired items, and what `Deliver` needs); `internal/httpapi/mailbox.go` (the 410); `cmd/permaily-enclave` (wiring, flags, storage on with a table, the loops of `Sweep` and `MoveLegacy`); `deploy/enclave.json`; in `internal/services/accounts` only `MayChange`, `AccountID` and the call to `Config.Mailboxes.RemoveAccount` in `removeLocked`; docs/data.md's rows, docs/operations.md ("Read the test mailbox", "Two enclaves", "A new deployment"), internal/AGENTS.md.
-- **Must not touch**: `internal/httpapi/mailboxes.go`, `internal/inbox/read.go`, `search.go`, `text.go`, `parse.go`, the web app, the admin routes and the notices.
-- **Tests**: every row of "Two enclaves"; the order of a disconnect, with a store that fails at each step; the move run twice and by two at once; every refusal at `RCPT TO` the same (never made, disconnected, paused, another domain, a `+tag`); no address and no identifier in the log while mail is handled (`TestMailEndToEnd`); a record put back to `active` after a disconnect refused.
+**What truly runs in parallel.** After 0 merges: 1, 2, 3 and 4. Pull request 2 needs from 1 only `inbox.MessageText` for `Get`'s text: it builds everything else against `inboxtest.Seed` and `mailboxestest.Fake`, and writes `Get` once 1 has merged. Pull request 4 needs nothing of 1 but the interface, faked by `mailboxestest.Fake`. Pull request 3 needs only the TypeScript types and played `fetch`. 5 waits for 2 and 3.
+
+### The seams, as committed
+
+| Seam | Where | Implemented by | Used by | Fake |
+|---|---|---|---|---|
+| `store.Scanner`, `store.EntryScan`, `store.MessageScan`, `store.ErrForked` | `internal/store/scan.go` | `*store.Memory`, `*store.AWS` (0) | 1, 2 | `store.Memory` itself |
+| `mailboxes.Records` (`CreateNew` among them) | `internal/services/mailboxes/mailboxes.go` | `*store.Anchored` (0) | 1 | `store.Anchored` over `store.Memory` |
+| `mailboxes.Accounts` (`Standing`) | same | `*accounts.Service` (1, in `accounts/standing.go`) | 1 | `mailboxestest.Accounts` |
+| `mailboxes.Notifier` | same | `*accounts.Service` (4, in `accounts/notices.go`) | 1 | `mailboxestest.Notices` |
+| `mailboxes.Caller`, `Standing`, `Access`, `NoticeKind`, limits, `ErrNoSuchMailbox`, `ErrSlowDown`, `ErrNotAllStored` | same | (types) | all | |
+| `httpapi.MailboxesService` | `internal/httpapi/mailboxes.go` | `*mailboxes.Service` (1) | 2 | `mailboxestest.Fake` |
+| `inbox.Box`, `inbox.Reader`, the stored format (`StoredMeta`, `SearchEntry`, `ConfirmEntry`, `SeenEntry`, purposes, keys, parse limits) | `internal/inbox/box.go` | `Reader` by 2; the format written by 1 | 1, 2, 5 | `inboxtest.Seed` writes the format |
+| `accounts.Mailboxes` | `internal/services/accounts/mailboxes.go` | `*mailboxes.Service` (1) | accounts (1: `RemoveAccount`; 4: the rest) | `mailboxestest.Fake` |
+| `httpapi.MailboxOperator` | `internal/httpapi/mailboxes_operator.go` | `*accounts.Service` and `*accounts.Admin` (4) | 4's routes | (4 tests it with `mailboxestest.Fake` under accounts) |
+| `smtpd.Recipients` | `internal/smtpd/recipients.go` | `*mailboxes.Service` (1) | `smtpd` (1) | (1 owns both sides) |
+
+**The composition** is `cmd/permaily-enclave` (`main.go`, `platform_enclave.go`, `platform_dev.go`), owned by pull request 1: it makes `*accounts.Service` first, then the `*mailboxes.Service` from the store, the anchored records (an `Anchored` of its own, `OnlyNewest`, reported in `/status` as `mailbox`), the keys and `*accounts.Service` as its `Accounts`; gives the service to accounts (the two refer to each other, so accounts takes it once, before serving, with `SetMailboxes`, which pull request 1 adds next to `Config.Mailboxes`) and to `smtpd`; and asserts at compile time `var _ httpapi.MailboxesService`, `accounts.Mailboxes` and `smtpd.Recipients` of `(*mailboxes.Service)(nil)`. Pull request 2 adds the lines that mount its handler; pull request 4 gives `*accounts.Service` to the mailboxes service as its `Notifier` and asserts `httpapi.MailboxOperator` of `(*accounts.Service)(nil)` and `(*accounts.Admin)(nil)`.
+
+`depguard` holds: the new service imports `contracts`, `domain`, `envelope`, `keys`, `store` and `inbox`, never `net/http`, an adapter or the AWS SDK; `inboxtest` and `mailboxestest` are fakes, allowed only in tests (`no-fakes-in-production` lists them).
+
+### 0. Store
+
+- **Owns**: `internal/store` (`anchor.go`, `s3commits.go`, `memory.go`, `aws.go`, `scan.go` and their tests); `pkg/attestation/status.go` (`AnchorRegression.Fork`) and `cmd/permaily-verify` (printing it); `cmd/permaily-enclave/platform_enclave.go`'s `anchorStatus` (the fork) and `ForkIsLost` on the TLS identity's `Anchored`; docs/verification.md, ADR 0016's and 0024's paragraphs if this pull request's wording needs fixing.
+- **Must not touch**: anything of mailboxes, accounts or the web app.
+- **Tests**: S1 to S5; the fork against the fake bucket and, when `PERMAILY_TEST_ANCHOR_BUCKET` is set, a real one; `/status` and `permaily-verify` with a fork; the store's coverage stays at least 96 % with the emulators.
+- **Done when**: `make check` passes; every existing test of `Anchored` and `S3Commits` passes unchanged but `TestAnchoredOverS3CommitsWithADeleteMarkerInBetween`, which now expects `ErrForked` on both enclaves.
+
+### 1. Server core: records, lifecycle, delivery, the test mailbox retired
+
+- **Owns**: `internal/services/mailboxes/` (the service: records, the list, the address, making, settings, disconnecting, the sweep, pausing, `RemoveAccount`, `Count`, `Total`, `Records`, `ByAddress`, `Record`, `Open`, `Accept`, `Deliver`; `enclaves_test.go`); `internal/domain/mailbox.go` (the address, the label, `AttachmentFilename`); in `internal/inbox`: `deliver.go` (writing the format), `parse.go` (`StoredMeta`, `SearchEntry`, the parse limits, the confirmation and its checks), `text.go` (`MessageText`), and deleting `inbox.go` and `messages.go`; `internal/msgauth` (the signed header fields and `l=`); `internal/smtpd` (`Recipients`, admission); in `internal/services/accounts`: `standing.go`, the `Config.Mailboxes` field, `SetMailboxes` and the call in `removeLocked`; `internal/httpapi/mailbox.go` and its test (deleted); `cmd/permaily-enclave` (the composition above, flags, `main_dev_test.go`); `deploy/enclave.json`, `nix/eif.nix`, `.gitleaks.toml`, `deploy/tofu/mail.tf` and its variable; `scrub`; docs/data.md's rows, docs/operations.md, internal/AGENTS.md; `scripts/coverage-thresholds.txt` (a line for the new package).
+- **Must not touch**: `internal/inbox/read.go`, `search.go`; `internal/httpapi/mailboxes.go` beyond the interface; the admin and operator routes; `notices.go`; the web app.
+- **Depends on**: 0.
+- **Tests**: M1 to M22; the order of making and of a disconnect with a store that fails at each step; every refusal at `RCPT TO` the same; every row of "The answers, all of them"; each limit of "Admission" at its value and one past it (a hundred sessions, messages near 25 MiB at once); the parse limits; the confirmation's checks with the real message from staging (signed, for this mailbox; replayed to another; `l=`; `To` not signed; two addresses in `To`); `TestMailEndToEnd` on the API; the log holds no address, subject, identifier or code.
+- **Done when**: `make check`; coverage of the new package at least 95 %; a staging rehearsal: a Gmail account forwarding to a new mailbox through Gmail's set-up, its confirmation verified, mail read, the mailbox disconnected and its mail gone after the sweep.
 
 ### 2. Server messages: the inbox, and all of `/api/v1/mailboxes`
 
-- **Owns**: `internal/inbox/read.go` (list, get, raw, attachment), `search.go`, `text.go` (text from HTML), `parse.go` (names with addresses, what `txt#` holds); `internal/httpapi/mailboxes.go` (every route of the table, with the session and same-origin checks taken out of `AccountsAPI` into a helper both use); `go.mod` (`golang.org/x/net` from indirect to direct) and the `vendorHash` in `nix/go.nix`.
-- **Must not touch**: `internal/services/`; `deliver.go`, but for the one call that writes `txt#`; `cmd/`, but for mounting the handler (`app.Handle("/api/v1/mailboxes", …)` and with a trailing `/`); the web app.
-- **Tests**: every route's answers and errors against a fake `httpapi.MailboxService`; text from HTML (scripts, styles and comments dropped, link targets kept, entities, truncation); the headers of attachment and raw downloads; cleaned filenames; the bounds of search (2,000 looked at, `next`, `searched_to`, the fallback to meta); a message of another account is 404.
+- **Owns**: `internal/inbox/read.go` and `search.go` (the `Reader`); `internal/httpapi/mailboxes.go` (every route of the person's table, with the session and same-origin checks taken out of `AccountsAPI` into a helper both use, and `too_many_mailboxes` and `mailbox_unreadable` added to the 409s of `failed`); `go.mod` (`golang.org/x/net` from indirect to direct) and the `vendorHash` in `nix/go.nix`.
+- **Must not touch**: `internal/services/`; `deliver.go`, `parse.go`, `text.go`; `cmd/`, but for mounting the handler (`app.Handle("/api/v1/mailboxes", …)` and with a trailing `/`); the web app.
+- **Depends on**: 0; 1 for `MessageText` and to merge.
+- **Tests**: every route's answers and errors against `mailboxestest.Fake`, including every cell of the access table; reading against `inboxtest.Seed`, and before merging against messages written by 1's `Deliver`; the bounds of a list (500 read, `next` on a short page) and of a search (2,000 read with expired and unopenable entries counted, `next` and `searched_to` on a page with no match); the headers of attachment and raw downloads; cleaned filenames; a message of another account is 404; the read budget answers 429.
+- **Done when**: `make check`; `internal/httpapi` stays at 95 % and `internal/inbox` at 86 % or more.
 
-### 3. Web: Accounts wired, and the Inbox
+### 3. Web: Accounts wired, the Inbox, and the gate
 
-- **Owns**: `web/src/pages/accounts/*`, `web/src/pages/inbox/*` (new), the calls in `web/src/lib/api.ts` (the types are there already), `web/src/App.tsx`, `web/src/sections.ts`, `web/tests/pages/accounts/*` and `inbox/*`, coverage thresholds for both, docs/web.md.
+- **Owns**: `web/src/pages/accounts/*`, `web/src/pages/inbox/*` (new), `web/src/components/SessionGate.tsx` (the limited form for closing and unagreed accounts), `web/src/pages/auth/AccountClosing.tsx` and `Terms.tsx` (a link to the mailboxes), the calls in `web/src/lib/api.ts` (the types are there already), `web/src/App.tsx`, `web/src/sections.ts`, `web/tests/pages/accounts/*`, `inbox/*` and the gate's tests, coverage thresholds for them, docs/web.md.
 - **Must not touch**: `web/src/pages/admin/*`, the server.
-- **Tests**: `fetch` played as for the other pages: the list, connecting, the set-up with the code arriving while it asks, verified and not, disconnecting with `confirmation_needed`; the inbox's list, paging, a search with `next`, one message, deleting one and many, the empty states. `expectAccessible()` on each; no mailbox address, search or code in storage or the address bar (`expectNotKept`).
+- **Depends on**: the contract only.
+- **Tests**: `fetch` played: the list, connecting, the set-up with the code arriving while it asks, verified, not verified, for another address, disconnecting with `confirmation_needed` and its exact words, an `unreadable` mailbox; the inbox's list, a short page with `next`, a search page with nothing found and `next`, one message, deleting one and many, the empty states; the gate: a closing account reaches Accounts and the Inbox with only what it may do, one that has not agreed reaches the list, downloads and disconnecting and nothing else, and every other route still shows their screens. `expectAccessible()` on each; no address, search or code in storage or the address bar (`expectNotKept`).
+- **Done when**: `bun run check` in `web/` and the root `bun run lint` pass; thresholds do not go down.
 
 ### 4. Operator, admin panel and notices
 
-- **Owns**: `internal/services/accounts/notices.go` (the five notices, as the `Notifier`), `operator.go` and `admins.go` additions (counts, the admin log's kinds), `internal/httpapi/accounts.go` (the admin and operator routes above), `pkg/attestation/status.go` (the two kinds), `cmd/permaily-verify` (printing them), `scripts/accounts.sh`, `web/src/pages/admin/*`, the `mailboxes` fields of `AccountRecord` and `Stats` in `internal/contracts`.
-- **Must not touch**: `internal/services/mailboxes` beyond calling it, the person's own screens of the web app.
-- **Tests**: each notice's blocks, sent once and never failing what caused it; the operator's and the admin panel's routes, with the method list of the operator updated; the counts on `/status`; the admin log's entries.
+- **Owns**: `internal/services/accounts/notices.go` (the five notices, as the `Notifier`), `mailbox_admin.go` (new: the operator's and the admin's wrappers, implementing `httpapi.MailboxOperator`), `operator.go` and `admins.go` additions (the kinds, counts in `AccountRecord` and `Stats`), `internal/httpapi/accounts.go` (the admin and operator routes above), `pkg/attestation/status.go` (the two kinds), `cmd/permaily-verify` (printing them), `scripts/accounts.sh`, `web/src/pages/admin/*`, the `mailboxes` fields of `AccountRecord` and `Stats` in `internal/contracts`.
+- **Must not touch**: `internal/services/mailboxes`; the person's screens of the web app.
+- **Depends on**: 0 to merge (nothing of it); 1 to compose.
+- **Tests**: each notice's blocks, in `sampleMails`, sent once and never failing what caused it; the operator's routes and the admin panel's with `mailboxestest.Fake`: the fresh proof, the guard (an admin on an admin's mailbox, anyone on the super admin's), the count, the log entry, `too_many_requests`; the method list of the operator updated; the counts on `/status`.
+- **Done when**: `make check`; `internal/services/accounts` stays at 99 %.
 
-### The seams, exactly
+### 5. Showing HTML
 
-```go
-// internal/services/mailboxes (pull request 1). What it needs from accounts,
-// which *accounts.Service implements (pull request 1 adds the two methods):
-type Accounts interface {
-	// MayChange is nil when the account may change something now,
-	// contracts.ErrAccountClosing or contracts.ErrTermsChanged when not, and
-	// contracts.ErrUnauthorized when it is blocked or gone.
-	MayChange(ctx context.Context, accountID string) error
-	// AccountID is the account whose contact address is address; "" for none.
-	AccountID(ctx context.Context, address string) (string, error)
-}
-
-// What it needs to tell the person (pull request 4 implements it in accounts;
-// nil sends nothing). kind is one of the five of "Notices by mail".
-type Notifier interface {
-	MailboxNotice(ctx context.Context, accountID, kind string, at time.Time)
-}
-
-// Who asks: the adapter fills it in from the session.
-type Caller struct {
-	Account        string
-	ConfirmedUntil time.Time // the session's; Disconnect refuses when it has passed
-}
-
-// What *mailboxes.Service gives:
-//   List(ctx, Caller) (*contracts.MailboxList, error)
-//   Create(ctx, Caller, contracts.MailboxCreate) (*contracts.Mailbox, error)
-//   Get(ctx, Caller, id string) (*contracts.Mailbox, error)
-//   Update(ctx, Caller, id string, contracts.MailboxUpdate) (*contracts.Mailbox, error)
-//   Disconnect(ctx, Caller, id string) error
-//   Open(ctx, Caller, id string) (inbox.Box, error)        // the owner checked, the record read, the key unwrapped
-//   Records(ctx, accountID string) (*contracts.MailboxRecordList, error)
-//   ByAddress(ctx, address string) (*contracts.MailboxRecordList, error)
-//   Pause(ctx, id string) (*contracts.MailboxRecord, error)
-//   Resume(ctx, id string) (*contracts.MailboxRecord, error)
-//   Count(ctx, accountID string) (int, error)
-//   RemoveAccount(ctx, accountID string) error              // accounts.Config.Mailboxes
-//   Accepts(ctx, rcpt string) error                         // smtpd; nil or the SMTP refusal
-//   Ingest(ctx, from string, rcpts []string, raw []byte) error
-
-// internal/inbox: pull request 1 writes Box and deliver.go, pull request 2 the rest.
-type Box struct {
-	ID            string
-	Key           []byte
-	RetentionDays int
-}
-//   Deliver(ctx, store.Store, store.Entries, Box, from string, rcpts []string, raw []byte, auth []AuthResult, now time.Time) (Delivered, error)
-//   DeleteAll(ctx, store.Store, store.Entries, mailboxID string, page int) (done bool, err error)
-//   DeleteMessages(ctx, store.Store, store.Entries, Box, ids []string) (int, error)
-//   List(ctx, store.Store, Box, limit int, after string) (*contracts.MessagePage, error)
-//   Search(ctx, store.Store, store.Entries, Box, q string, limit int, after string) (*contracts.MessagePage, error)
-//   Get(ctx, store.Store, Box, id string) (*contracts.Message, error)
-//   Raw(ctx, store.Store, Box, id string) ([]byte, error)
-//   Attachment(ctx, store.Store, Box, id string, index int) (name string, data []byte, err error)
-```
-
-`httpapi.MailboxService` (pull request 2) is the person's half of that list with `Open` hidden behind it, and `httpapi.MailboxOperator` (pull request 4) the four operator methods. `cmd/permaily-enclave` passes the one `*mailboxes.Service` to both, with a compile-time assertion that whichever of 2 and 4 merges second adds.
+As "Its pull request: the fifth", at the end of this record; it calls `Reader.Get` (2) and adds to the frame's route the read budget of "Admission".
 
 ## What it rests on, and what is left
 
-- **The root secret stays inside enclaves.** A copy of the table from before a disconnect, together with the root secret, reads that copy's mail (see "Keys").
-- **Google's word for the Gmail account.** "Verified" means Google signed a message saying that account asked to forward here; it does not prove that later mail comes from it.
+- **The root secret stays inside enclaves of public releases.** A saved copy of the table from before a disconnect, together with the root secret, reads that copy's mail ("What disconnecting does to the key").
+- **Google's word for the Gmail account**: Google confirms that a Gmail account asked to forward to this mailbox, and nothing more. The checks rest on Google signing `To` and the whole body; a real message captured in staging must show it (pull request 1).
 - **Whether an address exists** is learnt only by guessing 100 bits.
-- **A deleted message put back** in the table and the bucket by whoever writes to them shows again in the inbox, until the audit log of ADR 0019.
+- **A deleted message put back** in the table and the bucket shows again in the inbox, until the audit log of ADR 0019.
 - **Search scans**: a mailbox of more than about 20,000 messages takes several pages to search through.
-- **Decided by the owner on 2026-11-12**: messages are shown as HTML from the start (not text only); the inbox shows one mailbox at a time; five mailboxes an account; the test mailbox goes to `hello@permaily.com`, the super admin; a blocked account's mailboxes keep receiving; the operator may pause and resume a mailbox and never disconnect or read it; the Gmail filter step is dropped from the screens.
-- **To design while building**: the exact words of the screens and notices, with the designer.
+- **Decided by the owner on 2026-11-12**: messages are shown as HTML from the start; the inbox shows one mailbox at a time; five mailboxes an account; a blocked account's mailboxes keep receiving; the operator may pause and resume a mailbox and never disconnect or read it; the Gmail filter step is dropped from the screens. The owner's choice that the test mailbox goes to `hello@permaily.com` is met by the super admin making an ordinary mailbox after the release, which TLS-RPT then names.
+- **Decided by the orchestrator of the review on 2026-11-12, the owner told**: no migration of the test mailbox; disconnecting promises immediate refusal of new access, and running requests end within their deadline; what a closing account and one that has not agreed may do.
+- **To design while building**: the exact words of the screens and notices beyond those written here, with the designer.
 
 ## Showing a message's HTML
 
@@ -413,7 +600,7 @@ The viewer is an `<iframe>` whose `src` is `/api/v1/mailboxes/{id}/messages/{mes
 - **Why not `srcdoc`.** A `srcdoc` document takes a copy of its parent's policy container, so the app's own CSP (`default-src 'self'`) would apply inside it: inline styles and `data:` images would be refused, and the mail shown unstyled and without its images, unless the app's CSP were loosened for the whole app (`style-src 'unsafe-inline'; img-src data:`). A `<meta>` CSP inside the document can only add restrictions. `srcdoc` would also put the hostile HTML into a string in the app's own JavaScript, one mistaken `innerHTML` away from the app's DOM. A URL gives the frame a CSP of its own, the narrowest that shows mail, leaves the app's untouched, and keeps the HTML out of the app's JavaScript entirely.
 - **The app's CSP.** Today `default-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'` (`internal/router`). `frame-src` falls back to `child-src` and then `default-src`, so a same-origin frame is allowed already; the fifth pull request writes `frame-src 'self'` out, so a later change to `default-src` cannot widen or break it unnoticed, and a test pins it. Nothing else of the app's CSP changes.
 - **The frame's response headers**, on every answer of the route, errors included: `Content-Type: text/html; charset=utf-8`; `Content-Security-Policy: sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors https://app.permaily.com` (the app's host from the image's configuration; dev mode's own); `X-Content-Type-Options: nosniff`; `Cross-Origin-Resource-Policy: same-origin`; `Referrer-Policy: no-referrer`; `Cache-Control: no-store`; `X-DNS-Prefetch-Control: off`. They replace the router's for this route (the router's `frame-ancestors 'none'` would forbid the frame).
-- **How the session authorises it.** As every route: the `__Host-` session cookie. The frame's request is made by the app's own document for a frame whose every ancestor is the app, so it is same-site and carries `SameSite=Strict` cookies; the sandbox applies to the document that comes back, not to the request that fetches it. The route checks the owner and reads the record like `GET message`, and counts against the eight raw messages open at once. A request from inside the frame is cross-site (opaque origin) and carries no session: the frame cannot ask the API for anything.
+- **How the session authorises it.** As every route: the `__Host-` session cookie. The frame's request is made by the app's own document for a frame whose every ancestor is the app, so it is same-site and carries `SameSite=Strict` cookies; the sandbox applies to the document that comes back, not to the request that fetches it. The route opens the mailbox like `GET message` (`Open` with `AccessReadMessage`: the owner, the record, the account's standing), and takes the raw message's size from the bytes of mail open for reading ("Admission"). A request from inside the frame is cross-site (opaque origin) and carries no session: the frame cannot ask the API for anything.
 - **Opened directly in a tab** (a person copies the frame's address): the browser sends `Sec-Fetch-Dest: document` and the route answers 404 with the frame's headers. A browser that sends no `Sec-Fetch-*` gets the document, and the CSP `sandbox` applies at the top level as it does in a frame: an opaque origin, no script, links that open the link page. MDN's warning that sandboxing is useless if the content can be opened outside the frame is about the `sandbox` attribute alone; the header covers it.
 - **Back, forward and the cache.** The viewer makes a new `<iframe>` element for each message (React `key` on the message identifier) and never changes the `src` of one: the first navigation of a new frame replaces its initial `about:blank` and adds no history entry, so Back leaves the message instead of stepping through frames. `Cache-Control: no-store` keeps the document out of the HTTP cache. A page restored from the back-forward cache (after signing out, say) is the app's question as a whole; the message view listens for `pageshow` with `persisted` and asks the server again.
 - **Chrome, Firefox and Safari** all support the `sandbox` attribute and its `allow-popups*` tokens, the CSP `sandbox` directive (Baseline since 2016), `frame-ancestors`, `Sec-Fetch-Dest` (Baseline since March 2023, Safari 16.4) and `Referrer-Policy`. What differs: DNS prefetching (Chromium honours `X-DNS-Prefetch-Control`, the others mostly do not prefetch from HTTPS pages at all), and how each treats `<link rel=preconnect>` under CSP; both are covered by the sanitiser writing no remote host. Rejected: the `credentialless` attribute (Chromium only, and not needed: the frame needs no credentials of its own).
@@ -505,11 +692,11 @@ What the two sandbox flags open, besides that: a link with `target="_blank"` ope
 
 ### Its pull request: the fifth
 
-Recommended: a fifth pull request, built once 2 and 3 have merged, so the inbox works as text first and the riskiest part gets a review of its own, by someone who reads only it; a release takes all five.
+Recommended: a pull request of its own, built once 2 and 3 have merged, so the inbox works as text first and the riskiest part gets a review of its own, by someone who reads only it; a release takes all six.
 
 - **Owns**: `internal/mailhtml/` (sanitiser, CSS tokeniser, corpus, fuzz target, golden outputs, `frametest`); `internal/inbox/htmlpart.go` (the HTML part, its charset and its `cid:` parts) and the one call in `read.go` that fills `Message.html`; `internal/httpapi/mailboxes_html.go` (the two routes, registered in `mailboxes.go`'s mux by two lines); `internal/router` (`frame-src 'self'`); `web/src/pages/inbox/MessageFrame.tsx`, the switch and the notes in the message view, `web/src/pages/inbox/Link.tsx` and its route in `App.tsx`; `web/e2e/` and its CI job; `web/AGENTS.md` (the second place the app leaves for another site), docs/web.md, docs/threat-model.md ("Mail shown in the app": built), docs/testing.md, docs/accessibility.md.
-- **Must not touch**: what pull requests 1 to 4 own beyond the lines named.
-- **The seam with pull request 2**: `inbox.Get` leaves `Message.html` absent until this one fills it; the web app shows the text and no switch when it is absent, so 3 works unchanged before 5 and needs no flag. With 5: `mailhtml.Render(in mailhtml.Input) (mailhtml.Output, error)`, where `Input` is `{HTML []byte (UTF-8), Inline map[string]InlinePart, Mailbox, Message string}` and `Output` is `{Document []byte, Report contracts.MessageHTML, Links []string}`; `Get` uses the report, the HTML route the document, the link route `Links[n]`.
+- **Must not touch**: what pull requests 0 to 4 own beyond the lines named.
+- **The seam with pull request 2**: `Reader.Get` leaves `Message.html` absent until this one fills it; the web app shows the text and no switch when it is absent, so 3 works unchanged before 5 and needs no flag. With 5: `mailhtml.Render(in mailhtml.Input) (mailhtml.Output, error)`, where `Input` is `{HTML []byte (UTF-8), Inline map[string]InlinePart, Mailbox, Message string}` and `Output` is `{Document []byte, Report contracts.MessageHTML, Links []string}`; `Reader.Get` uses the report, the HTML route the document, the link route `Links[n]`.
 - **Rejected: building it inside 2 and 3.** The two would each carry half of the riskiest change of step 2, reviewed among everything else; and while it was unfinished, the inbox could not be tried at all.
 
 ### What this rests on (looked up on 2026-11-12)

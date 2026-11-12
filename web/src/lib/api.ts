@@ -118,23 +118,30 @@ export type LinkedProvider = { provider: Provider; linked_at: string }
  * come with the screens that do.
  */
 
-/** `waiting` until mail other than Gmail's confirmations arrives; `paused` while Permaily's operator stops it. */
-export type MailboxState = 'waiting' | 'receiving' | 'paused'
+/**
+ * `waiting` until mail other than Gmail's confirmations arrives; `paused` while Permaily's operator stops it;
+ * `unreadable` when its record can't be read: it shows only its id and `created_at`, and can only be disconnected.
+ */
+export type MailboxState = 'waiting' | 'receiving' | 'paused' | 'unreadable'
 
-/** A forwarding confirmation Gmail sent to the mailbox. `verified` only when Google signed it. */
+/** A forwarding confirmation Gmail sent to the mailbox. Anyone can send one that looks like it. */
 export type ForwardingConfirmation = {
+  /** Empty when `for_another_address`: it confirms nothing here. */
   code: string
   /** The Gmail account that asked, as the message says. */
   requester?: string
   received_at: string
+  /** Google signed it and it names this mailbox: Google confirms that `requester` asked to forward here. */
   verified: boolean
+  /** Google signed it for another forwarding address, and someone sent it here: it says nothing of this mailbox. */
+  for_another_address?: boolean
   /** The message that carried it, in the mailbox's inbox. */
   message?: string
 }
 
 export type Mailbox = {
   id: string
-  /** Where the person forwards their mail, at inbox.permaily.com. */
+  /** Where the person forwards their mail, at inbox.permaily.com. Empty when `unreadable`. */
   address: string
   /** The person's own name for it. Empty when they gave none. */
   label: string
@@ -146,7 +153,10 @@ export type Mailbox = {
   /** When the first mail that was not a confirmation arrived: nothing from before it is here. */
   receiving_since?: string
   paused_at?: string
-  /** The Gmail account Google said asked to forward here. Absent: the label is shown as not verified. */
+  /**
+   * The first Gmail account Google confirmed asked to forward here, while the mailbox waited. Not that forwarding is
+   * on, nor that later mail comes from it. Absent: shown as not verified.
+   */
   source?: { provider: 'gmail'; address: string; verified_at: string }
   /** The newest first, ten at most, for thirty days each. */
   confirmations: ForwardingConfirmation[]
@@ -170,11 +180,15 @@ export type MessageSummary = {
   confirmation: boolean
 }
 
+/**
+ * A page reads a bounded number of stored items (500 for a list, 2,000 for a search), so it may hold fewer messages
+ * than asked for, or none, and still have `next`: show "Older" or "Search older mail" whenever `next` is there.
+ */
 export type MessagePage = {
   messages: MessageSummary[]
-  /** What to ask the next page with (`after`). Absent when nothing older is left to list or search. */
+  /** What to ask the next page with (`after`): the last item the page read. Absent when nothing older is left. */
   next?: string
-  /** For a search: when the oldest message this page looked at arrived. */
+  /** For a search: when the oldest message this page looked at arrived; absent when it looked at none. */
   searched_to?: string
 }
 
@@ -270,6 +284,7 @@ export type ApiErrorCode =
   | 'invalid_retention'
   | 'invalid_query'
   | 'too_many_messages'
+  | 'mailbox_unreadable'
   | 'network'
   | 'other'
 
@@ -308,6 +323,7 @@ const known: ReadonlySet<string> = new Set([
   'invalid_retention',
   'invalid_query',
   'too_many_messages',
+  'mailbox_unreadable',
 ])
 
 export class ApiError extends Error {

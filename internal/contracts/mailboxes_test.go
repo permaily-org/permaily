@@ -27,6 +27,12 @@ func TestMailboxShapes(t *testing.T) {
 			Source:        &MailboxSource{Provider: MailboxSourceGmail, Address: "me@gmail.com", VerifiedAt: at},
 			Confirmations: []ForwardingConfirmation{{Code: "123456789", Requester: "me@gmail.com", ReceivedAt: at, Verified: true, Message: "m1"}},
 		}, `{"id":"mbx_x","address":"a@inbox.permaily.com","label":"Work","state":"receiving","created_at":"2026-11-12T10:00:00Z","retention_days":30,"retention_options":[7,30,90,180,365],"receiving_since":"2026-11-12T10:00:00Z","source":{"provider":"gmail","address":"me@gmail.com","verified_at":"2026-11-12T10:00:00Z"},"confirmations":[{"code":"123456789","requester":"me@gmail.com","received_at":"2026-11-12T10:00:00Z","verified":true,"message":"m1"}]}`},
+		{"a confirmation Google signed for another address", ForwardingConfirmation{Requester: "someone@gmail.com", ReceivedAt: at, ForAnotherAddress: true, Message: "m2"},
+			`{"code":"","requester":"someone@gmail.com","received_at":"2026-11-12T10:00:00Z","verified":false,"for_another_address":true,"message":"m2"}`},
+		{"a mailbox that cannot be read", Mailbox{ID: "mbx_x", State: MailboxUnreadable, CreatedAt: at, RetentionOptions: []int{}, Confirmations: []ForwardingConfirmation{}},
+			`{"id":"mbx_x","address":"","label":"","state":"unreadable","created_at":"2026-11-12T10:00:00Z","retention_days":0,"retention_options":[],"confirmations":[]}`},
+		{"a page of a search that found nothing yet", MessagePage{Messages: []MessageSummary{}, Next: "m9", SearchedTo: at},
+			`{"messages":[],"next":"m9","searched_to":"2026-11-12T10:00:00Z"}`},
 		{"a page of a search", MessagePage{
 			Messages: []MessageSummary{{ID: "m1", ReceivedAt: at, ExpiresAt: at, Size: 10, From: []MailAddress{{Name: "Ann", Address: "ann@example.org"}}, Subject: "Hi", Snippet: "Hello", Attachments: 1}},
 			Next:     "m1", SearchedTo: at,
@@ -99,7 +105,7 @@ func TestMessageHTMLLimits(t *testing.T) {
 
 func TestMailboxErrors(t *testing.T) {
 	codes := map[string]bool{}
-	for _, e := range []*Error{ErrTooManyMailboxes, ErrInvalidLabel, ErrInvalidRetention, ErrInvalidQuery, ErrTooManyMessages, ErrMailboxMoved} {
+	for _, e := range []*Error{ErrTooManyMailboxes, ErrInvalidLabel, ErrInvalidRetention, ErrInvalidQuery, ErrTooManyMessages, ErrMailboxUnreadable} {
 		if codes[e.Code] {
 			t.Errorf("%s is used twice", e.Code)
 		}

@@ -86,7 +86,7 @@ Not deployed: one enclave runs today. The code is ready for two behind one addre
 - **The TLS identity.** One enclave logs `acme: certificate obtained`, the other `acme: certificate installed` within ten minutes. Both serve one key. While one orders, the identity holds its claim; the other waits up to the end of that claim (eleven minutes, more after failed tries) and then orders itself. Nothing needs doing.
 - **`the stored identity holds another key`** in one enclave's log: the identity was lost and made again by the other enclave. Restart the enclave that logs it, so both serve the new key, and follow "Replace the TLS key" for the CAA records.
 - **The challenges** of an open order are items `pk=acme-challenge#tls-<CA host>` in the table, sealed. They expire with the order and are deleted when it ends; one left behind ends by itself.
-- **The test mailbox** is made once by whichever enclave starts first.
+- **The test mailbox** is made once by whichever enclave starts first, until the release that retires it (ADR 0026).
 - **Sign-ins in progress** (by mail, address changes, confirmations, passkey ceremonies, trips to a provider) are sealed items `pk=pending#…` in the table, so one started through one enclave ends through the other. An enclave ends none started before it started: replacing or restarting one ends the sign-ins started before, and the person asks again.
 - **Limits** are counted in each enclave's memory, on purpose, so with two each is at most twice what it says, and **`/status`** is the enclave's that answered (ADR 0017, "Two enclaves at once").
 
@@ -188,6 +188,8 @@ Check that the next run starts, then delete the old token. Other applies run wit
 
 ## Read the test mailbox
 
+Until the release that builds mailboxes per account (ADR 0026), which retires it: see the next section.
+
 ```sh
 token=$(cat ~/.config/permaily/test-mailbox-token)
 curl -s -H "Authorization: Bearer $token" https://api.permaily.com/v1/mailbox                  # address, retention, Gmail codes
@@ -199,6 +201,17 @@ curl -s -X PATCH -H "Authorization: Bearer $token" -d '{"retention_days":30}' ht
 To send a test message, connect to `inbox.permaily.com:25` with STARTTLS from a server: home connections usually block outbound port 25.
 
 To forward a Gmail account: in Gmail, Settings > Forwarding > Add a forwarding address (the mailbox address), read the confirmation code from `/v1/mailbox`, enter it in Gmail, then enable forwarding.
+
+## Mailboxes per account: what changes for the operator
+
+Takes effect with the release that builds ADR 0026; until then nothing here applies.
+
+- **The test mailbox is retired.** The release reads nothing of it: `/v1/mailbox` answers 404, the token reads nothing, and `u-9b393600758a2985dae3@inbox.permaily.com` refuses mail like any unknown address. Turn off any Gmail forwarding to it. Mail is read in the app, by the account that owns the mailbox; the operator's token reads nobody's.
+- **TLS-RPT.** The release removes the `_smtp._tls.inbox` record (`tls_rpt_address` is empty by default in `deploy/tofu`). After it is verified: sign in as the super admin, make a mailbox labelled "TLS reports", then set `tls_rpt_address` to its address and apply. Reports arrive there as attachments, read with "Download".
+- **Deleting F1's items**, once the release is verified and a rollback to v0.11.0 is no longer wanted (after it, v0.11.0 would start with a new, empty test mailbox): in the table every item with `pk=mailbox#test` (`sk=mailbox` and every `sk=msg#…`), and in the mail bucket every object under `raw/test/`. Then remove v0.11.0 and older releases from `release_keys` ("Delete the key of an old release"): until their keys are gone they can still open the root secret, and the test mailbox's mail was readable by them and by the token.
+- **Staging rehearsals** read mail through a mailbox of a signed-in account: sign in to the staging app with an invitation, make one or two mailboxes, send to them from a server with STARTTLS, and read them in the app or with the session's cookie under `/api/v1/mailboxes`.
+- **Pausing a mailbox** for abuse: `scripts/accounts.sh mailbox find <address>`, then `mailbox pause <id>` and later `mailbox resume <id>`; ten changes of one mailbox in thirty days at most. Its person is told by mail; nothing is deleted. The operator cannot disconnect a mailbox or read mail.
+- **A regression marked `fork` in `/status`** means two commits at one version of an anchored record: someone wrote to the anchors bucket. A mailbox or an account whose record is forked stops for good (a mailbox shows as "can't be read" and can only be disconnected); a forked TLS identity is made again with a new key, so follow "Replace the TLS key".
 
 ## Invite someone
 

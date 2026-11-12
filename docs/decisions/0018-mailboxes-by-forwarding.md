@@ -14,7 +14,7 @@ F1 receives the mail of one test mailbox that a Gmail account forwards to. F2 gi
 - **No mail from before.** Permaily sees mail from the day the forwarding starts, and the app says so.
 - **Retention** as F1 has it: ninety days unless the user picks 7, 30, 180 or 365.
 - **A full inbox in the app:** browse, search and delete what is stored.
-- **Disconnecting a mailbox deletes its mail at once:** the address stops accepting, and the mailbox's key is destroyed. Receipts of what left are kept (ADR 0019).
+- **Disconnecting a mailbox deletes its mail:** the address stops accepting at once, no request opens the mailbox again, and its mail is deleted within minutes. The mailbox's key is taken out of its stored record, so the code of public releases never unwraps it again; that is a refusal enforced by approved code, not destruction proof against a later theft of the root secret together with a saved copy of the storage (ADR 0026, "What disconnecting does to the key"). Receipts of what left are kept (ADR 0019).
 - **Which account is behind a mailbox.** For Gmail it comes from Google's forwarding confirmation, signed by `google.com`, so it is verified. For any other provider the user types a label, shown as not verified.
 
 ## Consequences

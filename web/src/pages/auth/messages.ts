@@ -52,6 +52,8 @@ const messages: Record<ApiErrorCode, string> = {
   invalid_retention: 'Choose 7, 30, 90, 180 or 365 days.',
   invalid_query: 'A search is 1 to 200 characters.',
   too_many_messages: 'Delete at most 100 messages at a time.',
+  mailbox_unreadable:
+    "This mailbox can't be read. Disconnect it, and write to support@permaily.com.",
   other: 'Something went wrong on our side. Try again in a moment.',
 }
 

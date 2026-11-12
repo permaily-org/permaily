@@ -24,9 +24,11 @@ var (
 	// ErrTooManyMessages refuses deleting more messages at once than one
 	// request deletes.
 	ErrTooManyMessages = &Error{"too_many_messages", "delete at most 100 messages at a time"}
-	// ErrMailboxMoved answers the F1 test mailbox's token API once that
-	// mailbox is in an account (410): the token reads nothing any more.
-	ErrMailboxMoved = &Error{"mailbox_moved", "the test mailbox is in an account now; read it in the app"}
+	// ErrMailboxUnreadable refuses opening or changing a mailbox whose record
+	// cannot be read: its newest version is gone, or two versions were
+	// committed in its place (ADR 0026). It accepts no mail; it can only be
+	// disconnected, which deletes what it holds.
+	ErrMailboxUnreadable = &Error{"mailbox_unreadable", "this mailbox can't be read; disconnect it, and write to support@permaily.com"}
 )
 
 // MailboxRetentionDays are the periods a mailbox keeps mail for, the default
@@ -48,13 +50,19 @@ const (
 	// MailboxPaused is a mailbox the operator paused: it refuses new mail
 	// until the operator resumes it. What it holds stays.
 	MailboxPaused MailboxState = "paused"
+	// MailboxUnreadable is a mailbox whose record cannot be read
+	// (ErrMailboxUnreadable): it refuses mail, shows nothing of itself but
+	// its identifier and when it was added, and can only be disconnected.
+	MailboxUnreadable MailboxState = "unreadable"
 )
 
 // Mailbox is what a person sees of one of their mailboxes.
 type Mailbox struct {
 	ID string `json:"id"`
 	// Address is where the person forwards their mail: random, at
-	// inbox.permaily.com.
+	// inbox.permaily.com. Empty for a mailbox that is MailboxUnreadable, as
+	// are the label, the retention's choices and every date but CreatedAt
+	// (when it was added to the account).
 	Address string `json:"address"`
 	// Label is the person's own name for the mailbox; empty when they gave
 	// none.
@@ -71,16 +79,18 @@ type Mailbox struct {
 	ReceivingSince time.Time `json:"receiving_since,omitzero"`
 	// PausedAt is when the operator paused the mailbox; absent otherwise.
 	PausedAt time.Time `json:"paused_at,omitzero"`
-	// Source is the Gmail account Google said asked to forward here; absent
-	// when no confirmation signed by google.com came while the mailbox was
-	// waiting. Without it the app shows the label as not verified.
+	// Source is the first Gmail account Google confirmed asked to forward to
+	// this mailbox, while it was waiting; absent when none did. Without it
+	// the app shows the mailbox as not verified.
 	Source *MailboxSource `json:"source,omitempty"`
 	// Confirmations are the forwarding confirmations received, the newest
 	// first, ten at most, for thirty days each. Always a list.
 	Confirmations []ForwardingConfirmation `json:"confirmations"`
 }
 
-// MailboxSource is the account a provider vouches forwards to a mailbox.
+// MailboxSource is what a provider confirmed in a message it signed: that
+// this account asked to forward its mail to the mailbox. Not that forwarding
+// is on, and not that later mail comes from it.
 type MailboxSource struct {
 	// Provider is "gmail", the only one that says so in a signed message.
 	Provider string `json:"provider"`
@@ -94,14 +104,21 @@ const MailboxSourceGmail = "gmail"
 
 // ForwardingConfirmation is a message Gmail sends to a forwarding address
 // when an account asks to forward to it, with the code that turns forwarding
-// on. Verified is true only when it carries a valid DKIM signature of
-// google.com: anyone can send a message that looks like one.
+// on. Anyone can send a message that looks like one.
 type ForwardingConfirmation struct {
+	// Code is empty when ForAnotherAddress: it confirms nothing here.
 	Code string `json:"code"`
 	// Requester is the Gmail account that asked, as the message says.
 	Requester  string    `json:"requester,omitempty"`
 	ReceivedAt time.Time `json:"received_at"`
-	Verified   bool      `json:"verified"`
+	// Verified is true only when google.com signed the message (DKIM, over
+	// its From, To and Subject and its whole body) and the address it names
+	// as where mail is forwarded is this mailbox's: Google confirms that
+	// Requester asked to forward to this mailbox.
+	Verified bool `json:"verified"`
+	// ForAnotherAddress is a message Google signed for another forwarding
+	// address, sent here by someone else: it says nothing of this mailbox.
+	ForAnotherAddress bool `json:"for_another_address,omitempty"`
 	// Message is the message that carried it, in the mailbox's inbox.
 	Message string `json:"message,omitempty"`
 }
@@ -149,15 +166,17 @@ type MessageSummary struct {
 }
 
 // MessagePage is a page of a mailbox's messages, the newest first, or of the
-// ones a search found.
+// ones a search found. A page reads a bounded number of stored items (500
+// for a list, 2,000 for a search, expired ones included), so it may hold
+// fewer messages than were asked for, or none, and still have a Next.
 type MessagePage struct {
 	Messages []MessageSummary `json:"messages"`
-	// Next is what to ask the following page with (after); absent when
-	// nothing older is left to list or to search.
+	// Next is what to ask the following page with (after): the identifier of
+	// the last item the page read, found or not. Absent when nothing older
+	// is left to list or to search.
 	Next string `json:"next,omitempty"`
-	// SearchedTo is, for a search, when the oldest message looked at by this
-	// page arrived: a search looks at a bounded number of messages a page,
-	// and may answer none found with a Next to go on.
+	// SearchedTo is, for a search, when the oldest message this page looked
+	// at arrived; absent when it looked at none.
 	SearchedTo time.Time `json:"searched_to,omitzero"`
 }
 
@@ -305,8 +324,10 @@ type MessagesDeleted struct {
 }
 
 // MailboxRecord is what the operator's tool and the admin panel show of a
-// mailbox: what the enclave vouches for, read from its signed record. Never
-// its address, its label or the account at the provider behind it.
+// mailbox: what the enclave vouches for, read from its signed record (the
+// retention from its signed settings). Never its address, its label or the
+// account at the provider behind it. State is the one the person sees,
+// MailboxUnreadable included (then only ID, Account and CreatedAt are set).
 type MailboxRecord struct {
 	ID             string       `json:"id"`
 	Account        string       `json:"account"`
