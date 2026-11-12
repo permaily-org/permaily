@@ -50,7 +50,7 @@ The service that runs inside the AWS Nitro Enclave, including the embedded web a
 | react-dom | MIT |
 | react-router | MIT |
 | scheduler | MIT |
-| Google Sans, Medium, Latin (web/src/components/brands) | OFL-1.1 |
+| Google Sans, Medium, Latin (web/src/components/brands) | MIT |
 
 ## permaily-host
 
