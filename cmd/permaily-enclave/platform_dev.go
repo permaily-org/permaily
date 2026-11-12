@@ -75,6 +75,18 @@ func devClock() time.Time { return time.Now().Add(time.Duration(devAhead.Load())
 // whole service tells it.
 var devProviders atomic.Pointer[idptest.Server]
 
+// devShared, when a test sets it, is the storage and the keys of every
+// platform this process starts in dev mode: two enclaves of one deployment
+// over one storage, as the test of a sign-in started through one and ended
+// through the other needs.
+var devShared atomic.Pointer[devStorage]
+
+type devStorage struct {
+	mem     *store.Memory
+	commits *store.MemoryCommits
+	keys    *keys.Local
+}
+
 // defaultSuperAdmin is the super admin's address in dev mode, which a test or
 // a person trying the admin panel signs up with.
 const defaultSuperAdmin = "admin@permaily.test"
@@ -120,13 +132,16 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	if err != nil {
 		return nil, err
 	}
-	mem := store.NewMemory()
-	mem.Now = devClock
-	p := &platform{mode: "dev", listener: ln, attester: att, certs: certs, store: mem}
+	mem, commits := store.NewMemory(), store.NewMemoryCommits()
 	local, err := keys.NewLocal()
 	if err != nil {
 		return nil, err
 	}
+	if shared := devShared.Load(); shared != nil {
+		mem, commits, local = shared.mem, shared.commits, shared.keys
+	}
+	mem.Now = devClock
+	p := &platform{mode: "dev", listener: ln, attester: att, certs: certs, store: mem}
 	// Accounts, with the messages kept instead of sent: GET /dev/outbox on
 	// the app's host shows them, sign-in codes included.
 	appURL := "https://" + hosts.App
@@ -143,7 +158,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	}()
 	if p.accounts, err = accounts.New(accounts.Config{
 		// As in the enclave: only the newest version of an account's record is kept.
-		Records: &store.Anchored{Records: mem, Commits: store.NewMemoryCommits(), OnlyNewest: true, Now: devClock}, Entries: mem,
+		Records: &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Now: devClock}, Entries: mem,
 		Keys: local, Mailer: outbox, AppURL: appURL, SuperAdmin: cfg.superAdmin, Log: log, Now: devClock,
 		Providers: &idp.Client{HTTP: &http.Client{}, RedirectURL: appURL + providerCallback, Now: devClock, Endpoints: providers.Endpoints()},
 	}); err != nil {

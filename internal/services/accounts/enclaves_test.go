@@ -27,6 +27,8 @@ type between struct {
 	meanwhile func()
 	always    bool
 	writes    int
+	// onRecord, when set, is given each record before it is written.
+	onRecord func(*store.Record)
 }
 
 func (b *between) run() {
@@ -40,11 +42,17 @@ func (b *between) run() {
 }
 
 func (b *between) PutRecord(ctx context.Context, r *store.Record, create bool) error {
+	if b.onRecord != nil {
+		b.onRecord(r)
+	}
 	b.run()
 	return b.Anchored.PutRecord(ctx, r, create)
 }
 
 func (b *between) PutRecordAt(ctx context.Context, r *store.Record, at store.Mark) error {
+	if b.onRecord != nil {
+		b.onRecord(r)
+	}
 	b.run()
 	return b.Anchored.PutRecordAt(ctx, r, at)
 }
@@ -106,15 +114,23 @@ type enclave struct {
 
 func (w *world) enclave() *enclave {
 	w.t.Helper()
+	return w.enclaveAt(0)
+}
+
+// enclaveAt is an enclave whose clock is ahead of the world's by ahead, or
+// behind it.
+func (w *world) enclaveAt(ahead time.Duration) *enclave {
+	w.t.Helper()
+	now := func() time.Time { return w.now.Add(ahead) }
 	e := &enclave{
 		w:       w,
-		records: &between{Anchored: &store.Anchored{Records: w.mem, Commits: w.commits, OnlyNewest: true, Now: func() time.Time { return w.now }}},
+		records: &between{Anchored: &store.Anchored{Records: w.mem, Commits: w.commits, OnlyNewest: true, Now: now}},
 		entries: &watched{Entries: w.mem},
 	}
 	var err error
 	e.svc, err = New(Config{
 		Records: e.records, Entries: e.entries, Keys: w.svc.cfg.Keys, Mailer: w.out, Providers: w.idp,
-		AppURL: "https://app.permaily.test", SuperAdmin: superAdmin, Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: func() time.Time { return w.now },
+		AppURL: "https://app.permaily.test", SuperAdmin: superAdmin, Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: now,
 	})
 	if err != nil {
 		w.t.Fatal(err)

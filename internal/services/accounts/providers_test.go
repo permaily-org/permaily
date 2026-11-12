@@ -96,7 +96,13 @@ func (w *world) on(providers ...idp.Provider) {
 // returns its state and the value of the browser's cookie.
 func (w *world) leave(who *Authenticated, in contracts.ProviderStart) (state, cookie string) {
 	w.t.Helper()
-	started, cookie, err := w.svc.StartProvider(context.Background(), w.fresh(who), in)
+	return w.leaveFrom(w.svc, who, in)
+}
+
+// leaveFrom is leave through one enclave.
+func (w *world) leaveFrom(svc *Service, who *Authenticated, in contracts.ProviderStart) (state, cookie string) {
+	w.t.Helper()
+	started, cookie, err := svc.StartProvider(context.Background(), w.fresh(who), in)
 	if err != nil {
 		w.t.Fatalf("starting with %s: %v", in.Provider, err)
 	}
@@ -111,7 +117,13 @@ func (w *world) leave(who *Authenticated, in contracts.ProviderStart) (state, co
 // at the provider.
 func (w *world) comeBack(state, cookie string, who idp.Identity) (*ProviderDone, error) {
 	w.t.Helper()
-	done, err := w.svc.FinishProvider(context.Background(), ProviderAnswer{State: state, Code: w.idp.approve(who), Browser: cookie, From: Browser{UserAgent: "provider device"}})
+	return w.comeBackTo(w.svc, state, cookie, who)
+}
+
+// comeBackTo is comeBack through one enclave.
+func (w *world) comeBackTo(svc *Service, state, cookie string, who idp.Identity) (*ProviderDone, error) {
+	w.t.Helper()
+	done, err := svc.FinishProvider(context.Background(), ProviderAnswer{State: state, Code: w.idp.approve(who), Browser: cookie, From: Browser{UserAgent: "provider device"}})
 	if done == nil || !strings.HasPrefix(done.Path, "/") || strings.HasPrefix(done.Path, "//") {
 		w.t.Fatalf("the browser is sent nowhere in the app: %+v %v", done, err)
 	}
