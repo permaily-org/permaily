@@ -228,3 +228,24 @@ func TestCSSTokeniser(t *testing.T) {
 		t.Errorf("%q", b.String())
 	}
 }
+
+// Found by FuzzCSS (testdata/fuzz/FuzzCSS/8d9ad1c3f2da0c8f): two tokens the
+// input wrote with nothing between ("0" and "+0") were written back glued
+// ("00"), which a browser reads as one number. Tokens that would merge are
+// written with a space between, so the output reads back as the filter read
+// it.
+func TestCSSAdjacentTokensStaySeparate(t *testing.T) {
+	for _, in := range []string{
+		"a{color:rgb(0+0+0)}", "a{margin:0+0}", "a{padding:1px+2px}", "a{font:bold+12px Arial}", "a{margin:1+2%}",
+	} {
+		out := (&cssBudget{}).filterStylesheet(in)
+		if again := (&cssBudget{}).filterStylesheet(out); again != out {
+			t.Errorf("%q: written %q, read back %q", in, out, again)
+		}
+		for _, glued := range []string{"00", "1px2", "bold12", "12%"} {
+			if strings.Contains(out, glued) {
+				t.Errorf("%q: written %q, with %q glued", in, out, glued)
+			}
+		}
+	}
+}

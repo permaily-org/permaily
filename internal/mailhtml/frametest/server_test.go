@@ -17,9 +17,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"log/slog"
 	"math/big"
@@ -261,6 +265,18 @@ func newSuite(t *testing.T, web string) *suite {
 		}
 		s.messages[name] = id
 	}
+	// Sample mail for the screens of docs/web.md (screenshots, by hand):
+	// named, with their own subjects, after the corpus.
+	for i, sm := range samples(t) {
+		id := fmt.Sprintf("%016x%016x", at.Add(time.Duration(len(names)+i)*time.Second).UnixNano(), len(names)+i+1)
+		meta := inbox.StoredMeta{From: []contracts.MailAddress{{Name: "Northwind Outfitters", Address: "news@northwind.example"}}, Subject: sm.subject}
+		raw := "From: Northwind Outfitters <news@northwind.example>\r\nTo: Alice <alice@example.org>\r\nSubject: " + sm.subject +
+			"\r\nDate: Thu, 12 Nov 2026 09:30:00 +0000\r\nMIME-Version: 1.0\r\n" + sm.body
+		if err := inboxtest.Seed(context.Background(), mem, mem, b, inboxtest.Message{ID: id, ReceivedAt: at.Add(time.Duration(i) * time.Minute), RetentionDays: 30, Raw: []byte(raw), Meta: meta}); err != nil {
+			t.Fatal(err)
+		}
+		s.messages[sm.name] = id
+	}
 	api := httpapi.MailboxesAPI(httpapi.MailboxesConfig{
 		Service: fake, Reader: inbox.NewReader(mem), Sessions: s.sessions, AppOrigin: appOrigin,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -300,6 +316,73 @@ func newSuite(t *testing.T, web string) *suite {
 	s.internet.StartTLS()
 	t.Cleanup(func() { s.app.Close(); s.internet.Close() })
 	return s
+}
+
+type sample struct{ name, subject, body string }
+
+// samples are the sample messages the screens are shown with: a newsletter
+// with remote images and an inline image too large to show, a message with
+// a text part of its own, one too large to format and one in a charset
+// Permaily does not read.
+func samples(t *testing.T) []sample {
+	logo := pngOf(t, 120, 40, color.RGBA{0x1f, 0x5c, 0x4a, 0xff})
+	huge := pngOf(t, 8193, 1, color.RGBA{0xff, 0xff, 0xff, 0xff})
+	newsletter := `<!DOCTYPE html><html><head><style>
+.wrap{max-width:600px;margin:0 auto;font-family:Georgia,serif;color:#222}
+h1{font-size:28px;color:#1f5c4a;margin:16px 0 8px}
+.cta{background-color:#1f5c4a;padding:12px 20px}
+@media (max-width:480px){h1{font-size:22px}}
+</style></head><body bgcolor="#f6f3ee"><div class="wrap">
+<p><img src="cid:logo@northwind" alt="Northwind Outfitters" width="120" height="40"></p>
+<h1>The autumn trail guide</h1>
+<p><img src="https://cdn.northwind.example/hero.jpg" alt="A trail through birch trees" width="600"></p>
+<p>Six routes for the short days, a checklist for wet weather, and the boots our guides wore all season.</p>
+<p><img src="cid:map@northwind" alt="The route map"></p>
+<table width="100%" cellpadding="0" cellspacing="0"><tr><td class="cta"><a href="https://northwind.example/guide/autumn?utm_source=mail">Read the guide</a></td></tr></table>
+<p style="font-size:13px;color:#555">You get this because you asked for trail news. <a href="https://northwind.example/unsubscribe/7c91">Unsubscribe</a>.</p>
+<img src="https://t.northwind.example/open/7c91.gif" width="1" height="1" alt="">
+</div></body></html>`
+	related := "Content-Type: multipart/related; boundary=rel\r\n\r\n" +
+		"--rel\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + newsletter + "\r\n" +
+		"--rel\r\nContent-Type: image/png\r\nContent-ID: <logo@northwind>\r\nContent-Transfer-Encoding: base64\r\n\r\n" + b64(logo) + "\r\n" +
+		"--rel\r\nContent-Type: image/png\r\nContent-ID: <map@northwind>\r\nContent-Transfer-Encoding: base64\r\n\r\n" + b64(huge) + "\r\n" +
+		"--rel--\r\n"
+	alternative := "Content-Type: multipart/alternative; boundary=alt\r\n\r\n" +
+		"--alt\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nYour order NW-20417 has shipped.\r\n\r\nTrail boots, size 42: 1\r\nWool socks: 2\r\n\r\nTrack it at https://northwind.example/orders/NW-20417\r\n" +
+		"--alt\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p style=\"font:16px/1.5 Arial,sans-serif\">Your order <b>NW-20417</b> has shipped.</p>" +
+		"<table border=\"1\" cellpadding=\"6\" style=\"border-collapse:collapse\"><tr><td>Trail boots, size 42</td><td>1</td></tr><tr><td>Wool socks</td><td>2</td></tr></table>" +
+		"<p><a href=\"https://northwind.example/orders/NW-20417\">Track your parcel</a></p>\r\n--alt--\r\n"
+	return []sample{
+		{"sample-newsletter", "The autumn trail guide", related},
+		{"sample-order", "Your order has shipped", alternative},
+		{"sample-too-large", "Everything in our catalogue", "Content-Type: text/html; charset=utf-8\r\n\r\n<p>The whole catalogue.</p>" + strings.Repeat("<br>", 524_288)},
+		{"sample-unreadable", "Ein Gruß aus dem Laden", "Content-Type: multipart/alternative; boundary=alt\r\n\r\n--alt\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nA greeting from the shop, in the text the sender included.\r\n--alt\r\nContent-Type: text/html; charset=utf-7\r\n\r\n+ADw-p+AD4-Hallo+ADw-/p+AD4-\r\n--alt--\r\n"},
+	}
+}
+
+func pngOf(t *testing.T, w, h int, c color.RGBA) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			img.SetRGBA(x, y, c)
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func b64(b []byte) string {
+	s := base64.StdEncoding.EncodeToString(b)
+	var out strings.Builder
+	for len(s) > 76 {
+		out.WriteString(s[:76] + "\r\n")
+		s = s[76:]
+	}
+	out.WriteString(s)
+	return out.String()
 }
 
 type statusWriter struct {

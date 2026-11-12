@@ -475,6 +475,22 @@ func cssWriteString(b *strings.Builder, s string) {
 }
 
 // cssWriteNumber writes a non-negative number in plain decimal.
+// cssGlues says whether a token of kind next, written right after one of
+// kind prev with nothing between, would be read back as part of it ("0"
+// then "+0" as "00", "bold" then "12px" as "bold12px"). The writers put a
+// space between such tokens, which separates component values as the
+// tokens already were.
+func cssGlues(prev, next cssKind) bool {
+	switch prev {
+	case cssNumber, cssDimension, cssIdent, cssHash:
+		switch next {
+		case cssNumber, cssPercentage, cssDimension, cssIdent:
+			return true
+		}
+	}
+	return false
+}
+
 func cssWriteNumber(b *strings.Builder, v float64) {
 	b.WriteString(strconv.FormatFloat(v, 'f', -1, 64))
 }

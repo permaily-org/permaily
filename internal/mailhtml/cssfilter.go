@@ -443,14 +443,26 @@ func checkValue(prop string, kind valueKind, value []cssNode, ctx cssContext) (s
 	}
 	var b strings.Builder
 	afterSlash := false
+	last := cssEOF // the kind of the token written last, for cssGlues
 	for i, n := range value {
 		if n.isBlock() {
-			if n.block != cssFunction || !colourFunctions[strings.ToLower(n.tok.Value)] || !colourAllowed(kind) || !checkColourFunction(n, &b) {
+			if n.block != cssFunction || !colourFunctions[strings.ToLower(n.tok.Value)] || !colourAllowed(kind) {
 				return "", false
 			}
+			if cssGlues(last, cssIdent) {
+				b.WriteByte(' ')
+			}
+			if !checkColourFunction(n, &b) {
+				return "", false
+			}
+			last = cssEOF
 			continue
 		}
 		t := n.tok
+		if cssGlues(last, t.Kind) {
+			b.WriteByte(' ')
+		}
+		last = t.Kind
 		switch t.Kind {
 		case cssWhitespace:
 			b.WriteByte(' ')
@@ -544,10 +556,15 @@ func hexColour(s string) bool {
 // numbers, percentages and angles, and writes it.
 func checkColourFunction(n cssNode, b *strings.Builder) bool {
 	var inner strings.Builder
+	last := cssEOF
 	for _, c := range n.children {
 		if c.isBlock() {
 			return false
 		}
+		if cssGlues(last, c.tok.Kind) {
+			inner.WriteByte(' ')
+		}
+		last = c.tok.Kind
 		switch t := c.tok; t.Kind {
 		case cssWhitespace:
 			inner.WriteByte(' ')
