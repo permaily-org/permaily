@@ -26,13 +26,15 @@ export default defineConfig({
         'src/pages/settings/signin/**',
         'src/pages/settings/account/**',
         'src/pages/admin/**',
+        'src/pages/accounts/**',
+        'src/pages/inbox/**',
       ],
       // The measured values, rounded down. They only go up (docs/testing.md).
       thresholds: {
-        'src/lib/**': { statements: 98, branches: 96, functions: 100, lines: 100 },
+        'src/lib/**': { statements: 98, branches: 97, functions: 100, lines: 100 },
         'src/components/SessionGate.tsx': {
           statements: 98,
-          branches: 96,
+          branches: 97,
           functions: 100,
           lines: 100,
         },
@@ -47,6 +49,8 @@ export default defineConfig({
           lines: 99,
         },
         'src/pages/admin/**': { statements: 97, branches: 91, functions: 100, lines: 100 },
+        'src/pages/accounts/**': { statements: 97, branches: 88, functions: 100, lines: 100 },
+        'src/pages/inbox/**': { statements: 98, branches: 92, functions: 100, lines: 100 },
       },
     },
   },

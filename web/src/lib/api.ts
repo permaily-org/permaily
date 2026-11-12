@@ -771,6 +771,144 @@ export function finishConfirmEmail(attempt: string, code: string): Promise<Me> {
   return request('POST', '/api/v1/auth/confirm/email/finish', { attempt, code })
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Mailboxes and the inbox: the person's own calls (ADR 0026, "The API"). The admin panel's are elsewhere.
+// ---------------------------------------------------------------------------------------------------------------
+
+const mailboxStates: ReadonlySet<string> = new Set(['waiting', 'receiving', 'paused', 'unreadable'])
+
+/** A mailbox as the server answered it, or a failure. An `unreadable` one has only its id and `created_at`. */
+function mailboxOf(answer: Partial<Mailbox> | null): Mailbox {
+  if (typeof answer?.id !== 'string' || !mailboxStates.has(answer.state as string)) {
+    throw new ApiError('other')
+  }
+  return {
+    ...(answer as Mailbox),
+    address: typeof answer.address === 'string' ? answer.address : '',
+    label: typeof answer.label === 'string' ? answer.label : '',
+    retention_options: Array.isArray(answer.retention_options) ? answer.retention_options : [],
+    confirmations: Array.isArray(answer.confirmations) ? answer.confirmations : [],
+  }
+}
+
+function mailboxPath(id: string): string {
+  return `/api/v1/mailboxes/${encodeURIComponent(id)}`
+}
+
+function messagePath(mailbox: string, message: string): string {
+  return `${mailboxPath(mailbox)}/messages/${encodeURIComponent(message)}`
+}
+
+/** The account's mailboxes, the oldest first, without the ones being disconnected, and how many it may have. */
+export async function mailboxes(): Promise<MailboxList> {
+  const answer = await request<Partial<MailboxList> | null>('GET', '/api/v1/mailboxes')
+  if (!Array.isArray(answer?.mailboxes)) throw new ApiError('other')
+  return {
+    mailboxes: answer.mailboxes.map(mailboxOf),
+    limit: typeof answer.limit === 'number' ? answer.limit : answer.mailboxes.length,
+  }
+}
+
+/** Makes a mailbox with a new address. The label may be empty. */
+export async function createMailbox(label: string): Promise<Mailbox> {
+  return mailboxOf(await request('POST', '/api/v1/mailboxes', { label }))
+}
+
+export async function mailbox(id: string): Promise<Mailbox> {
+  return mailboxOf(await request('GET', mailboxPath(id)))
+}
+
+/** Changes what the person may change of a mailbox. A new period applies to mail received from now on. */
+export async function updateMailbox(
+  id: string,
+  change: { label?: string; retention_days?: number },
+): Promise<Mailbox> {
+  return mailboxOf(await request('PATCH', mailboxPath(id), change))
+}
+
+/**
+ * Disconnects a mailbox: its address stops accepting mail and its mail is deleted. Needs a fresh proof of who
+ * the person is. A forked one answers `mailbox_unreadable` and stays.
+ */
+export function disconnectMailbox(id: string): Promise<void> {
+  return request('DELETE', mailboxPath(id))
+}
+
+/** How many messages a page asks for. */
+export const messagesPerPage = 50
+
+/**
+ * A page of a mailbox's messages, the newest first, or with `q` a page of what a search found. Read the page's
+ * `next` to go on, even when it holds no message.
+ */
+export async function messages(
+  id: string,
+  page: { after?: string; q?: string } = {},
+): Promise<MessagePage> {
+  const query = new URLSearchParams({ limit: String(messagesPerPage) })
+  if (page.after) query.set('after', page.after)
+  if (page.q) query.set('q', page.q)
+  const answer = await request<Partial<MessagePage> | null>(
+    'GET',
+    `${mailboxPath(id)}/messages?${query}`,
+  )
+  if (!Array.isArray(answer?.messages)) throw new ApiError('other')
+  return {
+    messages: answer.messages,
+    ...(typeof answer.next === 'string' && answer.next !== '' ? { next: answer.next } : {}),
+    ...(typeof answer.searched_to === 'string' ? { searched_to: answer.searched_to } : {}),
+  }
+}
+
+/** One message: its text always, and what it says of its HTML when it has some. */
+export async function message(mailbox: string, id: string): Promise<Message> {
+  const answer = await request<Partial<Message> | null>('GET', messagePath(mailbox, id))
+  if (typeof answer?.id !== 'string') throw new ApiError('other')
+  const list = <T>(value: T[] | undefined): T[] => (Array.isArray(value) ? value : [])
+  return {
+    ...(answer as Message),
+    from: list(answer.from),
+    to: list(answer.to),
+    cc: list(answer.cc),
+    reply_to: list(answer.reply_to),
+    attachments: list(answer.attachments),
+    auth: list(answer.auth),
+    text: typeof answer.text === 'string' ? answer.text : '',
+    subject: typeof answer.subject === 'string' ? answer.subject : '',
+  }
+}
+
+/** Where the raw message is downloaded from, as a file: never opened in the page. */
+export function rawMessageUrl(mailbox: string, id: string): string {
+  return `${messagePath(mailbox, id)}/raw`
+}
+
+/** Where an attachment is downloaded from, as a file of any type: never opened in the page. */
+export function attachmentUrl(mailbox: string, id: string, index: number): string {
+  return `${messagePath(mailbox, id)}/attachments/${index}`
+}
+
+export function deleteMessage(mailbox: string, id: string): Promise<void> {
+  return request('DELETE', messagePath(mailbox, id))
+}
+
+/** The most messages one request deletes. */
+export const maxDeleted = 100
+
+/** Deletes up to a hundred messages, and answers how many of them were there. */
+export async function deleteMessages(mailbox: string, ids: string[]): Promise<number> {
+  const answer = await request<{ deleted?: unknown } | null>(
+    'POST',
+    `${mailboxPath(mailbox)}/messages/delete`,
+    { ids },
+  )
+  return typeof answer?.deleted === 'number' ? answer.deleted : 0
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// End of the person's mailbox calls.
+// ---------------------------------------------------------------------------------------------------------------
+
 /** An account as the admin panel sees it. Nothing of its mail, and nothing that signs in to it. */
 export type AccountRecord = {
   id: string

@@ -1,5 +1,5 @@
 import { type RefObject, useEffect, useRef, useState } from 'react'
-import { Button, Checkbox, TextAnchor } from '../../components/ui/index.ts'
+import { Button, Checkbox, TextAnchor, TextLink } from '../../components/ui/index.ts'
 import * as api from '../../lib/api.ts'
 import { useSession } from '../../lib/session.tsx'
 import { privacyUrl, termsUrl } from '../../lib/terms.ts'
@@ -184,6 +184,10 @@ export function TermsChanged({
           Sign out
         </Button>
       </div>
+      {/* Without agreeing, the person can still download their mail and disconnect mailboxes (ADR 0026). */}
+      <p className="mt-8 text-small text-ink-2">
+        <TextLink to="/accounts">Your mailboxes</TextLink>
+      </p>
       <p className="mt-8 text-small text-ink-2">
         If you don't agree, you can sign out, or delete your account.
       </p>
