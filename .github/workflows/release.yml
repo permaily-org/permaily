@@ -2,7 +2,10 @@ name: release
 
 # A merge from develop into main builds the enclave image on x86_64 and arm64,
 # checks both are identical, attests provenance, and lets semantic-release cut
-# a version from the Conventional Commits since the last tag. The tag points at
+# a version from the Conventional Commits since the last tag. The release
+# publishes the image's measurements (pcrs.json), never the image: it contains
+# AWS's GPL kernel, and whoever needs the image builds it (ADR 0023,
+# scripts/release-image.sh). No job hands the image to another. The tag points at
 # the built commit (no release commit), so `scripts/verify.sh <tag>` rebuilds
 # exactly the published PCRs.
 
@@ -33,7 +36,9 @@ jobs:
           nix build .#permaily-host --out-link host
           nix build .#permaily-verify --out-link verify
           mkdir out
-          cp eif/permaily.eif eif/pcrs.json out/
+          cp eif/pcrs.json out/
+          # The image's checksum, to compare the two builds; not the image.
+          cp eif/SHA256SUMS out/image.sha256sums
           cp host/bin/permaily-host out/permaily-host-linux-arm64
           arch=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
           cp verify/bin/permaily-verify out/permaily-verify-linux-$arch
@@ -61,12 +66,13 @@ jobs:
           path: artifacts
       - name: x86_64 and arm64 builds are identical
         run: |
-          for f in permaily.eif pcrs.json permaily-host-linux-arm64; do
+          for f in image.sha256sums pcrs.json permaily-host-linux-arm64; do
             cmp artifacts/build-ubuntu-24.04/$f artifacts/build-ubuntu-24.04-arm/$f
           done
           mkdir dist
-          cp artifacts/build-ubuntu-24.04-arm/* dist/
+          cp artifacts/build-ubuntu-24.04-arm/{pcrs.json,permaily-host-linux-arm64,permaily-verify-linux-arm64} dist/
           cp artifacts/build-ubuntu-24.04/permaily-verify-linux-amd64 dist/
+          cp third-party-notices.md dist/
           (cd dist && sha256sum * > SHA256SUMS)
           cat dist/pcrs.json
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2

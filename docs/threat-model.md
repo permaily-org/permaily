@@ -7,7 +7,7 @@ That the service answering on the Permaily hosts runs an enclave image built fro
 ## Trusted
 
 - **AWS Nitro hardware and hypervisor**, the Nitro Security Module and the AWS Nitro Enclaves root certificate (pinned by fingerprint in `pkg/attestation`).
-- **AWS prebuilt enclave kernel, init and nsm.ko** from aws-nitro-enclaves-cli (pinned by hash in `nix/eif.nix`).
+- **AWS prebuilt enclave kernel, init and nsm.ko** from aws-nitro-enclaves-cli (pinned by hash in `nix/aws-blobs.nix`, each binary described in `nix/aws-blobs.json` and checked in every image CI builds).
 - **The source code and its pinned dependencies**: Go modules (`go.sum`, `vendorHash`), npm packages (`bun.lock` and the `node_modules` hash), nixpkgs (`flake.lock`).
 - **Let's Encrypt** for issuing certificates to the enclave's key, and the public WebPKI for the verifier's TLS checks and for the enclave's connections to KMS.
 - **Sigstore's public instance** (Fulcio, the Rekor transparency logs and, for entries of Rekor v2, the timestamp authority that says when a signature existed; all pinned in `pkg/provenance`; three of the five keyholders of Sigstore's TUF root can give a running enclave other logs and timestamp authorities, never another issuer of certificates, ADR 0013) and **GitHub Actions** (its token issuer, its hosted runners, and the rule that `main` only changes through reviewed merges): together they say which images are public releases, and a running enclave hands the root secret only to those.

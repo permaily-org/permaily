@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploys an enclave image and permaily-host to the instance created by deploy/tofu.
 #
-#   nix build .#eif --out-link result-eif                # or .#eif-staging, or a downloaded release
+#   nix build .#eif --out-link result-eif                # or .#eif-staging, or scripts/release-image.sh for a release
 #   nix build .#permaily-host --out-link result-host
 #   AWS_PROFILE=permaily scripts/deploy.sh result-eif result-host/bin/permaily-host [--debug]
 #
