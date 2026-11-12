@@ -24,20 +24,68 @@ describe('the providers on the sign-in screens', () => {
     guest()
     await open('/sign-in')
     const first = await screen.findByRole('button', { name: 'Continue with Google' })
-    const offered = screen.getAllByRole('button', { name: /^Continue with / })
+    const offered = screen.getAllByRole('button', { name: /^(Continue|Sign in) with / })
     expect(offered.map((button) => button.textContent)).toEqual([
       'Continue with Google',
       'Continue with GitHub',
       // The identifier is meta; to a person it is Facebook.
       'Continue with Facebook',
-      'Continue with Microsoft',
+      // Microsoft's rules tie its logo to these words.
+      'Sign in with Microsoft',
     ])
     await settle()
     expect(screen.queryByText(/Meta/)).toBeNull()
-    // No mark of a provider is drawn or loaded.
-    expect(first.querySelector('img, svg')).toBeNull()
-    expect(document.querySelector('img')).toBeNull()
+    expect(first.textContent).toBe('Continue with Google')
     await expectAccessible()
+  })
+
+  it.each(['light', 'dark'])(
+    'each show the mark of their provider, hidden from assistive technology, in the %s theme',
+    async (theme) => {
+      document.documentElement.dataset.theme = theme
+      try {
+        guest()
+        await open('/sign-in')
+        await screen.findByRole('button', { name: 'Continue with Google' })
+        const offered = screen.getAllByRole('button', { name: /^(Continue|Sign in) with / })
+        expect(
+          offered.map((button) => {
+            const marks = button.querySelectorAll('svg')
+            expect(marks).toHaveLength(1)
+            const mark = marks[0]
+            // Decorative: the button's name is its words, and the mark is not focusable on its own.
+            expect(mark.getAttribute('aria-hidden')).toBe('true')
+            expect(mark.getAttribute('focusable')).toBe('false')
+            expect(mark.querySelector('title, desc')).toBeNull()
+            // The mark comes before the words.
+            expect(button.firstElementChild).toBe(mark)
+            return mark.dataset.mark
+          }),
+        ).toEqual(['google', 'github', 'meta', 'microsoft'])
+        // Drawn in the page: nothing is loaded from anywhere.
+        expect(document.querySelector('img, image, use, object, iframe')).toBeNull()
+        await expectAccessible()
+      } finally {
+        delete document.documentElement.dataset.theme
+      }
+    },
+  )
+
+  it('name what is inside their marks uniquely, and point only at those names', async () => {
+    guest()
+    await open('/sign-up')
+    await screen.findByRole('button', { name: 'Continue with Google' })
+    const ids = [...document.querySelectorAll('svg [id]')].map((element) => element.id)
+    expect(ids.length).toBeGreaterThan(0)
+    expect(new Set(ids).size).toBe(ids.length)
+    for (const reference of document.querySelectorAll(
+      'svg [mask], svg [filter], svg [clip-path]',
+    )) {
+      for (const name of ['mask', 'filter', 'clip-path']) {
+        const value = reference.getAttribute(name)
+        if (value) expect(ids).toContain(value.replace(/^url\(#(.*)\)$/, '$1'))
+      }
+    }
   })
 
   it.each([
@@ -50,7 +98,7 @@ describe('the providers on the sign-in screens', () => {
     await screen.findByRole('heading', { name: 'Sign in' })
     await waitFor(() => expect(server.asked('GET /api/v1/auth/providers')).toHaveLength(1))
     await settle()
-    expect(screen.queryByRole('button', { name: /^Continue with / })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^(Continue|Sign in) with / })).toBeNull()
   })
 
   it('leave the app only for the address the server answered, with where the person was going', async () => {
@@ -62,7 +110,7 @@ describe('the providers on the sign-in screens', () => {
     await user.click(await screen.findByRole('button', { name: 'Continue with Facebook' }))
     // While the browser leaves, every action of the group waits.
     expect(screen.getByText('Taking you to Facebook').getAttribute('role')).toBe('status')
-    for (const button of screen.getAllByRole('button', { name: /^Continue with / })) {
+    for (const button of screen.getAllByRole('button', { name: /^(Continue|Sign in) with / })) {
       expect((button as HTMLButtonElement).disabled).toBe(true)
     }
     starting.give(ok({ url: away, expires_in: 600 }))

@@ -21,6 +21,16 @@ describe('what each provider is called on screen', () => {
       microsoft: 'Microsoft',
     })
   })
+
+  it('is the words of its button, which Microsoft wants as Sign in', async () => {
+    const { providerAction } = await load()
+    expect(providers.map(providerAction)).toEqual([
+      'Continue with Google',
+      'Continue with GitHub',
+      'Continue with Facebook',
+      'Sign in with Microsoft',
+    ])
+  })
 })
 
 describe('leaving for a provider', () => {
