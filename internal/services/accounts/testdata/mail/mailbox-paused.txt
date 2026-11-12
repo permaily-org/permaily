@@ -1,0 +1,10 @@
+To: ada@example.com
+Subject: Permaily paused one of your mailboxes
+
+Permaily paused one of your mailboxes.
+
+It refuses new mail until Permaily resumes it. The mail it holds stays, and you can read, delete or disconnect it.
+
+    When: 12 November 2026, 09:30 UTC
+
+Write to support@permaily.com to ask why.

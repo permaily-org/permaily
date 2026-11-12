@@ -8,13 +8,16 @@ import (
 	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/domain/mail"
 	"github.com/permaily-org/permaily/internal/idp"
+	"github.com/permaily-org/permaily/internal/services/mailboxes"
 )
 
 // Notices by mail (ADR 0017): a person is told of security and access, and of
 // nothing else. A sign-in from a device that had not signed in before, a
 // change in how the account is signed into, a change of the contact address,
 // a deletion asked or cancelled, the operator blocking or unblocking the
-// account, and the account made an admin or no longer one. They cannot be turned off.
+// account, the account made an admin or no longer one, and a mailbox added,
+// asked to be forwarded to by Gmail, disconnected, paused or resumed (ADR
+// 0026). They cannot be turned off.
 //
 // A notice is plain text and its HTML (ADR 0025), from the same sender and through the same Mailer
 // as a sign-in message, so the watch of ADR 0021 applies to it. Its subject
@@ -267,4 +270,81 @@ func adminMail(to, app string, moment time.Time, made bool) Mail {
 	return noticeMail(to, "Your Permaily account is no longer an admin",
 		"Your Permaily account is no longer an admin of Permaily. The admin panel is closed to it from now on.",
 		facts, "To ask why, write to "+supportAddress+".")
+}
+
+// The notices about mailboxes (ADR 0026, "Notices by mail"), which the
+// mailboxes service asks for (mailboxes.Notifier). None names the mailbox:
+// no address, label, code, link or identifier; the fact is when.
+var mailboxNotices = map[mailboxes.NoticeKind]struct {
+	subject, lead, paragraph string
+	// note is the small print, given the app's host.
+	note func(app string) string
+}{
+	mailboxes.NoticeAdded: {
+		subject:   "A mailbox was added to your Permaily account",
+		lead:      "A mailbox was added to your Permaily account.",
+		paragraph: "Mail forwarded to it is kept in your account, and only you can read it, in the app.",
+		note: func(app string) string {
+			return "If this wasn't you, sign in at " + app + ", disconnect it, and write to " + supportAddress + "."
+		},
+	},
+	mailboxes.NoticeForwarding: {
+		subject:   "Gmail asked to forward to your Permaily mailbox",
+		lead:      "Google confirmed that a Gmail account asked to forward its mail to one of your Permaily mailboxes.",
+		paragraph: "Open Accounts in the app to see which Gmail account asked. Enter the code in Gmail only if that account is yours.",
+		note: func(string) string {
+			return "If you didn't ask, do nothing: no mail is forwarded until the code is entered in Gmail."
+		},
+	},
+	mailboxes.NoticeDisconnected: {
+		subject:   "A mailbox was disconnected from your Permaily account",
+		lead:      "A mailbox was disconnected from your Permaily account. Its address no longer accepts mail, and its mail is being deleted.",
+		paragraph: "Turn forwarding to it off in Gmail, or Gmail will tell you that forwarding fails.",
+		note: func(app string) string {
+			return "If this wasn't you, sign in at " + app + ", sign out the devices you don't know, and write to " + supportAddress + "."
+		},
+	},
+	mailboxes.NoticePaused: {
+		subject:   "Permaily paused one of your mailboxes",
+		lead:      "Permaily paused one of your mailboxes.",
+		paragraph: "It refuses new mail until Permaily resumes it. The mail it holds stays, and you can read, delete or disconnect it.",
+		note:      func(string) string { return "Write to " + supportAddress + " to ask why." },
+	},
+	mailboxes.NoticeResumed: {
+		subject: "Permaily resumed one of your mailboxes",
+		lead:    "Permaily resumed one of your mailboxes. It accepts mail again.",
+		note:    func(string) string { return "To ask why it was paused, write to " + supportAddress + "." },
+	},
+}
+
+// mailboxMail writes a notice about a mailbox, of a kind there is one of.
+func mailboxMail(to, app string, kind mailboxes.NoticeKind, moment time.Time) Mail {
+	n := mailboxNotices[kind]
+	blocks := []mail.Block{mail.Lead(n.lead)}
+	if n.paragraph != "" {
+		blocks = append(blocks, mail.Paragraph(n.paragraph))
+	}
+	blocks = append(blocks, mail.Facts(at("When", moment)), mail.Note(n.note(app)))
+	return compose(to, n.subject, blocks...)
+}
+
+// MailboxNotice tells an account's person of what happened to one of its
+// mailboxes, at its contact address: it implements mailboxes.Notifier. It is
+// called after the change is stored, fails nothing and holds its caller back
+// no longer than any notice (notify): the account is read within that wait
+// too. One that cannot be sent, for an account that is gone or a kind there
+// is no notice of, is logged by its kind alone.
+func (s *Service) MailboxNotice(ctx context.Context, accountID string, kind mailboxes.NoticeKind, moment time.Time) {
+	if _, known := mailboxNotices[kind]; !known || !validID("acc", accountID) {
+		s.cfg.Log.Warn("accounts: a notice could not be sent", "kind", string(kind))
+		return
+	}
+	reading, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.noticeWait)
+	doc, err := s.read(reading, accountID)
+	cancel()
+	if err != nil || doc == nil {
+		s.cfg.Log.Warn("accounts: a notice could not be sent", "kind", string(kind))
+		return
+	}
+	s.notify(ctx, string(kind), mailboxMail(doc.Address, s.rp.ID, kind, moment))
 }
