@@ -1,6 +1,6 @@
 # 0006 Source-available personal use license with a CLA
 
-Status: Accepted. Pending legal review.
+Status: Accepted; license 1.2 since 2026-11-12, which also lets organisations inspect, build and verify the code and publish what they find, while running it stays for natural persons, for themselves. Pending legal review.
 Date: 2026-11-08
 
 ## Context

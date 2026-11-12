@@ -12,9 +12,9 @@ const principles = [
       'They hold back mail, or remove details from it, before any app’s request runs. Apps are never told.',
   },
   {
-    title: 'No third-party model reads mail',
+    title: 'Models see as little as possible',
     detail:
-      'Rules written in words run on a model inside the verified service, and mail never leaves it.',
+      'Exact rules run inside the verified service. Only a rule about meaning sends a model the one field it asks about, and the service says when a model decided.',
   },
   { title: 'Keep as little as possible', detail: 'Mail passes through rather than piling up.' },
   {
@@ -30,7 +30,7 @@ const principles = [
 const refusals = [
   'Sell, mine or advertise on your mail.',
   'Train models on your mail.',
-  'Use a third-party model to read your mail.',
+  'Send a model more of a message than the one field a rule asks about.',
   'Ship closed-source code in the path that handles your mail.',
   'Claim to control what an app does after it receives its slice.',
 ];
@@ -72,14 +72,14 @@ const refusals = [
   <section class="sec rule-top">
     <div class="wrap two">
       <h2 class="h-d">How we make money</h2>
-      <p class="body">Personal is free. Developers pay for the tokens they use, and companies pay per seat. That’s all of it. <a class="link" href="/pricing/">See pricing</a></p>
+      <p class="body">Personal is free, by invitation, for people in the United States. Paid plans for developers and companies are planned, not available yet. <a class="link" href="/pricing/">See pricing</a></p>
     </div>
   </section>
 
   <Cta
     title="Start with nothing"
-    body="Connect your inbox in about three minutes. Nothing is shared until you approve it."
-    primary={{ label: 'Get started free', href: LINKS.signup }}
+    body="Today you can make an account by invitation. Mailboxes and connections come next, and nothing is shared until you approve it."
+    primary={{ label: 'Sign up by invitation', href: LINKS.signup }}
     secondary={{ label: 'Talk to us', href: '/contact/' }}
   />
 </Base>

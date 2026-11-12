@@ -2,51 +2,40 @@
 import { LINKS, NAV } from '../config/site';
 
 interface Props {
-  minimal?: boolean;
   /** Docs pages already sit inside a <header>, so they render this as a <div>. */
   as?: 'header' | 'div';
 }
 
-const { minimal = false, as: Tag = 'header' } = Astro.props;
+const { as: Tag = 'header' } = Astro.props;
 const path = Astro.url.pathname.endsWith('/') ? Astro.url.pathname : `${Astro.url.pathname}/`;
 ---
 
 <Tag class="site-head">
-  {
-    minimal ? (
-      <div class="wrap inner only-word">
-        <a class="word" href="/">Permaily</a>
-      </div>
-    ) : (
-      <>
-        <div class="wrap inner">
-          <a class="word" href="/">Permaily</a>
-          <nav class="site-nav" aria-label="Main">
-            {NAV.map((item) => (
-              <a href={item.href} aria-current={path === item.href ? 'page' : undefined}>
-                {item.label}
-              </a>
-            ))}
-          </nav>
-          <div class="site-act">
-            <a class="only-wide" href={LINKS.docs} aria-current={path.startsWith(LINKS.docs) ? 'true' : undefined}>Docs</a>
-            <a class="btn" href={LINKS.signup}>Get started free</a>
-            <button class="menu-btn" aria-expanded="false" aria-controls="menu" aria-label="Menu">
-              <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-                <path class="b" d="M2 5h14M2 9h14M2 13h14" />
-                <path class="x" d="M4 4l10 10M14 4L4 14" />
-              </svg>
-            </button>
-          </div>
-        </div>
-        <div class="menu" id="menu">
-          {NAV.map((item) => <a href={item.href}>{item.label}</a>)}
-          <a href={LINKS.docs}>Docs</a>
-          <a href={LINKS.login}>Log in</a>
-        </div>
-      </>
-    )
-  }
+  <div class="wrap inner">
+    <a class="word" href="/">Permaily</a>
+    <nav class="site-nav" aria-label="Main">
+      {NAV.map((item) => (
+        <a href={item.href} aria-current={path === item.href ? 'page' : undefined}>
+          {item.label}
+        </a>
+      ))}
+    </nav>
+    <div class="site-act">
+      <a class="only-wide" href={LINKS.docs} aria-current={path.startsWith(LINKS.docs) ? 'true' : undefined}>Docs</a>
+      <a class="btn" href={LINKS.signup}>Sign up</a>
+      <button class="menu-btn" aria-expanded="false" aria-controls="menu" aria-label="Menu">
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+          <path class="b" d="M2 5h14M2 9h14M2 13h14" />
+          <path class="x" d="M4 4l10 10M14 4L4 14" />
+        </svg>
+      </button>
+    </div>
+  </div>
+  <div class="menu" id="menu">
+    {NAV.map((item) => <a href={item.href}>{item.label}</a>)}
+    <a href={LINKS.docs}>Docs</a>
+    <a href={LINKS.login}>Log in</a>
+  </div>
 </Tag>
 
 <style is:global>
@@ -64,10 +53,6 @@ const path = Astro.url.pathname.endsWith('/') ? Astro.url.pathname : `${Astro.ur
     align-items: center;
     gap: var(--space-24);
     height: 64px;
-  }
-
-  .site-head .inner.only-word {
-    grid-template-columns: 1fr;
   }
 
   .word {

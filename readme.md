@@ -44,4 +44,4 @@ Permaily is in early development, built in the open.
 
 ## License
 
-The code is public so anyone can audit and verify it. It is free for personal use; companies and organizations need a commercial license. See [license.md](license.md) and [docs/commercial.md](docs/commercial.md).
+The code is public so anyone can audit and verify it: individuals and organizations may inspect it, build it to verify the service, and publish what they find. Running it is free for a person, for their own use; companies and organizations that want to run it need a commercial license. See [license.md](license.md) and [docs/commercial.md](docs/commercial.md). Using the hosted service is covered by its [terms](https://permaily.com/terms/) and [privacy policy](https://permaily.com/privacy/).

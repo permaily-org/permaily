@@ -1,0 +1,125 @@
+---
+import { LEGAL_UPDATED } from '../config/legal';
+import { LINKS } from '../config/site';
+import Base from './Base.astro';
+
+// The frame of every legal page: the tabs between them, the date, the title
+// and a plain introduction, then the page's own sections as prose.
+
+interface Props {
+  title: string;
+  heading: string;
+  description: string;
+  intro: string;
+  // A line under the date, such as the version of the terms.
+  note?: string;
+}
+
+const { title, heading, description, intro, note } = Astro.props;
+const here = Astro.url.pathname.replace(/\/?$/, '/');
+
+const tabs = [
+  { label: 'Privacy', href: LINKS.privacy },
+  { label: 'Terms', href: LINKS.terms },
+  { label: 'Data processing', href: LINKS.dataProcessing },
+  { label: 'Subprocessors', href: LINKS.subprocessors },
+  { label: 'Deleting your data', href: LINKS.dataDeletion },
+];
+---
+
+<Base title={title} description={description}>
+  <section class="page-head">
+    <div class="wrap">
+      <nav class="tabs" aria-label="Legal">
+        {tabs.map((tab) => <a href={tab.href} aria-current={tab.href === here ? 'page' : undefined}>{tab.label}</a>)}
+      </nav>
+      <p class="small updated">Updated {LEGAL_UPDATED}{note ? ` · ${note}` : ''}</p>
+      <h1 class="h-l title">{heading}</h1>
+      <p class="intro plain">{intro}</p>
+    </div>
+  </section>
+
+  <section class="page-end">
+    <div class="wrap stack sections">
+      <slot />
+    </div>
+  </section>
+</Base>
+
+<style is:global>
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-24);
+    margin-bottom: var(--space-40);
+    border-bottom: var(--hair) solid var(--rule);
+  }
+
+  .tabs a {
+    margin-bottom: -1px;
+    padding-block: var(--space-10);
+    color: var(--ink-2);
+    font-size: var(--text-body);
+    text-decoration: none;
+  }
+
+  .tabs a[aria-current='page'] {
+    border-bottom: 2px solid var(--ink);
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  .updated {
+    margin-bottom: var(--space-12);
+  }
+
+  .page-head .title {
+    margin-bottom: var(--space-20);
+  }
+
+  .plain {
+    max-width: 38em;
+  }
+
+  .sections {
+    gap: var(--space-48);
+  }
+
+  .prose {
+    display: grid;
+    gap: var(--space-24);
+    max-width: 42em;
+  }
+
+  .prose h2 {
+    font-size: var(--text-heading);
+    font-weight: 500;
+    letter-spacing: var(--tracking-h);
+    line-height: var(--leading-snug);
+  }
+
+  .prose h3 {
+    font-size: var(--text-body);
+    font-weight: 500;
+  }
+
+  .prose p,
+  .prose li {
+    color: var(--ink-2);
+  }
+
+  .prose ul,
+  .prose ol {
+    display: grid;
+    gap: var(--space-10);
+    padding-left: 1.25em;
+  }
+
+  .prose ul {
+    list-style: disc;
+  }
+
+  .prose ol {
+    list-style: decimal;
+  }
+</style>

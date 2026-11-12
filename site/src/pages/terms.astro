@@ -1,0 +1,92 @@
+---
+import { COURTS, GOVERNING_LAW, MINIMUM_AGE, OPERATOR, TERMS_VERSION } from '../config/legal';
+import { LINKS } from '../config/site';
+import Legal from '../layouts/Legal.astro';
+---
+
+<Legal
+  title="Terms"
+  heading="Terms of service"
+  description="The agreement between you and the person who runs Permaily: what the service is, who may use it, and what each side promises."
+  intro="These terms are the agreement between you and the person who runs Permaily. They are short on purpose. Where they and the law disagree, the law wins."
+  note={`Version ${TERMS_VERSION}`}
+>
+  <div class="prose">
+    <h2>1. Who runs Permaily</h2>
+    {/* TODO LEGAL: the operator's state (Florida) is not confirmed; docs/legal.md. */}
+    <p>Permaily is run by one person, {OPERATOR.name}, in {OPERATOR.state}, {OPERATOR.country} (“we”, “us”), not by a company. You can reach us at <a class="link" href={`mailto:${OPERATOR.support}`}>{OPERATOR.support}</a>. How we handle your data is in the <a class="link" href={LINKS.privacy}>privacy policy</a>.</p>
+    <p>We wrote these terms ourselves, without a lawyer. This is version <span data-terms-version>{TERMS_VERSION}</span>, and it applies from the date at the top of the page.</p>
+
+    <h2>2. What Permaily is, and what it isn’t</h2>
+    <p>Permaily is built to keep a copy of the mail you forward to it inside a service whose code is public and checked, so that the person who runs it can’t read that mail, and to give apps and AI agents you approve only the part you approve, for as long as you allow, with a record of what each one received.</p>
+    <ul>
+      <li><b>It’s early.</b> Permaily is free, by invitation, and not finished. Today you can make an account and manage it. Mailboxes, connections, rules and receipts are planned and not open yet; the app shows what’s available.</li>
+      <li><b>It isn’t your mail provider or a backup.</b> Your mail stays with your provider. Once mailboxes open, Permaily will keep a copy only for as long as you set.</li>
+      <li><b>It can’t control what others do with what you share.</b> An app or agent you approve receives what you approved, and its own terms cover what it does next. Revoking it stops what comes next; it can’t recall what it already received.</li>
+      <li><b>Support can’t give an account back.</b> The service has no way for us or the admins to sign in as you, change your contact address or add a way to sign in. If you lose your email, your passkeys and your recovery codes, the account is lost.</li>
+      <li><b>The protection has limits, and we say which.</b> The <a class="link" href={LINKS.privacy}>privacy policy</a> and the <a class="link" href={LINKS.trustModel}>trust model</a> list what the design doesn’t cover, such as sign-in by mail passing through your mail provider and Amazon Web Services. Don’t rely on Permaily for more than they describe.</li>
+      <li><b>Some of it will depend on a model.</b> Once rules and requests about meaning open, such as “mail about invoices”, a model will decide them, and a model can be wrong. The service holds mail back when in doubt, and says when a model decided.</li>
+    </ul>
+
+    <h2>3. Who can use it</h2>
+    <p>You can use Permaily only if all of this is true:</p>
+    <ul>
+      <li>you are at least {MINIMUM_AGE};</li>
+      <li>you were invited;</li>
+      <li>you use it for yourself and your own mail, not for or on behalf of a company or any other organisation, and not for clients’ mail;</li>
+      <li>the sanctions laws of the United States, which bind us, don’t forbid us to provide it to you: because of who you are, who you act for, or where you live.</li>
+    </ul>
+    <p>Invitations are only because Permaily isn’t open yet. They aren’t limited to one country, but we choose whom to invite, and we may ask where you live before we do. If one of these stops being true, stop using Permaily and delete your account, or tell us. We may block an account that doesn’t meet them.</p>
+
+    <h2>4. Your account</h2>
+    <ul>
+      <li>Give a contact address that is yours, and keep your ways of signing in safe. Anyone who signs in to your account can do what you can.</li>
+      <li>We try to tell you by mail of a sign-in from a new device, a change in how you sign in, a change of address, and anything we or an admin do to your account (the privacy policy lists which). A message can fail to arrive and isn’t sent again, so check Settings too. If something wasn’t you, write to support at once: we can block the account, but not give it back.</li>
+      <li>You can delete your account in Settings at any time. It closes at once and is removed after seven days, unless you cancel. <a class="link" href={LINKS.dataDeletion}>Deleting your data</a> says what is removed, when, and what stays.</li>
+    </ul>
+
+    <h2>5. Your mail, and what you tell us to share</h2>
+    <ul>
+      <li>Forward only mail you’re allowed to forward. Mail from your work, for example, may be covered by your employer’s rules.</li>
+      <li>You keep every right you have in your mail. You let us store and process it only to provide the service to you, as the privacy policy says.</li>
+      <li>Once connections open, approving one is your instruction and your consent for Permaily to give that app or agent the mail it covers, as the consent screen shows it. Turning on a rule or request that depends on meaning is your instruction and consent for Permaily to send the part of a message it names to the model provider listed on <a class="link" href={LINKS.subprocessors}>Subprocessors</a>. Revoking stops it.</li>
+      <li>Your mail holds other people’s messages. Use what you share with apps and agents in a way that respects them, and the law.</li>
+    </ul>
+
+    <h2>6. What you must not do</h2>
+    <ul>
+      <li>Use Permaily to break the law, including sanctions and export laws, or to receive, store or share content that is illegal.</li>
+      <li>Forward or reach mail that isn’t yours to forward, or use the service to spy on someone.</li>
+      <li>Use it to send spam, or to attack, overload or get around the limits of the service, its providers or anyone else.</li>
+      <li>Try to reach other people’s accounts or data.</li>
+    </ul>
+    <p>Testing the service’s security is welcome, if you only use your own accounts, stop as soon as you find something, and report it to <a class="link" href={`mailto:${OPERATOR.security}`}>{OPERATOR.security}</a> before telling anyone else. We won’t take action against research done that way.</p>
+
+    <h2>7. What we may do</h2>
+    <p>If an account breaks these terms, is used to harm someone, or was taken over, we or an admin may block it, sign its devices out, or ask to delete it. The privacy policy lists everything we and the admins can do to an account. Unless the law, an investigation or the safety of others stops us, we tell you why and listen if you disagree.</p>
+    <p>We keep or hand over data when the law requires it, as the privacy policy describes. That can keep specific records past the time this page or the privacy policy gives, for as long as the law requires and no longer.</p>
+
+    <h2>8. The software</h2>
+    <p>The code that runs Permaily is public under the <a class="link" href={`${LINKS.source}/blob/main/license.md`}>Permaily Personal Use License</a>. These terms are about using the service; they don’t change what the license lets you do with the code. For the name and logo, see the <a class="link" href={`${LINKS.source}/blob/main/docs/trademark.md`}>trademark policy</a>.</p>
+
+    <h2>9. Availability and changes to the service</h2>
+    <p>We work to keep Permaily running and your data safe, but we can’t promise it will always be available, free of errors, or keep every feature. We may change it, and we may stop offering it. If we stop, we’ll tell you by mail as early as we can, aiming for at least 30 days, so you can delete your account first; something outside our control, such as a provider ending our access, can make that shorter.</p>
+
+    <h2>10. No warranty</h2>
+    <p>Permaily is free and early, and is provided as it is and as available. As far as the law allows, we give no promise, express or implied, that it fits a particular purpose, will meet your needs or will keep your data safe from every risk, beyond what these terms and the privacy policy say.</p>
+
+    <h2>11. Liability</h2>
+    <p>As far as the law allows, we aren’t liable for indirect, incidental, special, consequential or punitive damages, or for lost profits, and our total liability to you for all claims about the service is limited to 100 US dollars. This doesn’t limit liability for fraud, for harm we cause on purpose or by gross negligence, for death or personal injury caused by negligence, or anything else the law doesn’t let us limit, and doesn’t take away any right the law where you live gives you that can’t be waived by agreement.</p>
+
+    <h2>12. Ending</h2>
+    <p>You can stop using Permaily and delete your account whenever you like. We may end your access with 30 days’ notice by mail, or at once if you seriously break these terms, no longer meet section 3, or the law requires it. Sections 7, 10, 11 and 14 keep applying after the end.</p>
+
+    <h2>13. Changes to these terms</h2>
+    <p>If we change these terms in a way that matters to you, such as how we use your data or what we’re liable for, we’ll tell you by mail at least 30 days before the change takes effect, and you can delete your account before then. Small changes, such as fixing wording, take effect when published. Each change gets a new version and date at the top of this page.</p>
+
+    <h2>14. Law and courts</h2>
+    {/* TODO LEGAL: Florida law and courts depend on the operator's state; docs/legal.md. */}
+    <p>These terms, and any dispute about them or the service, are governed by the law of {GOVERNING_LAW} and the federal law of the United States. Disputes go to {COURTS}, unless the law where you live gives you a right to bring them in your own courts that can’t be waived by agreement. There is no arbitration, and nothing here stops you from joining a class action the law allows.</p>
+    <p>If part of these terms can’t be enforced, the rest still applies. These terms and the privacy policy are the whole agreement between you and us about the service.</p>
+  </div>
+</Legal>

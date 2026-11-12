@@ -1,4 +1,4 @@
-// The phone menu, the theme switch, and forms that have no backend yet.
+// The phone menu, the theme switch, and the contact form, which has no backend yet.
 
 const button = document.querySelector<HTMLElement>('.menu-btn');
 const menu = document.querySelector<HTMLElement>('.menu');
