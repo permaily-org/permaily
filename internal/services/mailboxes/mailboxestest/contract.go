@@ -20,6 +20,7 @@ type Service interface {
 	Create(ctx context.Context, c mailboxes.Caller, in contracts.MailboxCreate) (*contracts.Mailbox, error)
 	Get(ctx context.Context, c mailboxes.Caller, id string) (*contracts.Mailbox, error)
 	Update(ctx context.Context, c mailboxes.Caller, id string, in contracts.MailboxUpdate) (*contracts.Mailbox, error)
+	CheckChange(ctx context.Context, c mailboxes.Caller, id string) error
 	Disconnect(ctx context.Context, c mailboxes.Caller, id string) error
 	Open(ctx context.Context, c mailboxes.Caller, id string, a mailboxes.Access) (inbox.Box, error)
 	RemoveAccount(ctx context.Context, accountID string) error
@@ -152,6 +153,8 @@ var contractCases = []contractCase{
 		is(t, "get", err, contracts.ErrNotFound)
 		_, err = s.Service.Update(ctx, other, m.ID, contracts.MailboxUpdate{})
 		is(t, "update", err, contracts.ErrNotFound)
+		is(t, "check a change", s.Service.CheckChange(ctx, other, m.ID), contracts.ErrNotFound)
+		is(t, "check a change of none", s.Service.CheckChange(ctx, other, "mbx_none"), contracts.ErrNotFound)
 		is(t, "disconnect", s.Service.Disconnect(ctx, other, m.ID), contracts.ErrNotFound)
 		_, err = s.Service.Open(ctx, other, m.ID, mailboxes.AccessListMessages)
 		is(t, "open", err, contracts.ErrNotFound)
@@ -159,6 +162,7 @@ var contractCases = []contractCase{
 		s.Accounts.Set(other.Account, mailboxes.Standing{Closing: true})
 		_, err = s.Service.Update(ctx, other, m.ID, contracts.MailboxUpdate{})
 		is(t, "update while closing", err, contracts.ErrNotFound)
+		is(t, "check a change while closing", s.Service.CheckChange(ctx, other, m.ID), contracts.ErrNotFound)
 		is(t, "disconnect without a proof", s.Service.Disconnect(ctx, mailboxes.Caller{Account: other.Account}, m.ID), contracts.ErrNotFound)
 	}},
 	{"C2 what each standing may open", func(t *testing.T, s *Subject) {
@@ -197,6 +201,13 @@ var contractCases = []contractCase{
 		me := caller("acc_me")
 		m := create(t, s, me)
 		label := "Home"
+		// CheckChange answers what the change would before its input, and
+		// changes nothing.
+		is(t, "check making", s.Service.CheckChange(ctx, me, ""), nil)
+		is(t, "check changing", s.Service.CheckChange(ctx, me, m.ID), nil)
+		if n, l := count(t, s, me.Account), listed(t, s, me); n != 1 || len(l) != 1 || l[0].Label != "Work" || len(s.Notices.Sent()) != 1 {
+			t.Fatalf("a check changed something: %d, %+v, %v", n, l, kinds(s))
+		}
 		for _, c := range []struct {
 			standing mailboxes.Standing
 			want     error
@@ -206,6 +217,8 @@ var contractCases = []contractCase{
 			{mailboxes.Standing{Closing: true}, contracts.ErrAccountClosing},
 		} {
 			s.Accounts.Set(me.Account, c.standing)
+			is(t, "check making", s.Service.CheckChange(ctx, me, ""), c.want)
+			is(t, "check changing", s.Service.CheckChange(ctx, me, m.ID), c.want)
 			_, err := s.Service.Create(ctx, me, contracts.MailboxCreate{})
 			is(t, "create", err, c.want)
 			_, err = s.Service.Update(ctx, me, m.ID, contracts.MailboxUpdate{Label: &label})
@@ -224,6 +237,8 @@ var contractCases = []contractCase{
 		is(t, "list", err, contracts.ErrUnauthorized)
 		_, err = s.Service.Create(ctx, me, contracts.MailboxCreate{})
 		is(t, "create", err, contracts.ErrUnauthorized)
+		is(t, "check making", s.Service.CheckChange(ctx, me, ""), contracts.ErrUnauthorized)
+		is(t, "check changing another's", s.Service.CheckChange(ctx, me, m.ID), contracts.ErrUnauthorized)
 		_, err = s.Service.Get(ctx, me, m.ID)
 		is(t, "get another's", err, contracts.ErrUnauthorized)
 		is(t, "disconnect another's", s.Service.Disconnect(ctx, me, m.ID), contracts.ErrUnauthorized)
@@ -326,6 +341,10 @@ var contractCases = []contractCase{
 		is(t, "open", err, contracts.ErrMailboxUnreadable)
 		_, err = s.Service.Update(ctx, me, m.ID, contracts.MailboxUpdate{})
 		is(t, "update", err, contracts.ErrMailboxUnreadable)
+		is(t, "check a change", s.Service.CheckChange(ctx, me, m.ID), contracts.ErrMailboxUnreadable)
+		s.Accounts.Set(me.Account, mailboxes.Standing{Closing: true, TermsAgreed: true})
+		is(t, "check a change while closing", s.Service.CheckChange(ctx, me, m.ID), contracts.ErrAccountClosing)
+		s.Accounts.Set(me.Account, mailboxes.Standing{TermsAgreed: true})
 		is(t, "disconnect", s.Service.Disconnect(ctx, me, m.ID), nil)
 		if len(listed(t, s, me)) != 0 || count(t, s, me.Account) != 0 {
 			t.Error("the slot is still held")
@@ -337,6 +356,7 @@ var contractCases = []contractCase{
 		m := create(t, s, me)
 		s.MakeForked(t, m.ID)
 		is(t, "disconnect", s.Service.Disconnect(ctx, me, m.ID), contracts.ErrMailboxForked)
+		is(t, "check a change", s.Service.CheckChange(ctx, me, m.ID), contracts.ErrMailboxUnreadable)
 		l := listed(t, s, me)
 		if len(l) != 1 || l[0].State != contracts.MailboxUnreadable || count(t, s, me.Account) != 1 {
 			t.Fatalf("listed %+v", l)

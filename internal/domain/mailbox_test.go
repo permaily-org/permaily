@@ -65,6 +65,37 @@ func TestAttachmentFilename(t *testing.T) {
 		"  ":                     "attachment-3",
 		strings.Repeat("n", 200): strings.Repeat("n", AttachmentFilenameMax),
 		"bad\xffutf8.txt":        "badutf8.txt",
+		// What PR #90's cleaning refused too, kept as the stricter.
+		" . ":                     "attachment-3",
+		"\x00\x01\x7f":            "attachment-3",
+		"résumé 日本.pdf":           "résumé 日本.pdf",
+		strings.Repeat("é", 200):  strings.Repeat("é", AttachmentFilenameMax),
+		"a<b>:c|d?e*f\".txt":      "abcdef.txt",
+		"\xff\xfeok":              "ok",
+		"line\u2028sep\u2029.txt": "linesep.txt",
+		"trailing. . ":            "trailing",
+		"\ufffdx":                 "x",
+		// Windows' reserved device names, with or without an extension, in
+		// any case; executable and double extensions are kept as they are.
+		"CON":                                  "_CON",
+		"con.txt":                              "_con.txt",
+		"Nul.tar.gz":                           "_Nul.tar.gz",
+		"aux":                                  "_aux",
+		"PRN.pdf":                              "_PRN.pdf",
+		"COM1":                                 "_COM1",
+		"com9.log":                             "_com9.log",
+		"LPT1.txt":                             "_LPT1.txt",
+		"lpt9":                                 "_lpt9",
+		"COM¹.txt":                             "_COM¹.txt",
+		"CON" + strings.Repeat(" ", 130) + "x": "_CON",
+		"nul." + strings.Repeat("e", 200):      "_nul." + strings.Repeat("e", AttachmentFilenameMax-5),
+		"CON .txt":                             "_CON .txt",
+		"COM0":                                 "COM0",
+		"COM10.txt":                            "COM10.txt",
+		"CONSOLE.txt":                          "CONSOLE.txt",
+		"icon.txt":                             "icon.txt",
+		"invoice.pdf.exe":                      "invoice.pdf.exe",
+		"setup.exe":                            "setup.exe",
 	} {
 		if got := AttachmentFilename(in, 3); got != want {
 			t.Errorf("%q: %q, want %q", in, got, want)

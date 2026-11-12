@@ -179,6 +179,12 @@ func run(cfg config, log *slog.Logger) error {
 		// never leaves it. Invitations are the operator's, on the API host.
 		app := http.NewServeMux()
 		app.Handle("/api/", httpapi.AccountsAPI(p.accounts, log))
+		if p.mailboxes != nil {
+			// The person's mailboxes and their mail (ADR 0026, "The API").
+			mine := httpapi.MailboxesAPI(httpapi.MailboxesConfig{Service: p.mailboxes, Reader: p.reader, Sessions: p.accounts, Log: log})
+			app.Handle("/api/v1/mailboxes", mine)
+			app.Handle("/api/v1/mailboxes/", mine)
+		}
 		for path, h := range p.devRoutes {
 			app.Handle(path, h)
 		}
