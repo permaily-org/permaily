@@ -106,6 +106,10 @@ type Config struct {
 	SuperAdmin string
 	Log        *slog.Logger
 	Now        func() time.Time
+	// Terms says the version of the terms in force: domain.TermsVersion when
+	// nil, which is what the enclave runs with. Dev mode and the tests change
+	// it, as a new release would.
+	Terms func() string
 }
 
 // Limits on what one enclave keeps in memory and starts at once.
@@ -190,8 +194,10 @@ type attempt struct {
 	// one that confirms changes no address, and a sign-in does neither.
 	account string
 	// invitation is the entry of the invitation the sign-up will use, if the
-	// address has no account when the sign-in ends.
+	// address has no account when the sign-in ends, and agreed the person's
+	// agreement to the terms, given with it.
 	invitation string
+	agreed     termsDoc
 	// code is empty when the message carried only the link.
 	code, token [sha256.Size]byte
 	withCode    bool
@@ -209,6 +215,9 @@ func New(cfg Config) (*Service, error) {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.Terms == nil {
+		cfg.Terms = func() string { return domain.TermsVersion }
 	}
 	if cfg.SuperAdmin != "" {
 		address, err := domain.NormalizeAddress(cfg.SuperAdmin)
@@ -240,6 +249,9 @@ func New(cfg Config) (*Service, error) {
 func (s *Service) Wait() { s.work.Wait() }
 
 func (s *Service) now() time.Time { return s.cfg.Now().UTC() }
+
+// terms is the version of the terms in force.
+func (s *Service) terms() string { return s.cfg.Terms() }
 
 // Identifiers are random and say what they name: acc_…, ses_…, att_…, cer_…, inv_….
 var idEncoding = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPadding(base32.NoPadding)
@@ -330,12 +342,16 @@ type accountDoc struct {
 	// Admin says the super admin made the account an admin, who and when
 	// (admins.go). Nothing else makes one but the super admin's address.
 	Admin *adminDoc `json:"admin,omitempty"`
+	// Terms is the version of the terms its person agreed to, and when
+	// (terms.go); nil for the accounts made before there were terms.
+	Terms *termsDoc `json:"terms,omitempty"`
 }
 
 func (d *accountDoc) view() contracts.Account {
 	return contracts.Account{
 		ID: d.ID, State: d.State, Address: d.Address, Name: d.Name, Language: d.Language,
 		CreatedAt: d.CreatedAt, ClosesAt: d.ClosesAt, ClosingBy: d.closingBy(), PasskeyOnly: d.PasskeyOnly,
+		Terms: d.agreedVersion(),
 	}
 }
 
@@ -480,16 +496,26 @@ func (s *Service) own(ctx context.Context, who *Authenticated) (*accountDoc, err
 }
 
 // change is rewrite for what a person changes of their own account. A
-// blocked account takes none of it, as if its session were not there, and a
+// blocked account takes none of it, as if its session were not there, a
 // closing one refuses everything but cancelling, and a recovery code used to
-// sign in.
+// sign in, and one whose person did not agree to the terms in force refuses
+// everything until they do (terms.go).
 func (s *Service) change(ctx context.Context, id string, edit func(*accountDoc) error) (*accountDoc, error) {
+	return s.changeAgreed(ctx, id, true, edit)
+}
+
+// changeAgreed is change, asking for the agreement to the terms or not: not
+// for agreeing itself, nor for what a sign-in writes (link).
+func (s *Service) changeAgreed(ctx context.Context, id string, terms bool, edit func(*accountDoc) error) (*accountDoc, error) {
 	return s.rewrite(ctx, id, func(doc *accountDoc) error {
 		if doc.blocked() {
 			return contracts.ErrUnauthorized
 		}
 		if doc.State == contracts.AccountClosing {
 			return contracts.ErrAccountClosing
+		}
+		if terms && !doc.agreed(s.terms()) {
+			return contracts.ErrTermsChanged
 		}
 		return edit(doc)
 	})
@@ -640,15 +666,15 @@ func (s *Service) follow(ctx context.Context, partition string, owns func(*accou
 	return doc, e, nil
 }
 
-// create makes the account of address, which just proved to be the person's.
-// stale is the pointer that led nowhere, if there was one. It reports whether
-// the account it returns was made here: not when another sign-up of the same
-// address ended first.
-func (s *Service) create(ctx context.Context, address string, stale *store.Entry) (*accountDoc, bool, error) {
+// create makes the account of address, which just proved to be the person's,
+// with the agreement to the terms they gave. stale is the pointer that led
+// nowhere, if there was one. It reports whether the account it returns was
+// made here: not when another sign-up of the same address ended first.
+func (s *Service) create(ctx context.Context, address string, agreed termsDoc, stale *store.Entry) (*accountDoc, bool, error) {
 	now := s.now()
 	doc := &accountDoc{
 		V: 1, ID: newID("acc"), State: contracts.AccountActive, Address: address,
-		Language: "en", CreatedAt: now, AddressVerifiedAt: now,
+		Language: "en", CreatedAt: now, AddressVerifiedAt: now, Terms: &agreed,
 	}
 	// The entry in the list of accounts goes in before the record: one without
 	// a record lists nothing, where an account without one would never be shown.
@@ -731,7 +757,7 @@ func (s *Service) createInvitations(ctx context.Context, by *acting, count int) 
 	defer func() {
 		s.acted(ActionInvitationsMade, len(out.Invitations))
 		for _, id := range out.IDs {
-			s.logged(ctx, by, ActionInvitationsMade, "", id)
+			s.logged(ctx, by, logDoc{Kind: ActionInvitationsMade, Invitation: id})
 		}
 	}()
 	for range count {
@@ -861,12 +887,19 @@ func (s *Service) StartEmail(ctx context.Context, in contracts.EmailStart) (*con
 			return nil, contracts.ErrInvalidInvitation
 		}
 	}
-	return s.startEmail(ctx, address, invitation)
+	// An invitation makes an account, which takes the agreement to the terms
+	// in force: asked of the request, and so of no address.
+	agreed, err := s.agreement(invitation, in.Terms)
+	if err != nil {
+		return nil, err
+	}
+	return s.startEmail(ctx, address, invitation, agreed)
 }
 
 // startEmail starts a sign-in by email for an address as accounts are found
-// by, with the entry of an invitation that was checked, if there is one.
-func (s *Service) startEmail(ctx context.Context, address, invitation string) (*contracts.EmailStarted, error) {
+// by, with the entry of an invitation that was checked, if there is one, and
+// the agreement to the terms given with it.
+func (s *Service) startEmail(ctx context.Context, address, invitation string, agreed termsDoc) (*contracts.EmailStarted, error) {
 	if invitation != "" && !s.allow(invitation, s.now()) {
 		return nil, contracts.ErrInvalidInvitation
 	}
@@ -879,7 +912,7 @@ func (s *Service) startEmail(ctx context.Context, address, invitation string) (*
 			// The request may end before the message is sent.
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendTimeout)
 			defer cancel()
-			s.deliver(ctx, id, address, invitation)
+			s.deliver(ctx, id, address, invitation, agreed)
 		}()
 	default:
 		s.cfg.Log.Warn("accounts: too many sign-in messages being sent, one was dropped")
@@ -888,7 +921,7 @@ func (s *Service) startEmail(ctx context.Context, address, invitation string) (*
 }
 
 // deliver sends the message of a sign-in, if one is due.
-func (s *Service) deliver(ctx context.Context, id, address, invitation string) {
+func (s *Service) deliver(ctx context.Context, id, address, invitation string, agreed termsDoc) {
 	doc, _, err := s.lookup(ctx, address)
 	if err != nil {
 		s.cfg.Log.Error("accounts: looking an address up", "err", scrub(err))
@@ -904,7 +937,7 @@ func (s *Service) deliver(ctx context.Context, id, address, invitation string) {
 	if !s.allow(address, now) {
 		return
 	}
-	a := &attempt{address: address, invitation: invitation, expires: now.Add(domain.EmailCodeLifetime)}
+	a := &attempt{address: address, invitation: invitation, agreed: agreed, expires: now.Add(domain.EmailCodeLifetime)}
 	code, token := "", newSecret()
 	a.token = sha256.Sum256([]byte(token))
 
@@ -1029,19 +1062,25 @@ func (s *Service) proved(ctx context.Context, in contracts.EmailFinish) (*accoun
 	case a.invitation == "":
 		return nil, false, contracts.ErrInvalidCode
 	}
-	return s.signUp(ctx, a.address, a.invitation, stale)
+	return s.signUp(ctx, a.address, a.invitation, a.agreed, stale)
 }
 
 // signUp makes the account of an address that proved to be the person's and
-// has none. The invitation is used up here, by whoever deletes it first.
-func (s *Service) signUp(ctx context.Context, address, invitation string, stale *store.Entry) (*accountDoc, bool, error) {
+// has none, with the agreement to the terms given at the start. The terms may
+// have changed since (a new release): then the person agreed to a text that
+// is not in force, and nothing is made. The invitation is used up here, by
+// whoever deletes it first.
+func (s *Service) signUp(ctx context.Context, address, invitation string, agreed termsDoc, stale *store.Entry) (*accountDoc, bool, error) {
+	if agreed.Version != s.terms() {
+		return nil, false, contracts.ErrTermsNeeded
+	}
 	if err := s.cfg.Entries.DeleteEntry(ctx, invitation, invitationKey); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, false, contracts.ErrInvalidInvitation
 		}
 		return nil, false, err
 	}
-	return s.create(ctx, address, stale)
+	return s.create(ctx, address, agreed, stale)
 }
 
 // LookEmail says which address the link of a message would sign in, and ends
@@ -1256,7 +1295,7 @@ func (s *Service) Me(ctx context.Context, who *Authenticated) (*contracts.Me, er
 	if err != nil {
 		return nil, err
 	}
-	return &contracts.Me{Account: s.view(doc), Session: who.Session}, nil
+	return &contracts.Me{Account: s.view(doc), Session: who.Session, Terms: s.terms()}, nil
 }
 
 // view is the account as its person sees it, with what it is in the admin

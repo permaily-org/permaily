@@ -125,6 +125,9 @@ func (s *Service) Admin(ctx context.Context, who *Authenticated) (*Admin, error)
 	if role == "" {
 		return nil, contracts.ErrNotFound
 	}
+	if err := s.agreeing(doc); err != nil {
+		return nil, err
+	}
 	if !doc.PasskeyOnly {
 		return nil, contracts.ErrPasskeyOnlyNeeded
 	}
@@ -249,7 +252,7 @@ func (s *Service) makeAdmin(ctx context.Context, by *acting, id string) (*contra
 		return nil, err
 	}
 	s.acted(ActionAdminMade, 1)
-	s.logged(ctx, by, ActionAdminMade, doc.ID, "")
+	s.logged(ctx, by, logDoc{Kind: ActionAdminMade, Account: doc.ID})
 	if changed {
 		s.notify(ctx, noticeAdminMade, adminMail(doc.Address, s.rp.ID, at, true))
 	}
@@ -257,7 +260,20 @@ func (s *Service) makeAdmin(ctx context.Context, by *acting, id string) (*contra
 }
 
 func (s *Service) removeAdmin(ctx context.Context, by *acting, id string) (*contracts.AdminList, error) {
-	if err := by.superOnly(); err != nil {
+	if by != nil && !by.super {
+		return nil, contracts.ErrSuperAdminOnly
+	}
+	// Told before the proof is asked for: the super admin stays, confirmed or not.
+	if validID("acc", id) {
+		doc, err := s.read(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if doc != nil && s.role(doc) == contracts.AdminSuper {
+			return nil, ErrSuperAdminStays
+		}
+	}
+	if err := by.changing(); err != nil {
 		return nil, err
 	}
 	doc, changed, err := s.operate(ctx, id, nil, func(doc *accountDoc) error {
@@ -279,7 +295,7 @@ func (s *Service) removeAdmin(ctx context.Context, by *acting, id string) (*cont
 		s.cfg.Log.Warn("accounts: the pointer of an admin that was removed could not be deleted")
 	}
 	s.acted(ActionAdminRemoved, 1)
-	s.logged(ctx, by, ActionAdminRemoved, doc.ID, "")
+	s.logged(ctx, by, logDoc{Kind: ActionAdminRemoved, Account: doc.ID})
 	if changed {
 		s.notify(ctx, noticeAdminRemoved, adminMail(doc.Address, s.rp.ID, s.now(), false))
 	}
@@ -362,18 +378,21 @@ type logDoc struct {
 	Admin      string    `json:"admin"`
 	Account    string    `json:"account,omitempty"`
 	Invitation string    `json:"invitation,omitempty"`
+	// Provider is the provider whose application was set or removed.
+	Provider string `json:"provider,omitempty"`
 }
 
 // logged writes what an admin did in the admin log. The operator with the
 // admin token is not written here: that is counted only. An entry that
 // cannot be written does not undo what was done, which is done already; it is
 // logged by its kind alone.
-func (s *Service) logged(ctx context.Context, by *acting, kind, account, invitation string) {
+func (s *Service) logged(ctx context.Context, by *acting, entry logDoc) {
 	if by == nil {
 		return
 	}
-	if err := s.writeLog(ctx, logDoc{V: 1, At: s.now(), Kind: kind, Admin: by.id, Account: account, Invitation: invitation}); err != nil {
-		s.cfg.Log.Warn("accounts: an entry of the admin log could not be written", "kind", kind)
+	entry.V, entry.At, entry.Admin = 1, s.now(), by.id
+	if err := s.writeLog(ctx, entry); err != nil {
+		s.cfg.Log.Warn("accounts: an entry of the admin log could not be written", "kind", entry.Kind)
 	}
 }
 
@@ -431,7 +450,7 @@ func (s *Service) AdminLog(ctx context.Context, after string, limit int) (*contr
 		if err != nil || json.Unmarshal(raw, &doc) != nil || !validID("acc", doc.Admin) || !doc.At.Add(adminLogLifetime).After(now) {
 			continue
 		}
-		entry := contracts.LogEntry{At: doc.At, Kind: doc.Kind, Admin: contracts.LogAccount{ID: doc.Admin, Address: address(doc.Admin)}, Invitation: doc.Invitation}
+		entry := contracts.LogEntry{At: doc.At, Kind: doc.Kind, Admin: contracts.LogAccount{ID: doc.Admin, Address: address(doc.Admin)}, Invitation: doc.Invitation, Provider: doc.Provider}
 		if doc.Account != "" {
 			entry.Account = &contracts.LogAccount{ID: doc.Account, Address: address(doc.Account)}
 		}

@@ -468,7 +468,7 @@ func (s *Service) record(ctx context.Context, doc *accountDoc) (*contracts.Accou
 		CreatedAt: doc.CreatedAt, AddressVerifiedAt: doc.AddressVerifiedAt, ClosesAt: doc.ClosesAt,
 		ClosingBy: doc.closingBy(), BlockedAt: doc.BlockedAt,
 		Passkeys: len(doc.Passkeys), PasskeyOnly: doc.PasskeyOnly, Providers: providers, Sessions: len(sessions),
-		Admin: s.role(doc),
+		Admin: s.role(doc), Terms: doc.agreedTo(),
 	}, nil
 }
 

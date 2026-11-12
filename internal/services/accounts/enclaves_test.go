@@ -115,6 +115,7 @@ func (w *world) enclave() *enclave {
 	e.svc, err = New(Config{
 		Records: e.records, Entries: e.entries, Keys: w.svc.cfg.Keys, Mailer: w.out, Providers: w.idp,
 		AppURL: "https://app.permaily.test", SuperAdmin: superAdmin, Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: func() time.Time { return w.now },
+		Terms: func() string { return w.terms },
 	})
 	if err != nil {
 		w.t.Fatal(err)
@@ -140,7 +141,7 @@ func (e *enclave) passkey(who *Authenticated, name string) (*contracts.Passkey, 
 // start starts a sign-in through this enclave, and returns what ends it.
 func (e *enclave) start(address, invitation string) contracts.EmailFinish {
 	e.w.t.Helper()
-	res, err := e.svc.StartEmail(context.Background(), contracts.EmailStart{Address: address, Invitation: invitation})
+	res, err := e.svc.StartEmail(context.Background(), contracts.EmailStart{Address: address, Invitation: invitation, Terms: e.w.terms})
 	if err != nil {
 		e.w.t.Fatal(err)
 	}
@@ -844,5 +845,31 @@ func TestAnAdminMadeThroughOneEnclaveActsThroughTheOther(t *testing.T) {
 	}
 	if _, err := other.svc.Admin(ctx, w.fresh(anaWho)); !errors.Is(err, contracts.ErrNotFound) {
 		t.Fatalf("ana through the other after: %v", err)
+	}
+}
+
+// Agreeing to the terms through one enclave counts through the other: the
+// agreement is in the account's record, changed through change and read
+// with it. An enclave of a newer release asks again, whichever enclave the
+// account last agreed through.
+func TestAnAgreementThroughOneEnclaveCountsThroughTheOther(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	me, cookie := w.signUp("ana@example.org")
+	w.terms = newTerms
+	one, other := w.enclave(), w.enclave()
+	name := "Ana"
+	whoOther, _ := other.svc.Authenticate(ctx, cookie)
+	if _, err := other.svc.UpdateAccount(ctx, whoOther, contracts.AccountUpdate{Name: &name}); !errors.Is(err, contracts.ErrTermsChanged) {
+		t.Fatalf("before agreeing: %v", err)
+	}
+	whoOne, _ := one.svc.Authenticate(ctx, cookie)
+	if _, err := one.svc.AgreeTerms(ctx, whoOne, contracts.TermsAgree{Version: newTerms}); err != nil {
+		t.Fatal(err)
+	}
+	if account, err := other.svc.UpdateAccount(ctx, whoOther, contracts.AccountUpdate{Name: &name}); err != nil || account.Terms != newTerms {
+		t.Fatalf("through the other after: %+v %v", account, err)
+	}
+	if doc := w.doc(me.Account.ID); doc.Terms == nil || doc.Terms.Version != newTerms || doc.Name != name {
+		t.Fatalf("the record: %+v", doc)
 	}
 }

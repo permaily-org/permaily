@@ -29,17 +29,20 @@ type world struct {
 	anchored *store.Anchored
 	out      *Outbox
 	// idp plays the providers (providers_test.go).
-	idp  *fakeProviders
-	logs *bytes.Buffer
-	svc  *Service
-	now  time.Time
+	idp *fakeProviders
+	// terms is the version of the terms in force for the world's enclaves:
+	// a test changes it as a new release would.
+	terms string
+	logs  *bytes.Buffer
+	svc   *Service
+	now   time.Time
 }
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
 	w := &world{
 		t: t, mem: store.NewMemory(), commits: store.NewMemoryCommits(), out: &Outbox{}, idp: newFakeProviders(), logs: &bytes.Buffer{},
-		now: time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC),
+		now: time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC), terms: domain.TermsVersion,
 	}
 	w.mem.Now = func() time.Time { return w.now }
 	local, err := keys.NewLocal()
@@ -55,7 +58,7 @@ func (w *world) service(k Keys) *Service {
 	svc, err := New(Config{
 		Records: w.anchored,
 		Entries: w.mem, Keys: k, Mailer: w.out, Providers: w.idp, AppURL: "https://app.permaily.test", SuperAdmin: superAdmin,
-		Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: func() time.Time { return w.now },
+		Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: func() time.Time { return w.now }, Terms: func() string { return w.terms },
 	})
 	if err != nil {
 		w.t.Fatal(err)
@@ -72,11 +75,16 @@ var (
 )
 
 // start asks for a sign-in and returns the attempt and the message that was
-// sent for it, nil when none was.
+// sent for it, nil when none was. With an invitation, it is a sign-up from
+// the sign-up screen: the person agreed to the terms in force.
 func (w *world) start(address, invitation string) (string, *Mail) {
 	w.t.Helper()
 	before := len(w.out.Sent())
-	res, err := w.svc.StartEmail(context.Background(), contracts.EmailStart{Address: address, Invitation: invitation})
+	in := contracts.EmailStart{Address: address, Invitation: invitation}
+	if invitation != "" {
+		in.Terms = w.terms
+	}
+	res, err := w.svc.StartEmail(context.Background(), in)
 	if err != nil {
 		w.t.Fatalf("start %s: %v", address, err)
 	}
@@ -415,7 +423,7 @@ func TestStartLimits(t *testing.T) {
 			t.Fatalf("sign-up %d with the invitation sent nothing", i+1)
 		}
 	}
-	if _, err := w.svc.StartEmail(ctx, contracts.EmailStart{Address: "z@example.org", Invitation: invitation}); !errors.Is(err, contracts.ErrInvalidInvitation) {
+	if _, err := w.svc.StartEmail(ctx, contracts.EmailStart{Address: "z@example.org", Invitation: invitation, Terms: w.terms}); !errors.Is(err, contracts.ErrInvalidInvitation) {
 		t.Fatalf("a sixth address with one invitation: %v", err)
 	}
 

@@ -92,6 +92,7 @@ type AccountsService interface {
 	CancelDeletion(ctx context.Context, who *accounts.Authenticated) (*contracts.Account, error)
 	StartAddressChange(ctx context.Context, who *accounts.Authenticated, in contracts.AddressStart) (*contracts.EmailStarted, error)
 	FinishAddressChange(ctx context.Context, who *accounts.Authenticated, in contracts.AddressFinish) (*contracts.Account, error)
+	AgreeTerms(ctx context.Context, who *accounts.Authenticated, in contracts.TermsAgree) (*contracts.Account, error)
 
 	ProvidersOn(ctx context.Context) (*contracts.ProvidersOn, error)
 	StartProvider(ctx context.Context, who *accounts.Authenticated, in contracts.ProviderStart) (*contracts.ProviderStarted, string, error)
@@ -461,6 +462,15 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 	}))
 	mux.HandleFunc("POST /api/v1/account/delete/cancel", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		out, err := svc.CancelDeletion(r.Context(), who)
+		answer(w, out, err)
+	}))
+	// Agreeing to the terms in force, by the version the person was shown.
+	mux.HandleFunc("POST /api/v1/account/terms", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		var in contracts.TermsAgree
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := svc.AgreeTerms(r.Context(), who, in)
 		answer(w, out, err)
 	}))
 	// Changing the contact address: a code goes to the new one, and proves it.

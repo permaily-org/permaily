@@ -616,6 +616,7 @@ func TestTheOperatorFindsAnAddress(t *testing.T) {
 			ID: ana.Account.ID, State: contracts.AccountActive, Address: "ana@example.org", Language: "en",
 			CreatedAt: ana.Account.CreatedAt, AddressVerifiedAt: ana.Account.CreatedAt,
 			Passkeys: 1, Providers: []string{"google"}, Sessions: 1,
+			Terms: &contracts.TermsAgreement{Version: domain.TermsVersion, At: ana.Account.CreatedAt},
 		}
 		if !reflect.DeepEqual(rec, want) {
 			t.Fatalf("%q: %+v, want %+v", address, rec, want)

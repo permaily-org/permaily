@@ -79,6 +79,14 @@ var (
 	// admin included, blocks or deletes the super admin's account through
 	// the admin panel.
 	ErrSuperAdminKept = &Error{"super_admin_only", "the super admin's account is not blocked or deleted here"}
+	// ErrTermsNeeded refuses making an account without the person's agreement
+	// to the terms of service and the privacy policy in force, and an
+	// agreement to a version that is not that one.
+	ErrTermsNeeded = &Error{"terms_needed", "agree to the terms of service and the privacy policy to make an account"}
+	// ErrTermsChanged has the code of ErrTermsNeeded: an account whose person
+	// agreed to an earlier version, or to none, changes nothing until they
+	// agree to the one in force.
+	ErrTermsChanged = &Error{"terms_needed", "the terms changed; agree to them to go on"}
 )
 
 // The failures of signing in with a provider (Google, GitHub, Meta,
@@ -141,6 +149,21 @@ type Account struct {
 	// PasskeyOnly says the account signs in with passkeys only, which the
 	// admin panel needs.
 	PasskeyOnly bool `json:"passkey_only"`
+	// Terms is the version of the terms the person agreed to; absent when
+	// they agreed to none, as the accounts made before there were terms.
+	Terms string `json:"terms,omitempty"`
+}
+
+// TermsAgreement is which version of the terms a person agreed to, and when.
+type TermsAgreement struct {
+	Version string    `json:"version"`
+	At      time.Time `json:"at"`
+}
+
+// TermsAgree is a person agreeing to the terms in force: Version is the one
+// they were shown.
+type TermsAgree struct {
+	Version string `json:"version"`
 }
 
 // What an account is in the admin panel.
@@ -195,6 +218,9 @@ type AccountRecord struct {
 	// Admin is AdminSuper or AdminRole for an admin's account; absent
 	// otherwise.
 	Admin string `json:"admin,omitempty"`
+	// Terms is the version of the terms the person agreed to and when;
+	// absent when they agreed to none.
+	Terms *TermsAgreement `json:"terms,omitempty"`
 }
 
 // AccountList is one page of the accounts, the oldest first.
@@ -250,6 +276,9 @@ type ConfirmFinish struct {
 type EmailStart struct {
 	Address    string `json:"address"`
 	Invitation string `json:"invitation,omitempty"`
+	// Terms is the version of the terms the person agreed to, needed with an
+	// invitation: an account is made only with it.
+	Terms string `json:"terms,omitempty"`
 }
 
 // EmailStarted answers EmailStart, whether a message was sent or not.
@@ -286,6 +315,9 @@ type EmailPending struct {
 type Me struct {
 	Account Account `json:"account"`
 	Session Session `json:"session"`
+	// Terms is the version of the terms in force. When the account's is
+	// another, the person agrees to this one before changing anything.
+	Terms string `json:"terms"`
 }
 
 // SessionList is the sessions of an account.
@@ -537,6 +569,9 @@ type ProviderStart struct {
 	Provider   string `json:"provider"`
 	Invitation string `json:"invitation,omitempty"`
 	ReturnTo   string `json:"return_to,omitempty"`
+	// Terms is the version of the terms the person agreed to, needed with an
+	// invitation, as for EmailStart.
+	Terms string `json:"terms,omitempty"`
 }
 
 // ProviderStarted answers ProviderStart: where the browser goes, and for how
@@ -638,6 +673,9 @@ type LogEntry struct {
 	// Invitation is the invitation it was about, made or revoked; absent
 	// otherwise.
 	Invitation string `json:"invitation,omitempty"`
+	// Provider is the provider whose application was set or removed; absent
+	// otherwise.
+	Provider string `json:"provider,omitempty"`
 }
 
 // AdminLog is a page of the admin log, the newest first.

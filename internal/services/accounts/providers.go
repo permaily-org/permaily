@@ -87,8 +87,10 @@ type trip struct {
 	// browser is the hash of the value of the cookie the browser was given:
 	// the provider's answer ends the trip only where that cookie is.
 	browser [sha256.Size]byte
-	// invitation is the entry of the invitation a sign-up will use.
+	// invitation is the entry of the invitation a sign-up will use, and
+	// agreed the agreement to the terms given with it.
 	invitation string
+	agreed     termsDoc
 	// account and session are whose Settings started it, to link a provider
 	// to that account and to no other; empty for a sign-in.
 	account, session string
@@ -108,6 +110,7 @@ type unconfirmed struct {
 	// used for anything else.
 	address    string
 	invitation string
+	agreed     termsDoc
 	returnTo   string
 	expires    time.Time
 }
@@ -172,7 +175,9 @@ func (s *Service) linked(ctx context.Context, p idp.Provider, subject string) (*
 // (made).
 func (s *Service) link(ctx context.Context, accountID string, p idp.Provider, subject string, made bool) (*accountDoc, error) {
 	var kept accountDoc
-	doc, err := s.change(ctx, accountID, func(doc *accountDoc) error {
+	// A sign-in links, or the end of a link that Settings started, which was
+	// asked of the terms at its start: neither asks again.
+	doc, err := s.changeAgreed(ctx, accountID, false, func(doc *accountDoc) error {
 		i := doc.provider(p)
 		if i >= 0 && doc.Providers[i].Subject != subject {
 			return contracts.ErrProviderLinked
@@ -270,6 +275,9 @@ func (s *Service) StartProvider(ctx context.Context, who *Authenticated, in cont
 		if doc.State == contracts.AccountClosing {
 			return nil, "", contracts.ErrAccountClosing
 		}
+		if !doc.agreed(s.terms()) {
+			return nil, "", contracts.ErrTermsChanged
+		}
 		if doc.provider(p) >= 0 {
 			return nil, "", contracts.ErrProviderLinked
 		}
@@ -281,6 +289,9 @@ func (s *Service) StartProvider(ctx context.Context, who *Authenticated, in cont
 		}
 		if t.invitation == "" {
 			return nil, "", contracts.ErrInvalidInvitation
+		}
+		if t.agreed, err = s.agreement(t.invitation, in.Terms); err != nil {
+			return nil, "", err
 		}
 	}
 	state, browser := newSecret(), newSecret()
@@ -475,7 +486,7 @@ func (s *Service) firstTime(ctx context.Context, t *trip, subject, address strin
 	case doc == nil && t.invitation == "":
 		return nil, false, contracts.ErrInvitationNeeded
 	case doc == nil:
-		if doc, made, err = s.signUp(ctx, address, t.invitation, stale); err != nil {
+		if doc, made, err = s.signUp(ctx, address, t.invitation, t.agreed, stale); err != nil {
 			return nil, false, err
 		}
 	case doc.PasskeyOnly:
@@ -546,7 +557,7 @@ func (s *Service) confirmLater(t *trip, who *idp.Identity) *ProviderDone {
 	s.mu.Lock()
 	s.sweep(now)
 	keep(s.unconfirmed, browserKey(browser), &unconfirmed{
-		provider: t.provider, subject: who.Subject, address: address, invitation: t.invitation,
+		provider: t.provider, subject: who.Subject, address: address, invitation: t.invitation, agreed: t.agreed,
 		returnTo: t.returnTo, expires: now.Add(domain.ProviderConfirmLifetime),
 	}, maxUnconfirmed)
 	s.mu.Unlock()
@@ -592,7 +603,7 @@ func (s *Service) StartProviderConfirm(ctx context.Context, browser string, in c
 	if err != nil {
 		return nil, err
 	}
-	return s.startEmail(ctx, address, u.invitation)
+	return s.startEmail(ctx, address, u.invitation, u.agreed)
 }
 
 // FinishProviderConfirm ends the sign-in that waits in a browser with the
@@ -841,7 +852,7 @@ func (s *Service) setProviderApp(ctx context.Context, by *acting, provider strin
 	}
 	s.cfg.Log.Info("accounts: a provider's application was set", "provider", provider)
 	s.acted(ActionProviderAppSet, 1)
-	s.logged(ctx, by, ActionProviderAppSet, "", "")
+	s.logged(ctx, by, logDoc{Kind: ActionProviderAppSet, Provider: provider})
 	return &contracts.ProviderApp{Provider: provider, ClientID: set.ClientID, SetAt: set.SetAt}, nil
 }
 
@@ -869,7 +880,7 @@ func (s *Service) removeProviderApp(ctx context.Context, by *acting, provider st
 	if err == nil && removed {
 		s.cfg.Log.Info("accounts: a provider's application was removed", "provider", provider)
 		s.acted(ActionProviderAppRemove, 1)
-		s.logged(ctx, by, ActionProviderAppRemove, "", "")
+		s.logged(ctx, by, logDoc{Kind: ActionProviderAppRemove, Provider: provider})
 	}
 	return err
 }

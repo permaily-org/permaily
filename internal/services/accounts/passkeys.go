@@ -118,6 +118,9 @@ func (s *Service) StartPasskey(ctx context.Context, who *Authenticated) (*contra
 		// Told now, and not after the person made the passkey.
 		return nil, contracts.ErrAccountClosing
 	}
+	if err := s.agreeing(doc); err != nil {
+		return nil, err
+	}
 	if len(doc.Passkeys) >= domain.MaxPasskeys {
 		return nil, contracts.ErrTooManyPasskeys
 	}

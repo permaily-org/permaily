@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/httpapi"
 	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/services/accounts"
@@ -854,7 +855,7 @@ func TestInvitationsAdminAPI(t *testing.T) {
 func (a *app) signInWith(address, invitation string) {
 	a.t.Helper()
 	var started contracts.EmailStarted
-	read(a.t, a.call("POST", "/api/v1/auth/email/start", `{"address":"`+address+`","invitation":"`+invitation+`"}`, nil), 200, &started)
+	read(a.t, a.call("POST", "/api/v1/auth/email/start", `{"address":"`+address+`","invitation":"`+invitation+`","terms":"`+domain.TermsVersion+`"}`, nil), 200, &started)
 	a.svc.Wait()
 	sent := a.out.Sent()
 	read(a.t, a.call("POST", "/api/v1/auth/email/finish", `{"attempt":"`+started.Attempt+`","code":"`+sentCode.FindStringSubmatch(sent[len(sent)-1].Text)[1]+`"}`, nil), 200, nil)

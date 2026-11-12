@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/httpapi"
 	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/keys"
@@ -123,7 +124,7 @@ func (a *app) signIn(address string) contracts.Me {
 	if err != nil {
 		a.t.Fatal(err)
 	}
-	rec := a.call("POST", "/api/v1/auth/email/start", `{"address":"`+address+`","invitation":"`+inv.Invitations[0]+`"}`, nil)
+	rec := a.call("POST", "/api/v1/auth/email/start", `{"address":"`+address+`","invitation":"`+inv.Invitations[0]+`","terms":"`+domain.TermsVersion+`"}`, nil)
 	var started contracts.EmailStarted
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &started) != nil || started.Attempt == "" || started.ExpiresIn != 600 {
 		a.t.Fatalf("start: %d %s", rec.Code, rec.Body)
@@ -317,7 +318,7 @@ func TestInvitationsAPI(t *testing.T) {
 		}
 	}
 	// An invitation made here signs someone up.
-	rec = a.call("POST", "/api/v1/auth/email/start", `{"address":"ana@example.org","invitation":"`+out.Invitations[0]+`"}`, nil)
+	rec = a.call("POST", "/api/v1/auth/email/start", `{"address":"ana@example.org","invitation":"`+out.Invitations[0]+`","terms":"`+domain.TermsVersion+`"}`, nil)
 	a.svc.Wait()
 	if rec.Code != 200 || len(a.out.Sent()) != 1 {
 		t.Fatalf("signing up with it: %d %s", rec.Code, rec.Body)
@@ -851,7 +852,7 @@ func TestAccountsAdminAPI(t *testing.T) {
 			t.Fatalf("account %d of the list: %+v", i, r)
 		}
 	}
-	if !strings.Contains(rec.Body.String(), `"passkeys":0,"passkey_only":false,"providers":[],"sessions":1}`) || strings.Count(rec.Body.String(), "closes_at") != 1 {
+	if !strings.Contains(rec.Body.String(), `"passkeys":0,"passkey_only":false,"providers":[],"sessions":1,"terms":{"version":"`+domain.TermsVersion+`","at":"`) || strings.Count(rec.Body.String(), "closes_at") != 1 {
 		t.Fatalf("the list: %s", rec.Body)
 	}
 	if cho := list.Accounts[2]; cho.State != contracts.AccountClosing || cho.Name != "Cho" || cho.ClosesAt.IsZero() || list.Accounts[0].State != contracts.AccountActive {
@@ -956,5 +957,46 @@ func TestAccountsAdminAPIShowsTheSignedRecords(t *testing.T) {
 		if strings.Contains(logs.String(), secret) {
 			t.Fatalf("the logs hold %q:\n%s", secret, logs)
 		}
+	}
+}
+
+// Signing up takes the agreement to the terms in force; GET me says which the
+// account agreed to and which are in force; agreeing names the version.
+func TestTermsAPI(t *testing.T) {
+	a := newApp(t)
+	inv, err := a.svc.CreateInvitations(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var e httpapi.APIError
+	for _, terms := range []string{``, `,"terms":"2020-01-01"`} {
+		if read(t, a.call("POST", "/api/v1/auth/email/start", `{"address":"ana@example.org","invitation":"`+inv.Invitations[0]+`"`+terms+`}`, nil), 400, &e); e.Error.Code != "terms_needed" {
+			t.Fatalf("signing up with %q: %+v", terms, e)
+		}
+	}
+	if read(t, a.call("POST", "/api/v1/account/terms", `{"version":"`+domain.TermsVersion+`"}`, nil), 401, &e); e.Error.Code != "unauthorized" {
+		t.Fatalf("agreeing signed out: %+v", e)
+	}
+	a.signIn("ana@example.org")
+	rec := a.call("GET", "/api/v1/me", "", nil)
+	if read(t, rec, 200, nil); !strings.Contains(rec.Body.String(), `"terms":"`+domain.TermsVersion+`"}`) || !strings.Contains(rec.Body.String(), `"passkey_only":false,"terms":"`+domain.TermsVersion+`"}`) {
+		t.Fatalf("me: %s", rec.Body)
+	}
+	for body, code := range map[string]string{
+		`{"version":"2020-01-01"}`: "terms_needed",
+		`{}`:                       "terms_needed",
+		`{"version":"x","at":"y"}`: "invalid_body",
+	} {
+		if read(t, a.call("POST", "/api/v1/account/terms", body, nil), 400, &e); e.Error.Code != code {
+			t.Errorf("%s: %+v", body, e)
+		}
+	}
+	var agreed contracts.Account
+	if read(t, a.call("POST", "/api/v1/account/terms", `{"version":"`+domain.TermsVersion+`"}`, nil), 200, &agreed); agreed.Terms != domain.TermsVersion {
+		t.Fatalf("agreeing: %+v", agreed)
+	}
+	evil := func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") }
+	if read(t, a.call("POST", "/api/v1/account/terms", `{"version":"`+domain.TermsVersion+`"}`, evil), 403, &e); e.Error.Code != "forbidden" {
+		t.Fatalf("from another origin: %+v", e)
 	}
 }

@@ -190,6 +190,14 @@ func AccountName(s string) (string, error) {
 	return s, nil
 }
 
+// TermsVersion is the version of the terms of service and the privacy policy
+// (https://permaily.com/terms/ and https://permaily.com/privacy/) that a
+// person agrees to when they make an account, and agrees to again when it
+// changes. The site's TERMS_VERSION, in site/src/config/legal.ts, must be the
+// same: a test on the site's side checks it. So must the web app's, in
+// web/src/lib/terms.ts, which TestTermsVersionMatchesTheWebApp checks.
+const TermsVersion = "2026-11-12"
+
 // AccountClosing is how long an account that its person asked to delete can
 // still be kept, by cancelling (ADR 0017).
 const AccountClosing = 7 * 24 * time.Hour

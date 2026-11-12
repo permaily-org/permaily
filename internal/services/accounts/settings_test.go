@@ -1188,6 +1188,7 @@ func TestTheOperatorsTool(t *testing.T) {
 		ID: made[0].Account.ID, State: contracts.AccountActive, Address: "ana@example.org", Language: "en",
 		CreatedAt: made[0].Account.CreatedAt, AddressVerifiedAt: made[0].Account.CreatedAt,
 		Passkeys: 2, PasskeyOnly: true, Providers: []string{}, Sessions: 1,
+		Terms: &contracts.TermsAgreement{Version: domain.TermsVersion, At: made[0].Account.CreatedAt},
 	}
 	if err != nil || !reflect.DeepEqual(*rec, want) {
 		t.Fatalf("an account: %+v %v, want %+v", rec, err, want)

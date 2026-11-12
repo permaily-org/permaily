@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/httpapi"
 	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/services/accounts"
@@ -158,7 +159,7 @@ func TestProvidersAPI(t *testing.T) {
 
 	// A sign-up: the page asks where to send the browser, the provider sends
 	// it back, and the callback sends it on, signed in.
-	state := a.leave("/api/v1/auth/provider/start", `{"provider":"google","invitation":"`+inv.Invitations[0]+`","return_to":"/connections?new=1"}`)
+	state := a.leave("/api/v1/auth/provider/start", `{"provider":"google","invitation":"`+inv.Invitations[0]+`","return_to":"/connections?new=1","terms":"`+domain.TermsVersion+`"}`)
 	rec, to := a.comeBack(state, ana)
 	if to != "/connections?new=1" {
 		t.Fatalf("sent to %q", to)

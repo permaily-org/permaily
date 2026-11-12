@@ -758,6 +758,17 @@ func TestAdminFailures(t *testing.T) {
 			t.Fatalf("the log with the records down: %+v %v", log, err)
 		}
 	})
+	t.Run("what may be acted on cannot be read", func(t *testing.T) {
+		w, f, boss, ana := setup(t)
+		admin := w.as(boss)
+		f.fail["get record"] = down
+		if _, err := admin.BlockAccount(ctx, ana.me.Account.ID); !errors.Is(err, down) {
+			t.Errorf("blocking: %v", err)
+		}
+		if _, err := admin.RemoveAdmin(ctx, ana.me.Account.ID); !errors.Is(err, down) {
+			t.Errorf("removing an admin: %v", err)
+		}
+	})
 	t.Run("changing", func(t *testing.T) {
 		w, f, boss, ana := setup(t)
 		admin := w.as(boss)
@@ -822,4 +833,83 @@ func TestAdminFailures(t *testing.T) {
 			t.Fatalf("who is an admin with the records down: %v", err)
 		}
 	})
+}
+
+// An admin who may not act on an account is told so before being asked to
+// confirm it's them: confirming would be for nothing. Another admin's account
+// to an admin who is not the super admin, and the super admin's account to
+// anyone who would block or delete it, or remove it as an admin.
+func TestAnAdminWhoMayNotActIsToldBeforeConfirming(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	boss := w.account(superAdmin, true)
+	ana := w.account("ana@example.org", true)
+	bea := w.account("bea@example.org", true)
+	carl, _ := w.signUp("carl@example.org")
+	for _, a := range []*adminAccount{ana, bea} {
+		if _, err := w.as(boss).MakeAdmin(ctx, a.me.Account.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.later()
+	stale := func(a *adminAccount) *Admin {
+		t.Helper()
+		admin, err := w.svc.Admin(ctx, w.who(a.cookie))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return admin
+	}
+	anaStale, bossStale := stale(ana), stale(boss)
+	beaID, bossID := bea.me.Account.ID, boss.me.Account.ID
+	for what, err := range map[string]error{
+		"ana blocks bea":           second2(anaStale.BlockAccount(ctx, beaID)),
+		"ana unblocks bea":         second2(anaStale.UnblockAccount(ctx, beaID)),
+		"ana deletes bea":          second2(anaStale.DeleteAccount(ctx, beaID)),
+		"ana cancels bea's":        second2(anaStale.KeepAccount(ctx, beaID)),
+		"ana signs bea out":        second2(anaStale.CloseAccountSessions(ctx, beaID)),
+		"ana blocks the boss":      second2(anaStale.BlockAccount(ctx, bossID)),
+		"ana blocks herself":       second2(anaStale.BlockAccount(ctx, ana.me.Account.ID)),
+		"the boss blocks himself":  second2(bossStale.BlockAccount(ctx, bossID)),
+		"the boss deletes himself": second2(bossStale.DeleteAccount(ctx, bossID)),
+		"the boss removes himself": second2(bossStale.RemoveAdmin(ctx, bossID)),
+		"ana makes an admin":       second2(anaStale.MakeAdmin(ctx, carl.Account.ID)),
+		"ana sets a provider":      second2(anaStale.SetProviderApp(ctx, "google", contracts.ProviderAppSet{ClientID: "a", ClientSecret: "b"})),
+	} {
+		if !errors.Is(err, contracts.ErrSuperAdminOnly) {
+			t.Errorf("%s: %v", what, err)
+		}
+	}
+	// What they may do still asks for the proof first.
+	for what, err := range map[string]error{
+		"ana blocks carl":            second2(anaStale.BlockAccount(ctx, carl.Account.ID)),
+		"the boss blocks bea":        second2(bossStale.BlockAccount(ctx, beaID)),
+		"the boss signs himself out": second2(bossStale.CloseAccountSessions(ctx, bossID)),
+		"ana, an account not there":  second2(anaStale.BlockAccount(ctx, newID("acc"))),
+	} {
+		if !errors.Is(err, contracts.ErrConfirmationNeeded) {
+			t.Errorf("%s: %v", what, err)
+		}
+	}
+}
+
+// The log names the provider whose application an admin set or removed.
+func TestTheLogNamesTheProvider(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	boss := w.account(superAdmin, true)
+	if _, err := w.as(boss).SetProviderApp(ctx, "github", contracts.ProviderAppSet{ClientID: "a", ClientSecret: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	w.now = w.now.Add(time.Second)
+	if err := w.as(boss).RemoveProviderApp(ctx, "github"); err != nil {
+		t.Fatal(err)
+	}
+	log, err := w.svc.AdminLog(ctx, "", 10)
+	if err != nil || len(log.Entries) != 2 {
+		t.Fatalf("the log: %+v %v", log, err)
+	}
+	for i, kind := range []string{ActionProviderAppRemove, ActionProviderAppSet} {
+		if e := log.Entries[i]; e.Kind != kind || e.Provider != "github" || e.Account != nil {
+			t.Errorf("entry %d: %+v", i, e)
+		}
+	}
 }
