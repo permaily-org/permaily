@@ -1,6 +1,8 @@
 import { type FormEvent, type RefObject, useEffect, useRef, useState } from 'react'
+import { useConfirmed } from '../../../components/Confirm.tsx'
 import { Button, Dialog, TextAction } from '../../../components/ui/index.ts'
 import * as api from '../../../lib/api.ts'
+import { isCancelled } from '../../../lib/cancelled.ts'
 import { describeDevice } from '../../../lib/device.ts'
 import { actionClass, cx } from '../../../lib/styles.ts'
 import {
@@ -81,6 +83,7 @@ function PasskeyRow({
   last: boolean
   section: SignInSection
 }) {
+  const confirmed = useConfirmed()
   const [draft, setDraft] = useState<string | null>(null)
   const [removing, setRemoving] = useState(false)
   const [pending, setPending] = useState(false)
@@ -143,8 +146,13 @@ function PasskeyRow({
     setRemoveError(null)
     setPending(true)
     try {
-      await api.removePasskey(passkey.id)
+      await confirmed(() => api.removePasskey(passkey.id))
     } catch (failure) {
+      // The person chose not to confirm it's them: the question stays, as it was.
+      if (isCancelled(failure)) {
+        setPending(false)
+        return
+      }
       const code = section.failed(failure)
       if (!code) return
       if (code !== 'not_found') {
@@ -322,6 +330,7 @@ function AddPasskey({
   onDone: () => void
   section: SignInSection
 }) {
+  const confirmed = useConfirmed()
   const [name, setName] = useState(() => suggestedName(taken))
   const [pending, setPending] = useState(false)
   const [outcome, setOutcome] = useState<{ quiet: boolean; text: string } | null>(null)
@@ -358,7 +367,8 @@ function AddPasskey({
     const signal = leaving.current?.signal
     try {
       if (!made.current) {
-        const { ceremony, options } = await api.startPasskey()
+        // Confirming it's the person, when the server asks for it, comes before the browser's prompt.
+        const { ceremony, options } = await confirmed(() => api.startPasskey())
         made.current = {
           ceremony,
           credential: await makePasskey(options, signal),
@@ -373,6 +383,7 @@ function AddPasskey({
     } catch (failure) {
       if (signal?.aborted) return
       setPending(false)
+      if (isCancelled(failure)) return
       if (failure instanceof PasskeyError) {
         setOutcome(problems[failure.kind])
         return
@@ -424,7 +435,8 @@ function AddPasskey({
           aria-describedby="new-passkey-outcome"
           className={field}
         />
-        <button type="submit" disabled={pending} className={actionClass()}>
+        {/* Not disabled while it waits: confirming it's you may open meanwhile, and focus comes back here. */}
+        <button type="submit" aria-disabled={pending} className={actionClass()}>
           Continue
         </button>
         <TextAction disabled={pending} onClick={onDone}>

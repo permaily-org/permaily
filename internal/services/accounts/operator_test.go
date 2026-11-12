@@ -136,18 +136,18 @@ func TestABlockedAccountSignsInByNoWay(t *testing.T) {
 		"me":           second(w.svc.Me(ctx, anaWho)),
 		"name":         second(w.svc.UpdateAccount(ctx, anaWho, contracts.AccountUpdate{Name: text("Ana")})),
 		"passkeys":     second(w.svc.Passkeys(ctx, anaWho)),
-		"new passkey":  second(w.svc.StartPasskey(ctx, anaWho)),
+		"new passkey":  second(w.svc.StartPasskey(ctx, w.fresh(anaWho))),
 		"rename":       second(w.svc.RenamePasskey(ctx, anaWho, passkey.ID.String(), contracts.PasskeyRename{Name: "x"})),
-		"remove":       w.svc.RemovePasskey(ctx, anaWho, passkey.ID.String()),
-		"passkey only": second(w.svc.SetPasskeyOnly(ctx, anaWho, contracts.PasskeyOnly{On: true})),
-		"delete":       second(w.svc.StartDeletion(ctx, anaWho)),
+		"remove":       w.svc.RemovePasskey(ctx, w.fresh(anaWho), passkey.ID.String()),
+		"passkey only": second(w.svc.SetPasskeyOnly(ctx, w.fresh(anaWho), contracts.PasskeyOnly{On: true})),
+		"delete":       second(w.svc.StartDeletion(ctx, w.fresh(anaWho))),
 		"cancel":       second(w.svc.CancelDeletion(ctx, anaWho)),
 		"providers":    second(w.svc.LinkedProviders(ctx, anaWho)),
-		"unlink":       w.svc.UnlinkProvider(ctx, anaWho, "google"),
-		"address":      second(w.svc.StartAddressChange(ctx, anaWho, contracts.AddressStart{Address: "new@example.org"})),
+		"unlink":       w.svc.UnlinkProvider(ctx, w.fresh(anaWho), "google"),
+		"address":      second(w.svc.StartAddressChange(ctx, w.fresh(anaWho), contracts.AddressStart{Address: "new@example.org"})),
 		"address ends": second(w.svc.FinishAddressChange(ctx, anaWho, contracts.AddressFinish{Attempt: early, Code: "000000"})),
 		"link provider": func() error {
-			_, _, err := w.svc.StartProvider(ctx, anaWho, contracts.ProviderStart{Provider: "github"})
+			_, _, err := w.svc.StartProvider(ctx, w.fresh(anaWho), contracts.ProviderStart{Provider: "github"})
 			return err
 		}(),
 	}
@@ -323,11 +323,11 @@ func TestNothingSaysAnAddressIsBlockedBeforeProof(t *testing.T) {
 	// Someone else asks to move to the blocked account's address: the answer
 	// and the message are as for any address.
 	n := w.count()
-	free, err := w.svc.StartAddressChange(ctx, w.who(eveCookie), contracts.AddressStart{Address: "nobody@example.org"})
+	free, err := w.svc.StartAddressChange(ctx, w.fresh(w.who(eveCookie)), contracts.AddressStart{Address: "nobody@example.org"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	taken, err := w.svc.StartAddressChange(ctx, w.who(eveCookie), contracts.AddressStart{Address: "ana@example.org"})
+	taken, err := w.svc.StartAddressChange(ctx, w.fresh(w.who(eveCookie)), contracts.AddressStart{Address: "ana@example.org"})
 	if err != nil || taken.ExpiresIn != free.ExpiresIn || !validID("att", taken.Attempt) {
 		t.Fatalf("asking for a blocked account's address: %+v %v", taken, err)
 	}
@@ -349,7 +349,7 @@ func TestBlockedAndClosing(t *testing.T) {
 	anaWho := w.who(anaCookie)
 
 	// Closing, then blocked.
-	if _, err := w.svc.StartDeletion(ctx, anaWho); err != nil {
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(anaWho)); err != nil {
 		t.Fatal(err)
 	}
 	rec := w.operator(w.svc.BlockAccount, ana.Account.ID)
@@ -379,8 +379,18 @@ func TestBlockedAndClosing(t *testing.T) {
 	if rec := w.operator(w.svc.UnblockAccount, bea.Account.ID); rec.State != contracts.AccountClosing || !rec.BlockedAt.IsZero() {
 		t.Fatalf("unblocked while closing: %+v", rec)
 	}
-	if rec := w.operator(w.svc.KeepAccount, ana.Account.ID); rec.State != contracts.AccountActive || rec.BlockedAt.IsZero() || rec.ClosingBy != "" {
-		t.Fatalf("kept while blocked: %+v", rec)
+	// What Ana asked, only Ana cancels, also while blocked: the operator
+	// unblocks first, and she signs in and cancels.
+	if rec, err := w.svc.KeepAccount(ctx, ana.Account.ID); !errors.Is(err, contracts.ErrNotCancellable) || rec != nil {
+		t.Fatalf("the operator keeps what a blocked person asked to delete: %+v %v", rec, err)
+	}
+	w.operator(w.svc.UnblockAccount, ana.Account.ID)
+	_, again := w.signIn("ana@example.org")
+	if kept, err := w.svc.CancelDeletion(ctx, w.who(again)); err != nil || kept.State != contracts.AccountActive {
+		t.Fatalf("Ana cancels once unblocked: %+v %v", kept, err)
+	}
+	if rec := w.operator(w.svc.BlockAccount, ana.Account.ID); rec.State != contracts.AccountActive || rec.BlockedAt.IsZero() || rec.ClosingBy != "" {
+		t.Fatalf("kept and blocked again: %+v", rec)
 	}
 	// On its day a blocked, closing account is removed like any other.
 	w.operator(w.svc.BlockAccount, bea.Account.ID)
@@ -434,7 +444,7 @@ func TestTheOperatorDeletesAndKeeps(t *testing.T) {
 	if rec := w.operator(w.svc.DeleteAccount, ana.Account.ID); !rec.ClosesAt.Equal(day) || rec.ClosingBy != contracts.ClosingByOperator {
 		t.Fatalf("asked again by the operator: %+v", rec)
 	}
-	if got, err := w.svc.StartDeletion(ctx, anaWho); err != nil || !got.ClosesAt.Equal(day) || got.ClosingBy != contracts.ClosingByOperator {
+	if got, err := w.svc.StartDeletion(ctx, w.fresh(anaWho)); err != nil || !got.ClosesAt.Equal(day) || got.ClosingBy != contracts.ClosingByOperator {
 		t.Fatalf("asked again by the person: %+v %v", got, err)
 	}
 	if got, _ := w.sent(n); len(got) != 0 {
@@ -459,15 +469,36 @@ func TestTheOperatorDeletesAndKeeps(t *testing.T) {
 		t.Fatalf("after the person cancelled: %+v, list %v", doc, w.listed(closingPartition))
 	}
 
-	// The person asks, and the operator cancels.
+	// The person asks, and the operator cannot cancel it: only the person
+	// does. Nothing changes and nothing is counted.
 	n = w.count()
-	if got, err := w.svc.StartDeletion(ctx, anaWho); err != nil || got.ClosingBy != contracts.ClosingByPerson {
+	if got, err := w.svc.StartDeletion(ctx, w.fresh(anaWho)); err != nil || got.ClosingBy != contracts.ClosingByPerson {
 		t.Fatalf("the person asks: %+v %v", got, err)
 	}
 	told = w.one(n, "ana@example.org", subjectDeleting)
 	if !strings.Contains(told.Text, "You asked to delete your Permaily account.") || !strings.Contains(told.Text, "If it was not you, sign in and cancel it") {
 		t.Fatalf("the notice: %s", told.Text)
 	}
+	n, version := w.count(), w.version(ana.Account.ID)
+	_, counted := w.svc.OperatorActions()
+	if rec, err := w.svc.KeepAccount(ctx, ana.Account.ID); !errors.Is(err, contracts.ErrNotCancellable) || rec != nil {
+		t.Fatalf("the operator cancels what the person asked: %+v %v", rec, err)
+	}
+	if doc := w.doc(ana.Account.ID); doc.State != contracts.AccountClosing || doc.closingBy() != contracts.ClosingByPerson || w.version(ana.Account.ID) != version {
+		t.Fatalf("after the refusal: %+v", doc)
+	}
+	if _, now := w.svc.OperatorActions(); now[ActionDeleteCancel] != counted[ActionDeleteCancel] {
+		t.Fatalf("a refusal was counted: %v", now)
+	}
+	if got, _ := w.sent(n); len(got) != 0 {
+		t.Fatalf("a refusal sent %+v", got)
+	}
+	if _, err := w.svc.CancelDeletion(ctx, anaWho); err != nil {
+		t.Fatal(err)
+	}
+
+	// The operator asks, and the operator cancels.
+	w.operator(w.svc.DeleteAccount, ana.Account.ID)
 	n = w.count()
 	if rec := w.operator(w.svc.KeepAccount, ana.Account.ID); rec.State != contracts.AccountActive || rec.ClosingBy != "" || !rec.ClosesAt.IsZero() {
 		t.Fatalf("the operator cancels: %+v", rec)
@@ -602,7 +633,7 @@ func TestTheOperatorFindsAnAddress(t *testing.T) {
 		}
 	}
 	// It only looks: an account that is due is shown, and stays.
-	if _, err := w.svc.StartDeletion(ctx, w.who(anaCookie)); err != nil {
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(w.who(anaCookie))); err != nil {
 		t.Fatal(err)
 	}
 	w.now = w.now.Add(domain.AccountClosing + time.Hour)
@@ -886,7 +917,7 @@ func TestTheOperatorsActionsAreCounted(t *testing.T) {
 		}
 	}
 	check("at the start")
-	if len(want) != 9 {
+	if len(want) != 11 {
 		t.Fatalf("%d kinds", len(want))
 	}
 

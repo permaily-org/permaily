@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
+import { useConfirmed } from '../../../components/Confirm.tsx'
 import { Button, Dialog } from '../../../components/ui/index.ts'
 import * as api from '../../../lib/api.ts'
+import { isCancelled } from '../../../lib/cancelled.ts'
 import { closingDay, closingDays, formatFullDay } from '../../../lib/closing.ts'
 import { useSession } from '../../../lib/session.tsx'
 import { cx } from '../../../lib/styles.ts'
@@ -16,6 +18,7 @@ import { messageFor } from '../../auth/messages.ts'
  */
 export function DeleteAccount() {
   const { state, accountChanged, failed } = useSession()
+  const confirmed = useConfirmed()
   // The day the account would be removed, read from the clock when the question opens.
   const [asked, setAsked] = useState<Date | null>(null)
   const [typed, setTyped] = useState('')
@@ -56,8 +59,13 @@ export function DeleteAccount() {
     setPending(true)
     try {
       // The account is closing from this answer on: the app shows that and nothing else.
-      accountChanged(await api.deleteAccount())
+      accountChanged(await confirmed(() => api.deleteAccount()))
     } catch (failure) {
+      // The person chose not to confirm it's them: the question stays, as it was.
+      if (isCancelled(failure)) {
+        setPending(false)
+        return
+      }
       const code = failed(failure)
       setPending(false)
       if (code) {

@@ -19,7 +19,7 @@ import (
 func (w *world) askFor(svc *Service, who *Authenticated, address string) (string, *Mail) {
 	w.t.Helper()
 	before := len(w.out.Sent())
-	res, err := svc.StartAddressChange(context.Background(), who, contracts.AddressStart{Address: address})
+	res, err := svc.StartAddressChange(context.Background(), w.fresh(who), contracts.AddressStart{Address: address})
 	if err != nil {
 		w.t.Fatalf("asking for %s: %v", address, err)
 	}
@@ -164,7 +164,7 @@ func TestChangingTheContactAddress(t *testing.T) {
 
 	// Changing to the address it has already is nothing to do, and back to
 	// one it had is a change like another.
-	if _, err := w.svc.StartAddressChange(ctx, who, contracts.AddressStart{Address: "ANA.new@example.org"}); !errors.Is(err, contracts.ErrInvalidAddress) {
+	if _, err := w.svc.StartAddressChange(ctx, w.fresh(who), contracts.AddressStart{Address: "ANA.new@example.org"}); !errors.Is(err, contracts.ErrInvalidAddress) {
 		t.Fatalf("its own address: %v", err)
 	}
 	if got, err := w.moveTo(who, "third@example.org"); err != nil || got.Address != "third@example.org" {
@@ -204,7 +204,7 @@ func TestAddressChangeRefusals(t *testing.T) {
 	bea, beaCookie := w.signUp("bea@example.org")
 	who, beaWho := w.who(cookie), w.who(beaCookie)
 	start := func(address string) error {
-		_, err := w.svc.StartAddressChange(ctx, who, contracts.AddressStart{Address: address})
+		_, err := w.svc.StartAddressChange(ctx, w.fresh(who), contracts.AddressStart{Address: address})
 		w.svc.Wait()
 		return err
 	}
@@ -225,8 +225,8 @@ func TestAddressChangeRefusals(t *testing.T) {
 		t.Fatalf("a refused address was sent %+v", got)
 	}
 	// No session, no change.
-	ghost := &Authenticated{AccountID: newID("acc")}
-	if _, err := w.svc.StartAddressChange(ctx, ghost, contracts.AddressStart{Address: "new@example.org"}); !errors.Is(err, contracts.ErrUnauthorized) {
+	ghost := w.ghost()
+	if _, err := w.svc.StartAddressChange(ctx, w.fresh(ghost), contracts.AddressStart{Address: "new@example.org"}); !errors.Is(err, contracts.ErrUnauthorized) {
 		t.Fatalf("starting without an account: %v", err)
 	}
 	if err := finish(ghost, newID("att"), "123456"); !errors.Is(err, contracts.ErrUnauthorized) {
@@ -296,7 +296,7 @@ func TestAddressChangeRefusals(t *testing.T) {
 	w.onePerAddress()
 
 	// A closing account changes nothing, and is told before the message.
-	if _, err := w.svc.StartDeletion(ctx, who); err != nil {
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(who)); err != nil {
 		t.Fatal(err)
 	}
 	if err := start("new@example.org"); !errors.Is(err, contracts.ErrAccountClosing) {
@@ -315,7 +315,7 @@ func TestAddressChangeRefusals(t *testing.T) {
 	records := &between{Anchored: w.anchored}
 	w.svc.cfg.Records = records
 	records.meanwhile = func() {
-		if _, err := w.enclave().svc.StartDeletion(ctx, who); err != nil {
+		if _, err := w.enclave().svc.StartDeletion(ctx, w.fresh(who)); err != nil {
 			t.Error(err)
 		}
 	}
@@ -334,7 +334,7 @@ func TestAddressChangeRefusals(t *testing.T) {
 	writes := 0
 	records.always, records.meanwhile = true, func() {
 		if writes++; writes == 2 {
-			if _, err := w.enclave().svc.StartDeletion(ctx, who); err != nil {
+			if _, err := w.enclave().svc.StartDeletion(ctx, w.fresh(who)); err != nil {
 				t.Error(err)
 			}
 		}
@@ -364,7 +364,7 @@ func TestAddressChangeLimits(t *testing.T) {
 		}
 	}
 	n := w.count()
-	if _, err := w.svc.StartAddressChange(ctx, who, contracts.AddressStart{Address: "one.more@example.org"}); !errors.Is(err, contracts.ErrTooManyRequests) {
+	if _, err := w.svc.StartAddressChange(ctx, w.fresh(who), contracts.AddressStart{Address: "one.more@example.org"}); !errors.Is(err, contracts.ErrTooManyRequests) {
 		t.Fatalf("a sixth request in an hour: %v", err)
 	}
 	if got, _ := w.sent(n); len(got) != 0 {
@@ -930,7 +930,7 @@ func TestAChangeOfAddressThatStopsHalfway(t *testing.T) {
 		}
 		// Removed as it is, nothing of either address is left behind: the
 		// removal that cannot reach the second pointer is tried again.
-		if _, err := w.svc.StartDeletion(context.Background(), who); err != nil {
+		if _, err := w.svc.StartDeletion(context.Background(), w.fresh(who)); err != nil {
 			t.Fatal(err)
 		}
 		w.now = w.now.Add(domain.AccountClosing)

@@ -60,6 +60,16 @@ func TestSessionExpiry(t *testing.T) {
 	}
 }
 
+func TestConfirmedUntil(t *testing.T) {
+	at := time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)
+	if got := ConfirmedUntil(at); !got.Equal(at.Add(10 * time.Minute)) {
+		t.Fatalf("a proof lasts %v", got.Sub(at))
+	}
+	if !ConfirmedUntil(time.Time{}).IsZero() {
+		t.Fatal("no proof is fresh until some time")
+	}
+}
+
 func TestInvitations(t *testing.T) {
 	if got := FormatInvitation("abcd2345wxyz"); got != "ABCD-2345-WXYZ" {
 		t.Errorf("format: %q", got)

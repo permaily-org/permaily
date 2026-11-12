@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../../src/lib/api.ts'
-import { network, ok, refused, server } from '../helpers/server.ts'
+import { meOf, network, ok, refused, server } from '../helpers/server.ts'
 
 /** The code a request fails with. */
 async function failure(request: Promise<unknown>): Promise<string> {
@@ -70,6 +70,12 @@ describe('how a failure reads', () => {
     'last_way_in',
     'account_blocked',
     'address_in_use',
+    'confirmation_needed',
+    'passkey_required',
+    'passkey_only_needed',
+    'super_admin_only',
+    'not_cancellable',
+    'invalid_provider_app',
   ])('keeps the code %s the server answered', async (code) => {
     server.on('GET /api/v1/me', refused(400, code))
     expect(await failure(api.me())).toBe(code)
@@ -401,5 +407,149 @@ describe('providers', () => {
       { provider: 'google', return_to: '/settings#linked=google' },
       { provider: 'google' },
     ])
+  })
+})
+
+describe('confirming it is the person', () => {
+  it('reads the ways the account has, in its order, without any it does not know', async () => {
+    server.on(
+      'GET /api/v1/auth/confirm',
+      ok({ ways: ['email', 'carrier pigeon', 'passkey'], confirmed_until: '2026-11-12T10:10:00Z' }),
+    )
+    expect(await api.confirmWays()).toEqual({
+      ways: ['passkey', 'email'],
+      confirmed_until: '2026-11-12T10:10:00Z',
+    })
+    server.on('GET /api/v1/auth/confirm', ok({ ways: ['email'], confirmed_until: 7 }))
+    expect(await api.confirmWays()).toEqual({ ways: ['email'] })
+    server.on('GET /api/v1/auth/confirm', ok({ ways: 'email' }))
+    expect(await failure(api.confirmWays())).toBe('other')
+  })
+
+  it('confirms with a passkey and with a code', async () => {
+    server
+      .on('POST /api/v1/auth/confirm/passkey/start', ok({ ceremony: 'cer_1', options: {} }))
+      .on('POST /api/v1/auth/confirm/passkey/finish', ok(meOf()))
+      .on('POST /api/v1/auth/confirm/email/start', ok({ attempt: 'att_1', expires_in: 600 }))
+      .on('POST /api/v1/auth/confirm/email/finish', ok(meOf()))
+    expect(await api.startConfirmPasskey()).toEqual({ ceremony: 'cer_1', options: {} })
+    await api.finishConfirmPasskey('cer_1', { id: 'cred' })
+    expect(server.asked('POST /api/v1/auth/confirm/passkey/finish')[0].body).toEqual({
+      ceremony: 'cer_1',
+      credential: { id: 'cred' },
+    })
+    expect(await api.startConfirmEmail()).toEqual({ attempt: 'att_1', expires_in: 600 })
+    expect(server.asked('POST /api/v1/auth/confirm/email/start')[0].body).toBeUndefined()
+    await api.finishConfirmEmail('att_1', '123456')
+    expect(server.asked('POST /api/v1/auth/confirm/email/finish')[0].body).toEqual({
+      attempt: 'att_1',
+      code: '123456',
+    })
+  })
+})
+
+describe('the admin API', () => {
+  it('reads a page of accounts, and fills in what an answer leaves out', async () => {
+    server
+      .on('GET /api/v1/admin/accounts?limit=50', ok({ accounts: [], unreadable: 2, next: 'cur_2' }))
+      .on('GET /api/v1/admin/accounts?limit=10&after=cur_2', ok({ accounts: [], next: '' }))
+      .on('GET /api/v1/admin/accounts?address=a+b%40example.org', ok({ accounts: null }))
+    expect(await api.adminAccounts()).toEqual({ accounts: [], unreadable: 2, next: 'cur_2' })
+    expect(await api.adminAccounts('cur_2', 10)).toEqual({ accounts: [], unreadable: 0 })
+    expect(await failure(api.adminFindAccount('a b@example.org'))).toBe('other')
+  })
+
+  it('names an account in the path, whatever its id holds', async () => {
+    server
+      .on('GET /api/v1/admin/accounts/a%2Fb', ok({ id: 'a/b' }))
+      .on('POST /api/v1/admin/accounts/a%2Fb/delete/cancel', ok({ id: 'a/b' }))
+    expect(await api.adminAccount('a/b')).toEqual({ id: 'a/b' })
+    expect(await api.adminAccountAction('a/b', 'delete/cancel')).toEqual({ id: 'a/b' })
+  })
+
+  it('reads invitations, and the codes only once they are made', async () => {
+    server.on('GET /api/v1/admin/invitations', ok({ invitations: [], truncated: 'yes' }))
+    expect(await api.adminInvitations()).toEqual({ invitations: [], truncated: false })
+    server.on('GET /api/v1/admin/invitations', ok({}))
+    expect(await failure(api.adminInvitations())).toBe('other')
+    server.on('POST /api/v1/admin/invitations', ok({ invitations: ['A'] }))
+    expect(await api.makeInvitations(1)).toEqual({ invitations: ['A'], ids: [], expires_at: '' })
+    expect(server.asked('POST /api/v1/admin/invitations')[0].body).toEqual({ count: 1 })
+    server.on('POST /api/v1/admin/invitations', ok({ invitations: [] }))
+    expect(await failure(api.makeInvitations(1))).toBe('other')
+    server.on('POST /api/v1/admin/invitations', ok({}))
+    expect(await failure(api.makeInvitations(1))).toBe('other')
+    server.on('DELETE /api/v1/admin/invitations/inv%2F1', ok())
+    expect(await api.revokeInvitation('inv/1')).toBeUndefined()
+  })
+
+  it('reads the providers set, without any it does not know, and never a secret back', async () => {
+    server.on(
+      'GET /api/v1/admin/providers',
+      ok({
+        providers: [
+          { provider: 'google', client_id: 'g' },
+          { provider: 'myspace', client_id: 'm' },
+          { provider: 'github' },
+          null,
+        ],
+      }),
+    )
+    expect(await api.providerApps()).toEqual([{ provider: 'google', client_id: 'g' }])
+    server.on('GET /api/v1/admin/providers', ok({}))
+    expect(await failure(api.providerApps())).toBe('other')
+    server
+      .on('PUT /api/v1/admin/providers/meta', ok())
+      .on('DELETE /api/v1/admin/providers/meta', ok())
+    await api.setProviderApp('meta', 'id', 'secret')
+    expect(server.asked('PUT /api/v1/admin/providers/meta')[0].body).toEqual({
+      client_id: 'id',
+      client_secret: 'secret',
+    })
+    await api.removeProviderApp('meta')
+  })
+
+  it('reads, makes and removes admins', async () => {
+    server.on('GET /api/v1/admin/admins', ok({ admins: [] }))
+    expect(await api.admins()).toEqual([])
+    server.on('GET /api/v1/admin/admins', ok({}))
+    expect(await failure(api.admins())).toBe('other')
+    // A change answers the admins as they are after it.
+    const after = [{ id: 'acc/1', address: 'a@example.org', name: '', super: false }]
+    server
+      .on('PUT /api/v1/admin/admins/acc%2F1', ok({ admins: after }))
+      .on('DELETE /api/v1/admin/admins/acc%2F1', ok({ admins: [] }))
+    expect(await api.makeAdmin('acc/1')).toEqual(after)
+    expect(server.asked('PUT /api/v1/admin/admins/acc%2F1')[0].body).toBeUndefined()
+    expect(await api.removeAdmin('acc/1')).toEqual([])
+    server.on('DELETE /api/v1/admin/admins/acc%2F1', ok())
+    expect(await failure(api.removeAdmin('acc/1'))).toBe('other')
+  })
+
+  it('reads the log a page at a time', async () => {
+    server
+      .on('GET /api/v1/admin/log?limit=50', ok({ entries: [], next: 'cur_2' }))
+      .on('GET /api/v1/admin/log?limit=5&after=cur_2', ok({ entries: [], next: '' }))
+    expect(await api.adminLog()).toEqual({ entries: [], next: 'cur_2' })
+    expect(await api.adminLog('cur_2', 5)).toEqual({ entries: [] })
+    server.on('GET /api/v1/admin/log?limit=50', ok({}))
+    expect(await failure(api.adminLog())).toBe('other')
+  })
+
+  it('reads the numbers, taking them as complete unless the server says otherwise', async () => {
+    const accounts = { active: 1, closing: 0, blocked: 0, total: 1 }
+    server.on('GET /api/v1/admin/stats', ok({ accounts }))
+    expect(await api.adminStats()).toEqual({ accounts, invitations: { unused: 0 }, complete: true })
+    server.on(
+      'GET /api/v1/admin/stats',
+      ok({ accounts, invitations: { unused: 3 }, complete: false }),
+    )
+    expect(await api.adminStats()).toEqual({
+      accounts,
+      invitations: { unused: 3 },
+      complete: false,
+    })
+    server.on('GET /api/v1/admin/stats', ok({ accounts: null }))
+    expect(await failure(api.adminStats())).toBe('other')
   })
 })

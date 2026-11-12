@@ -62,6 +62,10 @@ type platform struct {
 	mail func() *attestation.MailStatus
 }
 
+// defaultSuperAdmin is empty in the enclave: the super admin's address is
+// compiled into the image (-super-admin, from deploy/enclave.json).
+const defaultSuperAdmin = ""
+
 // logOutput writes to the console and, when a log port is set, to the parent
 // instance over vsock.
 func logOutput(cfg config) io.Writer {
@@ -195,7 +199,7 @@ func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, a
 		// The providers are asked who signed in over TLS that ends here, through
 		// the host's proxy, and send the browser back to the app's own host.
 		Providers: &idp.Client{HTTP: egress, RedirectURL: "https://" + hosts.App + providerCallback},
-		AppURL:    "https://" + hosts.App, Log: log,
+		AppURL:    "https://" + hosts.App, SuperAdmin: cfg.superAdmin, Log: log,
 	})
 	if err != nil {
 		return err

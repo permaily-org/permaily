@@ -9,6 +9,9 @@ export const focusRing =
 /** A page's padding: 16px on phones, 32px from sm, the full 56px from lg. */
 export const pagePadding = 'px-4 pt-6 pb-10 sm:px-8 lg:px-14 lg:pt-9 lg:pb-14'
 
+/** The height of the sign-in screen's actions, which stand in one column: the providers' buttons and the passkey's. */
+export const signInHeight = 'h-10'
+
 export type ButtonVariant = 'primary' | 'secondary' | 'danger'
 export type ButtonSize = 'md' | 'sm'
 

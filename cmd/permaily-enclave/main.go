@@ -57,7 +57,10 @@ type config struct {
 	credentialsPort     uint32
 	// mailFrom is the address the service's own mail is sent from, through
 	// SES. Empty leaves accounts off: nobody could sign in.
-	mailFrom    string
+	mailFrom string
+	// superAdmin is the contact address of the super admin's account, who
+	// makes and removes the other admins of the admin panel (ADR 0022).
+	superAdmin  string
 	dohEndpoint string
 	logPort     uint32
 
@@ -96,6 +99,7 @@ func main() {
 	flag.StringVar(&cfg.anchorBucket, "anchor-bucket", "", "S3 bucket with Object Lock for the commits of the records that must not be put back to an earlier copy")
 	flag.IntVar(&cfg.anchorRetentionDays, "anchor-retention-days", 0, "days S3 keeps each commit, whatever anyone asks")
 	flag.StringVar(&cfg.mailFrom, "mail-from", "", "address the service's own mail is sent from, through SES; empty leaves accounts off")
+	flag.StringVar(&cfg.superAdmin, "super-admin", defaultSuperAdmin, "contact address of the super admin's account; empty leaves the admin panel to nobody")
 	flag.StringVar(&cfg.dohEndpoint, "doh-endpoint", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS endpoint for DKIM lookups")
 	flag.Parse()
 

@@ -22,6 +22,15 @@ export function refused(status: number, code: string): Reply {
 
 export const network: Reply = 'network'
 
+/** Answers `first` the first time it is asked, and `then` every time after. */
+export function once(first: Reply, then: Reply): Answer {
+  let asked = 0
+  return () => (asked++ === 0 ? first : then)
+}
+
+/** The server's answer to a change made without a fresh proof of who the person is. */
+export const confirmationNeeded = refused(403, 'confirmation_needed')
+
 /** An answer a test gives when it chooses: the request waits until then. */
 export function later(): { answer: Answer; give: (reply: Reply) => void } {
   let give: (reply: Reply) => void = () => {}
@@ -40,6 +49,8 @@ export type Account = {
   created_at: string
   closes_at?: string
   closing_by?: 'person' | 'operator'
+  admin?: 'super' | 'admin'
+  passkey_only?: boolean
 }
 
 export const ana: Account = {
@@ -51,10 +62,11 @@ export const ana: Account = {
   created_at: '2026-03-06T10:00:00Z',
 }
 
-export function meOf(account: Account = ana) {
+export function meOf(account: Account = ana, session: { confirmed_until?: string } = {}) {
   return {
     account,
     session: {
+      ...session,
       id: 'ses_here',
       created_at: '2026-11-01T10:00:00Z',
       last_used_at: '2026-11-10T10:00:00Z',

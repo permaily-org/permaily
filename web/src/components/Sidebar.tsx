@@ -1,10 +1,10 @@
-import { ChevronsUpDown, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react'
+import { ChevronsUpDown, PanelLeftClose, PanelLeftOpen, ShieldCheck, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { NavLink } from 'react-router'
 import { errorCode } from '../lib/api.ts'
 import { useSession } from '../lib/session.tsx'
 import { cx, focusRing } from '../lib/styles.ts'
-import { sections } from '../sections.ts'
+import { type Section, sections } from '../sections.ts'
 
 type SidebarProps =
   | { variant: 'static'; collapsed: boolean; onToggle: () => void }
@@ -16,6 +16,12 @@ export function Sidebar(props: SidebarProps) {
   const id = drawer ? 'sidebar-drawer' : 'sidebar'
   const ToggleIcon = drawer ? X : collapsed ? PanelLeftOpen : PanelLeftClose
   const rootRef = useRef<HTMLDivElement>(null)
+  const { state } = useSession()
+  // The admin panel is in the list only for an admin: nobody else sees that it exists.
+  const shown: Section[] =
+    state.status === 'signedIn' && state.me.account.admin
+      ? [...sections, { path: '/admin', label: 'Admin', icon: ShieldCheck, waiting: 0 }]
+      : sections
 
   // A drawer takes focus when it opens.
   useEffect(() => {
@@ -51,7 +57,7 @@ export function Sidebar(props: SidebarProps) {
       {header}
 
       <nav aria-label="Main" className="flex flex-col gap-0.5">
-        {sections.map(({ path, label, icon: Icon, waiting }) => (
+        {shown.map(({ path, label, icon: Icon, waiting }) => (
           <NavLink
             key={path}
             to={path}

@@ -40,12 +40,17 @@ const (
 	ActionInvitationRevoked = "invitation_revoked"
 	ActionProviderAppSet    = "provider_app_set"
 	ActionProviderAppRemove = "provider_app_removed"
+	// ActionAdminMade and ActionAdminRemoved: the super admin made an account
+	// an admin, or made it stop being one (admins.go).
+	ActionAdminMade    = "admin_made"
+	ActionAdminRemoved = "admin_removed"
 )
 
 // OperatorActionKinds lists every kind, in the order they are shown.
 var OperatorActionKinds = []string{
 	ActionBlock, ActionUnblock, ActionDelete, ActionDeleteCancel, ActionSessionsClose,
 	ActionInvitationsMade, ActionInvitationRevoked, ActionProviderAppSet, ActionProviderAppRemove,
+	ActionAdminMade, ActionAdminRemoved,
 }
 
 // acted counts n actions of a kind and logs the kind. Never whose account it
@@ -74,17 +79,23 @@ func (s *Service) OperatorActions() (time.Time, map[string]int) {
 	return s.since, out
 }
 
-// operate is rewrite for the operator: the account is named by its
-// identifier, one that is not there is ErrNotFound, and an edit that finds
-// nothing to change (errUnchanged) hands back the account as it is. It
-// reports whether the record was written.
-func (s *Service) operate(ctx context.Context, id string, edit func(*accountDoc) error) (*accountDoc, bool, error) {
+// operate is rewrite for the operator and the admins: the account is named
+// by its identifier, one that is not there is ErrNotFound, and an edit that
+// finds nothing to change (errUnchanged) hands back the account as it is. It
+// reports whether the record was written. guard, unless it is nil, refuses
+// an account the one who acts may not act on, before edit runs.
+func (s *Service) operate(ctx context.Context, id string, guard, edit func(*accountDoc) error) (*accountDoc, bool, error) {
 	if !validID("acc", id) {
 		return nil, false, contracts.ErrNotFound
 	}
 	var same accountDoc
 	doc, err := s.rewrite(ctx, id, func(doc *accountDoc) error {
 		same = *doc
+		if guard != nil {
+			if err := guard(doc); err != nil {
+				return err
+			}
+		}
 		return edit(doc)
 	})
 	switch {
@@ -103,8 +114,15 @@ func (s *Service) operate(ctx context.Context, id string, edit func(*accountDoc)
 // is apart from deleting: a blocked account can be closing, and stays blocked
 // until it is unblocked or removed.
 func (s *Service) BlockAccount(ctx context.Context, id string) (*contracts.AccountRecord, error) {
+	return s.block(ctx, nil, id)
+}
+
+func (s *Service) block(ctx context.Context, by *acting, id string) (*contracts.AccountRecord, error) {
+	if err := by.changing(); err != nil {
+		return nil, err
+	}
 	at := s.now().Truncate(time.Second)
-	doc, changed, err := s.operate(ctx, id, func(doc *accountDoc) error {
+	doc, changed, err := s.operate(ctx, id, by.guard(s, ActionBlock), func(doc *accountDoc) error {
 		if doc.blocked() {
 			return errUnchanged
 		}
@@ -115,6 +133,7 @@ func (s *Service) BlockAccount(ctx context.Context, id string) (*contracts.Accou
 		return nil, err
 	}
 	s.acted(ActionBlock, 1)
+	s.logged(ctx, by, ActionBlock, doc.ID, "")
 	// Also when it was blocked already: an earlier try may have failed here.
 	// A session written after this stands for nothing all the same: every
 	// request reads the record.
@@ -129,7 +148,14 @@ func (s *Service) BlockAccount(ctx context.Context, id string) (*contracts.Accou
 
 // UnblockAccount lets the account's person sign in again.
 func (s *Service) UnblockAccount(ctx context.Context, id string) (*contracts.AccountRecord, error) {
-	doc, changed, err := s.operate(ctx, id, func(doc *accountDoc) error {
+	return s.unblock(ctx, nil, id)
+}
+
+func (s *Service) unblock(ctx context.Context, by *acting, id string) (*contracts.AccountRecord, error) {
+	if err := by.changing(); err != nil {
+		return nil, err
+	}
+	doc, changed, err := s.operate(ctx, id, by.guard(s, ActionUnblock), func(doc *accountDoc) error {
 		if !doc.blocked() {
 			return errUnchanged
 		}
@@ -140,6 +166,7 @@ func (s *Service) UnblockAccount(ctx context.Context, id string) (*contracts.Acc
 		return nil, err
 	}
 	s.acted(ActionUnblock, 1)
+	s.logged(ctx, by, ActionUnblock, doc.ID, "")
 	if changed {
 		s.notify(ctx, noticeUnblocked, blockedMail(doc.Address, s.rp.ID, s.now(), false))
 	}
@@ -148,15 +175,23 @@ func (s *Service) UnblockAccount(ctx context.Context, id string) (*contracts.Acc
 
 // DeleteAccount is the operator asking to delete an account: the same seven
 // days, and the same removal, as when its person asks. The record says the
-// operator asked. No device is signed out: the person sees the account
-// closing and can cancel, unless the account is blocked. One that is closing
-// already keeps its day and who asked.
+// operator asked (an admin asks as the operator). No device is signed out:
+// the person sees the account closing and can cancel, unless the account is
+// blocked. One that is closing already keeps its day and who asked.
 func (s *Service) DeleteAccount(ctx context.Context, id string) (*contracts.AccountRecord, error) {
-	doc, changed, err := s.operate(ctx, id, s.closing(ctx, contracts.ClosingByOperator))
+	return s.deleteAccount(ctx, nil, id)
+}
+
+func (s *Service) deleteAccount(ctx context.Context, by *acting, id string) (*contracts.AccountRecord, error) {
+	if err := by.changing(); err != nil {
+		return nil, err
+	}
+	doc, changed, err := s.operate(ctx, id, by.guard(s, ActionDelete), s.closing(ctx, contracts.ClosingByOperator))
 	if err != nil {
 		return nil, err
 	}
 	s.acted(ActionDelete, 1)
+	s.logged(ctx, by, ActionDelete, doc.ID, "")
 	if changed {
 		s.cfg.Log.Info("accounts: account closing")
 		s.notify(ctx, noticeDeletionAsked, deletionAskedMail(doc, s.rp.ID, s.now()))
@@ -164,13 +199,21 @@ func (s *Service) DeleteAccount(ctx context.Context, id string) (*contracts.Acco
 	return s.record(ctx, doc)
 }
 
-// KeepAccount is the operator cancelling the deletion of an account, whoever
-// asked for it: the account is active again.
+// KeepAccount is the operator cancelling the deletion of an account that the
+// operator asked for: the account is active again. A deletion its person
+// asked for is theirs to cancel (ErrNotCancellable), and nothing changes.
 func (s *Service) KeepAccount(ctx context.Context, id string) (*contracts.AccountRecord, error) {
+	return s.keepAccount(ctx, nil, id)
+}
+
+func (s *Service) keepAccount(ctx context.Context, by *acting, id string) (*contracts.AccountRecord, error) {
+	if err := by.changing(); err != nil {
+		return nil, err
+	}
 	if !validID("acc", id) {
 		return nil, contracts.ErrNotFound
 	}
-	doc, _, err := s.keep(ctx, id, contracts.ClosingByOperator)
+	doc, _, err := s.keep(ctx, id, contracts.ClosingByOperator, by.guard(s, ActionDeleteCancel))
 	if errors.Is(err, contracts.ErrUnauthorized) {
 		return nil, contracts.ErrNotFound
 	}
@@ -178,16 +221,25 @@ func (s *Service) KeepAccount(ctx context.Context, id string) (*contracts.Accoun
 		return nil, err
 	}
 	s.acted(ActionDeleteCancel, 1)
+	s.logged(ctx, by, ActionDeleteCancel, doc.ID, "")
 	return s.record(ctx, doc)
 }
 
 // CloseAccountSessions signs every device out of an account.
 func (s *Service) CloseAccountSessions(ctx context.Context, id string) (*contracts.AccountRecord, error) {
-	doc, _, err := s.operate(ctx, id, func(*accountDoc) error { return errUnchanged })
+	return s.closeAccountSessions(ctx, nil, id)
+}
+
+func (s *Service) closeAccountSessions(ctx context.Context, by *acting, id string) (*contracts.AccountRecord, error) {
+	if err := by.changing(); err != nil {
+		return nil, err
+	}
+	doc, _, err := s.operate(ctx, id, by.guard(s, ActionSessionsClose), func(*accountDoc) error { return errUnchanged })
 	if err != nil {
 		return nil, err
 	}
 	s.acted(ActionSessionsClose, 1)
+	s.logged(ctx, by, ActionSessionsClose, doc.ID, "")
 	if err := s.closeSessions(ctx, id, ""); err != nil {
 		return nil, err
 	}
@@ -203,18 +255,10 @@ func (s *Service) AccountRecordByAddress(ctx context.Context, address string) (*
 		return nil, err
 	}
 	out := &contracts.AccountList{Accounts: []contracts.AccountRecord{}}
-	e, err := s.cfg.Entries.GetEntry(ctx, loginPartition(address), loginKey)
-	if errors.Is(err, store.ErrNotFound) {
-		return out, nil
-	}
+	id, err := s.pointer(ctx, address)
 	if err != nil {
 		return nil, err
 	}
-	key, err := s.signingKey(ctx)
-	if err != nil {
-		return nil, err
-	}
-	id := pointed(key, e)
 	if id == "" {
 		return out, nil
 	}
@@ -234,6 +278,42 @@ func (s *Service) AccountRecordByAddress(ctx context.Context, address string) (*
 	}
 	out.Accounts = append(out.Accounts, *rec)
 	return out, nil
+}
+
+// find returns the account of an address as a sign-in finds it, and only
+// looks: an account that is due is returned and not removed. nil when the
+// address has none, or its pointer leads nowhere; an error when the account
+// is there and cannot be read.
+func (s *Service) find(ctx context.Context, address string) (*accountDoc, error) {
+	id, err := s.pointer(ctx, address)
+	if err != nil || id == "" {
+		return nil, err
+	}
+	doc, err := s.read(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if doc == nil || !doc.has(address) {
+		return nil, nil // the pointer leads nowhere
+	}
+	return doc, nil
+}
+
+// pointer returns the account the pointer of an address names, "" when there
+// is none that this deployment wrote there.
+func (s *Service) pointer(ctx context.Context, address string) (string, error) {
+	e, err := s.cfg.Entries.GetEntry(ctx, loginPartition(address), loginKey)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	key, err := s.signingKey(ctx)
+	if err != nil {
+		return "", err
+	}
+	return pointed(key, e), nil
 }
 
 // ---- invitations ----
@@ -328,6 +408,13 @@ func (s *Service) Invitations(ctx context.Context) (*contracts.InvitationList, e
 // and has not ended finds it gone. One that was used, or revoked, or never
 // made, is ErrNotFound.
 func (s *Service) RevokeInvitation(ctx context.Context, id string) error {
+	return s.revokeInvitation(ctx, nil, id)
+}
+
+func (s *Service) revokeInvitation(ctx context.Context, by *acting, id string) error {
+	if err := by.changing(); err != nil {
+		return err
+	}
 	if !validID("inv", id) {
 		return contracts.ErrNotFound
 	}
@@ -354,6 +441,7 @@ func (s *Service) RevokeInvitation(ctx context.Context, id string) error {
 	revoked := err == nil
 	if revoked {
 		s.acted(ActionInvitationRevoked, 1)
+		s.logged(ctx, by, ActionInvitationRevoked, "", id)
 	}
 	if err := s.forget(ctx, invitationsPartition, id); err != nil {
 		return err

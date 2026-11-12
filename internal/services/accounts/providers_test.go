@@ -96,7 +96,7 @@ func (w *world) on(providers ...idp.Provider) {
 // returns its state and the value of the browser's cookie.
 func (w *world) leave(who *Authenticated, in contracts.ProviderStart) (state, cookie string) {
 	w.t.Helper()
-	started, cookie, err := w.svc.StartProvider(context.Background(), who, in)
+	started, cookie, err := w.svc.StartProvider(context.Background(), w.fresh(who), in)
 	if err != nil {
 		w.t.Fatalf("starting with %s: %v", in.Provider, err)
 	}
@@ -590,10 +590,10 @@ func TestProviderConfirmRefusals(t *testing.T) {
 	// linked to the first that confirms.
 	eve, _ := w.signUp("eve@example.org")
 	w.now = w.now.Add(time.Hour + time.Minute) // an address is sent five messages an hour
-	if err := w.svc.UnlinkProvider(ctx, w.who(anaCookie), "meta"); err != nil {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(w.who(anaCookie)), "meta"); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.svc.UnlinkProvider(ctx, w.who(anaCookie), "meta"); !errors.Is(err, contracts.ErrNotFound) {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(w.who(anaCookie)), "meta"); !errors.Is(err, contracts.ErrNotFound) {
 		t.Fatalf("unlinking twice: %v", err)
 	}
 	b1, a1, m1 = waits("990003", "eve@example.org")
@@ -611,7 +611,7 @@ func TestProviderConfirmRefusals(t *testing.T) {
 	// passkeys only gets no message at all.
 	w.now = w.now.Add(time.Hour + time.Minute)
 	b1, a1, m1 = waits("990004", "ana@example.org")
-	if _, err := w.svc.StartDeletion(ctx, w.who(anaCookie)); err != nil {
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(w.who(anaCookie))); err != nil {
 		t.Fatal(err)
 	}
 	if err := finish(b1, a1, m1); !errors.Is(err, contracts.ErrAccountClosing) {
@@ -699,7 +699,7 @@ func TestProviderLinkFromSettings(t *testing.T) {
 
 	// One of each provider: told at the start, and at the end when two trips
 	// were on their way.
-	if _, _, err := w.svc.StartProvider(ctx, anaWho, contracts.ProviderStart{Provider: "google"}); !errors.Is(err, contracts.ErrProviderLinked) {
+	if _, _, err := w.svc.StartProvider(ctx, w.fresh(anaWho), contracts.ProviderStart{Provider: "google"}); !errors.Is(err, contracts.ErrProviderLinked) {
 		t.Fatalf("a second account of one provider: %v", err)
 	}
 	s1, c1 := w.leave(eveWho, contracts.ProviderStart{Provider: "google"})
@@ -711,7 +711,7 @@ func TestProviderLinkFromSettings(t *testing.T) {
 	w.refusedWith("the second of two trips", done, err, contracts.ErrProviderLinked, "/settings#provider_error=provider_linked")
 	// Linking what is linked already changes nothing.
 	written := w.version(eve.Account.ID)
-	if err := w.svc.UnlinkProvider(ctx, eveWho, "google"); err != nil {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(eveWho), "google"); err != nil {
 		t.Fatal(err)
 	}
 	s1, c1 = w.leave(eveWho, contracts.ProviderStart{Provider: "google"})
@@ -737,15 +737,15 @@ func TestProviderLinkFromSettings(t *testing.T) {
 	// A closing account links nothing: told at the start, and at the end
 	// when it was asked meanwhile.
 	state, cookie = w.leave(eveWho, contracts.ProviderStart{Provider: "github"})
-	if _, err := w.svc.StartDeletion(ctx, eveWho); err != nil {
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(eveWho)); err != nil {
 		t.Fatal(err)
 	}
 	done, err = w.comeBack(state, cookie, person(idp.GitHub, "717071707170", "", false))
 	w.refusedWith("an account closing meanwhile", done, err, contracts.ErrAccountClosing, "/settings#provider_error=account_closing")
-	if _, _, err := w.svc.StartProvider(ctx, eveWho, contracts.ProviderStart{Provider: "github"}); !errors.Is(err, contracts.ErrAccountClosing) {
+	if _, _, err := w.svc.StartProvider(ctx, w.fresh(eveWho), contracts.ProviderStart{Provider: "github"}); !errors.Is(err, contracts.ErrAccountClosing) {
 		t.Fatalf("starting from a closing account: %v", err)
 	}
-	if err := w.svc.UnlinkProvider(ctx, eveWho, "google"); !errors.Is(err, contracts.ErrAccountClosing) {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(eveWho), "google"); !errors.Is(err, contracts.ErrAccountClosing) {
 		t.Fatalf("unlinking from a closing account: %v", err)
 	}
 	// It still signs in with the provider it has, to cancel.
@@ -760,7 +760,7 @@ func TestProviderLinkFromSettings(t *testing.T) {
 		t.Fatalf("eve %+v, stored %q", w.providers(eve.Account.ID), w.stored("717071707170"))
 	}
 	ghost := &Authenticated{AccountID: "acc_" + strings.Repeat("a", 26)}
-	if _, _, err := w.svc.StartProvider(ctx, ghost, contracts.ProviderStart{Provider: "google"}); !errors.Is(err, contracts.ErrUnauthorized) {
+	if _, _, err := w.svc.StartProvider(ctx, w.fresh(ghost), contracts.ProviderStart{Provider: "google"}); !errors.Is(err, contracts.ErrUnauthorized) {
 		t.Fatalf("starting for an account that is not there: %v", err)
 	}
 	if _, err := w.svc.LinkedProviders(ctx, ghost); !errors.Is(err, contracts.ErrUnauthorized) {
@@ -796,7 +796,7 @@ func TestProviderRulesThatCarryOver(t *testing.T) {
 		t.Fatalf("a session was made: %+v", list)
 	}
 	// Turned off again, the provider she linked signs in.
-	if _, err := w.svc.SetPasskeyOnly(ctx, anaWho, contracts.PasskeyOnly{On: false}); err != nil {
+	if _, err := w.svc.SetPasskeyOnly(ctx, w.fresh(anaWho), contracts.PasskeyOnly{On: false}); err != nil {
 		t.Fatal(err)
 	}
 	if done, err := w.through(mine, ""); err != nil || w.who(done.Session).AccountID != ana.Account.ID {
@@ -806,7 +806,7 @@ func TestProviderRulesThatCarryOver(t *testing.T) {
 	// A provider that is off, and a name that is no provider.
 	for _, name := range []string{"github", "meta", "microsoft", "", "Google", "nope", "google "} {
 		for _, who := range []*Authenticated{nil, anaWho} {
-			if out, cookie, err := w.svc.StartProvider(ctx, who, contracts.ProviderStart{Provider: name}); !errors.Is(err, contracts.ErrProviderOff) || out != nil || cookie != "" {
+			if out, cookie, err := w.svc.StartProvider(ctx, w.fresh(who), contracts.ProviderStart{Provider: name}); !errors.Is(err, contracts.ErrProviderOff) || out != nil || cookie != "" {
 				t.Errorf("%q started: %+v %v", name, out, err)
 			}
 		}
@@ -862,11 +862,11 @@ func TestUnlinkProvider(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"meta", "nope", "", "GitHub"} {
-		if err := w.svc.UnlinkProvider(ctx, anaWho, name); !errors.Is(err, contracts.ErrNotFound) {
+		if err := w.svc.UnlinkProvider(ctx, w.fresh(anaWho), name); !errors.Is(err, contracts.ErrNotFound) {
 			t.Errorf("unlinking %q: %v", name, err)
 		}
 	}
-	if err := w.svc.UnlinkProvider(ctx, anaWho, "github"); err != nil {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(anaWho), "github"); err != nil {
 		t.Fatal(err)
 	}
 	if l := w.providers(ana.Account.ID); len(l) != 1 || l[0].Provider != idp.Google {
@@ -896,7 +896,7 @@ func TestUnlinkProvider(t *testing.T) {
 	if _, err := w.svc.change(ctx, ana.Account.ID, alone); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.svc.UnlinkProvider(ctx, anaWho, "google"); !errors.Is(err, contracts.ErrLastWayIn) {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(anaWho), "google"); !errors.Is(err, contracts.ErrLastWayIn) {
 		t.Fatalf("unlinking the only way in: %v", err)
 	}
 	if l := w.providers(ana.Account.ID); len(l) != 1 {
@@ -909,7 +909,7 @@ func TestUnlinkProvider(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.svc.UnlinkProvider(ctx, anaWho, "google"); err != nil {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(anaWho), "google"); err != nil {
 		t.Fatalf("unlinking with a passkey left: %v", err)
 	}
 	w.quiet("515051505150", "g-sub-ana", "example.net", ana.Account.ID)
@@ -1002,7 +1002,7 @@ func TestProvidersWrittenByHand(t *testing.T) {
 	}
 	while := w.snapshot()
 	oldPointer, _ := w.mem.GetEntry(ctx, providerPartition(idp.GitHub, "515051505150"), loginKey)
-	if err := w.svc.UnlinkProvider(ctx, anaWho, "github"); err != nil {
+	if err := w.svc.UnlinkProvider(ctx, w.fresh(anaWho), "github"); err != nil {
 		t.Fatal(err)
 	}
 	w.putBack(while)
@@ -1484,13 +1484,13 @@ func TestProviderFailures(t *testing.T) {
 		if (err == nil) != (session != "") {
 			t.Fatalf("%s down, confirming: a session %v with %v", op, session != "", err)
 		}
-		if err := w.svc.UnlinkProvider(ctx, who, "google"); !errors.Is(err, down) && op != "list entries" && op != "put entry" {
+		if err := w.svc.UnlinkProvider(ctx, w.fresh(who), "google"); !errors.Is(err, down) && op != "list entries" && op != "put entry" {
 			t.Fatalf("%s down, unlinking: %v", op, err)
 		}
 		if _, err := w.svc.LinkedProviders(ctx, who); !errors.Is(err, down) && op == "get record" {
 			t.Fatalf("%s down, listing: %v", op, err)
 		}
-		if _, _, err := w.svc.StartProvider(ctx, who, contracts.ProviderStart{Provider: "microsoft"}); err == nil {
+		if _, _, err := w.svc.StartProvider(ctx, w.fresh(who), contracts.ProviderStart{Provider: "microsoft"}); err == nil {
 			t.Fatalf("%s down: a provider that is off was started", op)
 		}
 		if op == "get entry" || op == "derive" {
@@ -1699,7 +1699,7 @@ func TestProviderFailuresWhileLinking(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.fail["derive"], f.skip["derive"] = down, 1
-	err = w.svc.UnlinkProvider(ctx, who, "google")
+	err = w.svc.UnlinkProvider(ctx, w.fresh(who), "google")
 	f.fail, f.skip = map[string]error{}, map[string]int{}
 	if !errors.Is(err, down) || len(w.providers(ana.Account.ID)) != 1 {
 		t.Fatalf("unlinking without the key: %v", err)
@@ -1791,7 +1791,7 @@ func TestRemovingAnAccountWithProviders(t *testing.T) {
 	}
 	moved, _ := c.mem.GetEntry(ctx, loginPartition("eve@example.org"), loginKey)
 	c.mem.SetEntry(store.Entry{Partition: providerPartition(idp.GitHub, "515051505150"), Key: loginKey, Value: moved.Value, Version: 9})
-	got, err := c.svc.StartDeletion(ctx, c.who)
+	got, err := c.svc.StartDeletion(ctx, c.fresh(c.who))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1824,7 +1824,7 @@ func TestRemovingAnAccountWithProviders(t *testing.T) {
 	if _, err := c2.linkFrom(c2.who, hers); err != nil {
 		t.Fatal(err)
 	}
-	got, err = c2.svc.StartDeletion(ctx, c2.who)
+	got, err = c2.svc.StartDeletion(ctx, c2.fresh(c2.who))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -28,11 +28,11 @@ func (s *Service) UpdateAccount(ctx context.Context, who *Authenticated, in cont
 	var view contracts.Account
 	_, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
 		if in.Name == nil || doc.Name == name {
-			view = doc.view()
+			view = s.view(doc)
 			return errUnchanged
 		}
 		doc.Name = name
-		view = doc.view()
+		view = s.view(doc)
 		return nil
 	})
 	if err != nil && !errors.Is(err, errUnchanged) {
@@ -85,6 +85,9 @@ func closingKey(doc *accountDoc) string { return timedKey(doc.ClosesAt, doc.ID) 
 // and nothing else of it changes. Every other device is signed out. Asking
 // again changes nothing: the day stays, and so does who asked first.
 func (s *Service) StartDeletion(ctx context.Context, who *Authenticated) (*contracts.Account, error) {
+	if err := s.confirmed(who); err != nil {
+		return nil, err
+	}
 	var same accountDoc
 	edit := s.closing(ctx, contracts.ClosingByPerson)
 	doc, err := s.rewrite(ctx, who.AccountID, func(doc *accountDoc) error {
@@ -112,7 +115,7 @@ func (s *Service) StartDeletion(ctx context.Context, who *Authenticated) (*contr
 	if err != nil {
 		return nil, err
 	}
-	view := doc.view()
+	view := s.view(doc)
 	return &view, nil
 }
 
@@ -198,26 +201,37 @@ func (s *Service) closeSessions(ctx context.Context, accountID, keep string) err
 // operator asked for too, unless the account is blocked: then they are not
 // signed in at all.
 func (s *Service) CancelDeletion(ctx context.Context, who *Authenticated) (*contracts.Account, error) {
-	doc, _, err := s.keep(ctx, who.AccountID, contracts.ClosingByPerson)
+	doc, _, err := s.keep(ctx, who.AccountID, contracts.ClosingByPerson, nil)
 	if err != nil {
 		return nil, err
 	}
-	view := doc.view()
+	view := s.view(doc)
 	return &view, nil
 }
 
 // keep makes a closing account active again, for its person or for the
-// operator (by), and reports whether it was closing.
-func (s *Service) keep(ctx context.Context, id, by string) (*accountDoc, bool, error) {
+// operator (by), and reports whether it was closing. The operator, and an
+// admin, cancel only a deletion the operator asked for: one the person asked
+// for is theirs to cancel (ErrNotCancellable). guard, when there is one,
+// refuses an account the one who acts may not act on.
+func (s *Service) keep(ctx context.Context, id, by string, guard func(*accountDoc) error) (*accountDoc, bool, error) {
 	var same accountDoc
 	var entry *store.Entry
 	doc, err := s.rewrite(ctx, id, func(doc *accountDoc) error {
 		if by == contracts.ClosingByPerson && doc.blocked() {
 			return contracts.ErrUnauthorized // its session stands for nothing
 		}
+		if guard != nil {
+			if err := guard(doc); err != nil {
+				return err
+			}
+		}
 		if doc.State != contracts.AccountClosing {
 			same = *doc
 			return errUnchanged
+		}
+		if by == contracts.ClosingByOperator && doc.closingBy() != contracts.ClosingByOperator {
+			return contracts.ErrNotCancellable
 		}
 		// The entry is read before the record says the account is kept, and
 		// deleted below only as it was read: once the record says so, the
@@ -300,6 +314,9 @@ func (s *Service) removeLocked(ctx context.Context, doc *accountDoc) error {
 		}
 	}
 	if err := s.forget(ctx, accountsPartition, listKey(doc)); err != nil {
+		return err
+	}
+	if err := s.forget(ctx, adminsPartition, doc.ID); err != nil {
 		return err
 	}
 	if err := s.clear(ctx, doc.ID, closingKey(doc)); err != nil {
@@ -451,6 +468,7 @@ func (s *Service) record(ctx context.Context, doc *accountDoc) (*contracts.Accou
 		CreatedAt: doc.CreatedAt, AddressVerifiedAt: doc.AddressVerifiedAt, ClosesAt: doc.ClosesAt,
 		ClosingBy: doc.closingBy(), BlockedAt: doc.BlockedAt,
 		Passkeys: len(doc.Passkeys), PasskeyOnly: doc.PasskeyOnly, Providers: providers, Sessions: len(sessions),
+		Admin: s.role(doc),
 	}, nil
 }
 

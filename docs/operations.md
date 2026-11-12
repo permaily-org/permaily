@@ -205,7 +205,7 @@ It asks the enclave (`GET /v1/admin/accounts`, with the admin token from `~/.con
 scripts/accounts.sh block <account>            # nobody signs in to it, and every device is signed out
 scripts/accounts.sh unblock <account>
 scripts/accounts.sh delete <account>           # removed in seven days, unless that is cancelled
-scripts/accounts.sh cancel <account>           # cancels a deletion, whoever asked for it
+scripts/accounts.sh cancel <account>           # cancels a deletion the operator asked for
 scripts/accounts.sh close-sessions <account>   # signs every device out, and nothing else
 ```
 
@@ -213,11 +213,22 @@ scripts/accounts.sh close-sessions <account>   # signs every device out, and not
 
 - **Block** when an account is being misused or was taken over. Its person is told by mail, and when they sign in and prove who they are they are told the account is blocked and to write to support@permaily.com. Nothing says so before that proof, so nobody else learns of it. Blocking is apart from deleting: a blocked account stays as it is until it is unblocked or removed.
 - **Delete** is what a person does from Settings, asked for them: the account is closing for seven days and then removed with everything in it, within ten minutes of the moment it is due or as soon as it is next used. The person is told by mail, sees who asked, and can cancel from the app unless the account is blocked. There is no way to bring a removed account back.
+- **Cancel** only a deletion the operator asked for. One the person asked for is theirs to cancel: the enclave answers `not_cancellable` and changes nothing, and the script says so before asking. To keep the account of a blocked person who asked to delete it, unblock it: they sign in and cancel.
 - **Close sessions** when a device was lost: the person signs in again.
 
 What cannot be done, on purpose (ADR 0017): change an account's contact address, add or remove a passkey or a provider, turn "passkey only" off, or sign in as someone. Each would be a way into the account. So someone who lost their mail, their passkeys and their recovery codes cannot be given the account back: support can block it and delete it, and the person signs up again. A person changes their own address in Settings, with a code sent to the new one.
 
 Everything done here is counted by the enclave, by its kind and never by account, on `/status` (`admin`), which `permaily-verify` prints twice an hour for anyone, and is logged by its kind. A restart starts the count again.
+
+## The admin panel
+
+Admins manage the same things from the web app, signed in to their own accounts, under `/api/v1/admin/` on the app's host (ADR 0022). The super admin is the account whose contact address is `super_admin` in `deploy/enclave.json` (`hello@permaily.com`); it makes and removes the other admins there. The token and the scripts above stay, for the first invitation and for automation, and cannot make admins.
+
+1. Sign up `hello@permaily.com` with an invitation from `scripts/invite.sh`, from the mailbox of that address.
+2. Add a passkey and turn "passkey only" on at once: until then whoever reads that mailbox is the super admin, and the panel refuses everything (`passkey_only_needed`).
+3. Make the other admins from the panel. Each is told by mail, and needs "passkey only" too.
+
+Every change in the panel asks the admin to confirm with a passkey when their last proof is older than ten minutes. An admin who is not the super admin acts on no admin's account and does not touch the providers' applications. Nobody blocks or deletes the super admin's account there. Every action is in the panel's log (400 days, read by admins) and counted on `/status` with the token's. Whoever writes to the table can delete entries of the log; the counts on `/status` are what is public.
 
 ## Sign-in with Google, GitHub, Meta and Microsoft
 
