@@ -61,6 +61,7 @@ Each needs code that is not this document's. Blocking ones first.
 10. Accounts never used for a long time are deleted after a set period, if the maintainers decide so (open question 4; Microsoft API Terms 5(c)).
 11. `scripts/third-party-notices.ts` carries the attribution notices of Apache-2.0 components that have a NOTICE file (Apache-2.0 section 4(d)).
 12. Before rules and connections open: calls to OpenAI's Responses API ask it not to store the request (`store: false`), and the consent screen says what OpenAI keeps while zero data retention is not approved (ADR 0020).
+13. Before the inbox shows HTML (ADR 0026, pull request 5): the privacy page says, in its section on mail, exactly what ADR 0026 promises and no more. Opening or reading a message makes no request the sender or anyone outside Permaily can see: remote images are never loaded, and nothing else in a message is fetched. Following a link is the person's act: Permaily shows where it leads first and sends nothing until they press Open; the site then learns that the link was followed and when, and may know who followed it from the link itself. Browser features the person turns on, such as translation in Safari or Chrome, reader mode and extensions, see what the browser shows them and are outside Permaily's control. Images in a message keep their metadata, shown only to the person. Nothing of the formatted message is stored. The site's page is not changed by this note; the pull request that builds the inbox changes it (Rules, above).
 
 ## Procedures (operator)
 

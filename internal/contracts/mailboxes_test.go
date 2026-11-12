@@ -1,6 +1,7 @@
 package contracts
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -48,10 +49,15 @@ func TestMailboxShapes(t *testing.T) {
 			ID: "m1", ReceivedAt: at, ExpiresAt: at, Size: 10, From: []MailAddress{{Address: "a@example.org"}},
 			To: []MailAddress{}, Cc: []MailAddress{}, ReplyTo: []MailAddress{}, Subject: "Hi", Date: "",
 			Text: "Hello", TextFrom: TextFromPlain, Attachments: []MessageAttachment{}, Auth: []AuthCheck{},
-			HTML: &MessageHTML{Status: HTMLShown, RemoteImages: 3, RemoteOther: 1, InlineImages: 2, InlineImagesOmitted: 1, Links: 4},
-		}, `{"id":"m1","received_at":"2026-11-12T10:00:00Z","expires_at":"2026-11-12T10:00:00Z","size":10,"from":[{"address":"a@example.org"}],"to":[],"cc":[],"reply_to":[],"subject":"Hi","date":"","text":"Hello","text_from":"plain","text_truncated":false,"attachments":[],"auth":[],"confirmation":false,"unparsed":false,"html":{"status":"shown","remote_images":3,"remote_other":1,"inline_images":2,"inline_images_omitted":1,"links":4}}`},
-		{"a link of a message", MessageLink{URL: "https://xn--bnk-sna.example/a", Host: "xn--bnk-sna.example", Shown: "bank.example"},
-			`{"url":"https://xn--bnk-sna.example/a","host":"xn--bnk-sna.example","shown":"bank.example"}`},
+			HTML: &MessageHTML{Status: HTMLShown, RemoteImages: 3, RemoteOther: 1, InlineImages: 2, InlineImagesOmitted: 3,
+				InlineImagesOmittedBy: MessageImagesOmitted{TooLarge: 1, Animated: 1, Unsupported: 1}, Links: 4},
+		}, `{"id":"m1","received_at":"2026-11-12T10:00:00Z","expires_at":"2026-11-12T10:00:00Z","size":10,"from":[{"address":"a@example.org"}],"to":[],"cc":[],"reply_to":[],"subject":"Hi","date":"","text":"Hello","text_from":"plain","text_truncated":false,"attachments":[],"auth":[],"confirmation":false,"unparsed":false,"html":{"status":"shown","remote_images":3,"remote_other":1,"inline_images":2,"inline_images_omitted":3,"inline_images_omitted_by":{"too_large":1,"animated":1,"unsupported":1},"links":4}}`},
+		{"a message the enclave could not render now", MessageHTML{Status: HTMLUnavailable},
+			`{"status":"unavailable","remote_images":0,"remote_other":0,"inline_images":0,"inline_images_omitted":0,"inline_images_omitted_by":{"too_large":0,"animated":0,"unsupported":0},"links":0}`},
+		{"a link of a message", MessageLink{Link: "3.AAECAwQFBgcICQoL", URL: "https://xn--bnk-sna.example/a", Host: "xn--bnk-sna.example", Shown: "bank.example"},
+			`{"link":"3.AAECAwQFBgcICQoL","url":"https://xn--bnk-sna.example/a","host":"xn--bnk-sna.example","shown":"bank.example"}`},
+		{"a link to a port", MessageLink{Link: "0.AAECAwQFBgcICQoL", URL: "http://example.org:8080/x", Host: "example.org:8080"},
+			`{"link":"0.AAECAwQFBgcICQoL","url":"http://example.org:8080/x","host":"example.org:8080"}`},
 		{"what the operator sees", MailboxRecord{ID: "mbx_x", Account: "acc_y", State: MailboxPaused, CreatedAt: at, RetentionDays: 90, PausedAt: at},
 			`{"id":"mbx_x","account":"acc_y","state":"paused","created_at":"2026-11-12T10:00:00Z","retention_days":90,"paused_at":"2026-11-12T10:00:00Z","verified":false}`},
 	}
@@ -93,19 +99,59 @@ func TestMailboxUpdateNamesWhatChanges(t *testing.T) {
 }
 
 // The limits of showing HTML hold together: one image fits the images
-// together, and the frame's document stays under 10 MiB.
+// together, the images' pixels fit their sides, the frame's document stays
+// under 11 MiB, and the bounds a pass counts before the tree are above what
+// the tree may hold.
 func TestMessageHTMLLimits(t *testing.T) {
 	if MessageInlineImageMaxBytes > MessageInlineImagesMaxBytes {
 		t.Error("one inline image may be larger than all of them together")
 	}
-	if doc := MessageHTMLMaxBytes + MessageInlineImagesMaxBytes*4/3; doc > 10<<20 {
+	if MessageInlineImageMaxPixels > MessageInlineImagesMaxPixels || MessageInlineImageMaxPixels > MessageInlineImageMaxSide*MessageInlineImageMaxSide {
+		t.Error("one image's pixels are not bounded by the message's or by its sides")
+	}
+	if doc := MessageHTMLMaxMarkupBytes + MessageInlineImagesMaxBytes*4/3; doc > 11<<20 {
 		t.Errorf("the frame's document may be %d bytes", doc)
+	}
+	if MessageHTMLMaxMarkupBytes < MessageHTMLMaxBytes {
+		t.Error("the output may not hold what the part may")
+	}
+	if MessageHTMLMaxTreeBound < MessageHTMLMaxElements || MessageHTMLMaxElements > MessageHTMLMaxStartTags {
+		t.Error("the tree's bound is below the elements the output may hold")
+	}
+	if MessageHTMLMaxDepth >= 512 {
+		t.Error("the depth must be below x/net/html's own cap of 512 open elements")
+	}
+	if MessageHTMLRendersPerAccount >= MessageHTMLRenders {
+		t.Error("one account may hold every render slot")
+	}
+	if MessageHTMLRenderWait <= MessageHTMLRenderDeadline {
+		t.Error("a render waiting behind one at its deadline would always time out")
+	}
+	if MessageHTMLMaxLinks > 1000 {
+		t.Error("a link's number has at most three digits in its token")
+	}
+}
+
+func TestMessageLinkToken(t *testing.T) {
+	for _, ok := range []string{"0.AAECAwQFBgcICQoL", "999.-_-_-_-_-_-_-_-_", "12.abcdefghijklmnop"} {
+		if !MessageLinkToken(ok) {
+			t.Errorf("%q is refused", ok)
+		}
+	}
+	for _, bad := range []string{"", "0", "01.AAECAwQFBgcICQoL", "1000.AAECAwQFBgcICQoL", "-1.AAECAwQFBgcICQoL",
+		"1.AAECAwQFBgcICQo", "1.AAECAwQFBgcICQoLM", "1.AAECAwQFBgcICQo=", "1.AAECAwQFBgcICQo+", "1/AAECAwQFBgcICQoL", "1.AAECAwQFBgcICQoL\n"} {
+		if MessageLinkToken(bad) {
+			t.Errorf("%q is taken for a token", bad)
+		}
+	}
+	if n := base64.RawURLEncoding.EncodedLen(MessageLinkTagBytes); n != 16 {
+		t.Errorf("a tag of %d bytes is %d characters", MessageLinkTagBytes, n)
 	}
 }
 
 func TestMailboxErrors(t *testing.T) {
 	codes := map[string]bool{}
-	for _, e := range []*Error{ErrTooManyMailboxes, ErrInvalidLabel, ErrInvalidRetention, ErrInvalidQuery, ErrTooManyMessages, ErrMailboxUnreadable} {
+	for _, e := range []*Error{ErrTooManyMailboxes, ErrInvalidLabel, ErrInvalidRetention, ErrInvalidQuery, ErrTooManyMessages, ErrMailboxUnreadable, ErrLinkChanged, ErrBusy} {
 		if codes[e.Code] {
 			t.Errorf("%s is used twice", e.Code)
 		}

@@ -103,6 +103,27 @@ Built in `internal/services/accounts`, `internal/sesmail`, `internal/webauthn` a
 | An upgrade from the running release keeps everything, and accounts work on the real storage | Staging, 2026-11-11: an image of the code of v0.9.0 (PCR0 `a13508d5…`) handed the root secret to an image of commit `4d57e77` (PCR0 `abeb0d5a…`), which came up with the same TLS key, the same ACME account and the same version of the TLS record, no regression, and passed `permaily-verify`. On it: a sign-up whose message left through SES; the name changed twice, a deletion asked for and cancelled, after which the table held one version of the account's record (the fifth); a change refused while closing (`account_closing`); `scripts/accounts.sh` listing the account from its signed record; a provider's application given with `scripts/provider.sh`, stored sealed and taken away; no warning or error in the enclave's log | covered |
 | An administrator of the account who sets SES to keep a copy is seen, and stops the mail | Same staging image, 2026-11-11: a configuration set made the default of the domain's identity was read within a second (`configuration_set`), the next sign-in sent no message, and `permaily-verify` failed naming it; the same with an identity of the address alone carrying the set; after both were removed the enclave read a clean state again and `permaily-verify` still failed, with the times the set was seen | covered |
 
+## F2 step 2: showing a message's HTML (release gate)
+
+Designed in ADR 0026, "Showing a message's HTML", built by its fifth pull request. A release that shows HTML ships only when every row below is done, recorded here with the browsers' versions and the date. Browsers: Chrome, Firefox and Safari on desktop, and Safari on iOS, current versions; "each browser" means all four. The automated suite runs against `internal/mailhtml/frametest`; the rows by hand run against a staging image.
+
+| Check | What counts as passing | Status |
+|---|---|---|
+| The session cookie on the frame's first navigation from the app | In each browser, the frame's request carries the `SameSite=Strict` session cookie and the frame shows the document; for a browser that does not send it, the route answers 401 with the frame's headers and the viewer shows the text and its line, and this row says which browser | not done |
+| A sandboxed document's own requests carry no session | With the sandbox attribute and no CSP, a document in the frame that requests `/api/v1/me` (image, link click, form) makes requests that carry no session cookie and answer 401, in each browser | not done |
+| The link page's tab and its session | A click on a link in the frame opens one tab on the link page without an opener; its first request carries no session cookie; its `GET .../links/{link}` carries the session and answers 200; in each browser | not done |
+| Missing Fetch Metadata | A request with every `Sec-Fetch-*` header stripped (a proxy) gets the document; opened as a top-level page it runs no script, has an opaque origin (`localStorage` throws) and fetches nothing | not done |
+| The frame's URL opened directly, from history, from session restore, from another message's link | Each browser that sends Fetch Metadata answers "This message can't be shown here." (404), never the message; one that sends none shows it sandboxed, running and fetching nothing | not done |
+| Print, reader mode, view source | Printing the message view, Safari Reader and Firefox Reader View on it, and viewing the frame's source fetch nothing from the internet host and run nothing; what each shows is recorded | not done |
+| Link previews on iOS | Touch-and-hold on a link in the frame, and on the link page's "Open" button, sends nothing to the internet host; a preview shows at most Permaily's link page | not done |
+| The link page contacts nothing before "Open" | Loading, hovering, focusing and waiting on the link page send nothing to the internet host; pressing "Open" sends one request, without a `Referer`, in a tab without an opener; in each browser | not done |
+| Image limits on a phone | The message of 50 images at the pixel limit opens in Safari on an iPhone without the tab reloading or the app becoming unresponsive | not done |
+| The back/forward cache | After signing out in the message view, Back shows "Checking…" and then the sign-in, never the message, in each browser | not done |
+| The hostile corpus with the frame alone (run A) | ADR 0026, "Tests", item 26 passes in Chromium (required in CI), Firefox and WebKit, and by hand in Safari on macOS and iOS; the DNS lookups of prefetch hints recorded per browser | not done |
+| The hostile corpus with the sanitiser alone (run B) | ADR 0026, "Tests", item 27 passes in the same browsers: no request at all, only allowlisted DOM, every link uncovered and in its box | not done |
+| Go and the browsers agree on every link | ADR 0026, "Tests", items 24 and 25 pass in Node, Chromium, Firefox and WebKit | not done |
+| Measured budgets | ADR 0026's Limits table holds measured render time and peak memory on the pinned `x/net/html`, in an enclave of the production size, in place of its starting values | not done |
+
 ## Public site
 
 | Criterion | Evidence | Status |

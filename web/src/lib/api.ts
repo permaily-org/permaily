@@ -225,27 +225,51 @@ export type Message = {
  * when `status` is `shown`, a sandboxed frame loads it from `.../messages/{message}/html`, a new frame per message.
  */
 export type MessageHTML = {
-  /** `too_large` and `unreadable`: show the text, say why, offer the original. */
-  status: 'shown' | 'too_large' | 'unreadable'
+  /**
+   * `too_large` and `unreadable`: show the text, say why, offer the original. `unavailable`: the enclave could not
+   * render it now (busy, or past its deadline); show the text and offer to try again.
+   */
+  status: 'shown' | 'too_large' | 'unreadable' | 'unavailable'
   /** Images the message would have fetched from elsewhere, never loaded: "3 remote images were not loaded". */
   remote_images: number
   /** Other remote references taken out: stylesheets, fonts, frames, media. */
   remote_other: number
-  /** Images that travel in the message and are shown; and the ones not shown (SVG, wrong type, too large). */
+  /** Images that travel in the message and are shown; and the ones not shown, with why in `inline_images_omitted_by`. */
   inline_images: number
   inline_images_omitted: number
+  inline_images_omitted_by: MessageImagesOmitted
   /** Links that open the link page. */
   links: number
 }
 
-/** Where a link of a message leads, for the link page (`GET .../messages/{message}/links/{n}`). */
+/** Why images that travel in a message were not shown; the three add up to `inline_images_omitted`. */
+export type MessageImagesOmitted = {
+  /** Over a limit of bytes, of a side, of pixels, or of how many a message shows. */
+  too_large: number
+  /** An animated GIF, PNG or WebP: none is shown. */
+  animated: number
+  /** Not PNG, JPEG, GIF or WebP by its bytes (SVG included), a part that is not there, or one that does not read. */
+  unsupported: number
+}
+
+/**
+ * Where a link of a message leads, for the link page (`GET .../messages/{message}/links/{link}`). The page parses `url`
+ * with `new URL()`, shows and goes where that parse says, and offers nothing when its `host` is not this `host`.
+ */
 export type MessageLink = {
-  /** http or https, as the server wrote it: the only address the link page leaves for. */
+  /** The link's token as the route names it, `<n>.<tag>`: a renumbered link answers `link_changed`, never another address. */
+  link: string
+  /** http or https, ASCII, as the server wrote it again: the only address the link page leaves for. */
   url: string
-  /** The host in ASCII (`xn--` for other characters), so a look-alike shows. */
+  /** Its host (`xn--` for other characters, so a look-alike shows) and `:port` when not the default, as `URL.host` writes it. */
   host: string
   /** The host the link's text named, when it named another one. */
   shown?: string
+}
+
+/** Whether `link` has the shape of a link's token: a number below 1,000 without leading zeros, a dot, 16 base64url characters. */
+export function isMessageLinkToken(link: string): boolean {
+  return /^(0|[1-9][0-9]{0,2})\.[A-Za-z0-9_-]{16}$/.test(link)
 }
 
 /** The codes the server answers with, plus `network` for a request that got no answer. */
@@ -285,6 +309,8 @@ export type ApiErrorCode =
   | 'invalid_query'
   | 'too_many_messages'
   | 'mailbox_unreadable'
+  | 'link_changed'
+  | 'busy'
   | 'network'
   | 'other'
 
@@ -324,6 +350,8 @@ const known: ReadonlySet<string> = new Set([
   'invalid_query',
   'too_many_messages',
   'mailbox_unreadable',
+  'link_changed',
+  'busy',
 ])
 
 export class ApiError extends Error {
