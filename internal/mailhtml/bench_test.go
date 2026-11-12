@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -123,20 +124,39 @@ func BenchmarkFiftyImages(b *testing.B) {
 	benchRender(b, in, contracts.HTMLShown)
 }
 
-// The amplification case at the largest size that is still shown: the most
-// work the tree bound lets through for this shape (found by bisection).
+// The amplification shape at its most expensive that is still shown. With
+// 400 formatting elements it is never shown (they nest past the depth of
+// 256), so this one opens 240, then repeats "</div><div>x" to the largest
+// size the limits accept (found by bisection): the most work the tree bound
+// and the output's limits let through for this shape.
 func BenchmarkAmplificationShown(b *testing.B) {
-	lo, hi := 4096, contracts.MessageHTMLMaxBytes
-	for hi-lo > 64 {
-		mid := (lo + hi) / 2
-		st, err := Render(context.Background(), input(amplification(mid)), io.Discard)
-		if err == nil && st.Status == contracts.HTMLShown {
+	shape := func(size int) string {
+		var s strings.Builder
+		s.WriteString("<div>")
+		for i := range 240 {
+			s.WriteString(`<b id=` + strconv.Itoa(i) + `>`)
+		}
+		for s.Len() < size-12 {
+			s.WriteString("</div><div>x")
+		}
+		return s.String()
+	}
+	shown := func(size int) bool {
+		st, err := Render(context.Background(), input(shape(size)), io.Discard)
+		return err == nil && st.Status == contracts.HTMLShown
+	}
+	if !shown(0) {
+		b.Fatal("the shape is not shown even at its smallest")
+	}
+	lo, hi := 0, contracts.MessageHTMLMaxBytes
+	for hi-lo > 16 {
+		if mid := (lo + hi) / 2; shown(mid) {
 			lo = mid
 		} else {
 			hi = mid
 		}
 	}
-	src := amplification(lo)
+	src := shape(lo)
 	bound, err := treeBound(context.Background(), []byte(src))
 	if err != nil {
 		b.Fatal(err)

@@ -53,6 +53,9 @@ fuzz:
 	go test -run='^$$' -fuzz='^FuzzGitHubUser$$' -fuzztime=100000x ./internal/idp
 	go test -run='^$$' -fuzz='^FuzzGitHubEmails$$' -fuzztime=300000x ./internal/idp
 	go test -run='^$$' -fuzz='^FuzzMetaUser$$' -fuzztime=300000x ./internal/idp
+	go test -run='^$$' -fuzz='^FuzzSanitise$$' -fuzztime=100000x ./internal/mailhtml
+	go test -run='^$$' -fuzz='^FuzzCSS$$' -fuzztime=1000000x ./internal/mailhtml
+	go test -run='^$$' -fuzz='^FuzzImageStructure$$' -fuzztime=1000000x ./internal/mailhtml
 
 notices:
 	bun scripts/third-party-notices.ts

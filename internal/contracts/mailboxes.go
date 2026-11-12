@@ -286,8 +286,8 @@ const (
 // HTML", "Limits", where each has its reason). Past the ones of the part,
 // the tokens, the tree and the output the HTML is HTMLTooLarge; past the
 // others what is over is left out and the rest is shown. The render budgets
-// marked as starting values are replaced by measured ones when the
-// sanitiser is built.
+// were checked against what the sanitiser measured in an enclave's size
+// (ADR 0026, "Limits").
 const (
 	// MessageHTMLMaxBytes bounds the HTML part, before and after it is
 	// transcoded to UTF-8.
@@ -342,7 +342,7 @@ const (
 	MessageInlineImagesMaxPixels = 1 << 25
 	// MessageHTMLRenders is how many renders run at once in one enclave;
 	// MessageHTMLRenderQueue how many may wait, for at most
-	// MessageHTMLRenderWait. Starting values.
+	// MessageHTMLRenderWait.
 	MessageHTMLRenders     = 2
 	MessageHTMLRenderQueue = 16
 	MessageHTMLRenderWait  = 5 * time.Second
@@ -350,8 +350,8 @@ const (
 	// account's share: past it, too_many_requests.
 	MessageHTMLRendersPerAccount = 1
 	MessageHTMLQueuedPerAccount  = 2
-	// MessageHTMLRenderDeadline stops a render that runs longer. Starting
-	// value.
+	// MessageHTMLRenderDeadline stops a render that runs longer: the
+	// slowest input the limits accept took 0.32 s (ADR 0026, "Limits").
 	MessageHTMLRenderDeadline = 2 * time.Second
 )
 
