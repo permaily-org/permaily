@@ -551,6 +551,18 @@ func (s *stuck) Send(ctx context.Context, _ Mail) error {
 	return ctx.Err()
 }
 
+// ignoring is a mail system that takes a message and does not answer until
+// the test frees it, whatever its context says.
+type ignoring struct {
+	took, free chan struct{}
+}
+
+func (i *ignoring) Send(context.Context, Mail) error {
+	close(i.took)
+	<-i.free
+	return nil
+}
+
 // A notice that cannot be sent fails nothing: what caused it is done, and
 // answered. One that hangs holds the answer for a short time and no longer.
 // What is logged is that a notice of a kind was not sent, and no more.
@@ -665,32 +677,41 @@ func TestANoticeThatFailsDoesNotFailTheAction(t *testing.T) {
 	w.quiet("ana@", "ana.new@", "example.org", id, "outbox", "told to fail")
 
 	// A mail system that never answers holds the action for the wait, and no
-	// longer: then the sending is given up.
+	// longer: then the sending is given up. A wait that is over already, so
+	// that nothing here depends on how fast the machine is.
 	hang := &stuck{released: make(chan struct{}, 4)}
-	w.svc.cfg.Mailer, w.svc.noticeWait = hang, 30*time.Millisecond
-	began := time.Now()
+	w.svc.cfg.Mailer, w.svc.noticeWait = hang, 0
 	if _, err := w.svc.BlockAccount(ctx, id); err != nil {
 		t.Fatalf("blocking with a mail system that hangs: %v", err)
-	}
-	if took := time.Since(began); took > 5*time.Second {
-		t.Fatalf("a notice held the action for %v", took)
 	}
 	if !w.doc(id).blocked() {
 		t.Fatal("not blocked")
 	}
-	select {
-	case <-hang.released:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the sending of a notice that hung was not given up")
-	}
+	<-hang.released
 	w.svc.Wait()
-	if !strings.Contains(w.logs.String(), `msg="accounts: a notice was not sent in time" kind=blocked`) {
-		t.Fatalf("logs:\n%s", w.logs)
+	// And one that does not even end when told to: the action is answered
+	// all the same, while it still holds the message.
+	deaf := &ignoring{took: make(chan struct{}), free: make(chan struct{})}
+	w.svc.cfg.Mailer = deaf
+	if _, err := w.svc.UnblockAccount(ctx, id); err != nil {
+		t.Fatalf("unblocking with a mail system that never answers: %v", err)
+	}
+	<-deaf.took
+	close(deaf.free)
+	w.svc.Wait()
+	logs = w.logs.String()
+	for _, kind := range []string{noticeBlocked, noticeUnblocked} {
+		if !strings.Contains(logs, `msg="accounts: a notice was not sent in time" kind=`+kind+"\n") {
+			t.Fatalf("no line for a notice of kind %s not sent in time:\n%s", kind, logs)
+		}
 	}
 
 	// The request that caused a notice may be over before it is sent: it is
 	// sent all the same.
-	w.svc.cfg.Mailer, w.svc.noticeWait = w.out, noticeTimeout
+	w.svc.cfg.Mailer, w.svc.noticeWait = w.out, time.Hour
+	if _, err := w.svc.BlockAccount(ctx, id); err != nil {
+		t.Fatal(err)
+	}
 	gone, cancel := context.WithCancel(ctx)
 	cancel()
 	n := w.count()
@@ -810,4 +831,27 @@ func TestDeviceFailures(t *testing.T) {
 			t.Fatalf("an entry that another sign-in wrote was logged as a failure:\n%s", w.logs)
 		}
 	})
+}
+
+// How a notice's sending ended is what is logged, whenever the end of the
+// wait is seen: the sending ends the wait once it is over, so an answer that
+// is there when the wait ends is the answer. Before, notify chose between
+// the two at random, and logged a notice that could not be sent as one not
+// sent in time on a busy machine.
+func TestANoticeIsLoggedAsItEnded(t *testing.T) {
+	over := make(chan struct{})
+	close(over)
+	for _, how := range []sending{noticeSent, noticeFailed, noticeLate} {
+		for range 200 {
+			done := make(chan sending, 1)
+			done <- how
+			if got := settle(done, over); got != how {
+				t.Fatalf("a sending that ended as %d was taken as %d", how, got)
+			}
+		}
+	}
+	// The wait over, and no answer yet: not in time.
+	if got := settle(make(chan sending), over); got != noticeLate {
+		t.Fatalf("no answer when the wait ended: %d", got)
+	}
 }

@@ -379,7 +379,9 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 	w.on(idp.Meta, idp.Microsoft)
 	ana, anaCookie := w.signUp("ana@example.org")
 	written := w.version(ana.Account.ID)
-	mallory := person(idp.Meta, "770011", "Ana@Example.org", false)
+	// Numeric subjects are long in these tests: a short one is found by
+	// chance in the hashes the storage holds, which made w.stored flaky.
+	mallory := person(idp.Meta, "77007700770011", "Ana@Example.org", false)
 
 	// The answer is the same whether the address has an account or not, with
 	// an invitation or without, and whatever the provider gave for one.
@@ -391,9 +393,9 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 	}{
 		{mallory, "", "ana@example.org"},
 		{mallory, w.invite(), "ana@example.org"},
-		{person(idp.Meta, "770012", "nobody@example.org", false), "", "nobody@example.org"},
-		{person(idp.Meta, "770013", "nobody@example.org", false), w.invite(), "nobody@example.org"},
-		{person(idp.Meta, "770014", "", false), "", ""},
+		{person(idp.Meta, "77007700770012", "nobody@example.org", false), "", "nobody@example.org"},
+		{person(idp.Meta, "77007700770013", "nobody@example.org", false), w.invite(), "nobody@example.org"},
+		{person(idp.Meta, "77007700770014", "", false), "", ""},
 		{person(idp.Microsoft, "ms-sub-1", "not an address", false), "", ""},
 		// Vouched for, and not an address accounts are found by.
 		{person(idp.Microsoft, "ms-sub-2", "aña@example.org", true), w.invite(), ""},
@@ -408,8 +410,8 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 		}
 		browsers = append(browsers, done.Browser)
 	}
-	if w.accounts() != 1 || w.version(ana.Account.ID) != written || len(w.stored("7700", "ms-sub-")) != 0 {
-		t.Fatalf("linked or made without the code: %d accounts, stored %q", w.accounts(), w.stored("7700", "ms-sub-"))
+	if w.accounts() != 1 || w.version(ana.Account.ID) != written || len(w.stored("770077007700", "ms-sub-")) != 0 {
+		t.Fatalf("linked or made without the code: %d accounts, stored %q", w.accounts(), w.stored("770077007700", "ms-sub-"))
 	}
 	if list, _ := w.svc.Sessions(ctx, w.who(anaCookie)); len(list.Sessions) != 1 {
 		t.Fatalf("a session was made: %+v", list)
@@ -518,7 +520,7 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 	if err != nil || me.Account.Address != "nobody@example.org" || me.Account.ID == ana.Account.ID {
 		t.Fatalf("signing up by confirming: %+v %v", me, err)
 	}
-	if l := w.providers(me.Account.ID); len(l) != 1 || l[0].Subject != "770013" {
+	if l := w.providers(me.Account.ID); len(l) != 1 || l[0].Subject != "77007700770013" {
 		t.Fatalf("what the new record lists: %+v", l)
 	}
 
@@ -540,7 +542,7 @@ func TestProviderAddressNotVouchedFor(t *testing.T) {
 	if _, err := w.svc.PendingProvider(ctx, malloryBrowser); !errors.Is(err, contracts.ErrProviderFailed) {
 		t.Fatalf("after twenty minutes: %v", err)
 	}
-	w.quiet("ana@", "example.org", "example.net", "7700", "880022", "ms-sub-", ana.Account.ID, malloryBrowser, nobody)
+	w.quiet("ana@", "example.org", "example.net", "770077007700", "880022", "ms-sub-", ana.Account.ID, malloryBrowser, nobody)
 }
 
 // What confirming an address refuses once the address is the person's: the
@@ -664,10 +666,10 @@ func TestProviderLinkFromSettings(t *testing.T) {
 	if err != nil || done.Path != "/settings/sign-in" || done.Session != "" || done.Browser != "" {
 		t.Fatalf("linking: %+v %v", done, err)
 	}
-	if done, err = w.linkFrom(anaWho, person(idp.GitHub, "5150", "ana@example.org", true)); err != nil || done.Path != "/settings" {
+	if done, err = w.linkFrom(anaWho, person(idp.GitHub, "515051505150", "ana@example.org", true)); err != nil || done.Path != "/settings" {
 		t.Fatalf("linking with her own address: %+v %v", done, err)
 	}
-	if done, err = w.linkFrom(anaWho, person(idp.Meta, "6160", "eve@example.org", false)); err != nil {
+	if done, err = w.linkFrom(anaWho, person(idp.Meta, "616061606160", "eve@example.org", false)); err != nil {
 		t.Fatalf("linking with an address that is not vouched for: %+v %v", done, err)
 	}
 	list, err = w.svc.LinkedProviders(ctx, anaWho)
@@ -678,7 +680,7 @@ func TestProviderLinkFromSettings(t *testing.T) {
 		t.Fatalf("eve %+v, %d accounts", w.providers(eve.Account.ID), w.accounts())
 	}
 	// Each signs in to Ana's account from now on, with no invitation.
-	for _, who := range []idp.Identity{person(idp.Google, "g-sub-ana", "", false), person(idp.GitHub, "5150", "eve@example.org", true), person(idp.Meta, "6160", "", false)} {
+	for _, who := range []idp.Identity{person(idp.Google, "g-sub-ana", "", false), person(idp.GitHub, "515051505150", "eve@example.org", true), person(idp.Meta, "616061606160", "", false)} {
 		if done, err := w.through(who, ""); err != nil || w.who(done.Session).AccountID != ana.Account.ID {
 			t.Fatalf("signing in with %s: %+v %v", who.Provider, done, err)
 		}
@@ -730,7 +732,7 @@ func TestProviderLinkFromSettings(t *testing.T) {
 	if err := w.svc.CloseSession(ctx, eveWho, w.who(second).Session.ID); err != nil {
 		t.Fatal(err)
 	}
-	done, err = w.comeBack(state, cookie, person(idp.GitHub, "7170", "", false))
+	done, err = w.comeBack(state, cookie, person(idp.GitHub, "717071707170", "", false))
 	w.refusedWith("a session closed meanwhile", done, err, contracts.ErrProviderFailed, "/settings#provider_error=provider_failed")
 	// A closing account links nothing: told at the start, and at the end
 	// when it was asked meanwhile.
@@ -738,7 +740,7 @@ func TestProviderLinkFromSettings(t *testing.T) {
 	if _, err := w.svc.StartDeletion(ctx, eveWho); err != nil {
 		t.Fatal(err)
 	}
-	done, err = w.comeBack(state, cookie, person(idp.GitHub, "7170", "", false))
+	done, err = w.comeBack(state, cookie, person(idp.GitHub, "717071707170", "", false))
 	w.refusedWith("an account closing meanwhile", done, err, contracts.ErrAccountClosing, "/settings#provider_error=account_closing")
 	if _, _, err := w.svc.StartProvider(ctx, eveWho, contracts.ProviderStart{Provider: "github"}); !errors.Is(err, contracts.ErrAccountClosing) {
 		t.Fatalf("starting from a closing account: %v", err)
@@ -754,8 +756,8 @@ func TestProviderLinkFromSettings(t *testing.T) {
 	if got, err := w.svc.CancelDeletion(ctx, w.who(done.Session)); err != nil || got.State != contracts.AccountActive {
 		t.Fatalf("cancelling: %+v %v", got, err)
 	}
-	if len(w.providers(eve.Account.ID)) != 1 || len(w.stored("7170")) != 0 {
-		t.Fatalf("eve %+v, stored %q", w.providers(eve.Account.ID), w.stored("7170"))
+	if len(w.providers(eve.Account.ID)) != 1 || len(w.stored("717071707170")) != 0 {
+		t.Fatalf("eve %+v, stored %q", w.providers(eve.Account.ID), w.stored("717071707170"))
 	}
 	ghost := &Authenticated{AccountID: "acc_" + strings.Repeat("a", 26)}
 	if _, _, err := w.svc.StartProvider(ctx, ghost, contracts.ProviderStart{Provider: "google"}); !errors.Is(err, contracts.ErrUnauthorized) {
@@ -764,7 +766,7 @@ func TestProviderLinkFromSettings(t *testing.T) {
 	if _, err := w.svc.LinkedProviders(ctx, ghost); !errors.Is(err, contracts.ErrUnauthorized) {
 		t.Fatalf("the providers of an account that is not there: %v", err)
 	}
-	w.quiet("ana@", "example.org", "g-sub-", "5150", "6160", "7170", ana.Account.ID, eve.Account.ID)
+	w.quiet("ana@", "example.org", "g-sub-", "515051505150", "616061606160", "717071707170", ana.Account.ID, eve.Account.ID)
 }
 
 // "Passkey only" turns providers off for the account, a closing account
@@ -853,7 +855,7 @@ func TestUnlinkProvider(t *testing.T) {
 	w.on(idp.Google, idp.GitHub)
 	ana, anaCookie := w.signUp("ana@example.org")
 	anaWho := w.who(anaCookie)
-	hers := person(idp.GitHub, "5150", "elsewhere@example.net", false)
+	hers := person(idp.GitHub, "515051505150", "elsewhere@example.net", false)
 	for _, who := range []idp.Identity{person(idp.Google, "g-sub-ana", "", false), hers} {
 		if _, err := w.linkFrom(anaWho, who); err != nil {
 			t.Fatal(err)
@@ -872,7 +874,7 @@ func TestUnlinkProvider(t *testing.T) {
 	}
 	// Nothing of it stays in the storage, and it signs nobody in: it is a
 	// provider account nobody knows, whose address is to be confirmed.
-	if left := w.stored("5150"); len(left) != 0 {
+	if left := w.stored("515051505150"); len(left) != 0 {
 		t.Fatalf("left in the storage: %q", left)
 	}
 	done, err := w.through(hers, "")
@@ -910,7 +912,7 @@ func TestUnlinkProvider(t *testing.T) {
 	if err := w.svc.UnlinkProvider(ctx, anaWho, "google"); err != nil {
 		t.Fatalf("unlinking with a passkey left: %v", err)
 	}
-	w.quiet("5150", "g-sub-ana", "example.net", ana.Account.ID)
+	w.quiet("515051505150", "g-sub-ana", "example.net", ana.Account.ID)
 }
 
 // Whoever writes to the storage cannot link a provider account to an
@@ -991,7 +993,7 @@ func TestProvidersWrittenByHand(t *testing.T) {
 
 	// Ana links a provider account and unlinks it. Everything the storage
 	// held while it was linked is put back: it stays unlinked.
-	hers := person(idp.GitHub, "5150", "other@example.net", false)
+	hers := person(idp.GitHub, "515051505150", "other@example.net", false)
 	if _, err := w.linkFrom(anaWho, hers); err != nil {
 		t.Fatal(err)
 	}
@@ -999,7 +1001,7 @@ func TestProvidersWrittenByHand(t *testing.T) {
 		t.Fatalf("while linked: %+v %v", done, err)
 	}
 	while := w.snapshot()
-	oldPointer, _ := w.mem.GetEntry(ctx, providerPartition(idp.GitHub, "5150"), loginKey)
+	oldPointer, _ := w.mem.GetEntry(ctx, providerPartition(idp.GitHub, "515051505150"), loginKey)
 	if err := w.svc.UnlinkProvider(ctx, anaWho, "github"); err != nil {
 		t.Fatal(err)
 	}
@@ -1035,7 +1037,7 @@ func TestProvidersWrittenByHand(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.mem.SetEntry(*oldPointer)
-	done, err = w.through(person(idp.GitHub, "5150", "eve@example.org", true), "")
+	done, err = w.through(person(idp.GitHub, "515051505150", "eve@example.org", true), "")
 	if notAna("a pointer from before", done, err); err != nil || w.who(done.Session).AccountID != eve.Account.ID {
 		t.Fatalf("a pointer from before: %+v %v", done, err)
 	}
@@ -1472,7 +1474,7 @@ func TestProviderFailures(t *testing.T) {
 				t.Fatalf("%s down, signing in: %+v %v", op, done, err)
 			}
 		}
-		done, err = w.comeBack(linkState, linkCookie, person(idp.Meta, "770011", "", false))
+		done, err = w.comeBack(linkState, linkCookie, person(idp.Meta, "77007700770011", "", false))
 		if !errors.Is(err, down) || done.Path != "/settings#provider_error=provider_unavailable" {
 			if op != "list entries" || err != nil {
 				t.Fatalf("%s down, linking: %+v %v", op, done, err)
@@ -1784,11 +1786,11 @@ func TestRemovingAnAccountWithProviders(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One whose pointer now leads elsewhere, by hand: it is left alone.
-	if _, err := c.linkFrom(c.who, person(idp.GitHub, "5150", "", false)); err != nil {
+	if _, err := c.linkFrom(c.who, person(idp.GitHub, "515051505150", "", false)); err != nil {
 		t.Fatal(err)
 	}
 	moved, _ := c.mem.GetEntry(ctx, loginPartition("eve@example.org"), loginKey)
-	c.mem.SetEntry(store.Entry{Partition: providerPartition(idp.GitHub, "5150"), Key: loginKey, Value: moved.Value, Version: 9})
+	c.mem.SetEntry(store.Entry{Partition: providerPartition(idp.GitHub, "515051505150"), Key: loginKey, Value: moved.Value, Version: 9})
 	got, err := c.svc.StartDeletion(ctx, c.who)
 	if err != nil {
 		t.Fatal(err)
@@ -1803,7 +1805,7 @@ func TestRemovingAnAccountWithProviders(t *testing.T) {
 	if left := c.stored("g-sub-closing-ana", c.ana.Account.ID); len(left) != 0 {
 		t.Fatalf("left in the storage: %q", left)
 	}
-	if e, err := c.mem.GetEntry(ctx, providerPartition(idp.GitHub, "5150"), loginKey); err != nil || e.Version != 9 {
+	if e, err := c.mem.GetEntry(ctx, providerPartition(idp.GitHub, "515051505150"), loginKey); err != nil || e.Version != 9 {
 		t.Fatalf("a pointer that led elsewhere: %+v %v", e, err)
 	}
 	done, err := c.through(hers, "")

@@ -62,26 +62,55 @@ func (s *Service) notify(ctx context.Context, kind string, mails ...Mail) {
 	// The request may end before the notice is sent, and the wait ends the
 	// sending too: a mail system that does not answer holds nothing.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.noticeWait)
-	sent := make(chan bool, 1)
+	done := make(chan sending, 1)
 	s.work.Add(1)
 	go func() {
 		defer func() { cancel(); <-s.noticing; s.work.Done() }()
-		ok := true
+		how := noticeSent
 		for _, m := range mails {
 			// Not the error: a mail system's errors carry the address.
 			if s.cfg.Mailer.Send(ctx, m) != nil {
-				ok = false
+				how = noticeFailed
 			}
 		}
-		sent <- ok
-	}()
-	select {
-	case ok := <-sent:
-		if !ok {
-			s.cfg.Log.Warn("accounts: a notice could not be sent", "kind", kind)
+		// Only the wait ends ctx before this goroutine does: a send that
+		// failed once it was over was not given the time.
+		if how == noticeFailed && ctx.Err() != nil {
+			how = noticeLate
 		}
-	case <-ctx.Done():
+		done <- how
+	}()
+	switch settle(done, ctx.Done()) {
+	case noticeFailed:
+		s.cfg.Log.Warn("accounts: a notice could not be sent", "kind", kind)
+	case noticeLate:
 		s.cfg.Log.Warn("accounts: a notice was not sent in time", "kind", kind)
+	}
+}
+
+// sending is how the sending of a notice ended.
+type sending int
+
+const (
+	noticeSent sending = iota
+	noticeFailed
+	noticeLate
+)
+
+// settle returns how a sending ended, or noticeLate when the wait is over
+// first. The sending ends the wait too, after it says how it ended: when the
+// end of the wait is seen with the answer there, the answer is what counts.
+func settle(done <-chan sending, over <-chan struct{}) sending {
+	select {
+	case how := <-done:
+		return how
+	case <-over:
+		select {
+		case how := <-done:
+			return how
+		default:
+			return noticeLate
+		}
 	}
 }
 

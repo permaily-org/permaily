@@ -60,6 +60,9 @@ func (w *world) service(k Keys) *Service {
 	if err != nil {
 		w.t.Fatal(err)
 	}
+	// A wait for a notice that no test runs out of by accident: the ones
+	// about the wait end it themselves (notices_test.go).
+	svc.noticeWait = time.Hour
 	return svc
 }
 
