@@ -91,7 +91,9 @@ func unconfirmedPartition(browser string) string {
 }
 
 // tripPartition is where the trip of a state is kept.
-func tripPartition(state string) string { return pendingPartition(kindTrip, secretName(kindTrip, state)) }
+func tripPartition(state string) string {
+	return pendingPartition(kindTrip, secretName(kindTrip, state))
+}
 
 // ---- what an account's record says ----
 

@@ -114,7 +114,7 @@ const (
 	// maxRecoveryCounts is how many addresses one enclave counts wrong
 	// recovery codes for.
 	maxRecoveryCounts = 10000
-	maxSending = 32
+	maxSending        = 32
 	// maxNoticing is how many notices are being sent at once; one more is
 	// dropped, and logged as that.
 	maxNoticing = 32

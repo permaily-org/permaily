@@ -840,6 +840,9 @@ func (f *failing) Derive(ctx context.Context, purpose string) ([]byte, error) {
 	if err := f.err("derive"); err != nil {
 		return nil, err
 	}
+	if err := f.err("derive " + purpose); err != nil {
+		return nil, err
+	}
 	return f.Keys.Derive(ctx, purpose)
 }
 

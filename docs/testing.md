@@ -56,7 +56,7 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `internal/webui` | 75 | 75.0 |
 | `internal/hostproxy` | 73 | 73.7 |
 | `internal/enclave` | 87 | 87.7 |
-| `internal/envelope` | 94 (target 95) | 94.3 (2026-11-11) |
+| `internal/envelope` | 97 | 97.0 (2026-11-12) |
 | `internal/keys` | 89 (target 95) | 89.5 |
 | `internal/inbox` | 84 | 84.7 |
 | `internal/msgauth` | 86 | 86.0 |
@@ -64,7 +64,7 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `internal/store` | 96 (with emulators) | 96.1 (2026-11-12) |
 | `internal/contracts` | 100 | 100.0 (2026-11-11) |
 | `internal/domain` | 100 | 100.0 (2026-11-11) |
-| `internal/services/accounts` | 99 | 99.5 (2026-11-12) |
+| `internal/services/accounts` | 99 | 99.6 (2026-11-12) |
 | `internal/sesmail` | 98 | 98.6 (2026-11-11) |
 | `internal/webauthn` | 99 | 99.4 (2026-11-11) |
 | `internal/idp` | 100 | 100.0 (2026-11-11) |
