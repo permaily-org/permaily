@@ -62,8 +62,12 @@ case $action in
     ask POST /v1/admin/invitations "{\"count\": $count}"
     jq -r '.invitations[]' "$work/response.json"
     echo "Valid until $(jq -r .expires_at "$work/response.json"), each for one new account." >&2
-    echo "Their identifiers, in the same order, to list or revoke them by:" >&2
-    jq -r '.ids[]' "$work/response.json" >&2
+    if jq -e 'has("ids")' "$work/response.json" > /dev/null; then
+      echo "Their identifiers, in the same order, to list or revoke them by:" >&2
+      jq -r '.ids[]' "$work/response.json" >&2
+    else
+      echo "This release gives no identifiers, so these cannot be listed or revoked." >&2
+    fi
     ;;
 
   list)
