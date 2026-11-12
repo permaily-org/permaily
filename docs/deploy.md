@@ -61,6 +61,7 @@ The site in `site/` is hosted on AWS Amplify, outside the enclave, managed by Op
 - Repository access: the Amplify GitHub App for us-east-2 is installed on `permaily-org`, limited to this repository. Creating the app once needed a GitHub token with `admin:repo_hook` (`TF_VAR_github_access_token`); Amplify does not store it and later applies run without it.
 - Certificate: an ACM certificate for exactly `permaily.com`, `www.` and `beta.` (`aws_acm_certificate.site`, in `us-east-1`, which is where CloudFront takes certificates from), not Amplify's managed one, which also covers `*.permaily.com`.
 - DNS in Cloudflare (DNS only): CNAMEs for the apex, `www` and `beta`, the three ACM validation records, and CAA at the apex: `issue` for Amazon and `issuewild ";"`, so nobody can issue a wildcard for the domain. The enclave subdomains keep their own CAA (`letsencrypt.org`).
+- A TXT record `google-site-verification=…` at the apex (`google.tf`) proves to Google Search Console that the account owning the Google sign-in application owns the domain; Google shows the name "Permaily" on its sign-in page only for a verified brand. Removing it unverifies the domain.
 - The footer shows the latest release's PCR0, read at build time. A release is published after `main` was built, so `release.yml` calls an Amplify webhook (`aws_amplify_webhook.release`, URL in the `AMPLIFY_RELEASE_WEBHOOK` secret) to rebuild `main` once `pcrs.json` exists.
 - `.github/workflows/site-smoke.yml` checks the live site after each push to `main`.
 

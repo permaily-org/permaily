@@ -21,6 +21,7 @@ export default defineConfig({
         'src/lib/**',
         'src/components/SessionGate.tsx',
         'src/components/Confirm.tsx',
+        'src/components/brands/**',
         'src/pages/auth/**',
         'src/pages/settings/signin/**',
         'src/pages/settings/account/**',
@@ -36,6 +37,7 @@ export default defineConfig({
           lines: 100,
         },
         'src/components/Confirm.tsx': { statements: 96, branches: 91, functions: 94, lines: 100 },
+        'src/components/brands/**': { statements: 100, branches: 100, functions: 100, lines: 100 },
         'src/pages/auth/**': { statements: 97, branches: 95, functions: 98, lines: 100 },
         'src/pages/settings/signin/**': { statements: 95, branches: 91, functions: 98, lines: 99 },
         'src/pages/settings/account/**': {

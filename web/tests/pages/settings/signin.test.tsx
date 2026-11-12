@@ -673,6 +673,8 @@ describe('providers', () => {
     await settle()
     expect(section().queryByText('Meta')).toBeNull()
     expect(section().queryByText('GitHub')).toBeNull()
+    // Named in words only: the providers' rules allow their marks on the sign-in button, not next to a name.
+    expect(document.querySelector('[data-mark]')).toBeNull()
     await expectAccessible()
   })
 
