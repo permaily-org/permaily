@@ -23,8 +23,8 @@ import (
 // When the proof was made is kept in the session's own entry, signed with
 // the rest of it (sessionDoc.ConfirmedAt): a request that lands on another
 // enclave sees it, and whoever writes to the storage cannot make a session
-// fresh. A ceremony or an attempt started to confirm lives in this enclave's
-// memory, as a sign-in's does, and belongs to the session that started it:
+// fresh. A ceremony or an attempt started to confirm is kept in the storage,
+// as a sign-in's is (pending.go), and belongs to the session that started it:
 // it signs nobody in, changes no address, and confirms no other session.
 
 // confirmFor is what a ceremony or an attempt that confirms a session is
@@ -79,7 +79,10 @@ func (s *Service) StartConfirmPasskey(ctx context.Context, who *Authenticated) (
 	if len(doc.Passkeys) == 0 {
 		return nil, contracts.ErrPasskeyNeeded
 	}
-	id, challenge := s.begin(confirmFor(who))
+	id, challenge, err := s.begin(ctx, confirmFor(who))
+	if err != nil {
+		return nil, err
+	}
 	out := &contracts.PasskeyRequest{Ceremony: id, Options: contracts.RequestOptions{
 		Challenge: challenge, Timeout: int(domain.PasskeyCeremonyLifetime / time.Millisecond),
 		RPID: s.rp.ID, UserVerification: passkeyRequired, AllowCredentials: []contracts.CredentialDescriptor{},
@@ -94,7 +97,10 @@ func (s *Service) StartConfirmPasskey(ctx context.Context, who *Authenticated) (
 // own account, answering the ceremony this session started. Every failure is
 // the one error of a passkey.
 func (s *Service) FinishConfirmPasskey(ctx context.Context, who *Authenticated, in contracts.PasskeySignIn) (*contracts.Me, error) {
-	challenge, ok := s.end(in.Ceremony, confirmFor(who))
+	challenge, ok, err := s.end(ctx, in.Ceremony, confirmFor(who))
+	if err != nil {
+		return nil, err
+	}
 	if !ok || string(in.Credential.Response.UserHandle) != who.AccountID {
 		return nil, contracts.ErrInvalidPasskey
 	}
@@ -163,22 +169,9 @@ func (s *Service) deliverConfirm(ctx context.Context, id, owner, address string)
 		return
 	}
 	code := randomString("0123456789", domain.EmailCodeDigits)
-	a := &attempt{address: address, account: owner, code: sha256.Sum256([]byte(code)), withCode: true, expires: now.Add(domain.EmailCodeLifetime)}
-	s.mu.Lock()
-	if len(s.attempts) >= maxAttempts {
-		s.mu.Unlock()
-		s.cfg.Log.Warn("accounts: too many sign-ins waiting, one was dropped")
-		return
-	}
-	s.attempts[id] = a
-	s.mu.Unlock()
-	if err := s.cfg.Mailer.Send(ctx, confirmMail(address, s.rp.ID, code)); err != nil {
-		// Not the error: a mail system's errors carry the address.
-		s.cfg.Log.Warn("accounts: a message to confirm a session could not be sent")
-		s.mu.Lock()
-		delete(s.attempts, id)
-		s.mu.Unlock()
-	}
+	sum := sha256.Sum256([]byte(code))
+	a := &attemptDoc{V: 1, Address: address, Account: owner, Code: sum[:], pendingTimes: pendingTimes{Made: now, Expires: now.Add(domain.EmailCodeLifetime)}}
+	s.send(ctx, id, a, confirmMail(address, s.rp.ID, code), "accounts: a message to confirm a session could not be sent")
 }
 
 // confirmMail writes the message with the code that confirms a session.
@@ -195,7 +188,7 @@ func (s *Service) FinishConfirmEmail(ctx context.Context, who *Authenticated, in
 	if _, err := s.own(ctx, who); err != nil {
 		return nil, err
 	}
-	if _, err := s.match(contracts.EmailFinish{Attempt: in.Attempt, Code: in.Code}, confirmFor(who), true); err != nil {
+	if _, err := s.match(ctx, contracts.EmailFinish{Attempt: in.Attempt, Code: in.Code}, confirmFor(who), true); err != nil {
 		return nil, err
 	}
 	return s.confirm(ctx, who, contracts.ConfirmEmail)
@@ -221,6 +214,14 @@ func (s *Service) confirm(ctx context.Context, who *Authenticated, how string) (
 		if doc == nil {
 			return nil, contracts.ErrUnauthorized
 		}
+		// Signed out meanwhile, with every other device of the account.
+		account, err := s.own(ctx, who)
+		if err != nil {
+			return nil, err
+		}
+		if !account.stands(doc) {
+			return nil, contracts.ErrUnauthorized
+		}
 		now := s.now()
 		doc.ConfirmedAt, doc.LastUsedAt = now, now
 		switch err := s.putSession(ctx, doc, e.Version); {
@@ -231,7 +232,7 @@ func (s *Service) confirm(ctx context.Context, who *Authenticated, how string) (
 		}
 		s.cfg.Log.Info("accounts: a session was confirmed", "way", how)
 		session := doc.view(doc.ID, now)
-		return s.Me(ctx, &Authenticated{AccountID: who.AccountID, Session: session})
+		return s.Me(ctx, &Authenticated{AccountID: who.AccountID, Session: session, signOuts: doc.SignOuts})
 	}
 	return nil, errors.New("accounts: a session keeps changing")
 }

@@ -252,7 +252,7 @@ func TestTwoEnclavesChangeOneAccount(t *testing.T) {
 		if doc := w.doc(who.AccountID); len(doc.RecoveryCodes) != domain.RecoveryCodes-1 {
 			t.Fatalf("%d codes left", len(doc.RecoveryCodes))
 		}
-		if list, _ := w.svc.sessions(ctx, who.AccountID); len(list) != 2 {
+		if list, _ := w.svc.sessions(ctx, who.AccountID, nil); len(list) != 2 {
 			t.Fatalf("%d sessions: one code signed in twice", len(list))
 		}
 		// The use that lost is not a wrong code.
@@ -622,15 +622,15 @@ func TestSessionsOverTheBoundGoBack(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if list, _ := w.svc.sessions(ctx, me.Account.ID); len(list) != maxSessions+3 {
+	if list, _ := w.svc.sessions(ctx, me.Account.ID, nil); len(list) != maxSessions+3 {
 		t.Fatalf("%d sessions", len(list))
 	}
 	w.now = w.now.Add(time.Minute)
-	newest, _, err := w.enclave().svc.newSession(ctx, me.Account.ID, "device")
+	newest, _, err := w.enclave().svc.newSession(ctx, w.doc(me.Account.ID), "device")
 	if err != nil {
 		t.Fatal(err)
 	}
-	list, _ := w.svc.sessions(ctx, me.Account.ID)
+	list, _ := w.svc.sessions(ctx, me.Account.ID, nil)
 	if len(list) != maxSessions {
 		t.Fatalf("%d sessions kept", len(list))
 	}
@@ -745,15 +745,15 @@ func TestChangeFailures(t *testing.T) {
 		w, f, me, _ := setup(t)
 		for range maxSessions {
 			w.now = w.now.Add(time.Minute)
-			if _, _, err := w.svc.newSession(ctx, me.Account.ID, "device"); err != nil {
+			if _, _, err := w.svc.newSession(ctx, w.doc(me.Account.ID), "device"); err != nil {
 				t.Fatal(err)
 			}
 		}
 		f.fail["delete "+accountPartition(me.Account.ID)] = down
-		if _, _, err := w.svc.newSession(ctx, me.Account.ID, "device"); !errors.Is(err, down) {
+		if _, _, err := w.svc.newSession(ctx, w.doc(me.Account.ID), "device"); !errors.Is(err, down) {
 			t.Fatalf("got %v", err)
 		}
-		if list, _ := w.svc.sessions(ctx, me.Account.ID); len(list) != maxSessions {
+		if list, _ := w.svc.sessions(ctx, me.Account.ID, nil); len(list) != maxSessions {
 			t.Fatalf("%d sessions", len(list))
 		}
 	})

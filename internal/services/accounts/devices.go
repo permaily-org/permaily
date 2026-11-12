@@ -172,7 +172,7 @@ func (s *Service) enter(ctx context.Context, doc *accountDoc, how way, from Brow
 	if doc.blocked() {
 		return nil, "", contracts.ErrAccountBlocked
 	}
-	session, cookie, err := s.newSession(ctx, doc.ID, from.UserAgent)
+	session, cookie, err := s.newSession(ctx, doc, from.UserAgent)
 	if err != nil {
 		return nil, "", err
 	}

@@ -40,53 +40,47 @@ func (d *accountDoc) passkey(id []byte) int {
 
 // ---- ceremonies ----
 
-// ceremony is a passkey being made or used, between the options sent to the
-// browser and its answer. Like a sign-in by mail it is kept only in memory.
-type ceremony struct {
-	challenge []byte
-	// account is whose passkey is being made; empty for a sign-in, which
+// ceremonyDoc is a passkey being made or used, between the options sent to
+// the browser and its answer. Like a sign-in by mail it is kept sealed in the
+// storage, and ended once, through any enclave (pending.go).
+type ceremonyDoc struct {
+	V         int    `json:"v"`
+	Challenge []byte `json:"challenge"`
+	// Account is whose passkey is being made; empty for a sign-in, which
 	// learns the account from the answer; confirmFor of a session for a
 	// ceremony that confirms that session (confirm.go).
-	account string
-	expires time.Time
+	Account string `json:"account,omitempty"`
+	pendingTimes
 }
 
 // begin starts a ceremony and returns its identifier and its challenge.
-func (s *Service) begin(account string) (string, []byte) {
+func (s *Service) begin(ctx context.Context, account string) (string, []byte, error) {
 	now := s.now()
-	c := &ceremony{challenge: make([]byte, 32), account: account, expires: now.Add(domain.PasskeyCeremonyLifetime)}
-	_, _ = rand.Read(c.challenge) // crypto/rand does not fail
+	c := &ceremonyDoc{V: 1, Challenge: make([]byte, 32), Account: account, pendingTimes: pendingTimes{Made: now, Expires: now.Add(domain.PasskeyCeremonyLifetime)}}
+	_, _ = rand.Read(c.Challenge) // crypto/rand does not fail
 	id := newID("cer")
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sweep(now)
-	if len(s.ceremonies) >= maxCeremonies {
-		// Anyone can start one, so refusing here would let anyone keep
-		// everybody from signing in. The one waiting longest goes instead.
-		oldest := ""
-		for other, waiting := range s.ceremonies {
-			if oldest == "" || waiting.expires.Before(s.ceremonies[oldest].expires) {
-				oldest = other
-			}
-		}
-		delete(s.ceremonies, oldest)
+	if err := s.stash(ctx, pendingPartition(kindCeremony, id), c); err != nil {
+		return "", nil, err
 	}
-	s.ceremonies[id] = c
-	return id, c.challenge
+	return id, c.Challenge, nil
 }
 
 // end returns the challenge of a ceremony that was started for account and
 // is still running. The ceremony is over either way: an answer is tried once.
-func (s *Service) end(id, account string) ([]byte, bool) {
-	now := s.now()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c := s.ceremonies[id]
-	delete(s.ceremonies, id)
-	if c == nil || !c.expires.After(now) || c.account != account {
-		return nil, false
+func (s *Service) end(ctx context.Context, id, account string) ([]byte, bool, error) {
+	if !validID("cer", id) {
+		return nil, false, nil
 	}
-	return c.challenge, true
+	var c ceremonyDoc
+	e, err := s.unstash(ctx, pendingPartition(kindCeremony, id), &c)
+	if err != nil || e == nil {
+		return nil, false, err
+	}
+	ok, err := s.claim(ctx, e, c.Expires)
+	if err != nil || !ok || c.Account != account {
+		return nil, false, err
+	}
+	return c.Challenge, true, nil
 }
 
 // refused logs why the WebAuthn checks refused an answer. Their errors are
@@ -121,7 +115,10 @@ func (s *Service) StartPasskey(ctx context.Context, who *Authenticated) (*contra
 	if len(doc.Passkeys) >= domain.MaxPasskeys {
 		return nil, contracts.ErrTooManyPasskeys
 	}
-	id, challenge := s.begin(doc.ID)
+	id, challenge, err := s.begin(ctx, doc.ID)
+	if err != nil {
+		return nil, err
+	}
 	out := &contracts.PasskeyCreation{Ceremony: id, Options: contracts.CreationOptions{
 		RP: contracts.RelyingParty{ID: s.rp.ID, Name: "Permaily"},
 		// The identifier is what the passkey answers with when it signs in:
@@ -155,7 +152,10 @@ func (s *Service) FinishPasskey(ctx context.Context, who *Authenticated, in cont
 	if err != nil {
 		return nil, err
 	}
-	challenge, ok := s.end(in.Ceremony, who.AccountID)
+	challenge, ok, err := s.end(ctx, in.Ceremony, who.AccountID)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, contracts.ErrInvalidPasskey
 	}
@@ -272,8 +272,11 @@ func (s *Service) RemovePasskey(ctx context.Context, who *Authenticated, id stri
 // StartPasskeySignIn starts a sign-in with a passkey. Nothing is asked: the
 // passkey says which account it is for, so the answer is the same for
 // everybody and tells nobody who has an account.
-func (s *Service) StartPasskeySignIn(_ context.Context) (*contracts.PasskeyRequest, error) {
-	id, challenge := s.begin("")
+func (s *Service) StartPasskeySignIn(ctx context.Context) (*contracts.PasskeyRequest, error) {
+	id, challenge, err := s.begin(ctx, "")
+	if err != nil {
+		return nil, err
+	}
 	return &contracts.PasskeyRequest{Ceremony: id, Options: contracts.RequestOptions{
 		Challenge: challenge, Timeout: int(domain.PasskeyCeremonyLifetime / time.Millisecond),
 		RPID: s.rp.ID, UserVerification: passkeyRequired,
@@ -285,7 +288,10 @@ func (s *Service) StartPasskeySignIn(_ context.Context) (*contracts.PasskeyReque
 // a passkey that is not there and an answer that does not check are all the
 // same error. An account that cannot be read is not: that is a failure.
 func (s *Service) FinishPasskeySignIn(ctx context.Context, in contracts.PasskeySignIn, from Browser) (*contracts.Me, string, error) {
-	challenge, ok := s.end(in.Ceremony, "")
+	challenge, ok, err := s.end(ctx, in.Ceremony, "")
+	if err != nil {
+		return nil, "", err
+	}
 	accountID := string(in.Credential.Response.UserHandle)
 	if !ok || !validID("acc", accountID) {
 		return nil, "", contracts.ErrInvalidPasskey
@@ -412,7 +418,7 @@ func (s *Service) recoveryTry(address string, right bool) bool {
 	defer s.mu.Unlock()
 	s.sweep(now)
 	list := recent(s.recoveries[address], now, time.Hour)
-	if len(list) >= domain.RecoveryTriesPerHour || (len(list) == 0 && len(s.recoveries) >= maxAttempts) {
+	if len(list) >= domain.RecoveryTriesPerHour || (len(list) == 0 && len(s.recoveries) >= maxRecoveryCounts) {
 		return false
 	}
 	if !right {
