@@ -5,6 +5,7 @@ import * as api from '../../lib/api.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import { Field } from '../auth/Field.tsx'
 import { formatDay } from '../settings/signin/shared.ts'
+import { FindMailbox } from './MailboxesSection.tsx'
 import { adminMessage, ListState, useAdmin } from './shared.tsx'
 
 /** An account's state in words: blocked, being deleted, or active. */
@@ -165,6 +166,8 @@ export function AccountsPage() {
           </TextAction>
         )}
       </section>
+
+      <FindMailbox />
 
       <section aria-labelledby="all-accounts" className="mt-10">
         <SectionHeading id="all-accounts" title="Every account" />

@@ -29,7 +29,7 @@ const tabs = [
 
 function AdminLayout({ superAdmin, self }: { superAdmin: boolean; self: string }) {
   const session = useSession()
-  const [stats, setStats] = useState<api.AdminStats | null>(null)
+  const [stats, setStats] = useState<api.AdminStatsWithMailboxes | null>(null)
   const [statsFailure, setStatsFailure] = useState<string | null>(null)
   // Whether the panel works: it does only while the admin's own account signs in with passkeys only. The
   // session said so before the panel opened; the server has the last word, on the first request. Until then
@@ -57,7 +57,7 @@ function AdminLayout({ superAdmin, self }: { superAdmin: boolean; self: string }
   const refreshStats = useCallback(async () => {
     const mine = ++turn.current
     try {
-      const answer = await api.adminStats()
+      const answer = await api.adminStatsWithMailboxes()
       if (mine !== turn.current) return
       setStats(answer)
       setStatsFailure(null)
@@ -125,7 +125,7 @@ function Stats({
   failure,
   onRetry,
 }: {
-  stats: api.AdminStats | null
+  stats: api.AdminStatsWithMailboxes | null
   failure: string | null
   onRetry: () => void
 }) {
@@ -147,6 +147,7 @@ function Stats({
     { label: 'Being deleted', value: stats.accounts.closing },
     { label: 'Blocked', value: stats.accounts.blocked },
     { label: 'Unused invitations', value: stats.invitations.unused },
+    ...(stats.mailboxes ? [{ label: 'Mailboxes', value: stats.mailboxes.total }] : []),
   ]
   return (
     <section aria-label="Numbers" className="mt-4">

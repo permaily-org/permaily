@@ -157,7 +157,9 @@ describe('the list of accounts', () => {
 describe('one account', () => {
   /** Opens an account's page and waits for it. */
   async function account(shown: Record<string, unknown> = eve, as = boss) {
-    asAdmin(as).on(`GET /api/v1/admin/accounts/${shown.id}`, ok(shown))
+    asAdmin(as)
+      .on(`GET /api/v1/admin/accounts/${shown.id}`, ok(shown))
+      .on(`GET /api/v1/admin/accounts/${shown.id}/mailboxes`, ok({ mailboxes: [] }))
     const opened = await open(`/admin/accounts/${shown.id}`)
     await screen.findByRole('heading', { level: 1, name: String(shown.address) })
     return opened
@@ -396,7 +398,9 @@ describe('one account', () => {
     const { user } = await open('/admin/accounts/acc_eve')
     const alert = await screen.findByText(/This account couldn't load\./)
     await expectAccessible()
-    server.on('GET /api/v1/admin/accounts/acc_eve', ok(eve))
+    server
+      .on('GET /api/v1/admin/accounts/acc_eve', ok(eve))
+      .on('GET /api/v1/admin/accounts/acc_eve/mailboxes', ok({ mailboxes: [] }))
     await user.click(
       within(alert.parentElement as HTMLElement).getByRole('button', { name: 'Try again' }),
     )
