@@ -175,7 +175,8 @@ func TestAnAgreementToAnotherVersionIsRefused(t *testing.T) {
 	w.terms = newTerms
 	version := w.version(me.Account.ID)
 	for _, shown := range []string{"", domain.TermsVersion, "2099-01-01"} {
-		if _, err := w.svc.AgreeTerms(ctx, w.who(cookie), contracts.TermsAgree{Version: shown}); !errors.Is(err, contracts.ErrTermsNeeded) {
+		// The account exists: it is told to agree to go on, not to make one.
+		if _, err := w.svc.AgreeTerms(ctx, w.who(cookie), contracts.TermsAgree{Version: shown}); !errors.Is(err, contracts.ErrTermsNeeded) || err.Error() != contracts.ErrTermsChanged.Error() {
 			t.Fatalf("agreeing to %q: %v", shown, err)
 		}
 	}
