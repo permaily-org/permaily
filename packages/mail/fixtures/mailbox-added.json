@@ -1,0 +1,29 @@
+{
+  "name": "mailbox-added",
+  "to": "ada@example.com",
+  "subject": "A mailbox was added to your Permaily account",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "A mailbox was added to your Permaily account."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Mail forwarded to it is kept in your account, and only you can read it, in the app."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "note",
+      "text": "If this wasn't you, sign in at app.permaily.com, disconnect it, and write to support@permaily.com."
+    }
+  ]
+}

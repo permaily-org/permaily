@@ -180,7 +180,8 @@ func TestAdminStatusJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"commit":"abc","admin":{"since":"2026-11-11T12:00:00Z","actions":{"block":1,"something_new":3}}}`), &st); err != nil || st.Admin.Actions["something_new"] != 3 || !st.Admin.Since.Equal(at) {
 		t.Fatalf("%+v %v", st.Admin, err)
 	}
-	if len(attestation.AdminActions) != 11 {
+	// The eleven of accounts, and a mailbox paused or resumed (ADR 0026).
+	if len(attestation.AdminActions) != 13 {
 		t.Fatalf("%d kinds", len(attestation.AdminActions))
 	}
 }

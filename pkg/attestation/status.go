@@ -94,13 +94,18 @@ const (
 	// of the service, or made it stop being one.
 	AdminMade    = "admin_made"
 	AdminRemoved = "admin_removed"
+	// AdminMailboxPaused and AdminMailboxResumed: a mailbox was made to
+	// refuse new mail, keeping what it holds, or to take it again. Never
+	// which mailbox: the operator cannot read, disconnect or delete one.
+	AdminMailboxPaused  = "mailbox_paused"
+	AdminMailboxResumed = "mailbox_resumed"
 )
 
 // AdminActions lists the kinds this package knows, in the order they are shown.
 var AdminActions = []string{
 	AdminBlock, AdminUnblock, AdminDelete, AdminDeleteCancel, AdminSessionsClose,
 	AdminInvitationsMade, AdminInvitationRevoked, AdminProviderAppSet, AdminProviderAppRemoved,
-	AdminMade, AdminRemoved,
+	AdminMade, AdminRemoved, AdminMailboxPaused, AdminMailboxResumed,
 }
 
 // What SES says about an identity, a domain or an address mail is sent from

@@ -21,7 +21,7 @@ func TestPrintAdmin(t *testing.T) {
 		none[kind] = 0
 	}
 	printAdmin(&out, &attestation.AdminStatus{Since: at, Actions: none})
-	if !strings.Contains(out.String(), "what the operator did to accounts through this enclave since 2026-11-11T08:00:00Z: nothing\n") || !strings.Contains(out.String(), "a restart starts the count again") {
+	if !strings.Contains(out.String(), "what the operator did to accounts through this enclave since 2026-11-11T08:00:00Z: nothing\n") || !strings.Contains(out.String(), "a restart starts the count again") || !strings.Contains(out.String(), "nor read, disconnect or delete a mailbox, only pause and resume one") {
 		t.Fatalf("nothing done:\n%s", out.String())
 	}
 	out.Reset()
@@ -33,6 +33,12 @@ func TestPrintAdmin(t *testing.T) {
 		`did what this verifier does not know ("another_new") 1 time; did what this verifier does not know ("something_new") 3 times` + "\n"
 	if !strings.Contains(out.String(), want) {
 		t.Fatalf("got:\n%s\nwant:\n%s", out.String(), want)
+	}
+	// A mailbox paused and resumed (ADR 0026): by kind, never which one.
+	out.Reset()
+	printAdmin(&out, &attestation.AdminStatus{Since: at, Actions: map[string]int{attestation.AdminMailboxPaused: 2, attestation.AdminMailboxResumed: 1}})
+	if !strings.Contains(out.String(), "since 2026-11-11T08:00:00Z: paused a mailbox 2 times; resumed a mailbox 1 time\n") {
+		t.Fatalf("mailboxes:\n%s", out.String())
 	}
 	// Every kind has its words.
 	out.Reset()

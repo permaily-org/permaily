@@ -1,0 +1,10 @@
+To: ada@example.com
+Subject: Gmail asked to forward to your Permaily mailbox
+
+Google confirmed that a Gmail account asked to forward its mail to one of your Permaily mailboxes.
+
+Open Accounts in the app to see which Gmail account asked. Enter the code in Gmail only if that account is yours.
+
+    When: 12 November 2026, 09:30 UTC
+
+If you didn't ask, do nothing: no mail is forwarded until the code is entered in Gmail.

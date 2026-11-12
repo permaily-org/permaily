@@ -917,7 +917,8 @@ func TestTheOperatorsActionsAreCounted(t *testing.T) {
 		}
 	}
 	check("at the start")
-	if len(want) != 11 {
+	// The eleven of accounts, and pausing and resuming a mailbox (ADR 0026).
+	if len(want) != 13 {
 		t.Fatalf("%d kinds", len(want))
 	}
 

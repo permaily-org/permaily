@@ -1128,16 +1128,95 @@ export async function adminLog(
 export type AdminStats = {
   accounts: { active: number; closing: number; blocked: number; total: number }
   invitations: { unused: number }
-  /** False when some accounts could not be read: the numbers are at least these. */
+  /** The mailboxes (ADR 0026), absent from a server that does not count them. */
+  mailboxes?: MailboxCounts
+  /** False when some accounts or mailboxes could not be read: the numbers are at least these. */
   complete: boolean
 }
 
 export async function adminStats(): Promise<AdminStats> {
-  const answer = await request<Partial<AdminStats> | null>('GET', '/api/v1/admin/stats')
+  const answer = await request<
+    (Omit<Partial<AdminStats>, 'mailboxes'> & { mailboxes?: Partial<MailboxCounts> }) | null
+  >('GET', '/api/v1/admin/stats')
   if (typeof answer?.accounts !== 'object' || answer.accounts === null) throw new ApiError('other')
   return {
     accounts: answer.accounts,
     invitations: { unused: answer.invitations?.unused ?? 0 },
     complete: answer.complete !== false,
+    ...(typeof answer.mailboxes?.total === 'number'
+      ? { mailboxes: { total: answer.mailboxes.total } }
+      : {}),
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Admin: mailboxes (ADR 0026, "What the operator and admins see and do"). What the admin panel sees of a mailbox
+// is its signed record: never its address, its label, the Gmail account behind it or its mail. It can pause and
+// resume one, and nothing else.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** A mailbox as the admin panel sees it. An `unreadable` one has only its id, its account and `created_at`. */
+export type MailboxRecord = {
+  id: string
+  account: string
+  state: MailboxState
+  created_at: string
+  retention_days: number
+  receiving_since?: string
+  /** Since when it refuses new mail. There only while it is paused. */
+  paused_at?: string
+  /** Google confirmed which Gmail account asked to forward to it. */
+  verified: boolean
+}
+
+/** How many mailboxes the deployment has, from an index that proves nothing: it may be off by one or two. */
+export type MailboxCounts = { total: number }
+
+function mailboxRecords(answer: { mailboxes?: unknown } | null): MailboxRecord[] {
+  if (!Array.isArray(answer?.mailboxes)) throw new ApiError('other')
+  return (answer.mailboxes as Array<Partial<MailboxRecord> | null>).filter(
+    (record): record is MailboxRecord =>
+      typeof record?.id === 'string' && mailboxStates.has(record.state as string),
+  )
+}
+
+function mailboxRecordOf(answer: Partial<MailboxRecord> | null): MailboxRecord {
+  const [record] = mailboxRecords({ mailboxes: [answer] })
+  if (!record) throw new ApiError('other')
+  return record
+}
+
+/** How many mailboxes an account has, or undefined from a server that does not say. */
+export function accountMailboxes(record: AccountRecord): number | undefined {
+  const count = (record as { mailboxes?: unknown }).mailboxes
+  return typeof count === 'number' ? count : undefined
+}
+
+/** The mailbox an entry of the admin log was about, when it was about one: its id, and nothing else. */
+export function logEntryMailbox(entry: LogEntry): string | undefined {
+  const mailbox = (entry as { mailbox?: unknown }).mailbox
+  return typeof mailbox === 'string' && mailbox !== '' ? mailbox : undefined
+}
+
+/** An account's mailboxes, the oldest first. */
+export async function adminAccountMailboxes(account: string): Promise<MailboxRecord[]> {
+  return mailboxRecords(
+    await request('GET', `/api/v1/admin/accounts/${encodeURIComponent(account)}/mailboxes`),
+  )
+}
+
+/** The mailbox of exactly this address, for a report of abuse that names it: none or one. */
+export async function adminFindMailbox(address: string): Promise<MailboxRecord | null> {
+  const query = new URLSearchParams({ address })
+  return mailboxRecords(await request('GET', `/api/v1/admin/mailboxes?${query}`))[0] ?? null
+}
+
+/** Pauses or resumes a mailbox. The answer is the mailbox after it. */
+export async function adminMailboxAction(
+  id: string,
+  action: 'pause' | 'resume',
+): Promise<MailboxRecord> {
+  return mailboxRecordOf(
+    await request('POST', `/api/v1/admin/mailboxes/${encodeURIComponent(id)}/${action}`),
+  )
 }

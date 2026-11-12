@@ -203,6 +203,12 @@ func run(cfg config, log *slog.Logger) error {
 		providers := httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.ProviderApps(p.accounts, log))
 		api.Handle("/v1/admin/providers", providers)
 		api.Handle("/v1/admin/providers/", providers)
+		// Mailboxes (ADR 0026): find the one an address leads to, pause and
+		// resume one; never read, disconnect or empty one. An account's
+		// mailboxes are under /v1/admin/accounts.
+		mailboxesOf := httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Mailboxes(p.accounts, log))
+		api.Handle("/v1/admin/mailboxes", mailboxesOf)
+		api.Handle("/v1/admin/mailboxes/", mailboxesOf)
 	}
 
 	keyRoutes(api, cfg, p, log)

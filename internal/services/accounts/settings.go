@@ -504,12 +504,16 @@ func (s *Service) record(ctx context.Context, doc *accountDoc) (*contracts.Accou
 	for _, p := range doc.Providers {
 		providers = append(providers, string(p.Provider))
 	}
+	mailboxes, err := s.mailboxCount(ctx, doc.ID)
+	if err != nil {
+		return nil, err
+	}
 	return &contracts.AccountRecord{
 		ID: doc.ID, State: doc.State, Address: doc.Address, Name: doc.Name, Language: doc.Language,
 		CreatedAt: doc.CreatedAt, AddressVerifiedAt: doc.AddressVerifiedAt, ClosesAt: doc.ClosesAt,
 		ClosingBy: doc.closingBy(), BlockedAt: doc.BlockedAt,
 		Passkeys: len(doc.Passkeys), PasskeyOnly: doc.PasskeyOnly, Providers: providers, Sessions: len(sessions),
-		Admin: s.role(doc), Terms: doc.agreedTo(),
+		Admin: s.role(doc), Terms: doc.agreedTo(), Mailboxes: mailboxes,
 	}, nil
 }
 

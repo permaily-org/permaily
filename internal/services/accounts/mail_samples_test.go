@@ -12,6 +12,7 @@ import (
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain/mail"
 	"github.com/permaily-org/permaily/internal/idp"
+	"github.com/permaily-org/permaily/internal/services/mailboxes"
 )
 
 // update writes the golden files of the messages and the fixtures of the
@@ -74,6 +75,12 @@ func sampleMails() []sampleMail {
 		{"unblocked", blockedMail(sampleTo, sampleApp, sampleAt, false)},
 		{"admin-made", adminMail(sampleTo, sampleApp, sampleAt, true)},
 		{"admin-removed", adminMail(sampleTo, sampleApp, sampleAt, false)},
+		// The notices about mailboxes (ADR 0026, "Notices by mail").
+		{"mailbox-added", mailboxMail(sampleTo, sampleApp, mailboxes.NoticeAdded, sampleAt)},
+		{"forwarding-asked", mailboxMail(sampleTo, sampleApp, mailboxes.NoticeForwarding, sampleAt)},
+		{"mailbox-disconnected", mailboxMail(sampleTo, sampleApp, mailboxes.NoticeDisconnected, sampleAt)},
+		{"mailbox-paused", mailboxMail(sampleTo, sampleApp, mailboxes.NoticePaused, sampleAt)},
+		{"mailbox-resumed", mailboxMail(sampleTo, sampleApp, mailboxes.NoticeResumed, sampleAt)},
 	}
 	for _, kind := range []string{noticePasskeyAdded, noticePasskeyRemoved, noticePasskeyOnlyOn, noticePasskeyOnlyOff, noticeRecoveryCodesNew, noticeRecoveryCodeUsed} {
 		list = append(list, sampleMail{"sign-in-change-" + kind, signInChangeMail(sampleTo, sampleApp, sampleAt, signInChanges[kind])})
@@ -90,8 +97,8 @@ func sampleMails() []sampleMail {
 // plain text of each, as it is sent, is the golden file's, byte for byte.
 func TestEveryMessageReadsAsItsGoldenText(t *testing.T) {
 	samples := sampleMails()
-	if len(samples) != 34 {
-		t.Fatalf("%d samples, want 34: a message added or removed changes this count and the golden files together", len(samples))
+	if len(samples) != 39 {
+		t.Fatalf("%d samples, want 39: a message added or removed changes this count and the golden files together", len(samples))
 	}
 	names := map[string]bool{}
 	for _, s := range samples {

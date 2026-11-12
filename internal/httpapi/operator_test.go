@@ -267,6 +267,18 @@ func TestTheOperatorsRoutesCannotChangeAnAddressOrAWayIn(t *testing.T) {
 	if !slices.Equal(names, want) {
 		t.Fatalf("what the operator's routes can ask of the service:\n%v\nwant\n%v", names, want)
 	}
+	// And of mailboxes (ADR 0026), the four of MailboxOperator, each taking an
+	// identifier or an address to look up: nothing that reads mail, shows a
+	// mailbox's address or label, disconnects one or deletes mail
+	// (TestTheMailboxRoutesCannotReadMailOrDisconnect holds the rest).
+	var ofMailboxes []string
+	mailboxOps := reflect.TypeOf((*httpapi.MailboxOperator)(nil)).Elem()
+	for i := range mailboxOps.NumMethod() {
+		ofMailboxes = append(ofMailboxes, mailboxOps.Method(i).Name)
+	}
+	if want := []string{"MailboxRecordByAddress", "MailboxRecords", "PauseMailbox", "ResumeMailbox"}; !slices.Equal(ofMailboxes, want) {
+		t.Fatalf("what the operator's mailbox routes can ask: %v, want %v", ofMailboxes, want)
+	}
 	// None of them takes anything but which account, an address to look up,
 	// a place in the list or a count: nothing to write into an account.
 	for i := range service.NumMethod() {
@@ -877,7 +889,7 @@ func TestStatusSaysWhatTheOperatorDid(t *testing.T) {
 		return st, rec.Body.String()
 	}
 	st, _ := get()
-	if st.Admin.Since.IsZero() || len(st.Admin.Actions) != 11 || st.Admin.Actions["invitations_made"] != 1 || st.Admin.Actions["block"] != 0 {
+	if st.Admin.Since.IsZero() || len(st.Admin.Actions) != 13 || st.Admin.Actions["invitations_made"] != 1 || st.Admin.Actions["block"] != 0 {
 		t.Fatalf("at the start: %+v", st.Admin)
 	}
 	one := "/v1/admin/accounts/" + me.Account.ID
@@ -897,7 +909,7 @@ func TestStatusSaysWhatTheOperatorDid(t *testing.T) {
 	want := map[string]int{
 		"block": 2, "unblock": 1, "delete": 1, "delete_cancel": 1, "sessions_close": 1,
 		"invitations_made": 5, "invitation_revoked": 1, "provider_app_set": 1, "provider_app_removed": 1,
-		"admin_made": 0, "admin_removed": 0,
+		"admin_made": 0, "admin_removed": 0, "mailbox_paused": 0, "mailbox_resumed": 0,
 	}
 	if !reflect.DeepEqual(st.Admin.Actions, want) {
 		t.Fatalf("what the operator did: %+v, want %+v", st.Admin.Actions, want)

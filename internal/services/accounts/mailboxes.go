@@ -58,9 +58,12 @@ type Mailboxes interface {
 	Record(ctx context.Context, id string) (*contracts.MailboxRecord, error)
 	// Pause makes the mailbox refuse new mail, at the version read, and tells
 	// its person; one paused already stays as it is and nobody is told.
-	// contracts.ErrNotFound for one that is not there or is disconnecting;
-	// contracts.ErrTooManyRequests past MaxStateChangesPerPeriod.
-	Pause(ctx context.Context, id string) (*contracts.MailboxRecord, error)
-	// Resume undoes Pause, with the same errors.
-	Resume(ctx context.Context, id string) (*contracts.MailboxRecord, error)
+	// changed says whether this call committed the change: what the answer
+	// needs is read before the commit, so a call that committed never fails,
+	// and only it is counted and logged. contracts.ErrNotFound for one that
+	// is not there or is disconnecting; contracts.ErrTooManyRequests past
+	// MaxStateChangesPerPeriod.
+	Pause(ctx context.Context, id string) (rec *contracts.MailboxRecord, changed bool, err error)
+	// Resume undoes Pause, with the same answers.
+	Resume(ctx context.Context, id string) (rec *contracts.MailboxRecord, changed bool, err error)
 }
