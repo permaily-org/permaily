@@ -27,11 +27,24 @@ type Box struct {
 // store.Entries and store.Scanner for txt# entries). Every method fails with
 // contracts.ErrNotFound for a message that is not in the box, has expired, or
 // does not open under its key. It checks nothing of who asks: Open did.
+//
+// Every method runs under the request's context, which ends
+// mailboxes.RequestDeadline after the request started, and checks it
+// between items. What reads a raw message (Get, Raw, Attachment) reads it
+// with store.MessageParts.ReadRaw bounded by the size the caller took from
+// the budget of mail open for reading, which the adapter takes before the
+// call and gives back when the response's buffer is released; a message
+// larger than the bound is ErrTooLarge, never read further. List and Search
+// read message items with store.Scanner and store.MessageParts.Item, never
+// a raw object (ADR 0026, "The inbox").
 type Reader interface {
 	// List is a page of the box's messages, the newest first, of at most
 	// limit (1 to 100) below the message before ("" for the newest). It reads
 	// at most ListMaxRead message items: a page may hold fewer than limit,
-	// or none, and still have Next (contracts.MessagePage).
+	// or none, and still have Next (contracts.MessagePage). Next is the last
+	// message it put on the page when it stopped inside a scan's batch, and
+	// the scan's Last otherwise; it is absent only when the scan said no
+	// More.
 	List(ctx context.Context, b Box, before string, limit int) (*contracts.MessagePage, error)
 	// Search is a page of what q finds (ADR 0026, "Searching"): it opens the
 	// box's search entries from below before, the newest first, until it has
@@ -81,7 +94,8 @@ const (
 	// PurposeConfirm seals a ConfirmEntry with envelope.SealText.
 	PurposeConfirm = "message-confirm"
 	// PurposeSeen seals a SeenEntry with envelope.SealText, bound to the
-	// mailbox and the entry's key instead of a message.
+	// mailbox and the entry's whole key (seen# and the digest) instead of a
+	// message.
 	PurposeSeen = "message-seen"
 )
 
@@ -141,18 +155,30 @@ type ConfirmEntry struct {
 }
 
 // SeenEntry is a delivery's claim on a message for one mailbox, and then the
-// mark that it is stored, sealed in its seen# entry. The entry's key is the
-// hex HMAC, under a key derived from the mailbox's, of the envelope sender
-// and the SHA-256 of the raw message.
+// mark that it is stored, sealed in its seen# entry (ADR 0026, "The claim").
+// The entry's key is the hex HMAC, under a key derived from the mailbox's,
+// of the envelope sender and the SHA-256 of the raw message. The entry
+// expires mailboxes.SeenFor after ReceivedAt, and nothing renews it.
 type SeenEntry struct {
 	// Stored is false while a delivery is storing it (a claim), true once
 	// every part of it is stored.
 	Stored bool `json:"stored"`
-	// Message is the identifier every delivery of this message writes under.
-	Message string `json:"message"`
-	// At is when the claim was made or taken over: a claim older than
-	// mailboxes.ClaimStale is taken over by the next delivery.
-	At time.Time `json:"at"`
+	// Message, ReceivedAt, ExpiresAt and RetentionDays are fixed by the
+	// delivery that first claims the message, from the settings it read
+	// then, and every later try writes under them, whatever the settings say
+	// by then: the same keys, the same received time, the same expiry for
+	// the item, its search entry and the raw object's tag.
+	Message       string    `json:"message"`
+	ReceivedAt    time.Time `json:"received_at"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	RetentionDays int       `json:"retention_days"`
+	// ClaimedAt is when the claim was made or last taken over (on the wall
+	// clock of the enclave that did it): a claim not stored whose ClaimedAt
+	// is more than mailboxes.ClaimStale ago is taken over by the next
+	// delivery, at the version read, which sets ClaimedAt and nothing else.
+	ClaimedAt time.Time `json:"claimed_at"`
+	// StoredAt is when it was marked stored; zero while it is a claim.
+	StoredAt time.Time `json:"stored_at,omitzero"`
 }
 
 // What a message may hold before parsing stops reading it (ADR 0026, "What a

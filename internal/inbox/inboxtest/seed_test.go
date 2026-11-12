@@ -39,6 +39,15 @@ func TestSeedWritesTheFormat(t *testing.T) {
 	if err != nil || json.Unmarshal(plain, &meta) != nil || meta.Subject != "Hi" {
 		t.Fatalf("meta: %+v %v", meta, err)
 	}
+	seen, err := mem.ListEntries(ctx, Partition(b.MailboxID), inbox.KeySeen, "", 10)
+	if err != nil || len(seen) != 1 {
+		t.Fatalf("seen# entries %v %v", seen, err)
+	}
+	plainSeen, err := envelope.OpenText(b.Key, seen[0].Value, envelope.AAD(inbox.PurposeSeen, b.MailboxID, seen[0].Key))
+	var mark inbox.SeenEntry
+	if err != nil || json.Unmarshal(plainSeen, &mark) != nil || !mark.Stored || mark.Message != m.ID || !mark.ExpiresAt.Equal(at.AddDate(0, 0, 30)) {
+		t.Fatalf("the mark %+v %v", mark, err)
+	}
 	for _, c := range []struct{ key, purpose string }{{inbox.KeySearch, inbox.PurposeSearch}, {inbox.KeyConfirm, inbox.PurposeConfirm}} {
 		e, err := mem.GetEntry(ctx, Partition(b.MailboxID), c.key+m.ID)
 		if err != nil {

@@ -20,12 +20,18 @@ import (
 // Those wrappers are httpapi.MailboxOperator, written by pull request 4.
 // Never give this interface to an adapter.
 type Mailboxes interface {
-	// RemoveAccount closes the account's list, so that nothing is added to it
-	// any more, then disconnects every mailbox it names (no notice; by
-	// "account_removed"), cancels every reservation in it, and removes the
-	// list. Every step can be done twice and by two enclaves at once; a
-	// failure is returned and the account's removal is tried again. An
-	// account without a list has nothing to remove.
+	// RemoveAccount always leaves the account's list closed: it closes the
+	// list at its version, or, when the account never had one, makes it
+	// closed (CreateNew), so a first creation still in flight loses that
+	// race (store.ErrExists, then it reads the closed list and refuses) or
+	// wins it and is then closed and enumerated here on the next try. Then
+	// it ends every mailbox the list names in a terminal commit (no notice;
+	// by "account_removed"): a readable one disconnected, a lost one
+	// removed, a reservation fenced by its tombstone. A forked one takes no
+	// commit and stays named in the closed list. The closed list is kept for
+	// good: it names the account and, at most, mailboxes whose records were
+	// forked. Every step can be done twice and by two enclaves at once; a
+	// failure is returned and the account's removal is tried again.
 	RemoveAccount(ctx context.Context, accountID string) error
 	// Count is how many mailboxes the account has (AccountRecord.Mailboxes):
 	// the ones the list names that are not disconnecting, cancelled or gone.
@@ -35,8 +41,11 @@ type Mailboxes interface {
 	// or a disconnect that failed in between.
 	Total(ctx context.Context) (int, error)
 	// Records lists the account's mailboxes as the operator sees them, the
-	// oldest first. contracts.ErrNotFound for an identifier that is not an
-	// account's.
+	// oldest first, without the leaving ones. It does not know accounts: an
+	// account with no list, or an identifier that is no account, is an empty
+	// list. The operator's and the admin's wrappers (pull request 4) answer
+	// contracts.ErrNotFound for an identifier that is not an account before
+	// asking.
 	Records(ctx context.Context, accountID string) (*contracts.MailboxRecordList, error)
 	// ByAddress is the mailbox an address leads to, as a list of none or one:
 	// the address is hashed as RCPT TO hashes it, the pointer followed and

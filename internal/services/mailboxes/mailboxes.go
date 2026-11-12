@@ -36,25 +36,45 @@ const (
 	// ReservationAge is how long an identifier added to the list may wait for
 	// its record before a reader of the list cancels it.
 	ReservationAge = 10 * time.Minute
-	// IngestDeadline bounds a delivery from the end of DATA to the answer;
-	// ReadDeadline (the HTTP server's write timeout) bounds a request that
-	// opens mail. Neither opens mail after it.
+	// IngestDeadline bounds a delivery from the end of DATA to its answer:
+	// every read of a record and every write of a message happens inside it
+	// (a context with this deadline, from the moment the last byte of DATA
+	// or of the last BDAT chunk is read).
 	IngestDeadline = time.Minute
-	ReadDeadline   = time.Minute
+	// RequestDeadline bounds every HTTP request that opens a mailbox or
+	// writes into its partition (reading, searching, downloading, the
+	// frame, deleting messages, changing the settings), from the moment the
+	// request starts: a context with this deadline is given to Open, the
+	// store, parsing and writing the response, and long loops check it. It
+	// equals the HTTP server's WriteTimeout, after which nothing is sent
+	// anyway, but it is the context that stops the work (ADR 0026,
+	// "Disconnecting").
+	RequestDeadline = time.Minute
 	// ClockSkew is how far the clocks of two enclaves may differ (ADR 0024).
 	ClockSkew = time.Minute
 	// SweepGrace is how long after disconnected_at the sweep makes its last
-	// pass: an ingest that read the record just before the disconnect has
-	// finished by then, whichever enclave's clock it ran on.
-	SweepGrace = IngestDeadline + ClockSkew + time.Minute
+	// pass. A request or a delivery that read the record before the
+	// disconnect's commit writes nothing after its own deadline, measured on
+	// its own monotonic clock from before that read: at most
+	// max(IngestDeadline, RequestDeadline) after the commit. disconnected_at
+	// and the sweep's "now" come from two enclaves' wall clocks, which differ
+	// by at most ClockSkew; a minute more is margin. So 1 + 1 + 1 = 3
+	// minutes (ADR 0026, "Disconnecting").
+	SweepGrace = max(IngestDeadline, RequestDeadline) + ClockSkew + time.Minute
 	// SweepInterval is how often every enclave runs the sweep.
 	SweepInterval = 10 * time.Minute
-	// ClaimStale is how long a delivery's claim on a message stands before
-	// another delivery of the same message takes it over, with the same
-	// message identifier.
-	ClaimStale = 2 * IngestDeadline
-	// SeenFor is how long a message is remembered as stored: longer than a
-	// sender retries (RFC 5321 suggests four to five days).
+	// ClaimStale is how long a delivery's claim on a message stands
+	// (inbox.SeenEntry.ClaimedAt) before another delivery of the same
+	// message takes it over, keeping what the claim fixed. A delivery's own
+	// work ends within IngestDeadline, so a claim older than this is one
+	// whose delivery has stopped, whichever enclave's clock it was taken on;
+	// two deliveries that overlap anyway write the same keys with the same
+	// fixed fields, so ClaimStale saves work and decides nothing.
+	ClaimStale = IngestDeadline + ClockSkew
+	// SeenFor is how long a message's seen# entry lives, from its first
+	// receipt (fixed in the claim, never renewed): longer than a sender
+	// retries (RFC 5321 suggests four to five days). A message sent again
+	// after it is a new message, stored a second time.
 	SeenFor = 7 * 24 * time.Hour
 )
 
@@ -135,24 +155,32 @@ type Notifier interface {
 }
 
 // Records is what the service needs of the anchored records (a mailbox's, an
-// account's list); *store.Anchored implements it once pull request 0 adds
-// CreateNew.
+// account's list); *store.Anchored with Strict and OnlyNewest implements it
+// once pull request 0 adds CreateNew and the strict option (ADR 0026, "The
+// store"). Every method fails with store.ErrForked, before anything else,
+// when the record has a fork at any version of its history; the strict
+// writers (PutRecordAt, RemoveRecord, CreateNew) read the whole history
+// again before they append, and append nothing to a forked record.
 type Records interface {
-	// GetRecordAt reads a record and where it was read: store.ErrNotFound
-	// when it was never made or was removed, store.ErrLost when its newest
-	// value is gone, store.ErrForked when two commits are at its newest
-	// version.
+	// GetRecordAt reads a record and where it was read: store.ErrForked; then
+	// store.ErrNotFound when it was never made or was removed;
+	// store.ErrLost when its newest value is gone or is not what was
+	// committed.
 	GetRecordAt(ctx context.Context, name string) (*store.Record, store.Mark, error)
 	// PutRecordAt writes a record only if nothing was committed for it since
-	// the mark: store.ErrChanged otherwise.
+	// the mark: store.ErrForked; then store.ErrChanged.
 	PutRecordAt(ctx context.Context, r *store.Record, at store.Mark) error
 	// CreateNew makes a record only if no commit of this deployment was ever
-	// made for its name, a removal included: store.ErrExists otherwise. It is
-	// the fence of ADR 0026: a name made once, cancelled or removed is never
-	// made again.
+	// made for its name and nothing is under its plain name: store.ErrForked
+	// when its history has a fork; then store.ErrExists when it has any
+	// commit at all, a removal included. It is the fence of ADR 0026: a
+	// name made once, cancelled or removed is never made again.
 	CreateNew(ctx context.Context, r *store.Record) error
 	// RemoveRecord commits that the record is gone and deletes every stored
-	// version of it.
+	// version of it. It reads only the history, never the value, so it
+	// removes a lost record as well as a readable one (ADR 0026, "An
+	// unreadable mailbox"): store.ErrForked for a forked one, which takes
+	// no commit. Removing a removed record succeeds.
 	RemoveRecord(ctx context.Context, name string) error
 }
 

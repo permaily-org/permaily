@@ -25,7 +25,7 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 | `msgauth` | DKIM verification with DNS-over-HTTPS (F1) |
 | `keys` | keys for one purpose derived from the root secret (`Derive`); the root secret (`Root`): created in an enclave, stored one record per image under that image's KMS key, accepted only from an enclave of the same image or of a public release, handed only to a newer public release (ADR 0013); data keys wrapped under it; KMS with attestation (Recipient, CMS); the reader that watches the policy and grants of the image's key and keeps every state seen, for `/status`; local keys for dev |
 | `envelope` | AES-256-GCM with key commitment and context binding (F1); `Sign` for values that stay readable outside the enclave and only an enclave can make (F2); `SealText` for sealed values kept as text, in entries |
-| `store` | DynamoDB and S3 store for mailboxes, messages, the enclave's own records (sealed, or readable and signed) and entries (small versioned rows that can expire: sessions, invitations); `Anchored`, which refuses an earlier copy of a record and writes one only if no other enclave changed it since it was read; in-memory store for dev and tests |
+| `store` | DynamoDB and S3 store for mailboxes, messages, the enclave's own records (sealed, or readable and signed) and entries (small versioned rows that can expire: sessions, invitations); `Anchored`, which refuses an earlier copy of a record and writes one only if no other enclave changed it since it was read; in-memory store for dev and tests. `strict.go`, `scan.go` and `parts.go` declare what ADR 0026's pull request 0 builds (strict records, the descending scan, a message's parts); nothing implements them yet |
 
 ## Rules
 

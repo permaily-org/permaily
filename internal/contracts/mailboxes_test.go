@@ -160,6 +160,10 @@ func TestMailboxErrors(t *testing.T) {
 			t.Errorf("%s is taken for not_found", e.Code)
 		}
 	}
+	// A forked mailbox answers as an unreadable one, with words of its own.
+	if !errors.Is(ErrMailboxForked, ErrMailboxUnreadable) || ErrMailboxForked.Message == ErrMailboxUnreadable.Message {
+		t.Error("a forked mailbox is not told apart in words only")
+	}
 	if ErrInvalidRetention.Code != "invalid_retention" {
 		t.Error("the F1 API's code changed")
 	}
