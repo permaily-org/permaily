@@ -281,9 +281,10 @@ func (r *storeReader) Attachment(ctx context.Context, b Box, id string, index in
 			n++
 			return true, nil
 		}
-		var err error
-		data, err = io.ReadAll(io.LimitReader(p.Body, int64(len(raw))))
-		found = err == nil
+		// What decodes, as delivery measured it when it listed the part: a
+		// body whose encoding breaks half way is the bytes before the break.
+		data, _ = io.ReadAll(io.LimitReader(p.Body, int64(len(raw))))
+		found = true
 		return false, nil
 	})
 	if walkErr != nil && errors.Is(walkErr, ctx.Err()) {

@@ -162,6 +162,11 @@ func newInboxApp(t *testing.T, edit func(*httpapi.MailboxesConfig)) *inboxApp {
 
 func (a *inboxApp) call(cookie, method, path, body string) *httptest.ResponseRecorder {
 	a.t.Helper()
+	return serve(a.h, cookie, method, path, body)
+}
+
+// serve asks h as the app does: same origin for changes, the session cookie.
+func serve(h http.Handler, cookie, method, path, body string) *httptest.ResponseRecorder {
 	var r *http.Request
 	if body == "" {
 		r = httptest.NewRequest(method, "https://app.permaily.test"+path, nil)
@@ -177,7 +182,7 @@ func (a *inboxApp) call(cookie, method, path, body string) *httptest.ResponseRec
 		r.AddCookie(&http.Cookie{Name: httpapi.SessionCookie, Value: cookie})
 	}
 	w := httptest.NewRecorder()
-	a.h.ServeHTTP(w, r)
+	h.ServeHTTP(w, r)
 	return w
 }
 
@@ -530,11 +535,13 @@ func TestR1AnswersAndErrors(t *testing.T) {
 	})
 }
 
-// R2: no route answers anything of a message as a document. Every answer of
-// every route, answered and refused, has nosniff; errors are JSON with fixed
-// words; JSON answers are JSON; downloads are downloads; and nothing of
-// another account's mailbox was read.
-func TestMailboxRoutesNeverAnswerADocument(t *testing.T) {
+// frameCheck asserts what every answer of the person's routes keeps for the
+// frame (ADR 0026, "What pull requests 1 to 4 keep true for the frame"):
+// nosniff; nothing of a message in a body that is neither JSON nor a
+// download; downloads only as attachments with the sandbox; JSON otherwise,
+// and errors with fixed words.
+func frameCheck(t *testing.T, name string, rec *httptest.ResponseRecorder) {
+	t.Helper()
 	fixed := map[string]bool{"no such endpoint": true, "internal error": true, "this request did not come from the app": true, "send JSON": true,
 		"the request is not the JSON this endpoint takes": true}
 	for _, e := range []*contracts.Error{contracts.ErrUnauthorized, contracts.ErrNotFound, contracts.ErrAccountClosing, contracts.ErrTermsChanged,
@@ -543,45 +550,50 @@ func TestMailboxRoutesNeverAnswerADocument(t *testing.T) {
 		contracts.ErrTooManyMessages, contracts.ErrTooManyRequests, contracts.ErrTooManyMailboxes} {
 		fixed[e.Message] = true
 	}
-	check := func(t *testing.T, name string, rec *httptest.ResponseRecorder) {
-		t.Helper()
-		h := rec.Header()
-		if h.Get("X-Content-Type-Options") != "nosniff" {
-			t.Errorf("%s: no nosniff", name)
-		}
-		body := rec.Body.String()
-		for _, s := range []string{"7f3a", "<script", "<img", "onload", "alert("} {
-			if strings.Contains(body, s) && h.Get("Content-Disposition") == "" && !strings.HasPrefix(h.Get("Content-Type"), "application/json") {
-				t.Errorf("%s: %q in a body that is not JSON nor a download", name, s)
-			}
-		}
-		switch {
-		case rec.Code == 204:
-			if body != "" {
-				t.Errorf("%s: a body with 204", name)
-			}
-		case h.Get("Content-Disposition") != "":
-			if ct := h.Get("Content-Type"); ct != "application/octet-stream" && ct != "message/rfc822" {
-				t.Errorf("%s: a download of type %q", name, ct)
-			}
-			if !strings.HasPrefix(h.Get("Content-Disposition"), "attachment; ") || h.Get("Content-Security-Policy") != "sandbox; default-src 'none'" ||
-				h.Get("Cross-Origin-Resource-Policy") != "same-origin" || h.Get("Cache-Control") != "no-store" {
-				t.Errorf("%s: download headers %v", name, h)
-			}
-		default:
-			if h.Get("Content-Type") != "application/json" {
-				t.Errorf("%s: %d of type %q", name, rec.Code, h.Get("Content-Type"))
-			}
-			if rec.Code >= 400 {
-				var e httpapi.APIError
-				if json.Unmarshal(rec.Body.Bytes(), &e) != nil || !fixed[e.Error.Message] {
-					t.Errorf("%s: error %q", name, body)
-				}
-			} else if !json.Valid(rec.Body.Bytes()) {
-				t.Errorf("%s: not JSON", name)
-			}
+	h := rec.Header()
+	if h.Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("%s: no nosniff", name)
+	}
+	body := rec.Body.String()
+	for _, s := range []string{"7f3a", "<script", "<img", "onload", "alert("} {
+		if strings.Contains(body, s) && h.Get("Content-Disposition") == "" && !strings.HasPrefix(h.Get("Content-Type"), "application/json") {
+			t.Errorf("%s: %q in a body that is not JSON nor a download", name, s)
 		}
 	}
+	switch {
+	case rec.Code == 204:
+		if body != "" {
+			t.Errorf("%s: a body with 204", name)
+		}
+	case h.Get("Content-Disposition") != "":
+		if ct := h.Get("Content-Type"); ct != "application/octet-stream" && ct != "message/rfc822" {
+			t.Errorf("%s: a download of type %q", name, ct)
+		}
+		if !strings.HasPrefix(h.Get("Content-Disposition"), "attachment; ") || h.Get("Content-Security-Policy") != "sandbox; default-src 'none'" ||
+			h.Get("Cross-Origin-Resource-Policy") != "same-origin" || h.Get("Cache-Control") != "no-store" {
+			t.Errorf("%s: download headers %v", name, h)
+		}
+	default:
+		if h.Get("Content-Type") != "application/json" {
+			t.Errorf("%s: %d of type %q", name, rec.Code, h.Get("Content-Type"))
+		}
+		if rec.Code >= 400 {
+			var e httpapi.APIError
+			if json.Unmarshal(rec.Body.Bytes(), &e) != nil || !fixed[e.Error.Message] {
+				t.Errorf("%s: error %q", name, body)
+			}
+		} else if !json.Valid(rec.Body.Bytes()) {
+			t.Errorf("%s: not JSON", name)
+		}
+	}
+}
+
+// R2: no route answers anything of a message as a document. Every answer of
+// every route, answered and refused, has nosniff; errors are JSON with fixed
+// words; JSON answers are JSON; downloads are downloads; and nothing of
+// another account's mailbox was read.
+func TestMailboxRoutesNeverAnswerADocument(t *testing.T) {
+	check := frameCheck
 	for _, standing := range []mailboxes.Standing{{TermsAgreed: true}, {Closing: true, TermsAgreed: true}, {}} {
 		a := newInboxApp(t, nil)
 		box := a.fake.Add(alice, "Mine")
