@@ -85,20 +85,19 @@ func closingKey(doc *accountDoc) string { return timedKey(doc.ClosesAt, doc.ID) 
 // again changes nothing: the day stays.
 func (s *Service) StartDeletion(ctx context.Context, who *Authenticated) (*contracts.Account, error) {
 	var view contracts.Account
+	// The day is set once: the change below may be tried more than once.
+	closes := s.now().Add(domain.AccountClosing).Truncate(time.Second)
 	_, err := s.rewrite(ctx, who.AccountID, func(doc *accountDoc) error {
 		if doc.State == contracts.AccountClosing {
 			view = doc.view()
 			return errUnchanged
 		}
-		doc.State, doc.ClosesAt = contracts.AccountClosing, s.now().Add(domain.AccountClosing).Truncate(time.Second)
+		doc.State, doc.ClosesAt = contracts.AccountClosing, closes
 		view = doc.view()
 		// The entry goes in before the record: one the record does not bear
 		// out is dropped when it is found, where a closing account without
 		// one would be found only when someone uses it.
-		if err := s.point(ctx, closingPartition, closingKey(doc), doc.ID, 0); err != nil && !errors.Is(err, store.ErrExists) {
-			return err
-		}
-		return nil
+		return s.listClosing(ctx, doc)
 	})
 	if err != nil && !errors.Is(err, errUnchanged) {
 		return nil, err
@@ -111,6 +110,32 @@ func (s *Service) StartDeletion(ctx context.Context, who *Authenticated) (*contr
 		return nil, err
 	}
 	return &view, nil
+}
+
+// listClosing writes the entry of an account in the list of closing accounts.
+// One that is there already is written again, so that it is another entry:
+// it may be of a deletion that was just cancelled, in this enclave or in
+// another, whose entry is about to be deleted as it was read then
+// (CancelDeletion), and this account would be closing and not in the list.
+func (s *Service) listClosing(ctx context.Context, doc *accountDoc) error {
+	key := closingKey(doc)
+	for range maxRewrites {
+		err := s.point(ctx, closingPartition, key, doc.ID, 0)
+		if !errors.Is(err, store.ErrExists) {
+			return err
+		}
+		e, err := s.cfg.Entries.GetEntry(ctx, closingPartition, key)
+		if errors.Is(err, store.ErrNotFound) {
+			continue // deleted meanwhile
+		}
+		if err != nil {
+			return err
+		}
+		if err := s.point(ctx, closingPartition, key, doc.ID, e.Version); !errors.Is(err, store.ErrConflict) {
+			return err
+		}
+	}
+	return errors.New("accounts: an entry of the list of closing accounts keeps changing")
 }
 
 // closeOthers signs out every device of the account but the one that asks.
@@ -134,13 +159,22 @@ func (s *Service) closeOthers(ctx context.Context, who *Authenticated) error {
 // that is not closing stays as it is.
 func (s *Service) CancelDeletion(ctx context.Context, who *Authenticated) (*contracts.Account, error) {
 	var view contracts.Account
-	entry := ""
+	var entry *store.Entry
 	_, err := s.rewrite(ctx, who.AccountID, func(doc *accountDoc) error {
 		if doc.State != contracts.AccountClosing {
 			view = doc.view()
 			return errUnchanged
 		}
-		entry = closingKey(doc)
+		// The entry is read before the record says the account is kept, and
+		// deleted below only as it was read: once the record says so, the
+		// person can ask to delete again, and the entry that is there then is
+		// of that (listClosing).
+		entry = nil
+		if e, err := s.cfg.Entries.GetEntry(ctx, closingPartition, closingKey(doc)); err == nil {
+			entry = e
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
 		doc.State, doc.ClosesAt = contracts.AccountActive, time.Time{}
 		view = doc.view()
 		return nil
@@ -153,8 +187,10 @@ func (s *Service) CancelDeletion(ctx context.Context, who *Authenticated) (*cont
 	}
 	// The record says it is kept, so the entry is nothing now. If it stays,
 	// it is dropped when the enclave next goes through the list.
-	if err := s.forget(ctx, closingPartition, entry); err != nil {
-		s.cfg.Log.Warn("accounts: an entry of the list of closing accounts could not be deleted")
+	if entry != nil {
+		if err := s.cfg.Entries.DeleteEntryAt(ctx, entry); err != nil && !errors.Is(err, store.ErrConflict) {
+			s.cfg.Log.Warn("accounts: an entry of the list of closing accounts could not be deleted")
+		}
 	}
 	s.cfg.Log.Info("accounts: account kept")
 	return &view, nil
@@ -222,7 +258,13 @@ func (s *Service) unpoint(ctx context.Context, key []byte, partition, accountID 
 	if err != nil || pointed(key, pointer) != accountID {
 		return err
 	}
-	return s.forget(ctx, pointer.Partition, pointer.Key)
+	// Only the pointer that was read: another enclave may have ended this
+	// removal meanwhile, and the address may have an account again, whose
+	// pointer is where this one was.
+	if err := s.cfg.Entries.DeleteEntryAt(ctx, pointer); err != nil && !errors.Is(err, store.ErrConflict) {
+		return err
+	}
+	return nil
 }
 
 // clear removes what is stored under an account's identifier: its sessions

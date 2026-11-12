@@ -458,6 +458,25 @@ func (s *AWS) DeleteEntry(ctx context.Context, partition, key string) error {
 	return nil
 }
 
+// DeleteEntryAt implements Entries.
+func (s *AWS) DeleteEntryAt(ctx context.Context, e *Entry) error {
+	_, err := s.DB.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName:                 aws.String(s.Table),
+		Key:                       entryKey(e.Partition, e.Key),
+		ConditionExpression:       aws.String("version = :version AND #value = :value"),
+		ExpressionAttributeNames:  map[string]string{"#value": "text"},
+		ExpressionAttributeValues: map[string]ddb.AttributeValue{":version": num(int64(e.Version)), ":value": str(string(e.Value))}, //nolint:gosec // a count of writes
+	})
+	if err != nil {
+		var failed *ddb.ConditionalCheckFailedException
+		if errors.As(err, &failed) {
+			return ErrConflict
+		}
+		return fmt.Errorf("store: delete entry: %w", err)
+	}
+	return nil
+}
+
 // ListEntries implements Entries.
 func (s *AWS) ListEntries(ctx context.Context, partition, prefix, after string, limit int) ([]Entry, error) {
 	cond, values := "pk = :pk", map[string]ddb.AttributeValue{":pk": str(partition)}

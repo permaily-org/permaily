@@ -732,6 +732,20 @@ func (f *failing) PutRecord(ctx context.Context, r *store.Record, create bool) e
 	return f.Records.PutRecord(ctx, r, create)
 }
 
+func (f *failing) GetRecordAt(ctx context.Context, name string) (*store.Record, store.Mark, error) {
+	if err := f.err("get record"); err != nil {
+		return nil, store.Mark{}, err
+	}
+	return f.Records.GetRecordAt(ctx, name)
+}
+
+func (f *failing) PutRecordAt(ctx context.Context, r *store.Record, at store.Mark) error {
+	if err := f.err("put record"); err != nil {
+		return err
+	}
+	return f.Records.PutRecordAt(ctx, r, at)
+}
+
 func (f *failing) GetEntry(ctx context.Context, partition, key string) (*store.Entry, error) {
 	if err := f.err("get entry"); err != nil {
 		return nil, err
@@ -764,6 +778,16 @@ func (f *failing) DeleteEntry(ctx context.Context, partition, key string) error 
 		return err
 	}
 	return f.Entries.DeleteEntry(ctx, partition, key)
+}
+
+func (f *failing) DeleteEntryAt(ctx context.Context, e *store.Entry) error {
+	if err := f.err("delete entry"); err != nil {
+		return err
+	}
+	if err := f.err("delete " + e.Partition); err != nil {
+		return err
+	}
+	return f.Entries.DeleteEntryAt(ctx, e)
 }
 
 func (f *failing) ListEntries(ctx context.Context, partition, prefix, after string, limit int) ([]store.Entry, error) {

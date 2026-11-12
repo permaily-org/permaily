@@ -342,6 +342,8 @@ var errUnchanged = errors.New("accounts: nothing to change")
 func (s *Service) SetPasskeyOnly(ctx context.Context, who *Authenticated, in contracts.PasskeyOnly) (*contracts.PasskeyOnlyState, error) {
 	out := &contracts.PasskeyOnlyState{PasskeyOnly: in.On, RecoveryCodes: []string{}}
 	_, err := s.change(ctx, who.AccountID, func(doc *accountDoc) error {
+		// Codes made on a try that was not written are in no record.
+		out.RecoveryCodes = []string{}
 		if doc.PasskeyOnly == in.On {
 			return errUnchanged
 		}
@@ -428,9 +430,10 @@ func (s *Service) Recover(ctx context.Context, in contracts.Recovery, userAgent 
 	if !doc.PasskeyOnly || !s.recoveryTry(address, right) || !right {
 		return nil, "", contracts.ErrInvalidCode
 	}
-	// Of two uses of one code at the same time, the second finds it gone. A
-	// closing account takes the code too: its person signs in to cancel.
-	_, err = s.rewrite(ctx, doc.ID, func(doc *accountDoc) error {
+	// Of two uses of one code at the same time, here or in two enclaves, the
+	// second finds it gone. A closing account takes the code too: its person
+	// signs in to cancel.
+	doc, err = s.rewrite(ctx, doc.ID, func(doc *accountDoc) error {
 		i := doc.recoveryCode(hash)
 		if i < 0 || !doc.PasskeyOnly || doc.Address != address {
 			return contracts.ErrInvalidCode

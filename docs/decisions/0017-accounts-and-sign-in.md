@@ -65,7 +65,7 @@ Decided while building the first piece, each to keep whoever runs the storage ou
 - **Every failure of a passkey ceremony is the same error** (`invalid_passkey`), and of a recovery the same as a wrong code (`invalid_code`): none says which part was wrong.
 - **A recovery code** is sixteen characters of the invitation alphabet, shown in four groups; its hash is taken with the account's identifier. Wrong ones are counted only for an address whose account has "passkey only" on, so made-up addresses do not fill the memory, and past the limit the right code is refused too with the same error, never with one that would say such an account exists. An address without an account costs the storage the same reads as one with.
 - **When too many ceremonies wait** (ten thousand), the oldest is dropped and the new one is kept: anyone can start a sign-in, so refusing new ones would let anyone keep everybody out.
-- **Changes to an account's record are made one at a time** inside an enclave (`change`). `store.Records` has no conditional write, so two enclaves running at once could undo each other's change to one account; one enclave runs today, and this has to be closed in `internal/store` before there are two.
+- **Changes to an account's record never undo one another**, in one enclave or in two. Each is a read, an edit and a write, and the write is refused when anything was committed for the record since the read (`store.Anchored.PutRecordAt`, ADR 0016). Then the record is read again and the edit runs again on what is there, four times at most; after that the change fails with an error and nothing is written. A change that raced with the account's removal is refused the same way, so the account does not come back. Inside one enclave the changes still go one at a time (`change`), so that its own requests do not make each other start over. What else two enclaves at once would break is listed below.
 - **Not done on purpose:** the synced flag of a passkey is not read again at each sign-in, turning "passkey only" on closes no session, a recovery leaves the mode on, and no message is sent yet when the ways to sign in change (the notices by mail come with step 9 of the plan).
 
 The web app's API for this, all under `/api/v1/`, JSON, binary values as base64url without padding in the shapes of `PublicKeyCredential.toJSON()`:
@@ -111,6 +111,33 @@ The web app's API for this, all under `/api/v1/`, JSON, binary values as base64u
 Accepted: sessions are signed and not anchored. A session that was closed and is put back in the table by whoever runs the storage works again for whoever still holds its cookie, until its thirty days end. Anchoring each session would write a locked commit for every sign-in.
 
 ## What it rests on, and what is left
+
+### Two enclaves at once
+
+One enclave runs today, and running two at once is not ready. This is what reading the code showed on 2026-11-12; none of what does not hold is fixed.
+
+What holds:
+
+- **An account's record**: no change undoes another, and none brings a removed account back (above).
+- **An invitation is used once**: of two sign-ups with it, one deletes it.
+- **Two sign-ups of one address make one account**: the pointer from the address is written only where none is, and the sign-up that loses removes its record.
+- **A session** is closed once, and one that was just closed is not written back by a request that was using it.
+- **Removing an account** can be done by both at once: every step can be done twice. The pointer from the address is deleted only as it was read, so not the pointer of an account the address made meanwhile.
+- **Deleting asked again in the second it was cancelled** leaves the account in the list of closing accounts: the entry is written again, and the cancel deletes only the entry it read.
+- **Devices signed in at the same time** can leave an account with a few more sessions than it keeps; the next sign-in brings it back.
+
+What does not:
+
+- **A sign-in that was started is in one enclave's memory**: by mail (the code and the link), a passkey ceremony, a trip to a provider, an address waiting to be confirmed. Ended in the other enclave it fails as a wrong code or a wrong passkey, and the person starts again. Nothing sends the two requests to the same enclave.
+- **Limits are counted by each enclave**, so each is as many times higher as there are enclaves: sign-in messages an hour for an address and for an invitation, wrong codes a day for an address, wrong recovery codes an hour. The five tries of one code are not: they belong to one sign-in.
+- **The providers' applications** are read once into memory and written whole (`changeApps`). A secret given through one enclave is not seen by the other until it restarts, and what the other then writes drops it.
+- **One provider account linked to two accounts in the same moment**, through two enclaves, can end listed by both records, with its pointer leading to one. It signs in to that one; the other counts a way in that does not work.
+- **A removal wins over a cancel that lands while it runs.** An enclave that read the account as due removes it; a cancel written in that moment through another enclave, whose clock is a little behind, was answered as kept. One enclave decides this under its lock.
+- **Signing the other devices out when deleting is asked** misses a device that is signing in just then, in one enclave as in two. That session sees only that the account is closing.
+- **The TLS identity** (ADR 0016) is stored with a plain write. Two enclaves hold the same key and each asks the CA for its own certificate; the CA's check reaches whichever enclave the connection lands on, so it can fail, and the certificate saved last is the one a restart finds.
+- **The test mailbox** is made, and its state written, with a plain write. Two enclaves that start together can each make it with a key of its own; the later one stays, and mail sealed under the other cannot be opened.
+- **What `/status` says is one enclave's**: the history of the mail watch (ADR 0021) and of the key policy, the commits it has seen, the trust root it took. Whoever verifies asks one enclave and learns nothing of the other.
+- **A commit added by whoever writes to the bucket**, in the moment between two changes of one account, loses one of them. It is noticed and not prevented (ADR 0016).
 
 - The records whose going back would matter here (ways to sign in, the "passkey only" switch, account state) go through `store.Anchored` (ADR 0016), so an earlier copy of them is refused.
 - A provider that lies about a verified address can take over the account with that address. The "passkey only" mode is the way out for whoever does not accept that.
