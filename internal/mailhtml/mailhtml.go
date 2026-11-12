@@ -159,7 +159,6 @@ func render(ctx context.Context, in Input) ([]byte, contracts.MessageHTML, error
 	}
 	second := &cappedWriter{max: limit}
 	if err := html.Render(second, again); err != nil || !bytes.Equal(first.buf.Bytes(), second.buf.Bytes()) {
-		debugMismatch(first.buf.Bytes(), second.buf.Bytes())
 		return nil, contracts.MessageHTML{}, errUnreadable
 	}
 	stats := wk.stats
