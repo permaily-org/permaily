@@ -13,6 +13,9 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['tests/**/*.test.{ts,tsx}'],
     setupFiles: ['tests/setup.ts'],
+    // A test that waits on screens and the fake server takes a second or two; on a busy machine more than
+    // the default five, and one cut short keeps running into the next test of its file.
+    testTimeout: 30_000,
     coverage: {
       provider: 'v8',
       reporter: ['text'],
