@@ -78,6 +78,7 @@ type recorder struct {
 	app      []seen
 	internet []seen
 	connects []string
+	lookups  []string
 }
 
 func (r *recorder) add(list *[]seen, s seen) {
@@ -132,6 +133,15 @@ func TestServe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if dns := os.Getenv("PERMAILY_FRAMETEST_DNS"); dns != "" {
+		pc, err := net.ListenPacket("udp", dns)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pc.Close()
+		go s.resolver(pc)
+		t.Logf("frametest: resolver on %s", dns)
+	}
 	srv := &http.Server{Handler: http.HandlerFunc(s.proxy), ReadHeaderTimeout: 10 * time.Second}
 	t.Logf("frametest: proxy on %s, app at %s, internet at %s", addr, s.app.Listener.Addr(), s.internet.Listener.Addr())
 	if err := srv.Serve(ln); err != nil {
@@ -184,10 +194,27 @@ func TestTheSuiteServerAnswers(t *testing.T) {
 	if err != nil || res.StatusCode != 200 {
 		t.Fatal(err)
 	}
+	// The resolver answers every name as one that does not exist, and
+	// records it.
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	go s.resolver(pc)
+	r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "udp", pc.LocalAddr().String())
+	}}
+	if addrs, err := r.LookupHost(context.Background(), "pre.evil.example"); err == nil || len(addrs) != 0 {
+		t.Fatalf("resolved: %v %v", addrs, err)
+	}
 	s.rec.mu.Lock()
 	defer s.rec.mu.Unlock()
 	if len(s.rec.internet) != 1 || s.rec.internet[0].Host != "evil.example" || len(s.rec.connects) != 1 {
 		t.Fatalf("%+v %v", s.rec.internet, s.rec.connects)
+	}
+	if len(s.rec.lookups) == 0 || s.rec.lookups[0] != "pre.evil.example" {
+		t.Fatalf("lookups %v", s.rec.lookups)
 	}
 }
 
@@ -400,10 +427,13 @@ func (s *suite) test(w http.ResponseWriter, r *http.Request) {
 		s.rec.mu.Lock()
 		defer s.rec.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"app": orEmpty(s.rec.app), "internet": orEmpty(s.rec.internet), "connects": orEmptyS(s.rec.connects)})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"app": orEmpty(s.rec.app), "internet": orEmpty(s.rec.internet),
+			"connects": orEmptyS(s.rec.connects), "lookups": orEmptyS(s.rec.lookups),
+		})
 	case "reset":
 		s.rec.mu.Lock()
-		s.rec.app, s.rec.internet, s.rec.connects = nil, nil, nil
+		s.rec.app, s.rec.internet, s.rec.connects, s.rec.lookups = nil, nil, nil, nil
 		s.rec.mu.Unlock()
 		write("text/plain", "reset")
 	case "session":
@@ -472,6 +502,70 @@ func (s *suite) test(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// resolver is the browsers' only DNS server when the suite runs isolated
+// (tests/message-frame/run.sh): it records the name of every query and
+// answers that it does not exist, so no name of a message resolves to
+// anything, and a lookup the browser made is seen.
+func (s *suite) resolver(pc net.PacketConn) {
+	buf := make([]byte, 1500)
+	for {
+		n, from, err := pc.ReadFrom(buf)
+		if err != nil {
+			return
+		}
+		name, end, ok := question(buf[:n])
+		if !ok {
+			continue
+		}
+		s.rec.mu.Lock()
+		s.rec.lookups = append(s.rec.lookups, name)
+		s.rec.mu.Unlock()
+		_, _ = pc.WriteTo(nxdomain(buf[:end]), from)
+	}
+}
+
+// question reads the name of a DNS query's first question (RFC 1035, 4.1),
+// and where that question ends.
+func question(m []byte) (string, int, bool) {
+	if len(m) < 12 || m[2]&0x80 != 0 || m[4] != 0 || m[5] == 0 {
+		return "", 0, false
+	}
+	var labels []string
+	i := 12
+	for {
+		if i >= len(m) {
+			return "", 0, false
+		}
+		l := int(m[i])
+		i++
+		if l == 0 {
+			break
+		}
+		if l > 63 || i+l > len(m) {
+			return "", 0, false
+		}
+		labels = append(labels, string(m[i:i+l]))
+		i += l
+	}
+	if i+4 > len(m) {
+		return "", 0, false
+	}
+	return strings.ToLower(strings.Join(labels, ".")), i + 4, true
+}
+
+// nxdomain is the answer to query (its header and one question): a
+// response, recursion available, name error, no records.
+func nxdomain(query []byte) []byte {
+	out := append([]byte(nil), query...)
+	out[2] = 0x80 | out[2]&0x79 // QR, the opcode and RD kept
+	out[3] = 0x80 | 3           // RA, NXDOMAIN
+	out[4], out[5] = 0, 1
+	for k := 6; k < 12; k++ {
+		out[k] = 0
+	}
+	return out
 }
 
 func orEmpty(s []seen) []seen {
