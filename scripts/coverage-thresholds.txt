@@ -9,12 +9,12 @@ github.com/permaily-org/permaily/pkg/provenance 99
 github.com/permaily-org/permaily/internal/router 100
 github.com/permaily-org/permaily/internal/httpapi 95
 github.com/permaily-org/permaily/internal/webui 75
-github.com/permaily-org/permaily/internal/hostproxy 73
+github.com/permaily-org/permaily/internal/hostproxy 77
 github.com/permaily-org/permaily/internal/envelope 97
 github.com/permaily-org/permaily/internal/keys 89
-github.com/permaily-org/permaily/internal/inbox 86
+github.com/permaily-org/permaily/internal/inbox 94
 github.com/permaily-org/permaily/internal/msgauth 86
-github.com/permaily-org/permaily/internal/smtpd 92
+github.com/permaily-org/permaily/internal/smtpd 96
 github.com/permaily-org/permaily/internal/store 97
 github.com/permaily-org/permaily/internal/tlsacme 91
 github.com/permaily-org/permaily/internal/enclave 87
@@ -22,6 +22,7 @@ github.com/permaily-org/permaily/internal/contracts 100
 github.com/permaily-org/permaily/internal/domain 100
 github.com/permaily-org/permaily/internal/domain/mail 100
 github.com/permaily-org/permaily/internal/services/accounts 99
+github.com/permaily-org/permaily/internal/services/mailboxes 95
 github.com/permaily-org/permaily/internal/sesmail 98
 github.com/permaily-org/permaily/internal/webauthn 99
 github.com/permaily-org/permaily/internal/idp 100

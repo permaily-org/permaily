@@ -21,7 +21,16 @@ func checkAnchors(a *attestation.AnchorStatus, now time.Time) error {
 	if a.Bucket == "" || a.RetentionDays < 1 {
 		return fmt.Errorf("the enclave names no store of commits, or no time it keeps them")
 	}
-	for _, r := range a.Regressions {
+	if len(a.Regressions) > 0 {
+		r := a.Regressions[0]
+		switch {
+		case r.Fork:
+			return fmt.Errorf("a %s record has two commits of different digests at version %d (seen at %s): whoever writes to the store of commits hid one while the enclave wrote the other. The enclave refuses that record",
+				r.Name, r.Found, r.At.UTC().Format(time.RFC3339))
+		case r.Unlocked:
+			return fmt.Errorf("a %s record has a commit at version %d that S3 does not keep locked (seen at %s): the store of commits did not keep a lock the enclave took, so whoever runs the storage could remove it",
+				r.Name, r.Found, r.At.UTC().Format(time.RFC3339))
+		}
 		return fmt.Errorf("the store of commits went back: the enclave had %s at version %d, and at %s the store answered version %d. Nobody can remove a commit, so the store was replaced or its guarantee failed",
 			r.Name, r.Had, r.At.UTC().Format(time.RFC3339), r.Found)
 	}

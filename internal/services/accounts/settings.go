@@ -314,6 +314,13 @@ func (s *Service) removeAt(ctx context.Context, doc *accountDoc, at store.Mark) 
 // back. The entry in the list of closing accounts goes last, so the enclave
 // keeps finding the account until nothing of it is left.
 func (s *Service) removeLocked(ctx context.Context, doc *accountDoc) error {
+	// Its mailboxes end first, each in a terminal commit, and its list is
+	// left closed (ADR 0026): a failure fails the removal, tried again.
+	if m := s.mailboxesOf(); m != nil {
+		if err := m.RemoveAccount(ctx, doc.ID); err != nil {
+			return err
+		}
+	}
 	key, err := s.signingKey(ctx)
 	if err != nil {
 		return err

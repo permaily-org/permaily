@@ -38,6 +38,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
@@ -121,6 +122,11 @@ type Config struct {
 	// nil, which is what the enclave runs with. Dev mode and the tests change
 	// it, as a new release would.
 	Terms func() string
+	// Mailboxes is the mailboxes of accounts (ADR 0026): an account's are
+	// ended when it is removed. Nil when there are none; the composition may
+	// give it later, once, with SetMailboxes, since the mailboxes service is
+	// made with this one as its accounts.
+	Mailboxes Mailboxes
 }
 
 // Limits on what one enclave keeps in memory and starts at once.
@@ -184,6 +190,9 @@ type Service struct {
 	appsMu   sync.Mutex
 	apps     map[idp.Provider]appDoc
 	appsRead time.Time
+
+	// mailboxes is Config.Mailboxes, or what SetMailboxes gave.
+	mailboxes atomic.Pointer[mailboxesHolder]
 
 	sending chan struct{}
 	// noticing bounds the notices being sent, and noticeWait is how long one
@@ -303,7 +312,7 @@ func randomString(alphabet string, n int) string {
 
 // identifiers are taken out of the errors this package logs: logs leave the
 // enclave, and a store's error names the record it was about.
-var identifiers = regexp.MustCompile(`\b(acc|ses|att|cer|inv)_[a-z2-7]{26}`)
+var identifiers = regexp.MustCompile(`\b(acc|ses|att|cer|inv|mbx)_[a-z2-7]{26}`)
 
 func scrub(err error) string { return identifiers.ReplaceAllString(err.Error(), "${1}_…") }
 

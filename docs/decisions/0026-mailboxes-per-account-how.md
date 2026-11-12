@@ -282,7 +282,7 @@ A message held for delivery takes about three times its size at its peak (the bu
 | Idle | 30 s (`IdleDeadline`) | That EHLO to the first `MAIL FROM`; a final answer to the next `MAIL FROM` or `QUIT` | `421 4.4.2`, closed |
 | A command, an answer | 1 min (`CommandTimeout`, `go-smtp`'s `ReadTimeout` and `WriteTimeout`) | One line read, one answer written | `421 4.4.2`, closed |
 | A transaction | 12 min (`TransactionDeadline`) | `MAIL FROM` to its final answer: every `RCPT TO`, all of `DATA` or every `BDAT` chunk, and the delivery | `451 4.4.2` once `DATA` started, `421 4.4.2` before; closed |
-| `DATA` that stops | 30 s (`DataStall`) | Between two reads that bring bytes | `451 4.4.2`, closed |
+| `DATA` that stops | 30 s (`DataStall`) | Between two reads that bring bytes | `451 4.4.2`, closed (between two `BDAT` chunks `go-smtp` is reading a command line, and answers `421 4.4.0`; corrected by pull request 1) |
 | The delivery | 1 min (`mailboxes.IngestDeadline`) | The last byte of `DATA` to the answer | `451 4.3.0` |
 | A session | 30 min (`SessionDeadline`) | The connection to its close | `421 4.4.2`, closed |
 | Transactions in a session | 20 (`MaxTransactions`) | Counted at `MAIL FROM` | `421 4.7.0`, closed |
@@ -347,7 +347,7 @@ So a crash never loses a message and never stores it twice while its claim lives
 | The mailbox over 600 messages this hour or 2 GiB today, in this enclave | `RCPT TO` | `451 4.7.1` |
 | An error reading the pointer or the record | `RCPT TO` | `451 4.3.0` |
 | An eleventh recipient | `RCPT TO` | `452 4.5.3` |
-| No recipient accepted | `DATA` | `554 5.5.1` |
+| No recipient accepted | `DATA` | `502 5.5.1` (`go-smtp` answers before any hook of the session; corrected by pull request 1) |
 | Bytes of `DATA` not admitted within 10 seconds | During `DATA` | `452 4.3.1`, closed |
 | More than 25 MiB | During `DATA` | `552 5.3.4`, closed |
 | The transaction past 12 minutes, or `DATA` silent for 30 seconds | During `DATA` | `451 4.4.2`, closed |
@@ -501,7 +501,7 @@ Every route that opens a mailbox runs under a context with `mailboxes.RequestDea
 
 ### What a message returns
 
-- **Text, always.** The text/plain part (the first, decoded); with none, text the enclave takes out of the text/html part with `golang.org/x/net/html`'s tokenizer (already in the module graph through `go-message`): text nodes, a line break for each block element, nothing of `script`, `style` or `head`, entities decoded, and each link's target written after its text in brackets. With neither, nothing (`text_from: none`). At most 256 KiB; `text_truncated` past it. The text view and search use it; `inbox.MessageText(raw []byte, max int) (text, from string, truncated bool)` makes it, at delivery for the search entry and at read for `Get`.
+- **Text, always.** The text/plain part (the first, decoded); with none, text the enclave takes out of the text/html part with `golang.org/x/net/html`'s tokenizer (already in the module graph through `go-message`): text nodes, a line break for each block element, nothing of `script`, `style` or `head`, entities decoded, and each link's target written after its text in brackets. With neither, nothing (`text_from: none`). At most 256 KiB; `text_truncated` past it. Pull request 1 takes the text out of HTML with a small reader of its own on the standard library's `html.UnescapeString`, with the same rules, so that the image's vendored modules do not change before pull request 2 moves `golang.org/x/net` to a direct dependency; the tokenizer can replace it then. The text view and search use it; `inbox.MessageText(raw []byte, max int) (text, from string, truncated bool)` makes it, at delivery for the search entry and at read for `Get`.
 - **And HTML, formatted**, as "Showing a message's HTML" says.
 - **Attachments** are listed by index, name, type and size, and downloaded only as files: `GET .../attachments/{index}` answers `Content-Type: application/octet-stream` whatever the message said, `Content-Disposition: attachment` with the name cleaned (`domain.AttachmentFilename`: no path, no control characters, at most 120 characters, `attachment-<n>` when nothing is left; `filename*` in UTF-8 and an ASCII `filename`), `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'`, `Cross-Origin-Resource-Policy: same-origin` and `Cache-Control: no-store`. The raw message the same way, as `message/rfc822`.
 - **Who sent it**: the DKIM results are returned (`auth`), and the app says "Signed by <domain>" or nothing; it never says a sender is who they claim to be.
@@ -770,6 +770,15 @@ S3Mock (the emulator of `docs/testing.md`) can show the listing of versions with
 **How that is proven.** The existing tests of `internal/store`, `internal/tlsacme`, `internal/services/accounts` and `cmd/permaily-enclave` pass with no change to their files (`git diff --stat develop -- '*_test.go'` shows only additions to `internal/store`). One new test pins the behaviour on a forked record that is not strict (S2): on the fake bucket, a fork under an `Anchored` with `OnlyNewest` (accounts') and under one with neither (the TLS identity's) is read by the smaller digest, written above, and removed exactly as before; a `Commits` wrapper counts the requests and finds no `History` call and the same sequence of `ListObjectVersions` and `GetObject` as a run of the same steps on `develop` (recorded in the test as the expected sequence); and `Regressions` holds what it holds today.
 
 **Done when**: as "0. Store" above.
+
+## Corrected while building pull request 1
+
+Found against the code, each with its test; nothing here changes a seam.
+
+- **A lost list is refused, not taken for none.** `store.ErrLost` is an `ErrNotFound`, so a list whose newest value is gone would have read as an account with no list, and a creation would have made a new one over it. The service refuses it (an error) wherever it reads a list; an account whose list was lost cannot make mailboxes, and its removal fails until the list is readable, which needs whoever writes to the storage to put the value back (`TestValuesThatDoNotVerify`).
+- **A lost mailbox removed by its person keeps its index entry until the sweep's last pass**: the index (signed `{account}`) is what lets a second disconnect of the caller's own removed mailbox answer as the first did, since neither the record nor the list can say whose it was. `Total` counts it until then.
+- **`NewSession` is called at each EHLO that starts a session**, the first one before `STARTTLS` too; the deadlines of a session are kept per connection, and the idle deadline starts at the EHLO that follows `STARTTLS`. A command before TLS (`RSET` included) does not extend the TLS deadline.
+- **What `go-smtp` answers itself**: no recipient at `DATA` is `502 5.5.1`; a stall between two `BDAT` chunks is `421 4.4.0`; a line over 4,000 bytes in `DATA` is `500 5.4.0`, closed. Inside `DATA` or a chunk the session's own answers hold.
 
 ## What it rests on, and what is left
 

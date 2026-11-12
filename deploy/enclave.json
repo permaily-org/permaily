@@ -1,8 +1,5 @@
 {
   "domain": "permaily.com",
-  "mailbox_id": "test",
-  "mailbox_address": "u-9b393600758a2985dae3@inbox.permaily.com",
-  "mailbox_token_sha256": "807b3fb58bb3bda476dc21545713b284eb7175be9e04c8e3995b93acf7f78b81",
   "mta_sts_mode": "enforce",
   "aws_region": "us-east-2",
   "dynamodb_table": "permaily-mail",

@@ -1,105 +1,351 @@
+// Package inbox is what is stored of a mailbox's mail and how it gets there
+// (ADR 0026): parsing a message within bounds (parse.go), the text it shows
+// and search reads (text.go), the claim and the order of writes of a delivery
+// (deliver.go), and the stored format that reading uses (box.go). Everything
+// here runs inside the enclave; the store only ever sees sealed bytes plus
+// identifiers, sizes and times.
 package inbox
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/emersion/go-message"
 	_ "github.com/emersion/go-message/charset" // decode non-UTF-8 charsets
 	"github.com/emersion/go-message/mail"
+
+	"github.com/permaily-org/permaily/internal/contracts"
 )
 
-// Meta is what the inbox extracts from a message. It is stored sealed.
-type Meta struct {
-	EnvelopeFrom           string       `json:"envelope_from"`
-	EnvelopeTo             []string     `json:"envelope_to"`
-	MessageID              string       `json:"message_id,omitempty"`
-	From                   []string     `json:"from,omitempty"`
-	To                     []string     `json:"to,omitempty"`
-	Cc                     []string     `json:"cc,omitempty"`
-	Subject                string       `json:"subject,omitempty"`
-	Date                   string       `json:"date,omitempty"`
-	ListID                 string       `json:"list_id,omitempty"`
-	Snippet                string       `json:"snippet,omitempty"`
-	Attachments            []Attachment `json:"attachments,omitempty"`
-	Auth                   []AuthResult `json:"auth,omitempty"`
-	ForwardingConfirmation bool         `json:"forwarding_confirmation,omitempty"`
-	ParseError             string       `json:"parse_error,omitempty"`
+// MaxMessageBytes is the largest message accepted (SMTP SIZE).
+const MaxMessageBytes = 25 << 20
+
+// AuthResult is the outcome of one sender authentication check.
+type AuthResult struct {
+	Method string `json:"method"` // "dkim"
+	Domain string `json:"domain"`
+	Result string `json:"result"` // "pass" or "fail: <reason>"
+	// Headers are the header fields the signature covers (its h=), lower
+	// case, and BodyLimited says it covers only part of the body (l=). Both
+	// are read by the check of Gmail's confirmation and never stored.
+	Headers     []string `json:"-"`
+	BodyLimited bool     `json:"-"`
 }
 
-// Attachment describes an attachment (its bytes stay in the raw message).
-type Attachment struct {
-	Filename    string `json:"filename"`
-	ContentType string `json:"content_type"`
-	Size        int64  `json:"size"`
-}
+// Authenticator checks a raw message's signatures (DKIM).
+type Authenticator func(ctx context.Context, raw []byte) []AuthResult
 
+// VerifyGmail turns on the mark that Google confirmed a forwarding
+// confirmation (ADR 0026, "Gmail's forwarding confirmation"). It stays off
+// until a real confirmation captured in a staging rehearsal passes the
+// predicate and its altered copies fail it: until then every confirmation is
+// stored with Verified false.
+var VerifyGmail = false
+
+// snippetRunes is how much of a message's text its summary shows.
 const snippetRunes = 200
 
-// parse extracts metadata. A message that cannot be parsed is still stored,
-// with ParseError set, so no mail is lost.
-func parse(raw []byte) (meta Meta, text string) {
-	r, err := mail.CreateReader(bytes.NewReader(raw))
-	if err != nil {
-		meta.ParseError = err.Error()
-		return meta, ""
-	}
-	h := r.Header
-	meta.MessageID, _ = h.MessageID()
-	meta.Subject, _ = h.Subject()
-	meta.Date = h.Get("Date")
-	meta.ListID = h.Get("List-Id")
-	meta.From = addresses(h, "From")
-	meta.To = addresses(h, "To")
-	meta.Cc = addresses(h, "Cc")
-
-	var body strings.Builder
-	for {
-		p, err := r.NextPart()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			meta.ParseError = err.Error()
-			break
-		}
-		switch ph := p.Header.(type) {
-		case *mail.InlineHeader:
-			ct, _, _ := ph.ContentType()
-			if ct == "text/plain" && body.Len() < 64<<10 {
-				b, _ := io.ReadAll(io.LimitReader(p.Body, 64<<10))
-				body.Write(b)
-			} else {
-				_, _ = io.Copy(io.Discard, p.Body)
-			}
-		case *mail.AttachmentHeader:
-			name, _ := ph.Filename()
-			ct, _, _ := ph.ContentType()
-			n, _ := io.Copy(io.Discard, p.Body)
-			meta.Attachments = append(meta.Attachments, Attachment{Filename: name, ContentType: ct, Size: n})
-		}
-	}
-	text = body.String()
-	meta.Snippet = snippet(text)
-	return meta, text
+// Parsed is what the enclave reads of a message once, at delivery: what is
+// sealed in its item, the start of its text for search, and a forwarding
+// confirmation when it is one.
+type Parsed struct {
+	Meta StoredMeta
+	// Text is the message's text, at most SearchTextMax bytes.
+	Text string
+	// Confirmation is set when the message is recognised as Gmail's
+	// forwarding confirmation.
+	Confirmation *Confirmation
 }
 
-func addresses(h mail.Header, key string) []string {
-	list, err := h.AddressList(key)
-	if err != nil {
-		if v := h.Get(key); v != "" {
-			return []string{v}
-		}
-		return nil
+// Confirmation is what a message recognised as Gmail's forwarding
+// confirmation says, and what the check that Google sent it needs.
+type Confirmation struct {
+	Code      string
+	Requester string
+	// What the check reads: how many of each header field there are, the
+	// From address, the addresses of To, and the address the body names as
+	// where mail will be forwarded ("" when the body is not the template).
+	froms, tos, subjects int
+	from                 string
+	to                   []string
+	named                string
+}
+
+const gmailForwarding = "forwarding-noreply@google.com"
+
+// Gmail's forwarding confirmation: the subject "(#123456789) Gmail Forwarding
+// Confirmation - Receive Mail from someone@gmail.com", and a body that says
+// "someone@gmail.com has requested to automatically forward mail to your
+// email address you@example.com" and "Confirmation code: 123456789".
+var (
+	reForwardSubject = regexp.MustCompile(`^\(#(\d{6,12})\) Gmail Forwarding Confirmation - Receive Mail from (\S+@\S+)$`)
+	reForwardCode    = regexp.MustCompile(`(?i)confirmation code:\s*(\d{6,12})`)
+	reForwardBody    = regexp.MustCompile(`(?i)(\S+@\S+)\s+has\s+requested\s+to\s+automatically\s+forward\s+mail\s+to\s+your\s+email\s+address\s+<?([^\s<>]+@[^\s<>]+?)>?[.,]?(?:\s|$)`)
+)
+
+// Verdict says what the enclave may say of a confirmation that arrived for
+// the mailbox at address, with the signatures checked at delivery: verified
+// when Google signed exactly this message for this mailbox, and for another
+// address when Google signed it for someone else's (ADR 0026). Both are false
+// while VerifyGmail is off.
+func (c *Confirmation) Verdict(auth []AuthResult, address string) (verified, forAnother bool) {
+	if !VerifyGmail || !c.signed(auth) || len(c.to) != 1 || c.named == "" {
+		return false, false
 	}
-	out := make([]string, 0, len(list))
+	to, named := strings.ToLower(c.to[0]), strings.ToLower(c.named)
+	switch address = strings.ToLower(address); {
+	case to == address && named == address:
+		return true, false
+	case to != address && named == to:
+		return false, true
+	}
+	return false, false
+}
+
+// signed is every check but which address: one From, To and Subject; From
+// exactly Gmail's forwarding service; and a passing signature of google.com
+// over From, To and Subject and the whole body.
+func (c *Confirmation) signed(auth []AuthResult) bool {
+	if c.froms != 1 || c.tos != 1 || c.subjects != 1 || c.from != gmailForwarding {
+		return false
+	}
+	return slices.ContainsFunc(auth, func(a AuthResult) bool {
+		return a.Method == "dkim" && a.Result == "pass" && a.Domain == "google.com" && !a.BodyLimited &&
+			slices.Contains(a.Headers, "from") && slices.Contains(a.Headers, "to") && slices.Contains(a.Headers, "subject")
+	})
+}
+
+// Parse reads a message within the limits of ADR 0026 ("What a message may
+// hold"). Past one it stops reading and sets Partial; a message that cannot
+// be read as mail at all is Unparsed. Mail is never refused for its content.
+func Parse(raw []byte) Parsed {
+	var p Parsed
+	head, partial := boundHeader(raw)
+	// An unknown charset or transfer encoding still gives a message to read.
+	e, _ := readEntity(head)
+	if e == nil {
+		p.Meta = StoredMeta{Unparsed: true, From: []contracts.MailAddress{}, To: []contracts.MailAddress{}, Cc: []contracts.MailAddress{}, ReplyTo: []contracts.MailAddress{}, Attachments: []contracts.MessageAttachment{}, Auth: []contracts.AuthCheck{}}
+		return p
+	}
+	h := mail.Header{Header: e.Header}
+	m := &p.Meta
+	m.MessageID, _ = h.MessageID()
+	m.MessageID = cut(m.MessageID, MaxHeaderFieldBytes, &partial)
+	m.Subject, _ = h.Subject()
+	m.Subject = cut(m.Subject, MaxSubjectBytes, &partial)
+	m.Date = cut(h.Get("Date"), MaxHeaderFieldBytes, &partial)
+	m.From = addressList(h, "From", &partial)
+	m.To = addressList(h, "To", &partial)
+	m.Cc = addressList(h, "Cc", &partial)
+	m.ReplyTo = addressList(h, "Reply-To", &partial)
+	m.Auth = []contracts.AuthCheck{}
+
+	w := walker{}
+	w.walk(e, 0)
+	partial = partial || w.partial
+	text, _, _ := w.text(SearchTextMax)
+	p.Text = text
+	m.Snippet = snippet(text)
+	m.Attachments = w.attachments
+	if m.Attachments == nil {
+		m.Attachments = []contracts.MessageAttachment{}
+	}
+	m.Partial = partial
+	p.Confirmation = recognise(h, m, w.plain, text)
+	m.Confirmation = p.Confirmation != nil
+	return p
+}
+
+// readEntity reads a message's header, within MaxHeaderBytes.
+func readEntity(b []byte) (*message.Entity, error) {
+	return message.ReadWithOptions(bytes.NewReader(b), &message.ReadOptions{MaxHeaderBytes: MaxHeaderBytes + 4})
+}
+
+// boundHeader returns raw, or, when its header block is longer than
+// MaxHeaderBytes, the complete header lines within it and no body.
+func boundHeader(raw []byte) ([]byte, bool) {
+	end := bytes.Index(raw, []byte("\r\n\r\n"))
+	if alt := bytes.Index(raw, []byte("\n\n")); end < 0 || (alt >= 0 && alt < end) {
+		end = alt
+	}
+	if (end >= 0 && end <= MaxHeaderBytes) || (end < 0 && len(raw) <= MaxHeaderBytes) {
+		return raw, false
+	}
+	head := raw[:MaxHeaderBytes]
+	if i := bytes.LastIndexByte(head, '\n'); i >= 0 {
+		head = head[:i+1]
+	}
+	out := append(bytes.Clone(head), "\r\n"...)
+	return out, true
+}
+
+// cut shortens s to at most n bytes, on a character's boundary, and says so.
+func cut(s string, n int, partial *bool) string {
+	if len(s) <= n {
+		return s
+	}
+	*partial = true
+	s = s[:n]
+	for !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+func addressList(h mail.Header, key string, partial *bool) []contracts.MailAddress {
+	out := []contracts.MailAddress{}
+	v := h.Get(key)
+	if v == "" {
+		return out
+	}
+	v = cut(v, MaxHeaderFieldBytes, partial)
+	list, err := mail.ParseAddressList(v)
+	if err != nil {
+		// What could not be read as addresses is kept as written.
+		return append(out, contracts.MailAddress{Address: v})
+	}
 	for _, a := range list {
-		out = append(out, a.Address)
+		if len(out) == MaxAddressesPerField {
+			*partial = true
+			break
+		}
+		out = append(out, contracts.MailAddress{Name: a.Name, Address: a.Address})
 	}
 	return out
+}
+
+// recognise returns the confirmation a message is, or nil: exactly one From
+// header, its address exactly Gmail's forwarding service, and a code in the
+// subject or the body. The envelope sender plays no part: nobody signs it.
+func recognise(h mail.Header, m *StoredMeta, plain, text string) *Confirmation {
+	c := &Confirmation{
+		froms:    len(h.Values("From")),
+		tos:      len(h.Values("To")),
+		subjects: len(h.Values("Subject")),
+	}
+	if c.froms != 1 || len(m.From) != 1 || strings.ToLower(m.From[0].Address) != gmailForwarding {
+		return nil
+	}
+	c.from = gmailForwarding
+	if s := reForwardSubject.FindStringSubmatch(m.Subject); s != nil {
+		c.Code, c.Requester = s[1], s[2]
+	} else if s := reForwardCode.FindStringSubmatch(text); s != nil {
+		c.Code = s[1]
+	} else {
+		return nil
+	}
+	for _, a := range m.To {
+		c.to = append(c.to, a.Address)
+	}
+	if s := reForwardBody.FindStringSubmatch(plain); s != nil {
+		c.named = s[2]
+	}
+	return c
+}
+
+// walker reads a message's parts: its first text/plain and text/html parts
+// and its attachments, within the limits of depth, parts and attachments.
+type walker struct {
+	parts       int
+	partial     bool
+	plain       string
+	plainSeen   bool
+	html        string
+	htmlSeen    bool
+	attachments []contracts.MessageAttachment
+}
+
+// maxHTMLForText bounds how much of a text/html part is read to take text
+// out of it.
+const maxHTMLForText = 2 << 20
+
+func (w *walker) walk(e *message.Entity, depth int) {
+	if depth > MaxMIMEDepth {
+		w.partial = true
+		return
+	}
+	if mr := e.MultipartReader(); mr != nil {
+		for {
+			part, err := mr.NextPart()
+			if errors.Is(err, io.EOF) {
+				return
+			}
+			if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
+				w.partial = true
+				return
+			}
+			if part == nil {
+				return
+			}
+			w.parts++
+			if w.parts > MaxMIMEParts {
+				w.partial = true
+				return
+			}
+			w.walk(part, depth+1)
+		}
+	}
+	w.leaf(e)
+}
+
+func (w *walker) leaf(e *message.Entity) {
+	ct, _, _ := e.Header.ContentType()
+	disp, params, _ := e.Header.ContentDisposition()
+	_, ctParams, _ := e.Header.ContentType()
+	name := params["filename"]
+	if name == "" {
+		name = ctParams["name"]
+	}
+	if disp == "attachment" || (name != "" && disp != "inline") || (disp == "inline" && !strings.HasPrefix(ct, "text/")) {
+		n, _ := io.Copy(io.Discard, io.LimitReader(e.Body, MaxMessageBytes+1))
+		if len(w.attachments) == MaxAttachmentsListed {
+			w.partial = true
+			return
+		}
+		if len(name) > MaxAttachmentName {
+			name = cut(name, MaxAttachmentName, &w.partial)
+		}
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		w.attachments = append(w.attachments, contracts.MessageAttachment{Index: len(w.attachments), Name: name, Type: ct, Size: n})
+		return
+	}
+	switch {
+	case (ct == "text/plain" || ct == "") && !w.plainSeen:
+		w.plainSeen = true
+		b, _ := io.ReadAll(io.LimitReader(e.Body, MessageTextMax+1))
+		w.plain = strings.ToValidUTF8(string(b), "�")
+	case ct == "text/html" && !w.htmlSeen:
+		w.htmlSeen = true
+		b, _ := io.ReadAll(io.LimitReader(e.Body, maxHTMLForText))
+		w.html = string(b)
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(e.Body, MaxMessageBytes+1))
+}
+
+// text is the message's text, at most max bytes: its text/plain part, else
+// what is taken out of its text/html part, else nothing.
+func (w *walker) text(max int) (text, from string, truncated bool) {
+	switch {
+	case w.plainSeen:
+		text, from = w.plain, contracts.TextFromPlain
+	case w.htmlSeen:
+		text, from = htmlText(w.html), contracts.TextFromHTML
+	default:
+		return "", contracts.TextFromNone, false
+	}
+	if len(text) > max {
+		truncated = true
+		text = cut(text, max, &truncated)
+	}
+	return text, from, truncated
 }
 
 func snippet(text string) string {
@@ -108,32 +354,4 @@ func snippet(text string) string {
 		return s
 	}
 	return string([]rune(s)[:snippetRunes]) + "…"
-}
-
-// Gmail's forwarding confirmation: subject "(#123456789) Gmail Forwarding
-// Confirmation - Receive Mail from someone@gmail.com", body "Confirmation code: 123456789".
-var (
-	reForwardSubject = regexp.MustCompile(`\(#(\d{6,12})\).*Forwarding Confirmation.*Receive Mail from (\S+@\S+)`)
-	reForwardCode    = regexp.MustCompile(`(?i)confirmation code:\s*(\d{6,12})`)
-)
-
-const gmailForwarding = "forwarding-noreply@google.com"
-
-// forwardingConfirmation returns the code and requesting address when meta is
-// Gmail's forwarding confirmation.
-func forwardingConfirmation(meta Meta, text string) (code, requester string, ok bool) {
-	fromGoogle := strings.EqualFold(meta.EnvelopeFrom, gmailForwarding)
-	for _, f := range meta.From {
-		fromGoogle = fromGoogle || strings.EqualFold(f, gmailForwarding)
-	}
-	if !fromGoogle {
-		return "", "", false
-	}
-	if m := reForwardSubject.FindStringSubmatch(meta.Subject); m != nil {
-		return m[1], m[2], true
-	}
-	if m := reForwardCode.FindStringSubmatch(text); m != nil {
-		return m[1], "", true
-	}
-	return "", "", false
 }
