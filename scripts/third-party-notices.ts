@@ -33,24 +33,35 @@ export const ALLOWED = new Set([
 
 type Component = { name: string; license: string; text: string }
 
-// AWS's prebuilt enclave blobs (nix/eif.nix), shipped unmodified inside the EIF.
-// The kernel and nsm.ko are GPL-2.0: they are separate programs aggregated in the
-// image, not linked with Permaily's code, and their source is published by AWS.
+// AWS's prebuilt enclave blobs (nix/aws-blobs.nix), shipped unmodified inside the
+// EIF. The kernel and nsm.ko are GPL-2.0 and init links the GNU C Library (LGPL)
+// statically: separate programs aggregated in the image, not linked with
+// Permaily's code. Their source goes out with every release as
+// permaily-gpl-source.tar.gz (nix/gpl-source.nix), and their license texts here.
+const gplSource =
+  'Source: permaily-gpl-source.tar.gz, attached to every release next to permaily.eif (`nix build .#gpl-source`; its README.md says, for each program, which source it holds and how certain it is). Distributed unmodified, as a separate program aggregated in the enclave image.'
+const licenseText = (file: string) =>
+  readFileSync(join(root, 'nix/gpl-source', file), 'utf8').trim()
 const awsBlobs: Component[] = [
   {
     name: 'Linux kernel (AWS Nitro Enclaves build, aws-nitro-enclaves-cli blobs)',
     license: 'GPL-2.0-only (aggregate, unmodified)',
-    text: 'Source: https://github.com/aws/aws-nitro-enclaves-sdk-bootstrap (kernel configuration and build) and https://cdn.kernel.org. Distributed unmodified as a separate program inside the enclave image.',
+    text: `${gplSource}\n\n${licenseText('gpl-2.0.txt')}`,
   },
   {
     name: 'nsm.ko, Nitro Secure Module driver (aws-nitro-enclaves-cli blobs)',
     license: 'GPL-2.0-only (aggregate, unmodified)',
-    text: 'Source: https://github.com/aws/aws-nitro-enclaves-sdk-bootstrap. Distributed unmodified as a separate kernel module inside the enclave image.',
+    text: `${gplSource}\n\n${licenseText('gpl-2.0.txt')}`,
   },
   {
     name: 'init (aws-nitro-enclaves-sdk-bootstrap)',
     license: 'Apache-2.0',
-    text: 'Source: https://github.com/aws/aws-nitro-enclaves-sdk-bootstrap',
+    text: 'Source: https://github.com/aws/aws-nitro-enclaves-sdk-bootstrap, and in permaily-gpl-source.tar.gz, attached to every release.',
+  },
+  {
+    name: 'GNU C Library, statically linked into init (aws-nitro-enclaves-cli blobs)',
+    license: 'LGPL-2.1-or-later (aggregate, unmodified)',
+    text: `${gplSource}\n\n${licenseText('lgpl-2.1.txt')}`,
   },
 ]
 

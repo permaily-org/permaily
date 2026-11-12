@@ -28,6 +28,7 @@ nix develop                 # go, golangci-lint, govulncheck, bun, node, opentof
 make check                  # every gate; must pass before a change is done
 make fuzz                   # short fuzzing of the attestation parser
 nix build .#eif             # enclave image + pcrs.json (x86_64 or arm64 Linux)
+nix build .#gpl-source      # source of the GPL programs in the image, published with each release
 bun run format              # Biome, whole repo
 ```
 

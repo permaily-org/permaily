@@ -110,7 +110,7 @@ nix build .#eif        # result/permaily.eif, result/pcrs.json, result/SHA256SUM
 go run ./cmd/permaily-verify -pcrs result/pcrs.json
 ```
 
-The build gives identical bytes on x86_64 and arm64 Linux (CI enforces this). Each release also publishes `pcrs.json`; `permaily-verify -release <tag>` uses it, which is weaker because it trusts CI instead of your own build.
+The build gives identical bytes on x86_64 and arm64 Linux (CI enforces this). Each release publishes `permaily.eif`, `pcrs.json`, the binaries, `permaily-gpl-source.tar.gz` (the source of the kernel, `nsm.ko` and `init` inside the image, from `nix build .#gpl-source`, which does not change the PCRs; `bun scripts/gpl-source.ts permaily.eif permaily-gpl-source.tar.gz` checks it describes that image), `third-party-notices.md` and `SHA256SUMS`, all under the same build provenance. `permaily-verify -release <tag>` uses the published `pcrs.json`, which is weaker because it trusts CI instead of your own build.
 
 The commit is compiled into the image, so the PCRs identify a commit. Builds from a working tree with uncommitted changes produce different PCRs.
 
