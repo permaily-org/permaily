@@ -142,8 +142,11 @@ func scansAndParts(t *testing.T, s partsStore, setNow func(time.Time), s3c *s3.C
 		for i := range 100 {
 			entry("s12", fmt.Sprintf("txt#%03d", i), time.Time{})
 		}
+		// The first page may or may not say More (Scanner: a page that read
+		// exactly maxRead may have nothing below it); the one below it is
+		// empty and says no more.
 		got, err := s.ScanEntriesDown(ctx, "s12", "txt#", "", 100)
-		if err != nil || got.Read != 100 || len(got.Entries) != 100 || got.Entries[0].Key != "txt#099" || got.Last != "txt#000" || !got.More {
+		if err != nil || got.Read != 100 || len(got.Entries) != 100 || got.Entries[0].Key != "txt#099" || got.Last != "txt#000" {
 			t.Fatalf("first page: read %d, %d entries, last %q, more %v, %v", got.Read, len(got.Entries), got.Last, got.More, err)
 		}
 		next, err := s.ScanEntriesDown(ctx, "s12", "txt#", got.Last, 100)

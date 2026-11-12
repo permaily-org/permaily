@@ -111,7 +111,13 @@ type Anchored struct {
 	// Strict reads every version of a record's commits, not only the newest,
 	// and refuses the record (ErrForked) wherever two commits of different
 	// digests share a version (ADR 0026, "The store"). Commits must then be a
-	// HistoryReader. A strict record is made only with CreateNew.
+	// HistoryReader. A strict record is made only with CreateNew, never taken
+	// from its plain name, and its errors do not hold its name.
+	//
+	// It holds for this Anchored only, which knows nothing of the names that
+	// other instances read: the layer that composes the store guarantees that
+	// a strict name is never read or written through an Anchored without
+	// Strict, and that strict records are made only with CreateNew.
 	Strict bool
 	Now    func() time.Time
 
@@ -187,22 +193,23 @@ func (a *Anchored) head(ctx context.Context, name string) (*Commit, uint64, erro
 // strictHead is head for a strict record: the whole history is read, a fork
 // at any version refuses the record before anything else, a commit without
 // its lock is reported, and then the store of commits must not have gone back
-// from what this enclave knows, as for every record.
+// from what this enclave knows, as for every record. Its errors do not hold
+// the record's name, which holds identifiers, and errors reach logs.
 func (a *Anchored) strictHead(ctx context.Context, name string) (*Commit, uint64, error) {
 	reader, ok := a.Commits.(HistoryReader)
 	if !ok {
-		return nil, 0, fmt.Errorf("store: commits of %s: a strict record needs a store of commits that reads its history", name)
+		return nil, 0, errors.New("store: a strict record needs a store of commits that reads its history")
 	}
 	h, err := reader.History(ctx, name)
 	if err != nil {
-		return nil, 0, fmt.Errorf("store: commits of %s: %w", name, err)
+		return nil, 0, fmt.Errorf("store: the commits of a strict record: %w", err)
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	had := a.seen[name]
 	if len(h.Forks) > 0 {
 		a.alarm(Regression{Name: name, Had: had.Version, Found: h.Forks[0].Version, Fork: true})
-		return nil, 0, fmt.Errorf("%w: %s at version %d", ErrForked, name, h.Forks[0].Version)
+		return nil, 0, fmt.Errorf("%w: at version %d", ErrForked, h.Forks[0].Version)
 	}
 	if len(h.Unlocked) > 0 {
 		a.alarm(Regression{Name: name, Had: had.Version, Found: h.Unlocked[0], Unlocked: true})
@@ -216,7 +223,7 @@ func (a *Anchored) strictHead(ctx context.Context, name string) (*Commit, uint64
 		if len(a.regressions) < maxRegressions {
 			a.regressions = append(a.regressions, Regression{Name: name, Had: had.Version, Found: found, At: a.now().UTC()})
 		}
-		return nil, 0, fmt.Errorf("%w: %s was at version %d, and the store answers %d", ErrRolledBack, name, had.Version, found)
+		return nil, 0, fmt.Errorf("%w: a strict record was at version %d, and the store answers %d", ErrRolledBack, had.Version, found)
 	}
 	if head != nil {
 		a.remember(*head)
@@ -271,6 +278,15 @@ func (a *Anchored) committed(ctx context.Context, c *Commit) (*Record, error) {
 // commits of its record changed under it.
 const maxChanges = 3
 
+// changing is the error of a read or a write that started over maxChanges
+// times. A strict record's does not hold its name, as strictHead's do not.
+func (a *Anchored) changing(name string) error {
+	if a.Strict {
+		return errors.New("store: the commits of a strict record keep changing")
+	}
+	return fmt.Errorf("store: the commits of %s keep changing", name)
+}
+
 // Mark is where a record was when it was read: what PutRecordAt needs to
 // store it only if nothing was committed since. The zero value marks nothing.
 type Mark struct {
@@ -301,6 +317,12 @@ func (a *Anchored) GetRecordAt(ctx context.Context, name string) (*Record, Mark,
 			return nil, Mark{}, err
 		}
 		at := Mark{name: name, next: next, head: head}
+		if head == nil && a.Strict {
+			if err := a.uncommitted(ctx, name); !errors.Is(err, ErrNotFound) {
+				return nil, Mark{}, err
+			}
+			return nil, at, ErrNotFound
+		}
 		if head == nil {
 			adopted, err := a.adopt(ctx, name, next)
 			if adopted {
@@ -329,7 +351,7 @@ func (a *Anchored) GetRecordAt(ctx context.Context, name string) (*Record, Mark,
 		// still the newest.
 		missing = head
 	}
-	return nil, Mark{}, fmt.Errorf("store: the commits of %s keep changing", name)
+	return nil, Mark{}, a.changing(name)
 }
 
 // adopt commits a record that has no commit yet. One written before commits
@@ -347,6 +369,24 @@ func (a *Anchored) adopt(ctx context.Context, name string, next uint64) (bool, e
 		return false, err
 	}
 	return true, nil
+}
+
+// uncommitted is what a strict record with no commit is: ErrNotFound when
+// nothing is under its plain name either. A strict record is never taken
+// from its plain name, as adopt takes the others: strict kinds came after
+// commits, so a value there with no commit is one whose commits are gone,
+// and the record is refused (ErrRolledBack, which is not ErrNotFound, so
+// nobody makes it again over that value without noticing; CreateNew answers
+// ErrExists).
+func (a *Anchored) uncommitted(ctx context.Context, name string) error {
+	_, err := a.Records.GetRecord(ctx, name)
+	switch {
+	case err == nil:
+		return fmt.Errorf("%w: a value without a commit where a strict record is", ErrRolledBack)
+	case errors.Is(err, ErrNotFound):
+		return ErrNotFound
+	}
+	return err
 }
 
 // commit stores r as a version of its own and appends the commit that makes
@@ -397,7 +437,9 @@ func (a *Anchored) PutRecordAt(ctx context.Context, r *Record, at Mark) error {
 	}
 	c, err := a.commit(ctx, r, at.next)
 	if errors.Is(err, ErrExists) {
-		a.discard(ctx, c)
+		if err := a.discard(ctx, c); err != nil {
+			return err // a strict record forked meanwhile: ErrForked, before ErrChanged
+		}
 		return ErrChanged
 	}
 	if err != nil {
@@ -413,19 +455,25 @@ func (a *Anchored) PutRecordAt(ctx context.Context, r *Record, at Mark) error {
 // discard deletes the value stored for a commit that was not made, so that it
 // does not stay in the storage. It leaves it when it cannot tell that nobody
 // reads it: two enclaves that store the same value at the same version store
-// it under the same name, and the one whose commit was made needs it.
-func (a *Anchored) discard(ctx context.Context, c *Commit) {
+// it under the same name, and the one whose commit was made needs it. It
+// returns ErrForked when the history it reads again has a fork (only a
+// strict record's can), and nothing otherwise.
+func (a *Anchored) discard(ctx context.Context, c *Commit) error {
 	head, _, err := a.head(ctx, c.Name)
+	if errors.Is(err, ErrForked) {
+		return err
+	}
 	if err != nil || head == nil {
-		return
+		return nil
 	}
 	switch {
 	case head.Version == c.Version && versioned(head) == versioned(c):
-		return // the commit that was made names this very value
+		return nil // the commit that was made names this very value
 	case head.Version > c.Version && !head.Gone() && !a.OnlyNewest:
-		return // every version is kept, and the one made at this version may be this value
+		return nil // every version is kept, and the one made at this version may be this value
 	}
 	_ = a.Records.DeleteRecord(ctx, versioned(c))
+	return nil
 }
 
 // PutRecord implements Records: r becomes the newest version. With create it
@@ -467,17 +515,27 @@ func (a *Anchored) PutRecord(ctx context.Context, r *Record, create bool) error 
 		}
 		// Another enclave took that version: write after it.
 	}
-	return fmt.Errorf("store: the commits of %s keep changing", r.Name)
+	return a.changing(r.Name)
 }
 
 // CreateNew makes a strict record only if no commit of this deployment was
-// ever made for its name and nothing is stored under its plain name from
-// before commits existed, so a name once made (and removed, or lost) is never
-// made again. In that order: ErrForked when its history has a fork,
-// ErrRolledBack when the store went back from what this enclave saw, then
-// ErrExists for any commit (a removal included, and one whose value is lost)
-// or a value under the plain name. Two enclaves that make one record at once
-// make it once: the other is told ErrExists.
+// ever made for its name and nothing is stored under its plain name, so a
+// name once made (and removed, or lost) is never made again. In that order:
+// ErrForked when its history has a fork (also one found after its append was
+// refused), ErrRolledBack when the store went back from what this enclave
+// saw, then ErrExists for any commit (a removal included, and one whose value
+// is lost) or a value under the plain name. Two enclaves that make one record
+// at once make it once: the other is told ErrExists.
+//
+// A try whose append was refused leaves the value it staged when no commit
+// is there to say it is not another enclave's (an orphan: a value no commit
+// names, which nothing reads; RemoveRecord deletes it with the rest).
+//
+// It is the only way a strict record is made, and strictness belongs to the
+// Anchored, not to the name: the layer that composes the store must make
+// every strict record with CreateNew, and must never read or write a strict
+// name through an Anchored that is not Strict (that one would read by Head,
+// adopt a plain value and write over a fork).
 func (a *Anchored) CreateNew(ctx context.Context, r *Record) error {
 	if !a.Strict {
 		return errors.New("store: CreateNew is for strict records")
@@ -506,13 +564,19 @@ func (a *Anchored) CreateNew(ctx context.Context, r *Record) error {
 			return err
 		}
 		if head != nil {
-			a.discard(ctx, c)
+			if err := a.discard(ctx, c); err != nil {
+				return err
+			}
 			return ErrExists
 		}
-		// Nobody reads the value stored for a version that holds no commit.
-		_ = a.Records.DeleteRecord(ctx, versioned(c))
+		// No commit is there yet, which does not say that none will name the
+		// value staged for this try: another enclave making the same record
+		// with the same bytes staged it under the same name, and its append
+		// may be under way (S3 answers 409 to one while the other's lands).
+		// So it stays: a value no commit names is nothing, and costs only its
+		// space; one deleted under an acknowledged commit is a record lost.
 	}
-	return fmt.Errorf("store: the commits of %s keep changing", r.Name)
+	return a.changing(r.Name)
 }
 
 // maxVersionPages bounds how many pages of stored versions one removal
@@ -546,7 +610,7 @@ func (a *Anchored) RemoveRecord(ctx context.Context, name string) error {
 		a.mu.Unlock()
 		return a.deleteVersions(ctx, name)
 	}
-	return fmt.Errorf("store: the commits of %s keep changing", name)
+	return a.changing(name)
 }
 
 // deleteVersions deletes everything stored of a record that was removed.
@@ -566,6 +630,9 @@ func (a *Anchored) deleteVersions(ctx context.Context, name string) error {
 				return err
 			}
 		}
+	}
+	if a.Strict {
+		return errors.New("store: the stored versions of a strict record keep coming back")
 	}
 	return fmt.Errorf("store: the stored versions of %s keep coming back", name)
 }
@@ -623,7 +690,13 @@ func (m *MemoryCommits) Head(_ context.Context, name string) (*Commit, uint64, e
 func (m *MemoryCommits) head(name string) (*Commit, uint64) {
 	var latest *Commit
 	used := map[uint64]bool{}
-	for _, c := range m.commits[name] {
+	// A copy is a commit at its version as the original is, as S3Commits
+	// reads one: it stays when the original is forgotten.
+	all := slices.Clone(m.commits[name])
+	for _, c := range m.copies[name] {
+		all = append(all, c.commit)
+	}
+	for _, c := range all {
 		// Of two commits at one version, the one with the smaller digest, as
 		// S3Commits.Head answers.
 		if latest == nil || c.Version > latest.Version || (c.Version == latest.Version && bytes.Compare(c.Digest[:], latest.Digest[:]) < 0) {
@@ -656,6 +729,11 @@ func (m *MemoryCommits) Append(_ context.Context, c Commit) (*Commit, error) {
 			return nil, ErrExists
 		}
 	}
+	for _, old := range m.copies[c.Name] {
+		if old.commit.Version == c.Version {
+			return nil, ErrExists
+		}
+	}
 	m.commits[c.Name] = append(m.commits[c.Name], c)
 	return &c, nil
 }
@@ -671,8 +749,9 @@ func (m *MemoryCommits) Take(name string, version uint64) {
 	m.taken[name][version] = true
 }
 
-// Forget removes the newest commit of name. The real store lets nobody do
-// that; tests use it to see what an enclave does if it happens anyway.
+// Forget removes the newest commit of name, not its copies (Copy). The real
+// store lets nobody do that; tests use it to see what an enclave does if it
+// happens anyway.
 func (m *MemoryCommits) Forget(name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -413,6 +413,16 @@ func TestS7AReplayedCommitIsNoFork(t *testing.T) {
 	if _, err := m.GetRecord(ctx, "mailbox-1"); err != nil {
 		t.Fatal(err)
 	}
+	// The copies are the commit: with the original forgotten, the locked
+	// copy still holds version 1 (review E: this half passed with a Copy
+	// that did nothing).
+	commits.Forget("mailbox-1")
+	if h, err := commits.History(ctx, "mailbox-1"); err != nil || h.Head == nil || h.Head.Version != 1 || len(h.Forks) != 0 || len(h.Unlocked) != 0 || h.Next != 2 {
+		t.Fatalf("history in memory, the copies only %+v, %v", h, err)
+	}
+	if got, err := m.GetRecord(ctx, "mailbox-1"); err != nil || string(got.Value) != "active" {
+		t.Fatalf("read by the copies %+v, %v", got, err)
+	}
 }
 
 // S8 (ADR 0026): CreateNew's precedence. A fork, then any commit (a removal
@@ -747,8 +757,10 @@ func (f failingPlain) GetRecord(ctx context.Context, name string) (*store.Record
 }
 
 // CreateNew when something that is not a commit takes its version under it:
-// it makes the record after it, and leaves nothing of the first try. When the
-// plain name cannot be read, it makes nothing.
+// it makes the record after it, and leaves the value of the first try, which
+// no commit names (review 2: with no commit there it cannot tell that it is
+// not another enclave's). When the plain name cannot be read, it makes
+// nothing.
 func TestCreateNewAroundWhatIsNotACommit(t *testing.T) {
 	ctx := context.Background()
 	records := store.NewMemory()
@@ -760,7 +772,7 @@ func TestCreateNewAroundWhatIsNotACommit(t *testing.T) {
 	if got, err := a.GetRecord(ctx, "mailbox-1"); err != nil || string(got.Value) != "made" {
 		t.Fatalf("read %+v, %v", got, err)
 	}
-	if stored := names(t, records, "mailbox-1"); len(stored) != 1 || !strings.Contains(stored[0], "@00000000000000000002-") {
+	if stored := names(t, records, "mailbox-1"); len(stored) != 2 || !strings.Contains(stored[0], "@00000000000000000001-") || !strings.Contains(stored[1], "@00000000000000000002-") {
 		t.Fatalf("stored %q", stored)
 	}
 

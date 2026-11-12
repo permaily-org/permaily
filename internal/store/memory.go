@@ -10,7 +10,9 @@ import (
 	"time"
 )
 
-// Memory is an in-memory Store for dev mode and tests.
+// Memory is an in-memory Store for dev mode and tests. Its scans gather and
+// sort every item of the partition before they take a page: what one returns
+// is bounded by maxRead, the work it does is not.
 type Memory struct {
 	mu  sync.Mutex
 	Now func() time.Time
@@ -28,6 +30,13 @@ type Memory struct {
 	// ("mailbox#<id>", "mailbox"), an entry its own; a listing or a scan
 	// names its partition and its prefix.
 	Interrupt func(ctx context.Context, step Step, partition, key string) error
+
+	// PageItems, when above zero, cuts every scan's page at that many items
+	// read, as DynamoDB cuts one at 1 MB of items whatever maxRead asks:
+	// fewer read than asked, and More while items are left below Last. So a
+	// service built on Memory sees short pages, and with expired items only
+	// a page that returns nothing and says More.
+	PageItems int
 
 	mailboxes map[string]Mailbox
 	messages  map[string]map[string]Message
@@ -137,6 +146,9 @@ func (s *Memory) DeleteRecord(ctx context.Context, name string) error {
 
 // GetMailbox implements Store.
 func (s *Memory) GetMailbox(ctx context.Context, id string) (*Mailbox, error) {
+	if err := checkIDs(true, id); err != nil {
+		return nil, err
+	}
 	if err := s.step(ctx, StepRead, "mailbox#"+id, "mailbox"); err != nil {
 		return nil, err
 	}
@@ -151,6 +163,9 @@ func (s *Memory) GetMailbox(ctx context.Context, id string) (*Mailbox, error) {
 
 // PutMailbox implements Store.
 func (s *Memory) PutMailbox(ctx context.Context, m *Mailbox) error {
+	if err := checkIDs(false, m.ID); err != nil {
+		return err
+	}
 	if err := s.step(ctx, StepRecord, "mailbox#"+m.ID, "mailbox"); err != nil {
 		return err
 	}
@@ -170,6 +185,9 @@ func (s *Memory) PutMailbox(ctx context.Context, m *Mailbox) error {
 
 // PutMessage implements Store: the raw message, then the item, as two steps.
 func (s *Memory) PutMessage(ctx context.Context, m *Message, raw []byte) error {
+	if err := checkIDs(false, m.MailboxID, m.ID); err != nil {
+		return err
+	}
 	if err := s.step(ctx, StepRaw, "mailbox#"+m.MailboxID, messageKey(m.ID)); err != nil {
 		return err
 	}
@@ -181,6 +199,9 @@ func (s *Memory) PutMessage(ctx context.Context, m *Message, raw []byte) error {
 
 // PutRaw implements MessageParts.
 func (s *Memory) PutRaw(ctx context.Context, m *Message, raw []byte) error {
+	if err := checkIDs(false, m.MailboxID, m.ID); err != nil {
+		return err
+	}
 	if err := s.step(ctx, StepRaw, "mailbox#"+m.MailboxID, messageKey(m.ID)); err != nil {
 		return err
 	}
@@ -195,6 +216,9 @@ func (s *Memory) PutRaw(ctx context.Context, m *Message, raw []byte) error {
 
 // PutItem implements MessageParts.
 func (s *Memory) PutItem(ctx context.Context, m *Message) error {
+	if err := checkIDs(false, m.MailboxID, m.ID); err != nil {
+		return err
+	}
 	if err := s.step(ctx, StepItem, "mailbox#"+m.MailboxID, messageKey(m.ID)); err != nil {
 		return err
 	}
@@ -211,6 +235,9 @@ func (s *Memory) PutItem(ctx context.Context, m *Message) error {
 
 // Item implements MessageParts.
 func (s *Memory) Item(ctx context.Context, mailboxID, id string) (*Message, error) {
+	if err := checkIDs(true, mailboxID, id); err != nil {
+		return nil, err
+	}
 	if err := s.step(ctx, StepRead, "mailbox#"+mailboxID, messageKey(id)); err != nil {
 		return nil, err
 	}
@@ -226,8 +253,11 @@ func (s *Memory) Item(ctx context.Context, mailboxID, id string) (*Message, erro
 
 // ReadRaw implements MessageParts.
 func (s *Memory) ReadRaw(ctx context.Context, mailboxID, id string, maxBytes int64) ([]byte, error) {
-	if maxBytes < 0 {
-		return nil, fmt.Errorf("store: a raw message bounded by %d bytes", maxBytes)
+	if err := checkRawBound(maxBytes); err != nil {
+		return nil, err
+	}
+	if err := checkIDs(true, mailboxID, id); err != nil {
+		return nil, err
 	}
 	if err := s.step(ctx, StepRead, "mailbox#"+mailboxID, messageKey(id)); err != nil {
 		return nil, err
@@ -246,6 +276,9 @@ func (s *Memory) ReadRaw(ctx context.Context, mailboxID, id string, maxBytes int
 
 // ListMessages implements Store.
 func (s *Memory) ListMessages(ctx context.Context, mailboxID string, limit int, before string) ([]Message, error) {
+	if err := checkIDs(true, mailboxID); err != nil {
+		return nil, err
+	}
 	if err := s.step(ctx, StepRead, "mailbox#"+mailboxID, "msg#"); err != nil {
 		return nil, err
 	}
@@ -283,6 +316,9 @@ func (s *Memory) GetMessage(ctx context.Context, mailboxID, id string) (*Message
 // that asking again finishes a delete that stopped between the two. It
 // returns ErrNotFound only when the item was not there.
 func (s *Memory) DeleteMessage(ctx context.Context, mailboxID, id string) error {
+	if err := checkIDs(true, mailboxID, id); err != nil {
+		return err
+	}
 	if err := s.step(ctx, StepDeleteRaw, "mailbox#"+mailboxID, messageKey(id)); err != nil {
 		return err
 	}
@@ -306,6 +342,9 @@ func (s *Memory) ScanMessagesDown(ctx context.Context, mailboxID, before string,
 	if err := scanBound(maxRead); err != nil {
 		return nil, err
 	}
+	if err := checkIDs(true, mailboxID); err != nil {
+		return nil, err
+	}
 	if err := s.step(ctx, StepRead, "mailbox#"+mailboxID, "msg#"); err != nil {
 		return nil, err
 	}
@@ -318,9 +357,9 @@ func (s *Memory) ScanMessagesDown(ctx context.Context, mailboxID, before string,
 		}
 	}
 	slices.SortFunc(all, func(a, b Message) int { return strings.Compare(b.ID, a.ID) })
-	read := all[:min(maxRead, len(all))]
-	// DynamoDB says there may be more whenever a page reads its limit.
-	out := &MessageScan{Messages: []Message{}, Read: len(read), More: len(read) == maxRead}
+	n, more := s.page(len(all), maxRead)
+	read := all[:n]
+	out := &MessageScan{Messages: []Message{}, Read: n, More: more}
 	now := s.Now()
 	for _, m := range read {
 		out.Last = m.ID
@@ -349,9 +388,9 @@ func (s *Memory) ScanEntriesDown(ctx context.Context, partition, prefix, before 
 		}
 	}
 	slices.SortFunc(all, func(a, b Entry) int { return strings.Compare(b.Key, a.Key) })
-	read := all[:min(maxRead, len(all))]
-	// DynamoDB says there may be more whenever a page reads its limit.
-	out := &EntryScan{Entries: []Entry{}, Read: len(read), More: len(read) == maxRead}
+	n, more := s.page(len(all), maxRead)
+	read := all[:n]
+	out := &EntryScan{Entries: []Entry{}, Read: n, More: more}
 	now := s.Now()
 	for _, e := range read {
 		out.Last = e.Key
@@ -361,6 +400,18 @@ func (s *Memory) ScanEntriesDown(ctx context.Context, partition, prefix, before 
 		}
 	}
 	return out, nil
+}
+
+// page is how many of a scan's items its page reads, and whether it says
+// More. DynamoDB says there may be more whenever a page reads its limit; a
+// page cut at PageItems says so while items are left.
+func (s *Memory) page(items, maxRead int) (int, bool) {
+	if s.PageItems > 0 && s.PageItems < maxRead {
+		n := min(s.PageItems, items)
+		return n, items > n
+	}
+	n := min(maxRead, items)
+	return n, n == maxRead
 }
 
 func scanBound(maxRead int) error {
