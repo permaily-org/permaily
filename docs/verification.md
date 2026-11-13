@@ -57,7 +57,7 @@ What this does not show: a configuration set put in place and removed between tw
 
 ## What the operator did to accounts
 
-The operator, with the admin token, can do some things to an account through the enclave: block it and unblock it, ask to delete it and cancel a deletion the operator asked for, sign its devices out, and make and revoke invitations (ADR 0017). The admins do the same from the web app, and the super admin makes and removes admins (ADR 0022). The enclave counts each kind of what both do and serves the counts on `/status` under `admin`, with the time it started counting. The verifier prints them:
+The operator, with the admin token, can do some things to an account through the enclave: block it and unblock it, ask to delete it and cancel a deletion the operator asked for, sign its devices out, and make and revoke invitations (ADR 0017); and pause and resume a mailbox (ADR 0026). The admins do the same from the web app, and the super admin makes and removes admins (ADR 0022). The enclave counts each kind of what both do and serves the counts on `/status` under `admin`, with the time it started counting. The verifier prints them:
 
 ```
       what the operator did to accounts through this enclave since 2026-11-12T04:58:12Z: blocked an account 1 time; made an invitation 2 times
@@ -65,7 +65,7 @@ The operator, with the admin token, can do some things to an account through the
 
 It fails on nothing here: blocking an account or asking to delete one is the operator's to do. It is printed so that it is seen, by anyone, twice an hour.
 
-What the operator cannot do through the enclave is not counted because there is no way to do it: change an account's contact address, add or remove a way to sign in, turn "passkey only" off, or sign in as someone. Those would be ways into an account, and the image you verified has no route for them.
+What the operator cannot do through the enclave is not counted because there is no way to do it: change an account's contact address, add or remove a way to sign in, turn "passkey only" off, or sign in as someone; read a mailbox, learn its address or label, disconnect it or delete its mail. Those would be ways into an account or its mail, and the image you verified has no route for them.
 
 What this does not show: which account, on purpose; anything from before the enclave started, since the count is in memory and a restart, which the operator can cause, starts it again (the start time is printed); and what is written to the storage by hand, which the enclave refuses where it would be a way in (ADR 0016, ADR 0017) and which can still delete an account.
 
@@ -178,7 +178,7 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
   },
   "admin": {
     "since": "<when this enclave started counting: when it started>",
-    "actions": {"block": 0, "unblock": 0, "delete": 0, "delete_cancel": 0, "sessions_close": 0, "invitations_made": 0, "invitation_revoked": 0, "provider_app_set": 0, "provider_app_removed": 0, "admin_made": 0, "admin_removed": 0}
+    "actions": {"block": 0, "unblock": 0, "delete": 0, "delete_cancel": 0, "sessions_close": 0, "invitations_made": 0, "invitation_revoked": 0, "provider_app_set": 0, "provider_app_removed": 0, "admin_made": 0, "admin_removed": 0, "mailbox_paused": 0, "mailbox_resumed": 0}
   },
   "anchors": {
     "bucket": "<S3 bucket with Object Lock that holds the commits>",
@@ -193,9 +193,9 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
 
 `anchors` lists the records the enclave refuses an earlier copy of (ADR 0016), as far as it read or wrote them since it started: the version of each, and until when S3 keeps its newest commit whatever anyone asks. The verifier fails when a commit is not locked, and when `regressions` is not empty: a commit the enclave had seen that the store stopped answering with. It warns when a lock ends within thirty days.
 
-`mail` says what SES would do with a message of the enclave besides delivering it, as the enclave read it: each identity is `no_configuration_set`, `configuration_set`, `not_verified` or `absent`. `failing` is true when the newest attempt got no answer to go by, and `state` and `checked_at` then describe the last one that did; `history_truncated` appears after more than 32 states. It is absent in an image that sends no mail. A regression of the record of an account is listed in `anchors.regressions` without the account's name.
+`mail` says what SES would do with a message of the enclave besides delivering it, as the enclave read it: each identity is `no_configuration_set`, `configuration_set`, `not_verified` or `absent`. `failing` is true when the newest attempt got no answer to go by, and `state` and `checked_at` then describe the last one that did; `history_truncated` appears after more than 32 states. It is absent in an image that sends no mail. A regression of the record of an account is listed in `anchors.regressions` without the account's name. One of a mailbox's record or an account's list of mailboxes (strict records, ADR 0026) is listed under the name `mailbox`, with `fork: true` when the record has two commits of different digests at one version, `unlocked: true` when a commit has no copy S3 keeps locked as the enclave wrote it, and `lost: true` when its newest commit names a value the table no longer holds (whoever writes to the table deleted or changed it); the verifier fails on each, naming which. Pausing and resuming a mailbox is counted in `admin`, never a regression.
 
-`admin` counts what the operator did to accounts through this enclave since it started, by kind: an account blocked or unblocked, a deletion asked or cancelled, the devices of an account signed out, invitations made (one by one) and one revoked, the application of a provider set or removed, and an admin made or removed. It counts what the operator does with the token and what the admins do in the web app together. Every kind the enclave knows is there, also at zero; a later image may count more kinds, which the verifier prints by name. It never holds an account, an address or an identifier. It is absent in an image without accounts and in images up to v0.10.0. The verifier checks nothing of it.
+`admin` counts what the operator did to accounts through this enclave since it started, by kind: an account blocked or unblocked, a deletion asked or cancelled, the devices of an account signed out, invitations made (one by one) and one revoked, the application of a provider set or removed, an admin made or removed, and a mailbox paused or resumed (`mailbox_paused`, `mailbox_resumed`, from the release that builds mailboxes per account, ADR 0026; never which mailbox: the operator cannot read, disconnect or empty one). It counts what the operator does with the token and what the admins do in the web app together. Every kind the enclave knows is there, also at zero; a later image may count more kinds, which the verifier prints by name. It never holds an account, an address or an identifier. It is absent in an image without accounts and in images up to v0.10.0. The verifier checks nothing of it.
 
 `root` is absent in an image that stores no mail. `from` is present when another release's enclave handed the root secret over. `history` and `gaps` are every state of the key's policy and grants the enclave has read since it started, and the periods in which it could not read. Releases up to v0.7.0 also report `kms`, the key they wrapped data keys with directly, with the same `history` and `gaps`. If KMS cannot be reached, or the image has no root secret yet, the endpoint answers 503.
 

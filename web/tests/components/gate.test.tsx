@@ -38,7 +38,10 @@ describe('where focus starts', () => {
   })
 
   it('moves to the heading of the next page when the page changes', async () => {
-    server.signedIn().settings()
+    server
+      .signedIn()
+      .settings()
+      .on('GET /api/v1/mailboxes', ok({ mailboxes: [], limit: 5 }))
     const { user } = await open('/accounts')
     await screen.findByRole('navigation', { name: 'Main' })
     await user.click(screen.getByRole('link', { name: 'Settings' }))

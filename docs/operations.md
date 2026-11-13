@@ -46,6 +46,8 @@ An old image can open the root secret for as long as its key exists: a flaw foun
 
 An image creates a root secret only when the table has neither a record `root-<its PCR0>` nor the record `deployment` (`pk=system`, `sk=record#deployment`). To start over on purpose, delete those items, the TLS identity (every `sk` that starts with `record#tls-<CA host>`) and the mailbox items; the next image creates a new root secret, a new TLS key and a new ACME account (see Certificates below), and everything stored before is unreadable. There is no way back. The commits in the anchors bucket cannot be deleted and need not be: they belong to the root secret that is gone, and the new deployment's versions go on after them.
 
+The accounts are kept under the same root secret: delete them too, or they stay in the table as records nobody can read, and an address or a provider's account would still point at an account that cannot be opened. That is every item of `pk=system` whose `sk` starts with `record#account-` (the accounts, every version) or `record#provider-apps` (the providers' applications); every item whose `pk` starts with `account#` (sessions and devices), `login#` (the pointers from an address, `login#email#…`, and from a provider's account, `login#<provider>#…`), `invitation#` (the invitations), `pending#` (the sign-ins, address changes, confirmations and passkey ceremonies in progress, with their `used` marks) or `acme-challenge#` (an ACME order left open); and every item of `pk=accounts`, `pk=closing`, `pk=admins` (the admins), `pk=admin-log` (the admin log) and `pk=invitations` (the list of invitations). With those, the records above and the mailbox items gone, nothing is left in the table: emptying it does the same.
+
 If the instance is lost, nothing is: create it again with OpenTofu and deploy the same release. The root secret is in DynamoDB, locked by the release's KMS key.
 
 ## Test with staging images
@@ -61,6 +63,16 @@ scripts/deploy.sh /tmp/stg-a /tmp/stg-a/permaily-host-linux-arm64
 go run ./cmd/permaily-verify -pcrs /tmp/stg-a/pcrs.json -ca-file letsencrypt-stg-root-x1.pem -skip-certificates
 PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem scripts/handoff.sh /tmp/stg-a /tmp/stg-b    # to a second image, built later
 ```
+
+`letsencrypt-stg-root-x1.pem` is the root of Let's Encrypt staging, fetched with `curl -sO https://letsencrypt.org/certs/staging/letsencrypt-stg-root-x1.pem` (as in [verification.md](verification.md)). Every operator script needs it against a staging image, as `PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem`: `scripts/invite.sh`, `scripts/accounts.sh`, `scripts/provider.sh` and `scripts/handoff.sh` (which passes it on to `scripts/sigstore-trust-root.sh --send`).
+
+The staging table keeps its root secret from one test to the next, and only the key of an image that holds it can open it. When the key of the last staging image that ran is gone (removed from `release_keys` and applied: it is disabled at once and deleted after seven days), nothing can open that secret again: start the staging table over as in "A new deployment, or losing everything", on `permaily-mail-staging`, before the next staging image.
+
+`tofu plan` removes the TLS-RPT record (`_smtp._tls.inbox`) unless `tls_rpt_address` is set. For the length of the test, set it, without committing, to the address the record has now (`dig +short TXT _smtp._tls.inbox.permaily.com`, the part after `mailto:`), and take the change out when the test ends.
+
+Give every test account a contact address that exists and takes mail. A notice sent to one that no longer does bounces, and SES then puts that address on the account's suppression list, which production shares: production stops writing to it too. See it with `AWS_PROFILE=permaily aws sesv2 get-suppressed-destination --region us-east-2 --email-address <address>` and remove it with `AWS_PROFILE=permaily aws sesv2 delete-suppressed-destination --region us-east-2 --email-address <address>`.
+
+The test mailbox's token is gone, so a rehearsal reads mail only through an account that is signed in. Its first one is an account made under the old release and kept signed in through the handoff, or the super admin's, signed in and read by the person who owns its address.
 
 Two staging images built at the same time may be logged in either order, and a handoff only goes forward in that order. Afterwards deploy the production release again, remove the staging keys from `release_keys`, restore the CAA records and delete the `staging/` branches.
 
@@ -80,7 +92,9 @@ Not deployed: one enclave runs today. The code is ready for two behind one addre
 - **The TLS identity.** One enclave logs `acme: certificate obtained`, the other `acme: certificate installed` within ten minutes. Both serve one key. While one orders, the identity holds its claim; the other waits up to the end of that claim (eleven minutes, more after failed tries) and then orders itself. Nothing needs doing.
 - **`the stored identity holds another key`** in one enclave's log: the identity was lost and made again by the other enclave. Restart the enclave that logs it, so both serve the new key, and follow "Replace the TLS key" for the CAA records.
 - **The challenges** of an open order are items `pk=acme-challenge#tls-<CA host>` in the table, sealed. They expire with the order and are deleted when it ends; one left behind ends by itself.
-- **The test mailbox** is made once by whichever enclave starts first.
+- **The test mailbox** is made once by whichever enclave starts first, until the release that retires it (ADR 0026). From that release, mailboxes are made once and changed at the version read whichever enclave a request lands on, every enclave sweeps disconnected mailboxes every ten minutes, and each counts the mail one mailbox takes in its own memory (600 messages an hour, 2 GiB a day each).
+- **Sign-ins in progress** (by mail, address changes, confirmations, passkey ceremonies, trips to a provider) are sealed items `pk=pending#…` in the table, so one started through one enclave ends through the other. An enclave ends none started before it started: replacing or restarting one ends the sign-ins started before, and the person asks again.
+- **Limits** are counted in each enclave's memory, on purpose, so with two each is at most twice what it says, and **`/status`** is the enclave's that answered (ADR 0017, "Two enclaves at once").
 
 Still needed before two run:
 
@@ -88,7 +102,7 @@ Still needed before two run:
 2. The parent instances, or one instance with two enclaves, each with its host proxy, behind it.
 3. A first release with ADR 0024 must run alone before a second enclave is added: a release from before writes the TLS identity without the claim.
 4. A way to roll a release out to two: hand the root secret to the new release once (any enclave of the running release can), then replace the enclaves one at a time. While both releases serve, `permaily-verify -release` fails on connections that land on the older one.
-5. The sign-in state that is still in each enclave's memory moved to the storage (ADR 0017).
+5. A way for a verifier to reach each enclave behind one address (ADR 0024).
 
 ## Look at enclave logs
 
@@ -112,6 +126,8 @@ Debug mode zeroes the PCRs, so verification fails on purpose and the enclave doe
 ## Let's Encrypt rate limits
 
 At most 5 certificates per week for the same set of names. Since v0.4.0 the enclave keeps its key and certificate sealed, so a restart or an upgrade issues nothing; only a renewal (every 60 days) or a new TLS key does. With two enclaves, one asks and the other serves what it stores, so they make no more orders than one (ADR 0024). If issuance fails with `rateLimited`, wait for the window, and use `.#eif-staging` for tests.
+
+To see that an upgrade issued nothing: v0.10.0 logs `acme: certificate installed` both when it reuses the stored certificate and right after ordering one, so for that release only the certificate's serial shows it (the same before and after: `openssl s_client -connect api.permaily.com:443 -servername api.permaily.com </dev/null | openssl x509 -noout -serial`). Later releases also log `acme: certificate obtained` when they order; an upgrade that logs only `installed` ordered nothing.
 
 ## Rotate the Cloudflare token
 
@@ -178,6 +194,8 @@ Check that the next run starts, then delete the old token. Other applies run wit
 
 ## Read the test mailbox
 
+Until the release that builds mailboxes per account (ADR 0026), which retires it: see the next section. That release has no `/v1/mailbox` and no `-mailbox-*` flags; what follows works only against v0.11.0 and before.
+
 ```sh
 token=$(cat ~/.config/permaily/test-mailbox-token)
 curl -s -H "Authorization: Bearer $token" https://api.permaily.com/v1/mailbox                  # address, retention, Gmail codes
@@ -189,6 +207,17 @@ curl -s -X PATCH -H "Authorization: Bearer $token" -d '{"retention_days":30}' ht
 To send a test message, connect to `inbox.permaily.com:25` with STARTTLS from a server: home connections usually block outbound port 25.
 
 To forward a Gmail account: in Gmail, Settings > Forwarding > Add a forwarding address (the mailbox address), read the confirmation code from `/v1/mailbox`, enter it in Gmail, then enable forwarding.
+
+## Mailboxes per account: what changes for the operator
+
+Takes effect with the release that builds ADR 0026; until then nothing here applies.
+
+- **The test mailbox is retired.** The release reads nothing of it: `/v1/mailbox` answers 404, the token reads nothing, and `u-9b393600758a2985dae3@inbox.permaily.com` refuses mail like any unknown address. Turn off any Gmail forwarding to it. Mail is read in the app, by the account that owns the mailbox; the operator's token reads nobody's.
+- **TLS-RPT.** The release removes the `_smtp._tls.inbox` record (`tls_rpt_address` is empty by default in `deploy/tofu`). After it is verified: sign in as the super admin, make a mailbox labelled "TLS reports", then set `tls_rpt_address` to its address and apply. Reports arrive there as attachments, read with "Download". This is the one mailbox whose address is public, by design: anyone can send to it, and only its account reads it.
+- **Deleting F1's items, and the keys of the releases before**, once the release is verified and a rollback to v0.11.0 is no longer wanted (after it, v0.11.0 would start with a new, empty test mailbox): in the table every item with `pk=mailbox#test` (`sk=mailbox` and every `sk=msg#…`), and in the mail bucket every object under `raw/test/`. Then remove v0.11.0 and older releases from `release_keys` ("Delete the key of an old release"): until their keys are gone they can still open the root secret, and the test mailbox's mail was readable by them and by the token. This step is required, not tidying: the guarantees of mailboxes assume that releases from before them no longer run against the data (ADR 0026, "The store"). Until it is done, a rollback is possible and those guarantees hold only while this release or a later one runs.
+- **Staging rehearsals** read mail through a mailbox of a signed-in account: sign in to the staging app with an invitation, make one or two mailboxes, send to them from a server with STARTTLS, and read them in the app or with the session's cookie under `/api/v1/mailboxes`.
+- **Pausing a mailbox** for abuse: `scripts/accounts.sh mailbox find <address>`, then `mailbox pause <id>` and later `mailbox resume <id>`; ten changes of one mailbox in thirty days at most. Its person is told by mail; nothing is deleted. The operator cannot disconnect a mailbox or read mail ("See and manage the accounts", "Mailboxes").
+- **A regression marked `fork` in `/status`**, under the name `mailbox`, means two commits of different digests at one version of a mailbox's record or an account's list: someone wrote to the anchors bucket. That mailbox stops for good, for the lock period (ten years): it refuses mail, nobody opens it, its person sees "Can't be read" and cannot disconnect it, and it keeps its slot. Nothing makes it readable again; tell its person through support. One marked `lost` means the newest commit of a mailbox's record or an account's list names a value the table no longer holds: someone deleted or changed the item in DynamoDB. A lost mailbox refuses mail and nobody opens it; it shows as `unreadable` in `scripts/accounts.sh mailboxes` and in the admin panel, with its identifier and when it was added, and its person can disconnect it, which frees its slot. A lost account list stops delivery to every mailbox of that account. One marked `unlocked` means S3 holds a commit without the lock the enclave wrote it with: report it to AWS and look at the bucket's configuration. Accounts and the TLS identity are not strict records: a fork there shows as a regression without the mark, as before (ADR 0016), and the TLS identity's is handled as ADR 0024 says.
 
 ## Invite someone
 
@@ -210,10 +239,10 @@ An invitation that was used is deleted when it is used, so the list does not sho
 ## See and manage the accounts
 
 ```sh
-scripts/accounts.sh                       # every account: identifier, address, name, state, passkeys, sessions
+scripts/accounts.sh                       # every account: identifier, address, name, state, passkeys, sessions, mailboxes
 scripts/accounts.sh acc_...               # one
 scripts/accounts.sh find ana@example.org  # the account of exactly that address
-scripts/accounts.sh stats                 # how many, by state
+scripts/accounts.sh stats                 # how many, by state, and their mailboxes
 ```
 
 It asks the enclave (`GET /v1/admin/accounts`, with the admin token from `~/.config/permaily/admin-token`), which answers from the signed records: the table in DynamoDB shows what is stored, this shows what the enclave accepts. `unreadable` counts accounts in the list whose record could not be read or does not verify: more than zero means the storage was changed by hand or is failing, and the enclave's log says which kind without naming the account. `stats` reads the whole list a page at a time and counts: active, closing (asked by the person or by the operator), blocked, and a few more.
@@ -236,6 +265,23 @@ scripts/accounts.sh close-sessions <account>   # signs every device out, and not
 What cannot be done, on purpose (ADR 0017): change an account's contact address, add or remove a passkey or a provider, turn "passkey only" off, or sign in as someone. Each would be a way into the account. So someone who lost their mail, their passkeys and their recovery codes cannot be given the account back: support can block it and delete it, and the person signs up again. A person changes their own address in Settings, with a code sent to the new one.
 
 Everything done here is counted by the enclave, by its kind and never by account, on `/status` (`admin`), which `permaily-verify` prints twice an hour for anyone, and is logged by its kind. A restart starts the count again.
+
+### Mailboxes
+
+```sh
+scripts/accounts.sh mailboxes <account>            # its mailboxes: identifier, state, dates, retention, whether Google confirmed it
+scripts/accounts.sh mailbox find <address>         # the mailbox an address leads to, and whose it is
+scripts/accounts.sh mailbox pause mbx_...          # it refuses new mail until resumed; asks for a "yes" unless --yes follows
+scripts/accounts.sh mailbox resume mbx_...         # it accepts mail again
+```
+
+They ask the enclave (`GET /v1/admin/accounts/{id}/mailboxes`, `GET /v1/admin/mailboxes?address=`, `POST /v1/admin/mailboxes/{id}/pause` and `/resume`, with the admin token), which answers from each mailbox's signed record (ADR 0026, "What the operator and admins see and do"). What it shows of a mailbox is its identifier, its account, its state (waiting, receiving, paused or unreadable), when it was added, how long it keeps mail, since when it receives, when it was paused and whether Google confirmed the Gmail account behind it. Never its address, its label, that Gmail account or its mail: the enclave gives none of them to the operator or to an admin. A mailbox whose record is lost or forked ("An unreadable mailbox" in ADR 0026) is shown as unreadable with its identifier, its account (from the signed index) and when it was added, and nothing else: it accepts no mail, nobody can open it, and it cannot be paused or resumed (`not_found`).
+
+- **Find** a mailbox when a report of abuse names its address: the enclave hashes the address as SMTP does, and answers the mailbox it leads to or nothing, the same nothing for an address never made, one disconnected and one that is not an address. It is one exact address a request and tells only whose an address you already know is: what bounds it as a way to test addresses is that an address is 100 random bits, which anyone can test against SMTP as well. The script never prints the address back.
+- **Pause** a mailbox that is flooded, or whose mail harms the service: it refuses new mail at `RCPT TO` with the same answer as an unknown address, keeps everything it holds, and its person can still read, delete and disconnect. They are told by mail ("Permaily paused one of your mailboxes"), and again when it is resumed. A mailbox is paused or resumed ten times in thirty days at most (`too_many_requests` after that), counted in its record, so the limit holds with any number of enclaves.
+- **What cannot be done, on purpose**: read a mailbox, see its address or label, disconnect it, delete its mail, change its label or retention, or move it to another account. Disconnecting destroys what is the person's; pausing stops the harm.
+
+Pausing and resuming are counted on `/status` as `mailbox_paused` and `mailbox_resumed`, never which mailbox, and logged by kind alone. Through the admin panel they also need a fresh proof, a mailbox of an admin's account is the super admin's alone to pause, and each is written in the admin log with the account and the mailbox by identifier.
 
 ## The admin panel
 

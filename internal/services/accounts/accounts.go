@@ -34,14 +34,15 @@ import (
 	"log/slog"
 	"math/big"
 	"net/url"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain"
+	"github.com/permaily-org/permaily/internal/domain/mail"
 	"github.com/permaily-org/permaily/internal/envelope"
 	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/store"
@@ -57,11 +58,20 @@ type Keys interface {
 // signingPurpose names the key that signs accounts, sessions and invitations.
 const signingPurpose = "permaily signed values v1"
 
-// Mail is a message the service sends to a person.
+// Mail is a message the service sends to a person. Its words are Blocks;
+// Text and HTML are its two parts, both written from them (compose).
 type Mail struct {
 	To      string
 	Subject string
+	Blocks  []mail.Block
 	Text    string
+	// HTML is "" when it could not be written: the message goes as text.
+	HTML string
+}
+
+// compose writes a message from its blocks: the plain text and the HTML.
+func compose(to, subject string, blocks ...mail.Block) Mail {
+	return Mail{To: to, Subject: subject, Blocks: blocks, Text: mail.Text(blocks), HTML: mail.HTML(subject, blocks)}
 }
 
 // Mailer sends mail. What it returns is never logged: a mail system's errors
@@ -111,6 +121,11 @@ type Config struct {
 	// nil, which is what the enclave runs with. Dev mode and the tests change
 	// it, as a new release would.
 	Terms func() string
+	// Mailboxes is the mailboxes of accounts (ADR 0026): an account's are
+	// ended when it is removed. Nil when there are none; the composition may
+	// give it later, once, with SetMailboxes, since the mailboxes service is
+	// made with this one as its accounts.
+	Mailboxes Mailboxes
 }
 
 // Limits on what one enclave keeps in memory and starts at once.
@@ -174,6 +189,9 @@ type Service struct {
 	appsMu   sync.Mutex
 	apps     map[idp.Provider]appDoc
 	appsRead time.Time
+
+	// mailboxes is Config.Mailboxes, or what SetMailboxes gave.
+	mailboxes atomic.Pointer[mailboxesHolder]
 
 	sending chan struct{}
 	// noticing bounds the notices being sent, and noticeWait is how long one
@@ -291,11 +309,8 @@ func randomString(alphabet string, n int) string {
 	return string(out)
 }
 
-// identifiers are taken out of the errors this package logs: logs leave the
-// enclave, and a store's error names the record it was about.
-var identifiers = regexp.MustCompile(`\b(acc|ses|att|cer|inv)_[a-z2-7]{26}`)
-
-func scrub(err error) string { return identifiers.ReplaceAllString(err.Error(), "${1}_…") }
+// scrub is what is logged of an error (domain.Redacted).
+func scrub(err error) string { return domain.Redacted(err) }
 
 func (s *Service) signingKey(ctx context.Context) ([]byte, error) {
 	key, err := s.cfg.Keys.Derive(ctx, signingPurpose)
@@ -1011,14 +1026,13 @@ func (s *Service) send(ctx context.Context, id string, a *attemptDoc, m Mail, fa
 func signInMail(to, appURL, attempt, code, token string) Mail {
 	link := fmt.Sprintf("%s/sign-in#attempt=%s&token=%s", appURL, attempt, token)
 	minutes := int(domain.EmailCodeLifetime / time.Minute)
-	var b strings.Builder
+	blocks := []mail.Block{mail.Lead("Open this link on the device you want to sign in to Permaily on:"), mail.Action(link)}
 	if code != "" {
-		fmt.Fprintf(&b, "Your code to sign in to Permaily:\n\n    %s\n\nOr open this link on the device you want to sign in on:\n\n", code)
-	} else {
-		b.WriteString("Open this link on the device you want to sign in to Permaily on:\n\n")
+		blocks = []mail.Block{mail.Lead("Your code to sign in to Permaily:"), mail.Code(code),
+			mail.Paragraph("Or open this link on the device you want to sign in on:"), mail.Action(link)}
 	}
-	fmt.Fprintf(&b, "    %s\n\nIt works once, for %d minutes. If you did not ask for it, ignore this message: nobody signs in without it.\n", link, minutes)
-	return Mail{To: to, Subject: "Sign in to Permaily", Text: b.String()}
+	blocks = append(blocks, mail.Note(fmt.Sprintf("It works once, for %d minutes. If you did not ask for it, ignore this message: nobody signs in without it.", minutes)))
+	return compose(to, "Sign in to Permaily", blocks...)
 }
 
 // take ends a sign-in with the code or the token of its message, and returns

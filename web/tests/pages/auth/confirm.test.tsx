@@ -43,6 +43,8 @@ describe('confirming an address for a provider', () => {
 
   it('sends the message, asks for its code, links and opens the app where the person was going', async () => {
     pending()
+    // Where the person was going: the list of mailboxes, which asks for them.
+    server.on('GET /api/v1/mailboxes', ok({ mailboxes: [], limit: 5 }))
     const { user } = await open('/sign-in#provider_confirm')
     const address = await screen.findByLabelText('Your email address')
     await user.clear(address)

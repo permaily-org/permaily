@@ -32,7 +32,7 @@ let
     pname = "permaily-go-modules";
     version = "0";
     inherit src;
-    vendorHash = "sha256-e4lzvY3yzBEmnT0nQWkTOUdyISW0dBHORgv3aqx6u9o=";
+    vendorHash = "sha256-lggQXav3eBsIjtHpVSqYBe8A55O+2w/ud6PRduBulPs=";
   }).goModules;
 
   ldflags = lib.concatStringsSep " " [

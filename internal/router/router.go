@@ -70,7 +70,10 @@ func New(common map[string]http.Handler, byHost map[string]http.Handler) http.Ha
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w)
-		if c, ok := common[r.URL.Path]; ok {
+		// A route of every host answers its path as written, never an
+		// encoding of it: a request for /%61ttestation goes to its host,
+		// whose own rules answer it (the app's refuses it).
+		if c, ok := common[r.URL.Path]; ok && r.URL.RawPath == "" {
 			c.ServeHTTP(w, r)
 			return
 		}
@@ -86,10 +89,16 @@ func New(common map[string]http.Handler, byHost map[string]http.Handler) http.Ha
 	})
 }
 
+// AppCSP is the Content-Security-Policy of every answer of the enclave, but
+// the frame's route, which sets its own.
+const AppCSP = "default-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
+
 func setSecurityHeaders(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("Strict-Transport-Security", "max-age=31536000")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
-	h.Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'")
+	// frame-src is written out (ADR 0026, "The frame"): the app frames only
+	// its own documents, a message's HTML, whatever default-src becomes.
+	h.Set("Content-Security-Policy", AppCSP)
 }

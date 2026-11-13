@@ -1,6 +1,6 @@
 # 0024 Two enclaves share one TLS identity and answer each other's ACME challenge
 
-Status: Accepted, built, not released. No deployment runs two enclaves yet.
+Status: Accepted, built, in production since v0.11.0 (2026-11-12). No deployment runs two enclaves yet.
 Date: 2026-11-12
 
 ## Context
@@ -47,7 +47,7 @@ Options 3 and 3.
 
 **What someone who reads the table could do with a challenge** while the order is open. The challenge's certificate is self-signed. It carries the SHA-256 of the key authorization: the token, a dot, and the thumbprint of the ACME account's public key. Anyone who connects to the enclave with `acme-tls/1` during the order gets that certificate anyway. Its private key is used only to complete one TLS handshake with that certificate. With both, someone could answer the CA's check instead of an enclave, which the host can already arrange, since it carries the CA's connection. That check validates the authorization of the enclave's own ACME account. Only the holder of the account's key can use it to finalize an order, with a CSR signed by the key it wants certified. The account's key is sealed. The key authorization holds the account's thumbprint, so it cannot validate an order of another account either. No browser trusts the challenge's certificate. Deleting the entry makes a check that lands on the other enclave fail, which is no more than dropping the CA's connection. An earlier entry put back is refused once the time sealed in it has passed. Before that it answers a token the CA no longer asks for. So the challenge would be safe in the clear. It is sealed all the same, for the cost of one seal under a key the enclave already holds: no private key leaves the enclave unsealed, as `internal/AGENTS.md` asks.
 
-**The test mailbox.** It is made with a write that only creates. The enclave that loses reads what the other made and uses its data key. Its state is written at the version read (`store.Mailbox.Version`), and on `ErrConflict` it is read and changed again, up to three times. A mailbox stored before versions existed reads as version 1, and is written at version 1 once. This mailbox is scaffolding of F1 that mailboxes per account replace (ADR 0018). It is not anchored, as ADR 0016 says: whoever writes to the table can still put back its state from before. That is a retention period and Gmail's forwarding codes.
+**The test mailbox.** It is made with a write that only creates. The enclave that loses reads what the other made and uses its data key. Its state is written at the version read (`store.Mailbox.Version`), and on `ErrConflict` it is read and changed again, up to three times. A mailbox stored before versions existed reads as version 1, and is written at version 1 once. This mailbox is scaffolding of F1 that mailboxes per account replace (ADR 0018); the release that builds them retires it (ADR 0026). It is not anchored, as ADR 0016 says: whoever writes to the table can still put back its state from before. That is a retention period and Gmail's forwarding codes.
 
 ## What a verifier sees
 
@@ -76,7 +76,6 @@ Running two enclaves still needs:
 - A pass-through load balancer for ports 443 and 25, and its health checks.
 - The parent instances or enclaves behind it, and a host proxy for each.
 - A way to roll a release out to two (docs/operations.md).
-- The rest of ADR 0017's list: sign-in state still in memory, limits counted by each enclave, and `/status` being one enclave's.
 - A first release with this code must run alone before a second enclave is added. A release from before writes the identity with a plain write and does not know the claim.
 - How a verifier reaches each enclave behind one address (above).
 

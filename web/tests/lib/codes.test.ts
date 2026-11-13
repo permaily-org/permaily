@@ -113,6 +113,10 @@ describe('what a browser is called', () => {
         'Mozilla/5.0 (Linux; Android 15) SamsungBrowser/28.0 Chrome/130.0 Safari/537.36',
         'Samsung Internet on Android',
       ],
+      [
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36',
+        'Chrome on Linux',
+      ],
       ['curl/8.0', 'Unknown device'],
       ['Mozilla/5.0 (X11; CrOS x86_64)', 'ChromeOS'],
       ['Something Firefox/1.0', 'Firefox'],

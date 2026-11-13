@@ -16,7 +16,12 @@
       "!deploy/tofu",
       "!spikes/**/testdata",
       "!pkg/provenance/testdata",
+      "!internal/mailhtml/testdata",
       "!pkg/provenance/sigstore_*.json",
+      "!internal/domain/mail/templates",
+      "!packages/mail/fixtures",
+      "!packages/mail/previews",
+      "!packages/mail/.react-email",
       "!**/*.md",
       "!**/*.mdx",
       "!**/*.svg"

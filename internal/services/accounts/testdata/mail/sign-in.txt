@@ -1,0 +1,12 @@
+To: ada@example.com
+Subject: Sign in to Permaily
+
+Your code to sign in to Permaily:
+
+    428913
+
+Or open this link on the device you want to sign in on:
+
+    https://app.permaily.com/sign-in#attempt=attempt-example&token=link-example
+
+It works once, for 10 minutes. If you did not ask for it, ignore this message: nobody signs in without it.

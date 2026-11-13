@@ -1,0 +1,30 @@
+{
+  "name": "deletion-asked-blocked",
+  "to": "ada@example.com",
+  "subject": "Your Permaily account is being deleted",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "Permaily's operator asked to delete your Permaily account. It will be removed, with everything in it, on 19 November 2026, 09:30 UTC."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "Asked",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        },
+        {
+          "label": "Removed",
+          "value": "19 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "The account is blocked, so nobody can sign in to cancel the deletion. To ask why, or to ask for the account to be kept, write to support@permaily.com."
+    }
+  ]
+}

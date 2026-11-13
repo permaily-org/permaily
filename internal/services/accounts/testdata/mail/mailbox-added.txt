@@ -1,0 +1,10 @@
+To: ada@example.com
+Subject: A mailbox was added to your Permaily account
+
+A mailbox was added to your Permaily account.
+
+Mail forwarded to it is kept in your account, and only you can read it, in the app.
+
+    When: 12 November 2026, 09:30 UTC
+
+If this wasn't you, sign in at app.permaily.com, disconnect it, and write to support@permaily.com.

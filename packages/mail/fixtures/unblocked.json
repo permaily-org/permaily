@@ -1,0 +1,25 @@
+{
+  "name": "unblocked",
+  "to": "ada@example.com",
+  "subject": "Your Permaily account was unblocked",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "Permaily's operator unblocked your Permaily account. You can sign in to it again at app.permaily.com."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "To ask why it was blocked, write to support@permaily.com."
+    }
+  ]
+}

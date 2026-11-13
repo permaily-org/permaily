@@ -1,0 +1,12 @@
+<!-- Test weakness of PR #92's review: each vector would set data-ran on the document and window.__ran, and ask the recording listener for /ran; the browser runs assert none did. -->
+<html><head><script>document.documentElement.setAttribute('data-ran','script');window.__ran='script';new Image().src='https://marker.example/ran?script'</script></head>
+<body onload="document.documentElement.setAttribute('data-ran','body');new Image().src='https://marker.example/ran?body'">
+<p>Marker <img src="x" alt="x" onerror="document.documentElement.setAttribute('data-ran','onerror');window.__ran='onerror';new Image().src='https://marker.example/ran?onerror'"></p>
+<svg onload="document.documentElement.setAttribute('data-ran','svg');new Image().src='https://marker.example/ran?svg'"><rect width="1" height="1"/></svg>
+<details open ontoggle="document.documentElement.setAttribute('data-ran','toggle');new Image().src='https://marker.example/ran?toggle'"><summary>s</summary>d</details>
+<input autofocus onfocus="document.documentElement.setAttribute('data-ran','focus');new Image().src='https://marker.example/ran?focus'">
+<iframe srcdoc="<script>parent.document.documentElement.setAttribute('data-ran','srcdoc');new Image().src='https://marker.example/ran?srcdoc'</script>"></iframe>
+<style onload="document.documentElement.setAttribute('data-ran','style')">p{color:#333}</style>
+<video><source onerror="document.documentElement.setAttribute('data-ran','source');new Image().src='https://marker.example/ran?source'"></video>
+<a id="m" href="javascript:document.documentElement.setAttribute('data-ran','href')">javascript link</a>
+</body></html>

@@ -113,6 +113,165 @@ export type ProviderPending = {
 /** A provider account that signs in to the account. Nothing else of it is kept, so nothing else is shown. */
 export type LinkedProvider = { provider: Provider; linked_at: string }
 
+/**
+ * Mailboxes and the inbox (ADR 0026), the shapes of `internal/contracts/mailboxes.go`. The calls that use them
+ * come with the screens that do.
+ */
+
+/**
+ * `waiting` until mail other than Gmail's confirmations arrives; `paused` while Permaily's operator stops it;
+ * `unreadable` when its record can't be read: it shows only its id and `created_at`, and can only be disconnected.
+ */
+export type MailboxState = 'waiting' | 'receiving' | 'paused' | 'unreadable'
+
+/** A forwarding confirmation Gmail sent to the mailbox. Anyone can send one that looks like it. */
+export type ForwardingConfirmation = {
+  /** Empty when `for_another_address`: it confirms nothing here. */
+  code: string
+  /** The Gmail account that asked, as the message says. */
+  requester?: string
+  received_at: string
+  /** Google signed it and it names this mailbox: Google confirms that `requester` asked to forward here. */
+  verified: boolean
+  /** Google signed it for another forwarding address, and someone sent it here: it says nothing of this mailbox. */
+  for_another_address?: boolean
+  /** The message that carried it, in the mailbox's inbox. */
+  message?: string
+}
+
+export type Mailbox = {
+  id: string
+  /** Where the person forwards their mail, at inbox.permaily.com. Empty when `unreadable`. */
+  address: string
+  /** The person's own name for it. Empty when they gave none. */
+  label: string
+  state: MailboxState
+  created_at: string
+  /** Days mail received from now on is kept, one of `retention_options`. */
+  retention_days: number
+  retention_options: number[]
+  /** When the first mail that was not a confirmation arrived: nothing from before it is here. */
+  receiving_since?: string
+  paused_at?: string
+  /**
+   * The first Gmail account Google confirmed asked to forward here, while the mailbox waited. Not that forwarding is
+   * on, nor that later mail comes from it. Absent: shown as not verified.
+   */
+  source?: { provider: 'gmail'; address: string; verified_at: string }
+  /** The newest first, ten at most, for thirty days each. */
+  confirmations: ForwardingConfirmation[]
+}
+
+export type MailboxList = { mailboxes: Mailbox[]; limit: number }
+
+export type MailAddress = { name?: string; address: string }
+
+export type MessageSummary = {
+  /** Time-ordered: a later message has a greater one. */
+  id: string
+  received_at: string
+  expires_at: string
+  size: number
+  from: MailAddress[]
+  subject: string
+  snippet: string
+  /** How many attachments it has. */
+  attachments: number
+  confirmation: boolean
+}
+
+/**
+ * A page reads a bounded number of stored items (500 for a list, 2,000 for a search), so it may hold fewer messages
+ * than asked for, or none, and still have `next`: show "Older" or "Search older mail" whenever `next` is there.
+ */
+export type MessagePage = {
+  messages: MessageSummary[]
+  /** What to ask the next page with (`after`): the last item the page read. Absent when nothing older is left. */
+  next?: string
+  /** For a search: when the oldest message this page looked at arrived; absent when it looked at none. */
+  searched_to?: string
+}
+
+export type MessageAttachment = { index: number; name: string; type: string; size: number }
+
+export type Message = {
+  id: string
+  received_at: string
+  expires_at: string
+  size: number
+  from: MailAddress[]
+  to: MailAddress[]
+  cc: MailAddress[]
+  reply_to: MailAddress[]
+  subject: string
+  /** The Date header as the sender wrote it. */
+  date: string
+  /** The text, always: 256 KiB at most. The text view and search use it. */
+  text: string
+  text_from: 'plain' | 'html' | 'none'
+  text_truncated: boolean
+  attachments: MessageAttachment[]
+  /** DKIM checks: `result` is `pass` or `fail: <reason>`. */
+  auth: { method: string; domain: string; result: string }[]
+  confirmation: boolean
+  /** Not readable as mail: only the raw message can be downloaded. */
+  unparsed: boolean
+  /** Its HTML, when it has a text/html part. Absent: show the text, without the switch. */
+  html?: MessageHTML
+}
+
+/**
+ * What the app is told of a message's HTML (ADR 0026, "Showing a message's HTML"). The HTML itself is never here:
+ * when `status` is `shown`, a sandboxed frame loads it from `.../messages/{message}/html`, a new frame per message.
+ */
+export type MessageHTML = {
+  /**
+   * `too_large` and `unreadable`: show the text, say why, offer the original. `unavailable`: the enclave could not
+   * render it now (busy, or past its deadline); show the text and offer to try again.
+   */
+  status: 'shown' | 'too_large' | 'unreadable' | 'unavailable'
+  /** Images the message would have fetched from elsewhere, never loaded: "3 remote images were not loaded". */
+  remote_images: number
+  /** Other remote references taken out: stylesheets, fonts, frames, media. */
+  remote_other: number
+  /** Images that travel in the message and are shown; and the ones not shown, with why in `inline_images_omitted_by`. */
+  inline_images: number
+  inline_images_omitted: number
+  inline_images_omitted_by: MessageImagesOmitted
+  /** Links that open the link page. */
+  links: number
+}
+
+/** Why images that travel in a message were not shown; the three add up to `inline_images_omitted`. */
+export type MessageImagesOmitted = {
+  /** Over a limit of bytes, of a side, of pixels, or of how many a message shows. */
+  too_large: number
+  /** An animated GIF, PNG or WebP: none is shown. */
+  animated: number
+  /** Not PNG, JPEG, GIF or WebP by its bytes (SVG included), a part that is not there, or one that does not read. */
+  unsupported: number
+}
+
+/**
+ * Where a link of a message leads, for the link page (`GET .../messages/{message}/links/{link}`). The page parses `url`
+ * with `new URL()`, shows and goes where that parse says, and offers nothing when its `host` is not this `host`.
+ */
+export type MessageLink = {
+  /** The link's token as the route names it, `<n>.<tag>`: a renumbered link answers `link_changed`, never another address. */
+  link: string
+  /** http or https, ASCII, as the server wrote it again: the only address the link page leaves for. */
+  url: string
+  /** Its host (`xn--` for other characters, so a look-alike shows) and `:port` when not the default, as `URL.host` writes it. */
+  host: string
+  /** The host the link's text named, when it named another one. */
+  shown?: string
+}
+
+/** Whether `link` has the shape of a link's token: a number below 1,000 without leading zeros, a dot, 16 base64url characters. */
+export function isMessageLinkToken(link: string): boolean {
+  return /^(0|[1-9][0-9]{0,2})\.[A-Za-z0-9_-]{16}$/.test(link)
+}
+
 /** The codes the server answers with, plus `network` for a request that got no answer. */
 export type ApiErrorCode =
   | 'invalid_address'
@@ -144,6 +303,14 @@ export type ApiErrorCode =
   | 'not_cancellable'
   | 'invalid_provider_app'
   | 'terms_needed'
+  | 'too_many_mailboxes'
+  | 'invalid_label'
+  | 'invalid_retention'
+  | 'invalid_query'
+  | 'too_many_messages'
+  | 'mailbox_unreadable'
+  | 'link_changed'
+  | 'busy'
   | 'network'
   | 'other'
 
@@ -177,6 +344,14 @@ const known: ReadonlySet<string> = new Set([
   'not_cancellable',
   'invalid_provider_app',
   'terms_needed',
+  'too_many_mailboxes',
+  'invalid_label',
+  'invalid_retention',
+  'invalid_query',
+  'too_many_messages',
+  'mailbox_unreadable',
+  'link_changed',
+  'busy',
 ])
 
 export class ApiError extends Error {
@@ -596,6 +771,172 @@ export function finishConfirmEmail(attempt: string, code: string): Promise<Me> {
   return request('POST', '/api/v1/auth/confirm/email/finish', { attempt, code })
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Mailboxes and the inbox: the person's own calls (ADR 0026, "The API"). The admin panel's are elsewhere.
+// ---------------------------------------------------------------------------------------------------------------
+
+const mailboxStates: ReadonlySet<string> = new Set(['waiting', 'receiving', 'paused', 'unreadable'])
+
+/** A mailbox as the server answered it, or a failure. An `unreadable` one has only its id and `created_at`. */
+function mailboxOf(answer: Partial<Mailbox> | null): Mailbox {
+  if (typeof answer?.id !== 'string' || !mailboxStates.has(answer.state as string)) {
+    throw new ApiError('other')
+  }
+  return {
+    ...(answer as Mailbox),
+    address: typeof answer.address === 'string' ? answer.address : '',
+    label: typeof answer.label === 'string' ? answer.label : '',
+    retention_options: Array.isArray(answer.retention_options) ? answer.retention_options : [],
+    confirmations: Array.isArray(answer.confirmations) ? answer.confirmations : [],
+  }
+}
+
+function mailboxPath(id: string): string {
+  return `/api/v1/mailboxes/${encodeURIComponent(id)}`
+}
+
+function messagePath(mailbox: string, message: string): string {
+  return `${mailboxPath(mailbox)}/messages/${encodeURIComponent(message)}`
+}
+
+/** The account's mailboxes, the oldest first, without the ones being disconnected, and how many it may have. */
+export async function mailboxes(): Promise<MailboxList> {
+  const answer = await request<Partial<MailboxList> | null>('GET', '/api/v1/mailboxes')
+  if (!Array.isArray(answer?.mailboxes)) throw new ApiError('other')
+  return {
+    mailboxes: answer.mailboxes.map(mailboxOf),
+    limit: typeof answer.limit === 'number' ? answer.limit : answer.mailboxes.length,
+  }
+}
+
+/** Makes a mailbox with a new address. The label may be empty. */
+export async function createMailbox(label: string): Promise<Mailbox> {
+  return mailboxOf(await request('POST', '/api/v1/mailboxes', { label }))
+}
+
+export async function mailbox(id: string): Promise<Mailbox> {
+  return mailboxOf(await request('GET', mailboxPath(id)))
+}
+
+/** Changes what the person may change of a mailbox. A new period applies to mail received from now on. */
+export async function updateMailbox(
+  id: string,
+  change: { label?: string; retention_days?: number },
+): Promise<Mailbox> {
+  return mailboxOf(await request('PATCH', mailboxPath(id), change))
+}
+
+/**
+ * Disconnects a mailbox: its address stops accepting mail and its mail is deleted. Needs a fresh proof of who
+ * the person is. A forked one answers `mailbox_unreadable` and stays.
+ */
+export function disconnectMailbox(id: string): Promise<void> {
+  return request('DELETE', mailboxPath(id))
+}
+
+/** How many messages a page asks for. */
+export const messagesPerPage = 50
+
+/**
+ * A page of a mailbox's messages, the newest first, or with `q` a page of what a search found. Read the page's
+ * `next` to go on, even when it holds no message.
+ */
+export async function messages(
+  id: string,
+  page: { after?: string; q?: string } = {},
+): Promise<MessagePage> {
+  const query = new URLSearchParams({ limit: String(messagesPerPage) })
+  if (page.after) query.set('after', page.after)
+  if (page.q) query.set('q', page.q)
+  const answer = await request<Partial<MessagePage> | null>(
+    'GET',
+    `${mailboxPath(id)}/messages?${query}`,
+  )
+  if (!Array.isArray(answer?.messages)) throw new ApiError('other')
+  return {
+    messages: answer.messages,
+    ...(typeof answer.next === 'string' && answer.next !== '' ? { next: answer.next } : {}),
+    ...(typeof answer.searched_to === 'string' ? { searched_to: answer.searched_to } : {}),
+  }
+}
+
+/** One message: its text always, and what it says of its HTML when it has some. */
+export async function message(mailbox: string, id: string): Promise<Message> {
+  const answer = await request<Partial<Message> | null>('GET', messagePath(mailbox, id))
+  if (typeof answer?.id !== 'string') throw new ApiError('other')
+  const list = <T>(value: T[] | undefined): T[] => (Array.isArray(value) ? value : [])
+  return {
+    ...(answer as Message),
+    from: list(answer.from),
+    to: list(answer.to),
+    cc: list(answer.cc),
+    reply_to: list(answer.reply_to),
+    attachments: list(answer.attachments),
+    auth: list(answer.auth),
+    text: typeof answer.text === 'string' ? answer.text : '',
+    subject: typeof answer.subject === 'string' ? answer.subject : '',
+  }
+}
+
+/** Where the raw message is downloaded from, as a file: never opened in the page. */
+export function rawMessageUrl(mailbox: string, id: string): string {
+  return `${messagePath(mailbox, id)}/raw`
+}
+
+/** Where an attachment is downloaded from, as a file of any type: never opened in the page. */
+export function attachmentUrl(mailbox: string, id: string, index: number): string {
+  return `${messagePath(mailbox, id)}/attachments/${index}`
+}
+
+/**
+ * Where the formatted view's frame loads a message's HTML from: a document the enclave writes from the message,
+ * sandboxed by the frame's attribute and its own policy. Only an `<iframe src>` asks for it; the app never reads it.
+ */
+export function messageHtmlUrl(mailbox: string, id: string): string {
+  return `${messagePath(mailbox, id)}/html`
+}
+
+/**
+ * Where a link of a message's HTML leads, for the link page. `link` is the token of the link page's address, which
+ * anyone can write: one without the shape of a token is answered `not_found` without asking.
+ */
+export async function messageLink(mailbox: string, id: string, link: string): Promise<MessageLink> {
+  if (!isMessageLinkToken(link)) throw new ApiError('not_found')
+  const answer = await request<Partial<MessageLink> | null>(
+    'GET',
+    `${messagePath(mailbox, id)}/links/${link}`,
+  )
+  if (typeof answer?.url !== 'string' || typeof answer.host !== 'string')
+    throw new ApiError('other')
+  return {
+    link,
+    url: answer.url,
+    host: answer.host,
+    ...(typeof answer.shown === 'string' && answer.shown !== '' ? { shown: answer.shown } : {}),
+  }
+}
+
+export function deleteMessage(mailbox: string, id: string): Promise<void> {
+  return request('DELETE', messagePath(mailbox, id))
+}
+
+/** The most messages one request deletes. */
+export const maxDeleted = 100
+
+/** Deletes up to a hundred messages, and answers how many of them were there. */
+export async function deleteMessages(mailbox: string, ids: string[]): Promise<number> {
+  const answer = await request<{ deleted?: unknown } | null>(
+    'POST',
+    `${mailboxPath(mailbox)}/messages/delete`,
+    { ids },
+  )
+  return typeof answer?.deleted === 'number' ? answer.deleted : 0
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// End of the person's mailbox calls.
+// ---------------------------------------------------------------------------------------------------------------
+
 /** An account as the admin panel sees it. Nothing of its mail, and nothing that signs in to it. */
 export type AccountRecord = {
   id: string
@@ -787,16 +1128,102 @@ export async function adminLog(
 export type AdminStats = {
   accounts: { active: number; closing: number; blocked: number; total: number }
   invitations: { unused: number }
-  /** False when some accounts could not be read: the numbers are at least these. */
+  /** The mailboxes (ADR 0026), absent from a server that does not count them. */
+  mailboxes?: MailboxCounts
+  /** False when some accounts or mailboxes could not be read: the numbers are at least these. */
   complete: boolean
 }
 
 export async function adminStats(): Promise<AdminStats> {
-  const answer = await request<Partial<AdminStats> | null>('GET', '/api/v1/admin/stats')
+  const answer = await request<
+    (Omit<Partial<AdminStats>, 'mailboxes'> & { mailboxes?: Partial<MailboxCounts> }) | null
+  >('GET', '/api/v1/admin/stats')
   if (typeof answer?.accounts !== 'object' || answer.accounts === null) throw new ApiError('other')
   return {
     accounts: answer.accounts,
     invitations: { unused: answer.invitations?.unused ?? 0 },
     complete: answer.complete !== false,
+    ...(typeof answer.mailboxes?.total === 'number'
+      ? { mailboxes: { total: answer.mailboxes.total } }
+      : {}),
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Admin: mailboxes (ADR 0026, "What the operator and admins see and do"). What the admin panel sees of a mailbox
+// is its signed record: never its address, its label, the Gmail account behind it or its mail. It can pause and
+// resume one, and nothing else.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** A mailbox as the admin panel sees it. An `unreadable` one has only its id, its account and `created_at`. */
+export type MailboxRecord = {
+  id: string
+  account: string
+  state: MailboxState
+  created_at: string
+  retention_days: number
+  receiving_since?: string
+  /** Since when it refuses new mail. There only while it is paused. */
+  paused_at?: string
+  /** Google confirmed which Gmail account asked to forward to it. */
+  verified: boolean
+}
+
+/** How many mailboxes the deployment has, from an index that proves nothing: it may be off by one or two. */
+export type MailboxCounts = { total: number }
+
+function mailboxRecords(answer: { mailboxes?: unknown } | null): MailboxRecord[] {
+  if (!Array.isArray(answer?.mailboxes)) throw new ApiError('other')
+  return (answer.mailboxes as Array<Partial<MailboxRecord> | null>).filter(
+    (record): record is MailboxRecord =>
+      typeof record?.id === 'string' && mailboxStates.has(record.state as string),
+  )
+}
+
+function mailboxRecordOf(answer: Partial<MailboxRecord> | null): MailboxRecord {
+  const [record] = mailboxRecords({ mailboxes: [answer] })
+  if (!record) throw new ApiError('other')
+  return record
+}
+
+/** How many mailboxes an account has, or undefined from a server that does not say. */
+export function accountMailboxes(record: AccountRecord): number | undefined {
+  const count = (record as { mailboxes?: unknown }).mailboxes
+  return typeof count === 'number' ? count : undefined
+}
+
+/** The mailbox an entry of the admin log was about, when it was about one: its id, and nothing else. */
+export function logEntryMailbox(entry: LogEntry): string | undefined {
+  const mailbox = (entry as { mailbox?: unknown }).mailbox
+  return typeof mailbox === 'string' && mailbox !== '' ? mailbox : undefined
+}
+
+/** An account's mailboxes, the oldest first. */
+export async function adminAccountMailboxes(account: string): Promise<MailboxRecord[]> {
+  return mailboxRecords(
+    await request('GET', `/api/v1/admin/accounts/${encodeURIComponent(account)}/mailboxes`),
+  )
+}
+
+/** The mailbox of exactly this address, for a report of abuse that names it: none or one. */
+export async function adminFindMailbox(address: string): Promise<MailboxRecord | null> {
+  const query = new URLSearchParams({ address })
+  return mailboxRecords(await request('GET', `/api/v1/admin/mailboxes?${query}`))[0] ?? null
+}
+
+/**
+ * A pause or a resume: the mailbox after it, and whether this call changed it. One that found the mailbox as asked
+ * (`changed: false`) told nobody and was counted nowhere.
+ */
+export type MailboxChange = MailboxRecord & { changed?: boolean }
+
+/** Pauses or resumes a mailbox. The answer is the mailbox after it, and whether the call changed it. */
+export async function adminMailboxAction(
+  id: string,
+  action: 'pause' | 'resume',
+): Promise<MailboxChange> {
+  const { changed, ...record } = mailboxRecordOf(
+    await request('POST', `/api/v1/admin/mailboxes/${encodeURIComponent(id)}/${action}`),
+  ) as MailboxRecord & { changed?: unknown }
+  return typeof changed === 'boolean' ? { ...record, changed } : record
 }

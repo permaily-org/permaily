@@ -1,0 +1,8 @@
+To: ada.lovelace@example.com
+Subject: The contact address of your Permaily account changed
+
+This address is now the contact address of your Permaily account. Messages about the account, and signing in by email, come here from now on.
+
+    When: 12 November 2026, 09:30 UTC
+
+If you did not ask for this, write to support@permaily.com.

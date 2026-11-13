@@ -1,0 +1,302 @@
+{
+  "about": "ADR 0026 tests 24 and 25: written by go test ./internal/mailhtml -run TestURLTable -update; read by web/tests and tests/message-frame",
+  "urls": [
+    {
+      "input": "http://2130706433:8080/x",
+      "kept": false,
+      "ipv4": true
+    },
+    {
+      "input": "http://0x7f000001:8080/x",
+      "kept": false,
+      "ipv4": true
+    },
+    {
+      "input": "http://0177.0.0.1/",
+      "kept": false,
+      "ipv4": true
+    },
+    {
+      "input": "http://127.1/",
+      "kept": false,
+      "ipv4": true
+    },
+    {
+      "input": "http://127.0.0.1/",
+      "kept": false,
+      "ipv4": true
+    },
+    {
+      "input": "http://[::1]/",
+      "kept": false
+    },
+    {
+      "input": "http://user:pw@example.com/",
+      "kept": false
+    },
+    {
+      "input": "https://evil.example\\@good.example/",
+      "kept": false
+    },
+    {
+      "input": "http://exa%6Dple.com/",
+      "kept": false
+    },
+    {
+      "input": "http://example.com./",
+      "kept": false
+    },
+    {
+      "input": "http://example.0x10/",
+      "kept": false
+    },
+    {
+      "input": "http://example.com:080/",
+      "kept": false
+    },
+    {
+      "input": "http://localhost/",
+      "kept": false
+    },
+    {
+      "input": "https://192.168.1.1/",
+      "kept": false,
+      "ipv4": true
+    },
+    {
+      "input": "http://0x7F.1/",
+      "kept": false,
+      "ipv4": true
+    },
+    {
+      "input": "http://1.2.3.4.5/",
+      "kept": false
+    },
+    {
+      "input": "https://bank.example/login",
+      "kept": true,
+      "url": "https://bank.example/login",
+      "protocol": "https:",
+      "hostname": "bank.example",
+      "host": "bank.example"
+    },
+    {
+      "input": "https://xn--pypal-4ve.example/",
+      "kept": true,
+      "url": "https://xn--pypal-4ve.example/",
+      "protocol": "https:",
+      "hostname": "xn--pypal-4ve.example",
+      "host": "xn--pypal-4ve.example"
+    },
+    {
+      "input": "https://раураl.example/",
+      "kept": true,
+      "url": "https://xn--l-7sba6dbr.example/",
+      "protocol": "https:",
+      "hostname": "xn--l-7sba6dbr.example",
+      "host": "xn--l-7sba6dbr.example"
+    },
+    {
+      "input": "https://bücher.example/",
+      "kept": true,
+      "url": "https://xn--bcher-kva.example/",
+      "protocol": "https:",
+      "hostname": "xn--bcher-kva.example",
+      "host": "xn--bcher-kva.example"
+    },
+    {
+      "input": "https://ＥＸＡＭＰＬＥ.com/",
+      "kept": true,
+      "url": "https://example.com/",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "HTTPS://Example.COM",
+      "kept": true,
+      "url": "https://example.com/",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://example.com:443/",
+      "kept": true,
+      "url": "https://example.com/",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "http://example.com:80/a",
+      "kept": true,
+      "url": "http://example.com/a",
+      "protocol": "http:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://example.com:8443/x",
+      "kept": true,
+      "url": "https://example.com:8443/x",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "port": "8443",
+      "host": "example.com:8443"
+    },
+    {
+      "input": "http://example.com:65535/",
+      "kept": true,
+      "url": "http://example.com:65535/",
+      "protocol": "http:",
+      "hostname": "example.com",
+      "port": "65535",
+      "host": "example.com:65535"
+    },
+    {
+      "input": "https://example.com/a/./b/../c",
+      "kept": true,
+      "url": "https://example.com/a/c",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://example.com/a/%2e%2E/b/.",
+      "kept": true,
+      "url": "https://example.com/b/",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://example.com/%7Euser/caf%C3%A9",
+      "kept": true,
+      "url": "https://example.com/%7Euser/caf%C3%A9",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://example.com/é ' \"\u003c\u003e`{}|^[]",
+      "kept": true,
+      "url": "https://example.com/%C3%A9%20%27%20%22%3C%3E%60%7B%7D%7C%5E%5B%5D",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://example.com/?q=a b\u0026r='\u0026s=é#f g#h",
+      "kept": true,
+      "url": "https://example.com/?q=a%20b\u0026r=%27\u0026s=%C3%A9#f%20g%23h",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://example.com/%zz%41",
+      "kept": true,
+      "url": "https://example.com/%25zz%41",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://example.com?x",
+      "kept": true,
+      "url": "https://example.com/?x",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://example.com#",
+      "kept": true,
+      "url": "https://example.com/#",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://example.com/p?",
+      "kept": true,
+      "url": "https://example.com/p?",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://a.b.c.example.museum/",
+      "kept": true,
+      "url": "https://a.b.c.example.museum/",
+      "protocol": "https:",
+      "hostname": "a.b.c.example.museum",
+      "host": "a.b.c.example.museum"
+    },
+    {
+      "input": "https://sub-domain.example.co.uk/path;params?q=1\u0026r=2#frag",
+      "kept": true,
+      "url": "https://sub-domain.example.co.uk/path;params?q=1\u0026r=2#frag",
+      "protocol": "https:",
+      "hostname": "sub-domain.example.co.uk",
+      "host": "sub-domain.example.co.uk"
+    },
+    {
+      "input": "https://example.com/a//b",
+      "kept": true,
+      "url": "https://example.com/a//b",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://example.com/../../a",
+      "kept": true,
+      "url": "https://example.com/a",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://example.com/~!$\u0026()*+,;=:@/",
+      "kept": true,
+      "url": "https://example.com/~!$\u0026()*+,;=:@/",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://shop.example/orders/100-2041?utm_source=email\u0026utm_medium=receipt",
+      "kept": true,
+      "url": "https://shop.example/orders/100-2041?utm_source=email\u0026utm_medium=receipt",
+      "protocol": "https:",
+      "hostname": "shop.example",
+      "host": "shop.example"
+    },
+    {
+      "input": "https://example.com/\u0000",
+      "kept": true,
+      "url": "https://example.com/",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://example.com/​",
+      "kept": true,
+      "url": "https://example.com/%E2%80%8B",
+      "protocol": "https:",
+      "hostname": "example.com",
+      "host": "example.com"
+    },
+    {
+      "input": "https://xn--bcher-kva.example/",
+      "kept": true,
+      "url": "https://xn--bcher-kva.example/",
+      "protocol": "https:",
+      "hostname": "xn--bcher-kva.example",
+      "host": "xn--bcher-kva.example"
+    }
+  ]
+}

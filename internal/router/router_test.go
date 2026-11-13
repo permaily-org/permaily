@@ -55,3 +55,17 @@ func TestRouter(t *testing.T) {
 		t.Fatalf("hosts: %v", got)
 	}
 }
+
+// ADR 0026, test 37: the app's policy, with frame-src written out, so a
+// later change to default-src cannot widen or break the frame unnoticed.
+func TestHTML37TheAppsPolicyFramesOnlyItself(t *testing.T) {
+	const want = "default-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
+	if AppCSP != want {
+		t.Fatalf("%q", AppCSP)
+	}
+	rec := httptest.NewRecorder()
+	New(nil, map[string]http.Handler{"app": http.NotFoundHandler()}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://app/", nil))
+	if rec.Header().Get("Content-Security-Policy") != want {
+		t.Fatal(rec.Header())
+	}
+}

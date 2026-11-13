@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/keys"
 	"github.com/permaily-org/permaily/pkg/attestation"
 	"github.com/permaily-org/permaily/pkg/kmspolicy"
@@ -61,7 +62,7 @@ func Handoff(hand func(context.Context, keys.Handoff) (*keys.HandoffResult, erro
 			writeError(w, http.StatusServiceUnavailable, "no_root_secret", "this enclave holds no root secret to hand over")
 		default:
 			// A failure of KMS or the store, reached through the host: keep the cause in the log.
-			log.Error("handoff failed", "err", err)
+			log.Error("handoff failed", "err", domain.Redacted(err))
 			writeError(w, http.StatusBadGateway, "failed", "the handoff failed; see the enclave log")
 		}
 	})

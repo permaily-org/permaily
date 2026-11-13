@@ -75,7 +75,7 @@ jobs:
       - run: go test -race ./...
       - name: End to end in dev mode (SMTP to API)
         run: go test -race -tags dev ./cmd/permaily-enclave
-      - name: Fuzz the parsers (attestation, KMS policy, release bundles, CMS, mail)
+      - name: Fuzz the parsers (attestation, KMS policy, release bundles, CMS, mail, mail's HTML)
         # A number of executions, not a duration: Go's fuzzer sometimes fails with
         # "context deadline exceeded" when a time limit ends mid-execution.
         run: |
@@ -88,6 +88,8 @@ jobs:
           go test -run='^$' -fuzz='^FuzzTrustUpdate$' -fuzztime=200000x ./pkg/provenance
           go test -run='^$' -fuzz=FuzzCMS -fuzztime=500000x ./internal/keys
           go test -run='^$' -fuzz=FuzzParse -fuzztime=150000x ./internal/inbox
+          go test -run='^$' -fuzz='^FuzzMessageText$' -fuzztime=150000x ./internal/inbox
+          go test -run='^$' -fuzz='^FuzzWalkParts$' -fuzztime=150000x ./internal/inbox
           go test -run='^$' -fuzz='^FuzzRegistered$' -fuzztime=400000x ./internal/webauthn
           go test -run='^$' -fuzz='^FuzzAsserted$' -fuzztime=400000x ./internal/webauthn
           go test -run='^$' -fuzz='^FuzzIDToken$' -fuzztime=400000x ./internal/idp
@@ -97,6 +99,9 @@ jobs:
           go test -run='^$' -fuzz='^FuzzGitHubUser$' -fuzztime=100000x ./internal/idp
           go test -run='^$' -fuzz='^FuzzGitHubEmails$' -fuzztime=300000x ./internal/idp
           go test -run='^$' -fuzz='^FuzzMetaUser$' -fuzztime=300000x ./internal/idp
+          go test -run='^$' -fuzz='^FuzzSanitise$' -fuzztime=100000x ./internal/mailhtml
+          go test -run='^$' -fuzz='^FuzzCSS$' -fuzztime=1000000x ./internal/mailhtml
+          go test -run='^$' -fuzz='^FuzzImageStructure$' -fuzztime=1000000x ./internal/mailhtml
 
   # pkg/provenance verifies release bundles with the standard library, inside
   # the enclave. Here it must give the same answers as sigstore-go, which lives
@@ -173,6 +178,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: cd web && bun install --frozen-lockfile
       - run: cd site && bun install --frozen-lockfile
+      - run: cd packages/mail && bun install --frozen-lockfile
       - name: Biome (lint and format)
         run: bun run lint
       - run: bun scripts/check-design-system.ts
@@ -180,6 +186,9 @@ jobs:
       - name: Third-party notices and license allowlist
         run: bun scripts/third-party-notices.ts --check
       - run: bun test scripts/
+      - name: Mail templates are what packages/mail makes, and its tests and types
+        working-directory: packages/mail
+        run: bun run check && bun run test && bun run typecheck
       - name: Release notes render with the configured preset
         run: node scripts/check-release-notes.mjs
 
@@ -299,3 +308,32 @@ jobs:
           [ -z "$failed" ]
           echo "PCRs reproduced across architectures:"
           cat eif-ubuntu-24.04/pcrs.json
+
+  # ADR 0026, "Tests", 26 to 31: the hostile corpus and the frame in real browsers, each on a Docker network with
+  # no route out (tests/message-frame/run.sh). Its own lockfile keeps the web app's dependencies, which Nix
+  # hashes, unchanged.
+  message-frame:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.13
+      - run: cd web && bun install --frozen-lockfile && bun run build
+      - run: cd tests/message-frame && bun install --frozen-lockfile && bun run typecheck
+      - name: The corpus twice and the frame, in ${{ matrix.browser }}
+        run: tests/message-frame/run.sh ${{ matrix.browser }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: message-frame-${{ matrix.browser }}-traces
+          path: tests/message-frame/test-results/

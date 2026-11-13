@@ -1,4 +1,4 @@
-import { ListFilter, type LucideIcon, Mail, Plug, ReceiptText, Settings } from 'lucide-react'
+import { Inbox, ListFilter, type LucideIcon, Mail, Plug, ReceiptText, Settings } from 'lucide-react'
 import { attentionCount } from './data/sample.ts'
 
 export type Section = {
@@ -11,6 +11,7 @@ export type Section = {
 
 // Sidebar order. Proof is a public page, not part of the app.
 export const sections: Section[] = [
+  { path: '/inbox', label: 'Inbox', icon: Inbox, waiting: 0 },
   {
     path: '/connections',
     label: 'Connections',

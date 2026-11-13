@@ -28,6 +28,7 @@ check-repo:
 	bun scripts/check-skills.ts
 	bun scripts/third-party-notices.ts --check
 	bun test scripts/
+	cd packages/mail && bun install --frozen-lockfile && bun run check && bun run test && bun run typecheck
 	node scripts/check-release-notes.mjs
 
 # Short fuzzing run of the attestation parser (CI runs it too).
@@ -41,6 +42,8 @@ fuzz:
 	go test -run='^$$' -fuzz='^FuzzTrustUpdate$$' -fuzztime=200000x ./pkg/provenance
 	go test -run='^$$' -fuzz=FuzzCMS -fuzztime=500000x ./internal/keys
 	go test -run='^$$' -fuzz=FuzzParse -fuzztime=150000x ./internal/inbox
+	go test -run='^$$' -fuzz='^FuzzMessageText$$' -fuzztime=150000x ./internal/inbox
+	go test -run='^$$' -fuzz='^FuzzWalkParts$$' -fuzztime=150000x ./internal/inbox
 	go test -run='^$$' -fuzz='^FuzzRegistered$$' -fuzztime=400000x ./internal/webauthn
 	go test -run='^$$' -fuzz='^FuzzAsserted$$' -fuzztime=400000x ./internal/webauthn
 	go test -run='^$$' -fuzz='^FuzzIDToken$$' -fuzztime=400000x ./internal/idp
@@ -50,6 +53,9 @@ fuzz:
 	go test -run='^$$' -fuzz='^FuzzGitHubUser$$' -fuzztime=100000x ./internal/idp
 	go test -run='^$$' -fuzz='^FuzzGitHubEmails$$' -fuzztime=300000x ./internal/idp
 	go test -run='^$$' -fuzz='^FuzzMetaUser$$' -fuzztime=300000x ./internal/idp
+	go test -run='^$$' -fuzz='^FuzzSanitise$$' -fuzztime=100000x ./internal/mailhtml
+	go test -run='^$$' -fuzz='^FuzzCSS$$' -fuzztime=1000000x ./internal/mailhtml
+	go test -run='^$$' -fuzz='^FuzzImageStructure$$' -fuzztime=1000000x ./internal/mailhtml
 
 notices:
 	bun scripts/third-party-notices.ts

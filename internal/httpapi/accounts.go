@@ -6,10 +6,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
@@ -132,17 +130,13 @@ const ProviderCookie = "__Host-permaily-provider"
 // provider sends the browser back. It is never logged.
 const DeviceCookie = "__Host-permaily-device"
 
-// identifiers are taken out of what is logged: logs leave the enclave, and
-// would say which account did what, and when.
-var identifiers = regexp.MustCompile(`\b(acc|ses|att|cer|inv)_[a-z2-7]{26}`)
-
 // failed answers a request with the error of a service. An error a caller
 // can act on goes out with its code; anything else is logged and answered
 // with nothing of its own.
-func failed(w http.ResponseWriter, log *slog.Logger, err error) {
+func failed(w http.ResponseWriter, r *http.Request, log *slog.Logger, err error) {
 	var known *contracts.Error
 	if !errors.As(err, &known) {
-		internal(log, err)
+		internal(r, log, err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
@@ -160,17 +154,37 @@ func failed(w http.ResponseWriter, log *slog.Logger, err error) {
 		status = http.StatusForbidden
 	case contracts.ErrLastPasskey.Code, contracts.ErrPasskeyNeeded.Code, contracts.ErrPasskeyOnlyOff.Code, contracts.ErrTooManyPasskeys.Code,
 		contracts.ErrAccountClosing.Code, contracts.ErrProviderOff.Code, contracts.ErrProviderInUse.Code, contracts.ErrProviderLinked.Code,
-		contracts.ErrLastWayIn.Code, contracts.ErrAddressInUse.Code, contracts.ErrNotCancellable.Code, contracts.ErrPasskeyRequired.Code:
+		contracts.ErrLastWayIn.Code, contracts.ErrAddressInUse.Code, contracts.ErrNotCancellable.Code, contracts.ErrPasskeyRequired.Code,
+		contracts.ErrTooManyMailboxes.Code, contracts.ErrMailboxUnreadable.Code:
 		// Well asked, and refused for how the account is now.
 		status = http.StatusConflict
 	}
 	writeError(w, status, known.Code, known.Message)
 }
 
-// internal logs a failure that is the service's own, without the accounts it
-// was about.
-func internal(log *slog.Logger, err error) {
-	log.Error("api: internal error", "err", identifiers.ReplaceAllString(err.Error(), "${1}_…"))
+// internal logs a failure that is the service's own, without the accounts,
+// mailboxes, messages or addresses it was about (domain.Redacted): logs leave
+// the enclave, and would say who did what, and when. A request its client
+// left is not one (clientLeft), and is not logged.
+func internal(r *http.Request, log *slog.Logger, err error) {
+	if clientLeft(r, err) {
+		return
+	}
+	log.Error("api: internal error", "err", domain.Redacted(err))
+}
+
+// clientLeft says whether a request failed only because its client went
+// away: the browser aborted it (the inbox replaces a search still on its
+// way) or the tab was closed. net/http then cancels the request's context,
+// whose cause is context.Canceled; the error is that cancellation, reaching
+// the handler through the service. A deadline the service set (the request's
+// deadline of the mailbox routes, the render's) ends its context with
+// context.DeadlineExceeded as its cause, never Canceled, so it is still the
+// service's failure, answered and logged as before. The log is public and
+// read for alarms, and the project logs nothing at debug level: nothing is
+// logged, and what is answered nobody reads.
+func clientLeft(r *http.Request, err error) bool {
+	return errors.Is(err, context.Canceled) && errors.Is(context.Cause(r.Context()), context.Canceled)
 }
 
 // maxAccountsBody bounds every request of the accounts API but the two that
@@ -194,35 +208,6 @@ func decodeUpTo(w http.ResponseWriter, r *http.Request, v any, limit int64) bool
 		return false
 	}
 	return true
-}
-
-// fromTheApp lets a request that changes something through only when the
-// page that made it is the app itself. The session cookie is SameSite=Strict
-// already; this holds whatever a browser does with cookies, and for the
-// requests that carry none (starting a sign-in).
-func fromTheApp(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			site := r.Header.Get("Sec-Fetch-Site")
-			if r.Header.Get("Origin") != "https://"+r.Host || (site != "" && site != "same-origin") {
-				writeError(w, http.StatusForbidden, "forbidden", "this request did not come from the app")
-				return
-			}
-			// A form of another site cannot send JSON without asking first.
-			if r.ContentLength != 0 && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-				writeError(w, http.StatusUnsupportedMediaType, "invalid_body", "send JSON")
-				return
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func setSession(w http.ResponseWriter, value string, maxAge int) {
-	http.SetCookie(w, &http.Cookie{
-		Name: SessionCookie, Value: value, Path: "/", MaxAge: maxAge,
-		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode,
-	})
 }
 
 func setProvider(w http.ResponseWriter, value string, life time.Duration) {
@@ -269,25 +254,10 @@ func provider(r *http.Request) string {
 // signing in, the account, its sessions and its passkeys. It is served on the app's host
 // only, and answers only to the app (cookies, same origin).
 func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
-	mux := http.NewServeMux()
+	mux := NewAppMux()
 	// signedIn runs next with the session of the request's cookie.
 	signedIn := func(next func(http.ResponseWriter, *http.Request, *accounts.Authenticated)) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			c, err := r.Cookie(SessionCookie)
-			if err != nil {
-				failed(w, log, contracts.ErrUnauthorized)
-				return
-			}
-			who, err := svc.Authenticate(r.Context(), c.Value)
-			if err != nil {
-				if errors.Is(err, contracts.ErrUnauthorized) {
-					setSession(w, "", -1) // a cookie that stands for nothing: drop it
-				}
-				failed(w, log, err)
-				return
-			}
-			next(w, r, who)
-		}
+		return withSession(svc, log, next)
 	}
 	mux.HandleFunc("POST /api/v1/auth/email/start", func(w http.ResponseWriter, r *http.Request) {
 		var in contracts.EmailStart
@@ -296,7 +266,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		}
 		out, err := svc.StartEmail(r.Context(), in)
 		if err != nil {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		writeJSON(w, out)
@@ -309,7 +279,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		}
 		out, err := svc.LookEmail(r.Context(), in)
 		if err != nil {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		writeJSON(w, out)
@@ -322,7 +292,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		from := browser(r)
 		me, cookie, err := svc.FinishEmail(r.Context(), in, from)
 		if err != nil {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		setSession(w, cookie, int(domain.SessionMax/time.Second))
@@ -331,7 +301,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 	})
 	mux.HandleFunc("POST /api/v1/auth/sign-out", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		if err := svc.CloseSession(r.Context(), who, who.Session.ID); err != nil && !errors.Is(err, contracts.ErrNotFound) {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		setSession(w, "", -1)
@@ -340,7 +310,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /api/v1/me", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		me, err := svc.Me(r.Context(), who)
 		if err != nil {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		writeJSON(w, me)
@@ -348,14 +318,14 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /api/v1/sessions", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		list, err := svc.Sessions(r.Context(), who)
 		if err != nil {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		writeJSON(w, list)
 	}))
 	mux.HandleFunc("DELETE /api/v1/sessions/{id}", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		if err := svc.CloseSession(r.Context(), who, r.PathValue("id")); err != nil {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		if r.PathValue("id") == who.Session.ID {
@@ -365,9 +335,9 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 	}))
 	// signedInWith answers a way of signing in that worked: the account, and
 	// the session in its cookie.
-	signedInWith := func(w http.ResponseWriter, from accounts.Browser, me *contracts.Me, cookie string, err error) {
+	signedInWith := func(w http.ResponseWriter, r *http.Request, from accounts.Browser, me *contracts.Me, cookie string, err error) {
 		if err != nil {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		setSession(w, cookie, int(domain.SessionMax/time.Second))
@@ -375,16 +345,16 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		writeJSON(w, me)
 	}
 	// answer writes what a service gave, or its error.
-	answer := func(w http.ResponseWriter, out any, err error) {
+	answer := func(w http.ResponseWriter, r *http.Request, out any, err error) {
 		if err != nil {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		writeJSON(w, out)
 	}
 	mux.HandleFunc("POST /api/v1/auth/passkey/start", func(w http.ResponseWriter, r *http.Request) {
 		out, err := svc.StartPasskeySignIn(r.Context())
-		answer(w, out, err)
+		answer(w, r, out, err)
 	})
 	mux.HandleFunc("POST /api/v1/auth/passkey/finish", func(w http.ResponseWriter, r *http.Request) {
 		var in contracts.PasskeySignIn
@@ -393,7 +363,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		}
 		from := browser(r)
 		me, cookie, err := svc.FinishPasskeySignIn(r.Context(), in, from)
-		signedInWith(w, from, me, cookie, err)
+		signedInWith(w, r, from, me, cookie, err)
 	})
 	mux.HandleFunc("POST /api/v1/auth/recovery", func(w http.ResponseWriter, r *http.Request) {
 		var in contracts.Recovery
@@ -402,15 +372,15 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		}
 		from := browser(r)
 		me, cookie, err := svc.Recover(r.Context(), in, from)
-		signedInWith(w, from, me, cookie, err)
+		signedInWith(w, r, from, me, cookie, err)
 	})
 	mux.HandleFunc("GET /api/v1/passkeys", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		out, err := svc.Passkeys(r.Context(), who)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	mux.HandleFunc("POST /api/v1/passkeys/start", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		out, err := svc.StartPasskey(r.Context(), who)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	mux.HandleFunc("POST /api/v1/passkeys/finish", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		var in contracts.PasskeyFinish
@@ -418,7 +388,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 			return
 		}
 		out, err := svc.FinishPasskey(r.Context(), who, in)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	mux.HandleFunc("PATCH /api/v1/passkeys/{id}", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		var in contracts.PasskeyRename
@@ -426,11 +396,11 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 			return
 		}
 		out, err := svc.RenamePasskey(r.Context(), who, r.PathValue("id"), in)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	mux.HandleFunc("DELETE /api/v1/passkeys/{id}", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		if err := svc.RemovePasskey(r.Context(), who, r.PathValue("id")); err != nil {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -441,11 +411,11 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 			return
 		}
 		out, err := svc.SetPasskeyOnly(r.Context(), who, in)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	mux.HandleFunc("POST /api/v1/account/recovery-codes", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		out, err := svc.NewRecoveryCodes(r.Context(), who)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	mux.HandleFunc("PATCH /api/v1/account", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		var in contracts.AccountUpdate
@@ -453,16 +423,16 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 			return
 		}
 		out, err := svc.UpdateAccount(r.Context(), who, in)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	// Deleting takes no body: the session says whose account it is.
 	mux.HandleFunc("POST /api/v1/account/delete", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		out, err := svc.StartDeletion(r.Context(), who)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	mux.HandleFunc("POST /api/v1/account/delete/cancel", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		out, err := svc.CancelDeletion(r.Context(), who)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	// Agreeing to the terms in force, by the version the person was shown.
 	mux.HandleFunc("POST /api/v1/account/terms", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
@@ -471,7 +441,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 			return
 		}
 		out, err := svc.AgreeTerms(r.Context(), who, in)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	// Changing the contact address: a code goes to the new one, and proves it.
 	mux.HandleFunc("POST /api/v1/account/address/start", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
@@ -480,7 +450,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 			return
 		}
 		out, err := svc.StartAddressChange(r.Context(), who, in)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	mux.HandleFunc("POST /api/v1/account/address/finish", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		var in contracts.AddressFinish
@@ -488,11 +458,11 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 			return
 		}
 		out, err := svc.FinishAddressChange(r.Context(), who, in)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	mux.HandleFunc("GET /api/v1/auth/providers", func(w http.ResponseWriter, r *http.Request) {
 		out, err := svc.ProvidersOn(r.Context())
-		answer(w, out, err)
+		answer(w, r, out, err)
 	})
 	// startProvider answers where to send the browser, and gives it the
 	// cookie that the provider's answer is taken with.
@@ -503,7 +473,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		}
 		out, cookie, err := svc.StartProvider(r.Context(), who, in)
 		if err != nil {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		setProvider(w, cookie, domain.ProviderLifetime)
@@ -516,7 +486,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 	// failed, and next to it the provider when the service still knew the
 	// trip, for the screen to name it. What the provider said went wrong is
 	// never read.
-	mux.HandleFunc("GET /api/v1/auth/provider/callback", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET "+ProviderCallback, func(w http.ResponseWriter, r *http.Request) {
 		q, from := r.URL.Query(), browser(r)
 		done, err := svc.FinishProvider(r.Context(), accounts.ProviderAnswer{
 			State: q.Get("state"), Code: q.Get("code"), Refused: q.Has("error"),
@@ -524,7 +494,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		})
 		var known *contracts.Error
 		if err != nil && !errors.As(err, &known) {
-			internal(log, err)
+			internal(r, log, err)
 		}
 		// The trip is over. The cookie goes, unless a sign-in now waits in
 		// this browser for its address.
@@ -548,7 +518,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 	})
 	mux.HandleFunc("GET /api/v1/auth/provider/pending", func(w http.ResponseWriter, r *http.Request) {
 		out, err := svc.PendingProvider(r.Context(), provider(r))
-		answer(w, out, err)
+		answer(w, r, out, err)
 	})
 	mux.HandleFunc("POST /api/v1/auth/provider/confirm/start", func(w http.ResponseWriter, r *http.Request) {
 		var in contracts.ProviderConfirmStart
@@ -556,7 +526,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 			return
 		}
 		out, err := svc.StartProviderConfirm(r.Context(), provider(r), in)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	})
 	mux.HandleFunc("POST /api/v1/auth/provider/confirm/finish", func(w http.ResponseWriter, r *http.Request) {
 		var in contracts.ProviderConfirm
@@ -568,17 +538,17 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 		if err == nil {
 			setProvider(w, "", -time.Second) // it waited for this
 		}
-		signedInWith(w, from, me, cookie, err)
+		signedInWith(w, r, from, me, cookie, err)
 	})
 	mux.HandleFunc("GET /api/v1/providers", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		out, err := svc.LinkedProviders(r.Context(), who)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	// From Settings: the same trip, which links to the session's account.
 	mux.HandleFunc("POST /api/v1/providers/start", signedIn(startProvider))
 	mux.HandleFunc("DELETE /api/v1/providers/{provider}", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		if err := svc.UnlinkProvider(r.Context(), who, r.PathValue("provider")); err != nil {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -586,11 +556,11 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 	// Confirming it is them again, for the changes that need a fresh proof.
 	mux.HandleFunc("GET /api/v1/auth/confirm", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		out, err := svc.ConfirmWays(r.Context(), who)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	mux.HandleFunc("POST /api/v1/auth/confirm/passkey/start", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		out, err := svc.StartConfirmPasskey(r.Context(), who)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	mux.HandleFunc("POST /api/v1/auth/confirm/passkey/finish", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		var in contracts.PasskeySignIn
@@ -598,11 +568,11 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 			return
 		}
 		out, err := svc.FinishConfirmPasskey(r.Context(), who, in)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	mux.HandleFunc("POST /api/v1/auth/confirm/email/start", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		out, err := svc.StartConfirmEmail(r.Context(), who)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	mux.HandleFunc("POST /api/v1/auth/confirm/email/finish", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		var in contracts.ConfirmFinish
@@ -610,7 +580,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 			return
 		}
 		out, err := svc.FinishConfirmEmail(r.Context(), who, in)
-		answer(w, out, err)
+		answer(w, r, out, err)
 	}))
 	// The admin panel: a session of an admin, or nothing at all. Who is not
 	// an admin is answered not_found, whatever path and method they ask.
@@ -618,7 +588,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 	mux.Handle("/api/v1/admin/", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 		admin, err := svc.Admin(r.Context(), who)
 		if err != nil {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		var op AdminOperator = admin
@@ -644,17 +614,18 @@ func adminPanel(log *slog.Logger) http.Handler {
 	accountRoutes(mux, prefix, op, log)
 	invitationRoutes(mux, prefix, op, log)
 	providerAppRoutes(mux, prefix, func(r *http.Request) ProviderAppService { return adminOf(r) }, log)
+	adminMailboxRoutes(mux, prefix, log)
 	mux.HandleFunc("GET "+prefix+"/admins", func(w http.ResponseWriter, r *http.Request) {
 		out, err := adminOf(r).Admins(r.Context())
-		answerWith(w, log, out, err)
+		answerWith(w, r, log, out, err)
 	})
 	mux.HandleFunc("PUT "+prefix+"/admins/{id}", func(w http.ResponseWriter, r *http.Request) {
 		out, err := adminOf(r).MakeAdmin(r.Context(), r.PathValue("id"))
-		answerWith(w, log, out, err)
+		answerWith(w, r, log, out, err)
 	})
 	mux.HandleFunc("DELETE "+prefix+"/admins/{id}", func(w http.ResponseWriter, r *http.Request) {
 		out, err := adminOf(r).RemoveAdmin(r.Context(), r.PathValue("id"))
-		answerWith(w, log, out, err)
+		answerWith(w, r, log, out, err)
 	})
 	mux.HandleFunc("GET "+prefix+"/log", func(w http.ResponseWriter, r *http.Request) {
 		limit, ok := pageLimit(w, r, log)
@@ -662,11 +633,11 @@ func adminPanel(log *slog.Logger) http.Handler {
 			return
 		}
 		out, err := adminOf(r).AdminLog(r.Context(), r.URL.Query().Get("after"), limit)
-		answerWith(w, log, out, err)
+		answerWith(w, r, log, out, err)
 	})
 	mux.HandleFunc("GET "+prefix+"/stats", func(w http.ResponseWriter, r *http.Request) {
 		out, err := adminOf(r).Stats(r.Context())
-		answerWith(w, log, out, err)
+		answerWith(w, r, log, out, err)
 	})
 	mux.HandleFunc(prefix+"/admins", refuse(http.MethodGet))
 	mux.HandleFunc(prefix+"/admins/{id}", refuse("PUT, DELETE"))
@@ -677,9 +648,9 @@ func adminPanel(log *slog.Logger) http.Handler {
 }
 
 // answerWith writes what a service gave, or its error.
-func answerWith(w http.ResponseWriter, log *slog.Logger, out any, err error) {
+func answerWith(w http.ResponseWriter, r *http.Request, log *slog.Logger, out any, err error) {
 	if err != nil {
-		failed(w, log, err)
+		failed(w, r, log, err)
 		return
 	}
 	writeJSON(w, out)
@@ -693,7 +664,7 @@ func pageLimit(w http.ResponseWriter, r *http.Request, log *slog.Logger) (int, b
 	}
 	limit, err := strconv.Atoi(v)
 	if err != nil {
-		failed(w, log, contracts.ErrInvalidLimit)
+		failed(w, r, log, contracts.ErrInvalidLimit)
 		return 0, false
 	}
 	return limit, true
@@ -733,15 +704,15 @@ func invitationRoutes(mux *http.ServeMux, prefix string, op func(*http.Request) 
 			return
 		}
 		out, err := op(r).CreateInvitations(r.Context(), in.Count)
-		answerWith(w, log, out, err)
+		answerWith(w, r, log, out, err)
 	})
 	mux.HandleFunc("GET "+prefix+"/invitations", func(w http.ResponseWriter, r *http.Request) {
 		out, err := op(r).Invitations(r.Context())
-		answerWith(w, log, out, err)
+		answerWith(w, r, log, out, err)
 	})
 	mux.HandleFunc("DELETE "+prefix+"/invitations/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if err := op(r).RevokeInvitation(r.Context(), r.PathValue("id")); err != nil {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -766,6 +737,7 @@ func invitationRoutes(mux *http.ServeMux, prefix string, op func(*http.Request) 
 func Accounts(svc OperatorService, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	accountRoutes(mux, "/v1/admin", func(*http.Request) OperatorService { return svc }, log)
+	operatorMailboxRoutes(mux, "/v1/admin", svc, log)
 	mux.HandleFunc("/", noSuchEndpoint)
 	return mux
 }
@@ -777,7 +749,7 @@ func accountRoutes(mux *http.ServeMux, prefix string, op func(*http.Request) Ope
 		q := r.URL.Query()
 		if q.Has("address") {
 			out, err := op(r).AccountRecordByAddress(r.Context(), q.Get("address"))
-			answerWith(w, log, out, err)
+			answerWith(w, r, log, out, err)
 			return
 		}
 		limit, ok := pageLimit(w, r, log)
@@ -785,11 +757,11 @@ func accountRoutes(mux *http.ServeMux, prefix string, op func(*http.Request) Ope
 			return
 		}
 		out, err := op(r).AccountRecords(r.Context(), q.Get("after"), limit)
-		answerWith(w, log, out, err)
+		answerWith(w, r, log, out, err)
 	})
 	mux.HandleFunc("GET "+prefix+"/accounts/{id}", func(w http.ResponseWriter, r *http.Request) {
 		out, err := op(r).AccountRecord(r.Context(), r.PathValue("id"))
-		answerWith(w, log, out, err)
+		answerWith(w, r, log, out, err)
 	})
 	for path, act := range map[string]func(OperatorService) func(context.Context, string) (*contracts.AccountRecord, error){
 		"block": func(s OperatorService) func(context.Context, string) (*contracts.AccountRecord, error) {
@@ -810,7 +782,7 @@ func accountRoutes(mux *http.ServeMux, prefix string, op func(*http.Request) Ope
 	} {
 		mux.HandleFunc("POST "+prefix+"/accounts/{id}/"+path, func(w http.ResponseWriter, r *http.Request) {
 			out, err := act(op(r))(r.Context(), r.PathValue("id"))
-			answerWith(w, log, out, err)
+			answerWith(w, r, log, out, err)
 		})
 		mux.HandleFunc(prefix+"/accounts/{id}/"+path, refuse(http.MethodPost))
 	}
@@ -838,7 +810,7 @@ func ProviderApps(svc ProviderAppService, log *slog.Logger) http.Handler {
 func providerAppRoutes(mux *http.ServeMux, prefix string, op func(*http.Request) ProviderAppService, log *slog.Logger) {
 	mux.HandleFunc("GET "+prefix+"/providers", func(w http.ResponseWriter, r *http.Request) {
 		out, err := op(r).ProviderApps(r.Context())
-		answerWith(w, log, out, err)
+		answerWith(w, r, log, out, err)
 	})
 	mux.HandleFunc("PUT "+prefix+"/providers/{provider}", func(w http.ResponseWriter, r *http.Request) {
 		var in contracts.ProviderAppSet
@@ -846,11 +818,11 @@ func providerAppRoutes(mux *http.ServeMux, prefix string, op func(*http.Request)
 			return
 		}
 		out, err := op(r).SetProviderApp(r.Context(), r.PathValue("provider"), in)
-		answerWith(w, log, out, err)
+		answerWith(w, r, log, out, err)
 	})
 	mux.HandleFunc("DELETE "+prefix+"/providers/{provider}", func(w http.ResponseWriter, r *http.Request) {
 		if err := op(r).RemoveProviderApp(r.Context(), r.PathValue("provider")); err != nil {
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

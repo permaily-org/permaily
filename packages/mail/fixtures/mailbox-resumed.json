@@ -1,0 +1,25 @@
+{
+  "name": "mailbox-resumed",
+  "to": "ada@example.com",
+  "subject": "Permaily resumed one of your mailboxes",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "Permaily resumed one of your mailboxes. It accepts mail again."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "note",
+      "text": "To ask why it was paused, write to support@permaily.com."
+    }
+  ]
+}

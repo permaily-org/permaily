@@ -1,6 +1,6 @@
 # 0022 Admins, and confirming again before a sensitive change
 
-Status: Accepted. Built (2026-11-12), not released yet.
+Status: Accepted. Built (2026-11-12); in production since v0.11.0 (2026-11-12).
 Date: 2026-11-12
 
 ## Context
@@ -59,7 +59,7 @@ For admins:
 
 - Every answer that is the person's own account (`GET me`, a confirmation, the name, the contact address, deleting and cancelling it) says what it is in the admin panel (`admin`) and whether it signs in with passkeys only (`passkey_only`), so the web app shows the panel's "turn on passkey only" screen without a request that is refused.
 - `PUT` and `DELETE /api/v1/admin/admins/{id}` answer the list of admins after the change (200). Making an admin of who is one, or of the super admin, changes nothing; removing who is no admin changes nothing. An account that is not there is 404.
-- An admin's request is decided with the record read when the request starts: whether it is an admin, the super admin, "passkey only", and whether its proof is fresh. The limits on the target account are checked again inside the change of the target's record.
+- An admin's request is decided with the record read when the request starts: whether it is an admin, the super admin, "passkey only", and whether its proof is fresh. The limits on the target account are checked again inside the change of the target's record. A mailbox's pause or resume (ADR 0026) changes the mailbox's record, not its owner's, so the owner's role is read once, before it: an owner made an admin in between has the pause commit, which is what the allowed order "pause, then promotion" gives. The guard protects an account while it is an admin, and a request admitted before the promotion is the same as one that finished before it.
 - A deletion asked through the panel is `closing_by: operator`, as one asked with the token.
 - The log has one entry per invitation made, with the invitation's identifier, and one per provider's application set or removed, without an account. The entry is written after the action; when it cannot be written, the action stands and the enclave logs that an entry of that kind was not written. Two entries in the same nanosecond are in no fixed order.
 - `GET stats` counts at most 1000 accounts, read from their signed records, and the invitations as their list shows them (1000 at most). `complete` is false when there were more, or when a record could not be read.

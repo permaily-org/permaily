@@ -29,7 +29,11 @@ func (e *Error) Is(target error) bool {
 
 // The failures of accounts and sign-in. Use errors.Is.
 var (
-	ErrInvalidAddress    = &Error{"invalid_address", "that is not an email address we can use"}
+	ErrInvalidAddress = &Error{"invalid_address", "that is not an email address we can use"}
+	// ErrSameAddress has the code of ErrInvalidAddress: changing the contact
+	// address to the one the account has already. It is the asker's own
+	// address, so saying so tells nothing.
+	ErrSameAddress       = &Error{"invalid_address", "that is the account's address already"}
 	ErrInvalidInvitation = &Error{"invalid_invitation", "that invitation is not valid, or was used already"}
 	// ErrInvalidCode covers a wrong code, one that ended and one that was
 	// used: whoever is guessing learns nothing from which.
@@ -85,7 +89,8 @@ var (
 	ErrTermsNeeded = &Error{"terms_needed", "agree to the terms of service and the privacy policy to make an account"}
 	// ErrTermsChanged has the code of ErrTermsNeeded: an account whose person
 	// agreed to an earlier version, or to none, changes nothing until they
-	// agree to the one in force.
+	// agree to the one in force; and an account that agrees to a version that
+	// is not that one is told the same.
 	ErrTermsChanged = &Error{"terms_needed", "the terms changed; agree to them to go on"}
 )
 
@@ -221,6 +226,9 @@ type AccountRecord struct {
 	// Terms is the version of the terms the person agreed to and when;
 	// absent when they agreed to none.
 	Terms *TermsAgreement `json:"terms,omitempty"`
+	// Mailboxes is how many mailboxes the account has (ADR 0026): never
+	// which addresses, labels or mail.
+	Mailboxes int `json:"mailboxes"`
 }
 
 // AccountList is one page of the accounts, the oldest first.
@@ -676,6 +684,9 @@ type LogEntry struct {
 	// Provider is the provider whose application was set or removed; absent
 	// otherwise.
 	Provider string `json:"provider,omitempty"`
+	// Mailbox is the mailbox it was done to, paused or resumed, by its
+	// identifier alone: never an address, a label or mail. Absent otherwise.
+	Mailbox string `json:"mailbox,omitempty"`
 }
 
 // AdminLog is a page of the admin log, the newest first.
@@ -703,6 +714,10 @@ type InvitationCounts struct {
 type Stats struct {
 	Accounts    AccountCounts    `json:"accounts"`
 	Invitations InvitationCounts `json:"invitations"`
+	// Mailboxes counts the deployment's mailboxes, from an index that
+	// proves nothing (ADR 0026): it may be off by a creation or a disconnect
+	// that failed in between.
+	Mailboxes MailboxCounts `json:"mailboxes"`
 	// Complete is false when there were more accounts or invitations than
 	// one request counts, or some could not be read.
 	Complete bool `json:"complete"`

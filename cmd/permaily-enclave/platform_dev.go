@@ -31,6 +31,7 @@ import (
 	"github.com/permaily-org/permaily/internal/nsm/fakensm"
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/services/accounts"
+	"github.com/permaily-org/permaily/internal/services/mailboxes"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
 	"github.com/permaily-org/permaily/pkg/attestation"
@@ -43,9 +44,10 @@ type platform struct {
 	smtpListener net.Listener
 	attester     nsm.Attester
 	certs        *tlsacme.Manager
-	keys         keys.Service
-	store        store.Store
-	auth         inbox.Authenticator
+	// mailboxes is the mailboxes of accounts (ADR 0026), and reader reads
+	// their stored mail; nil without accounts.
+	mailboxes *mailboxes.Service
+	reader    inbox.Reader
 	// rootStatus describes the key that holds the root secret, and handoff
 	// gives the root secret to the next release; nil without a root secret.
 	rootStatus func(context.Context) (*attestation.RootStatus, error)
@@ -172,7 +174,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 		}
 	}
 	mem, commits, local := storage.mem, storage.commits, storage.keys
-	p := &platform{mode: "dev", listener: ln, attester: att, certs: certs, store: mem}
+	p := &platform{mode: "dev", listener: ln, attester: att, certs: certs}
 	// Accounts, with the messages kept instead of sent: GET /dev/outbox on
 	// the app's host shows them, sign-in codes included.
 	appURL := "https://" + hosts.App
@@ -219,16 +221,23 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 		}
 		_, _ = io.WriteString(w, devTermsVersion()+"\n")
 	})}
-	if cfg.mailboxID != "" {
-		port := cfg.smtpPort
-		if port == 25 {
-			port = 2525 // unprivileged default for local runs
-		}
-		if p.smtpListener, err = net.Listen("tcp", fmt.Sprintf(":%d", port)); err != nil {
-			return nil, err
-		}
-		p.keys = local
-		p.auth = msgauth.DKIM(net.DefaultResolver.LookupTXT)
+	// The mailboxes of accounts, with their own strict records, and SMTP on
+	// -smtp-port (2525 by default in dev mode).
+	if p.mailboxes, err = mailboxes.New(mailboxes.Config{
+		Records: &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock},
+		Storage: mem, Keys: local, Accounts: p.accounts, Notifier: p.accounts, Domain: hosts.Inbox, Log: log, Now: devClock,
+		Auth: msgauth.DKIM(net.DefaultResolver.LookupTXT),
+	}); err != nil {
+		return nil, err
+	}
+	p.accounts.SetMailboxes(p.mailboxes)
+	p.reader = inbox.NewReader(mem)
+	port := cfg.smtpPort
+	if port == 25 {
+		port = 2525 // unprivileged default for local runs
+	}
+	if p.smtpListener, err = net.Listen("tcp", fmt.Sprintf(":%d", port)); err != nil {
+		return nil, err
 	}
 	return p, nil
 }

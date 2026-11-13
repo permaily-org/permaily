@@ -20,6 +20,8 @@ const kinds: Record<string, string> = {
   provider_app_removed: "Removed a provider's application",
   admin_made: 'Made an admin',
   admin_removed: 'Removed an admin',
+  mailbox_paused: 'Paused a mailbox',
+  mailbox_resumed: 'Resumed a mailbox',
 }
 
 /** What an entry about a provider's application says, with the provider by name. */
@@ -121,6 +123,12 @@ export function LogPage() {
                           <span className="wrap-anywhere font-mono">{entry.account.id}</span>
                         </>
                       )}
+                    </span>
+                  )}
+                  {api.logEntryMailbox(entry) && (
+                    <span className="block text-small text-ink-2">
+                      Mailbox{' '}
+                      <span className="wrap-anywhere font-mono">{api.logEntryMailbox(entry)}</span>
                     </span>
                   )}
                   {entry.invitation && (

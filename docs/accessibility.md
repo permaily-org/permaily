@@ -7,6 +7,7 @@ Target: WCAG 2.2 AA for the web app and the public site.
 - `site/e2e/a11y.spec.ts`: axe (WCAG 2.0/2.1/2.2 A and AA tags) on every public page, in light and dark themes, on desktop and mobile Chromium, with reduced motion emulated. Any violation fails CI.
 - Biome's a11y rules on the web app and the site. Some are warnings today (TODO below).
 - Before each release, manually: keyboard only, a screen reader (VoiceOver or NVDA), 200% zoom, and reduced motion.
+- The message view's frame and the link page, by hand in the same pass (ADR 0026, "Dark theme, height, keyboard, zoom"): Tab goes through the head's controls, into the frame's links in order and out; a screen reader announces the frame by its title ("Message: <subject>"), the label above it as text, a link by its text, the box of a remote image as "Remote image not loaded" and its `alt`; at 200% zoom the frame scrolls inside itself and the label stays in view; on the link page focus starts on the `h1`, then the address, the button "Open <host>" and "Back to the message". `web/tests/pages/inbox/message-html.test.tsx` runs axe and the focus order in jsdom; the frame's content is outside the app's DOM there.
 
 ## Rules
 

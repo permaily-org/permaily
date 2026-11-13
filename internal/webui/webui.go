@@ -32,7 +32,7 @@ func handler(sub fs.FS) http.Handler {
 			p = "index.html"
 		}
 		if _, err := fs.Stat(sub, p); err != nil {
-			if path.Ext(p) != "" {
+			if path.Ext(p) != "" && !strings.HasPrefix(p, "inbox/") {
 				http.NotFound(w, r)
 				return
 			}

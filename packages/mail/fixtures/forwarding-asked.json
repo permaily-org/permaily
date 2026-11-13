@@ -1,0 +1,29 @@
+{
+  "name": "forwarding-asked",
+  "to": "ada@example.com",
+  "subject": "Gmail asked to forward to your Permaily mailbox",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "Google confirmed that a Gmail account asked to forward its mail to one of your Permaily mailboxes."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Open Accounts in the app to see which Gmail account asked. Enter the code in Gmail only if that account is yours."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "note",
+      "text": "If you didn't ask, do nothing: no mail is forwarded until the code is entered in Gmail."
+    }
+  ]
+}

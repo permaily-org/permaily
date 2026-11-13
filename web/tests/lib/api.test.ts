@@ -76,6 +76,8 @@ describe('how a failure reads', () => {
     'super_admin_only',
     'not_cancellable',
     'invalid_provider_app',
+    'link_changed',
+    'busy',
   ])('keeps the code %s the server answered', async (code) => {
     server.on('GET /api/v1/me', refused(400, code))
     expect(await failure(api.me())).toBe(code)
@@ -551,5 +553,26 @@ describe('the admin API', () => {
     })
     server.on('GET /api/v1/admin/stats', ok({ accounts: null }))
     expect(await failure(api.adminStats())).toBe('other')
+  })
+})
+
+describe('the token of a link of a message', () => {
+  it('is a number below 1,000 without leading zeros, a dot, and 16 base64url characters', () => {
+    for (const ok of ['0.AAECAwQFBgcICQoL', '999.-_-_-_-_-_-_-_-_', '12.abcdefghijklmnop']) {
+      expect(api.isMessageLinkToken(ok)).toBe(true)
+    }
+    for (const bad of [
+      '',
+      '0',
+      '01.AAECAwQFBgcICQoL',
+      '1000.AAECAwQFBgcICQoL',
+      '1.AAECAwQFBgcICQo',
+      '1.AAECAwQFBgcICQoLM',
+      '1.AAECAwQFBgcICQo=',
+      '1/AAECAwQFBgcICQoL',
+      '1.AAECAwQFBgcICQoL\n',
+    ]) {
+      expect(api.isMessageLinkToken(bad)).toBe(false)
+    }
   })
 })

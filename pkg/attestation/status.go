@@ -94,13 +94,18 @@ const (
 	// of the service, or made it stop being one.
 	AdminMade    = "admin_made"
 	AdminRemoved = "admin_removed"
+	// AdminMailboxPaused and AdminMailboxResumed: a mailbox was made to
+	// refuse new mail, keeping what it holds, or to take it again. Never
+	// which mailbox: the operator cannot read, disconnect or delete one.
+	AdminMailboxPaused  = "mailbox_paused"
+	AdminMailboxResumed = "mailbox_resumed"
 )
 
 // AdminActions lists the kinds this package knows, in the order they are shown.
 var AdminActions = []string{
 	AdminBlock, AdminUnblock, AdminDelete, AdminDeleteCancel, AdminSessionsClose,
 	AdminInvitationsMade, AdminInvitationRevoked, AdminProviderAppSet, AdminProviderAppRemoved,
-	AdminMade, AdminRemoved,
+	AdminMade, AdminRemoved, AdminMailboxPaused, AdminMailboxResumed,
 }
 
 // What SES says about an identity, a domain or an address mail is sent from
@@ -213,6 +218,17 @@ type AnchorRegression struct {
 	Had   uint64    `json:"had"`
 	Found uint64    `json:"found"`
 	At    time.Time `json:"at"`
+	// Fork says the record has two commits of different digests at one
+	// version (Found): whoever writes to the store of commits hid one while an
+	// enclave wrote the other, and the record is refused (ADR 0026, a strict
+	// record). Unlocked says a commit (at Found) has no copy that S3 keeps
+	// locked: the store did not keep a lock it took. Lost says the newest
+	// commit (at Found) names a value the table no longer holds: whoever
+	// writes to it deleted or changed it, and the record is refused. Each
+	// fails verification, as any regression does.
+	Fork     bool `json:"fork,omitempty"`
+	Unlocked bool `json:"unlocked,omitempty"`
+	Lost     bool `json:"lost,omitempty"`
 }
 
 // SigstoreStatus identifies a trust root that Sigstore published through its

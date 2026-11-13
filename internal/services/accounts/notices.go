@@ -2,22 +2,24 @@ package accounts
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain"
+	"github.com/permaily-org/permaily/internal/domain/mail"
 	"github.com/permaily-org/permaily/internal/idp"
+	"github.com/permaily-org/permaily/internal/services/mailboxes"
 )
 
 // Notices by mail (ADR 0017): a person is told of security and access, and of
 // nothing else. A sign-in from a device that had not signed in before, a
 // change in how the account is signed into, a change of the contact address,
 // a deletion asked or cancelled, the operator blocking or unblocking the
-// account, and the account made an admin or no longer one. They cannot be turned off.
+// account, the account made an admin or no longer one, and a mailbox added,
+// asked to be forwarded to by Gmail, disconnected, paused or resumed (ADR
+// 0026). They cannot be turned off.
 //
-// A notice is plain text, from the same sender and through the same Mailer
+// A notice is plain text and its HTML (ADR 0025), from the same sender and through the same Mailer
 // as a sign-in message, so the watch of ADR 0021 applies to it. Its subject
 // is fixed words. It never holds a code, a link, a token or an identifier,
 // and nothing a person typed: not a name, not an address. Not even what the
@@ -55,6 +57,13 @@ const supportAddress = "support@permaily.com"
 // are sent or when noticeWait has passed, whichever is first. It returns
 // nothing: what caused the notice is done already.
 func (s *Service) notify(ctx context.Context, kind string, mails ...Mail) {
+	s.notifyBy(ctx, time.Now().Add(s.noticeWait), kind, mails...)
+}
+
+// notifyBy is notify within a deadline set before it was called: a notice
+// that read something first spends one budget on the read and the sending
+// together, never one for each.
+func (s *Service) notifyBy(ctx context.Context, deadline time.Time, kind string, mails ...Mail) {
 	select {
 	case s.noticing <- struct{}{}:
 	default:
@@ -63,7 +72,7 @@ func (s *Service) notify(ctx context.Context, kind string, mails ...Mail) {
 	}
 	// The request may end before the notice is sent, and the wait ends the
 	// sending too: a mail system that does not answer holds nothing.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.noticeWait)
+	ctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
 	done := make(chan sending, 1)
 	s.work.Add(1)
 	go func() {
@@ -127,16 +136,17 @@ func notWho(app string) string {
 
 // noticeMail writes a notice: what happened, the facts of it one a line, and
 // what to do.
-func noticeMail(to, subject, what string, facts [][2]string, after ...string) Mail {
-	var b strings.Builder
-	b.WriteString(what + "\n\n")
-	for _, f := range facts {
-		fmt.Fprintf(&b, "    %s: %s\n", f[0], f[1])
-	}
+func noticeMail(to, subject, what string, facts []mail.Fact, after ...string) Mail {
+	blocks := []mail.Block{mail.Lead(what), mail.Facts(facts...)}
 	for _, p := range after {
-		b.WriteString("\n" + p + "\n")
+		blocks = append(blocks, mail.Paragraph(p))
 	}
-	return Mail{To: to, Subject: subject, Text: b.String()}
+	return compose(to, subject, blocks...)
+}
+
+// at is the fact of when something happened.
+func at(label string, t time.Time) mail.Fact {
+	return mail.Fact{Label: label, Value: when(t), Machine: true}
 }
 
 const itWasYou = "If it was you, there is nothing to do."
@@ -147,14 +157,14 @@ const browserNotRecognised = "not recognised"
 // newDeviceMail tells of a sign-in from a device that had not signed in to
 // the account before: when, how, and which browser, named as the list of
 // sessions names it. Nothing else of what the browser said is repeated.
-func newDeviceMail(to, app string, at time.Time, how way, device string) Mail {
+func newDeviceMail(to, app string, moment time.Time, how way, device string) Mail {
 	browser := domain.DeviceName(device)
 	if browser == "" {
 		browser = browserNotRecognised
 	}
 	return noticeMail(to, "A new device signed in to your Permaily account",
 		"A device that had not signed in to your Permaily account before has just signed in to it.",
-		[][2]string{{"When", when(at)}, {"How", string(how)}, {"Browser", browser}},
+		[]mail.Fact{at("When", moment), {Label: "How", Value: string(how)}, {Label: "Browser", Value: browser}},
 		itWasYou, notWho(app))
 }
 
@@ -169,18 +179,18 @@ var signInChanges = map[string]string{ //nolint:gosec // G101: the words of noti
 }
 
 // signInChangeMail tells of a change in how the account is signed into.
-func signInChangeMail(to, app string, at time.Time, what string) Mail {
+func signInChangeMail(to, app string, moment time.Time, what string) Mail {
 	return noticeMail(to, "A change to how you sign in to Permaily", what,
-		[][2]string{{"When", when(at)}}, itWasYou, notWho(app))
+		[]mail.Fact{at("When", moment)}, itWasYou, notWho(app))
 }
 
 // providerMail tells of a provider linked to the account, or unlinked.
-func providerMail(to, app string, at time.Time, p idp.Provider, linked bool) Mail {
+func providerMail(to, app string, moment time.Time, p idp.Provider, linked bool) Mail {
 	what := "Signing in with " + providerNames[p] + " was removed from your Permaily account. It no longer signs in to the account."
 	if linked {
 		what = "Signing in with " + providerNames[p] + " was added to your Permaily account. It signs in to the account from now on."
 	}
-	return signInChangeMail(to, app, at, what)
+	return signInChangeMail(to, app, moment, what)
 }
 
 // noticeChange sends the notice of a change in how an account is signed into.
@@ -191,9 +201,9 @@ func (s *Service) noticeChange(ctx context.Context, doc *accountDoc, kind string
 // addressMails tell of a change of the contact address: the address it was,
 // and the one it is. Neither names the other: whoever reads the old one's
 // mail now is not told where the person went.
-func addressMails(from, to string, at time.Time) []Mail {
+func addressMails(from, to string, moment time.Time) []Mail {
 	const subject = "The contact address of your Permaily account changed"
-	facts := [][2]string{{"When", when(at)}}
+	facts := []mail.Fact{at("When", moment)}
 	return []Mail{
 		noticeMail(from, subject,
 			"The contact address of your Permaily account was changed to another one. This address is no longer the account's: messages about the account, and signing in by email, go to the new address from now on.",
@@ -215,7 +225,7 @@ func who(by string) string {
 
 // deletionAskedMail tells that the account is closing: who asked, and the day
 // it is removed.
-func deletionAskedMail(doc *accountDoc, app string, at time.Time) Mail {
+func deletionAskedMail(doc *accountDoc, app string, moment time.Time) Mail {
 	by := doc.closingBy()
 	last := "If it was not you, sign in and cancel it, and then sign out the devices you do not know and remove every way of signing in that is not yours. If you cannot sign in, write to " + supportAddress + "."
 	if by == contracts.ClosingByOperator {
@@ -228,23 +238,23 @@ func deletionAskedMail(doc *accountDoc, app string, at time.Time) Mail {
 	}
 	return noticeMail(doc.Address, "Your Permaily account is being deleted",
 		who(by)+" asked to delete your Permaily account. It will be removed, with everything in it, on "+when(doc.ClosesAt)+".",
-		[][2]string{{"Asked", when(at)}, {"Removed", when(doc.ClosesAt)}}, after...)
+		[]mail.Fact{at("Asked", moment), at("Removed", doc.ClosesAt)}, after...)
 }
 
 // deletionCancelledMail tells that the account is kept: who cancelled, and when.
-func deletionCancelledMail(to, app string, at time.Time, by string) Mail {
+func deletionCancelledMail(to, app string, moment time.Time, by string) Mail {
 	last := notWho(app)
 	if by == contracts.ClosingByOperator {
 		last = "To ask why, write to " + supportAddress + "."
 	}
 	return noticeMail(to, "Your Permaily account is no longer being deleted",
 		who(by)+" cancelled the deletion of your Permaily account. The account stays, as it was.",
-		[][2]string{{"When", when(at)}}, last)
+		[]mail.Fact{at("When", moment)}, last)
 }
 
 // blockedMail tells that the operator blocked the account, or unblocked it.
-func blockedMail(to, app string, at time.Time, blocked bool) Mail {
-	facts := [][2]string{{"When", when(at)}}
+func blockedMail(to, app string, moment time.Time, blocked bool) Mail {
+	facts := []mail.Fact{at("When", moment)}
 	if blocked {
 		return noticeMail(to, "Your Permaily account was blocked",
 			"Permaily's operator blocked your Permaily account. Every device was signed out of it, and nobody can sign in to it while it is blocked.",
@@ -257,8 +267,8 @@ func blockedMail(to, app string, at time.Time, blocked bool) Mail {
 
 // adminMail tells that the account was made an admin of Permaily, or stopped
 // being one.
-func adminMail(to, app string, at time.Time, made bool) Mail {
-	facts := [][2]string{{"When", when(at)}}
+func adminMail(to, app string, moment time.Time, made bool) Mail {
+	facts := []mail.Fact{at("When", moment)}
 	if made {
 		return noticeMail(to, "Your Permaily account is now an admin",
 			"Your Permaily account was made an admin of Permaily. It can manage the accounts and the invitations of the service in the admin panel at "+app+", while it signs in with passkeys only.",
@@ -267,4 +277,82 @@ func adminMail(to, app string, at time.Time, made bool) Mail {
 	return noticeMail(to, "Your Permaily account is no longer an admin",
 		"Your Permaily account is no longer an admin of Permaily. The admin panel is closed to it from now on.",
 		facts, "To ask why, write to "+supportAddress+".")
+}
+
+// The notices about mailboxes (ADR 0026, "Notices by mail"), which the
+// mailboxes service asks for (mailboxes.Notifier). None names the mailbox:
+// no address, label, code, link or identifier; the fact is when.
+var mailboxNotices = map[mailboxes.NoticeKind]struct {
+	subject, lead, paragraph string
+	// note is the small print, given the app's host.
+	note func(app string) string
+}{
+	mailboxes.NoticeAdded: {
+		subject:   "A mailbox was added to your Permaily account",
+		lead:      "A mailbox was added to your Permaily account.",
+		paragraph: "Mail forwarded to it is kept in your account, and only you can read it, in the app.",
+		note: func(app string) string {
+			return "If this wasn't you, sign in at " + app + ", disconnect it, and write to " + supportAddress + "."
+		},
+	},
+	mailboxes.NoticeForwarding: {
+		subject:   "Gmail asked to forward to your Permaily mailbox",
+		lead:      "Google confirmed that a Gmail account asked to forward its mail to one of your Permaily mailboxes.",
+		paragraph: "Open Accounts in the app to see which Gmail account asked. Enter the code in Gmail only if that account is yours.",
+		note: func(string) string {
+			return "If you didn't ask, do nothing: no mail is forwarded until the code is entered in Gmail."
+		},
+	},
+	mailboxes.NoticeDisconnected: {
+		subject:   "A mailbox was disconnected from your Permaily account",
+		lead:      "A mailbox was disconnected from your Permaily account. Its address no longer accepts mail, and its mail is being deleted.",
+		paragraph: "Turn forwarding to it off in Gmail, or Gmail will tell you that forwarding fails.",
+		note: func(app string) string {
+			return "If this wasn't you, sign in at " + app + ", sign out the devices you don't know, and write to " + supportAddress + "."
+		},
+	},
+	mailboxes.NoticePaused: {
+		subject:   "Permaily paused one of your mailboxes",
+		lead:      "Permaily paused one of your mailboxes.",
+		paragraph: "It refuses new mail until Permaily resumes it. The mail it holds stays, and you can read, delete or disconnect it.",
+		note:      func(string) string { return "Write to " + supportAddress + " to ask why." },
+	},
+	mailboxes.NoticeResumed: {
+		subject: "Permaily resumed one of your mailboxes",
+		lead:    "Permaily resumed one of your mailboxes. It accepts mail again.",
+		note:    func(string) string { return "To ask why it was paused, write to " + supportAddress + "." },
+	},
+}
+
+// mailboxMail writes a notice about a mailbox, of a kind there is one of.
+func mailboxMail(to, app string, kind mailboxes.NoticeKind, moment time.Time) Mail {
+	n := mailboxNotices[kind]
+	blocks := []mail.Block{mail.Lead(n.lead)}
+	if n.paragraph != "" {
+		blocks = append(blocks, mail.Paragraph(n.paragraph))
+	}
+	blocks = append(blocks, mail.Facts(at("When", moment)), mail.Note(n.note(app)))
+	return compose(to, n.subject, blocks...)
+}
+
+// MailboxNotice tells an account's person of what happened to one of its
+// mailboxes, at its contact address: it implements mailboxes.Notifier. It is
+// called after the change is stored, fails nothing and holds its caller back
+// no longer than any notice (notify): one deadline covers the read of the
+// account and the sending. One that cannot be sent, for an account that is
+// gone or a kind there is no notice of, is logged by its kind alone.
+func (s *Service) MailboxNotice(ctx context.Context, accountID string, kind mailboxes.NoticeKind, moment time.Time) {
+	if _, known := mailboxNotices[kind]; !known || !validID("acc", accountID) {
+		s.cfg.Log.Warn("accounts: a notice could not be sent", "kind", string(kind))
+		return
+	}
+	deadline := time.Now().Add(s.noticeWait)
+	reading, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
+	doc, err := s.read(reading, accountID)
+	cancel()
+	if err != nil || doc == nil {
+		s.cfg.Log.Warn("accounts: a notice could not be sent", "kind", string(kind))
+		return
+	}
+	s.notifyBy(ctx, deadline, string(kind), mailboxMail(doc.Address, s.rp.ID, kind, moment))
 }

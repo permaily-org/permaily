@@ -24,6 +24,8 @@ var adminWords = map[string]string{
 	attestation.AdminProviderAppRemoved: "removed a provider's application",
 	attestation.AdminMade:               "made an account an admin",
 	attestation.AdminRemoved:            "made an admin stop being one",
+	attestation.AdminMailboxPaused:      "paused a mailbox",
+	attestation.AdminMailboxResumed:     "resumed a mailbox",
 }
 
 // printAdmin prints what the enclave counts of what its operator did to
@@ -65,5 +67,5 @@ func printAdmin(w io.Writer, a *attestation.AdminStatus) {
 		what = strings.Join(did, "; ")
 	}
 	fmt.Fprintf(w, "      what the operator did to accounts through this enclave since %s: %s\n", a.Since.UTC().Format(time.RFC3339), what)
-	fmt.Fprintln(w, "      note: counted by the enclave, by kind and never by account, in memory: a restart starts the count again. The operator cannot change an account's address or how it is signed into through the enclave; what is written to the storage by hand is not seen here, and is refused by the enclave where it would matter")
+	fmt.Fprintln(w, "      note: counted by the enclave, by kind and never by account, in memory: a restart starts the count again. The operator cannot change an account's address or how it is signed into through the enclave, nor read, disconnect or delete a mailbox, only pause and resume one; what is written to the storage by hand is not seen here, and is refused by the enclave where it would matter")
 }

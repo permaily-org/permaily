@@ -18,13 +18,36 @@ import (
 	"time"
 )
 
+// SMTPPerAddress is how many connections to the enclave's SMTP port one
+// remote address holds at once (smtpd.MaxSessionsPerAddress, ADR 0026,
+// "Admission"): the enclave sees connections over vsock without the
+// sender's address, so the host counts them. It is about fairness, which the
+// host can break anyway; the enclave's own budgets hold whatever it does.
+const SMTPPerAddress = 8
+
+// SMTPRefusal is what the host says to a connection to the SMTP port past
+// SMTPPerAddress before closing it: one line in plain text, before any TLS,
+// as an SMTP server refuses a connection (RFC 5321, 3.1; RFC 3463's 4.7.0),
+// so the sender retries later instead of seeing the connection drop. It is
+// the one thing the host ever says on the enclave's SMTP port, and it says
+// nothing of mail: the host reads none and decides nothing about it (ADR
+// 0026, "Admission"; docs/threat-model.md).
+const SMTPRefusal = "421 4.7.0 Too many connections from your address, try again later\r\n"
+
+// refusalDeadline bounds the write of the refusal: it is a courtesy, and its
+// failure changes nothing.
+const refusalDeadline = time.Second
+
 // Forward accepts connections on ln and pipes each one to a connection
-// returned by dial until ctx is done.
-func Forward(ctx context.Context, ln net.Listener, dial func(context.Context) (net.Conn, error), log *slog.Logger) error {
+// returned by dial until ctx is done. With perAddress above zero, a remote
+// address that holds that many connections already has its next one told
+// refusal (when not empty) and closed at once.
+func Forward(ctx context.Context, ln net.Listener, dial func(context.Context) (net.Conn, error), perAddress int, refusal string, log *slog.Logger) error {
 	go func() {
 		<-ctx.Done()
 		ln.Close()
 	}()
+	held := &perAddressCount{n: map[string]int{}}
 	for {
 		in, err := ln.Accept()
 		if err != nil {
@@ -38,8 +61,22 @@ func Forward(ctx context.Context, ln net.Listener, dial func(context.Context) (n
 			}
 			return err
 		}
+		addr := remoteHost(in)
+		if perAddress > 0 && !held.take(addr, perAddress) {
+			if refusal != "" {
+				// A fresh socket takes one short line without waiting; the
+				// deadline holds if it does not, and a failure changes nothing.
+				_ = in.SetWriteDeadline(time.Now().Add(refusalDeadline))
+				_, _ = io.WriteString(in, refusal)
+			}
+			in.Close()
+			continue
+		}
 		go func() {
 			defer in.Close()
+			if perAddress > 0 {
+				defer held.give(addr)
+			}
 			dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			out, err := dial(dctx)
 			cancel()
@@ -51,6 +88,39 @@ func Forward(ctx context.Context, ln net.Listener, dial func(context.Context) (n
 			pipe(in, out)
 		}()
 	}
+}
+
+// perAddressCount counts the connections each remote address holds.
+type perAddressCount struct {
+	mu sync.Mutex
+	n  map[string]int
+}
+
+func (p *perAddressCount) take(addr string, limit int) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.n[addr] >= limit {
+		return false
+	}
+	p.n[addr]++
+	return true
+}
+
+func (p *perAddressCount) give(addr string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.n[addr]--; p.n[addr] <= 0 {
+		delete(p.n, addr)
+	}
+}
+
+// remoteHost is the address a connection comes from, without its port.
+func remoteHost(c net.Conn) string {
+	host, _, err := net.SplitHostPort(c.RemoteAddr().String())
+	if err != nil {
+		return c.RemoteAddr().String()
+	}
+	return host
 }
 
 // logLineLimit bounds one line from the enclave; longer ones are cut.
