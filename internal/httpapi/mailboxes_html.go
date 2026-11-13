@@ -204,6 +204,11 @@ func (a *mailboxesAPI) frame(w http.ResponseWriter, r *http.Request) {
 	}
 	var doc bytes.Buffer
 	out, err := mailhtml.Render(ctx, in, &doc)
+	// The slot covers the render, not the transfer: the document is complete
+	// in memory now (at most contracts.MessageHTMLMaxMarkupBytes and the
+	// images' base64, under 11 MiB), and the slot goes back before a byte is
+	// written, however slowly the reader reads.
+	release()
 	switch {
 	case err != nil:
 		frameFail(w, a.frameStatus(err))
@@ -212,9 +217,45 @@ func (a *mailboxesAPI) frame(w http.ResponseWriter, r *http.Request) {
 		frameFail(w, http.StatusNotFound)
 		return
 	}
+	// What waits for the reader is the document: held against the read
+	// budget in place of the raw message, and within the account's share.
+	done, err := a.waitingDocument(r.Context(), c.Account, held, int64(doc.Len()))
+	if err != nil {
+		frameFail(w, a.frameStatus(err))
+		return
+	}
+	defer done()
 	w.Header().Set("Content-Length", strconv.Itoa(doc.Len()))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(doc.Bytes()) //nolint:gosec // the sanitiser's document, served sandboxed by the frame's CSP to the frame alone
+}
+
+// waitingDocument admits a finished document of account to wait for its
+// reader: within the account's share (DocumentsWaitingPerAccount, else
+// contracts.ErrTooManyRequests) and held against the read budget in place
+// of what the request held for its raw message (waiting for room as a raw
+// read does, contracts.ErrTooManyRequests past it). done gives the share
+// back; the budget goes back with the request's held bytes.
+func (a *mailboxesAPI) waitingDocument(ctx context.Context, account string, held *heldBudget, n int64) (func(), error) {
+	a.mu.Lock()
+	if a.waiting[account] >= DocumentsWaitingPerAccount {
+		a.mu.Unlock()
+		return nil, contracts.ErrTooManyRequests
+	}
+	a.waiting[account]++
+	a.mu.Unlock()
+	done := func() {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if a.waiting[account]--; a.waiting[account] <= 0 {
+			delete(a.waiting, account)
+		}
+	}
+	if err := held.Resize(ctx, n); err != nil {
+		done()
+		return nil, err
+	}
+	return done, nil
 }
 
 // link answers where a link of a message's HTML leads, for the app's link
@@ -261,6 +302,8 @@ func (a *mailboxesAPI) link(w http.ResponseWriter, r *http.Request, c mailboxes.
 		a.failRender(w, err)
 		return
 	}
+	// The slot covers the render: the answer is a few hundred bytes of JSON.
+	free()
 	l, found := mailhtml.Find(links, token)
 	if !found {
 		writeError(w, http.StatusConflict, contracts.ErrLinkChanged.Code, contracts.ErrLinkChanged.Message)
@@ -404,6 +447,12 @@ func (a *mailboxesAPI) admit(ctx context.Context, account string, wait time.Dura
 	rctx, cancel := context.WithTimeout(ctx, inbox.RenderDeadline)
 	return rctx, func() { cancel(); free() }, nil
 }
+
+// DocumentsWaitingPerAccount is how many finished documents of the frame's
+// route one account may have waiting for their readers at once: a render
+// slot covers the render, not the transfer, so what bounds documents in
+// flight is the read budget they are held against, and this share.
+const DocumentsWaitingPerAccount = 2
 
 // SummaryWait is the longest GET message waits for a render slot for its
 // HTML summary: past it, html is unavailable and the text is answered. The

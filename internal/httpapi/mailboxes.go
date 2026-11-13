@@ -183,7 +183,7 @@ func MailboxesAPI(cfg MailboxesConfig) http.Handler {
 	}
 	a := &mailboxesAPI{
 		cfg: cfg, budget: newByteBudget(cfg.ReadBudget), searches: make(chan struct{}, SearchesAtOnce),
-		pages: map[string][]time.Time{}, slots: newRenderSlots(cfg.Renders, cfg.RenderQueue),
+		pages: map[string][]time.Time{}, waiting: map[string]int{}, slots: newRenderSlots(cfg.Renders, cfg.RenderQueue),
 	}
 	mux := NewAppMux()
 	const base = "/api/v1/mailboxes"
@@ -235,8 +235,9 @@ type mailboxesAPI struct {
 	searches chan struct{}
 	slots    *renderSlots
 
-	mu    sync.Mutex
-	pages map[string][]time.Time // search pages asked in the last minute, by account
+	mu      sync.Mutex
+	pages   map[string][]time.Time // search pages asked in the last minute, by account
+	waiting map[string]int         // finished frame documents waiting for their readers, by account
 }
 
 // fail answers an error of the service or the reader. One a caller can act
@@ -629,6 +630,22 @@ func (h *heldBudget) Take(ctx context.Context, n int64) error {
 	h.held += got
 	h.mu.Unlock()
 	return nil
+}
+
+// Resize makes what the request holds exactly n bytes: what it holds past n
+// goes back, what it lacks is taken, waiting as Take does.
+func (h *heldBudget) Resize(ctx context.Context, n int64) error {
+	h.mu.Lock()
+	held := h.held
+	h.mu.Unlock()
+	if n <= held {
+		h.mu.Lock()
+		h.held = n
+		h.mu.Unlock()
+		h.budget.give(held - n)
+		return nil
+	}
+	return h.Take(ctx, n-held)
 }
 
 func (h *heldBudget) release() {
