@@ -12,7 +12,7 @@ const knownHint: Record<string, { reason: string; connects: string[] }> = {
   'webkit 05-remote-references': {
     reason:
       "WebKit (Playwright 1.65) opens a CONNECT to the host of <link rel=preconnect> under the frame's CSP default-src 'none', and sends nothing through it (seen 2026-11-12)",
-    connects: ['pre.evil.example:443'],
+    connects: ['pre.evil.example'],
   },
 }
 
