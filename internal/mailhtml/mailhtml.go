@@ -64,8 +64,8 @@ const frameStyle = "html{color-scheme:light;background:#fff;color:#111}" +
 	"img{max-width:100% !important;height:auto}table{max-width:100% !important}a img{border:0}"
 
 // canvasStyle is written on the document's <html> element too: the sheet
-// is white whatever the sender's rules say.
-const canvasStyle = "color-scheme:light !important;background:#fff !important"
+// is white whatever the sender's rules say, and html holds every link.
+const canvasStyle = "color-scheme:light !important;background:#fff !important;" + holderForced
 
 // Render writes the frame's document for in into w and says what was taken
 // out of it. A message whose HTML is over a limit or does not parse back to
@@ -199,7 +199,7 @@ func document(wk *walker, body *html.Node) *html.Node {
 	own := element(atom.Style)
 	own.AppendChild(&html.Node{Type: html.TextNode, Data: frameStyle})
 	head.AppendChild(own)
-	body.Attr = wk.body
+	body.Attr = append(wk.body, html.Attribute{Key: "style", Val: holderForced}) // body holds every link
 	root.AppendChild(body)
 	sortAttributes(doc)
 	return doc

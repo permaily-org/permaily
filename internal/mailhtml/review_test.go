@@ -508,3 +508,106 @@ func TestReview1LinksReadsNoCSS(t *testing.T) {
 		t.Errorf("Links did CSS work: %d steps, %d bytes of <style>, %+v", wk.css.steps, wk.styleIn, wk.css)
 	}
 }
+
+// styleOf is the style attribute of the first element of the output whose
+// id is id.
+func styleOf(t *testing.T, out, id string) (string, bool) {
+	t.Helper()
+	doc, err := html.Parse(strings.NewReader(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *html.Node
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		for c := n.FirstChild; c != nil && found == nil; c = c.NextSibling {
+			if v, ok := attr(c, "id"); ok && v == id {
+				found = c
+				return
+			}
+			walk(c)
+		}
+	}
+	walk(doc)
+	if found == nil {
+		t.Fatalf("no #%s in %s", id, out)
+	}
+	_, hasHeight := attr(found, "height")
+	s, _ := attr(found, "style")
+	return s, hasHeight
+}
+
+// ancestorHolds are the declarations every element that holds a link
+// carries, attached to it with !important, which no rule of a stylesheet
+// can beat.
+var ancestorHolds = []string{"overflow:visible !important", "height:auto !important", "max-height:none !important", "min-width:min-content !important"}
+
+// Finding 3: a link's forced style did not stop its ancestors from hiding it
+// or laying it over what follows. On every element that holds a link
+// (html and body included): nothing hides it (display:none goes, from its
+// style and from every rule), nothing clips it (overflow is visible), and
+// no size of the ancestor holds it smaller than what it holds (height
+// auto, no maximum height, at least its min-content width), whatever a
+// stylesheet says; table-layout:fixed, which lets content leave its cells,
+// is not kept.
+func TestReview3AncestorsCannotHideOrMoveALink(t *testing.T) {
+	link := `<a href="https://example.com/">visible?</a>`
+	cases := []struct {
+		name, src string
+	}{
+		{"a width of 0 that clips", `<div id="x" style="width:0;overflow:hidden">` + link + `</div>`},
+		{"a table made a block of height 0", `<table id="x" style="display:block;height:0"><tr><td>` + link + `</td></tr></table><div>NEXT CONTENT</div>`},
+		{"a parent hidden", `<div id="x" style="display:none"><p>` + link + `</p></div>`},
+		{"a cell's height attribute", `<table><tr><td id="x" height="2" style="height:2px;max-height:2px">` + link + `</td></tr></table>`},
+		{"rules on the ancestor", `<style>#x{display:none!important;overflow:hidden!important;height:0!important;max-height:0!important;width:0!important;max-width:0!important;table-layout:fixed}</style><table id="x"><tr><td>` + link + `</td></tr></table>`},
+	}
+	for _, c := range cases {
+		_, out := renderOK(t, input(c.src))
+		style, height := styleOf(t, out, "x")
+		for _, want := range ancestorHolds {
+			if !strings.Contains(style, want) {
+				t.Errorf("%s: %q lacks %q", c.name, style, want)
+			}
+		}
+		for _, gone := range []string{"display:none", "overflow:hidden", "height:0", "height:2px", "max-height:2px"} {
+			if strings.Contains(style, gone) {
+				t.Errorf("%s: %q keeps %q", c.name, style, gone)
+			}
+		}
+		if height {
+			t.Errorf("%s: the height attribute is kept", c.name)
+		}
+	}
+	// The html and body the sanitiser writes hold every link.
+	_, out := renderOK(t, input(`<style>html,body{overflow:hidden;height:0}</style>`+link))
+	doc, _ := html.Parse(strings.NewReader(out))
+	for _, n := range []*html.Node{doc.LastChild, doc.LastChild.LastChild} {
+		s, _ := attr(n, "style")
+		for _, want := range ancestorHolds {
+			if !strings.Contains(s, want) {
+				t.Errorf("<%s style=%q> lacks %q", n.Data, s, want)
+			}
+		}
+	}
+	// No rule hides anything: display:none goes from every rule, in @media
+	// too; table-layout goes everywhere. The other values of display stay.
+	for in, want := range map[string]string{
+		".hide{display:none}": "",
+		"@media (max-width:600px){.desk{display:none!important}}":   "",
+		".col{display:block;color:red}":                             ".col{display:block;color:red}",
+		"@media (max-width:600px){td.col{display:block!important}}": "@media (max-width:600px){td.col{display:block !important}}",
+		"table{table-layout:fixed;color:red}":                       "table{color:red}",
+	} {
+		if got := sheet(in); got != want {
+			t.Errorf("%q: %q, want %q", in, got, want)
+		}
+	}
+	// What holds no link keeps its own: a cell's height, a hidden block.
+	_, out = renderOK(t, input(`<table><tr><td id="x" height="40" style="height:40px">spacer</td></tr></table><div id="y" style="display:none">preheader</div>`+link))
+	if style, height := styleOf(t, out, "x"); !strings.Contains(style, "height:40px") || !height || strings.Contains(style, "min-content") {
+		t.Errorf("a cell without a link: %q %v", style, height)
+	}
+	if style, _ := styleOf(t, out, "y"); !strings.Contains(style, "display:none") {
+		t.Errorf("a block without a link: %q", style)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -98,6 +99,10 @@ type walker struct {
 	lang, dir string
 	body      []html.Attribute
 	bodySeen  bool
+
+	// holds are the elements of the input that hold a link (at any depth):
+	// their style is written so that nothing hides or moves it.
+	holds map[*html.Node]bool
 }
 
 // tick counts a node visited and checks the context every ctxEvery nodes.
@@ -116,6 +121,12 @@ func (w *walker) tick() error {
 func (w *walker) document(doc *html.Node) (*html.Node, error) {
 	body := &html.Node{Type: html.ElementNode, Data: "body", DataAtom: atom.Body}
 	w.css.ctx = w.ctx
+	if !w.linksOnly {
+		w.holds = map[*html.Node]bool{}
+		if _, err := w.markHolders(doc); err != nil {
+			return nil, err
+		}
+	}
 	if err := w.walk(doc, body, 0, false); err != nil {
 		return nil, err
 	}
@@ -126,6 +137,37 @@ func (w *walker) document(doc *html.Node) (*html.Node, error) {
 	w.stats.RemoteOther += w.css.remoteOther
 	w.stats.Links = len(w.links)
 	return body, nil
+}
+
+// markHolders marks, in w.holds, every element under n that holds an a
+// whose href is http or https (a link the walk may keep: a few more than it
+// keeps, which only writes the style of an ancestor on a few more), and
+// says whether n holds one. What the walk drops is not looked into.
+func (w *walker) markHolders(n *html.Node) (bool, error) {
+	found := false
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if err := w.tick(); err != nil {
+			return false, err
+		}
+		if c.Type != html.ElementNode || c.Namespace != "" || dropped(c) {
+			continue
+		}
+		if c.DataAtom == atom.A {
+			href, _ := attr(c, "href")
+			if h := strings.ToLower(whatwgTrim(href)); strings.HasPrefix(h, "http:") || strings.HasPrefix(h, "https:") {
+				found = true
+			}
+		}
+		inner, err := w.markHolders(c)
+		if err != nil {
+			return false, err
+		}
+		if inner {
+			w.holds[c] = true
+			found = true
+		}
+	}
+	return found, nil
 }
 
 func (w *walker) newElement(parent *html.Node, a atom.Atom, name string, depth int) (*html.Node, error) {
@@ -518,9 +560,12 @@ func (w *walker) attributes(c *html.Node, a atom.Atom, inLink bool) []html.Attri
 		return out
 	}
 	var s strings.Builder
-	if inLink {
+	switch {
+	case inLink:
 		s.WriteString(descendantStyle(style))
-	} else {
+	case w.holds[c]:
+		s.WriteString(holderStyle(style))
+	default:
 		writeDecls(&s, style, false)
 		if keepsHeight(style) {
 			if s.Len() > 0 {
@@ -532,8 +577,46 @@ func (w *walker) attributes(c *html.Node, a atom.Atom, inLink bool) []html.Attri
 	if s.Len() > 0 || hasStyle && inLink {
 		out = append(out, html.Attribute{Key: "style", Val: s.String()})
 	}
+	if w.holds[c] && !inLink {
+		out = slices.DeleteFunc(out, func(a html.Attribute) bool { return a.Key == "height" })
+	}
 	return out
 }
+
+// holderOwned are the declarations an element that holds a link does not
+// keep of its own: a display of none, an overflow, and a height or a
+// maximum height (which, on a box whose display a rule may change, would
+// hold it smaller than what it holds). holderForced says what holds
+// instead.
+func holderOwned(d cssDecl) bool {
+	switch d.prop {
+	case "height", "max-height", "overflow", "overflow-x", "overflow-y":
+		return true
+	}
+	return d.prop == "display" && d.value == "none"
+}
+
+// holderStyle is the style of an element that holds a link (ADR 0026,
+// "CSS", "The principle, on a link's ancestors"): its own declarations but
+// those, then holderForced.
+func holderStyle(decls []cssDecl) string {
+	var s strings.Builder
+	writeDecls(&s, slices.DeleteFunc(decls, holderOwned), false)
+	if s.Len() > 0 {
+		s.WriteByte(';')
+	}
+	s.WriteString(holderForced)
+	return s.String()
+}
+
+// holderForced is attached to every element that holds a link, html and
+// body included, with !important, which wins over every rule of a style
+// sheet whatever its selector: nothing clips what the element holds, no
+// height or maximum height holds it shorter than its content, and no width
+// or maximum width narrower than the content's least width (min-width
+// wins over max-width), so a link inside keeps its box and lays over
+// nothing.
+const holderForced = "overflow:visible !important;height:auto !important;max-height:none !important;min-width:min-content !important"
 
 // keepsHeight says whether a style keeps a height as a length: the box then
 // shows what overflows it, whatever a rule says, so a height cannot hide

@@ -112,7 +112,7 @@ func checkElement(n *html.Node, inHead bool) error {
 		return nil
 	case "body":
 		for _, a := range n.Attr {
-			if a.Key != "bgcolor" && a.Key != "text" {
+			if a.Key != "bgcolor" && a.Key != "text" && (a.Key != "style" || a.Val != holderForced) {
 				return fmt.Errorf("body %s", a.Key)
 			}
 		}

@@ -28,13 +28,13 @@ func TestAttributes(t *testing.T) {
 		`<p>x<marquee><div>d</div></marquee></p>`:                                                                          `<div style="margin-top:1em;margin-bottom:1em">x<div>d</div></div>`,
 		`<p>a<td>b</td></p>`: `<p>ab</p>`,
 		`<a href="https://a.example/" style="color:red;font-weight:bold"><span style="display:block;color:blue">x</span><span style="display:none">y</span></a>`: `font-weight:bold;` + linkStyle,
-		`<body bgcolor="#eee" text="black" background="https://e.example/b.png"><p>x</p></body>`:                                                                 `<body bgcolor="#eee" text="black"><p>x</p></body>`,
+		`<body bgcolor="#eee" text="black" background="https://e.example/b.png"><p>x</p></body>`:                                                                 `<body bgcolor="#eee" style="` + holderForced + `" text="black"><p>x</p></body>`,
 		`<html lang="fr" dir="rtl"><p>x</p></html>`:                                 `<html dir="rtl" lang="fr" style=`,
 		`<html lang="f r" dir="up"><p>x</p></html>`:                                 `<html style=`,
 		`<a>no href</a><a href="#top">fragment</a><a href="/relative">relative</a>`: `no hreffragmentrelative`,
 		`<a href="https://a.example/"><a href="https://b.example/">nested</a></a>`:  `nested</a>`,
 		`<img src="data:image/png,abc"><img src="data:text/plain;base64,eA=="><img src="data:image/png;base64,!!!"><img><img src="ftp://e.example/x">`: `Image not shown</span><span`,
-		`<img src="https://e.example/x.png" style="width : 1px"><img src="https://e.example/y.png" width="2px" alt="a">`:                               `<body></body>`,
+		`<img src="https://e.example/x.png" style="width : 1px"><img src="https://e.example/y.png" width="2px" alt="a">`:                               `<body style="` + holderForced + `"></body>`,
 		`<blink>b</blink><o:p>o</o:p><custom-tag>c</custom-tag><form><fieldset><legend>l</legend><label>n</label></fieldset></form>`:                   `bocln`,
 	}
 	for in, want := range cases {

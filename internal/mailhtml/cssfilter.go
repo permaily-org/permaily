@@ -416,6 +416,12 @@ func (b *cssBudget) declaration(nodes []cssNode, ctx cssContext) (cssDecl, bool)
 	if !ok {
 		return cssDecl{}, false
 	}
+	if !ctx.attribute && prop == "display" && written == "none" {
+		// No rule hides anything: a rule's selector may match an element
+		// that holds a link, which no reading of the selector here can
+		// rule out (ADR 0026, "The principle, on a link's ancestors").
+		return cssDecl{}, false
+	}
 	return cssDecl{prop: prop, value: written, important: important}, true
 }
 
@@ -524,7 +530,7 @@ var cssProperties = map[string]valueKind{
 	"border-collapse": vKeywords, "border-spacing": vLength,
 	"width": vLength, "min-width": vLength, "max-width": vLength,
 	"height": vHeight, "min-height": vHeight, "max-height": vHeight,
-	"display": vDisplay, "float": vFloat, "clear": vClear, "table-layout": vKeywords, "caption-side": vKeywords,
+	"display": vDisplay, "float": vFloat, "clear": vClear, "caption-side": vKeywords,
 	"empty-cells": vKeywords, "list-style-type": vKeywords, "list-style-position": vKeywords,
 	"overflow": vKeywords, "overflow-x": vKeywords, "overflow-y": vKeywords, "box-sizing": vKeywords,
 }
