@@ -38,35 +38,47 @@ func CrossSiteExceptions() []CrossSiteException {
 	return append([]CrossSiteException(nil), crossSiteExceptions...)
 }
 
-// RefuseCrossSite wraps the app's host: a request for a path under /api/
-// whose Sec-Fetch-Site is present and is neither same-origin nor none is
-// answered 403 forbidden, the same answer fromTheApp gives, unless it is one
-// of the exceptions. same-site is refused too: the other hosts of the domain
-// (the public site among them) are not the app. A request without the header
-// (a browser that sends no Fetch Metadata, a client that is not a browser)
-// goes on, to the checks it met before.
-//
-// A path of the frame's route is answered as the frame's whatever refuses
-// it, here and after (framePathGuard): the frame's headers, then a fixed
-// HTML body, never the app's JSON.
-func RefuseCrossSite(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if framePathGuard(w, r, "https://"+r.Host) {
+// AppHost is the app's host (ADR 0026, "The app's host: one decision about
+// a path"), in this order, before anything else: a path not canonical is
+// refused (RequireCanonicalPath); a request for the frame's path is refused
+// as the frame's (another site, a trailing slash, a method other than GET
+// or HEAD) or handed to frame, the handler of the frame's route, and to
+// nothing else (with no frame, the frame's 404); and a request for a path
+// under /api/ whose Sec-Fetch-Site is present and is neither same-origin
+// nor none is answered 403 forbidden, the same answer fromTheApp gives,
+// unless it is one of the exceptions. same-site is refused too: the other
+// hosts of the domain (the public site among them) are not the app. A
+// request without the header (a browser that sends no Fetch Metadata, a
+// client that is not a browser) goes on, to the checks it met before. All
+// of it before a session is looked up, a cookie read or set, or anything
+// counted, and with plain prefix and suffix tests on the canonical path.
+func AppHost(next, frame http.Handler) http.Handler {
+	return RequireCanonicalPath(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if isFramePath(p) {
+			if status := frameRefusal(r); status != 0 {
+				answerFrameRefusal(w, status, "https://"+r.Host)
+				return
+			}
+			if frame == nil {
+				answerFrameRefusal(w, http.StatusNotFound, "https://"+r.Host)
+				return
+			}
+			frame.ServeHTTP(w, r)
 			return
 		}
-		if underAPI(r.URL.Path) && saysCrossSite(r) && !excepted(r) {
+		if (p == "/api" || strings.HasPrefix(p, "/api/")) && saysCrossSite(r) && !excepted(r) {
 			notFromTheApp(w)
 			return
 		}
 		next.ServeHTTP(w, r)
-	})
+	}))
 }
 
-// underAPI is whether p, as ServeMux cleans it, is the API's: a path that is
-// not clean is checked as the one it would be sent on to.
-func underAPI(p string) bool {
-	c := cleanPath(p)
-	return c == "/api" || strings.HasPrefix(c, "/api/")
+// RefuseCrossSite is AppHost whose next handler also serves the frame's
+// route: for a host or a test that mounts the frame's handler inside next.
+func RefuseCrossSite(next http.Handler) http.Handler {
+	return AppHost(next, next)
 }
 
 // saysCrossSite is whether the request carries Sec-Fetch-Site with anything

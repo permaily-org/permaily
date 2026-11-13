@@ -177,11 +177,12 @@ func run(cfg config, log *slog.Logger) error {
 	if p.accounts != nil {
 		// The web app and its own API share a host, so the session cookie
 		// never leaves it. Invitations are the operator's, on the API host.
-		app := http.NewServeMux()
+		app := httpapi.NewAppMux()
 		app.Handle("/api/", httpapi.AccountsAPI(p.accounts, log))
+		var mine http.Handler
 		if p.mailboxes != nil {
 			// The person's mailboxes and their mail (ADR 0026, "The API").
-			mine := httpapi.MailboxesAPI(httpapi.MailboxesConfig{Service: p.mailboxes, Reader: p.reader, Sessions: p.accounts, Log: log, AppOrigin: appOrigin(hosts.App, cfg.port)})
+			mine = httpapi.MailboxesAPI(httpapi.MailboxesConfig{Service: p.mailboxes, Reader: p.reader, Sessions: p.accounts, Log: log, AppOrigin: appOrigin(hosts.App, cfg.port)})
 			app.Handle("/api/v1/mailboxes", mine)
 			app.Handle("/api/v1/mailboxes/", mine)
 		}
@@ -189,10 +190,10 @@ func run(cfg config, log *slog.Logger) error {
 			app.Handle(path, h)
 		}
 		app.Handle("/", webui.Handler())
-		// Every route under /api/ answers the app alone: a request that says
-		// another site made it is refused before anything else
-		// (httpapi.RefuseCrossSite, ADR 0026).
-		byHost[hosts.App] = httpapi.RefuseCrossSite(app)
+		// One decision about a path, then the frame's path, then the rule
+		// that every route under /api/ answers the app alone, before
+		// anything else (httpapi.AppHost, ADR 0026).
+		byHost[hosts.App] = httpapi.AppHost(app, mine)
 		invitations := httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Invitations(p.accounts, log))
 		api.Handle("/v1/admin/invitations", invitations)
 		api.Handle("/v1/admin/invitations/", invitations)

@@ -236,7 +236,7 @@ func provider(r *http.Request) string {
 // signing in, the account, its sessions and its passkeys. It is served on the app's host
 // only, and answers only to the app (cookies, same origin).
 func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
-	mux := http.NewServeMux()
+	mux := NewAppMux()
 	// signedIn runs next with the session of the request's cookie.
 	signedIn := func(next func(http.ResponseWriter, *http.Request, *accounts.Authenticated)) http.HandlerFunc {
 		return withSession(svc, log, next)

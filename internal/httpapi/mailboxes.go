@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -186,7 +185,7 @@ func MailboxesAPI(cfg MailboxesConfig) http.Handler {
 		cfg: cfg, budget: newByteBudget(cfg.ReadBudget), searches: make(chan struct{}, SearchesAtOnce),
 		pages: map[string][]time.Time{}, slots: newRenderSlots(cfg.Renders, cfg.RenderQueue),
 	}
-	mux := http.NewServeMux()
+	mux := NewAppMux()
 	const base = "/api/v1/mailboxes"
 	in := func(next func(http.ResponseWriter, *http.Request, mailboxes.Caller)) http.HandlerFunc {
 		return withSession(cfg.Sessions, cfg.Log, func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
@@ -214,7 +213,10 @@ func MailboxesAPI(cfg MailboxesConfig) http.Handler {
 	mux.HandleFunc("GET "+base+"/{id}/messages/{message}/links/{link}", in(a.link)) // mailboxes_html.go
 	mux.HandleFunc(base+"/", noSuchEndpoint)
 	app := fromTheApp(mux)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// The same decision about a path as the app's host makes first (a path
+	// not canonical names nothing here), so this API holds it when mounted
+	// on its own too.
+	return RequireCanonicalPath(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The deadline runs from the request's start, before anything else.
 		ctx, cancel := context.WithTimeout(r.Context(), cfg.Deadline)
 		defer cancel()
@@ -223,23 +225,8 @@ func MailboxesAPI(cfg MailboxesConfig) http.Handler {
 		if framePathGuard(w, r, a.appOrigin(r)) {
 			return
 		}
-		// A path that is not clean names nothing here: ServeMux would answer
-		// it with a redirect whose body is HTML, and this API answers JSON.
-		if p := r.URL.Path; p != cleanPath(p) {
-			noSuchEndpoint(w, r)
-			return
-		}
 		app.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-// cleanPath is p as ServeMux would clean it, its trailing slash kept.
-func cleanPath(p string) string {
-	c := path.Clean("/" + p)
-	if strings.HasSuffix(p, "/") && c != "/" {
-		c += "/"
-	}
-	return c
+	}))
 }
 
 type mailboxesAPI struct {

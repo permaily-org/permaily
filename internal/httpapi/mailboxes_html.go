@@ -45,40 +45,48 @@ func SetFrameHeaders(h http.Header, appOrigin string) {
 	h.Set("X-DNS-Prefetch-Control", "off")
 }
 
-// isFramePath says whether p, as ServeMux would clean it and with or
-// without a trailing slash, is a path of the frame's route:
-// /api/v1/mailboxes/{id}/messages/{message}/html.
-func isFramePath(p string) bool {
-	s := strings.Split(strings.TrimSuffix(cleanPath(p), "/"), "/")
-	return len(s) == 8 && s[0] == "" && s[1] == "api" && s[2] == "v1" && s[3] == "mailboxes" && s[4] != "" &&
-		s[5] == "messages" && s[6] != "" && s[7] == "html"
+// frameRefusal is the status of a request for the frame's path (a
+// canonical path, isFramePath) refused before the frame's handler: another
+// site (403), a trailing slash, which names no route (404), and a method
+// other than GET or HEAD (405); 0 when none refuses it.
+func frameRefusal(r *http.Request) int {
+	switch {
+	case saysCrossSite(r):
+		return http.StatusForbidden
+	case strings.HasSuffix(r.URL.Path, "/"):
+		return http.StatusNotFound
+	case r.Method != http.MethodGet && r.Method != http.MethodHead:
+		return http.StatusMethodNotAllowed
+	}
+	return 0
+}
+
+// answerFrameRefusal answers a refused request for the frame's path: the
+// frame's headers and its fixed body.
+func answerFrameRefusal(w http.ResponseWriter, status int, appOrigin string) {
+	SetFrameHeaders(w.Header(), appOrigin)
+	if status == http.StatusMethodNotAllowed {
+		w.Header().Set("Allow", "GET, HEAD")
+	}
+	frameFail(w, status)
 }
 
 // framePathGuard answers what every answer of the frame's path shares
-// (ADR 0026, "The frame's path: every answer"): for a request whose path,
-// as written or as decoded, is one of the frame's route, it sets the
-// frame's headers before anything can refuse it, so every answer after is
-// the frame's; and it answers itself, with a fixed body, the refusals that
-// come before the route: another site (403), a path that is not clean
-// (404, where ServeMux would redirect with a body of its own) and a method
-// other than GET or HEAD (405). It says whether it answered.
+// (ADR 0026, "The frame's path: every answer"), inside the API, whose own
+// handler answers what it lets through: for a request for the frame's path
+// it sets the frame's headers before anything can refuse it, so every
+// answer after is the frame's, and answers the refusals of frameRefusal
+// itself. It says whether it answered.
 func framePathGuard(w http.ResponseWriter, r *http.Request, appOrigin string) bool {
-	if !isFramePath(r.URL.Path) && !isFramePath(r.URL.EscapedPath()) {
+	if !isFramePath(r.URL.Path) {
 		return false
 	}
 	SetFrameHeaders(w.Header(), appOrigin)
-	switch {
-	case saysCrossSite(r):
-		frameFail(w, http.StatusForbidden)
-	case r.URL.Path != cleanPath(r.URL.Path) || strings.HasSuffix(r.URL.Path, "/"):
-		frameFail(w, http.StatusNotFound)
-	case r.Method != http.MethodGet && r.Method != http.MethodHead:
-		w.Header().Set("Allow", "GET, HEAD")
-		frameFail(w, http.StatusMethodNotAllowed)
-	default:
-		return false
+	if status := frameRefusal(r); status != 0 {
+		answerFrameRefusal(w, status, appOrigin)
+		return true
 	}
-	return true
+	return false
 }
 
 // The fixed bodies of the frame's route when it shows no message: never

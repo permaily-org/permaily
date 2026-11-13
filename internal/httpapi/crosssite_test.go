@@ -76,8 +76,6 @@ func TestRefuseCrossSiteBeforeAnything(t *testing.T) {
 		"/api/v1/me", "/api", "/api/", "/api/v1/nothing", "/api/v1/admin/stats", "/api/v1/mailboxes",
 		"/api/v1/mailboxes/mbx_x/messages/m/html", "/api/v1/mailboxes/mbx_x/messages/m/raw",
 		"/api/v1/mailboxes/mbx_x/messages/m/attachments/0", "/api/v1/mailboxes/mbx_x/messages/m/links/0.AAAAAAAAAAAAAAAA",
-		// Not clean: checked as the path ServeMux would send it on to.
-		"/x/../api/v1/me", "/./api/v1/me", "//api/v1/me",
 		// A path next to the callback's, which is not it.
 		httpapi.ProviderCallback + "/",
 	}
@@ -114,7 +112,7 @@ func TestRefuseCrossSiteBeforeAnything(t *testing.T) {
 		{"/api/v1/me", nil}, {"/api/v1/me", []string{"same-origin"}}, {"/api/v1/me", []string{"none"}},
 		{"/api/v1/mailboxes/mbx_x/messages/m/raw", []string{"none"}},
 		{"/", []string{"cross-site"}}, {"/sign-in", []string{"same-site"}}, {"/inbox/mbx_x/m/links/0.AAAAAAAAAAAAAAAA", []string{"cross-site"}},
-		{"/apiary", []string{"cross-site"}}, {"/api/../sign-in", []string{"cross-site"}},
+		{"/apiary", []string{"cross-site"}},
 		{httpapi.ProviderCallback + "?state=x&code=y", []string{"cross-site"}}, {httpapi.ProviderCallback, []string{"same-site"}},
 	} {
 		before := ran.Load()

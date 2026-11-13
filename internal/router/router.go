@@ -70,7 +70,10 @@ func New(common map[string]http.Handler, byHost map[string]http.Handler) http.Ha
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w)
-		if c, ok := common[r.URL.Path]; ok {
+		// A route of every host answers its path as written, never an
+		// encoding of it: a request for /%61ttestation goes to its host,
+		// whose own rules answer it (the app's refuses it).
+		if c, ok := common[r.URL.Path]; ok && r.URL.RawPath == "" {
 			c.ServeHTTP(w, r)
 			return
 		}
