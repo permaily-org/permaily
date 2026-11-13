@@ -354,11 +354,12 @@ const (
 	// slowest input the limits accept took 0.32 s (ADR 0026, "Limits").
 	MessageHTMLRenderDeadline = 2 * time.Second
 	// MessageHTMLRenderMemory is the most one render holds at its peak, the
-	// heap above where it started: the largest measured is 78.5 MiB on one
-	// CPU (ADR 0026, "Limits"), where the collector runs late; 64 MiB until
-	// the second review of pull request 5 added the prepared stream and the
-	// plain parse of the output after the bounded one.
-	MessageHTMLRenderMemory = 96 << 20
+	// heap above where it started, garbage not yet collected included: the
+	// largest sample measured is 110.6 MiB on one CPU, where the collector
+	// runs late behind a render that allocates 532 MB (ADR 0026, "Limits");
+	// 64 MiB until the second review of pull request 5 added the prepared
+	// stream and the plain parse of the output after the bounded one.
+	MessageHTMLRenderMemory = 128 << 20
 )
 
 // MessageHTML is what the app is told of a message's HTML. The HTML itself
