@@ -92,10 +92,10 @@ func Render(ctx context.Context, in Input, w io.Writer) (contracts.MessageHTML, 
 
 // Links are the links of in's HTML, numbered as Render numbers them: the
 // token pass, the parse and the walk run with images, CSS and output
-// skipped. ErrNotShown when the HTML is over a limit.
+// skipped. ErrNotShown when the HTML is over a limit or unreadable.
 func Links(ctx context.Context, in Input) ([]Link, error) {
 	w, _, err := walkInput(ctx, in, true)
-	if errors.Is(err, errTooLarge) {
+	if errors.Is(err, errTooLarge) || errors.Is(err, errUnreadable) {
 		return nil, ErrNotShown
 	}
 	if err != nil {

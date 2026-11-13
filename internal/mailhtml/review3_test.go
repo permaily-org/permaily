@@ -1,9 +1,11 @@
 package mailhtml
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -147,5 +149,160 @@ func TestReview3FADroppedCommentJoinsNothing(t *testing.T) {
 			t.Errorf("%q: a comment in the output: %s", src, out)
 		}
 		boundHolds(t, src)
+	}
+}
+
+// textLink is a text of the output and where it leads: the destination its
+// innermost link resolves to through Links and Find, "" when it is in none.
+type textLink struct{ text, url string }
+
+// linkedTexts reads the output as a browser does (x/net/html, without the
+// prepared stream) and says, for each text that is not white space, where
+// it leads: the token of the innermost <a> around it, resolved by Find
+// among Links(in), which must be the address the <a>'s title names.
+func linkedTexts(t *testing.T, in Input, out string) []textLink {
+	t.Helper()
+	links, err := Links(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := html.Parse(strings.NewReader(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []textLink
+	for n := doc; n != nil; n = next(n, doc) {
+		if n.Type != html.TextNode || strings.Trim(n.Data, " \t\n\f\r") == "" || n.Parent.DataAtom == atom.Style {
+			continue
+		}
+		tl := textLink{text: strings.TrimSpace(n.Data)}
+		for p := n.Parent; p != nil; p = p.Parent {
+			if p.DataAtom != atom.A {
+				continue
+			}
+			href, _ := attr(p, "href")
+			title, _ := attr(p, "title")
+			l, ok := Find(links, href[strings.LastIndexByte(href, '/')+1:])
+			if !ok || l.URL != title {
+				t.Errorf("%q: %q resolves to %+v, its title says %q", tl.text, href, l, title)
+			}
+			tl.url = l.URL
+			break
+		}
+		got = append(got, tl)
+	}
+	return got
+}
+
+// C: a link inside a link. A browser ends the outer link where the inner
+// one starts (the adoption agency); the sanitiser, having renamed <a> in the
+// prepared stream, built them nested and unwrapped the inner one, so "B"
+// led to a.example. The text of a link leads to the destination the sender
+// wrote for the innermost link around it: the outer link ends where an
+// inner one starts and goes on after it as a link of its own to the same
+// destination; an inner link that is not kept (no href, a refused
+// destination, mailto:) leads nowhere, not to the outer one's.
+func TestReview3CNestedLinksLeadWhereTheSenderWrote(t *testing.T) {
+	const a, b, c = "https://a.example/", "https://b.example/", "https://c.example/"
+	cases := []struct {
+		name, src string
+		want      []textLink
+	}{
+		{"the reviewer's", `<a href="https://a.example"><div><a href="https://b.example">B</a></div></a>`,
+			[]textLink{{"B", b}}},
+		{"text around it", `<a href="https://a.example">A1<div><a href="https://b.example">B</a></div>A2</a>`,
+			[]textLink{{"A1", a}, {"B", b}, {"A2", a}}},
+		{"three levels", `<a href="https://a.example">A1<div>A2<a href="https://b.example">B1<div><a href="https://c.example">C</a></div>B2</a>A3</div>A4</a>`,
+			[]textLink{{"A1", a}, {"A2", a}, {"B1", b}, {"C", c}, {"B2", b}, {"A3", a}, {"A4", a}}},
+		// Where no block stands between them, the prepared stream ends the
+		// first link before the second as a browser's parser does (with
+		// the inline elements open inside it): what follows leads nowhere,
+		// in a browser too.
+		{"in formatting", `<a href="https://a.example"><b>A1<span><a href="https://b.example"><i>B</i></a></span>A2</b></a>`,
+			[]textLink{{"A1", a}, {"B", b}, {"A2", ""}}},
+		{"side by side", `<a href="https://a.example">A1<a href="https://b.example">B</a>A2</a>`,
+			[]textLink{{"A1", a}, {"B", b}, {"A2", ""}}},
+		{"an inner link with no href", `<a href="https://a.example">A1<div><a>N</a></div>A2</a>`,
+			[]textLink{{"A1", a}, {"N", ""}, {"A2", a}}},
+		{"an inner link refused", `<a href="https://a.example">A1<div><a href="javascript:alert(1)">J</a></div>A2</a>`,
+			[]textLink{{"A1", a}, {"J", ""}, {"A2", a}}},
+		{"an inner mailto:", `<a href="https://a.example">A1<div><a href="mailto:x@b.example">M</a></div>A2</a>`,
+			[]textLink{{"A1", a}, {"M [x@b.example]", ""}, {"A2", a}}},
+		{"an inner link refused, holding a link", `<a href="https://a.example">A1<div><a href="ftp://x">F<div><a href="https://c.example">C</a></div></a></div>A2</a>`,
+			[]textLink{{"A1", a}, {"F", ""}, {"C", c}, {"A2", a}}},
+		{"a sender's placeholder", `<a href="https://a.example">A1<permaily-a href="https://b.example">P</permaily-a></a>`,
+			[]textLink{{"A1P", a}}},
+	}
+	for _, tc := range cases {
+		in := input(tc.src)
+		st, out := renderOK(t, in)
+		if st.Status != contracts.HTMLShown {
+			t.Errorf("%s: %s", tc.name, st.Status)
+			continue
+		}
+		if got := linkedTexts(t, in, out); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: %v, want %v\n%s", tc.name, got, tc.want, out)
+		}
+		if strings.Contains(out, "permaily-") {
+			t.Errorf("%s: a placeholder in the output: %s", tc.name, out)
+		}
+	}
+}
+
+// C: the formatting elements are renamed in the prepared stream to names
+// the parser builds as unknown elements; a sender who wrote those names got
+// a real link or a real <b>. The names carry a suffix drawn for each render
+// (crypto/rand) that the sender cannot write, and an element whose name
+// starts with the reserved prefix is an unknown element: unwrapped.
+func TestReview3CTheSendersPlaceholdersAreUnknownElements(t *testing.T) {
+	for _, src := range []string{
+		`<permaily-a href="https://b.example">P</permaily-a>`,
+		`<permaily-b>P</permaily-b>`,
+		`<PERMAILY-A HREF="https://b.example">P</PERMAILY-A>`,
+		`<permaily-strong>P</permaily-strong><permaily-font color=red>Q</permaily-font>`,
+		`<b><permaily-a href="https://b.example">P</permaily-a></b>`,
+	} {
+		in := input(src)
+		st, out := renderOK(t, in)
+		if st.Status != contracts.HTMLShown || st.Links != 0 {
+			t.Errorf("%q: %s with %d links: %s", src, st.Status, st.Links, out)
+		}
+		for _, tag := range []string{"<a ", "<strong", "<font", "permaily-"} {
+			if strings.Contains(out, tag) {
+				t.Errorf("%q: %s in %s", src, tag, out)
+			}
+		}
+		if strings.Contains(src, "<b>") != strings.Contains(out, "<b>") {
+			t.Errorf("%q: %s", src, out)
+		}
+		if links, err := Links(context.Background(), in); err != nil || len(links) != 0 {
+			t.Errorf("%q: links %v %v", src, links, err)
+		}
+	}
+	// Two prepared streams of the same part name the formatting elements
+	// differently.
+	one, err := prepare(context.Background(), []byte("<b>x</b>"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, _ := prepare(context.Background(), []byte("<b>x</b>"), false)
+	if bytes.Equal(one.stream, two.stream) || !strings.HasPrefix(one.prefix, formattingPrefix) || len(one.prefix) < len(formattingPrefix)+16 {
+		t.Errorf("%q %q", one.stream, two.stream)
+	}
+}
+
+// C: a start tag that carries the drawn prefix (which the sender would have
+// had to guess) makes the part unreadable, in Render and in Links.
+func TestReview3CTheDrawnNameMakesThePartUnreadable(t *testing.T) {
+	old := placeholderPrefix
+	defer func() { placeholderPrefix = old }()
+	placeholderPrefix = func() string { return formattingPrefix + "0123456789abcdef-" }
+	for _, src := range []string{`<permaily-0123456789abcdef-a href="https://b.example">P</permaily-0123456789abcdef-a>`, `<p><permaily-0123456789ABCDEF-b>P`} {
+		if st, err := Render(context.Background(), input(src), nil); err != nil || st.Status != contracts.HTMLUnreadable {
+			t.Errorf("%q: %s %v", src, st.Status, err)
+		}
+		if _, err := Links(context.Background(), input(src)); err != ErrNotShown {
+			t.Errorf("%q: %v", src, err)
+		}
 	}
 }

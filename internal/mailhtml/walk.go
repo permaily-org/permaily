@@ -103,6 +103,13 @@ type walker struct {
 	// holds are the elements of the input that hold a link (at any depth):
 	// their style is written so that nothing hides or moves it.
 	holds map[*html.Node]bool
+	// splits are the links of the input that hold another <a> (at any
+	// depth), and wrap, while the walk is inside one of them and outside
+	// the links it holds, the attributes of that link: each piece of its
+	// text and each of its images is written in a link of its own with
+	// them (ADR 0026, "A link inside a link").
+	splits map[*html.Node]bool
+	wrap   []html.Attribute
 }
 
 // tick counts a node visited and checks the context every ctxEvery nodes.
@@ -121,11 +128,9 @@ func (w *walker) tick() error {
 func (w *walker) document(doc *html.Node) (*html.Node, error) {
 	body := &html.Node{Type: html.ElementNode, Data: "body", DataAtom: atom.Body}
 	w.css.ctx = w.ctx
-	if !w.linksOnly {
-		w.holds = map[*html.Node]bool{}
-		if _, err := w.markHolders(doc); err != nil {
-			return nil, err
-		}
+	w.holds, w.splits = map[*html.Node]bool{}, map[*html.Node]bool{}
+	if _, _, err := w.markHolders(doc); err != nil {
+		return nil, err
 	}
 	if err := w.walk(doc, body, 0, false); err != nil {
 		return nil, err
@@ -142,33 +147,39 @@ func (w *walker) document(doc *html.Node) (*html.Node, error) {
 
 // markHolders marks, in w.holds, every element under n that holds an a
 // whose href is http or https (a link the walk may keep: a few more than it
-// keeps, which only writes the style of an ancestor on a few more), and
-// says whether n holds one. What the walk drops is not looked into.
-func (w *walker) markHolders(n *html.Node) (bool, error) {
-	found := false
+// keeps, which only writes the style of an ancestor on a few more), and in
+// w.splits every a under n that holds another a, whatever its href; and
+// says whether n holds each. What the walk drops is not looked into: the
+// walk reaches every a this pass does, and no other.
+func (w *walker) markHolders(n *html.Node) (holdsLink, holdsA bool, err error) {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if err := w.tick(); err != nil {
-			return false, err
+			return false, false, err
 		}
 		if c.Type != html.ElementNode || c.Namespace != "" || dropped(c) {
 			continue
 		}
 		if c.DataAtom == atom.A {
+			holdsA = true
 			href, _ := attr(c, "href")
 			if h := strings.ToLower(whatwgTrim(href)); strings.HasPrefix(h, "http:") || strings.HasPrefix(h, "https:") {
-				found = true
+				holdsLink = true
 			}
 		}
-		inner, err := w.markHolders(c)
+		link, a, err := w.markHolders(c)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
-		if inner {
+		if link {
 			w.holds[c] = true
-			found = true
+			holdsLink = true
 		}
+		if a && c.DataAtom == atom.A {
+			w.splits[c] = true
+		}
+		holdsA = holdsA || a
 	}
-	return found, nil
+	return holdsLink, holdsA, nil
 }
 
 func (w *walker) newElement(parent *html.Node, a atom.Atom, name string, depth int) (*html.Node, error) {
@@ -237,6 +248,14 @@ func (w *walker) walk(src, dst *html.Node, depth int, inLink bool) error {
 		}
 		switch c.Type {
 		case html.TextNode:
+			if w.wrap != nil && strings.Trim(c.Data, " \t\n\f\r") != "" {
+				piece, err := w.piece(dst, depth)
+				if err != nil {
+					return err
+				}
+				appendText(piece, c.Data)
+				continue
+			}
 			appendText(dst, c.Data)
 		case html.ElementNode:
 			if err := w.element(c, dst, depth, inLink); err != nil {
@@ -294,6 +313,18 @@ func (w *walker) element(c, dst *html.Node, depth int, inLink bool) error {
 		return w.walk(c, dst, depth, inLink)
 	case a == atom.A:
 		return w.link(c, dst, depth, inLink)
+	case a == atom.Img && w.wrap != nil:
+		piece, err := w.piece(dst, depth)
+		if err != nil {
+			return err
+		}
+		if err := w.image(c, piece, depth+1, true); err != nil {
+			return err
+		}
+		if piece.FirstChild == nil {
+			dst.RemoveChild(piece) // an image removed, or Links
+		}
+		return nil
 	case a == atom.Img:
 		return w.image(c, dst, depth, inLink)
 	case !keptElements[a]:
@@ -312,6 +343,9 @@ func (w *walker) element(c, dst *html.Node, depth int, inLink bool) error {
 	n, err := w.newElement(dst, a, name, depth)
 	if err != nil {
 		return err
+	}
+	if w.wrap != nil {
+		w.holds[c] = true // it holds the pieces of a link
 	}
 	w.countAttributes(c)
 	n.Attr = w.attributes(c, c.DataAtom, inLink)
@@ -735,7 +769,9 @@ func descendantStyle(decls []cssDecl) string {
 // maxLinkText bounds the text of a link read for the host it names.
 const maxLinkText = 2 << 10
 
-// textOf is the text inside n, at most max bytes.
+// textOf is the text inside n but that of the links it holds, at most max
+// bytes. Each node of the input is read for at most the one link it is
+// innermost in.
 func textOf(n *html.Node, max int) string {
 	var b strings.Builder
 	var walk func(*html.Node)
@@ -744,8 +780,8 @@ func textOf(n *html.Node, max int) string {
 			switch {
 			case c.Type == html.TextNode:
 				b.WriteString(c.Data)
-			case c.Type == html.ElementNode && c.Namespace == "" && !dropped(c):
-				walk(c)
+			case c.Type == html.ElementNode && c.Namespace == "" && !dropped(c) && c.DataAtom != atom.A:
+				walk(c) // the text of a link inside is that link's
 			}
 		}
 	}
@@ -760,14 +796,25 @@ func textOf(n *html.Node, max int) string {
 // link keeps an http or https link to a DNS name as a link to the app's
 // link page, opened in a new tab; writes a mailto: or tel: link as its text
 // with the address after it when the text does not say it; and writes every
-// other one, a link inside a link, and links past the thousandth, as text.
+// other one, and links past the thousandth, as text. A kept link that holds
+// another (w.splits) is written as pieces: each text and image of its own
+// in a link of its own to it, and the links it holds as they are, so the
+// text of each leads where the sender wrote for the innermost link around
+// it (ADR 0026, "A link inside a link"). What a link that is not kept holds
+// leads nowhere, not to the link around it.
 func (w *walker) link(c, dst *html.Node, depth int, inLink bool) error {
 	w.countAttributes(c)
+	if inLink {
+		// A kept link that holds an <a> is in w.splits, written as pieces,
+		// so no <a> is ever reached inside one written whole; were it, the
+		// part would not be shown.
+		return errUnreadable
+	}
+	around := w.wrap
+	w.wrap = nil
+	defer func() { w.wrap = around }()
 	href, _ := attr(c, "href")
 	href = whatwgTrim(href)
-	if inLink {
-		return w.walk(c, dst, depth, inLink)
-	}
 	lower := strings.ToLower(href)
 	if strings.HasPrefix(lower, "mailto:") || strings.HasPrefix(lower, "tel:") {
 		if err := w.walk(c, dst, depth, inLink); err != nil {
@@ -800,10 +847,6 @@ func (w *walker) link(c, dst *html.Node, depth int, inLink bool) error {
 		link.Shown = shown
 	}
 	w.links = append(w.links, link)
-	a, err := w.newElement(dst, atom.A, "a", depth)
-	if err != nil {
-		return err
-	}
 	attrs := []html.Attribute{
 		{Key: "href", Val: link.Path}, {Key: "target", Val: "_blank"},
 		{Key: "rel", Val: "noopener noreferrer"}, {Key: "title", Val: target.URL},
@@ -836,8 +879,27 @@ func (w *walker) link(c, dst *html.Node, depth int, inLink bool) error {
 		s.WriteString(linkStyle)
 		attrs = append(attrs, html.Attribute{Key: "style", Val: s.String()})
 	}
+	if w.splits[c] {
+		w.wrap = attrs
+		return w.walk(c, dst, depth, false)
+	}
+	a, err := w.newElement(dst, atom.A, "a", depth)
+	if err != nil {
+		return err
+	}
 	a.Attr = attrs
 	return w.walk(c, a, depth+1, true)
+}
+
+// piece is a link of its own, with w.wrap's attributes, for one text or
+// image of a link that holds another.
+func (w *walker) piece(dst *html.Node, depth int) (*html.Node, error) {
+	a, err := w.newElement(dst, atom.A, "a", depth)
+	if err != nil {
+		return nil, err
+	}
+	a.Attr = slices.Clone(w.wrap)
+	return a, nil
 }
 
 // The words of the box drawn instead of an image not shown.

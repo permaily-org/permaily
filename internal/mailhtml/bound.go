@@ -3,6 +3,8 @@ package mailhtml
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"io"
 	"strings"
@@ -35,11 +37,24 @@ var (
 var formattingAtoms = setAtoms(atom.A, atom.B, atom.Big, atom.Code, atom.Em, atom.Font, atom.I,
 	atom.Nobr, atom.S, atom.Small, atom.Strike, atom.Strong, atom.Tt, atom.U)
 
-// formattingPrefix names a formatting element in the stream: <b> is written
-// <permaily-b>, a name the parser builds as any unknown element.
-// restoreFormatting gives the parsed elements their names back. A sender's
-// own <permaily-b> becomes a <b>, which it could have written.
+// formattingPrefix begins the names of the formatting elements in the
+// stream: <b> is written <permaily-…-b>, where … is drawn for each prepared
+// stream (placeholderPrefix), a name the parser builds as any unknown
+// element. restoreFormatting gives the parsed elements whose names carry
+// that stream's prefix their names back. A sender cannot write the drawn
+// part, so an element of the message named <permaily-b> or <permaily-a> is
+// an unknown element, unwrapped by the walk; a start tag that does carry the
+// stream's prefix makes the part unreadable.
 const formattingPrefix = "permaily-"
+
+// placeholderPrefix is the prefix of one prepared stream's placeholder
+// names: formattingPrefix, 16 hexadecimal digits from crypto/rand, "-".
+// A variable so a test can draw a known one.
+var placeholderPrefix = func() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b) // crypto/rand.Read never fails (Go 1.24 and later)
+	return formattingPrefix + hex.EncodeToString(b) + "-"
+}
 
 // rawText are the elements whose content x/net/html's tokenizer reads as
 // text unless told otherwise.
@@ -51,11 +66,12 @@ var rawText = map[atom.Atom]bool{
 // prepared is the stream the parser reads and the bounds of what it builds
 // from it: nodes (the document's node included) and attrBytes, the bytes of
 // the keys, values and namespaces its elements' attributes hold, counted
-// once per element that holds them.
+// once per element that holds them; and prefix, its placeholder names'.
 type prepared struct {
 	stream    []byte
 	nodes     int
 	attrBytes int
+	prefix    string
 }
 
 // emptyComment is what a comment of the input is written as in the stream.
@@ -75,7 +91,7 @@ const documentNodes = 5
 //   - a comment is written as an empty comment (emptyComment), which the
 //     walk drops, so nothing on either side of a comment is joined by its
 //     removal; and a text's final "<" is written "&lt;";
-//   - the formatting elements are renamed (formattingPrefix), so the parser
+//   - the formatting elements are renamed (placeholderPrefix), so the parser
 //     never clones one; a second <a> while one is open is preceded by the
 //     end tag of the first, as the parser would end it;
 //   - a start tag is written again from its name and attributes, values
@@ -113,7 +129,7 @@ func prepare(ctx context.Context, b []byte, limits bool) (prepared, error) {
 	z.SetMaxBuf(len(b) + 1)
 	var out bytes.Buffer
 	out.Grow(len(b) + len(b)/8)
-	p := prepared{nodes: documentNodes}
+	p := prepared{nodes: documentNodes, prefix: placeholderPrefix()}
 	starts, attrs, openA := 0, 0, 0
 	// foreign is sticky: once an <svg> or <math> has opened, the parser may
 	// be in foreign content anywhere after, where <script>, <style> and the
@@ -194,6 +210,9 @@ func prepare(ctx context.Context, b []byte, limits bool) (prepared, error) {
 			if limits && (starts > contracts.MessageHTMLMaxStartTags || n > contracts.MessageHTMLMaxAttributesPerElement || attrs > contracts.MessageHTMLMaxAttributes) {
 				return prepared{}, errTooLarge
 			}
+			if bytes.HasPrefix(name, []byte(p.prefix)) {
+				return prepared{}, errUnreadable // the sender wrote the drawn name
+			}
 			switch a {
 			case atom.Svg, atom.Math:
 				foreign = true
@@ -210,12 +229,12 @@ func prepare(ctx context.Context, b []byte, limits bool) (prepared, error) {
 			if formattingAtoms[a] {
 				if a == atom.A {
 					if openA > 0 {
-						out.WriteString("</" + formattingPrefix + "a>")
+						out.WriteString("</" + p.prefix + "a>")
 						openA--
 					}
 					openA++
 				}
-				tag = formattingPrefix + tag
+				tag = p.prefix + tag
 			}
 			p.nodes += 1 + impliedBy(a)
 			held := 0
@@ -245,7 +264,7 @@ func prepare(ctx context.Context, b []byte, limits bool) (prepared, error) {
 				if a == atom.A && openA > 0 {
 					openA--
 				}
-				tag = formattingPrefix + tag
+				tag = p.prefix + tag
 			}
 			out.WriteString("</" + tag + ">")
 		}
@@ -279,14 +298,14 @@ func keyReadsBack(k []byte) bool {
 	return len(k) > 0 && !bytes.ContainsAny(k, " \t\n\f\r/>=\"'<\x00")
 }
 
-// restoreFormatting gives the formatting elements of a parsed stream their
-// names back, without recursion.
-func restoreFormatting(doc *html.Node) {
+// restoreFormatting gives the formatting elements of a stream prepared with
+// prefix, once parsed, their names back, without recursion.
+func restoreFormatting(doc *html.Node, prefix string) {
 	for n := doc; n != nil; n = next(n, doc) {
-		if n.Type != html.ElementNode || n.Namespace != "" || !strings.HasPrefix(n.Data, formattingPrefix) {
+		if n.Type != html.ElementNode || n.Namespace != "" || !strings.HasPrefix(n.Data, prefix) {
 			continue
 		}
-		if a := atom.Lookup([]byte(n.Data[len(formattingPrefix):])); formattingAtoms[a] {
+		if a := atom.Lookup([]byte(n.Data[len(prefix):])); formattingAtoms[a] {
 			n.DataAtom, n.Data = a, a.String()
 		}
 	}
@@ -352,7 +371,7 @@ func parseBounded(ctx context.Context, b []byte, limits bool) (*html.Node, error
 	if err != nil {
 		return nil, err
 	}
-	restoreFormatting(doc)
+	restoreFormatting(doc, p.prefix)
 	return doc, nil
 }
 
