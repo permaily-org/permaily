@@ -56,18 +56,21 @@ func FuzzSanitise(f *testing.F) {
 		if !bytes.Equal(bytes.ToValidUTF8(b, []byte("\uFFFD")), b) {
 			return
 		}
-		bound, err := treeBound(ctx, b)
+		// The bound is a bound, with no slack: of the nodes the parser
+		// makes from the prepared stream, and of the bytes their attributes
+		// hold.
+		p, nodes, attrBytes, err := measure(string(b))
 		if err != nil {
 			return
 		}
-		doc, err := parse(ctx, b)
-		if err != nil {
-			return
+		if nodes > p.nodes || attrBytes > p.attrBytes {
+			t.Fatalf("the bound %d nodes and %d attribute bytes, the parser made %d and %d", p.nodes, p.attrBytes, nodes, attrBytes)
 		}
-		// Each token may also imply elements (html, head, body; tbody and
-		// tr for a cell): at most two a token, and four for the document.
-		if n := countNodes(doc); n > 3*bound+8 {
-			t.Fatalf("the bound %d is below the %d nodes the parser made", bound, n)
+		// The stream reads as the pass read it: once more through the pass
+		// it is the same stream, comments aside.
+		again, err := prepare(ctx, p.stream, false)
+		if err != nil || again.nodes > p.nodes {
+			t.Fatalf("the stream, prepared again: %d nodes against %d: %v", again.nodes, p.nodes, err)
 		}
 	})
 }
@@ -162,18 +165,14 @@ func TestFuzzFoundScriptInForeignContentIsMarkupToTheBound(t *testing.T) {
 		"<math></svg><style><b><b><b><b>x<b>y</style>",
 		"<noscript><b><b><b>x<b>y<b>z</noscript>",
 	} {
-		bound, err := treeBound(context.Background(), []byte(src))
-		doc, _ := parse(context.Background(), []byte(src))
-		if err != nil || countNodes(doc) > 3*bound+8 {
-			t.Errorf("%q: bound %d, %d nodes, %v", src, bound, countNodes(doc), err)
-		}
+		boundHolds(t, src)
 	}
 }
 
 // A formatting element whose end tag comes after a block opened inside it
-// stays active as a clone (the adoption agency's furthest block), and is
-// cloned again at each text after the block closes: the bound keeps
-// counting it.
+// was kept active as a clone (the adoption agency's furthest block), and
+// cloned again at each text after the block closed. Through the prepared
+// stream nothing is cloned, and the bound holds.
 func TestTheBoundCountsWhatTheAdoptionAgencyKeeps(t *testing.T) {
 	var b strings.Builder
 	for i := range 200 {
@@ -183,10 +182,5 @@ func TestTheBoundCountsWhatTheAdoptionAgencyKeeps(t *testing.T) {
 		b.WriteString("</b>")
 	}
 	b.WriteString(strings.Repeat("</div>x<div></b>", 200))
-	src := b.String()
-	bound, err := treeBound(context.Background(), []byte(src))
-	doc, _ := parse(context.Background(), []byte(src))
-	if err == nil && countNodes(doc) > 3*bound+8 {
-		t.Errorf("bound %d, %d nodes", bound, countNodes(doc))
-	}
+	boundHolds(t, b.String())
 }

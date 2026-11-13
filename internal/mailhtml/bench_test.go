@@ -158,11 +158,11 @@ func BenchmarkAmplificationShown(b *testing.B) {
 		}
 	}
 	src := shape(lo)
-	bound, err := treeBound(context.Background(), []byte(src))
+	p, err := prepare(context.Background(), []byte(src), true)
 	if err != nil {
 		b.Fatal(err)
 	}
-	b.Logf("%d bytes, tree bound %d", len(src), bound)
+	b.Logf("%d bytes, tree bound %d", len(src), p.nodes)
 	benchRender(b, input(src), contracts.HTMLShown)
 }
 

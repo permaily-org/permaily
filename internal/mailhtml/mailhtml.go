@@ -114,10 +114,7 @@ func walkInput(ctx context.Context, in Input, linksOnly bool) (*walker, *html.No
 			return nil, nil, errTooLarge
 		}
 	}
-	if _, err := treeBound(ctx, in.HTML); err != nil {
-		return nil, nil, err
-	}
-	doc, err := parse(ctx, in.HTML)
+	doc, err := parseBounded(ctx, in.HTML, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -149,17 +146,28 @@ func render(ctx context.Context, in Input) ([]byte, contracts.MessageHTML, error
 	}
 	// The output, parsed again with the same options and rendered again,
 	// must be the same bytes: a tree x/net/html would itself read otherwise
-	// is not sent.
-	again, err := parse(ctx, first.buf.Bytes())
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, contracts.MessageHTML{}, ctx.Err()
+	// is not sent. It is parsed first through its prepared stream, whose
+	// tree is bounded; once that reads back, every formatting element of the
+	// output ends at its own end tag as the current node, so the plain
+	// parse, the one a browser makes, clones nothing either (ADR 0026,
+	// "Budgets").
+	for _, bounded := range []bool{true, false} {
+		var again *html.Node
+		if bounded {
+			again, err = parseBounded(ctx, first.buf.Bytes(), false)
+		} else {
+			again, err = parse(ctx, first.buf.Bytes())
 		}
-		return nil, contracts.MessageHTML{}, errUnreadable
-	}
-	second := &cappedWriter{max: limit}
-	if err := html.Render(second, again); err != nil || !bytes.Equal(first.buf.Bytes(), second.buf.Bytes()) {
-		return nil, contracts.MessageHTML{}, errUnreadable
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, contracts.MessageHTML{}, ctx.Err()
+			}
+			return nil, contracts.MessageHTML{}, errUnreadable
+		}
+		second := &cappedWriter{max: limit}
+		if err := html.Render(second, again); err != nil || !bytes.Equal(first.buf.Bytes(), second.buf.Bytes()) {
+			return nil, contracts.MessageHTML{}, errUnreadable
+		}
 	}
 	stats := wk.stats
 	stats.Status = contracts.HTMLShown

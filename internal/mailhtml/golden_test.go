@@ -56,7 +56,7 @@ func TestGolden22(t *testing.T) {
 // 2 MiB, a newsletter far longer than real ones, is shown.
 func TestTreeBoundAcceptsRealMail(t *testing.T) {
 	src := realLookingNewsletter(t, contracts.MessageHTMLMaxBytes)
-	bound, err := treeBound(context.Background(), []byte(src))
+	p, err := prepare(context.Background(), []byte(src), true)
 	if err != nil {
 		t.Fatalf("the bound refuses a real-looking newsletter of %d bytes: %v", len(src), err)
 	}
@@ -64,7 +64,7 @@ func TestTreeBoundAcceptsRealMail(t *testing.T) {
 	if st.Status != contracts.HTMLShown {
 		t.Fatalf("%+v", st)
 	}
-	t.Logf("%d bytes, tree bound %d, %d links", len(src), bound, st.Links)
+	t.Logf("%d bytes, tree bound %d, %d links", len(src), p.nodes, st.Links)
 }
 
 // realLookingNewsletter is the golden newsletter's body repeated to at most

@@ -481,7 +481,7 @@ func TestTreeBound13(t *testing.T) {
 	brs := strings.Repeat("<br>", contracts.MessageHTMLMaxBytes/4)
 	amp := amplification(contracts.MessageHTMLMaxBytes)
 	for name, src := range map[string]string{"524,288 <br>": brs, "amplification": amp} {
-		if _, err := treeBound(context.Background(), []byte(src)); !errors.Is(err, errTooLarge) {
+		if _, err := prepare(context.Background(), []byte(src), true); !errors.Is(err, errTooLarge) {
 			t.Errorf("%s: the tokeniser pass said %v", name, err)
 		}
 		var st contracts.MessageHTML
@@ -500,8 +500,10 @@ func TestTreeBound13(t *testing.T) {
 	if n := countNodes(doc); n < 8000 {
 		t.Errorf("the amplification case makes %d nodes", n)
 	}
-	if bound, err := treeBound(context.Background(), []byte(small)); err != nil || bound < countNodes(doc) {
-		t.Errorf("bound %d for %d nodes: %v", bound, countNodes(doc), err)
+	// Through its prepared stream the parser clones nothing, and makes
+	// at most what the bound says.
+	if p, nodes, _, err := measure(small); err != nil || nodes > p.nodes || nodes > countNodes(doc)/10 {
+		t.Errorf("bound %d, %d nodes through the stream (%d without it): %v", p.nodes, nodes, countNodes(doc), err)
 	}
 
 	at := strings.Repeat("<br>", contracts.MessageHTMLMaxStartTags)
@@ -650,7 +652,7 @@ func TestBudgets19(t *testing.T) {
 		t.Errorf("the walk: %v", err)
 	}
 	// The tokeniser pass checks it too.
-	if _, err := treeBound(ended, []byte(src)); !errors.Is(err, context.Canceled) {
+	if _, err := prepare(ended, []byte(src), true); !errors.Is(err, context.Canceled) {
 		t.Errorf("the token pass: %v", err)
 	}
 }
