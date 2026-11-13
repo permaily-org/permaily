@@ -222,3 +222,25 @@ func BenchmarkAdversarialFamilies(b *testing.B) {
 		})
 	}
 }
+
+// The third review's A and its variants (review3_test.go), each at the
+// largest size a part may be: the text around what the walk unwraps or
+// drops, joined once.
+func BenchmarkJoinedText(b *testing.B) {
+	families := joinFamilies()
+	names := make([]string, 0, len(families))
+	for name := range families {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		b.Run(strings.ReplaceAll(name, " ", "_"), func(b *testing.B) {
+			unit := families[name]
+			src := strings.Repeat(unit, min(contracts.MessageHTMLMaxBytes/len(unit), contracts.MessageHTMLMaxStartTags)-10)
+			if strings.HasSuffix(name, "in a link") {
+				src = `<a href="https://a.example/">` + src + "</a>"
+			}
+			benchRender(b, input(src), contracts.HTMLShown)
+		})
+	}
+}
