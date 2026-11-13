@@ -133,6 +133,7 @@ func (w *walker) document(doc *html.Node) (*html.Node, error) {
 	if w.css.err != nil {
 		return nil, w.css.err
 	}
+	joinText(body)
 	w.stats.RemoteImages += w.css.remoteImages
 	w.stats.RemoteOther += w.css.remoteOther
 	w.stats.Links = len(w.links)
@@ -180,15 +181,41 @@ func (w *walker) newElement(parent *html.Node, a atom.Atom, name string, depth i
 	return n, nil
 }
 
+// appendText appends s to parent as a text node of its own: the text on
+// either side of what the walk does not keep is gathered as pieces, and
+// joinText makes each run of them one text node once the walk is done, so
+// the work is linear in the text (joining as it went copied what was
+// gathered at every piece).
 func appendText(parent *html.Node, s string) {
 	if s == "" {
 		return
 	}
-	if last := parent.LastChild; last != nil && last.Type == html.TextNode {
-		last.Data += s
-		return
-	}
 	parent.AppendChild(&html.Node{Type: html.TextNode, Data: s})
+}
+
+// joinText makes every run of adjacent text nodes under root one text node,
+// each run written once into a buffer of its size, without recursion.
+func joinText(root *html.Node) {
+	for n := root; n != nil; n = next(n, root) {
+		if n.Type != html.TextNode || n.NextSibling == nil || n.NextSibling.Type != html.TextNode {
+			continue
+		}
+		size := 0
+		for t := n; t != nil && t.Type == html.TextNode; t = t.NextSibling {
+			size += len(t.Data)
+		}
+		var b strings.Builder
+		b.Grow(size)
+		for t := n; t != nil && t.Type == html.TextNode; {
+			b.WriteString(t.Data)
+			following := t.NextSibling
+			if t != n {
+				n.Parent.RemoveChild(t)
+			}
+			t = following
+		}
+		n.Data = b.String()
+	}
 }
 
 func attr(n *html.Node, key string) (string, bool) {
