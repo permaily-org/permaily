@@ -69,7 +69,8 @@ const documentNodes = 5
 // tokenizer read it, with these changes, none of which changes an element
 // or text the walk keeps:
 //
-//   - comments are left out (the walk drops them);
+//   - comments are left out (the walk drops them), and a text's final "<"
+//     is written "&lt;", so two texts they separated never join into a tag;
 //   - the formatting elements are renamed (formattingPrefix), so the parser
 //     never clones one; a second <a> while one is open is preceded by the
 //     end tag of the first, as the parser would end it;
@@ -142,8 +143,17 @@ func prepare(ctx context.Context, b []byte, limits bool) (prepared, error) {
 				out.Write(bytes.ReplaceAll(text, []byte("</"), []byte(`<\/`)))
 			default:
 				// Text read in the data state: "<" in it is never followed by
-				// "/" and a letter, "!" or "?", which start a token.
-				out.Write(text)
+				// "/" and a letter, "!" or "?", which start a token. A final
+				// "<" is written "&lt;": with the comment that followed it
+				// left out, it would start a tag with the next text ("<",
+				// "<!>", "td>"; found by FuzzSanitise, testdata/fuzz/
+				// FuzzSanitise/b608e8361384e348).
+				if t, ok := bytes.CutSuffix(text, []byte("<")); ok {
+					out.Write(t)
+					out.WriteString("&lt;")
+				} else {
+					out.Write(text)
+				}
 			}
 		case html.CommentToken:
 			// Left out.

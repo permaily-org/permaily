@@ -1,6 +1,7 @@
 package mailhtml
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -518,5 +519,25 @@ func TestFuzzFoundACombinatorAfterTwoHyphensStaysACombinator(t *testing.T) {
 		if strings.Contains(out, "-->") {
 			t.Errorf("%q: written %q", in, out)
 		}
+	}
+}
+
+// Found by FuzzSanitise during the second review's fuzzing (testdata/fuzz/
+// FuzzSanitise/b608e8361384e348): "<", a comment, "td>" are two texts, and
+// with the comment left out the stream read "<td>", a start tag the pass
+// had charged as text. A text's final "<" is written "&lt;".
+func TestFuzzFoundTextsAroundACommentDoNotJoinIntoATag(t *testing.T) {
+	for _, src := range []string{"<<!>td>", "<table>" + strings.Repeat("<<!>td><<!>col>", 300), strings.Repeat("<<!---->/p>", 300), "a<<!-- x -->b>c"} {
+		p, nodes, _, err := measure(src)
+		if err != nil || nodes > p.nodes {
+			t.Errorf("%.40q: bound %d, %d nodes: %v", src, p.nodes, nodes, err)
+		}
+		if again, err := prepare(context.Background(), p.stream, false); err != nil || again.nodes > p.nodes || bytes.Contains(p.stream, []byte("<td>")) {
+			t.Errorf("%.40q: stream %.60q prepared again bounds %d against %d", src, p.stream, again.nodes, p.nodes)
+		}
+	}
+	st, out := renderOK(t, input("<<!>td>x"))
+	if st.Status != contracts.HTMLShown || !strings.Contains(out, "&lt;td&gt;x") {
+		t.Errorf("%s: %s", st.Status, out)
 	}
 }
