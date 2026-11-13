@@ -963,19 +963,29 @@ Real mail needs it: tables laid out by inline `style`, colours, fonts, and in ne
 
 ### Limits
 
-Each limit has a test at its value and one past it. The render's time and memory below were measured by pull request 5 (item 23, `internal/mailhtml/bench_test.go`) on the pinned `golang.org/x/net` v0.62.0 with Go 1.26.11, in a container limited to one CPU and 2,048 MiB (`docker run --cpus=1 --memory=2g`, `GOMAXPROCS=1`) on an Intel Core Ultra 9 285H, on 2026-11-12: the production enclave's size, on a faster core than an enclave's vCPU may be, so the deadline keeps a wide margin over them. Peak memory is the heap above where the render started, sampled every 100 µs; the process's own size can be up to twice that with Go's default `GOGC`. The median of three runs of five renders each:
+Each limit has a test at its value and one past it. The render's time and memory below were measured by pull request 5 (item 23, `internal/mailhtml/bench_test.go`, measured again after its code review with the CSS shapes added) on the pinned `golang.org/x/net` v0.62.0 with Go 1.26.11, in a container limited to one CPU and 2,048 MiB (`docker run --cpus=1 --memory=2g`, `GOMAXPROCS=1`) on an Intel Core Ultra 9 285H, on 2026-11-12: the production enclave's size, on a faster core than an enclave's vCPU may be, so the deadline keeps a wide margin over them. Peak memory is the heap above where the render started, sampled every 100 µs; the process's own size can be up to twice that with Go's default `GOGC`. The median of three runs of five renders each:
 
 | Input (item) | Answer | Time | Peak heap |
 |---|---|---|---|
-| 2 MiB of `&` (12) | `too_large`, stopped at 4 MiB of output | 40 ms | 16.0 MiB |
-| 524,288 `<br>` in 2 MiB (13) | `too_large` by the token pass, no tree | 5 ms | 0.4 MiB |
-| The amplification case, 2 MiB (13) | `too_large` by the token pass, no tree | 1 ms | 0.03 MiB |
-| The same shape with 240 formatting elements, at the largest size still shown (4,767 bytes, a tree bound of 128,213) | shown | 72 ms | 26.7 MiB |
-| 50,000 start tags (13) | shown | 56 ms | 17.4 MiB |
-| Nesting at 256 (13) | shown | 2 ms | 0.1 MiB |
-| A real-looking newsletter of 2 MiB, 1,000 links (a tree bound of 100,158, half the limit) | shown | 320 ms | 56.9 MiB |
-| A newsletter of 60 KiB, the size real ones have | shown | 12 ms | 3.3 MiB |
-| 50 images at the limits of pixels and bytes, as `cid:` parts | shown | 79 ms | 40.9 MiB |
+| 2 MiB of `&` (12) | `too_large`, stopped at 4 MiB of output | 23 ms | 12.0 MiB |
+| 524,288 `<br>` in 2 MiB (13) | `too_large` by the token pass, no tree | 3 ms | 0.4 MiB |
+| The amplification case, 2 MiB (13) | `too_large` by the token pass, no tree | 0.3 ms | 0.03 MiB |
+| The same shape with 240 formatting elements, at the largest size still shown (4,767 bytes, a tree bound of 128,213) | shown | 60 ms | 27.3 MiB |
+| 50,000 start tags (13) | shown | 21 ms | 13.3 MiB |
+| Nesting at 256 (13) | shown | 1 ms | 0.1 MiB |
+| A real-looking newsletter of 2 MiB, 1,000 links (a tree bound of 100,158, half the limit) | shown | 135 ms | 60.5 MiB |
+| A newsletter of 60 KiB, the size real ones have | shown | 10 ms | 4.3 MiB |
+| 50 images at the limits of pixels and bytes, as `cid:` parts | shown | 1 ms | 0.2 MiB |
+| **CSS (the review of pull request 5, finding 1), each in a part of 2 MiB:** `(`, `[`, `{`, `([{` or `url(` repeated in a `<style>` to 2 MiB (over the 256 KiB of the sheets: counted by the pass that keeps nothing) | shown, the CSS gone | 12 to 63 ms | 16.0 MiB |
+| An unterminated string, or comment, of 2 MiB in a `<style>` | shown, the CSS gone | 19 ms; 13 ms | 16.0 MiB |
+| Tiny rules (`a{}`), or declarations (`b:c;`), to 2 MiB in a `<style>` | shown, the CSS gone | 45 ms; 52 ms | 21.6 MiB |
+| `(` or `([{` repeated in a `<style>` just under 256 KiB (past the 131,072 tokens: counted) | shown, the CSS gone | 12 ms; 22 ms | 21.5 MiB |
+| `[` or `f(` nested 131,000 deep, within the tokens a sheet may be (read, the depth past 32 skipped) | shown | 15 ms; 6 ms | 22.0 MiB |
+| Tiny rules, or declarations, just under 256 KiB (filtered, past the 5,000 rules and 20,000 declarations) | shown | 15 ms; 22 ms | 23.3 MiB |
+| `color:red;` repeated just under 256 KiB (20,000 declarations kept) | shown | 38 ms | 53.7 MiB |
+| 2 MiB of elements whose `style` is 8 KiB of `(`, of `([{`, or of `color:red;` | shown | 94 ms; 90 ms; 178 ms | 57.9 MiB |
+
+Before the review, the same `<style>` of 2 MiB of `([{` ended the process (Go's fatal stack overflow, the parser recursing about a million levels), and 500,000 `(` took 504 ms past a deadline of 100 ms, grew the stack by 256 MiB and kept 47 MiB of heap. Each CSS shape above is also run under a deadline of 100 ms, in `Render` and in `Links`, and asserted to end within 250 ms with at most 64 MiB of heap and 4 MiB of stack (`TestReview1CSSWorkIsBoundedAndStopsAtTheDeadline`; the elements' `style` attributes are the ones that reach that deadline).
 
 The tree bound refuses the amplification case before any tree (1 ms, no tree) and accepts the 2 MiB newsletter at half its limit (`TestTreeBoundAcceptsRealMail`). 400 formatting elements open at once are never shown at any size: they nest past the depth of 256.
 
@@ -998,12 +1008,12 @@ The tree bound refuses the amplification case before any tree (1 ms, no tree) an
 | One image's pixels | 16,777,216 (16 MP, 64 MiB decoded at four bytes a pixel) | Not shown (`too_large`) | An 8192 x 8192 image is 256 MiB decoded; a 260 KiB PNG can declare it |
 | Pixels of a message's images together | 33,554,432 (32 MP, 128 MiB decoded) | Images past it not shown (`too_large`) | A long newsletter's images at high density are under 25 MP; 128 MiB is what a phone's browser tab can hold for one message beside the app. A browser's limit, not the enclave's: the release gate opens the worst case on an iPhone |
 | Animation | none in this version | Not shown (`animated`) | Cannot be stopped without a script in the frame |
-| Renders at once, per enclave | 2 | Wait in the queue | One vCPU per enclave; two keeps one person's render from blocking another's. The slowest render measured is 0.32 s and the largest 57 MiB at peak, so two at once take at most about 114 MiB of heap |
+| Renders at once, per enclave | 2 | Wait in the queue | One vCPU per enclave; two keeps one person's render from blocking another's. The slowest render measured is 0.18 s and the largest 60.5 MiB at peak, so two at once take at most about 121 MiB of heap |
 | Renders waiting, per enclave; how long one waits | 16; 5 seconds | 503 `busy` (`Message.html`: `unavailable`) | A queue that cannot grow without bound |
 | Renders per account, running and waiting | 1 running, 2 waiting (two waiting are refused a third whatever is running) | 429 `too_many_requests` | So one person cannot hold every slot |
 | How long `GET message` waits for a slot for its HTML summary | 1 second (`httpapi.SummaryWait`) | `Message.html` is `unavailable`; the text is answered | Opening a message waits behind renders at most this and one render's deadline ("Admission of a render") |
-| Time for one render | 2 seconds | Stopped; `unavailable` | Measured: 12 ms for a newsletter of real size, 320 ms for the slowest input the limits accept (a 2 MiB newsletter), about six times under the deadline; the deadline is what stops the work, not a hope |
-| Memory for one render | 64 MiB at peak | (by the limits above) | Measured: at most 56.9 MiB of heap (the 2 MiB newsletter), 3.3 MiB for a newsletter of real size; two at once fit beside the 128 MiB of mail open for reading of "Admission" in the enclave's 2,048 MiB |
+| Time for one render | 2 seconds, from the slot taken, the raw read included ("Admission of a render") | Stopped; `unavailable` | Measured: 10 ms for a newsletter of real size, 178 ms for the slowest input measured (2 MiB of elements with 8 KiB `style` attributes; the 2 MiB newsletter takes 135 ms), about eleven times under the deadline; the deadline is what stops the work, not a hope |
+| Memory for one render | 64 MiB at peak | (by the limits above) | Measured: at most 60.5 MiB of heap (the 2 MiB newsletter, whose 1,000 links' ancestors now carry their style), 4.3 MiB for a newsletter of real size; two at once fit beside the 128 MiB of mail open for reading of "Admission" in the enclave's 2,048 MiB |
 
 When the HTML is `too_large` or `unreadable`, the app shows the text with a line that says why, and "Download original". When it is `unavailable`, the text with "The formatted view isn't available right now. Try again in a moment." and "Try again".
 
