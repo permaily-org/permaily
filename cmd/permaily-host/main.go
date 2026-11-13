@@ -90,15 +90,15 @@ func main() {
 		}
 		// SMTP is the one port where how many connections one sender holds
 		// is limited here (ADR 0026, "Admission").
-		perAddress := 0
+		perAddress, refusal := 0, ""
 		if strings.HasSuffix(addr, ":25") {
-			perAddress = hostproxy.SMTPPerAddress
+			perAddress, refusal = hostproxy.SMTPPerAddress, hostproxy.SMTPRefusal
 		}
 		log.Info("forwarding", "tcp", addr, "vsock_cid", cid, "vsock_port", port, "per_address", perAddress)
 		go func() {
 			errc <- hostproxy.Forward(ctx, ln, func(ctx context.Context) (net.Conn, error) {
 				return vsock.DialContext(ctx, cid, port, nil)
-			}, perAddress, log)
+			}, perAddress, refusal, log)
 		}()
 	}
 

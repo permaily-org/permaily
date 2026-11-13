@@ -1211,12 +1211,19 @@ export async function adminFindMailbox(address: string): Promise<MailboxRecord |
   return mailboxRecords(await request('GET', `/api/v1/admin/mailboxes?${query}`))[0] ?? null
 }
 
-/** Pauses or resumes a mailbox. The answer is the mailbox after it. */
+/**
+ * A pause or a resume: the mailbox after it, and whether this call changed it. One that found the mailbox as asked
+ * (`changed: false`) told nobody and was counted nowhere.
+ */
+export type MailboxChange = MailboxRecord & { changed?: boolean }
+
+/** Pauses or resumes a mailbox. The answer is the mailbox after it, and whether the call changed it. */
 export async function adminMailboxAction(
   id: string,
   action: 'pause' | 'resume',
-): Promise<MailboxRecord> {
-  return mailboxRecordOf(
+): Promise<MailboxChange> {
+  const { changed, ...record } = mailboxRecordOf(
     await request('POST', `/api/v1/admin/mailboxes/${encodeURIComponent(id)}/${action}`),
-  )
+  ) as MailboxRecord & { changed?: unknown }
+  return typeof changed === 'boolean' ? { ...record, changed } : record
 }

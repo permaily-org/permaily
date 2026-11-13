@@ -34,6 +34,8 @@ type Change = {
   title: string
   says: string
   done: string
+  /** Said when the call found the mailbox as asked: it told nobody and was not counted. */
+  already: string
 }
 
 const changes: Record<Change['action'], Change> = {
@@ -43,6 +45,7 @@ const changes: Record<Change['action'], Change> = {
     title: 'Pause this mailbox?',
     says: 'It refuses new mail until it is resumed. The mail it holds stays, and its owner can still read, delete and disconnect it. They are told by email.',
     done: 'Mailbox paused.',
+    already: 'It was already paused: nothing was sent and nothing was counted.',
   },
   resume: {
     action: 'resume',
@@ -50,6 +53,7 @@ const changes: Record<Change['action'], Change> = {
     title: 'Resume this mailbox?',
     says: 'It accepts mail again. Its owner is told by email.',
     done: 'Mailbox resumed.',
+    already: 'It was not paused: nothing was sent and nothing was counted.',
   },
 }
 
@@ -143,7 +147,7 @@ export function MailboxesSection({ account, admin }: { account: string; admin: b
     if ('done' in result) {
       const after = result.done
       setRecords((now) => (now ?? []).map((one) => (one.id === after.id ? after : one)))
-      setSaid(asking.change.done)
+      setSaid(after.changed === false ? asking.change.already : asking.change.done)
       toSection.current = true
       setAsking(null)
       refreshStats()

@@ -261,7 +261,10 @@ describe('accounts.sh and mailboxes', () => {
 
   test('pausing and resuming ask the enclave, after a yes', async () => {
     answers = {
-      [`POST /v1/admin/mailboxes/${mailbox}/pause`]: { status: 200, body: paused },
+      [`POST /v1/admin/mailboxes/${mailbox}/pause`]: {
+        status: 200,
+        body: { ...paused, changed: true },
+      },
       [`POST /v1/admin/mailboxes/${mailbox}/resume`]: {
         status: 200,
         body: {
@@ -269,6 +272,7 @@ describe('accounts.sh and mailboxes', () => {
           state: 'receiving',
           paused_at: undefined,
           receiving_since: '2026-11-05T10:00:00Z',
+          changed: true,
         },
       },
     }
@@ -276,9 +280,11 @@ describe('accounts.sh and mailboxes', () => {
     let out = await run('accounts.sh', 'mailbox', 'pause', mailbox, '--yes')
     expect(out.exit).toBe(0)
     expect(out.stderr).toContain(`This will pause the mailbox ${mailbox}`)
+    expect(out.stderr).toContain('Done. The mailbox now:')
     expect(out.stdout).toContain('paused since 2026-11-12 09:30 UTC')
     out = await run('accounts.sh', 'mailbox', 'resume', mailbox, '--yes')
     expect(out.exit).toBe(0)
+    expect(out.stderr).toContain('Done. The mailbox now:')
     expect(out.stdout).toMatch(/State:\s+receiving/)
     expect(asked).toEqual([
       `POST /v1/admin/mailboxes/${mailbox}/pause`,
@@ -289,6 +295,42 @@ describe('accounts.sh and mailboxes', () => {
     out = await run('accounts.sh', 'mailbox', 'pause', mailbox)
     expect(out.exit).not.toBe(0)
     expect(asked).toEqual([])
+  })
+
+  test('a pause or a resume that changed nothing says so, and not that it was done', async () => {
+    const receiving = {
+      ...paused,
+      state: 'receiving',
+      paused_at: undefined,
+      receiving_since: '2026-11-05T10:00:00Z',
+    }
+    answers = {
+      [`POST /v1/admin/mailboxes/${mailbox}/pause`]: {
+        status: 200,
+        body: { ...paused, changed: false },
+      },
+      [`POST /v1/admin/mailboxes/${mailbox}/resume`]: {
+        status: 200,
+        body: { ...receiving, changed: false },
+      },
+    }
+    let out = await run('accounts.sh', 'mailbox', 'pause', mailbox, '--yes')
+    expect(out.exit).toBe(0)
+    expect(out.stderr).toContain('It was already paused: nothing was sent and nothing was counted.')
+    expect(out.stderr).not.toContain('Done.')
+    expect(out.stdout).toContain('paused since 2026-11-12 09:30 UTC')
+    out = await run('accounts.sh', 'mailbox', 'resume', mailbox, '--yes')
+    expect(out.exit).toBe(0)
+    expect(out.stderr).toContain('It was not paused: nothing was sent and nothing was counted.')
+    expect(out.stderr).not.toContain('Done.')
+    // An enclave of an earlier release does not say: nothing is claimed.
+    answers = {
+      [`POST /v1/admin/mailboxes/${mailbox}/pause`]: { status: 200, body: paused },
+    }
+    out = await run('accounts.sh', 'mailbox', 'pause', mailbox, '--yes')
+    expect(out.exit).toBe(0)
+    expect(out.stderr).not.toContain('Done.')
+    expect(out.stderr).toContain('The mailbox now:')
   })
 
   test('what the enclave refuses is said, and fails', async () => {

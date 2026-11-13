@@ -118,7 +118,7 @@ describe("an account's mailboxes", () => {
       'POST /api/v1/admin/mailboxes/mbx_receiving/pause',
       once(
         confirmationNeeded,
-        ok({ ...receiving, state: 'paused', paused_at: '2026-11-12T10:00:00Z' }),
+        ok({ ...receiving, state: 'paused', paused_at: '2026-11-12T10:00:00Z', changed: true }),
       ),
     )
     await user.click(section().getAllByRole('button', { name: 'Pause mailbox' })[0] as HTMLElement)
@@ -155,6 +155,7 @@ describe("an account's mailboxes", () => {
         state: 'receiving',
         paused_at: undefined,
         receiving_since: '2026-03-08T10:00:00Z',
+        changed: true,
       }),
     )
     await user.click(section().getByRole('button', { name: 'Resume mailbox' }))
@@ -163,6 +164,36 @@ describe("an account's mailboxes", () => {
     await user.click(question.getByRole('button', { name: 'Resume mailbox' }))
     await section().findByText('Mailbox resumed.')
     expect(section().queryByRole('button', { name: 'Resume mailbox' })).toBeNull()
+  })
+
+  it('says a pause or a resume that changed nothing changed nothing', async () => {
+    const { user } = await account()
+    // Another admin paused it after this page loaded: this call found it paused.
+    server.on(
+      'POST /api/v1/admin/mailboxes/mbx_receiving/pause',
+      ok({ ...receiving, state: 'paused', paused_at: '2026-11-12T10:00:00Z', changed: false }),
+    )
+    await user.click(section().getAllByRole('button', { name: 'Pause mailbox' })[0] as HTMLElement)
+    await user.click(
+      within(screen.getByRole('dialog', { name: 'Pause this mailbox?' })).getByRole('button', {
+        name: 'Pause mailbox',
+      }),
+    )
+    await section().findByText('It was already paused: nothing was sent and nothing was counted.')
+    expect(section().queryByText('Mailbox paused.')).toBeNull()
+    expect(section().getAllByRole('button', { name: 'Resume mailbox' })).toHaveLength(2)
+    server.on(
+      'POST /api/v1/admin/mailboxes/mbx_paused/resume',
+      ok({ ...paused, state: 'waiting', paused_at: undefined, changed: false }),
+    )
+    await user.click(section().getAllByRole('button', { name: 'Resume mailbox' })[1] as HTMLElement)
+    await user.click(
+      within(screen.getByRole('dialog', { name: 'Resume this mailbox?' })).getByRole('button', {
+        name: 'Resume mailbox',
+      }),
+    )
+    await section().findByText('It was not paused: nothing was sent and nothing was counted.')
+    expect(section().queryByText('Mailbox resumed.')).toBeNull()
   })
 
   it.each([
@@ -348,6 +379,20 @@ describe('the calls of the admin panel about mailboxes', () => {
     await expect(api.adminAccountMailboxes('acc_bad')).rejects.toMatchObject({ code: 'other' })
     await expect(api.adminMailboxAction('mbx_receiving', 'pause')).rejects.toMatchObject({
       code: 'other',
+    })
+    // Whether the call changed it is read only as a yes or a no.
+    server.on(
+      'POST /api/v1/admin/mailboxes/mbx_receiving/pause',
+      ok({ ...receiving, changed: 'no' }),
+    )
+    expect(await api.adminMailboxAction('mbx_receiving', 'pause')).toEqual(receiving)
+    server.on(
+      'POST /api/v1/admin/mailboxes/mbx_receiving/pause',
+      ok({ ...receiving, changed: false }),
+    )
+    expect(await api.adminMailboxAction('mbx_receiving', 'pause')).toEqual({
+      ...receiving,
+      changed: false,
     })
     expect(await api.adminFindMailbox('a@b')).toBeNull()
     // A server that does not count mailboxes: no count, rather than none.

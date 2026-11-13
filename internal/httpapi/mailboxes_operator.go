@@ -36,6 +36,6 @@ type MailboxOperator interface {
 	MailboxRecordByAddress(ctx context.Context, address string) (*contracts.MailboxRecordList, error)
 	// PauseMailbox and ResumeMailbox answer contracts.ErrTooManyRequests past
 	// ten changes of one mailbox in thirty days (mailboxes.MaxStateChangesPerPeriod).
-	PauseMailbox(ctx context.Context, id string) (*contracts.MailboxRecord, error)
-	ResumeMailbox(ctx context.Context, id string) (*contracts.MailboxRecord, error)
+	PauseMailbox(ctx context.Context, id string) (*contracts.MailboxChange, error)
+	ResumeMailbox(ctx context.Context, id string) (*contracts.MailboxChange, error)
 }

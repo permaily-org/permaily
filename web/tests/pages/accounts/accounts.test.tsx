@@ -288,6 +288,67 @@ describe('W1: connecting a mailbox and its forwarding set-up', () => {
     expect(server.asked('GET /api/v1/mailboxes/mbx_personal')).toHaveLength(before + 1)
   })
 
+  it('marks a step done only when the mailbox shows it was: Gmail’s code arrived, then mail', async () => {
+    const steps = () =>
+      screen
+        .getAllByRole('img', { name: /^Step \d/ })
+        .map((marker) => marker.getAttribute('aria-label'))
+    const shown = async (mailbox: unknown) => {
+      server.on('GET /api/v1/mailboxes/mbx_personal', ok(mailbox))
+      await open('/accounts/mbx_personal/forwarding')
+      await screen.findByRole('heading', { level: 1, name: 'Forward your Gmail here' })
+      return steps()
+    }
+    server.signedIn()
+    // Mail arrives, but no code from Gmail is here: nothing shows that Gmail's code was entered (mail sent
+    // straight to the address, or a code that was deleted).
+    expect(await shown(personal)).toEqual(['Step 1: Done', 'Step 2: Current step', 'Step 3: Done'])
+    expect(
+      screen.getByText(
+        "No code from Gmail is listed here, so this page can't tell whether this step was done.",
+      ),
+    ).toBeTruthy()
+    await expectAccessible()
+    // Gmail's code arrived, then mail: Gmail forwards only once its code was entered.
+    expect(await shown({ ...personal, confirmations: [confirmationOf()] })).toEqual([
+      'Step 1: Done',
+      'Step 2: Done',
+      'Step 3: Done',
+    ])
+    expect(screen.queryByText(/No code from Gmail is listed here/)).toBeNull()
+    // So does a Gmail account Google confirmed, whose code may be gone since.
+    expect(
+      await shown({
+        ...personal,
+        source: {
+          provider: 'gmail',
+          address: 'ana.ruiz@example.com',
+          verified_at: '2026-11-03T08:00:00Z',
+        },
+      }),
+    ).toEqual(['Step 1: Done', 'Step 2: Done', 'Step 3: Done'])
+    // A code Gmail sent for another address says nothing about this mailbox.
+    expect(
+      await shown(
+        mailboxOf({
+          state: 'waiting',
+          receiving_since: undefined,
+          confirmations: [confirmationOf({ code: '', for_another_address: true })],
+        }),
+      ),
+    ).toEqual(['Step 1: Current step', 'Step 2: Not started', 'Step 3: Not started'])
+    // A code for this address, and no mail yet: the code is the step.
+    expect(
+      await shown(
+        mailboxOf({
+          state: 'waiting',
+          receiving_since: undefined,
+          confirmations: [confirmationOf()],
+        }),
+      ),
+    ).toEqual(['Step 1: Done', 'Step 2: Current step', 'Step 3: Not started'])
+  })
+
   it('says when the mailbox is gone, paused, cannot be read or could not load', async () => {
     server.signedIn().on('GET /api/v1/mailboxes/mbx_personal', refused(404, 'not_found'))
     await open('/accounts/mbx_personal/forwarding')
@@ -424,6 +485,13 @@ describe('W3: disconnecting', () => {
     await user.click(go)
     // The server asked for a fresh proof: the person confirms with a code.
     const confirming = within(await screen.findByRole('dialog', { name: "Confirm it's you" }))
+    // It says why this change asks: what disconnecting does, not who gets into the account, which it does not decide.
+    expect(
+      confirming.getByText(
+        "Disconnecting stops this mailbox's address and deletes its mail for good, which can't be undone, so Permaily asks you to show it's you again. It counts for the next 10 minutes.",
+      ),
+    ).toBeTruthy()
+    expect(confirming.queryByText(/decides who can get into your account/)).toBeNull()
     await user.click(await confirming.findByRole('button', { name: 'Email me a code' }))
     await user.type(await confirming.findByLabelText('Code from the message'), '123456')
     await user.click(confirming.getByRole('button', { name: 'Confirm' }))

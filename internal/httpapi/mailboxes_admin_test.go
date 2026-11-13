@@ -333,10 +333,19 @@ func TestTheOperatorsMailboxes(t *testing.T) {
 	if len(list.Mailboxes) != 1 || list.Mailboxes[0].Account != carl.Account.ID {
 		t.Fatalf("by address: %s", rec.Body)
 	}
-	for _, action := range []string{"pause", "pause", "resume"} {
-		rec := call("POST", "/v1/admin/mailboxes/"+box.ID+"/"+action, token)
-		answered(t, action, rec, secrets...)
-		read(t, rec, 200, nil)
+	// Each answer says whether the call changed the mailbox, so the
+	// operator's tool does not say it told and counted what it did not.
+	for i, step := range []struct {
+		action  string
+		changed bool
+	}{{"pause", true}, {"pause", false}, {"resume", true}, {"resume", false}} {
+		rec := call("POST", "/v1/admin/mailboxes/"+box.ID+"/"+step.action, token)
+		answered(t, step.action, rec, secrets...)
+		var got map[string]any
+		read(t, rec, 200, &got)
+		if got["changed"] != step.changed || got["id"] != box.ID {
+			t.Fatalf("step %d, %s: %s", i, step.action, rec.Body)
+		}
 	}
 	// What was refused is not counted.
 	call("POST", "/v1/admin/mailboxes/mbx_"+strings.Repeat("z", 26)+"/pause", token)
@@ -394,11 +403,11 @@ func (brokenMailboxes) MailboxRecordByAddress(context.Context, string) (*contrac
 	return nil, errBrokenMailboxes
 }
 
-func (brokenMailboxes) PauseMailbox(context.Context, string) (*contracts.MailboxRecord, error) {
+func (brokenMailboxes) PauseMailbox(context.Context, string) (*contracts.MailboxChange, error) {
 	return nil, errBrokenMailboxes
 }
 
-func (brokenMailboxes) ResumeMailbox(context.Context, string) (*contracts.MailboxRecord, error) {
+func (brokenMailboxes) ResumeMailbox(context.Context, string) (*contracts.MailboxChange, error) {
 	return nil, errBrokenMailboxes
 }
 
@@ -455,7 +464,7 @@ func TestTheMailboxRoutesCannotReadMailOrDisconnect(t *testing.T) {
 			}
 		}
 		for j := 0; j < m.NumOut(); j++ {
-			if out := m.Out(j); out != reflect.TypeOf(&contracts.MailboxRecordList{}) && out != reflect.TypeOf(&contracts.MailboxRecord{}) && out != reflect.TypeOf((*error)(nil)).Elem() {
+			if out := m.Out(j); out != reflect.TypeOf(&contracts.MailboxRecordList{}) && out != reflect.TypeOf(&contracts.MailboxChange{}) && out != reflect.TypeOf((*error)(nil)).Elem() {
 				t.Errorf("%s answers a %s", ops.Method(i).Name, out)
 			}
 		}
@@ -472,5 +481,11 @@ func TestTheMailboxRoutesCannotReadMailOrDisconnect(t *testing.T) {
 	}
 	if want := []string{"id", "account", "state", "created_at", "retention_days", "receiving_since,omitzero", "paused_at,omitzero", "verified"}; !slices.Equal(fields, want) {
 		t.Fatalf("a mailbox's record shows %v", fields)
+	}
+	// A pause's answer is that record and whether the call changed it.
+	change := reflect.TypeOf(contracts.MailboxChange{})
+	if change.NumField() != 2 || !change.Field(0).Anonymous || change.Field(0).Type != rec ||
+		change.Field(1).Type.Kind() != reflect.Bool || change.Field(1).Tag.Get("json") != "changed" {
+		t.Fatalf("a pause's answer is %v", change)
 	}
 }

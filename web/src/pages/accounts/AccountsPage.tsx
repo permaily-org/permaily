@@ -28,6 +28,14 @@ function headline(count: number): string {
 }
 
 /**
+ * Why disconnecting asks the person to show it's them again: not because it decides who gets into the account,
+ * but because it stops the address and deletes its mail for good (ADR 0026, "Confirming again").
+ */
+const disconnectProof = {
+  says: "Disconnecting stops this mailbox's address and deletes its mail for good, which can't be undone, so Permaily asks you to show it's you again. It counts for the next 10 minutes.",
+}
+
+/**
  * The account's mailboxes, from the server: each one's address to forward to, its label, its state, whether
  * Google confirmed the Gmail account behind it, how long it keeps mail, and disconnecting it.
  */
@@ -71,7 +79,7 @@ export function AccountsPage() {
     setPending(true)
     setDialogError(null)
     try {
-      await confirmed(() => api.disconnectMailbox(mailbox.id))
+      await confirmed(() => api.disconnectMailbox(mailbox.id), disconnectProof)
       setList((now) =>
         now ? { ...now, mailboxes: now.mailboxes.filter((m) => m.id !== mailbox.id) } : now,
       )

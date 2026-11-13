@@ -62,7 +62,7 @@ func accountMailboxRoutes(mux *http.ServeMux, prefix string, op func(*http.Reque
 			return
 		}
 		out, err := m.MailboxRecords(r.Context(), r.PathValue("id"))
-		answerWith(w, log, out, err)
+		answerWith(w, r, log, out, err)
 	})
 	mux.HandleFunc(prefix+"/accounts/{id}/mailboxes", refuse(http.MethodGet))
 }
@@ -79,11 +79,11 @@ func mailboxRoutes(mux *http.ServeMux, prefix string, op func(*http.Request) Mai
 		// than one, is refused for what it is, and says nothing of any.
 		addresses := r.URL.Query()["address"]
 		if len(addresses) != 1 {
-			failed(w, log, contracts.ErrInvalidAddress)
+			failed(w, r, log, contracts.ErrInvalidAddress)
 			return
 		}
 		out, err := m.MailboxRecordByAddress(r.Context(), addresses[0])
-		answerWith(w, log, out, err)
+		answerWith(w, r, log, out, err)
 	})
 	for path, pause := range map[string]bool{"pause": true, "resume": false} {
 		mux.HandleFunc("POST "+prefix+"/mailboxes/{id}/"+path, func(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +97,7 @@ func mailboxRoutes(mux *http.ServeMux, prefix string, op func(*http.Request) Mai
 				act = m.PauseMailbox
 			}
 			out, err := act(r.Context(), r.PathValue("id"))
-			answerWith(w, log, out, err)
+			answerWith(w, r, log, out, err)
 		})
 		mux.HandleFunc(prefix+"/mailboxes/{id}/"+path, refuse(http.MethodPost))
 	}

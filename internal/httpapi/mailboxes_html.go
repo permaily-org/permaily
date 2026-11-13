@@ -292,7 +292,7 @@ func (a *mailboxesAPI) link(w http.ResponseWriter, r *http.Request, c mailboxes.
 	defer release()
 	token := r.PathValue("link")
 	if !contracts.MessageLinkToken(token) {
-		failed(w, a.cfg.Log, contracts.ErrNotFound)
+		failed(w, r, a.cfg.Log, contracts.ErrNotFound)
 		return
 	}
 	l, err := a.findLink(ctx, c.Account, b, r.PathValue("message"), token)
@@ -300,7 +300,7 @@ func (a *mailboxesAPI) link(w http.ResponseWriter, r *http.Request, c mailboxes.
 	case errors.Is(err, contracts.ErrLinkChanged):
 		writeError(w, http.StatusConflict, contracts.ErrLinkChanged.Code, contracts.ErrLinkChanged.Message)
 	case err != nil:
-		a.failRender(w, err)
+		a.failRender(w, r, err)
 	default:
 		writeJSON(w, contracts.MessageLink{Link: token, URL: l.URL, Host: l.Host, Shown: l.Shown})
 	}
@@ -344,12 +344,12 @@ func (a *mailboxesAPI) findLink(ctx context.Context, account string, b inbox.Box
 
 // failRender answers a render that could not run: busy (503) when no slot
 // came or its deadline passed, too_many_requests for the account's share.
-func (a *mailboxesAPI) failRender(w http.ResponseWriter, err error) {
+func (a *mailboxesAPI) failRender(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, contracts.ErrBusy), errors.Is(err, context.DeadlineExceeded):
 		writeError(w, http.StatusServiceUnavailable, contracts.ErrBusy.Code, contracts.ErrBusy.Message)
 	default:
-		a.fail(w, err)
+		a.fail(w, r, err)
 	}
 }
 

@@ -247,11 +247,16 @@ type mailboxesAPI struct {
 
 // fail answers an error of the service or the reader. One a caller can act
 // on goes out with its code and fixed words; any other is logged without
-// identifiers and answered with nothing of its own.
-func (a *mailboxesAPI) fail(w http.ResponseWriter, err error) {
+// identifiers and answered with nothing of its own. A request its client
+// left is not the service's failure (clientLeft) and is not logged.
+func (a *mailboxesAPI) fail(w http.ResponseWriter, r *http.Request, err error) {
 	var known *contracts.Error
 	if errors.As(err, &known) {
-		failed(w, a.cfg.Log, known)
+		failed(w, r, a.cfg.Log, known)
+		return
+	}
+	if clientLeft(r, err) {
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 	var msg string
@@ -274,7 +279,7 @@ func writeJSONStatus(w http.ResponseWriter, status int, v any) {
 func (a *mailboxesAPI) list(w http.ResponseWriter, r *http.Request, c mailboxes.Caller) {
 	out, err := a.cfg.Service.List(r.Context(), c)
 	if err != nil {
-		a.fail(w, err)
+		a.fail(w, r, err)
 		return
 	}
 	writeJSON(w, out)
@@ -284,7 +289,7 @@ func (a *mailboxesAPI) create(w http.ResponseWriter, r *http.Request, c mailboxe
 	// Who the caller is and what their standing allows come before the
 	// body (ADR 0026, "The API").
 	if err := a.cfg.Service.CheckChange(r.Context(), c, ""); err != nil {
-		a.fail(w, err)
+		a.fail(w, r, err)
 		return
 	}
 	var in contracts.MailboxCreate
@@ -293,7 +298,7 @@ func (a *mailboxesAPI) create(w http.ResponseWriter, r *http.Request, c mailboxe
 	}
 	out, err := a.cfg.Service.Create(r.Context(), c, in)
 	if err != nil {
-		a.fail(w, err)
+		a.fail(w, r, err)
 		return
 	}
 	writeJSONStatus(w, http.StatusCreated, out)
@@ -302,7 +307,7 @@ func (a *mailboxesAPI) create(w http.ResponseWriter, r *http.Request, c mailboxe
 func (a *mailboxesAPI) get(w http.ResponseWriter, r *http.Request, c mailboxes.Caller) {
 	out, err := a.cfg.Service.Get(r.Context(), c, r.PathValue("id"))
 	if err != nil {
-		a.fail(w, err)
+		a.fail(w, r, err)
 		return
 	}
 	writeJSON(w, out)
@@ -314,7 +319,7 @@ func (a *mailboxesAPI) update(w http.ResponseWriter, r *http.Request, c mailboxe
 	// caller's is not_found, and the standing and the record are answered,
 	// whatever the body.
 	if err := a.cfg.Service.CheckChange(r.Context(), c, r.PathValue("id")); err != nil {
-		a.fail(w, err)
+		a.fail(w, r, err)
 		return
 	}
 	var in contracts.MailboxUpdate
@@ -323,7 +328,7 @@ func (a *mailboxesAPI) update(w http.ResponseWriter, r *http.Request, c mailboxe
 	}
 	out, err := a.cfg.Service.Update(r.Context(), c, r.PathValue("id"), in)
 	if err != nil {
-		a.fail(w, err)
+		a.fail(w, r, err)
 		return
 	}
 	writeJSON(w, out)
@@ -331,7 +336,7 @@ func (a *mailboxesAPI) update(w http.ResponseWriter, r *http.Request, c mailboxe
 
 func (a *mailboxesAPI) disconnect(w http.ResponseWriter, r *http.Request, c mailboxes.Caller) {
 	if err := a.cfg.Service.Disconnect(r.Context(), c, r.PathValue("id")); err != nil {
-		a.fail(w, err)
+		a.fail(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -343,7 +348,7 @@ func (a *mailboxesAPI) disconnect(w http.ResponseWriter, r *http.Request, c mail
 func (a *mailboxesAPI) open(w http.ResponseWriter, r *http.Request, c mailboxes.Caller, access mailboxes.Access) (inbox.Box, context.Context, func(), bool) {
 	b, err := a.cfg.Service.Open(r.Context(), c, r.PathValue("id"), access)
 	if err != nil {
-		a.fail(w, err)
+		a.fail(w, r, err)
 		return inbox.Box{}, nil, nil, false
 	}
 	held := &heldBudget{budget: a.budget, wait: a.cfg.Wait}
@@ -367,20 +372,20 @@ func (a *mailboxesAPI) messages(w http.ResponseWriter, r *http.Request, c mailbo
 	if s, ok := query["limit"]; ok {
 		n, err := strconv.Atoi(s[0])
 		if err != nil || n < 1 || n > MaxMessagesLimit || len(s) > 1 {
-			failed(w, a.cfg.Log, contracts.ErrInvalidLimit)
+			failed(w, r, a.cfg.Log, contracts.ErrInvalidLimit)
 			return
 		}
 		limit = n
 	}
 	after := query.Get("after")
 	if _, ok := query["after"]; ok && !inbox.IsMessageID(after) {
-		failed(w, a.cfg.Log, contracts.ErrInvalidCursor)
+		failed(w, r, a.cfg.Log, contracts.ErrInvalidCursor)
 		return
 	}
 	if !searching {
 		page, err := a.cfg.Reader.List(ctx, b, after, limit)
 		if err != nil {
-			a.fail(w, err)
+			a.fail(w, r, err)
 			return
 		}
 		writeJSON(w, page)
@@ -388,26 +393,26 @@ func (a *mailboxesAPI) messages(w http.ResponseWriter, r *http.Request, c mailbo
 	}
 	q := query.Get("q")
 	if n := utf8.RuneCountInString(q); n < 1 || n > MaxQueryRunes || !utf8.ValidString(q) || strings.TrimSpace(q) == "" || len(query["q"]) > 1 {
-		failed(w, a.cfg.Log, contracts.ErrInvalidQuery)
+		failed(w, r, a.cfg.Log, contracts.ErrInvalidQuery)
 		return
 	}
 	if !a.searchAllowed(c.Account) {
-		failed(w, a.cfg.Log, contracts.ErrTooManyRequests)
+		failed(w, r, a.cfg.Log, contracts.ErrTooManyRequests)
 		return
 	}
 	select {
 	case a.searches <- struct{}{}:
 	case <-time.After(a.cfg.Wait):
-		failed(w, a.cfg.Log, contracts.ErrTooManyRequests)
+		failed(w, r, a.cfg.Log, contracts.ErrTooManyRequests)
 		return
 	case <-ctx.Done():
-		a.fail(w, ctx.Err())
+		a.fail(w, r, ctx.Err())
 		return
 	}
 	defer func() { <-a.searches }()
 	page, err := a.cfg.Reader.Search(ctx, b, q, after, limit)
 	if err != nil {
-		a.fail(w, err)
+		a.fail(w, r, err)
 		return
 	}
 	writeJSON(w, page)
@@ -448,7 +453,7 @@ func (a *mailboxesAPI) message(w http.ResponseWriter, r *http.Request, c mailbox
 	defer release()
 	m, err := a.cfg.Reader.Get(ctx, b, r.PathValue("message"))
 	if err != nil {
-		a.fail(w, err)
+		a.fail(w, r, err)
 		return
 	}
 	writeJSON(w, m)
@@ -477,7 +482,7 @@ func (a *mailboxesAPI) raw(w http.ResponseWriter, r *http.Request, c mailboxes.C
 	id := r.PathValue("message")
 	data, err := a.cfg.Reader.Raw(ctx, b, id)
 	if err != nil {
-		a.fail(w, err)
+		a.fail(w, r, err)
 		return
 	}
 	download(w, "message/rfc822", id+".eml", data) // the reader read it, so id is 32 hexadecimal characters
@@ -492,12 +497,12 @@ func (a *mailboxesAPI) attachment(w http.ResponseWriter, r *http.Request, c mail
 	s := r.PathValue("index")
 	index, err := strconv.Atoi(s)
 	if err != nil || index < 0 || index >= inbox.MaxAttachmentsListed || strconv.Itoa(index) != s {
-		failed(w, a.cfg.Log, contracts.ErrNotFound)
+		failed(w, r, a.cfg.Log, contracts.ErrNotFound)
 		return
 	}
 	name, data, err := a.cfg.Reader.Attachment(ctx, b, r.PathValue("message"), index)
 	if err != nil {
-		a.fail(w, err)
+		a.fail(w, r, err)
 		return
 	}
 	download(w, "application/octet-stream", domain.AttachmentFilename(name, index), data)
@@ -511,11 +516,11 @@ func (a *mailboxesAPI) deleteOne(w http.ResponseWriter, r *http.Request, c mailb
 	defer release()
 	n, err := a.cfg.Reader.Delete(ctx, b, []string{r.PathValue("message")})
 	if err != nil {
-		a.fail(w, err)
+		a.fail(w, r, err)
 		return
 	}
 	if n == 0 {
-		failed(w, a.cfg.Log, contracts.ErrNotFound)
+		failed(w, r, a.cfg.Log, contracts.ErrNotFound)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -532,12 +537,12 @@ func (a *mailboxesAPI) deleteMany(w http.ResponseWriter, r *http.Request, c mail
 		return
 	}
 	if len(in.IDs) > inbox.MaxDelete {
-		failed(w, a.cfg.Log, contracts.ErrTooManyMessages)
+		failed(w, r, a.cfg.Log, contracts.ErrTooManyMessages)
 		return
 	}
 	n, err := a.cfg.Reader.Delete(ctx, b, in.IDs)
 	if err != nil {
-		a.fail(w, err)
+		a.fail(w, r, err)
 		return
 	}
 	writeJSON(w, contracts.MessagesDeleted{Deleted: n})
