@@ -38,9 +38,6 @@
   --text-body--line-height: 1.45;
   --text-lead: 15px;
   --text-lead--line-height: 1.45;
-  --text-wordmark: 17px;
-  --text-wordmark--line-height: 1.2;
-  --text-wordmark--letter-spacing: -0.3px;
   --text-title: 18px;
   --text-title--line-height: 1.3;
   --text-heading: 28px;
@@ -111,4 +108,9 @@
   h1[tabindex='-1']:focus {
     outline: none;
   }
+}
+
+/* The logo's tip takes the logo's own colour on a light surface and the highlight on a dark one. */
+.logo-tip {
+  fill: light-dark(currentColor, var(--highlight));
 }

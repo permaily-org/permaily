@@ -1,5 +1,6 @@
 import { Check } from 'lucide-react'
 import { type ReactNode, type Ref, useEffect, useRef, useState } from 'react'
+import { Logo } from '../../components/Logo.tsx'
 import {
   Headline,
   StepMarker,
@@ -91,7 +92,7 @@ export function ConnectAgentPage() {
     <main className="flex min-h-svh flex-col lg:flex-row">
       <div className="min-w-0 flex-1 px-4 pt-8 pb-14 sm:px-14">
         <header className="flex items-center justify-between gap-4">
-          <span className="text-wordmark font-semibold">Permaily</span>
+          <Logo />
           <TextLink to="/connections">Back to connections</TextLink>
         </header>
         <Headline className="mt-8">Connect an agent.</Headline>
