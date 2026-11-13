@@ -470,23 +470,35 @@ func TestReviewN4NothingASenderWritesIsPositionedOrStacked(t *testing.T) {
 
 // What recurses, and what bounds its depth (ADR 0026, "Budgets"): the walk
 // and its helpers (markHolders, walk and element, countDropped, textOf,
-// needsDiv, sortAttributes) recurse on the parsed input, whose depth the
-// parser caps at 512 open elements (deeper is too_large); html.Render
-// recurses on the output, at most 256 deep. At the deepest the parser
-// accepts, through each of them, a render ends with its stack well under
-// the 4 MiB the tests allow, under -race and the default stack.
+// needsDiv, sortAttributes) recurse on the parsed input, whose
+// depth the parser caps at 512 open elements, html and body included
+// (deeper is too_large); html.Render recurses on the output, at most 256
+// deep. At exactly the deepest the parser accepts, 512 (the third review
+// found the test at 503), through each of them, a render ends with its
+// stack well under the 4 MiB the tests allow, under -race and the default
+// stack; one element deeper is refused.
 func TestRecursionAtTheParsersDepth(t *testing.T) {
 	deep := func(open, close string, n int, inner string) string {
 		return strings.Repeat(open, n) + inner + strings.Repeat(close, n)
 	}
-	const n = 400 // with the link's 100, html, body and a, under 512
 	link := `<a href="https://example.com/deep">` + deep("<o:p>", "</o:p>", 100, "deep text") + `</a>`
-	for name, src := range map[string]string{
-		"unwrapped elements around a link": deep("<o:p>", "</o:p>", n, link),
-		"a dropped subtree":                deep("<o:p>", "</o:p>", 10, "<svg>"+deep("<g>", "</g>", n-20, "x")+"</svg>") + link,
-		"kept elements past the depth":     deep("<span>", "</span>", n, link),
-		"paragraphs that need a div":       "<p>" + deep("<marquee>", "</marquee>", n-10, "<div>x</div>") + "</p>" + link,
-	} {
+	// Each shape at a depth of d: html and body, then what it nests.
+	shapes := map[string]func(d int) string{
+		// html, body, d-103 o:p, the a and its 100 o:p.
+		"unwrapped elements around a link": func(d int) string { return deep("<o:p>", "</o:p>", d-103, link) },
+		// html, body, 10 o:p, the svg and d-13 g.
+		"a dropped subtree": func(d int) string {
+			return deep("<o:p>", "</o:p>", 10, "<svg>"+deep("<g>", "</g>", d-13, "x")+"</svg>") + link
+		},
+		// html, body, d-103 span, the a and its 100 o:p.
+		"kept elements past the depth": func(d int) string { return deep("<span>", "</span>", d-103, link) },
+		// html, body, the p, d-4 marquee and the div.
+		"paragraphs that need a div": func(d int) string {
+			return "<p>" + deep("<marquee>", "</marquee>", d-4, "<div>x</div>") + "</p>" + link
+		},
+	}
+	for name, shape := range shapes {
+		src := shape(512)
 		var st contracts.MessageHTML
 		var err error
 		_, stack := peakMemory(func() {
@@ -500,10 +512,37 @@ func TestRecursionAtTheParsersDepth(t *testing.T) {
 		if err != nil || st.Status == "" || stack > renderStack {
 			t.Errorf("%s: %s %v, %d bytes of stack", name, st.Status, err, stack)
 		}
-		if _, nodes, _, err := measure(src); err != nil || nodes == 0 {
-			t.Errorf("%s: not parsed at %d deep: %v", name, n, err)
+		if d, err := parsedDepth(src); err != nil || d != 512 {
+			t.Errorf("%s: parsed %d deep: %v", name, d, err)
+		}
+		if _, err := parsedDepth(shape(513)); !errors.Is(err, errTooLarge) {
+			t.Errorf("%s: 513 deep parsed: %v", name, err)
 		}
 	}
+}
+
+// parsedDepth is how many elements deep the parser's tree of src's prepared
+// stream goes, html included.
+func parsedDepth(src string) (int, error) {
+	p, err := prepare(context.Background(), []byte(src), false)
+	if err != nil {
+		return 0, err
+	}
+	doc, err := parse(context.Background(), p.stream)
+	if err != nil {
+		return 0, err
+	}
+	deepest := 0
+	for n := doc; n != nil; n = next(n, doc) {
+		d := 0
+		for e := n; e != nil; e = e.Parent {
+			if e.Type == html.ElementNode {
+				d++
+			}
+		}
+		deepest = max(deepest, d)
+	}
+	return deepest, nil
 }
 
 // Found by FuzzCSS during the second review's fuzzing (testdata/fuzz/
