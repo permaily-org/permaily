@@ -164,14 +164,31 @@ func render(ctx context.Context, in Input) ([]byte, contracts.MessageHTML, error
 			}
 			return nil, contracts.MessageHTML{}, errUnreadable
 		}
-		second := &cappedWriter{max: limit}
-		if err := html.Render(second, again); err != nil || !bytes.Equal(first.buf.Bytes(), second.buf.Bytes()) {
+		// Compared as it is written: no second copy of the document.
+		second := &sameWriter{want: first.buf.Bytes()}
+		if err := html.Render(second, again); err != nil || second.at != len(second.want) {
 			return nil, contracts.MessageHTML{}, errUnreadable
 		}
 	}
 	stats := wk.stats
 	stats.Status = contracts.HTMLShown
 	return first.buf.Bytes(), stats, nil
+}
+
+// sameWriter fails as soon as what is written is not want, in order.
+type sameWriter struct {
+	want []byte
+	at   int
+}
+
+var errNotTheSame = errors.New("mailhtml: the output does not read back to itself")
+
+func (s *sameWriter) Write(p []byte) (int, error) {
+	if len(p) > len(s.want)-s.at || !bytes.Equal(p, s.want[s.at:s.at+len(p)]) {
+		return 0, errNotTheSame
+	}
+	s.at += len(p)
+	return len(p), nil
 }
 
 func element(a atom.Atom, attrs ...html.Attribute) *html.Node {

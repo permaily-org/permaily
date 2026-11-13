@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/httpapi"
 )
 
@@ -145,5 +146,17 @@ func TestReviewN6WaitingDocumentsAreHeldAgainstTheReadBudget(t *testing.T) {
 	}
 	if rec := frameCall(h, "bob", "/api/v1/mailboxes/"+bobBox.ID+"/messages/"+bobMsg+"/html", "iframe", "same-origin"); rec.Code != http.StatusTooManyRequests {
 		t.Errorf("a second document past the read budget: %d", rec.Code)
+	}
+}
+
+// What the renders and the mail open for reading may hold together stays a
+// quarter of the enclave's 2,048 MiB, so that with Go's collector, which
+// lets the heap grow to twice what is live, they take at most half of it
+// (ADR 0026, "Limits"): two renders at their peak, and the read budget,
+// which holds the raw messages being read and the documents waiting for
+// their readers.
+func TestRendersAndReadsFitTheEnclave(t *testing.T) {
+	if total := contracts.MessageHTMLRenders*contracts.MessageHTMLRenderMemory + httpapi.MailReadBudget; total > 512<<20 {
+		t.Fatalf("%d MiB", total>>20)
 	}
 }

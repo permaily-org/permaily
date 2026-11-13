@@ -191,3 +191,34 @@ func BenchmarkAdversarialCSS(b *testing.B) {
 		})
 	}
 }
+
+// The second review's shapes and every adversarial family of the bound
+// (review2_test.go), each at the largest size the token pass accepts.
+func BenchmarkAdversarialFamilies(b *testing.B) {
+	families := adversarialFamilies()
+	names := make([]string, 0, len(families))
+	for name := range families {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		b.Run(strings.ReplaceAll(name, " ", "_"), func(b *testing.B) {
+			n := largestShown(families[name])
+			if n < 0 {
+				b.Skip("refused at its smallest")
+			}
+			in := input(families[name](n))
+			b.ReportAllocs()
+			var peak uint64
+			for b.Loop() {
+				peak = max(peak, peakHeap(func() {
+					if _, err := Render(context.Background(), in, io.Discard); err != nil {
+						b.Fatal(err)
+					}
+				}))
+			}
+			b.ReportMetric(float64(peak)/(1<<20), "peak-MiB")
+			b.ReportMetric(float64(len(in.HTML)), "bytes")
+		})
+	}
+}

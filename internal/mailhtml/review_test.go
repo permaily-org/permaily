@@ -340,9 +340,10 @@ func peakMemory(f func()) (heap, stack uint64) {
 }
 
 // renderMemory is the most one render may hold at its peak (ADR 0026,
-// "Limits": 64 MiB), and the stack it may grow by.
+// "Limits": contracts.MessageHTMLRenderMemory), and the stack it may grow
+// by.
 const (
-	renderMemory = 64 << 20
+	renderMemory = contracts.MessageHTMLRenderMemory
 	renderStack  = 4 << 20
 	// deadlineMargin is how long past its deadline a render may take to
 	// stop. It is wide on purpose: on a shared CI runner the bounded work
