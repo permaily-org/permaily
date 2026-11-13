@@ -26,12 +26,17 @@ import { Button, Dialog, TextAction } from './ui/index.ts'
  * Runs an action that may need a fresh proof of who the person is. When the server answers
  * `confirmation_needed`, the person is asked to confirm it's them, and the action runs again, once, as it was:
  * nothing they typed is asked for again. Throws `ConfirmCancelled` when they chose not to. `why` says what the
- * dialog explains: a change to the person's own account, or an admin action on the service.
+ * dialog explains: a change that decides who gets into the person's account (the default), an admin action on
+ * the service, or the caller's own sentence for a change that asks for another reason.
  */
 export type Confirmed = <T>(action: () => Promise<T>, why?: ConfirmWhy) => Promise<T>
 
-/** Why the dialog asks: a change that decides who gets into the person's account, or an admin action. */
-export type ConfirmWhy = 'account' | 'admin'
+/**
+ * Why the dialog asks: a change that decides who gets into the person's account, an admin action, or `{ says }`,
+ * the sentence of a change that asks for proof for another reason (disconnecting a mailbox deletes its mail). The
+ * sentence ends saying that Permaily asks to show it's you again, and for how long that counts, as the others do.
+ */
+export type ConfirmWhy = 'account' | 'admin' | { says: string }
 
 const reasons: Record<ConfirmWhy, string> = {
   account:
@@ -380,7 +385,9 @@ function ConfirmSteps({
   return (
     <>
       {heading}
-      <p className="mt-3 text-body text-ink-2">{reasons[why]}</p>
+      <p className="mt-3 text-body text-ink-2">
+        {typeof why === 'string' ? reasons[why] : why.says}
+      </p>
       {step.kind === 'loading' && (
         <p role="status" className="mt-6 text-small text-ink-2">
           Loading

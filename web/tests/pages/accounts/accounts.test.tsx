@@ -424,6 +424,13 @@ describe('W3: disconnecting', () => {
     await user.click(go)
     // The server asked for a fresh proof: the person confirms with a code.
     const confirming = within(await screen.findByRole('dialog', { name: "Confirm it's you" }))
+    // It says why this change asks: what disconnecting does, not who gets into the account, which it does not decide.
+    expect(
+      confirming.getByText(
+        "Disconnecting stops this mailbox's address and deletes its mail for good, which can't be undone, so Permaily asks you to show it's you again. It counts for the next 10 minutes.",
+      ),
+    ).toBeTruthy()
+    expect(confirming.queryByText(/decides who can get into your account/)).toBeNull()
     await user.click(await confirming.findByRole('button', { name: 'Email me a code' }))
     await user.type(await confirming.findByLabelText('Code from the message'), '123456')
     await user.click(confirming.getByRole('button', { name: 'Confirm' }))
