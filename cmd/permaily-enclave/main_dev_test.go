@@ -1234,7 +1234,14 @@ func TestMailEndToEnd(t *testing.T) {
 			if a.header.Get("X-Content-Type-Options") != "nosniff" {
 				t.Errorf("%s %s: no nosniff", method, path)
 			}
-			if a.code >= 400 {
+			// The frame's path answers every error as the frame's: a fixed
+			// HTML body under the frame's own policy.
+			if a.code >= 400 && strings.HasSuffix(strings.TrimSuffix(path, "/"), "/html") {
+				if a.header.Get("Content-Type") != "text/html; charset=utf-8" || !strings.HasPrefix(a.header.Get("Content-Security-Policy"), "sandbox ") ||
+					!strings.Contains(a.body, "This message can") {
+					t.Errorf("%s %s: error %d %q", method, path, a.code, a.body)
+				}
+			} else if a.code >= 400 {
 				var e struct {
 					Error struct{ Code, Message string }
 				}
@@ -1415,7 +1422,16 @@ func TestMailEndToEnd(t *testing.T) {
 		for _, p := range []string{"", "/messages", "/messages/" + msg, "/messages/" + msg + "/raw", "/messages/" + msg + "/attachments/0", "/messages/" + msg + "/html"} {
 			for enclave := range 2 {
 				mine, nobody := fetchAs(ana, enclave, "GET", base+p, "", site), fetchAs(newBrowser(), enclave, "GET", base+p, "", site)
-				if mine.code != 403 || mine.body != nobody.body || nobody.code != 403 || !strings.Contains(mine.body, `"code":"forbidden"`) {
+				// The frame's path is refused as the frame's: its headers and
+				// its fixed body, never the app's JSON (PR #92's review, 9).
+				refused := `"code":"forbidden"`
+				if strings.HasSuffix(p, "/html") {
+					refused = "This message can't be shown here."
+					if !strings.HasPrefix(mine.header.Get("Content-Security-Policy"), "sandbox ") || mine.header.Get("Content-Type") != "text/html; charset=utf-8" {
+						t.Fatalf("%s from %s: %v", p, site, mine.header)
+					}
+				}
+				if mine.code != 403 || mine.body != nobody.body || nobody.code != 403 || !strings.Contains(mine.body, refused) {
 					t.Fatalf("%s from %s: %d %s; without the session %d %s", p, site, mine.code, mine.body, nobody.code, nobody.body)
 				}
 			}
