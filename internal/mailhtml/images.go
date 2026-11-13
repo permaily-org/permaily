@@ -175,6 +175,7 @@ func jpegStructure(b []byte) (imageInfo, bool) {
 		}
 	}
 }
+
 // gifStructure reads the header, the logical screen, then every block to
 // the trailer. More than one image, a NETSCAPE2.0 or ANIMEXTS1.0
 // application extension, is animated; an image outside the logical screen
