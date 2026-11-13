@@ -504,3 +504,19 @@ func TestRecursionAtTheParsersDepth(t *testing.T) {
 		}
 	}
 }
+
+// Found by FuzzCSS during the second review's fuzzing (testdata/fuzz/
+// FuzzCSS/4976eeef819347b3): the selector "--" then ">" was written "-->",
+// which reads back as the CDC token, so the filter's output was not a
+// fixed point. A space keeps them apart.
+func TestFuzzFoundACombinatorAfterTwoHyphensStaysACombinator(t *testing.T) {
+	for _, in := range []string{"-- >{font:1}", "--  >a{color:red}", "a,-- ~b{color:red}", "--+b{color:red}"} {
+		out := sheet(in)
+		if again := sheet(out); again != out {
+			t.Errorf("%q: written %q, read back %q", in, out, again)
+		}
+		if strings.Contains(out, "-->") {
+			t.Errorf("%q: written %q", in, out)
+		}
+	}
+}

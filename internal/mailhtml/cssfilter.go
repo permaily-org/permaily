@@ -841,6 +841,16 @@ const maxCompounds = 32
 // writeSelector checks a rule's prelude against the selector allowlist and
 // writes it again: type, #id and .class names, *, combinators, attribute
 // selectors, a few pseudo-classes, commas.
+// writeCombinator writes a combinator (or "*") after what b holds, with a
+// space when b ends with "-": "--" then ">" would read back as the CDC
+// token "-->" (found by FuzzCSS, testdata/fuzz/FuzzCSS/4976eeef819347b3).
+func writeCombinator(b *strings.Builder, v string) {
+	if s := b.String(); strings.HasSuffix(s, "-") {
+		b.WriteByte(' ')
+	}
+	b.WriteString(v)
+}
+
 func writeSelector(prelude []cssNode) (string, bool) {
 	prelude = trimSpace(prelude)
 	if len(prelude) == 0 {
@@ -869,7 +879,7 @@ func writeSelector(prelude []cssNode) (string, bool) {
 				switch n.tok.Value {
 				case ">", "+", "~":
 					space = false
-					b.WriteString(n.tok.Value)
+					writeCombinator(&b, n.tok.Value)
 					compounds++
 					continue
 				}
@@ -907,7 +917,7 @@ func writeSelector(prelude []cssNode) (string, bool) {
 				cssWriteIdent(&b, prelude[i+1].tok.Value)
 				i++
 			case "*", ">", "+", "~":
-				b.WriteString(t.Value)
+				writeCombinator(&b, t.Value)
 			default:
 				return "", false
 			}
