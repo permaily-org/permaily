@@ -184,6 +184,24 @@ func TestTheSuiteServerAnswers(t *testing.T) {
 	if frame.StatusCode != 200 || !strings.HasPrefix(frame.Header.Get("Content-Security-Policy"), "sandbox allow-popups") {
 		t.Fatalf("%d %v", frame.StatusCode, frame.Header)
 	}
+	// The app's host refuses what another site asks its API for, as the
+	// enclave's does, with the session or without.
+	for _, cookie := range []string{"alice", ""} {
+		req, _ := http.NewRequest("GET", appOrigin+"/api/v1/me", nil)
+		if cookie != "" {
+			req.AddCookie(&http.Cookie{Name: httpapi.SessionCookie, Value: cookie})
+		}
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		res, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		if res.StatusCode != 403 || !strings.Contains(string(body), `"code":"forbidden"`) {
+			t.Fatalf("me from another site, cookie %q: %d %s", cookie, res.StatusCode, body)
+		}
+	}
 	if res := get("/test/plain/"+cases[0].Name, ""); res.StatusCode != 200 || res.Header.Get("Content-Security-Policy") != "" {
 		t.Fatalf("%d %v", res.StatusCode, res.Header)
 	}
@@ -304,7 +322,9 @@ func newSuite(t *testing.T, web string) *suite {
 			}
 		})
 	}
-	s.app = httptest.NewUnstartedServer(recorded(router.New(nil, map[string]http.Handler{appHost: app})))
+	// The app's host as the enclave mounts it: every route under /api/
+	// behind the rule that refuses another site (httpapi.RefuseCrossSite).
+	s.app = httptest.NewUnstartedServer(recorded(router.New(nil, map[string]http.Handler{appHost: httpapi.RefuseCrossSite(app)})))
 	s.app.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 	s.app.StartTLS()
 	s.internet = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -573,10 +593,13 @@ func (s *suite) test(w http.ResponseWriter, r *http.Request) {
 	case "sandboxed":
 		// A document that asks the app for its API from inside the frame,
 		// with the sandbox attribute and no CSP of its own (release gate:
-		// "A sandboxed document's own requests carry no session").
+		// "A sandboxed document's own requests get nothing of the account"):
+		// an image, a click that navigates the frame and a new tab, each to
+		// the API, and an image of a page that is not the API, which records
+		// whether the browser attached the session without being refused.
 		w.Header().Del("Content-Security-Policy")
 		write("text/html; charset=utf-8", `<!DOCTYPE html><img src="/test/probe?from=img"><img src="/api/v1/me?from=img">`+
-			`<a id="go" href="/test/probe?from=click">go</a><a id="tab" href="/test/probe?from=tab" target="_blank">tab</a>`)
+			`<a id="go" href="/api/v1/me?from=click">go</a><a id="tab" href="/api/v1/me?from=tab" target="_blank">tab</a>`)
 	case "viewer-sandboxed":
 		write("text/html; charset=utf-8", page(viewerFrame("/test/sandboxed", "Message: sandboxed")))
 	case "nometa":

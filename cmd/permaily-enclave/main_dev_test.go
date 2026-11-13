@@ -284,6 +284,40 @@ func TestAccountsEndToEnd(t *testing.T) {
 	if code, body := call("GET", app+"/api/v1/me", "", ""); code != 200 || !strings.Contains(body, `"address":"ana@example.org"`) {
 		t.Fatalf("me: %d %s", code, body)
 	}
+	// What another site asks the app's API for is refused, with the session
+	// or without it, and the same answer either way; the app's own fetch
+	// (same-origin) and an address typed in (none) are answered (ADR 0026,
+	// "Corrected while building pull request 5").
+	fetch := func(c *http.Client, path, site string) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, app+path, nil)
+		req.Header.Set("Sec-Fetch-Site", site)
+		res, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(b)
+	}
+	outsider := &http.Client{Transport: client.Transport}
+	for _, site := range []string{"cross-site", "same-site"} {
+		withSession, refused := fetch(client, "/api/v1/me", site)
+		without, alsoRefused := fetch(outsider, "/api/v1/me", site)
+		if withSession != 403 || without != 403 || refused != alsoRefused || !strings.Contains(refused, `"code":"forbidden"`) {
+			t.Fatalf("me from %s: %d %s; without the session %d %s", site, withSession, refused, without, alsoRefused)
+		}
+	}
+	for _, site := range []string{"same-origin", "none"} {
+		if code, body := fetch(client, "/api/v1/me", site); code != 200 || !strings.Contains(body, `"address":"ana@example.org"`) {
+			t.Fatalf("me, %s: %d %s", site, code, body)
+		}
+	}
+	// The app's pages answer a navigation from anywhere as they answer one
+	// typed in (the test build may embed no web app).
+	if code, body := fetch(outsider, "/sign-in", "cross-site"); code == 403 || strings.Contains(body, `"forbidden"`) {
+		t.Fatalf("the sign-in page from another site: %d %s", code, body)
+	}
 	var session string
 	for _, c := range jar.Cookies(mustURL(t, app)) {
 		if c.Name == "__Host-permaily-session" {
@@ -613,7 +647,12 @@ func TestAccountsEndToEnd(t *testing.T) {
 	arrive := func(jar http.CookieJar, address string) string {
 		t.Helper()
 		browser := &http.Client{Jar: jar, Transport: client.Transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-		res, err := browser.Get(address)
+		// A navigation from the provider's site: the one route under /api/
+		// that answers it (httpapi.CrossSiteExceptions).
+		req, _ := http.NewRequest(http.MethodGet, address, nil)
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		req.Header.Set("Sec-Fetch-Mode", "navigate")
+		res, err := browser.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1138,14 +1177,22 @@ func TestMailEndToEnd(t *testing.T) {
 		}()
 	}
 	const app = "https://app.permaily.test"
-	fixed := map[string]bool{"no such endpoint": true, "internal error": true}
+	fixed := map[string]bool{"no such endpoint": true, "internal error": true, "this request did not come from the app": true}
 	for _, e := range []*contracts.Error{contracts.ErrUnauthorized, contracts.ErrNotFound, contracts.ErrConfirmationNeeded, contracts.ErrInvalidQuery, contracts.ErrTooManyMessages} {
 		fixed[e.Message] = true
 	}
 	// A browser of its own for each person, whose requests go to one enclave
 	// or the other.
 	type browser struct{ jar http.CookieJar }
+	// fetchAs asks as a browser whose request says it came from site (the
+	// Sec-Fetch-Site of a request to the app's host; "" sends none).
+	var fetchAs func(b browser, enclave int, method, path, body, site string) mailAnswer
+	// call asks as the app's own page does: fetch, same-origin.
 	call := func(b browser, enclave int, method, path, body string) mailAnswer {
+		t.Helper()
+		return fetchAs(b, enclave, method, path, body, "same-origin")
+	}
+	fetchAs = func(b browser, enclave int, method, path, body, site string) mailAnswer {
 		t.Helper()
 		client := &http.Client{Jar: b.jar, Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // dev mode self-signed certificate
@@ -1164,6 +1211,9 @@ func TestMailEndToEnd(t *testing.T) {
 			if strings.HasPrefix(url, app) && method != http.MethodGet {
 				req.Header.Set("Origin", app)
 				req.Header.Set("Content-Type", "application/json")
+			}
+			if strings.HasPrefix(url, app) && site != "" {
+				req.Header.Set("Sec-Fetch-Site", site)
 			}
 			if strings.HasPrefix(url, "https://api.") {
 				req.Header.Set("Authorization", "Bearer "+admin)
@@ -1350,6 +1400,26 @@ func TestMailEndToEnd(t *testing.T) {
 	}
 	if a := call(ana, 1, "GET", base+"/messages/"+msg+"/attachments/1", ""); a.code != 404 {
 		t.Fatalf("an attachment that is not there: %d", a.code)
+	}
+	// A download opened from the address bar (none) or by a browser that
+	// sends no Fetch Metadata is answered; asked by another site, nothing of
+	// the mailbox is, with the session or without (ADR 0026).
+	for _, site := range []string{"none", ""} {
+		for _, p := range []string{"/raw", "/attachments/0"} {
+			if a := fetchAs(ana, 0, "GET", base+"/messages/"+msg+p, "", site); a.code != 200 || !strings.HasPrefix(a.header.Get("Content-Disposition"), "attachment") {
+				t.Fatalf("download %s, %q: %d", p, site, a.code)
+			}
+		}
+	}
+	for _, site := range []string{"cross-site", "same-site"} {
+		for _, p := range []string{"", "/messages", "/messages/" + msg, "/messages/" + msg + "/raw", "/messages/" + msg + "/attachments/0", "/messages/" + msg + "/html"} {
+			for enclave := range 2 {
+				mine, nobody := fetchAs(ana, enclave, "GET", base+p, "", site), fetchAs(newBrowser(), enclave, "GET", base+p, "", site)
+				if mine.code != 403 || mine.body != nobody.body || nobody.code != 403 || !strings.Contains(mine.body, `"code":"forbidden"`) {
+					t.Fatalf("%s from %s: %d %s; without the session %d %s", p, site, mine.code, mine.body, nobody.code, nobody.body)
+				}
+			}
+		}
 	}
 	decode(call(ana, 0, "GET", "/api/v1/mailboxes/"+work.ID, ""), 200, &work)
 	if work.State != contracts.MailboxReceiving {

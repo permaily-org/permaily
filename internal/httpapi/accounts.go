@@ -468,7 +468,7 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 	// failed, and next to it the provider when the service still knew the
 	// trip, for the screen to name it. What the provider said went wrong is
 	// never read.
-	mux.HandleFunc("GET /api/v1/auth/provider/callback", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET "+ProviderCallback, func(w http.ResponseWriter, r *http.Request) {
 		q, from := r.URL.Query(), browser(r)
 		done, err := svc.FinishProvider(r.Context(), accounts.ProviderAnswer{
 			State: q.Get("state"), Code: q.Get("code"), Refused: q.Has("error"),

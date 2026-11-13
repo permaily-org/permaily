@@ -110,8 +110,8 @@ func main() {
 }
 
 // providerCallback is where a provider sends the browser back, on the app's
-// host. It is registered with each provider, to the letter.
-const providerCallback = "/api/v1/auth/provider/callback"
+// host: the one route under /api/ that a cross-site navigation reaches.
+const providerCallback = httpapi.ProviderCallback
 
 // keyRoutes mounts the operator's handoff of the root secret to the next
 // release, and a newer trust root of Sigstore's, each when the platform has
@@ -189,7 +189,10 @@ func run(cfg config, log *slog.Logger) error {
 			app.Handle(path, h)
 		}
 		app.Handle("/", webui.Handler())
-		byHost[hosts.App] = app
+		// Every route under /api/ answers the app alone: a request that says
+		// another site made it is refused before anything else
+		// (httpapi.RefuseCrossSite, ADR 0026).
+		byHost[hosts.App] = httpapi.RefuseCrossSite(app)
 		invitations := httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Invitations(p.accounts, log))
 		api.Handle("/v1/admin/invitations", invitations)
 		api.Handle("/v1/admin/invitations/", invitations)

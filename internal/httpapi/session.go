@@ -53,7 +53,7 @@ func fromTheApp(next http.Handler) http.Handler {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			site := r.Header.Get("Sec-Fetch-Site")
 			if r.Header.Get("Origin") != "https://"+r.Host || (site != "" && site != "same-origin") {
-				writeError(w, http.StatusForbidden, "forbidden", "this request did not come from the app")
+				notFromTheApp(w)
 				return
 			}
 			// A form of another site cannot send JSON without asking first.

@@ -92,34 +92,70 @@ test('28: the frame route opened in a tab answers 404, without the message', asy
   expect(await page.textContent('body')).not.toContain('Pay at')
 })
 
-test("release gate: a sandboxed document's own requests carry no session", async ({
+test("a sandboxed document's own requests to the API are refused and get nothing of the account", async ({
   page,
   context,
   browserName,
 }, info) => {
-  // Playwright's WebKit 27.2 sends the SameSite=Strict session on every request of the sandboxed (opaque origin)
-  // document, with Sec-Fetch-Site: cross-site (seen on 2026-11-12). The assertion stays: this marks the failure
-  // as known, and a WebKit that stops sending it fails here so the note is removed. ADR 0026, "Corrected while
-  // building pull request 5", says what holds instead; real Safari is the release gate's to check.
-  test.fail(
-    browserName === 'webkit',
-    'WebKit sends the Strict session cookie on a sandboxed document’s own requests',
-  )
+  // ADR 0026, "Corrected while building pull request 5": every request under /api/ that says another site made it
+  // is refused before a session is looked up (httpapi.RefuseCrossSite), so this holds in every engine, whether or
+  // not it attaches the SameSite=Strict session to a sandboxed (opaque origin) document's requests. Which engines
+  // attach it is recorded below and asserts nothing: Playwright's WebKit 27.2 does, Chromium and Firefox do not.
   await signIn(page)
   await reset(page)
   await page.goto('/test/viewer-sandboxed')
-  await page.waitForTimeout(1000)
   const frame = page.frameLocator('iframe')
+  await expect(frame.locator('#tab')).toBeVisible()
+  await page.waitForTimeout(1000)
   const [tab] = await Promise.all([context.waitForEvent('page'), frame.locator('#tab').click()])
   await tab.waitForLoadState()
   await frame.locator('#go').click()
   await page.waitForTimeout(1000)
   const seen = (await requests(page)).app.filter((r) => r.path.includes('from='))
+  const api = seen.filter((r) => r.path.startsWith('/api/'))
+  // An image, the frame's own navigation and a new tab: each to the API, each refused.
+  expect(api.map((r) => r.path).sort()).toEqual(
+    ['/api/v1/me?from=click', '/api/v1/me?from=img', '/api/v1/me?from=tab'].sort(),
+  )
+  for (const r of api) {
+    expect(r.site, r.path).not.toBe('same-origin')
+    expect(r.status, r.path).toBe(403)
+  }
+  // What the tab shows: the fixed refusal, nothing of the account (read as text: an engine may show JSON in a viewer
+  // of its own). The frame's navigation got the same 403 (above), which the app's frame-ancestors 'none' keeps any
+  // engine from showing in a frame at all.
+  await expect(tab.locator('body')).toContainText('this request did not come from the app')
+  const inTab = (await tab.textContent('body')) ?? ''
+  expect(inTab).not.toContain('alice')
+  expect(inTab).not.toContain('acc_')
+  // Informational, asserts nothing: which requests of the sandboxed document carried the session cookie.
+  const carried = seen.filter((r) => r.session).map((r) => r.path)
   observe(info, "the sandboxed document's requests", seen)
-  expect(seen.length).toBeGreaterThanOrEqual(3)
-  for (const r of seen) expect(r.session, r.path).toBe(false)
-  const me = seen.find((r) => r.path.startsWith('/api/v1/me'))
-  if (me) expect(me.status).toBe(401)
+  observe(
+    info,
+    `${browserName} attaches the session to a sandboxed document's requests`,
+    carried.length > 0 ? carried : 'none',
+  )
+})
+
+test('a download started from the app is same-origin and answered', async ({ page }, info) => {
+  // ADR 0026, "Corrected while building pull request 5": the rule that refuses another site leaves the app's own
+  // downloads alone. The message view's "Download original" is a link with `download`: a navigation the app's page
+  // starts: Sec-Fetch-Site: same-origin in Chromium 158 and Firefox 159; Playwright's WebKit 27.2 sends no Fetch
+  // Metadata on it at all (seen on 2026-11-12), which the rule leaves as it was.
+  await signIn(page)
+  const { box, cases: list } = await cases(page)
+  const links = list.find((c) => c.Name === 'links')?.Message as string
+  await page.goto(`/inbox/${box}/${links}`)
+  const original = page.getByRole('link', { name: 'Download original' })
+  await expect(original).toBeVisible()
+  await reset(page)
+  const [download] = await Promise.all([page.waitForEvent('download'), original.click()])
+  expect(download.suggestedFilename()).toBe(`${links}.eml`)
+  const seen = (await requests(page)).app.find((r) => r.path.endsWith('/raw'))
+  observe(info, 'the download of the original', seen)
+  expect(['same-origin', '', undefined]).toContain(seen?.site)
+  expect(seen?.status).toBe(200)
 })
 
 test('29: the link page contacts nothing until Open, then one request without a referrer, in a tab without an opener', async ({
