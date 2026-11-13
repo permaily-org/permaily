@@ -6,7 +6,10 @@ import { corpus, observe, requests, reset, signIn, watchDialogs } from './suite.
 // Run A's known failures: an engine that opens a connection or looks a name up for a resource hint of the raw message
 // under the frame's CSP. The sanitiser drops every <link>, so the document the frame is given never has one (run B
 // asserts zero connections and lookups in every engine); what fails is the frame's own line for that hint.
-const knownHint: Record<string, string> = {}
+const knownHint: Record<string, string> = {
+  'webkit 05-remote-references':
+    "WebKit (Playwright 1.65) opens a CONNECT to the host of <link rel=preconnect> under the frame's CSP default-src 'none', and sends nothing through it (seen 2026-11-12)",
+}
 
 test.describe('26: run A, the frame alone', () => {
   for (const name of corpus) {

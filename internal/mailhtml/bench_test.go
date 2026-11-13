@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -163,4 +164,30 @@ func BenchmarkAmplificationShown(b *testing.B) {
 	}
 	b.Logf("%d bytes, tree bound %d", len(src), bound)
 	benchRender(b, input(src), contracts.HTMLShown)
+}
+
+// The adversarial CSS of finding 1 of the review and its siblings, without
+// a deadline: what each costs when nothing stops it.
+func BenchmarkAdversarialCSS(b *testing.B) {
+	shapes := adversarialCSS()
+	names := make([]string, 0, len(shapes))
+	for name := range shapes {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		b.Run(strings.ReplaceAll(name, " ", "_"), func(b *testing.B) {
+			b.ReportAllocs()
+			in := input(shapes[name])
+			var peak uint64
+			for b.Loop() {
+				peak = max(peak, peakHeap(func() {
+					if _, err := Render(context.Background(), in, io.Discard); err != nil {
+						b.Fatal(err)
+					}
+				}))
+			}
+			b.ReportMetric(float64(peak)/(1<<20), "peak-MiB")
+		})
+	}
 }

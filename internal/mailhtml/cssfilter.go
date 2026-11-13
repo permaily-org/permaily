@@ -2,6 +2,7 @@ package mailhtml
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/permaily-org/permaily/internal/contracts"
@@ -151,7 +152,7 @@ func (b *cssBudget) parse(text string) ([]cssNode, bool) {
 		return nil, false
 	}
 	toks, err := cssTokenize(b.ctx, text, cssMaxTokens)
-	if err == errCSSTooMany {
+	if errors.Is(err, errCSSTooMany) {
 		b.countDiscarded(text)
 		return nil, false
 	}
