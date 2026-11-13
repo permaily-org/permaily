@@ -466,3 +466,41 @@ func TestReviewN4NothingASenderWritesIsPositionedOrStacked(t *testing.T) {
 		}
 	}
 }
+
+// What recurses, and what bounds its depth (ADR 0026, "Budgets"): the walk
+// and its helpers (markHolders, walk and element, countDropped, textOf,
+// needsDiv, sortAttributes) recurse on the parsed input, whose depth the
+// parser caps at 512 open elements (deeper is too_large); html.Render
+// recurses on the output, at most 256 deep. At the deepest the parser
+// accepts, through each of them, a render ends with its stack well under
+// the 4 MiB the tests allow, under -race and the default stack.
+func TestRecursionAtTheParsersDepth(t *testing.T) {
+	deep := func(open, close string, n int, inner string) string {
+		return strings.Repeat(open, n) + inner + strings.Repeat(close, n)
+	}
+	const n = 400 // with the link's 100, html, body and a, under 512
+	link := `<a href="https://example.com/deep">` + deep("<o:p>", "</o:p>", 100, "deep text") + `</a>`
+	for name, src := range map[string]string{
+		"unwrapped elements around a link": deep("<o:p>", "</o:p>", n, link),
+		"a dropped subtree":                deep("<o:p>", "</o:p>", 10, "<svg>"+deep("<g>", "</g>", n-20, "x")+"</svg>") + link,
+		"kept elements past the depth":     deep("<span>", "</span>", n, link),
+		"paragraphs that need a div":       "<p>" + deep("<marquee>", "</marquee>", n-10, "<div>x</div>") + "</p>" + link,
+	} {
+		var st contracts.MessageHTML
+		var err error
+		_, stack := peakMemory(func() {
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				st, err = Render(context.Background(), input(src), io.Discard)
+			}()
+			<-done
+		})
+		if err != nil || st.Status == "" || stack > renderStack {
+			t.Errorf("%s: %s %v, %d bytes of stack", name, st.Status, err, stack)
+		}
+		if _, nodes, _, err := measure(src); err != nil || nodes == 0 {
+			t.Errorf("%s: not parsed at %d deep: %v", name, n, err)
+		}
+	}
+}
