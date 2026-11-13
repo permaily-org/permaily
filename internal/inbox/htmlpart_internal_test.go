@@ -150,7 +150,7 @@ func TestHTMLInputAndTheLinkKey(t *testing.T) {
 	if h := messageHTML(ended, []byte("Content-Type: text/html\r\n\r\nx"), b, "m1"); h != nil {
 		t.Errorf("an ended request: %+v", h)
 	}
-	busy := WithRenderSlots(ctx, refusingSlots{})
+	busy := WithRenderAdmission(ctx, refusingSlots{})
 	if h := messageHTML(busy, []byte("Content-Type: text/html\r\n\r\n<p>x</p>"), b, "m1"); h == nil || h.Status != contracts.HTMLUnavailable {
 		t.Errorf("no slot: %+v", h)
 	}
@@ -160,9 +160,10 @@ type refusingSlots struct{}
 
 type grantingSlots struct{ taken, given *int }
 
-func (g grantingSlots) Take(context.Context) (func(), error) {
+func (g grantingSlots) Admit(ctx context.Context) (context.Context, func(), error) {
 	*g.taken++
-	return func() { *g.given++ }, nil
+	c, cancel := context.WithTimeout(ctx, RenderDeadline)
+	return c, func() { *g.given++; cancel() }, nil
 }
 
 // Get renders under the slot it takes, gives it back, and is unavailable
@@ -171,7 +172,7 @@ func TestGetRendersUnderASlotAndItsDeadline(t *testing.T) {
 	ctx := context.Background()
 	b := Box{MailboxID: "mbx", Key: bytes.Repeat([]byte{7}, 32)}
 	var taken, given int
-	h := messageHTML(WithRenderSlots(ctx, grantingSlots{&taken, &given}), []byte("Content-Type: text/html\r\n\r\n<p><a href=\"https://a.example/\">a</a></p>"), b, "m1")
+	h := messageHTML(WithRenderAdmission(ctx, grantingSlots{&taken, &given}), []byte("Content-Type: text/html\r\n\r\n<p><a href=\"https://a.example/\">a</a></p>"), b, "m1")
 	if h == nil || h.Status != contracts.HTMLShown || h.Links != 1 || taken != 1 || given != 1 {
 		t.Fatalf("%+v %d %d", h, taken, given)
 	}
@@ -183,4 +184,6 @@ func TestGetRendersUnderASlotAndItsDeadline(t *testing.T) {
 	}
 }
 
-func (refusingSlots) Take(context.Context) (func(), error) { return nil, contracts.ErrBusy }
+func (refusingSlots) Admit(context.Context) (context.Context, func(), error) {
+	return nil, nil, contracts.ErrBusy
+}

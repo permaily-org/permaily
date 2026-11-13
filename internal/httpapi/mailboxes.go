@@ -184,7 +184,7 @@ func MailboxesAPI(cfg MailboxesConfig) http.Handler {
 	}
 	a := &mailboxesAPI{
 		cfg: cfg, budget: newByteBudget(cfg.ReadBudget), searches: make(chan struct{}, SearchesAtOnce),
-		pages: map[string][]time.Time{}, slots: newRenderSlots(cfg.Renders, cfg.RenderQueue, cfg.RenderWait),
+		pages: map[string][]time.Time{}, slots: newRenderSlots(cfg.Renders, cfg.RenderQueue),
 	}
 	mux := http.NewServeMux()
 	const base = "/api/v1/mailboxes"
@@ -350,7 +350,7 @@ func (a *mailboxesAPI) open(w http.ResponseWriter, r *http.Request, c mailboxes.
 		return inbox.Box{}, nil, nil, false
 	}
 	held := &heldBudget{budget: a.budget, wait: a.cfg.Wait}
-	ctx := inbox.WithRenderSlots(inbox.WithReadBudget(r.Context(), held), accountSlots{a.slots, c.Account})
+	ctx := inbox.WithRenderAdmission(inbox.WithReadBudget(r.Context(), held), summaryAdmission{a, c.Account})
 	return b, ctx, held.release, true
 }
 

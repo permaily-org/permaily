@@ -14,11 +14,11 @@ import (
 // configuration names none: two renders at once, sixteen waiting for five
 // seconds, one running and two waiting per account (ADR 0026, "Limits").
 func TestHTML36TheProductionRenderSlots(t *testing.T) {
-	s := newRenderSlots(contracts.MessageHTMLRenders, contracts.MessageHTMLRenderQueue, contracts.MessageHTMLRenderWait)
+	s := newRenderSlots(contracts.MessageHTMLRenders, contracts.MessageHTMLRenderQueue)
 	ctx := context.Background()
 	var releases []func()
 	for i := range contracts.MessageHTMLRenders {
-		release, err := s.take(ctx, fmt.Sprintf("acc_running_%d", i))
+		release, err := s.take(ctx, fmt.Sprintf("acc_running_%d", i), contracts.MessageHTMLRenderWait)
 		if err != nil {
 			t.Fatalf("running %d: %v", i, err)
 		}
@@ -32,7 +32,7 @@ func TestHTML36TheProductionRenderSlots(t *testing.T) {
 	waits := make(chan result, contracts.MessageHTMLRenderQueue)
 	wait := func(account string) {
 		start := time.Now()
-		release, err := s.take(ctx, account)
+		release, err := s.take(ctx, account, contracts.MessageHTMLRenderWait)
 		if release != nil {
 			release()
 		}
@@ -54,7 +54,7 @@ func TestHTML36TheProductionRenderSlots(t *testing.T) {
 	go wait("acc_running_0")
 	go wait("acc_running_0")
 	settle(2)
-	if _, err := s.take(ctx, "acc_running_0"); !errors.Is(err, contracts.ErrTooManyRequests) {
+	if _, err := s.take(ctx, "acc_running_0", contracts.MessageHTMLRenderWait); !errors.Is(err, contracts.ErrTooManyRequests) {
 		t.Fatalf("past the account's share: %v", err)
 	}
 	// The queue fills at sixteen, from accounts within their share.
@@ -63,7 +63,7 @@ func TestHTML36TheProductionRenderSlots(t *testing.T) {
 		go wait(fmt.Sprintf("acc_waiting_%d", i))
 	}
 	settle(contracts.MessageHTMLRenderQueue)
-	if _, err := s.take(ctx, "acc_one_more"); !errors.Is(err, contracts.ErrBusy) {
+	if _, err := s.take(ctx, "acc_one_more", contracts.MessageHTMLRenderWait); !errors.Is(err, contracts.ErrBusy) {
 		t.Fatalf("past the queue of %d: %v", contracts.MessageHTMLRenderQueue, err)
 	}
 	// Nobody gives a slot back: every wait ends busy after five seconds.
@@ -76,7 +76,7 @@ func TestHTML36TheProductionRenderSlots(t *testing.T) {
 	for _, release := range releases {
 		release()
 	}
-	if release, err := s.take(ctx, "acc_one_more"); err != nil {
+	if release, err := s.take(ctx, "acc_one_more", contracts.MessageHTMLRenderWait); err != nil {
 		t.Fatalf("after: %v", err)
 	} else {
 		release()

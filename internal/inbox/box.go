@@ -53,8 +53,8 @@ type Reader interface {
 	Search(ctx context.Context, b Box, q, before string, limit int) (*contracts.MessagePage, error)
 	// Get is one message: its meta, its text (at most MessageTextMax), and
 	// what the frame needs of its HTML (Message.HTML: its status and counts,
-	// rendered under a render slot, WithRenderSlots, and RenderDeadline;
-	// absent when it has no HTML part).
+	// rendered once admitted through WithRenderAdmission, under the render's
+	// deadline; absent when it has no HTML part). The text needs no slot.
 	Get(ctx context.Context, b Box, id string) (*contracts.Message, error)
 	// Raw is the message as it was received, unsealed.
 	Raw(ctx context.Context, b Box, id string) ([]byte, error)

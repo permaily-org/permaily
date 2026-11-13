@@ -134,15 +134,14 @@ func (a *mailboxesAPI) frame(w http.ResponseWriter, r *http.Request) {
 		frameFail(w, a.frameStatus(err))
 		return
 	}
-	release, err := a.slots.take(r.Context(), c.Account)
+	held := &heldBudget{budget: a.budget, wait: a.cfg.Wait}
+	defer held.release()
+	ctx, release, err := a.admit(inbox.WithReadBudget(r.Context(), held), c.Account, a.cfg.RenderWait)
 	if err != nil {
 		frameFail(w, a.frameStatus(err))
 		return
 	}
 	defer release()
-	held := &heldBudget{budget: a.budget, wait: a.cfg.Wait}
-	defer held.release()
-	ctx := inbox.WithReadBudget(r.Context(), held)
 	id := r.PathValue("message")
 	raw, err := a.cfg.Reader.Raw(ctx, b, id)
 	if err != nil {
@@ -158,10 +157,8 @@ func (a *mailboxesAPI) frame(w http.ResponseWriter, r *http.Request) {
 		frameFail(w, http.StatusNotFound)
 		return
 	}
-	rctx, cancel := context.WithTimeout(ctx, inbox.RenderDeadline)
-	defer cancel()
 	var doc bytes.Buffer
-	out, err := mailhtml.Render(rctx, in, &doc)
+	out, err := mailhtml.Render(ctx, in, &doc)
 	switch {
 	case err != nil:
 		frameFail(w, a.frameStatus(err))
@@ -189,7 +186,7 @@ func (a *mailboxesAPI) link(w http.ResponseWriter, r *http.Request, c mailboxes.
 		failed(w, a.cfg.Log, contracts.ErrNotFound)
 		return
 	}
-	free, err := a.slots.take(ctx, c.Account)
+	ctx, free, err := a.admit(ctx, c.Account, a.cfg.RenderWait)
 	if err != nil {
 		a.failRender(w, err)
 		return
@@ -198,7 +195,7 @@ func (a *mailboxesAPI) link(w http.ResponseWriter, r *http.Request, c mailboxes.
 	id := r.PathValue("message")
 	raw, err := a.cfg.Reader.Raw(ctx, b, id)
 	if err != nil {
-		a.fail(w, err)
+		a.failRender(w, err)
 		return
 	}
 	in, status, ok, err := inbox.HTMLInput(ctx, raw, b, id)
@@ -210,9 +207,7 @@ func (a *mailboxesAPI) link(w http.ResponseWriter, r *http.Request, c mailboxes.
 		failed(w, a.cfg.Log, contracts.ErrNotFound)
 		return
 	}
-	rctx, cancel := context.WithTimeout(ctx, inbox.RenderDeadline)
-	defer cancel()
-	links, err := mailhtml.Links(rctx, in)
+	links, err := mailhtml.Links(ctx, in)
 	switch {
 	case errors.Is(err, mailhtml.ErrNotShown):
 		failed(w, a.cfg.Log, contracts.ErrNotFound)
@@ -246,7 +241,6 @@ func (a *mailboxesAPI) failRender(w http.ResponseWriter, err error) {
 type renderSlots struct {
 	running, queue       int
 	perRunning, perQueue int
-	wait                 time.Duration
 
 	mu       sync.Mutex
 	active   int
@@ -257,18 +251,18 @@ type renderSlots struct {
 
 type renderShare struct{ running, waiting int }
 
-func newRenderSlots(running, queue int, wait time.Duration) *renderSlots {
+func newRenderSlots(running, queue int) *renderSlots {
 	return &renderSlots{
-		running: running, queue: queue, wait: wait,
+		running: running, queue: queue,
 		perRunning: contracts.MessageHTMLRendersPerAccount, perQueue: contracts.MessageHTMLQueuedPerAccount,
 		accounts: map[string]*renderShare{}, changed: make(chan struct{}),
 	}
 }
 
-// take waits for a slot for account: contracts.ErrTooManyRequests past the
-// account's share, contracts.ErrBusy when the queue is full or the wait
-// ends, ctx's error when it ends. The function returned gives it back once.
-func (s *renderSlots) take(ctx context.Context, account string) (func(), error) {
+// take waits for a slot for account, at most wait:
+// contracts.ErrTooManyRequests past the account's share, contracts.ErrBusy
+// when the queue is full or the wait ends, ctx's error when it ends. The function returned gives it back once.
+func (s *renderSlots) take(ctx context.Context, account string, wait time.Duration) (func(), error) {
 	s.mu.Lock()
 	sh := s.accounts[account]
 	if sh == nil {
@@ -292,7 +286,7 @@ func (s *renderSlots) take(ctx context.Context, account string) (func(), error) 
 	}
 	s.waiting++
 	sh.waiting++
-	timer := time.NewTimer(s.wait)
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	for {
 		ch := s.changed
@@ -347,11 +341,38 @@ func (s *renderSlots) forget(sh *renderShare, account string) {
 	}
 }
 
-// accountSlots are the render slots as one request's account takes them,
-// for the reader (inbox.RenderSlots).
-type accountSlots struct {
-	slots   *renderSlots
+// admit is the one admission of a render, for the frame's route, the link
+// route and the summary GET message answers (ADR 0026, "Admission of a
+// render"): it runs after the mailbox is opened (its owner, its record and
+// the account's standing checked) and before anything of the message is
+// read. It takes a render slot of the enclave and of the account, waiting
+// at most wait, and starts the render's deadline there: the context it
+// returns ends inbox.RenderDeadline after the slot was taken, or with the
+// request (whose own deadline stays the outer bound), and the raw read, the
+// MIME walk, the charset and the render all run under it. The release ends
+// it and gives the slot back; defer it once.
+func (a *mailboxesAPI) admit(ctx context.Context, account string, wait time.Duration) (context.Context, func(), error) {
+	free, err := a.slots.take(ctx, account, wait)
+	if err != nil {
+		return nil, nil, err
+	}
+	rctx, cancel := context.WithTimeout(ctx, inbox.RenderDeadline)
+	return rctx, func() { cancel(); free() }, nil
+}
+
+// SummaryWait is the longest GET message waits for a render slot for its
+// HTML summary: past it, html is unavailable and the text is answered. The
+// text view never waits behind renders longer than this and one render's
+// deadline (ADR 0026, "Admission of a render").
+const SummaryWait = time.Second
+
+// summaryAdmission admits the summary of a message's HTML for the reader
+// (inbox.RenderAdmission), as the request's account.
+type summaryAdmission struct {
+	api     *mailboxesAPI
 	account string
 }
 
-func (s accountSlots) Take(ctx context.Context) (func(), error) { return s.slots.take(ctx, s.account) }
+func (s summaryAdmission) Admit(ctx context.Context) (context.Context, func(), error) {
+	return s.api.admit(ctx, s.account, min(SummaryWait, s.api.cfg.RenderWait))
+}

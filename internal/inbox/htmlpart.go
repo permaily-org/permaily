@@ -1,6 +1,7 @@
 package inbox
 
 import (
+	"bytes"
 	"context"
 	"crypto/hkdf"
 	"crypto/sha256"
@@ -31,20 +32,25 @@ func LinkKey(mailboxKey []byte) []byte {
 	return k
 }
 
-// RenderSlots is what a render takes before it runs (ADR 0026, "Renders at
-// once"): Take waits for a slot of the enclave and of the caller's account,
-// and fails with contracts.ErrBusy or contracts.ErrTooManyRequests; the
-// function it returns gives the slot back.
-type RenderSlots interface {
-	Take(ctx context.Context) (release func(), err error)
+// RenderAdmission admits a render (ADR 0026, "Admission of a render"):
+// Admit takes a render slot of the enclave and of the caller's account,
+// and starts the render's deadline; the context it returns ends at that
+// deadline (and with the request), and every step of the render runs under
+// it: the MIME walk for the HTML part, its charset, the render. It fails
+// with contracts.ErrBusy, contracts.ErrTooManyRequests or the request's
+// error. The function it returns ends the context and gives the slot back;
+// it is called once.
+type RenderAdmission interface {
+	Admit(ctx context.Context) (rctx context.Context, release func(), err error)
 }
 
-type slotsKey struct{}
+type admissionKey struct{}
 
-// WithRenderSlots makes Get take a slot from s before it renders. Without
-// one Get renders at once (tests of the reader alone).
-func WithRenderSlots(ctx context.Context, s RenderSlots) context.Context {
-	return context.WithValue(ctx, slotsKey{}, s)
+// WithRenderAdmission makes Get admit the render of a message's HTML
+// through a. Without one Get renders at once under RenderDeadline (tests of
+// the reader alone).
+func WithRenderAdmission(ctx context.Context, a RenderAdmission) context.Context {
+	return context.WithValue(ctx, admissionKey{}, a)
 }
 
 // RenderDeadline is how long one render may run
@@ -221,6 +227,9 @@ func htmlInput(ctx context.Context, raw []byte, b Box, id string) (mailhtml.Inpu
 	return mailhtml.Input{HTML: decoded, Inline: part.inline, Mailbox: b.MailboxID, Message: id, LinkKey: LinkKey(b.Key)}, "", nil
 }
 
+// htmlInputFn is HTMLInput; tests see when Get calls it.
+var htmlInputFn = HTMLInput
+
 // HTMLInput is the render's input for one message of a box, read from its
 // raw bytes: what the frame's route and the link route render. ok is false
 // when the message has no HTML part; status is set when it has one that
@@ -237,31 +246,65 @@ func HTMLInput(ctx context.Context, raw []byte, b Box, id string) (in mailhtml.I
 }
 
 // messageHTML is what Get says of a message's HTML: its status and counts,
-// rendered into nothing under a render slot and the render's deadline; nil
-// when it has no HTML part. A slot that does not come, or a render that
-// passes its deadline, is contracts.HTMLUnavailable.
+// rendered into nothing; nil when it has no HTML part. The text and the
+// metadata Get answers need no slot: only this summary does. A message
+// whose bytes name no HTML type (mayHoldHTML) asks for none, so a text
+// message never waits behind renders. Otherwise the render is admitted
+// first, and the HTML part is found, transcoded and rendered under the
+// admitted context; an admission refused, or a deadline that passes, is
+// contracts.HTMLUnavailable.
 func messageHTML(ctx context.Context, raw []byte, b Box, id string) *contracts.MessageHTML {
-	in, status, ok, err := HTMLInput(ctx, raw, b, id)
+	if !mayHoldHTML(raw) {
+		return nil
+	}
+	var rctx context.Context
+	var release func()
+	if a, ok := ctx.Value(admissionKey{}).(RenderAdmission); ok {
+		c, r, err := a.Admit(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil // the request's own context ended: Get answers its error
+			}
+			return &contracts.MessageHTML{Status: contracts.HTMLUnavailable}
+		}
+		rctx, release = c, r
+	} else {
+		rctx, release = context.WithTimeout(ctx, RenderDeadline)
+	}
+	defer release()
+	in, status, ok, err := htmlInputFn(rctx, raw, b, id)
 	switch {
 	case err != nil:
-		return nil // the request's own context ended: Get answers its error
+		if ctx.Err() != nil {
+			return nil
+		}
+		return &contracts.MessageHTML{Status: contracts.HTMLUnavailable} // the render's deadline passed
 	case !ok:
 		return nil
 	case status != "":
 		return &contracts.MessageHTML{Status: status}
 	}
-	if slots, ok := ctx.Value(slotsKey{}).(RenderSlots); ok {
-		release, err := slots.Take(ctx)
-		if err != nil {
-			return &contracts.MessageHTML{Status: contracts.HTMLUnavailable}
-		}
-		defer release()
-	}
-	rctx, cancel := context.WithTimeout(ctx, RenderDeadline)
-	defer cancel()
 	out, err := mailhtml.Render(rctx, in, nil)
 	if err != nil {
 		return &contracts.MessageHTML{Status: contracts.HTMLUnavailable}
 	}
 	return &out
+}
+
+// mayHoldHTML says whether raw names an HTML type anywhere ("/html" in any
+// case), so that a part of it may be text/html. It is a pass over bytes
+// that keeps nothing; a false yes costs a render slot, never a wrong
+// answer, and a no is certain: a part whose type does not say "/html" is
+// not HTML to the MIME walk.
+func mayHoldHTML(raw []byte) bool {
+	for i := 0; ; {
+		j := bytes.IndexByte(raw[i:], '/')
+		if j < 0 {
+			return false
+		}
+		i += j + 1
+		if len(raw)-i >= 4 && raw[i]|0x20 == 'h' && raw[i+1]|0x20 == 't' && raw[i+2]|0x20 == 'm' && raw[i+3]|0x20 == 'l' {
+			return true
+		}
+	}
 }

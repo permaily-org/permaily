@@ -16,11 +16,12 @@ import (
 // Finding 5: an account with nothing running can have two renders waiting,
 // not three: the share bounds what waits, whatever is running.
 func TestReview5AnAccountWithNothingRunningWaitsTwice(t *testing.T) {
-	s := newRenderSlots(2, 16, 2*time.Second)
+	s := newRenderSlots(2, 16)
+	const wait = 2 * time.Second
 	ctx := context.Background()
 	// Both slots, held by two other accounts.
 	for _, other := range []string{"acc_other_1", "acc_other_2"} {
-		release, err := s.take(ctx, other)
+		release, err := s.take(ctx, other, wait)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -29,7 +30,7 @@ func TestReview5AnAccountWithNothingRunningWaitsTwice(t *testing.T) {
 	waits := make(chan error, 3)
 	for range 2 {
 		go func() {
-			release, err := s.take(ctx, "acc_mine")
+			release, err := s.take(ctx, "acc_mine", wait)
 			if release != nil {
 				release()
 			}
@@ -48,7 +49,7 @@ func TestReview5AnAccountWithNothingRunningWaitsTwice(t *testing.T) {
 		}
 	}
 	start := time.Now()
-	if _, err := s.take(ctx, "acc_mine"); !errors.Is(err, contracts.ErrTooManyRequests) || time.Since(start) > time.Second {
+	if _, err := s.take(ctx, "acc_mine", wait); !errors.Is(err, contracts.ErrTooManyRequests) || time.Since(start) > time.Second {
 		t.Fatalf("a third wait of an account with nothing running: %v after %v", err, time.Since(start))
 	}
 	for range 2 {
