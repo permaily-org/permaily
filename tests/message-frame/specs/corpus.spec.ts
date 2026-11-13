@@ -133,7 +133,9 @@ function inspect() {
       s.position !== 'relative' ||
       s.zIndex !== '2147483647'
     )
-      problems.push(`a link's box: ${s.display} ${s.visibility} ${s.opacity} ${s.position} ${s.zIndex}`)
+      problems.push(
+        `a link's box: ${s.display} ${s.visibility} ${s.opacity} ${s.position} ${s.zIndex}`,
+      )
     a.scrollIntoView({ block: 'center', inline: 'center' })
     // A link that holds something to show and has no box at all (an ancestor hidden it) fails.
     if (a.getClientRects().length === 0 && (a.textContent?.trim() || a.querySelector('img')))
