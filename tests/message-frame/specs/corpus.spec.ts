@@ -272,7 +272,9 @@ const nestedLinks: Record<string, string | null> = {
   Q1: null,
 }
 
-test('27: run B, a link inside a link: each text leads where the sender wrote', async ({ page }) => {
+test('27: run B, a link inside a link: each text leads where the sender wrote', async ({
+  page,
+}) => {
   await signIn(page)
   const { box, cases: list } = await cases(page)
   const name = '21-nested-links'

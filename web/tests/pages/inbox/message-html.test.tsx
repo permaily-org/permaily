@@ -84,6 +84,19 @@ describe('32: the switch, the notes, the labels', () => {
     expect(frame()).not.toBeNull()
   })
 
+  it('holds the frame and its label to one column of 760px at most, left-aligned, whatever the message says', async () => {
+    // Mail is written for about 600px: the width is the app's, outside the message, where the sender has no say
+    // (the third code review, "The newsletter width regression"). jsdom has no layout: the classes are what is said.
+    showing(messageOf({ html: htmlOf() }))
+    await open(path)
+    await screen.findByRole('heading', { level: 1, name: 'Dinner on Friday' })
+    const column = frame()?.closest('.max-w-\\[760px\\]')
+    expect(column).toBeTruthy()
+    expect(column?.contains(screen.getByText(frameLabel))).toBe(true)
+    expect(column?.className).toContain('w-full')
+    expect(column?.className).not.toContain('mx-auto')
+  })
+
   it('says the text of an HTML-only message is the formatted one without formatting, and shows no switch without HTML', async () => {
     showing(messageOf({ html: htmlOf(), text_from: 'html' }))
     const { user } = await open(path)
