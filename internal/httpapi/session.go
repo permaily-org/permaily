@@ -29,7 +29,7 @@ func withSession(auth Sessions, log *slog.Logger, next func(http.ResponseWriter,
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(SessionCookie)
 		if err != nil {
-			failed(w, log, contracts.ErrUnauthorized)
+			failed(w, r, log, contracts.ErrUnauthorized)
 			return
 		}
 		who, err := auth.Authenticate(r.Context(), c.Value)
@@ -37,7 +37,7 @@ func withSession(auth Sessions, log *slog.Logger, next func(http.ResponseWriter,
 			if errors.Is(err, contracts.ErrUnauthorized) {
 				setSession(w, "", -1) // a cookie that stands for nothing: drop it
 			}
-			failed(w, log, err)
+			failed(w, r, log, err)
 			return
 		}
 		next(w, r, who)
