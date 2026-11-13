@@ -286,8 +286,8 @@ const (
 // HTML", "Limits", where each has its reason). Past the ones of the part,
 // the tokens, the tree and the output the HTML is HTMLTooLarge; past the
 // others what is over is left out and the rest is shown. The render budgets
-// marked as starting values are replaced by measured ones when the
-// sanitiser is built.
+// were checked against what the sanitiser measured in an enclave's size
+// (ADR 0026, "Limits").
 const (
 	// MessageHTMLMaxBytes bounds the HTML part, before and after it is
 	// transcoded to UTF-8.
@@ -342,7 +342,7 @@ const (
 	MessageInlineImagesMaxPixels = 1 << 25
 	// MessageHTMLRenders is how many renders run at once in one enclave;
 	// MessageHTMLRenderQueue how many may wait, for at most
-	// MessageHTMLRenderWait. Starting values.
+	// MessageHTMLRenderWait.
 	MessageHTMLRenders     = 2
 	MessageHTMLRenderQueue = 16
 	MessageHTMLRenderWait  = 5 * time.Second
@@ -350,9 +350,16 @@ const (
 	// account's share: past it, too_many_requests.
 	MessageHTMLRendersPerAccount = 1
 	MessageHTMLQueuedPerAccount  = 2
-	// MessageHTMLRenderDeadline stops a render that runs longer. Starting
-	// value.
+	// MessageHTMLRenderDeadline stops a render that runs longer: the
+	// slowest input measured took 0.2 s (ADR 0026, "Limits").
 	MessageHTMLRenderDeadline = 2 * time.Second
+	// MessageHTMLRenderMemory is the most one render holds at its peak, the
+	// heap above where it started, garbage not yet collected included: the
+	// largest sample measured is 110.6 MiB on one CPU, where the collector
+	// runs late behind a render that allocates 532 MB (ADR 0026, "Limits");
+	// 64 MiB until the second review of pull request 5 added the prepared
+	// stream and the plain parse of the output after the bounded one.
+	MessageHTMLRenderMemory = 128 << 20
 )
 
 // MessageHTML is what the app is told of a message's HTML. The HTML itself

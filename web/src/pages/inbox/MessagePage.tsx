@@ -11,7 +11,7 @@ import { canDeleteMail, canRead, useStanding } from '../accounts/standing.ts'
 import { messageFor } from '../auth/messages.ts'
 import { fullTime, size } from './format.ts'
 import { deletedOne } from './InboxPage.tsx'
-import { MessageBody } from './MessageBody.tsx'
+import { canFormat, htmlNotes, MessageBody, useMessageView, ViewSwitch } from './MessageBody.tsx'
 
 /**
  * One message: who sent it as the enclave read it, its subject, when it came, who signed it, its attachments
@@ -35,6 +35,8 @@ function MessageView({ mailboxId, messageId }: { mailboxId: string; messageId: s
   const [failure, setFailure] = useState<{ code: api.ApiErrorCode; text: string } | null>(null)
   const [pending, setPending] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [view, setView] = useMessageView()
   const inbox = `/inbox/${encodeURIComponent(mailboxId)}`
 
   const load = useCallback(async () => {
@@ -53,6 +55,32 @@ function MessageView({ mailboxId, messageId }: { mailboxId: string; messageId: s
     // An account that has not agreed may download a message, not open it: it is not asked for.
     if (reading) void load()
   }, [mailboxId, reading, load, failed])
+
+  // A page the browser brings back from its back/forward cache brings its frame and text back with it, even after
+  // signing out (no-store does not keep every browser from it). The message goes at once, and comes back only
+  // when the session and the message both answer again.
+  useEffect(() => {
+    const shown = (event: PageTransitionEvent) => {
+      if (!event.persisted) return
+      setMessage(null)
+      setFailure(null)
+      setChecking(true)
+      void (async () => {
+        try {
+          await api.me()
+          const again = await api.message(mailboxId, messageId)
+          setMessage(again)
+        } catch (error) {
+          const code = failed(error)
+          if (code) setFailure({ code, text: messageFor(code) })
+        } finally {
+          setChecking(false)
+        }
+      })()
+    }
+    window.addEventListener('pageshow', shown)
+    return () => window.removeEventListener('pageshow', shown)
+  }, [failed, mailboxId, messageId])
 
   async function remove() {
     if (pending) return
@@ -104,6 +132,7 @@ function MessageView({ mailboxId, messageId }: { mailboxId: string; messageId: s
         {reading && message && (
           <MessageFacts
             message={message}
+            views={canFormat(message) ? <ViewSwitch view={view} onChange={setView} /> : undefined}
             actions={
               <>
                 {original}
@@ -128,6 +157,10 @@ function MessageView({ mailboxId, messageId }: { mailboxId: string; messageId: s
           </p>
           <div className="mt-5">{original}</div>
         </>
+      ) : checking ? (
+        <p role="status" className="mt-5 text-body text-ink-2">
+          Checking…
+        </p>
       ) : !message ? (
         <div className="max-w-2xl">
           {gone ? (
@@ -139,27 +172,56 @@ function MessageView({ mailboxId, messageId }: { mailboxId: string; messageId: s
           )}
         </div>
       ) : (
-        <MessageContent mailboxId={mailboxId} message={message} mailbox={mailbox} />
+        <MessageContent
+          mailboxId={mailboxId}
+          message={message}
+          mailbox={mailbox}
+          view={view}
+          onRetry={load}
+        />
       )}
     </div>
   )
 }
 
-/** What follows the head: notes, a confirmation's code, the attachments, then the text. */
+/** What follows the head: notes, a confirmation's code, the attachments, then the message in its view. */
 function MessageContent({
   mailboxId,
   message,
   mailbox,
+  view,
+  onRetry,
 }: {
   mailboxId: string
   message: api.Message
   mailbox: api.Mailbox | null
+  view: 'formatted' | 'text'
+  onRetry: () => void
 }) {
+  const notes = htmlNotes(message.html)
+  const formatted = view === 'formatted' && canFormat(message)
   const confirmation = message.confirmation
     ? mailbox?.confirmations.find((c) => c.message === message.id)
     : undefined
+  // The text gets a rule of its own only below something; right under the head, the head's rule is enough.
+  const between =
+    notes.length > 0 || message.unparsed || message.confirmation || message.attachments.length > 0
   return (
     <>
+      {notes.length > 0 && (
+        <ul aria-label="About the formatted view" className="mt-4 max-w-3xl text-small text-ink-2">
+          {notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+          {message.html?.status === 'unavailable' && (
+            <li className="mt-2">
+              <Button variant="secondary" size="sm" onClick={onRetry}>
+                Try again
+              </Button>
+            </li>
+          )}
+        </ul>
+      )}
       {message.unparsed && (
         <p className="mt-5 max-w-3xl text-body text-ink-2">
           Permaily couldn't read this message as mail. Download the original to open it elsewhere.
@@ -187,9 +249,15 @@ function MessageContent({
       )}
       {message.attachments.length > 0 && <Attachments mailboxId={mailboxId} message={message} />}
 
-      <section aria-label="Message text" className="mt-7 flex-1 border-t border-rule pt-6">
-        <MessageBody message={message} />
-        {message.text_truncated && (
+      <section
+        aria-label={formatted ? 'Message' : 'Message text'}
+        className={cx(
+          'mt-7 flex flex-1 flex-col',
+          !formatted && between && 'border-t border-rule pt-6',
+        )}
+      >
+        <MessageBody mailboxId={mailboxId} message={message} view={view} />
+        {!formatted && message.text_truncated && (
           <p className="mt-6 max-w-prose border-t border-rule pt-3 text-small text-ink-2">
             The text is cut short here. The rest is in the original.
           </p>

@@ -99,7 +99,12 @@ func (a *app) leave(path, body string) string {
 func (a *app) back(query string) (*httptest.ResponseRecorder, string) {
 	a.t.Helper()
 	session := a.cookie
-	rec := a.call("GET", "/api/v1/auth/provider/callback?"+query, "", func(r *http.Request) {
+	// Through the rule of the app's host, as the enclave mounts it: the
+	// callback is its exception (httpapi.CrossSiteExceptions).
+	h := a.h
+	a.h = httpapi.RefuseCrossSite(h)
+	defer func() { a.h = h }()
+	rec := a.call("GET", httpapi.ProviderCallback+"?"+query, "", func(r *http.Request) {
 		r.Header.Del("Origin")
 		r.Header.Set("Sec-Fetch-Site", "cross-site")
 		r.Header.Del("Cookie")

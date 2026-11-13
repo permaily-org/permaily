@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -139,6 +138,16 @@ type MailboxesConfig struct {
 	Wait       time.Duration
 	// Now is the clock of the search pages' rate (time.Now).
 	Now func() time.Time
+	// AppOrigin is the app's origin, the only one that may frame a
+	// message's HTML (frame-ancestors): https://app.<domain>, with its port
+	// when it is not 443. Without one, the request's own host.
+	AppOrigin string
+	// Renders, RenderQueue and RenderWait are the render slots
+	// (contracts.MessageHTMLRenders, MessageHTMLRenderQueue,
+	// MessageHTMLRenderWait); tests set smaller ones.
+	Renders     int
+	RenderQueue int
+	RenderWait  time.Duration
 }
 
 // MailboxesAPI returns every route of the person's table under
@@ -151,6 +160,11 @@ type MailboxesConfig struct {
 // and attachments, a download that no browser renders; nothing of a message
 // is in an error or a log.
 func MailboxesAPI(cfg MailboxesConfig) http.Handler {
+	_, h := newMailboxesAPI(cfg)
+	return h
+}
+
+func newMailboxesAPI(cfg MailboxesConfig) (*mailboxesAPI, http.Handler) {
 	if cfg.Deadline <= 0 {
 		cfg.Deadline = mailboxes.RequestDeadline
 	}
@@ -163,11 +177,20 @@ func MailboxesAPI(cfg MailboxesConfig) http.Handler {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.Renders <= 0 {
+		cfg.Renders = contracts.MessageHTMLRenders
+	}
+	if cfg.RenderQueue <= 0 {
+		cfg.RenderQueue = contracts.MessageHTMLRenderQueue
+	}
+	if cfg.RenderWait <= 0 {
+		cfg.RenderWait = contracts.MessageHTMLRenderWait
+	}
 	a := &mailboxesAPI{
 		cfg: cfg, budget: newByteBudget(cfg.ReadBudget), searches: make(chan struct{}, SearchesAtOnce),
-		pages: map[string][]time.Time{},
+		pages: map[string][]time.Time{}, waiting: map[string]int{}, slots: newRenderSlots(cfg.Renders, cfg.RenderQueue),
 	}
-	mux := http.NewServeMux()
+	mux := NewAppMux()
 	const base = "/api/v1/mailboxes"
 	in := func(next func(http.ResponseWriter, *http.Request, mailboxes.Caller)) http.HandlerFunc {
 		return withSession(cfg.Sessions, cfg.Log, func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
@@ -191,39 +214,35 @@ func MailboxesAPI(cfg MailboxesConfig) http.Handler {
 	mux.HandleFunc(base+"/{id}/messages/{message}/raw", refuse(http.MethodGet))
 	mux.HandleFunc("GET "+base+"/{id}/messages/{message}/attachments/{index}", in(a.attachment))
 	mux.HandleFunc(base+"/{id}/messages/{message}/attachments/{index}", refuse(http.MethodGet))
+	mux.HandleFunc("GET "+base+"/{id}/messages/{message}/html", a.frame)            // mailboxes_html.go
+	mux.HandleFunc("GET "+base+"/{id}/messages/{message}/links/{link}", in(a.link)) // mailboxes_html.go
 	mux.HandleFunc(base+"/", noSuchEndpoint)
 	app := fromTheApp(mux)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// The same decision about a path as the app's host makes first (a path
+	// not canonical names nothing here), so this API holds it when mounted
+	// on its own too.
+	return a, RequireCanonicalPath(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The deadline runs from the request's start, before anything else.
 		ctx, cancel := context.WithTimeout(r.Context(), cfg.Deadline)
 		defer cancel()
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		// A path that is not clean names nothing here: ServeMux would answer
-		// it with a redirect whose body is HTML, and this API answers JSON.
-		if p := r.URL.Path; p != cleanPath(p) {
-			noSuchEndpoint(w, r)
+		// The frame's path is answered as the frame's whatever refuses it.
+		if framePathGuard(w, r, a.appOrigin(r)) {
 			return
 		}
 		app.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-// cleanPath is p as ServeMux would clean it, its trailing slash kept.
-func cleanPath(p string) string {
-	c := path.Clean("/" + p)
-	if strings.HasSuffix(p, "/") && c != "/" {
-		c += "/"
-	}
-	return c
+	}))
 }
 
 type mailboxesAPI struct {
 	cfg      MailboxesConfig
 	budget   *byteBudget
 	searches chan struct{}
+	slots    *renderSlots
 
-	mu    sync.Mutex
-	pages map[string][]time.Time // search pages asked in the last minute, by account
+	mu      sync.Mutex
+	pages   map[string][]time.Time // search pages asked in the last minute, by account
+	waiting map[string]int         // finished frame documents waiting for their readers, by account
 }
 
 // fail answers an error of the service or the reader. One a caller can act
@@ -328,7 +347,8 @@ func (a *mailboxesAPI) open(w http.ResponseWriter, r *http.Request, c mailboxes.
 		return inbox.Box{}, nil, nil, false
 	}
 	held := &heldBudget{budget: a.budget, wait: a.cfg.Wait}
-	return b, inbox.WithReadBudget(r.Context(), held), held.release, true
+	ctx := inbox.WithRenderAdmission(inbox.WithReadBudget(r.Context(), held), summaryAdmission{a, c.Account})
+	return b, ctx, held.release, true
 }
 
 func (a *mailboxesAPI) messages(w http.ResponseWriter, r *http.Request, c mailboxes.Caller) {
@@ -554,6 +574,7 @@ type byteBudget struct {
 	mu      sync.Mutex
 	total   int64
 	free    int64
+	waiting int           // takes waiting for room
 	changed chan struct{} // closed, and replaced, whenever bytes are given back
 }
 
@@ -565,6 +586,19 @@ func newByteBudget(total int64) *byteBudget {
 // passed: contracts.ErrTooManyRequests then, or ctx's error when it ends.
 func (b *byteBudget) take(ctx context.Context, n int64, wait time.Duration) (int64, error) {
 	n = min(max(n, 0), b.total)
+	b.mu.Lock()
+	if b.free >= n {
+		b.free -= n
+		b.mu.Unlock()
+		return n, nil
+	}
+	b.waiting++
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		b.waiting--
+		b.mu.Unlock()
+	}()
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	for {
@@ -615,6 +649,22 @@ func (h *heldBudget) Take(ctx context.Context, n int64) error {
 	h.held += got
 	h.mu.Unlock()
 	return nil
+}
+
+// Resize makes what the request holds exactly n bytes: what it holds past n
+// goes back, what it lacks is taken, waiting as Take does.
+func (h *heldBudget) Resize(ctx context.Context, n int64) error {
+	h.mu.Lock()
+	held := h.held
+	h.mu.Unlock()
+	if n <= held {
+		h.mu.Lock()
+		h.held = n
+		h.mu.Unlock()
+		h.budget.give(held - n)
+		return nil
+	}
+	return h.Take(ctx, n-held)
 }
 
 func (h *heldBudget) release() {

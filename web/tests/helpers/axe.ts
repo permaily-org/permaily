@@ -10,6 +10,9 @@ export async function expectAccessible(root: Element = document.body): Promise<v
   const results = await axe.run(root, {
     runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] },
     rules: { 'color-contrast': { enabled: false } },
+    // The message's frame is a document of its own that jsdom does not load; its frame element is checked here
+    // (its title), its content in real browsers (tests/message-frame).
+    iframes: false,
   })
   const found = results.violations.map(
     (violation) =>

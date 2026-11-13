@@ -110,8 +110,8 @@ func main() {
 }
 
 // providerCallback is where a provider sends the browser back, on the app's
-// host. It is registered with each provider, to the letter.
-const providerCallback = "/api/v1/auth/provider/callback"
+// host: the one route under /api/ that a cross-site navigation reaches.
+const providerCallback = httpapi.ProviderCallback
 
 // keyRoutes mounts the operator's handoff of the root secret to the next
 // release, and a newer trust root of Sigstore's, each when the platform has
@@ -177,11 +177,12 @@ func run(cfg config, log *slog.Logger) error {
 	if p.accounts != nil {
 		// The web app and its own API share a host, so the session cookie
 		// never leaves it. Invitations are the operator's, on the API host.
-		app := http.NewServeMux()
+		app := httpapi.NewAppMux()
 		app.Handle("/api/", httpapi.AccountsAPI(p.accounts, log))
+		var mine http.Handler
 		if p.mailboxes != nil {
 			// The person's mailboxes and their mail (ADR 0026, "The API").
-			mine := httpapi.MailboxesAPI(httpapi.MailboxesConfig{Service: p.mailboxes, Reader: p.reader, Sessions: p.accounts, Log: log})
+			mine = httpapi.MailboxesAPI(httpapi.MailboxesConfig{Service: p.mailboxes, Reader: p.reader, Sessions: p.accounts, Log: log, AppOrigin: appOrigin(hosts.App, cfg.port)})
 			app.Handle("/api/v1/mailboxes", mine)
 			app.Handle("/api/v1/mailboxes/", mine)
 		}
@@ -189,7 +190,10 @@ func run(cfg config, log *slog.Logger) error {
 			app.Handle(path, h)
 		}
 		app.Handle("/", webui.Handler())
-		byHost[hosts.App] = app
+		// One decision about a path, then the frame's path, then the rule
+		// that every route under /api/ answers the app alone, before
+		// anything else (httpapi.AppHost, ADR 0026).
+		byHost[hosts.App] = httpapi.AppHost(app, mine)
 		invitations := httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Invitations(p.accounts, log))
 		api.Handle("/v1/admin/invitations", invitations)
 		api.Handle("/v1/admin/invitations/", invitations)
@@ -267,4 +271,13 @@ func run(cfg config, log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// appOrigin is the app's origin, the only one that may frame a message's
+// HTML: its port written when it is not 443 (dev mode).
+func appOrigin(host string, port uint32) string {
+	if port == 443 {
+		return "https://" + host
+	}
+	return "https://" + host + ":" + strconv.FormatUint(uint64(port), 10)
 }

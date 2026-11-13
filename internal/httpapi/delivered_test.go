@@ -531,7 +531,7 @@ func TestTheFrameOnTheRealRoutes(t *testing.T) {
 	}
 	var m contracts.Message
 	read(t, a.call("alice", "GET", "/api/v1/mailboxes/"+box.ID+"/messages/"+msg, ""), 200, &m)
-	if m.Subject != hostileSubject || m.TextFrom != contracts.TextFromHTML || strings.Contains(m.Text, "alert(\"") || m.HTML != nil {
+	if m.Subject != hostileSubject || m.TextFrom != contracts.TextFromHTML || strings.Contains(m.Text, "alert(\"") || m.HTML == nil || m.HTML.Status != contracts.HTMLShown {
 		t.Fatalf("%+v", m)
 	}
 	// No GET changed anything: the message is still there, and the mailbox

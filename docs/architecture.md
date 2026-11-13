@@ -22,7 +22,7 @@ sending MTA ─STARTTLS───▶ EIP:25  ─▶ permaily-host ─────
 
   | Host | Serves |
   |---|---|
-  | `app.permaily.com` | web app (see [web.md](web.md)), embedded with `go:embed`, and its own API under `/api/v1/` (sign-in, account, sessions), which answers only to the app: session cookie, same origin (F2, not on in production yet) |
+  | `app.permaily.com` | web app (see [web.md](web.md)), embedded with `go:embed`, and its own API under `/api/v1/` (sign-in, account, sessions), which answers only to the app: session cookie, same origin, and nothing that says another site made it (F2, not on in production yet) |
   | `api.permaily.com` | `/v1/mailbox` for the F1 test mailbox (token) until ADR 0026 retires it; the operator's routes (`/v1/admin/…`); API for integrated apps in F2 |
   | `mcp.permaily.com` | remote MCP server for ChatGPT and Claude (F2) |
   | `inbox.permaily.com` | MX (SMTP on port 25 with STARTTLS) for forwarded mail (F1) |

@@ -251,7 +251,7 @@ func TestReview8BoundMetaShrinksInOrder(t *testing.T) {
 		}
 	}
 	// A part with a Content-Type that cannot be read is no text: it is listed.
-	w := walkMessage(context.Background(), []byte("Content-Type: multipart/mixed; boundary=p\r\n\r\n--p\r\nContent-Type: ;;;\r\n\r\nx\r\n--p--\r\n"), 100, true)
+	w := walkMessage(context.Background(), []byte("Content-Type: multipart/mixed; boundary=p\r\n\r\n--p\r\nContent-Type: ;;;\r\n\r\nx\r\n--p--\r\n"), 100, true, false)
 	if len(w.attachments) != 1 || w.plainSeen {
 		t.Fatalf("%+v", w.attachments)
 	}
