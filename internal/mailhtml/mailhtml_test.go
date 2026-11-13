@@ -493,7 +493,10 @@ func TestTreeBound13(t *testing.T) {
 		}
 		var st contracts.MessageHTML
 		n := allocated(func() { st, _ = Render(context.Background(), input(src), nil) })
-		if st.Status != contracts.HTMLTooLarge || n > 8<<20 {
+		// What the pass allocates: the stream it writes, growing toward the
+		// part's size, and its tokens; 8.5 MB under -race. A tree of either
+		// input would be hundreds of MiB.
+		if st.Status != contracts.HTMLTooLarge || n > 16<<20 {
 			t.Errorf("%s: %s, %d bytes allocated (a tree was built?)", name, st.Status, n)
 		}
 	}
