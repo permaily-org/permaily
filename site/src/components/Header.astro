@@ -1,5 +1,6 @@
 ---
 import { LINKS, NAV } from '../config/site';
+import Logo from './Logo.astro';
 
 interface Props {
   /** Docs pages already sit inside a <header>, so they render this as a <div>. */
@@ -12,7 +13,7 @@ const path = Astro.url.pathname.endsWith('/') ? Astro.url.pathname : `${Astro.ur
 
 <Tag class="site-head">
   <div class="wrap inner">
-    <a class="word" href="/">Permaily</a>
+    <a class="word" href="/" aria-label="Permaily"><Logo /></a>
     <nav class="site-nav" aria-label="Main">
       {NAV.map((item) => (
         <a href={item.href} aria-current={path === item.href ? 'page' : undefined}>
@@ -55,10 +56,11 @@ const path = Astro.url.pathname.endsWith('/') ? Astro.url.pathname : `${Astro.ur
     height: 64px;
   }
 
+  /* The logo, as the way home. The link fills its column; the picture stays at its start. */
   .word {
-    font-size: var(--text-wordmark);
-    font-weight: 600;
-    letter-spacing: var(--tracking-w);
+    display: flex;
+    align-items: center;
+    color: var(--ink);
     text-decoration: none;
   }
 

@@ -1,0 +1,30 @@
+---
+// The logo: the mark beside the name, as one picture. Its mark is 20px high, which sets the letters at the
+// size the name had as text. It takes the colour of the text around it, and on a dark surface its tip takes
+// the highlight. It is hidden from assistive technology: the link around it carries the name. The outlines
+// are in logo.ts, which is generated (docs/design.md, "The logo").
+import { logo } from './logo';
+---
+
+<svg
+  class="logo"
+  viewBox={`0 0 ${logo.width} ${logo.height}`}
+  width={logo.width}
+  height={logo.height}
+  aria-hidden="true"
+>
+  <path d={logo.body}></path>
+  <path class="tip" d={logo.tip}></path>
+</svg>
+
+<style>
+  .logo {
+    display: block;
+    flex: none;
+    fill: currentColor;
+  }
+
+  .tip {
+    fill: light-dark(currentColor, var(--highlight));
+  }
+</style>
