@@ -247,8 +247,7 @@ func (r *storeReader) Get(ctx context.Context, b Box, id string) (*contracts.Mes
 	if err != nil {
 		return nil, err
 	}
-	out.Text, out.TextFrom, out.TextTruncated = MessageText(ctx, raw, MessageTextMax)
-	out.HTML = messageHTML(ctx, raw, b, m.ID)
+	out.Text, out.TextFrom, out.TextTruncated, out.HTML = messageTextAndHTML(ctx, raw, b, m.ID)
 	return out, ctx.Err()
 }
 

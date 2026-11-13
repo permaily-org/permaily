@@ -32,7 +32,7 @@ import (
 // MessageHTMLMaxBytes) or ctx cut anything. from is contracts.TextFromPlain,
 // TextFromHTML or TextFromNone.
 func MessageText(ctx context.Context, raw []byte, max int) (text, from string, truncated bool) {
-	w := walkMessage(ctx, raw, max, false)
+	w := walkMessage(ctx, raw, max, false, false)
 	return w.text(ctx, max)
 }
 
@@ -179,10 +179,13 @@ type walked struct {
 }
 
 // walkMessage walks a message once: the first text/plain part is read up to
-// plainMax bytes, the first text/html part up to contracts.MessageHTMLMaxBytes,
-// and with list every attachment is listed, within the limits. A header
-// block longer than MaxHeaderBytes leaves the message without a body.
-func walkMessage(ctx context.Context, raw []byte, plainMax int, list bool) *walked {
+// plainMax bytes, the first text/html part up to contracts.MessageHTMLMaxBytes
+// (once a text/plain part is read, a later one is only seen, not read), and
+// with list every attachment is listed, within the limits. With seekHTML
+// the walk goes on past the first text/plain part until it has seen a
+// text/html part that is not an attachment. A header block longer than
+// MaxHeaderBytes leaves the message without a body.
+func walkMessage(ctx context.Context, raw []byte, plainMax int, list, seekHTML bool) *walked {
 	w := &walked{}
 	head, cut := boundHeader(raw)
 	if cut {
@@ -202,11 +205,14 @@ func walkMessage(ctx context.Context, raw []byte, plainMax int, list bool) *walk
 			w.plain, w.plainCut = readUpTo(p.Body, plainMax)
 		case t == "text/html" && !w.htmlSeen:
 			w.htmlSeen = true
-			w.html, w.htmlCut = readUpTo(p.Body, contracts.MessageHTMLMaxBytes)
+			if !w.plainSeen {
+				w.html, w.htmlCut = readUpTo(p.Body, contracts.MessageHTMLMaxBytes)
+			}
 		}
-		// Without a list, the walk ends at the first text/plain part: nothing
-		// after it is read.
-		return list || !w.plainSeen, nil
+		// Without a list, the walk ends at the first text/plain part (and,
+		// seeking HTML, at the first text/html one too): nothing after is
+		// read.
+		return list || !w.plainSeen || seekHTML && !w.htmlSeen, nil
 	})
 	if err != nil {
 		w.partial = true

@@ -1,7 +1,6 @@
 package inbox
 
 import (
-	"bytes"
 	"context"
 	"crypto/hkdf"
 	"crypto/sha256"
@@ -245,18 +244,29 @@ func HTMLInput(ctx context.Context, raw []byte, b Box, id string) (in mailhtml.I
 	return in, status, true, nil
 }
 
+// messageTextAndHTML is what Get says of a message's text and HTML. One
+// bounded MIME walk reads the text and says whether the message has an
+// HTML part at all (a text/html part that is not an attachment, ADR 0026,
+// "Admission of a render"): without one there is no html field and no
+// render slot is asked for, whatever the bytes say.
+func messageTextAndHTML(ctx context.Context, raw []byte, b Box, id string) (text, from string, truncated bool, h *contracts.MessageHTML) {
+	w := walkMessage(ctx, raw, MessageTextMax, false, true)
+	text, from, truncated = w.text(ctx, MessageTextMax)
+	if !w.htmlSeen {
+		return text, from, truncated, nil
+	}
+	return text, from, truncated, messageHTML(ctx, raw, b, id)
+}
+
 // messageHTML is what Get says of a message's HTML: its status and counts,
 // rendered into nothing; nil when it has no HTML part. The text and the
-// metadata Get answers need no slot: only this summary does. A message
-// whose bytes name no HTML type (mayHoldHTML) asks for none, so a text
-// message never waits behind renders. Otherwise the render is admitted
-// first, and the HTML part is found, transcoded and rendered under the
-// admitted context; an admission refused, or a deadline that passes, is
+// metadata Get answers need no slot: only this summary does, and only for
+// a message the text's walk found an HTML part in (messageTextAndHTML), so
+// a text message never waits behind renders. The render is admitted first,
+// and the HTML part is found, transcoded and rendered under the admitted
+// context; an admission refused, or a deadline that passes, is
 // contracts.HTMLUnavailable.
 func messageHTML(ctx context.Context, raw []byte, b Box, id string) *contracts.MessageHTML {
-	if !mayHoldHTML(raw) {
-		return nil
-	}
 	var rctx context.Context
 	var release func()
 	if a, ok := ctx.Value(admissionKey{}).(RenderAdmission); ok {
@@ -289,22 +299,4 @@ func messageHTML(ctx context.Context, raw []byte, b Box, id string) *contracts.M
 		return &contracts.MessageHTML{Status: contracts.HTMLUnavailable}
 	}
 	return &out
-}
-
-// mayHoldHTML says whether raw names an HTML type anywhere ("/html" in any
-// case), so that a part of it may be text/html. It is a pass over bytes
-// that keeps nothing; a false yes costs a render slot, never a wrong
-// answer, and a no is certain: a part whose type does not say "/html" is
-// not HTML to the MIME walk.
-func mayHoldHTML(raw []byte) bool {
-	for i := 0; ; {
-		j := bytes.IndexByte(raw[i:], '/')
-		if j < 0 {
-			return false
-		}
-		i += j + 1
-		if len(raw)-i >= 4 && raw[i]|0x20 == 'h' && raw[i+1]|0x20 == 't' && raw[i+2]|0x20 == 'm' && raw[i+3]|0x20 == 'l' {
-			return true
-		}
-	}
 }

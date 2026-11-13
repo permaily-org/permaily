@@ -54,7 +54,7 @@ func TestReview4AMessageHTMLIsWorkedOnlyAfterItsAdmission(t *testing.T) {
 	// never waits behind renders.
 	asked, calls = 0, nil
 	plain := []byte("Content-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: text/plain\r\n\r\nhello\r\n--m--\r\n")
-	if h := messageHTML(WithRenderAdmission(ctx, admitted), plain, b, "m1"); h != nil || asked != 0 {
+	if _, _, _, h := messageTextAndHTML(WithRenderAdmission(ctx, admitted), plain, b, "m1"); h != nil || asked != 0 {
 		t.Fatalf("a plain message: %+v, asked %d", h, asked)
 	}
 }
@@ -66,7 +66,7 @@ func (f admitFunc) Admit(ctx context.Context) (context.Context, func(), error) {
 // Finding 4: the edges of the admitted summary. A refusal while the
 // request itself has ended answers nothing of the HTML (Get answers the
 // request's error); a message whose bytes say "/html" with no HTML part is
-// admitted, has no summary and gives its slot back; a render that fails
+// not admitted at all and has no summary; a render that fails
 // after its input was made, its deadline passed, is unavailable.
 func TestReview4TheEdgesOfTheAdmittedSummary(t *testing.T) {
 	b := Box{MailboxID: "mbx", Key: bytes.Repeat([]byte{7}, 32)}
@@ -83,7 +83,9 @@ func TestReview4TheEdgesOfTheAdmittedSummary(t *testing.T) {
 		return c, func() { released++; cancel() }, nil
 	})
 	plain := []byte("Content-Type: text/plain\r\n\r\nthe page is at https://e.example/index/html")
-	if h := messageHTML(WithRenderAdmission(context.Background(), admitted), plain, b, "m1"); h != nil || released != 1 {
+	// A message whose walk finds no HTML part asks for no slot at all,
+	// whatever its bytes say (the second review's N8).
+	if _, _, _, h := messageTextAndHTML(WithRenderAdmission(context.Background(), admitted), plain, b, "m1"); h != nil || released != 0 {
 		t.Errorf("no HTML part: %+v, released %d", h, released)
 	}
 	// The input made without looking at the context, then the render under

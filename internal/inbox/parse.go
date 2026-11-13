@@ -158,7 +158,7 @@ func Parse(ctx context.Context, raw []byte) Parsed {
 	m.ReplyTo = addressList(h, "Reply-To", &partial)
 	m.Auth = []contracts.AuthCheck{}
 
-	w := walkMessage(ctx, raw, MessageTextMax, true)
+	w := walkMessage(ctx, raw, MessageTextMax, true, false)
 	partial = partial || w.partial
 	text, _, _ := w.text(ctx, SearchTextMax)
 	p.Text = text
