@@ -57,7 +57,7 @@ func joinFamilies() map[string]string {
 // the size is about twice the work (a quadratic walk makes it four times),
 // and at the largest size a part may be the peak of the heap stays within a
 // render's memory.
-func TestReview3ATextIsJoinedInLinearWork(t *testing.T) {
+func TestReviewThirdATextIsJoinedInLinearWork(t *testing.T) {
 	ctx := context.Background()
 	for name, unit := range joinFamilies() {
 		wrap := func(n int) string {
@@ -132,7 +132,7 @@ func shownText(t *testing.T, src string) string {
 // was shown "&". A dropped comment leaves an empty comment in its place,
 // charged as one node, and no comment reaches the output: the text shown is
 // the original's, for this input and the joins fuzzing found before.
-func TestReview3FADroppedCommentJoinsNothing(t *testing.T) {
+func TestReviewThirdFADroppedCommentJoinsNothing(t *testing.T) {
 	for _, src := range []string{
 		"&am<!>p;", "&am<!---->p;", "x&lt<!-- y -->;z", "<<!>td>x", "<<!---->/p>", "a<<!-- x -->b>c",
 		"<table><tr><td>&am<!>p;</td></tr></table>",
@@ -202,7 +202,7 @@ func linkedTexts(t *testing.T, in Input, out string) []textLink {
 // inner one starts and goes on after it as a link of its own to the same
 // destination; an inner link that is not kept (no href, a refused
 // destination, mailto:) leads nowhere, not to the outer one's.
-func TestReview3CNestedLinksLeadWhereTheSenderWrote(t *testing.T) {
+func TestReviewThirdCNestedLinksLeadWhereTheSenderWrote(t *testing.T) {
 	const a, b, c = "https://a.example/", "https://b.example/", "https://c.example/"
 	cases := []struct {
 		name, src string
@@ -254,7 +254,7 @@ func TestReview3CNestedLinksLeadWhereTheSenderWrote(t *testing.T) {
 // a real link or a real <b>. The names carry a suffix drawn for each render
 // (crypto/rand) that the sender cannot write, and an element whose name
 // starts with the reserved prefix is an unknown element: unwrapped.
-func TestReview3CTheSendersPlaceholdersAreUnknownElements(t *testing.T) {
+func TestReviewThirdCTheSendersPlaceholdersAreUnknownElements(t *testing.T) {
 	for _, src := range []string{
 		`<permaily-a href="https://b.example">P</permaily-a>`,
 		`<permaily-b>P</permaily-b>`,
@@ -293,7 +293,7 @@ func TestReview3CTheSendersPlaceholdersAreUnknownElements(t *testing.T) {
 
 // C: a start tag that carries the drawn prefix (which the sender would have
 // had to guess) makes the part unreadable, in Render and in Links.
-func TestReview3CTheDrawnNameMakesThePartUnreadable(t *testing.T) {
+func TestReviewThirdCTheDrawnNameMakesThePartUnreadable(t *testing.T) {
 	old := placeholderPrefix
 	defer func() { placeholderPrefix = old }()
 	placeholderPrefix = func() string { return formattingPrefix + "0123456789abcdef-" }
@@ -303,6 +303,72 @@ func TestReview3CTheDrawnNameMakesThePartUnreadable(t *testing.T) {
 		}
 		if _, err := Links(context.Background(), input(src)); err != ErrNotShown {
 			t.Errorf("%q: %v", src, err)
+		}
+	}
+}
+
+// insideLink are the declarations everything inside a kept link carries
+// but its images, with !important (ADR 0026, "What each link carries"):
+// what a holder carries, so nothing inside collapses or clips the link,
+// and square corners.
+var insideLink = append(slices.Clone(ancestorHolds), "border-radius:0!important")
+
+// D: an element inside a link could collapse it: a span made an inline
+// block of no width and a hidden overflow left the link's box zero wide in
+// three engines. Everything inside a kept link carries what a holder
+// carries (overflow:visible, height:auto, max-height:none, max-width:none,
+// min-width:min-content), as well as the colour, font and display it
+// carried; an image inside keeps its own treatment (the frame's
+// max-width:100% and its own width and height).
+func TestReviewThirdDNothingInsideALinkCollapsesIt(t *testing.T) {
+	for _, tc := range []struct {
+		src  string
+		want []string
+	}{
+		{`<a href="https://a.example"><span id="x" style="display:inline-block;width:0;max-width:0;overflow:hidden">LINK</span></a>`, insideLink},
+		{`<style>.c{width:0!important;max-width:0!important;overflow:hidden!important;height:0!important}</style><a href="https://a.example"><b><span id="x" class="c" style="max-height:0;min-width:0;border-radius:50%">LINK</span></b></a>`, insideLink},
+		// In a link that holds another, the span holds a piece of it: a
+		// holder.
+		{`<a href="https://a.example"><div><span id="x" style="display:inline-block;width:0;overflow:hidden">LINK</span><a href="https://b.example">B</a></div></a>`, ancestorHolds},
+	} {
+		src := tc.src
+		_, out := renderOK(t, input(src))
+		style, _ := styleOf(t, out, "x")
+		for _, d := range tc.want {
+			if !strings.Contains(style, d) {
+				t.Errorf("%.60q: no %s in %q", src, d, style)
+			}
+		}
+		for _, own := range []string{"max-width:0", "overflow:hidden", "max-height:0", "min-width:0", "border-radius:50%"} {
+			if strings.Contains(style, own) {
+				t.Errorf("%.60q: %s kept in %q", src, own, style)
+			}
+		}
+	}
+	// An image inside a link keeps its own width: no min-content to hold it
+	// wider than the frame.
+	_, out := renderOK(t, input(`<a href="https://a.example"><img id="i" src="`+dataURI("image/png", pngImage(t, 4, 4, true))+`" width="40" style="width:40px"></a>`))
+	style, _ := styleOf(t, out, "i")
+	if strings.Contains(style, "min-width") || strings.Contains(style, "max-width") || !strings.Contains(style, "border-radius:0!important") {
+		t.Errorf("an image inside a link: %q", style)
+	}
+}
+
+// G: a link whose corners are rounded does not take the click at them: a
+// border-radius of 100% let the points inside its box's corners reach the
+// body in Chromium and Firefox. A link, and everything inside it, has
+// square corners, whatever its style or a rule says.
+func TestReviewThirdGALinksCornersAreSquare(t *testing.T) {
+	src := `<style>a{border-radius:100%!important}.r{border-top-left-radius:9px}</style>` +
+		`<a id="l" class="r" href="https://a.example" style="border-radius:100%;border-bottom-right-radius:50%">ROUND</a>`
+	_, out := renderOK(t, input(src))
+	style, _ := styleOf(t, out, "l")
+	if !strings.HasSuffix(style, "border-radius:0!important") && !strings.Contains(style, "border-radius:0!important;") {
+		t.Errorf("no square corners: %q", style)
+	}
+	for _, own := range []string{"border-radius:100%", "border-bottom-right-radius"} {
+		if strings.Contains(style, own) {
+			t.Errorf("%s kept: %q", own, style)
 		}
 	}
 }

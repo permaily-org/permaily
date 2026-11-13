@@ -628,7 +628,7 @@ func (w *walker) attributes(c *html.Node, a atom.Atom, inLink bool) []html.Attri
 	var s strings.Builder
 	switch {
 	case inLink:
-		s.WriteString(descendantStyle(style))
+		s.WriteString(descendantStyle(style, a == atom.Img))
 	case w.holds[c]:
 		s.WriteString(holderStyle(style))
 	default:
@@ -713,17 +713,17 @@ func prependStyle(attrs []html.Attribute, decls string) []html.Attribute {
 // linkStyle is what every kept link carries, after its own declarations, so
 // nothing the sender wrote changes how a link looks: underlined, blue on
 // white, in its own box that holds what it draws and fits its container,
-// and positioned with the largest z-index, so it is painted above
-// everything the message draws (which can neither position a box nor make
-// a stacking context) and takes the click at every point of its box (ADR
-// 0026, "What each link carries").
+// with square corners, and positioned with the largest z-index, so it is
+// painted above everything the message draws (which can neither position a
+// box nor make a stacking context) and takes the click at every point of
+// its box (ADR 0026, "What each link carries").
 const linkStyle = "display:inline-block!important;max-width:100%!important;overflow:hidden!important;" +
 	"color:#1a4fd6!important;background-color:#fff!important;text-decoration:underline!important;" +
 	"font-size:max(1em, 12px)!important;line-height:normal!important;letter-spacing:normal!important;" +
 	"word-spacing:normal!important;text-indent:0!important;vertical-align:baseline!important;" +
 	"width:auto!important;height:auto!important;min-width:0!important;min-height:0!important;" +
 	"max-height:none!important;margin:0!important;padding:0!important;border:0!important;" +
-	"position:relative!important;z-index:2147483647!important"
+	"border-radius:0!important;position:relative!important;z-index:2147483647!important"
 
 // linkOwned are the properties linkStyle sets: the link's own are dropped.
 var linkOwned = set("display", "max-width", "overflow", "overflow-x", "overflow-y", "color", "background",
@@ -732,24 +732,34 @@ var linkOwned = set("display", "max-width", "overflow", "overflow-x", "overflow-
 	"width", "height", "min-width", "min-height", "max-height", "margin", "margin-top", "margin-right",
 	"margin-bottom", "margin-left", "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
 	"border", "border-top", "border-right", "border-bottom", "border-left", "border-width", "border-top-width",
-	"border-right-width", "border-bottom-width", "border-left-width")
+	"border-right-width", "border-bottom-width", "border-left-width", "border-radius", "border-top-left-radius",
+	"border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius")
 
 // descendantOwned are the properties written on everything inside a link:
-// its text in the link's colour and size, on no colour of its own.
-var descendantOwned = set("color", "background", "background-color", "font-size", "font", "line-height",
-	"display", "letter-spacing", "word-spacing", "text-indent", "vertical-align")
+// its text in the link's colour and size, on no colour of its own, with
+// square corners; descendantSizing those written on everything inside a
+// link but its images, as on a holder (holderForced).
+var (
+	descendantOwned = set("color", "background", "background-color", "font-size", "font", "line-height",
+		"display", "letter-spacing", "word-spacing", "text-indent", "vertical-align", "border-radius",
+		"border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius")
+	descendantSizing = set("height", "max-height", "max-width", "min-width", "overflow", "overflow-x", "overflow-y")
+)
 
 // descendantStyle is the style of an element inside a link: its own
-// declarations but those the link decides, then the link's colour, size and
-// a display of its own that a rule cannot set to none.
-func descendantStyle(decls []cssDecl) string {
+// declarations but those the link decides, then the link's colour, size,
+// square corners and a display of its own that a rule cannot set to none,
+// and, but on an image, what a holder carries, so that nothing inside a
+// link clips or collapses it (ADR 0026, "What each link carries"). An image
+// keeps its own sizes, within the frame's max-width of 100%.
+func descendantStyle(decls []cssDecl, image bool) string {
 	var kept []cssDecl
 	display := "revert"
 	for _, d := range decls {
 		if d.prop == "display" && d.value != "none" {
 			display = d.value
 		}
-		if !descendantOwned[d.prop] {
+		if !descendantOwned[d.prop] && (image || !descendantSizing[d.prop]) {
 			kept = append(kept, d)
 		}
 	}
@@ -760,9 +770,12 @@ func descendantStyle(decls []cssDecl) string {
 	}
 	s.WriteString("color:inherit!important;background-color:transparent!important;font-size:inherit!important;" +
 		"line-height:inherit!important;letter-spacing:normal!important;word-spacing:normal!important;" +
-		"text-indent:0!important;vertical-align:baseline!important;display:")
+		"text-indent:0!important;vertical-align:baseline!important;border-radius:0!important;display:")
 	s.WriteString(display)
 	s.WriteString("!important")
+	if !image {
+		s.WriteString(";" + holderForced)
+	}
 	return s.String()
 }
 

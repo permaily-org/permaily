@@ -176,6 +176,21 @@ func corpusCase(t *testing.T, name string, st contracts.MessageHTML, out string,
 			strings.Contains(out, "<details") || strings.Contains(out, "<summary") {
 			t.Errorf("%+v: %s", st, out)
 		}
+	case "20":
+		// The third review's D and G: everything inside a link carries what
+		// a holder does, and every link and what it holds square corners.
+		body := out[strings.Index(out, "<body"):] // the sender's sheet is in the head, beaten by !important
+		if st.Links < 2 || strings.Count(out, linkStyle) != st.Links || strings.Contains(body, "border-radius:100%") ||
+			strings.Contains(body, "border-radius:50%") || strings.Contains(body, "max-width:0") {
+			t.Errorf("%+v: %s", st, out)
+		}
+	case "21":
+		// The third review's C: a link inside a link (TestReviewThirdC…
+		// says where each text leads); no placeholder name reaches the
+		// output.
+		if st.Links != 8 || strings.Contains(out, "permaily-") || strings.Contains(out, "<b>") {
+			t.Errorf("%+v: %+v", st, links)
+		}
 	case "15":
 		want := contracts.MessageImagesOmitted{TooLarge: 1, Unsupported: 3}
 		if st.InlineImagesOmittedBy != want || st.InlineImages != 1 || !strings.Contains(out, "data:image/gif;base64,") {

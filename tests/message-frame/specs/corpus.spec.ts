@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { corpus, observe, requests, reset, signIn, watchDialogs } from './suite.ts'
+import { cases, corpus, observe, requests, reset, signIn, watchDialogs } from './suite.ts'
 
 // ADR 0026, "Tests", 26 and 27: the hostile corpus run twice, so neither line hides the other's failures.
 
@@ -245,4 +245,62 @@ test.describe('27: run B, the sanitiser alone', () => {
       ])
     })
   }
+})
+
+// The third code review's C: a link inside a link. In the DOM each engine builds from the sanitiser's output, every
+// text leads where the sender wrote for the innermost link around it: its link's token, resolved by the link route
+// (the destination the link page would open), is that link's destination; the text of an inner link that is not
+// kept, or of a placeholder name the sender wrote, leads nowhere of another link's.
+const nestedLinks: Record<string, string | null> = {
+  A1: 'https://a.example/',
+  B1: 'https://b.example/',
+  A2: 'https://a.example/',
+  C1: 'https://c.example/',
+  C2: 'https://c.example/',
+  D1: 'https://d.example/',
+  E1: 'https://e.example/',
+  D2: 'https://d.example/',
+  C3: 'https://c.example/',
+  C4: 'https://c.example/',
+  F1: 'https://f.example/',
+  N1: null,
+  F2: 'https://f.example/',
+  G1: 'https://g.example/',
+  J1: null,
+  G2: 'https://g.example/',
+  H1P1: 'https://h.example/',
+  Q1: null,
+}
+
+test('27: run B, a link inside a link: each text leads where the sender wrote', async ({ page }) => {
+  await signIn(page)
+  const { box, cases: list } = await cases(page)
+  const name = '21-nested-links'
+  const id = list.find((c) => c.Name === name)?.Message as string
+  await page.goto(`/test/plain/${name}`)
+  const texts = await page.evaluate(() => {
+    const out: Array<[string, string | null, boolean]> = []
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+      const text = t.textContent?.trim()
+      if (!text) continue
+      const a = t.parentElement?.closest('a') ?? null
+      // A link inside another in the DOM the engine built would be a finding of its own.
+      out.push([text, a?.getAttribute('href') ?? null, !!a?.parentElement?.closest('a')])
+    }
+    return out
+  })
+  const got: Record<string, string | null> = {}
+  for (const [text, href, nested] of texts) {
+    expect(nested, text).toBe(false)
+    if (href === null) {
+      got[text] = null
+      continue
+    }
+    const token = href.slice(href.lastIndexOf('/') + 1)
+    const res = await page.request.get(`/api/v1/mailboxes/${box}/messages/${id}/links/${token}`)
+    expect(res.status(), text).toBe(200)
+    got[text] = (await res.json()).url
+  }
+  expect(got).toEqual(nestedLinks)
 })
