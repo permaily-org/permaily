@@ -1,6 +1,7 @@
 package mailhtml
 
 import (
+	"context"
 	"strings"
 
 	"github.com/permaily-org/permaily/internal/contracts"
@@ -22,21 +23,66 @@ type cssNode struct {
 
 func (n cssNode) isBlock() bool { return n.block != 0 }
 
-// cssMaxNesting bounds how deep blocks and functions nest: deeper ones are
-// read as nothing.
+// cssMaxNesting bounds how deep blocks and functions nest: a block opened
+// deeper is kept as an empty block, and what is inside it is skipped
+// without descending into it.
 const cssMaxNesting = 32
 
-// cssComponents reads tokens into component values.
-func cssComponents(toks []cssToken) []cssNode {
-	p := &cssParser{toks: toks}
-	return p.list(0, cssEOF)
+// cssComponents reads tokens into component values, iteratively: the
+// nesting limit is checked before a block is entered, and a block past it
+// is skipped by counting its brackets. It stops with ctx's error.
+func cssComponents(ctx context.Context, toks []cssToken) ([]cssNode, error) {
+	type open struct {
+		node cssNode
+		end  cssKind
+	}
+	stack := []open{{end: cssEOF}}
+	closeTop := func() {
+		top := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		parent := &stack[len(stack)-1].node
+		parent.children = append(parent.children, top.node)
+	}
+	for i := 0; i < len(toks); i++ {
+		if i%cssCheckEvery == 0 && ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		t := toks[i]
+		top := &stack[len(stack)-1]
+		if len(stack) > 1 && t.Kind == top.end {
+			closeTop()
+			continue
+		}
+		var node cssNode
+		switch t.Kind {
+		case cssLBrace, cssLBracket, cssLParen:
+			node = cssNode{block: t.Kind}
+		case cssFunction:
+			node = cssNode{tok: t, block: cssFunction}
+		default:
+			top.node.children = append(top.node.children, cssNode{tok: t})
+			continue
+		}
+		if len(stack) > cssMaxNesting {
+			var err error
+			if i, err = cssSkipBlock(ctx, toks, i); err != nil {
+				return nil, err
+			}
+			top.node.children = append(top.node.children, node)
+			continue
+		}
+		stack = append(stack, open{node: node, end: closing(t.Kind)})
+	}
+	for len(stack) > 1 {
+		closeTop() // a block the input does not close ends with it
+	}
+	return stack[0].node.children, nil
 }
 
-type cssParser struct {
-	toks []cssToken
-	i    int
-}
-
+// closing is the token that closes a block opened by open (a function
+// closes with a parenthesis).
 func closing(open cssKind) cssKind {
 	switch open {
 	case cssLBrace:
@@ -47,31 +93,27 @@ func closing(open cssKind) cssKind {
 	return cssRParen
 }
 
-func (p *cssParser) list(depth int, end cssKind) []cssNode {
-	var out []cssNode
-	for p.i < len(p.toks) {
-		t := p.toks[p.i]
-		p.i++
-		switch t.Kind {
-		case end:
-			return out
-		case cssLBrace, cssLBracket, cssLParen:
-			children := p.list(depth+1, closing(t.Kind))
-			if depth+1 > cssMaxNesting {
-				children = nil
+// cssSkipBlock is the index of the token that closes the block toks[i]
+// opens, or the last one: the brackets are matched as the parser matches
+// them, a stack of one byte a level, and nothing is kept.
+func cssSkipBlock(ctx context.Context, toks []cssToken, i int) (int, error) {
+	ends := []cssKind{closing(toks[i].Kind)}
+	for i++; i < len(toks); i++ {
+		if i%cssCheckEvery == 0 && ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return 0, err
 			}
-			out = append(out, cssNode{block: t.Kind, children: children})
-		case cssFunction:
-			children := p.list(depth+1, cssRParen)
-			if depth+1 > cssMaxNesting {
-				children = nil
+		}
+		switch k := toks[i].Kind; {
+		case k == ends[len(ends)-1]:
+			if ends = ends[:len(ends)-1]; len(ends) == 0 {
+				return i, nil
 			}
-			out = append(out, cssNode{tok: t, block: cssFunction, children: children})
-		default:
-			out = append(out, cssNode{tok: t})
+		case k == cssLBrace || k == cssLBracket || k == cssLParen || k == cssFunction:
+			ends = append(ends, closing(k))
 		}
 	}
-	return out
+	return len(toks) - 1, nil
 }
 
 // cssBudget is what the CSS of one message may still use, and what the
@@ -81,6 +123,69 @@ type cssBudget struct {
 	decls        int
 	remoteImages int
 	remoteOther  int
+
+	// ctx stops the work; err is its error once it has, and every pass
+	// returns at once from then on.
+	ctx   context.Context
+	steps int
+	err   error
+}
+
+// stopped counts a step of the filter, checks the context every
+// cssCheckEvery of them, and says whether the work has stopped.
+func (b *cssBudget) stopped() bool {
+	if b.err != nil {
+		return true
+	}
+	if b.steps++; b.steps%cssCheckEvery == 0 && b.ctx != nil {
+		b.err = b.ctx.Err()
+	}
+	return b.err != nil
+}
+
+// parse reads text into component values within cssMaxTokens. ok is false
+// when it has more, and then its addresses are counted by a pass that
+// keeps nothing; or when the work has stopped.
+func (b *cssBudget) parse(text string) ([]cssNode, bool) {
+	if b.err != nil {
+		return nil, false
+	}
+	toks, err := cssTokenize(b.ctx, text, cssMaxTokens)
+	if err == errCSSTooMany {
+		b.countDiscarded(text)
+		return nil, false
+	}
+	if err == nil {
+		var nodes []cssNode
+		if nodes, err = cssComponents(b.ctx, toks); err == nil {
+			return nodes, true
+		}
+	}
+	b.err = err
+	return nil, false
+}
+
+// countDiscarded counts the remote addresses of CSS that goes without
+// being parsed (over the size of the style sheets, or of too many tokens),
+// token by token, keeping none: each url() token and each string of an
+// http, https or protocol-relative address counts once, in RemoteOther. It
+// says how many it counted.
+func (b *cssBudget) countDiscarded(text string) int {
+	if b.err != nil {
+		return 0
+	}
+	n := 0
+	err := cssScan(b.ctx, text, func(t cssToken) {
+		if (t.Kind == cssURL || t.Kind == cssString) && looksRemote(t.Value) {
+			n++
+		}
+	})
+	if err != nil {
+		b.err = err
+		return 0
+	}
+	b.remoteOther += n
+	return n
 }
 
 // cssContext says where a declaration list is: in a style attribute of an
@@ -100,15 +205,24 @@ type cssDecl struct {
 // filterStylesheet filters the text of a <style> element into rules written
 // again, within the budget.
 func (b *cssBudget) filterStylesheet(text string) string {
-	nodes := cssComponents(cssTokenize(text))
+	nodes, ok := b.parse(text)
+	if !ok {
+		return ""
+	}
 	var out strings.Builder
 	b.rules0(nodes, &out, 0)
+	if b.err != nil {
+		return ""
+	}
 	return out.String()
 }
 
 // rules0 filters a list of rules (a stylesheet, or the block of @media).
 func (b *cssBudget) rules0(nodes []cssNode, out *strings.Builder, depth int) {
 	for i := 0; i < len(nodes); {
+		if b.stopped() {
+			return
+		}
 		n := nodes[i]
 		switch {
 		case n.tok.Kind == cssWhitespace || n.tok.Kind == cssCDO || n.tok.Kind == cssCDC || n.tok.Kind == cssSemicolon && !n.isBlock():
@@ -216,13 +330,24 @@ func (b *cssBudget) filterStyleAttribute(text, element string) []cssDecl {
 	if len(text) > contracts.MessageHTMLMaxStyleAttributeBytes {
 		return nil
 	}
-	return b.declarations(cssComponents(cssTokenize(text)), cssContext{attribute: true, element: element})
+	nodes, ok := b.parse(text)
+	if !ok {
+		return nil
+	}
+	decls := b.declarations(nodes, cssContext{attribute: true, element: element})
+	if b.err != nil {
+		return nil
+	}
+	return decls
 }
 
 // declarations reads a declaration list and keeps what the allowlist keeps.
 func (b *cssBudget) declarations(nodes []cssNode, ctx cssContext) []cssDecl {
 	var out []cssDecl
 	for i := 0; i < len(nodes); {
+		if b.stopped() {
+			return nil
+		}
 		j := i
 		for j < len(nodes) && (nodes[j].tok.Kind != cssSemicolon || nodes[j].isBlock()) {
 			j++
@@ -310,6 +435,9 @@ func (b *cssBudget) countURLs(nodes []cssNode, image bool) bool {
 	var walk func([]cssNode)
 	walk = func(ns []cssNode) {
 		for _, n := range ns {
+			if b.stopped() {
+				return
+			}
 			var addr string
 			isURL := false
 			switch {

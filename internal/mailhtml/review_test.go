@@ -4,10 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"hash/crc32"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
@@ -284,5 +289,222 @@ func TestReview2AnImageMeansOneThing(t *testing.T) {
 	// its size (confirmed, unchanged).
 	if info, ok := imageStructure(gifImage(t, 3, 2, 2, false)); !ok || !info.Animated {
 		t.Errorf("two GIF images: %+v %v", info, ok)
+	}
+}
+
+// adversarialCSS are the shapes of finding 1 and their siblings, each a
+// message's HTML of at most the 2 MiB a part may be: blocks opened and
+// never closed, strings and comments that never end, more rules and
+// declarations than the limits, in <style> (over its 256 KiB, and under)
+// and in style attributes.
+func adversarialCSS() map[string]string {
+	const max = contracts.MessageHTMLMaxBytes - 64
+	fill := func(head, unit, tail string, size int) string {
+		n := (size - len(head) - len(tail)) / len(unit)
+		return head + strings.Repeat(unit, n) + tail
+	}
+	sheet := func(unit string, size int) string { return fill("<style>", unit, "</style><p>hello</p>", size) }
+	underSheet := contracts.MessageHTMLMaxStyleBytes - 64
+	attrs := func(unit string) string {
+		one := `<p style="` + strings.Repeat(unit, (contracts.MessageHTMLMaxStyleAttributeBytes-16)/len(unit)) + `">x</p>`
+		return strings.Repeat(one, max/len(one))
+	}
+	return map[string]string{
+		"( to 2 MiB":              sheet("(", max),
+		"[ to 2 MiB":              sheet("[", max),
+		"{ to 2 MiB":              sheet("{", max),
+		"([{ mixed to 2 MiB":      sheet("([{", max),
+		"url( to 2 MiB":           sheet("url(", max),
+		"( under the sheet limit": sheet("(", underSheet),
+		"[ deep, within the tokens a sheet may be": "<style>a{x:" + strings.Repeat("[", cssMaxTokens-16) + "}</style><p>hello</p>",
+		"(( deep in a function, within the tokens": "<style>a{x:" + strings.Repeat("f(", (cssMaxTokens-16)/2) + "}</style><p>hello</p>",
+		"([{ under the sheet limit":                sheet("([{", underSheet),
+		"an unterminated string of 2 MiB":          fill(`<style>a{font-family:"`, "x", "</style><p>hello</p>", max),
+		"an unterminated comment of 2 MiB":         fill("<style>/*", "x", "</style><p>hello</p>", max),
+		"tiny rules to 2 MiB":                      sheet("a{}", max),
+		"tiny rules under the sheet limit":         sheet("a{}", underSheet),
+		"declarations to 2 MiB":                    fill("<style>a{", "b:c;", "}</style><p>hello</p>", max),
+		"declarations under the sheet limit":       fill("<style>a{", "b:c;", "}</style><p>hello</p>", underSheet),
+		"kept declarations under the limit":        fill("<style>a{", "color:red;", "}</style><p>hello</p>", underSheet),
+		"( in style attributes":                    attrs("("),
+		"([{ in style attributes":                  attrs("([{"),
+		"declarations in style attributes":         attrs("color:red;"),
+	}
+}
+
+// peakMemory runs f and says the most the heap and the goroutine stacks
+// held above where they started, sampled every 100 microseconds.
+func peakMemory(f func()) (heap, stack uint64) {
+	runtime.GC()
+	var base runtime.MemStats
+	runtime.ReadMemStats(&base)
+	var peakHeap, peakStack atomic.Uint64
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		var m runtime.MemStats
+		tick := time.NewTicker(100 * time.Microsecond)
+		defer tick.Stop()
+		for {
+			runtime.ReadMemStats(&m)
+			if m.HeapAlloc > base.HeapAlloc && m.HeapAlloc-base.HeapAlloc > peakHeap.Load() {
+				peakHeap.Store(m.HeapAlloc - base.HeapAlloc)
+			}
+			if m.StackInuse > base.StackInuse && m.StackInuse-base.StackInuse > peakStack.Load() {
+				peakStack.Store(m.StackInuse - base.StackInuse)
+			}
+			select {
+			case <-stop:
+				return
+			case <-tick.C:
+			}
+		}
+	}()
+	f()
+	close(stop)
+	wg.Wait()
+	return peakHeap.Load(), peakStack.Load()
+}
+
+// renderMemory is the most one render may hold at its peak (ADR 0026,
+// "Limits": 64 MiB), and the stack it may grow by.
+const (
+	renderMemory = 64 << 20
+	renderStack  = 4 << 20
+	// deadlineMargin is how long past its deadline a render may take to
+	// stop: one check of the context in each loop, on a loaded machine.
+	deadlineMargin = 150 * time.Millisecond
+)
+
+// Finding 1: CSS nesting was bounded after the recursion, a stylesheet over
+// its limit was still made into tokens and components to count its URLs,
+// none of it checked the deadline, and Links paid for it too. Each shape
+// ends within its deadline and a margin, within the render's memory and
+// without a deep stack, in Render and in Links.
+func TestReview1CSSWorkIsBoundedAndStopsAtTheDeadline(t *testing.T) {
+	const deadline = 100 * time.Millisecond
+	for name, src := range adversarialCSS() {
+		if len(src) > contracts.MessageHTMLMaxBytes {
+			t.Fatalf("%s: %d bytes", name, len(src))
+		}
+		for _, links := range []bool{false, true} {
+			var err error
+			var took time.Duration
+			heap, stack := peakMemory(func() {
+				ctx, cancel := context.WithTimeout(context.Background(), deadline)
+				defer cancel()
+				start := time.Now()
+				if links {
+					_, err = Links(ctx, input(src))
+				} else {
+					_, err = Render(ctx, input(src), nil)
+				}
+				took = time.Since(start)
+			})
+			if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, ErrNotShown) {
+				t.Errorf("%s (links %v): %v", name, links, err)
+			}
+			if testing.Verbose() {
+				t.Logf("%s (links %v): %v, heap %.1f MiB, stack %.2f MiB, %v", name, links, took,
+					float64(heap)/(1<<20), float64(stack)/(1<<20), err)
+			}
+			if took > deadline+deadlineMargin || heap > renderMemory || stack > renderStack {
+				t.Errorf("%s (links %v): %v, heap %.1f MiB, stack %.1f MiB", name, links, took,
+					float64(heap)/(1<<20), float64(stack)/(1<<20))
+			}
+		}
+	}
+}
+
+// Finding 1: each pass of the CSS work stops with its context: the
+// tokeniser, the parser into components, the skip of a block too deep, the
+// filter and the count of what is discarded, given an ended context, stop
+// with its error, and Render answers it.
+func TestReview1EveryCSSPassChecksItsContext(t *testing.T) {
+	ended, end := context.WithCancel(context.Background())
+	end()
+	big := strings.Repeat("a{color:red}", 20_000)
+	if _, err := cssTokenize(ended, big, cssMaxTokens); !errors.Is(err, context.Canceled) {
+		t.Errorf("the tokeniser: %v", err)
+	}
+	if err := cssScan(ended, big, func(cssToken) {}); !errors.Is(err, context.Canceled) {
+		t.Errorf("the scan: %v", err)
+	}
+	toks := tokenize(t, big)
+	if _, err := cssComponents(ended, toks); !errors.Is(err, context.Canceled) {
+		t.Errorf("the components: %v", err)
+	}
+	deep := tokenize(t, strings.Repeat("(", 40)+strings.Repeat("[", 20_000))
+	if _, err := cssSkipBlock(ended, deep, 39); !errors.Is(err, context.Canceled) {
+		t.Errorf("the skip: %v", err)
+	}
+	nodes, err := cssComponents(context.Background(), toks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &cssBudget{ctx: ended}
+	var out strings.Builder
+	if b.rules0(nodes, &out, 0); !errors.Is(b.err, context.Canceled) {
+		t.Errorf("the filter: %v", b.err)
+	}
+	b = &cssBudget{ctx: ended}
+	if got := b.filterStylesheet(big); got != "" || !errors.Is(b.err, context.Canceled) {
+		t.Errorf("a stopped filter wrote %d bytes: %v", len(got), b.err)
+	}
+	b = &cssBudget{ctx: ended}
+	if b.countDiscarded(big); !errors.Is(b.err, context.Canceled) {
+		t.Errorf("the count of what is discarded: %v", b.err)
+	}
+	b = &cssBudget{ctx: ended}
+	if d := b.filterStyleAttribute(strings.Repeat("color:red;", 800), "td"); d != nil || !errors.Is(b.err, context.Canceled) {
+		t.Errorf("a style attribute: %v", b.err)
+	}
+	// Through the walk: a context that ends while a <style> is filtered.
+	doc, err := parse(context.Background(), []byte("<style>"+big+"</style><p>x</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&walker{ctx: ended, in: input("")}).document(doc); !errors.Is(err, context.Canceled) {
+		t.Errorf("the walk: %v", err)
+	}
+}
+
+// Finding 1: CSS too deep is kept as empty blocks, so the rule around it
+// still reads as one, the rest of the sheet is kept, and a rule past the
+// depth limit is dropped, not read as something else.
+func TestReview1DeepCSSIsSkippedNotMisread(t *testing.T) {
+	deep := strings.Repeat("(", 40) + "x" + strings.Repeat(")", 40)
+	for _, c := range []struct{ in, want string }{
+		{"a{color:red}b{x:" + deep + "}c{color:blue}", "a{color:red}c{color:blue}"},
+		{"a{color:red}" + strings.Repeat("[", 50_000) + "}c{color:blue}", "a{color:red}"},
+		{"@media print{" + strings.Repeat("{", 40) + "}p{color:red}", ""},
+		{"a{color:red}b{x:" + strings.Repeat("(", 50) + "url(https://e.example/x)" + "}", "a{color:red}"},
+	} {
+		if got := sheet(c.in); got != c.want {
+			t.Errorf("%.40q: %q, want %q", c.in, got, c.want)
+		}
+	}
+	// Past the tokens one sheet may be, it goes, and its addresses are
+	// counted by the pass that keeps nothing.
+	b := &cssBudget{ctx: context.Background()}
+	over := strings.Repeat("a{}", cssMaxTokens/3+1) + "@import url(https://e.example/a.css);@import 'http://e.example/b.css';"
+	if got := b.filterStylesheet(over); got != "" || b.remoteOther != 2 || b.err != nil {
+		t.Errorf("%q, %d remote, %v", got, b.remoteOther, b.err)
+	}
+}
+
+// Finding 1: Links reads no CSS at all, in <style> or in style attributes:
+// the work it does is the token pass, the parse and the walk.
+func TestReview1LinksReadsNoCSS(t *testing.T) {
+	src := "<style>@import url(https://e.example/a.css);" + strings.Repeat("a{color:red}", 1000) + "</style>" +
+		`<p style="color:red;background:url(https://e.example/b.png)"><a href="https://example.com/" style="color:red">x</a></p>`
+	wk, _, err := walkInput(context.Background(), input(src), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wk.css.steps != 0 || wk.styleIn != 0 || wk.css.remoteOther != 0 || wk.css.remoteImages != 0 || len(wk.links) != 1 {
+		t.Errorf("Links did CSS work: %d steps, %d bytes of <style>, %+v", wk.css.steps, wk.styleIn, wk.css)
 	}
 }

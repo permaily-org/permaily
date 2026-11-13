@@ -1,6 +1,7 @@
 package mailhtml
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -200,7 +201,7 @@ func TestCSSTokeniser(t *testing.T) {
 	}
 	for in, want := range cases {
 		var got []cssKind
-		for _, tok := range cssTokenize(in) {
+		for _, tok := range tokenize(t, in) {
 			got = append(got, tok.Kind)
 		}
 		if len(got) != len(want) {
@@ -214,10 +215,10 @@ func TestCSSTokeniser(t *testing.T) {
 			}
 		}
 	}
-	if v := cssTokenize(`\75 rl(x)`)[0].Value; v != "x" {
+	if v := tokenize(t, `\75 rl(x)`)[0].Value; v != "x" {
 		t.Errorf("%q", v)
 	}
-	if v := cssTokenize(`\0 \110000`)[0].Value; v != "��" {
+	if v := tokenize(t, `\0 \110000`)[0].Value; v != "��" {
 		t.Errorf("%q", v)
 	}
 	var b strings.Builder
@@ -248,4 +249,14 @@ func TestCSSAdjacentTokensStaySeparate(t *testing.T) {
 			}
 		}
 	}
+}
+
+// tokenize is cssTokenize of s, without a deadline, within cssMaxTokens.
+func tokenize(t testing.TB, s string) []cssToken {
+	t.Helper()
+	toks, err := cssTokenize(context.Background(), s, cssMaxTokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return toks
 }

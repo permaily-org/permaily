@@ -102,6 +102,9 @@ type walker struct {
 
 // tick counts a node visited and checks the context every ctxEvery nodes.
 func (w *walker) tick() error {
+	if w.css.err != nil {
+		return w.css.err // the CSS work stopped with the context
+	}
 	w.ticks++
 	if w.ticks%ctxEvery == 0 {
 		return w.ctx.Err()
@@ -112,8 +115,12 @@ func (w *walker) tick() error {
 // document walks a parsed document into the children of a new body.
 func (w *walker) document(doc *html.Node) (*html.Node, error) {
 	body := &html.Node{Type: html.ElementNode, Data: "body", DataAtom: atom.Body}
+	w.css.ctx = w.ctx
 	if err := w.walk(doc, body, 0, false); err != nil {
 		return nil, err
+	}
+	if w.css.err != nil {
+		return nil, w.css.err
 	}
 	w.stats.RemoteImages += w.css.remoteImages
 	w.stats.RemoteOther += w.css.remoteOther
@@ -179,12 +186,15 @@ func (w *walker) element(c, dst *html.Node, depth int, inLink bool) error {
 	switch {
 	case a == atom.Style:
 		w.style(c)
-		return nil
+		return w.css.err
 	case a == atom.Head:
 		// Of the message's head, only its style sheets are read.
 		for h := c.FirstChild; h != nil; h = h.NextSibling {
 			if h.Type == html.ElementNode && h.Namespace == "" && h.DataAtom == atom.Style {
 				w.style(h)
+				if w.css.err != nil {
+					return w.css.err
+				}
 			} else if err := w.countDropped(h); err != nil {
 				return err
 			}
@@ -283,8 +293,12 @@ func needsDiv(p *html.Node) bool {
 }
 
 // style reads a <style> element through the CSS filter, within the budget
-// of all of them together.
+// of all of them together; past it the CSS goes and only its addresses are
+// counted, by a pass that keeps nothing. Links reads no CSS at all.
 func (w *walker) style(c *html.Node) {
+	if w.linksOnly {
+		return
+	}
 	var b strings.Builder
 	for t := c.FirstChild; t != nil; t = t.NextSibling {
 		if t.Type == html.TextNode {
@@ -294,10 +308,7 @@ func (w *walker) style(c *html.Node) {
 	text := b.String()
 	w.styleIn += len(text)
 	if w.styleIn > contracts.MessageHTMLMaxStyleBytes {
-		w.css.countURLs(cssComponents(cssTokenize(text)), false)
-		return
-	}
-	if w.linksOnly {
+		w.css.countDiscarded(text)
 		return
 	}
 	if out := w.css.filterStylesheet(text); out != "" {

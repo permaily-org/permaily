@@ -1,6 +1,8 @@
 package mailhtml
 
 import (
+	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -56,24 +58,60 @@ type cssToken struct {
 	ID     bool
 }
 
-// cssMaxTokens bounds the tokens one stylesheet or declaration list makes:
-// more than its bytes allow is impossible, this is a second bound.
-const cssMaxTokens = 1 << 20
+// cssMaxTokens bounds the tokens one stylesheet or declaration list is
+// made into: past it the CSS goes, and only its addresses are counted, by a
+// pass that keeps nothing (cssScan). A newsletter's 60 KiB of CSS is about
+// 25,000 tokens.
+const cssMaxTokens = 1 << 17
 
-// cssTokenize reads s into tokens. It never fails: what is not valid becomes
-// bad-string, bad-url or a delimiter, as the specification says.
-func cssTokenize(s string) []cssToken {
-	t := &cssTokenizer{s: cssPreprocess(s)}
+// errCSSTooMany is CSS of more tokens than cssMaxTokens.
+var errCSSTooMany = errors.New("mailhtml: CSS of too many tokens")
+
+// cssCheckEvery is how often, in code points read or nodes visited, a pass
+// of the CSS work checks its context.
+const cssCheckEvery = 1 << 12
+
+// cssTokenize reads s into at most max tokens: errCSSTooMany past them, and
+// ctx's error once it ends (checked as the code points are read). It never
+// fails otherwise: what is not valid becomes bad-string, bad-url or a
+// delimiter, as the specification says.
+func cssTokenize(ctx context.Context, s string, max int) ([]cssToken, error) {
+	t := &cssTokenizer{s: cssPreprocess(s), ctx: ctx}
 	var out []cssToken
-	for len(out) < cssMaxTokens {
+	for {
 		tok := t.next()
+		if t.err != nil {
+			return nil, t.err
+		}
 		if tok.Kind == cssEOF {
-			break
+			return out, nil
+		}
+		if len(out) >= max {
+			return nil, errCSSTooMany
 		}
 		out = append(out, tok)
 	}
-	return out
 }
+
+// cssScan reads s token by token and gives each to f, keeping none, with
+// every value cut to cssScanValue bytes: what is needed to tell whether an
+// address is remote. It stops with ctx's error.
+func cssScan(ctx context.Context, s string, f func(cssToken)) error {
+	t := &cssTokenizer{s: cssPreprocess(s), ctx: ctx, valueMax: cssScanValue}
+	for {
+		tok := t.next()
+		if t.err != nil {
+			return t.err
+		}
+		if tok.Kind == cssEOF {
+			return nil
+		}
+		f(tok)
+	}
+}
+
+// cssScanValue is how much of a value cssScan keeps.
+const cssScanValue = 16
 
 // cssPreprocess replaces CR, CRLF and FF with LF, and NUL and invalid UTF-8
 // with U+FFFD ("Preprocessing the input stream").
@@ -86,8 +124,20 @@ func cssPreprocess(s string) string {
 }
 
 type cssTokenizer struct {
-	s string
-	i int
+	s     string
+	i     int
+	ctx   context.Context
+	steps int
+	err   error
+	// valueMax, when set, is how many bytes of a value are kept.
+	valueMax int
+}
+
+// write adds r to a value being read, up to valueMax bytes.
+func (t *cssTokenizer) write(b *strings.Builder, r rune) {
+	if t.valueMax == 0 || b.Len() < t.valueMax {
+		b.WriteRune(r)
+	}
 }
 
 func (t *cssTokenizer) peek(k int) rune {
@@ -106,9 +156,19 @@ func (t *cssTokenizer) peek(k int) rune {
 	return r
 }
 
+// advance reads one code point, and checks the context every
+// cssCheckEvery of them: once it has ended, the input ends there, so every
+// loop of the tokeniser stops.
 func (t *cssTokenizer) advance() rune {
 	if t.i >= len(t.s) {
 		return -1
+	}
+	if t.steps++; t.steps%cssCheckEvery == 0 && t.ctx != nil {
+		if err := t.ctx.Err(); err != nil {
+			t.err = err
+			t.i = len(t.s)
+			return -1
+		}
 	}
 	r, size := utf8.DecodeRuneInString(t.s[t.i:])
 	t.i += size
@@ -289,10 +349,10 @@ func (t *cssTokenizer) name() string {
 		c := t.peek(0)
 		switch {
 		case isNameCode(c):
-			b.WriteRune(t.advance())
+			t.write(&b, t.advance())
 		case validEscape(c, t.peek(1)):
 			t.advance()
-			b.WriteRune(t.escape())
+			t.write(&b, t.escape())
 		default:
 			return b.String()
 		}
@@ -344,13 +404,13 @@ func (t *cssTokenizer) url() cssToken {
 			return cssToken{Kind: cssBadURL}
 		case c == '\\':
 			if validEscape(c, t.peek(0)) {
-				b.WriteRune(t.escape())
+				t.write(&b, t.escape())
 				continue
 			}
 			t.badURL()
 			return cssToken{Kind: cssBadURL}
 		default:
-			b.WriteRune(c)
+			t.write(&b, c)
 		}
 	}
 }
@@ -383,10 +443,10 @@ func (t *cssTokenizer) string(quote rune) cssToken {
 			case '\n':
 				t.advance()
 			default:
-				b.WriteRune(t.escape())
+				t.write(&b, t.escape())
 			}
 		default:
-			b.WriteRune(c)
+			t.write(&b, c)
 		}
 	}
 }

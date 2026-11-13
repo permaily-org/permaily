@@ -2,6 +2,7 @@ package mailhtml
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -198,7 +199,10 @@ func checkCSS(text string, attribute bool) error {
 	if strings.ContainsAny(text, "<") {
 		return fmt.Errorf("a < in CSS")
 	}
-	toks := cssTokenize(text)
+	toks, err := cssTokenize(context.Background(), text, cssMaxTokens)
+	if err != nil {
+		return err
+	}
 	expectProperty := true
 	var blocks []bool // for each open block: does it hold declarations (not rules, as @media's)?
 	media := false
