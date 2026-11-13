@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -159,5 +160,29 @@ func TestNonCanonicalSpellingsAreRefused(t *testing.T) {
 		if reached.Load() != before+1 {
 			t.Errorf("%s: not served", target)
 		}
+	}
+}
+
+// The gate's own words: which paths are canonical, the patterns every
+// AppMux recorded, and the frame's path on a host with no mailboxes.
+func TestCanonicalPathsAndTheRecordedRoutes(t *testing.T) {
+	for p, want := range map[string]bool{
+		"/": true, "/inbox/mbx_1/m/links/0.AbC-_d": true, "/api/v1/mailboxes/": true, "/a/b~c": true,
+		"": false, "a": false, "//": false, "/a//b": false, "/a/./b": false, "/a/..": false, "/a%2fb": false, `/a\b`: false, "/a b": false, "/é": false,
+	} {
+		if got := httpapi.CanonicalPath(p); got != want {
+			t.Errorf("%q: %v", p, got)
+		}
+	}
+	httpapi.MailboxesAPI(httpapi.MailboxesConfig{})
+	if !slices.Contains(httpapi.RegisteredPatterns(), "GET /api/v1/mailboxes/{id}/messages/{message}/html") {
+		t.Errorf("%v", httpapi.RegisteredPatterns())
+	}
+	reached := false
+	h := httpapi.AppHost(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }), nil)
+	rec := raw(t, h, "GET", "/api/v1/mailboxes/b/messages/m/html", "Sec-Fetch-Site", "same-origin", "Sec-Fetch-Dest", "iframe")
+	wantFrameHeaders(t, "no mailboxes", rec.Header())
+	if reached || rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "This message can't be shown here.") {
+		t.Errorf("no mailboxes: %d %q, reached %v", rec.Code, rec.Body, reached)
 	}
 }
