@@ -275,12 +275,15 @@ func (s *renderSlots) take(ctx context.Context, account string) (func(), error) 
 		sh = &renderShare{}
 		s.accounts[account] = sh
 	}
-	if sh.running+sh.waiting >= s.perRunning+s.perQueue {
-		s.mu.Unlock()
-		return nil, contracts.ErrTooManyRequests
-	}
 	if s.active < s.running && sh.running < s.perRunning {
 		return s.granted(sh, account), nil
+	}
+	// The account's share of the queue, whatever it has running: two
+	// waiting are refused a third even when none of its renders runs.
+	if sh.waiting >= s.perQueue {
+		s.forget(sh, account)
+		s.mu.Unlock()
+		return nil, contracts.ErrTooManyRequests
 	}
 	if s.waiting >= s.queue {
 		s.forget(sh, account)
