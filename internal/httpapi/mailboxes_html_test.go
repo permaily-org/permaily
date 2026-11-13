@@ -190,7 +190,11 @@ func TestHTML35TheFrameRoute(t *testing.T) {
 				continue
 			}
 			rec := frameCall(a.h, "alice", path, dest, site)
-			if rec.Code != 404 {
+			want := 404 // not a frame's request
+			if site == "same-site" || site == "cross-site" {
+				want = 403 // another site's, refused first (finding 9 of the review)
+			}
+			if rec.Code != want {
 				t.Errorf("%s %s: %d", dest, site, rec.Code)
 			}
 			frameDocumentCheck(t, dest+" "+site, rec)

@@ -219,6 +219,10 @@ func MailboxesAPI(cfg MailboxesConfig) http.Handler {
 		ctx, cancel := context.WithTimeout(r.Context(), cfg.Deadline)
 		defer cancel()
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		// The frame's path is answered as the frame's whatever refuses it.
+		if framePathGuard(w, r, a.appOrigin(r)) {
+			return
+		}
 		// A path that is not clean names nothing here: ServeMux would answer
 		// it with a redirect whose body is HTML, and this API answers JSON.
 		if p := r.URL.Path; p != cleanPath(p) {

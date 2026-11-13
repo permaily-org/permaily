@@ -55,6 +55,17 @@ func refusedAsNotTheApp(t *testing.T, name string, rec *httptest.ResponseRecorde
 	}
 }
 
+// refusedAsTheFrame is the same refusal on a path of the frame's route: the
+// frame's headers and its fixed body, never the app's JSON (finding 9 of
+// pull request 5's review).
+func refusedAsTheFrame(t *testing.T, name string, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	wantFrameHeaders(t, name, rec.Header())
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "This message can't be shown here.") {
+		t.Errorf("%s: %d %q", name, rec.Code, rec.Body)
+	}
+}
+
 func TestRefuseCrossSiteBeforeAnything(t *testing.T) {
 	var ran atomic.Int32
 	h := httpapi.RefuseCrossSite(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -77,8 +88,12 @@ func TestRefuseCrossSiteBeforeAnything(t *testing.T) {
 				name := method + " " + p + " " + strings.Join(site, ",")
 				with := crossSite(h, method, p, "alice", site...)
 				without := crossSite(h, method, p, "", site...)
-				refusedAsNotTheApp(t, name+" with a session", with)
-				refusedAsNotTheApp(t, name+" without one", without)
+				refused := refusedAsNotTheApp
+				if strings.HasSuffix(p, "/html") {
+					refused = refusedAsTheFrame
+				}
+				refused(t, name+" with a session", with)
+				refused(t, name+" without one", without)
 			}
 		}
 	}
@@ -144,9 +159,13 @@ func TestTheMailboxRoutesRefuseAnotherSite(t *testing.T) {
 		route{"the frame", "GET", "/api/v1/mailboxes/" + box.ID + "/messages/" + msg + "/html", "", 200},
 		route{"a link", "GET", "/api/v1/mailboxes/" + box.ID + "/messages/" + msg + "/links/0.AAAAAAAAAAAAAAAA", "", 404})
 	for _, r := range all {
+		refused := refusedAsNotTheApp
+		if r.name == "the frame" {
+			refused = refusedAsTheFrame
+		}
 		for _, site := range []string{"cross-site", "same-site"} {
-			refusedAsNotTheApp(t, r.name+" "+site+" with a session", crossSite(h, r.method, r.path, "alice", site))
-			refusedAsNotTheApp(t, r.name+" "+site+" without one", crossSite(h, r.method, r.path, "", site))
+			refused(t, r.name+" "+site+" with a session", crossSite(h, r.method, r.path, "alice", site))
+			refused(t, r.name+" "+site+" without one", crossSite(h, r.method, r.path, "", site))
 		}
 	}
 	if seen.n.Load() != 0 || len(a.svc.opened) != 0 || len(a.reader.read) != 0 {

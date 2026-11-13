@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,6 +43,42 @@ func SetFrameHeaders(h http.Header, appOrigin string) {
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-DNS-Prefetch-Control", "off")
+}
+
+// isFramePath says whether p, as ServeMux would clean it and with or
+// without a trailing slash, is a path of the frame's route:
+// /api/v1/mailboxes/{id}/messages/{message}/html.
+func isFramePath(p string) bool {
+	s := strings.Split(strings.TrimSuffix(cleanPath(p), "/"), "/")
+	return len(s) == 8 && s[0] == "" && s[1] == "api" && s[2] == "v1" && s[3] == "mailboxes" && s[4] != "" &&
+		s[5] == "messages" && s[6] != "" && s[7] == "html"
+}
+
+// framePathGuard answers what every answer of the frame's path shares
+// (ADR 0026, "The frame's path: every answer"): for a request whose path,
+// as written or as decoded, is one of the frame's route, it sets the
+// frame's headers before anything can refuse it, so every answer after is
+// the frame's; and it answers itself, with a fixed body, the refusals that
+// come before the route: another site (403), a path that is not clean
+// (404, where ServeMux would redirect with a body of its own) and a method
+// other than GET or HEAD (405). It says whether it answered.
+func framePathGuard(w http.ResponseWriter, r *http.Request, appOrigin string) bool {
+	if !isFramePath(r.URL.Path) && !isFramePath(r.URL.EscapedPath()) {
+		return false
+	}
+	SetFrameHeaders(w.Header(), appOrigin)
+	switch {
+	case saysCrossSite(r):
+		frameFail(w, http.StatusForbidden)
+	case r.URL.Path != cleanPath(r.URL.Path) || strings.HasSuffix(r.URL.Path, "/"):
+		frameFail(w, http.StatusNotFound)
+	case r.Method != http.MethodGet && r.Method != http.MethodHead:
+		w.Header().Set("Allow", "GET, HEAD")
+		frameFail(w, http.StatusMethodNotAllowed)
+	default:
+		return false
+	}
+	return true
 }
 
 // The fixed bodies of the frame's route when it shows no message: never

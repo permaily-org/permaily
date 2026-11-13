@@ -45,8 +45,15 @@ func CrossSiteExceptions() []CrossSiteException {
 // (the public site among them) are not the app. A request without the header
 // (a browser that sends no Fetch Metadata, a client that is not a browser)
 // goes on, to the checks it met before.
+//
+// A path of the frame's route is answered as the frame's whatever refuses
+// it, here and after (framePathGuard): the frame's headers, then a fixed
+// HTML body, never the app's JSON.
 func RefuseCrossSite(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if framePathGuard(w, r, "https://"+r.Host) {
+			return
+		}
 		if underAPI(r.URL.Path) && saysCrossSite(r) && !excepted(r) {
 			notFromTheApp(w)
 			return
