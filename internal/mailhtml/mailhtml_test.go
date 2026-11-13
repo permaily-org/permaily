@@ -13,6 +13,7 @@ import (
 	"image"
 	"image/color"
 	"image/gif"
+	"image/jpeg"
 	_ "image/png" // image.DecodeConfig of the 8192 x 8192 PNG
 	"os"
 	"path/filepath"
@@ -351,11 +352,11 @@ func TestImages11(t *testing.T) {
 	// Through cid: parts, the only way an image of more than the part's
 	// 2 MiB comes: one over 2 MiB, and three of 1.9 MiB, past 5 MiB
 	// together.
-	big := append(pngImage(t, 4, 4, false), make([]byte, 1900<<10)...)
+	big := padPNG(pngImage(t, 4, 4, false), 1900<<10)
 	in := input(imgs("cid:a", "cid:a", "cid:a", "cid:over", "cid:cut"))
 	in.Inline = map[string]InlinePart{
 		"a":    {Type: "image/png", Data: big},
-		"over": {Type: "image/png", Data: append(pngImage(t, 4, 4, false), make([]byte, 2<<20)...)},
+		"over": {Type: "image/png", Data: padPNG(pngImage(t, 4, 4, false), 2<<20)},
 		"cut":  {Type: "image/png", TooLarge: true},
 	}
 	if st, _ := renderOK(t, in); st.InlineImages != 2 || st.InlineImagesOmittedBy.TooLarge != 3 {
@@ -396,11 +397,26 @@ func gifOutside(t *testing.T) []byte {
 	return b
 }
 
-func jpegImage(t *testing.T, w, h int) []byte {
+// jpegImage is a real baseline JPEG from Go's encoder: tables, a frame, a
+// scan of entropy-coded data and its end.
+func jpegImage(t testing.TB, w, h int) []byte {
 	t.Helper()
-	b := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 'J', 'F', 'I', 'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0}
-	sof := []byte{0xFF, 0xC0, 0, 11, 8, byte(h >> 8), byte(h), byte(w >> 8), byte(w), 1, 1, 0x11, 0}
-	return append(append(b, sof...), 0xFF, 0xD9)
+	var b bytes.Buffer
+	if err := jpeg.Encode(&b, image.NewGray(image.Rect(0, 0, w, h)), nil); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}
+
+// padPNG is b with an ancillary chunk of n zero bytes before its IEND: a
+// PNG that larger and still one image.
+func padPNG(b []byte, n int) []byte {
+	end := len(b) - 12
+	pad := make([]byte, 12+n)
+	binary.BigEndian.PutUint32(pad, uint32(n))
+	copy(pad[4:], "tEXt")
+	binary.BigEndian.PutUint32(pad[8+n:], crc32.ChecksumIEEE(pad[4:8+n]))
+	return append(append(append([]byte{}, b[:end]...), pad...), b[end:]...)
 }
 
 // Item 12: 2 MiB of "&" is refused at 4 MiB of output, while it is
@@ -748,7 +764,7 @@ func TestImageStructureRefuses(t *testing.T) {
 			t.Errorf("%+v %v", info, ok)
 		}
 		for n := range len(b) - 1 {
-			if info, ok := imageStructure(b[:n]); ok && n < len(b)-1 && info.Type != "image/jpeg" {
+			if info, ok := imageStructure(b[:n]); ok {
 				t.Errorf("%s cut at %d reads", info.Type, n)
 			}
 		}

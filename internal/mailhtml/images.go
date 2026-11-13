@@ -41,13 +41,21 @@ func imageStructure(b []byte) (imageInfo, bool) {
 	return imageInfo{}, false
 }
 
-// pngStructure reads the signature, IHDR first, then every chunk to IEND.
-// An acTL, fcTL or fdAT chunk is APNG.
+// The walkers are structural checks, not validators: they accept a file
+// only when its structure says one thing, so the size they measure is the
+// size a decoder decodes (one header, one image, nothing after its end that
+// a decoder could read as another). An accepted file can still fail to
+// decode in a browser, which then shows nothing.
+
+// pngStructure reads the signature, IHDR first and once, then every chunk
+// to IEND: PLTE once and before the image data, the IDAT chunks one after
+// another, at least one, and nothing after IEND. An acTL, fcTL or fdAT
+// chunk is APNG.
 func pngStructure(b []byte) (imageInfo, bool) {
 	info := imageInfo{Type: "image/png"}
 	p := 8
-	first := true
-	for {
+	idat, idatEnded, plte := false, false, false
+	for first := true; ; first = false {
 		if len(b)-p < 12 {
 			return imageInfo{}, false
 		}
@@ -57,8 +65,15 @@ func pngStructure(b []byte) (imageInfo, bool) {
 			return imageInfo{}, false
 		}
 		data := b[p+8 : p+8+n]
-		if first {
-			if typ != "IHDR" || n != 13 {
+		if first != (typ == "IHDR") {
+			return imageInfo{}, false // IHDR first, and only first
+		}
+		if idat && typ != "IDAT" {
+			idatEnded = true
+		}
+		switch typ {
+		case "IHDR":
+			if n != 13 {
 				return imageInfo{}, false
 			}
 			w, h := binary.BigEndian.Uint32(data), binary.BigEndian.Uint32(data[4:])
@@ -66,25 +81,39 @@ func pngStructure(b []byte) (imageInfo, bool) {
 				return imageInfo{}, false
 			}
 			info.Width, info.Height = int(w), int(h)
-			first = false
-		}
-		switch typ {
+		case "IDAT":
+			if idatEnded {
+				return imageInfo{}, false
+			}
+			idat = true
+		case "PLTE":
+			if plte || idat {
+				return imageInfo{}, false
+			}
+			plte = true
 		case "acTL", "fcTL", "fdAT":
 			info.Animated = true
 		case "IEND":
+			if !idat || p+12+n != len(b) {
+				return imageInfo{}, false
+			}
 			return info, true
 		}
 		p += 12 + n
 	}
 }
 
-// jpegStructure reads markers to the first start of frame (SOFn), which
-// holds the size.
+// jpegStructure reads every marker from the start of the image to its end
+// (EOI), the entropy-coded data of each scan skipped to the next marker:
+// exactly one frame header (SOFn), before the first scan, and no second
+// start of image. What follows EOI is not read; a decoder stops there.
 func jpegStructure(b []byte) (imageInfo, bool) {
+	var info imageInfo
 	p := 2
+	frames, scans := 0, 0
 	for {
 		// Fill bytes before a marker.
-		for p < len(b) && b[p] == 0xFF && p+1 < len(b) && b[p+1] == 0xFF {
+		for p+1 < len(b) && b[p] == 0xFF && b[p+1] == 0xFF {
 			p++
 		}
 		if len(b)-p < 2 || b[p] != 0xFF {
@@ -93,10 +122,15 @@ func jpegStructure(b []byte) (imageInfo, bool) {
 		m := b[p+1]
 		p += 2
 		switch {
-		case m == 0xD8 || m == 0x01 || m >= 0xD0 && m <= 0xD7:
+		case m == 0xD9:
+			if frames != 1 || scans == 0 {
+				return imageInfo{}, false
+			}
+			return info, true
+		case m == 0xD8 || m == 0xDE || m == 0xDF:
+			return imageInfo{}, false // another image, or a hierarchical one
+		case m == 0x01 || m >= 0xD0 && m <= 0xD7:
 			continue // no length
-		case m == 0xD9 || m == 0xDA:
-			return imageInfo{}, false // end, or scan data before a frame
 		}
 		if len(b)-p < 2 {
 			return imageInfo{}, false
@@ -106,7 +140,8 @@ func jpegStructure(b []byte) (imageInfo, bool) {
 			return imageInfo{}, false
 		}
 		if m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC {
-			if n < 8 {
+			frames++
+			if frames > 1 || scans > 0 || n < 8 {
 				return imageInfo{}, false
 			}
 			h := int(binary.BigEndian.Uint16(b[p+3:]))
@@ -114,12 +149,32 @@ func jpegStructure(b []byte) (imageInfo, bool) {
 			if w == 0 || h == 0 {
 				return imageInfo{}, false // a height given later (DNL) is not read
 			}
-			return imageInfo{Type: "image/jpeg", Width: w, Height: h}, true
+			info = imageInfo{Type: "image/jpeg", Width: w, Height: h}
 		}
 		p += n
+		if m != 0xDA {
+			continue
+		}
+		if frames == 0 {
+			return imageInfo{}, false // scan data before a frame
+		}
+		scans++
+		// The entropy-coded data, to the next marker: 0xFF followed by
+		// 0x00 (a stuffed byte), a restart marker or more fill is data.
+		for {
+			i := bytes.IndexByte(b[p:], 0xFF)
+			if i < 0 || p+i+1 >= len(b) {
+				return imageInfo{}, false
+			}
+			p += i
+			if next := b[p+1]; next == 0x00 || next >= 0xD0 && next <= 0xD7 {
+				p += 2
+				continue
+			}
+			break
+		}
 	}
 }
-
 // gifStructure reads the header, the logical screen, then every block to
 // the trailer. More than one image, a NETSCAPE2.0 or ANIMEXTS1.0
 // application extension, is animated; an image outside the logical screen
@@ -214,77 +269,112 @@ func gifSubBlocks(b []byte, p int) (int, bool) {
 	}
 }
 
-// webpStructure reads the RIFF chunks: VP8 or VP8L alone, or VP8X with its
-// animation flag clear, no ANIM or ANMF chunk, and image data.
+// webpStructure reads the RIFF chunks. The simple form is one chunk, VP8
+// or VP8L, and nothing else. The extended form is VP8X first and once,
+// then, in this order and each at most once: ICCP, ALPH (only before a
+// lossy VP8), the image data (exactly one VP8 or VP8L, whose size is
+// VP8X's canvas), EXIF, XMP. Any other chunk, or one repeated or out of
+// that order, refuses the file. The animation flag, or an ANIM or ANMF
+// chunk, is animation.
 func webpStructure(b []byte) (imageInfo, bool) {
 	size := int(binary.LittleEndian.Uint32(b[4:]))
 	if size < 4 || size > len(b)-8 {
 		return imageInfo{}, false
 	}
 	b = b[:8+size]
-	info := imageInfo{Type: "image/webp"}
+	type chunk struct {
+		fourcc string
+		data   []byte
+	}
+	var chunks []chunk
 	p := 12
-	first := true
-	extended, haveData := false, false
 	for p < len(b) {
 		if len(b)-p < 8 {
 			return imageInfo{}, false
 		}
-		fourcc := string(b[p : p+4])
 		n := int(binary.LittleEndian.Uint32(b[p+4:]))
 		if n < 0 || n > len(b)-p-8 {
 			return imageInfo{}, false
 		}
-		data := b[p+8 : p+8+n]
-		switch fourcc {
-		case "VP8X":
-			if !first || n < 10 {
-				return imageInfo{}, false
-			}
-			extended = true
-			if data[0]&0x02 != 0 {
-				info.Animated = true
-			}
-			info.Width = 1 + int(uint32(data[4])|uint32(data[5])<<8|uint32(data[6])<<16)
-			info.Height = 1 + int(uint32(data[7])|uint32(data[8])<<8|uint32(data[9])<<16)
-		case "VP8 ":
-			if n < 10 || data[3] != 0x9D || data[4] != 0x01 || data[5] != 0x2A {
-				return imageInfo{}, false
-			}
-			w := int(binary.LittleEndian.Uint16(data[6:]) & 0x3FFF)
-			h := int(binary.LittleEndian.Uint16(data[8:]) & 0x3FFF)
-			if !extended {
-				info.Width, info.Height = w, h
-			}
-			haveData = true
-		case "VP8L":
-			if n < 5 || data[0] != 0x2F {
-				return imageInfo{}, false
-			}
-			bits := binary.LittleEndian.Uint32(data[1:])
-			w := int(bits&0x3FFF) + 1
-			h := int(bits>>14&0x3FFF) + 1
-			if !extended {
-				info.Width, info.Height = w, h
-			}
-			haveData = true
-		case "ANIM", "ANMF":
-			info.Animated = true
-		}
-		if first && !extended && fourcc != "VP8 " && fourcc != "VP8L" {
-			return imageInfo{}, false
-		}
-		first = false
+		chunks = append(chunks, chunk{string(b[p : p+4]), b[p+8 : p+8+n]})
 		p += 8 + n + n&1
 	}
-	if p != len(b) && p != len(b)+1 {
+	if len(chunks) == 0 || p != len(b) && p != len(b)+1 {
 		return imageInfo{}, false
 	}
-	if !haveData && !info.Animated {
+	info := imageInfo{Type: "image/webp"}
+	if chunks[0].fourcc != "VP8X" {
+		if len(chunks) != 1 {
+			return imageInfo{}, false
+		}
+		w, h, ok := webpPayload(chunks[0].fourcc, chunks[0].data)
+		if !ok {
+			return imageInfo{}, false
+		}
+		info.Width, info.Height = w, h
+		return info, true
+	}
+	x := chunks[0].data
+	if len(x) < 10 {
 		return imageInfo{}, false
 	}
-	if info.Width == 0 || info.Height == 0 {
+	info.Width = 1 + int(uint32(x[4])|uint32(x[5])<<8|uint32(x[6])<<16)
+	info.Height = 1 + int(uint32(x[7])|uint32(x[8])<<8|uint32(x[9])<<16)
+	for _, c := range chunks[1:] {
+		if c.fourcc == "ANIM" || c.fourcc == "ANMF" {
+			info.Animated = true
+		}
+	}
+	if x[0]&0x02 != 0 || info.Animated {
+		info.Animated = true
+		return info, true // never shown: its frames are not read
+	}
+	// The order of the extended form, as a position each chunk must pass.
+	order := map[string]int{"ICCP": 1, "ALPH": 2, "VP8 ": 3, "VP8L": 3, "EXIF": 4, "XMP ": 5}
+	at, payloads, alpha := 0, 0, false
+	for _, c := range chunks[1:] {
+		pos, ok := order[c.fourcc]
+		if !ok || pos <= at && pos != 3 || pos == 3 && payloads > 0 {
+			return imageInfo{}, false // unknown, repeated or out of order
+		}
+		at = pos
+		switch c.fourcc {
+		case "ALPH":
+			alpha = true
+		case "VP8 ", "VP8L":
+			if c.fourcc == "VP8L" && alpha {
+				return imageInfo{}, false // an alpha chunk a lossless image ignores
+			}
+			w, h, ok := webpPayload(c.fourcc, c.data)
+			if !ok || w != info.Width || h != info.Height {
+				return imageInfo{}, false
+			}
+			payloads++
+		}
+	}
+	if payloads != 1 {
 		return imageInfo{}, false
 	}
 	return info, true
+}
+
+// webpPayload is the size a VP8 (lossy key frame) or VP8L (lossless) chunk
+// declares.
+func webpPayload(fourcc string, data []byte) (int, int, bool) {
+	switch fourcc {
+	case "VP8 ":
+		if len(data) < 10 || data[3] != 0x9D || data[4] != 0x01 || data[5] != 0x2A {
+			return 0, 0, false
+		}
+		w := int(binary.LittleEndian.Uint16(data[6:]) & 0x3FFF)
+		h := int(binary.LittleEndian.Uint16(data[8:]) & 0x3FFF)
+		return w, h, w > 0 && h > 0
+	case "VP8L":
+		if len(data) < 5 || data[0] != 0x2F {
+			return 0, 0, false
+		}
+		bits := binary.LittleEndian.Uint32(data[1:])
+		return int(bits&0x3FFF) + 1, int(bits>>14&0x3FFF) + 1, true
+	}
+	return 0, 0, false
 }
