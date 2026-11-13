@@ -351,7 +351,7 @@ const (
 	MessageHTMLRendersPerAccount = 1
 	MessageHTMLQueuedPerAccount  = 2
 	// MessageHTMLRenderDeadline stops a render that runs longer: the
-	// slowest input the limits accept took 0.32 s (ADR 0026, "Limits").
+	// slowest input measured took 0.2 s (ADR 0026, "Limits").
 	MessageHTMLRenderDeadline = 2 * time.Second
 	// MessageHTMLRenderMemory is the most one render holds at its peak, the
 	// heap above where it started, garbage not yet collected included: the
