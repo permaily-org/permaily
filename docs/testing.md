@@ -68,13 +68,13 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `pkg/provenance` | 99 | 99.4 |
 | `internal/tlsacme` | 91 (with Pebble) | 92.1 (2026-11-12); the test of two enclaves started together moves it by a few tenths, run to run |
 | `internal/router` | 100 | 100.0 |
-| `internal/httpapi` | 97 | 97.7 (2026-11-12, with the operator's and admins' mailboxes) |
+| `internal/httpapi` | 97 | 97.5 (2026-11-12, after PR #92's code review) |
 | `internal/webui` | 75 | 75.0 |
 | `internal/hostproxy` | 77 | 77.2 (2026-11-12) |
 | `internal/enclave` | 87 | 87.7 |
 | `internal/envelope` | 97 | 97.0 (2026-11-12) |
 | `internal/keys` | 89 (target 95) | 89.9 (2026-11-12) |
-| `internal/inbox` | 97 | 97.2 (2026-11-12, ADR 0026's pull request 2, merged with pull request 1) |
+| `internal/inbox` | 97 | 97.3 (2026-11-12, after PR #92's code review) |
 | `internal/msgauth` | 86 | 86.0 |
 | `internal/smtpd` | 96 | 96.8 (2026-11-12, PR #91's review) |
 | `internal/store` | 97 (with emulators) | 97.7 (2026-11-12, PR #91's review) |
@@ -86,7 +86,7 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `internal/sesmail` | 98 | 98.6 (2026-11-11) |
 | `internal/webauthn` | 99 | 99.4 (2026-11-11) |
 | `internal/idp` | 100 | 100.0 (2026-11-11) |
-| `internal/mailhtml` | 94 | 94.7 (2026-11-12, ADR 0026's pull request 5) |
+| `internal/mailhtml` | 95 | 95.2 (2026-11-12, after PR #92's code review) |
 
 Coverage of the web app is in `web/vitest.config.ts`, one threshold for each area that talks to the server, set the same way. The screens on sample data have none: they are still changing.
 

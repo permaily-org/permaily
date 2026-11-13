@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"testing"
+	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/mailhtml"
@@ -61,3 +62,43 @@ func TestReview4AMessageHTMLIsWorkedOnlyAfterItsAdmission(t *testing.T) {
 type admitFunc func(context.Context) (context.Context, func(), error)
 
 func (f admitFunc) Admit(ctx context.Context) (context.Context, func(), error) { return f(ctx) }
+
+// Finding 4: the edges of the admitted summary. A refusal while the
+// request itself has ended answers nothing of the HTML (Get answers the
+// request's error); a message whose bytes say "/html" with no HTML part is
+// admitted, has no summary and gives its slot back; a render that fails
+// after its input was made, its deadline passed, is unavailable.
+func TestReview4TheEdgesOfTheAdmittedSummary(t *testing.T) {
+	b := Box{MailboxID: "mbx", Key: bytes.Repeat([]byte{7}, 32)}
+	htmlRaw := []byte("Content-Type: text/html\r\n\r\n<p>x</p>")
+	ended, end := context.WithCancel(context.Background())
+	end()
+	refused := admitFunc(func(context.Context) (context.Context, func(), error) { return nil, nil, context.Canceled })
+	if h := messageHTML(WithRenderAdmission(ended, refused), htmlRaw, b, "m1"); h != nil {
+		t.Errorf("an ended request: %+v", h)
+	}
+	released := 0
+	admitted := admitFunc(func(ctx context.Context) (context.Context, func(), error) {
+		c, cancel := context.WithCancel(ctx)
+		return c, func() { released++; cancel() }, nil
+	})
+	plain := []byte("Content-Type: text/plain\r\n\r\nthe page is at https://e.example/index/html")
+	if h := messageHTML(WithRenderAdmission(context.Background(), admitted), plain, b, "m1"); h != nil || released != 1 {
+		t.Errorf("no HTML part: %+v, released %d", h, released)
+	}
+	// The input made without looking at the context, then the render under
+	// a deadline that has passed.
+	old := htmlInputFn
+	htmlInputFn = func(ctx context.Context, raw []byte, b Box, id string) (mailhtml.Input, string, bool, error) {
+		in, status, ok, err := old(context.Background(), raw, b, id)
+		return in, status, ok, err
+	}
+	defer func() { htmlInputFn = old }()
+	passed := admitFunc(func(ctx context.Context) (context.Context, func(), error) {
+		c, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+		return c, cancel, nil
+	})
+	if h := messageHTML(WithRenderAdmission(context.Background(), passed), htmlRaw, b, "m1"); h == nil || h.Status != contracts.HTMLUnavailable {
+		t.Errorf("a render past its deadline: %+v", h)
+	}
+}
