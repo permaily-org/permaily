@@ -3,6 +3,7 @@ package mailhtml
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"runtime"
 	"slices"
@@ -301,7 +302,7 @@ func TestReviewThirdCTheDrawnNameMakesThePartUnreadable(t *testing.T) {
 		if st, err := Render(context.Background(), input(src), nil); err != nil || st.Status != contracts.HTMLUnreadable {
 			t.Errorf("%q: %s %v", src, st.Status, err)
 		}
-		if _, err := Links(context.Background(), input(src)); err != ErrNotShown {
+		if _, err := Links(context.Background(), input(src)); !errors.Is(err, ErrNotShown) {
 			t.Errorf("%q: %v", src, err)
 		}
 	}
