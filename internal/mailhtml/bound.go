@@ -78,8 +78,9 @@ var blocks = setAtoms(atom.Address, atom.Applet, atom.Article, atom.Aside, atom.
 // parser will create. It fails with errTooLarge past any limit, or ctx's
 // error, and builds no tree.
 //
-// The bound adds one for each start tag and text token, and at each of them
-// every formatting element the parser may hold as active and not open,
+// The bound adds one for each comment and doctype (found by FuzzSanitise),
+// one for each start tag and text token, and at each of these every
+// formatting element the parser may hold as active and not open,
 // which its "reconstruct the active formatting elements" step can clone
 // there. A formatting element leaves that count only at its end tag, and
 // only when no block has started since it opened (then the parser pops it
@@ -151,6 +152,8 @@ func treeBound(ctx context.Context, b []byte) (int, error) {
 			return 0, errTooLarge
 		case html.TextToken:
 			bound += 1 + active
+		case html.CommentToken, html.DoctypeToken:
+			bound++ // a node of its own, never cloned
 		case html.StartTagToken, html.SelfClosingTagToken:
 			starts++
 			name, hasAttr := z.TagName()

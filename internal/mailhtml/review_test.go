@@ -706,3 +706,21 @@ func TestReviewCSSExpectationsWrittenByHand(t *testing.T) {
 		}
 	}
 }
+
+// Found by FuzzSanitise after the review (testdata/fuzz/FuzzSanitise/
+// a26e07e044c78bc2): comments and doctypes are nodes of the tree too, and
+// the bound did not count them, so a part of 2 MiB of "<!>" made about
+// 700,000 nodes past the 200,000 of the bound. Each counts one.
+func TestFuzzFoundCommentsAreNodesToTheBound(t *testing.T) {
+	for _, src := range []string{"<!><!><!><!><!0", "<!--a--><!DOCTYPE x><!--b--><p>x</p><!---->", "<!DOCTYPE html><!DOCTYPE html>"} {
+		bound, err := treeBound(context.Background(), []byte(src))
+		doc, _ := parse(context.Background(), []byte(src))
+		if err != nil || countNodes(doc) > 3*bound+8 || bound < strings.Count(src, "<!") {
+			t.Errorf("%q: bound %d, %d nodes, %v", src, bound, countNodes(doc), err)
+		}
+	}
+	st, _ := renderOK(t, input(strings.Repeat("<!>", contracts.MessageHTMLMaxBytes/3)))
+	if st.Status != contracts.HTMLTooLarge {
+		t.Errorf("2 MiB of comments: %+v", st)
+	}
+}

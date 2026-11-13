@@ -133,8 +133,21 @@ func FuzzImageStructure(f *testing.F) {
 		if info.Animated || info.Type == "image/webp" || info.Width*info.Height > 1<<16 {
 			return
 		}
+		// A GIF's measure is its logical screen, the canvas a browser
+		// draws; Go decodes its one frame, which lies inside it
+		// (testdata/fuzz/FuzzImageStructure/3c69cc3eafe0ecf5: a frame of
+		// 3 x 2 at 32,48 on a screen of 48 x 304).
+		if cfg, _, err := image.DecodeConfig(bytes.NewReader(b)); err == nil && (cfg.Width != info.Width || cfg.Height != info.Height) {
+			t.Fatalf("measured %dx%d, configured %dx%d", info.Width, info.Height, cfg.Width, cfg.Height)
+		}
 		img, _, err := image.Decode(bytes.NewReader(b))
-		if err == nil && (img.Bounds().Dx() != info.Width || img.Bounds().Dy() != info.Height) {
+		switch {
+		case err != nil:
+		case info.Type == "image/gif":
+			if !img.Bounds().In(image.Rect(0, 0, info.Width, info.Height)) {
+				t.Fatalf("measured %dx%d, a frame at %v", info.Width, info.Height, img.Bounds())
+			}
+		case img.Bounds().Dx() != info.Width || img.Bounds().Dy() != info.Height:
 			t.Fatalf("measured %dx%d, decoded %v", info.Width, info.Height, img.Bounds())
 		}
 	})
