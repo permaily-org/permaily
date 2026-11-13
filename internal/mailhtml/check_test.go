@@ -160,6 +160,17 @@ func checkElement(n *html.Node, inHead bool) error {
 				return fmt.Errorf("rel %q", a.Val)
 			}
 		case "style":
+			// A link's forced style positions it on top: the one place the
+			// output says position and z-index.
+			if n.Data == "a" {
+				if !strings.HasSuffix(a.Val, linkStyle) {
+					return fmt.Errorf("a link without its forced style: %q", a.Val)
+				}
+				if err := checkCSS(strings.TrimSuffix(a.Val, linkStyle), true); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := checkCSS(a.Val, true); err != nil {
 				return err
 			}

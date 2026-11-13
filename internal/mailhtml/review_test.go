@@ -515,7 +515,7 @@ func styleOf(t *testing.T, out, id string) (string, bool) {
 // ancestorHolds are the declarations every element that holds a link
 // carries, attached to it with !important, which no rule of a stylesheet
 // can beat.
-var ancestorHolds = []string{"overflow:visible !important", "height:auto !important", "max-height:none !important", "min-width:min-content !important"}
+var ancestorHolds = []string{"overflow:visible!important", "height:auto!important", "max-height:none!important", "max-width:none!important", "min-width:min-content!important"}
 
 // Finding 3: a link's forced style did not stop its ancestors from hiding it
 // or laying it over what follows. On every element that holds a link

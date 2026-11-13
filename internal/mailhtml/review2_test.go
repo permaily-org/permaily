@@ -363,3 +363,106 @@ func TestTheOutputParsesBackBoundedAndPlain(t *testing.T) {
 		}
 	}
 }
+
+// linkOnTop is what every kept link carries so that it is painted above
+// everything the message draws and takes the click at every point of its
+// box (ADR 0026, "What each link carries").
+var linkOnTop = []string{"position:relative!important", "z-index:2147483647!important"}
+
+// N4: a link could still be hidden or covered. No display of a table's
+// column keeps a box for a link; details and summary are plain containers,
+// so their content is always shown; an element that holds a link has no
+// maximum width; and every link is positioned on top of everything.
+func TestReviewN4LinksHaveABoxAndAreOnTop(t *testing.T) {
+	link := `<a href="https://example.com/">LINK</a>`
+	for _, src := range []string{
+		`<div id="x" style="display:table-column">` + link + `</div>`,
+		`<div id="x" style="display:table-column-group">` + link + `</div>`,
+	} {
+		_, out := renderOK(t, input(src))
+		if style, _ := styleOf(t, out, "x"); strings.Contains(style, "table-column") {
+			t.Errorf("%s: %q", src, style)
+		}
+	}
+	for _, in := range []string{
+		"@media screen{div{display:table-column-group!important}}",
+		"div{display:table-column}", "td{display:table-column}",
+	} {
+		if got := sheet(in); strings.Contains(got, "table-column") {
+			t.Errorf("%q: %q", in, got)
+		}
+	}
+	// details and summary become div, whatever open says.
+	_, out := renderOK(t, input(`<details id="x"><summary id="y">More</summary>`+link+`</details><details open><summary>S</summary>T</details>`))
+	if strings.Contains(out, "<details") || strings.Contains(out, "<summary") || !strings.Contains(out, `<div id="x"`) || !strings.Contains(out, `<div id="y"`) {
+		t.Errorf("details and summary: %s", out)
+	}
+	// An element that holds a link has no maximum width.
+	_, out = renderOK(t, input(`<table id="x" style="width:0;max-width:0"><tr><td id="y" style="width:0;max-width:0">`+link+`</td></tr></table>`))
+	for _, id := range []string{"x", "y"} {
+		if style, _ := styleOf(t, out, id); !strings.Contains(style, "max-width:none!important") || strings.Contains(style, "max-width:0") {
+			t.Errorf("#%s: %q", id, style)
+		}
+	}
+	// Every link is on top.
+	_, out = renderOK(t, input(`<div>`+link+`<br><span style="padding:100px;background-color:#fff">COVER</span></div>`))
+	doc, _ := html.Parse(strings.NewReader(out))
+	links := 0
+	for n := doc; n != nil; n = next(n, doc) {
+		if n.Type == html.ElementNode && n.Data == "a" {
+			links++
+			s, _ := attr(n, "style")
+			for _, want := range linkOnTop {
+				if !strings.Contains(s, want) {
+					t.Errorf("a link's style %q lacks %q", s, want)
+				}
+			}
+		}
+	}
+	if links != 1 {
+		t.Errorf("%d links in %s", links, out)
+	}
+}
+
+// stackingContexts are the properties that make a box positioned or give
+// it a stacking context, with a value that does, per CSS 2.1 (9.9, "Layered
+// presentation"; Appendix E), CSS Positioned Layout 3, CSS Transforms 1 and
+// 2, Compositing and Blending 1, Filter Effects 1 and 2, CSS Masking 1, CSS
+// Containment 2 and 3, CSS View Transitions 1, Motion Path 1, CSS Will
+// Change 1, and MDN's list ("Stacking context", looked up on 2026-11-13).
+// None may survive the filter, in a style attribute or in a style sheet,
+// so nothing a sender writes can be painted above a link or take its
+// click.
+var stackingContexts = map[string]string{
+	"position": "relative", "z-index": "1", "top": "0", "left": "0", "right": "0", "bottom": "0", "inset": "0",
+	"inset-block": "0", "inset-inline": "0", "opacity": "0.5", "transform": "translateZ(0)", "translate": "1px",
+	"rotate": "1deg", "scale": "2", "perspective": "10px", "transform-style": "preserve-3d", "filter": "blur(1px)",
+	"backdrop-filter": "blur(1px)", "clip-path": "inset(0)", "mask": "none", "mask-image": "linear-gradient(red,red)",
+	"mask-border": "none", "mask-border-source": "linear-gradient(red,red)", "-webkit-mask": "none",
+	"-webkit-mask-image": "linear-gradient(red,red)", "-webkit-box-reflect": "below", "mix-blend-mode": "multiply",
+	"isolation": "isolate", "will-change": "transform", "contain": "paint", "content-visibility": "auto",
+	"container-type": "size", "container": "a / size", "view-transition-name": "a", "offset-path": "path('M0 0')",
+	"offset": "path('M0 0')", "-webkit-overflow-scrolling": "touch", "overlay": "auto", "zoom": "2",
+	"display": "flex", "float": "none; z-index: 5",
+}
+
+func TestReviewN4NothingASenderWritesIsPositionedOrStacked(t *testing.T) {
+	for prop, val := range stackingContexts {
+		decl := prop + ":" + val
+		var attr strings.Builder
+		writeDecls(&attr, (&cssBudget{}).filterStyleAttribute(decl, "div"), false)
+		for _, out := range []string{attr.String(), sheet("div{" + decl + "}"), sheet("@media screen{div{" + decl + " !important}}")} {
+			for p := range stackingContexts {
+				if p == "display" || p == "float" {
+					continue
+				}
+				if strings.Contains(out, p+":") {
+					t.Errorf("%q kept %q in %q", decl, p, out)
+				}
+			}
+			if strings.Contains(out, "flex") || strings.Contains(out, "grid") {
+				t.Errorf("%q kept %q", decl, out)
+			}
+		}
+	}
+}

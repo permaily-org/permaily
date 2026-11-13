@@ -538,7 +538,7 @@ var cssProperties = map[string]valueKind{
 
 var displayValues = set("none", "block", "inline", "inline-block", "list-item", "table", "inline-table",
 	"table-row", "table-cell", "table-row-group", "table-header-group", "table-footer-group",
-	"table-column", "table-column-group", "table-caption")
+	"table-caption")
 
 var fontSizeKeywords = set("xx-small", "x-small", "small", "medium", "large", "x-large", "xx-large", "xxx-large", "smaller", "larger")
 

@@ -23,7 +23,7 @@ func TestAttributes(t *testing.T) {
 		`<table><colgroup span="2" width="10"><col span="1" width="50%"></colgroup><tr><td>x</td></tr></table>`:            `<table><colgroup span="2" width="10"><col span="1" width="50%"/></colgroup><tbody><tr><td>x</td></tr></tbody></table>`,
 		`<p onclick="x" data-x="y" hidden style="color:red;position:fixed">p</p>`:                                          `<p style="color:red">p</p>`,
 		`<td style="height:0;overflow:hidden">x`:                                                                           `x`,
-		`<table><tr><td style="height:0;overflow:hidden">x</td></tr></table>`:                                              `<table><tbody><tr><td style="height:0;overflow:hidden;overflow:visible !important">x</td></tr></tbody></table>`,
+		`<table><tr><td style="height:0;overflow:hidden">x</td></tr></table>`:                                              `<table><tbody><tr><td style="height:0;overflow:hidden;overflow:visible!important">x</td></tr></tbody></table>`,
 		`<p style="color:red">x<table><tr><td>t</td></tr></table></p>`:                                                     `<div style="margin-top:1em;margin-bottom:1em;color:red">x<table><tbody><tr><td>t</td></tr></tbody></table></div></body>`,
 		`<p>x<marquee><div>d</div></marquee></p>`:                                                                          `<div style="margin-top:1em;margin-bottom:1em">x<div>d</div></div>`,
 		`<p>a<td>b</td></p>`: `<p>ab</p>`,
@@ -44,7 +44,7 @@ func TestAttributes(t *testing.T) {
 		}
 	}
 	if st, out := renderOK(t, input(`<a href="https://a.example/"><span style="display:block">x</span><span style="display:none">y</span><span>z</span></a>`)); st.Links != 1 ||
-		!strings.Contains(out, "display:block !important") || !strings.Contains(out, "display:revert !important") || strings.Contains(out, "display:none") {
+		!strings.Contains(out, "display:block!important") || !strings.Contains(out, "display:revert!important") || strings.Contains(out, "display:none") {
 		t.Errorf("inside a link: %s", out)
 	}
 	if colour, ok := colour("12345"); ok {

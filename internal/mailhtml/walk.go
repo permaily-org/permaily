@@ -274,7 +274,12 @@ func (w *walker) element(c, dst *html.Node, depth int, inLink bool) error {
 		return w.walk(c, dst, depth, inLink) // unwrapped
 	}
 	name := c.Data
-	if a == atom.P && needsDiv(c) {
+	switch {
+	case a == atom.P && needsDiv(c):
+		a, name = atom.Div, "div"
+	case a == atom.Details || a == atom.Summary:
+		// Plain containers: what they hold is always shown, whatever open
+		// says.
 		a, name = atom.Div, "div"
 	}
 	n, err := w.newElement(dst, a, name, depth)
@@ -571,7 +576,7 @@ func (w *walker) attributes(c *html.Node, a atom.Atom, inLink bool) []html.Attri
 			if s.Len() > 0 {
 				s.WriteByte(';')
 			}
-			s.WriteString("overflow:visible !important")
+			s.WriteString("overflow:visible!important")
 		}
 	}
 	if s.Len() > 0 || hasStyle && inLink {
@@ -590,7 +595,7 @@ func (w *walker) attributes(c *html.Node, a atom.Atom, inLink bool) []html.Attri
 // instead.
 func holderOwned(d cssDecl) bool {
 	switch d.prop {
-	case "height", "max-height", "overflow", "overflow-x", "overflow-y":
+	case "height", "max-height", "max-width", "overflow", "overflow-x", "overflow-y":
 		return true
 	}
 	return d.prop == "display" && d.value == "none"
@@ -612,11 +617,12 @@ func holderStyle(decls []cssDecl) string {
 // holderForced is attached to every element that holds a link, html and
 // body included, with !important, which wins over every rule of a style
 // sheet whatever its selector: nothing clips what the element holds, no
-// height or maximum height holds it shorter than its content, and no width
-// or maximum width narrower than the content's least width (min-width
-// wins over max-width), so a link inside keeps its box and lays over
-// nothing.
-const holderForced = "overflow:visible !important;height:auto !important;max-height:none !important;min-width:min-content !important"
+// height or maximum height holds it shorter than its content, no maximum
+// width at all, and no width narrower than the content's least width
+// (min-width wins over width), so a link inside keeps its box and lays
+// over nothing.
+const holderForced = "overflow:visible!important;height:auto!important;max-height:none!important;" +
+	"max-width:none!important;min-width:min-content!important"
 
 // keepsHeight says whether a style keeps a height as a length: the box then
 // shows what overflows it, whatever a rule says, so a height cannot hide
@@ -645,14 +651,18 @@ func prependStyle(attrs []html.Attribute, decls string) []html.Attribute {
 
 // linkStyle is what every kept link carries, after its own declarations, so
 // nothing the sender wrote changes how a link looks: underlined, blue on
-// white, in its own box that holds what it draws and fits its container
-// (ADR 0026, "What each link carries").
-const linkStyle = "display:inline-block !important;max-width:100% !important;overflow:hidden !important;" +
-	"color:#1a4fd6 !important;background-color:#fff !important;text-decoration:underline !important;" +
-	"font-size:max(1em, 12px) !important;line-height:normal !important;letter-spacing:normal !important;" +
-	"word-spacing:normal !important;text-indent:0 !important;vertical-align:baseline !important;" +
-	"width:auto !important;height:auto !important;min-width:0 !important;min-height:0 !important;" +
-	"max-height:none !important;margin:0 !important;padding:0 !important;border:0 !important"
+// white, in its own box that holds what it draws and fits its container,
+// and positioned with the largest z-index, so it is painted above
+// everything the message draws (which can neither position a box nor make
+// a stacking context) and takes the click at every point of its box (ADR
+// 0026, "What each link carries").
+const linkStyle = "display:inline-block!important;max-width:100%!important;overflow:hidden!important;" +
+	"color:#1a4fd6!important;background-color:#fff!important;text-decoration:underline!important;" +
+	"font-size:max(1em, 12px)!important;line-height:normal!important;letter-spacing:normal!important;" +
+	"word-spacing:normal!important;text-indent:0!important;vertical-align:baseline!important;" +
+	"width:auto!important;height:auto!important;min-width:0!important;min-height:0!important;" +
+	"max-height:none!important;margin:0!important;padding:0!important;border:0!important;" +
+	"position:relative!important;z-index:2147483647!important"
 
 // linkOwned are the properties linkStyle sets: the link's own are dropped.
 var linkOwned = set("display", "max-width", "overflow", "overflow-x", "overflow-y", "color", "background",
@@ -687,11 +697,11 @@ func descendantStyle(decls []cssDecl) string {
 	if s.Len() > 0 {
 		s.WriteByte(';')
 	}
-	s.WriteString("color:inherit !important;background-color:transparent !important;font-size:inherit !important;" +
-		"line-height:inherit !important;letter-spacing:normal !important;word-spacing:normal !important;" +
-		"text-indent:0 !important;vertical-align:baseline !important;display:")
+	s.WriteString("color:inherit!important;background-color:transparent!important;font-size:inherit!important;" +
+		"line-height:inherit!important;letter-spacing:normal!important;word-spacing:normal!important;" +
+		"text-indent:0!important;vertical-align:baseline!important;display:")
 	s.WriteString(display)
-	s.WriteString(" !important")
+	s.WriteString("!important")
 	return s.String()
 }
 
@@ -811,10 +821,10 @@ var omittedWords = map[string]string{
 	omitUnsupported: "Image not shown",
 }
 
-const boxStyle = "display:inline-block !important;max-width:100% !important;box-sizing:border-box !important;" +
-	"border:1px solid #9a9a9a !important;padding:2px 6px !important;margin:2px 0 !important;" +
-	"background:#f4f4f4 !important;color:#444 !important;font:13px/1.4 system-ui, sans-serif !important;" +
-	"text-decoration:none !important;overflow-wrap:anywhere !important"
+const boxStyle = "display:inline-block!important;max-width:100%!important;box-sizing:border-box!important;" +
+	"border:1px solid #9a9a9a!important;padding:2px 6px!important;margin:2px 0!important;" +
+	"background:#f4f4f4!important;color:#444!important;font:13px/1.4 system-ui, sans-serif!important;" +
+	"text-decoration:none!important;overflow-wrap:anywhere!important"
 
 // image shows an image that travels in the message as a data: URI rebuilt
 // from its bytes, when its structure reads and it is within the limits, and
