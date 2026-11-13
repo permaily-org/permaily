@@ -316,16 +316,12 @@ describe('accounts.sh and mailboxes', () => {
     }
     let out = await run('accounts.sh', 'mailbox', 'pause', mailbox, '--yes')
     expect(out.exit).toBe(0)
-    expect(out.stderr).toContain(
-      'It was already paused: nothing was sent and nothing was counted.',
-    )
+    expect(out.stderr).toContain('It was already paused: nothing was sent and nothing was counted.')
     expect(out.stderr).not.toContain('Done.')
     expect(out.stdout).toContain('paused since 2026-11-12 09:30 UTC')
     out = await run('accounts.sh', 'mailbox', 'resume', mailbox, '--yes')
     expect(out.exit).toBe(0)
-    expect(out.stderr).toContain(
-      'It was not paused: nothing was sent and nothing was counted.',
-    )
+    expect(out.stderr).toContain('It was not paused: nothing was sent and nothing was counted.')
     expect(out.stderr).not.toContain('Done.')
     // An enclave of an earlier release does not say: nothing is claimed.
     answers = {

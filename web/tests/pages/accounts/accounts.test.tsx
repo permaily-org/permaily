@@ -302,11 +302,7 @@ describe('W1: connecting a mailbox and its forwarding set-up', () => {
     server.signedIn()
     // Mail arrives, but no code from Gmail is here: nothing shows that Gmail's code was entered (mail sent
     // straight to the address, or a code that was deleted).
-    expect(await shown(personal)).toEqual([
-      'Step 1: Done',
-      'Step 2: Current step',
-      'Step 3: Done',
-    ])
+    expect(await shown(personal)).toEqual(['Step 1: Done', 'Step 2: Current step', 'Step 3: Done'])
     expect(
       screen.getByText(
         "No code from Gmail is listed here, so this page can't tell whether this step was done.",
@@ -344,7 +340,11 @@ describe('W1: connecting a mailbox and its forwarding set-up', () => {
     // A code for this address, and no mail yet: the code is the step.
     expect(
       await shown(
-        mailboxOf({ state: 'waiting', receiving_since: undefined, confirmations: [confirmationOf()] }),
+        mailboxOf({
+          state: 'waiting',
+          receiving_since: undefined,
+          confirmations: [confirmationOf()],
+        }),
       ),
     ).toEqual(['Step 1: Done', 'Step 2: Current step', 'Step 3: Not started'])
   })
