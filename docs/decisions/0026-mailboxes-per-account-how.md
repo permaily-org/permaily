@@ -265,7 +265,7 @@ The enclave has 2 GiB (`enclave_memory_mib`), and the Go runtime is held under 1
 | Budget | Value | When it is taken | Over it |
 |---|---|---|---|
 | SMTP sessions at once | 64 | When a connection is accepted | `421 4.3.2 Too busy, try again later`, and the connection closes |
-| Sessions from one remote address | 8 | By the host's proxy (`internal/hostproxy`), which sees the address | The proxy refuses the connection |
+| Sessions from one remote address | 8 | By the host's proxy (`internal/hostproxy`), which sees the address | The proxy answers `421 4.7.0` and closes the connection ("The answers, all of them") |
 | Bytes of `DATA` held at once | 128 MiB | As bytes arrive, a MiB at a time, from the first byte of `DATA` or the first `BDAT` chunk: never at `MAIL FROM`, never from a declared `SIZE` | A step waits at most 10 seconds, then `452 4.3.1 Insufficient system storage, try again later`, and the connection closes |
 | Bytes of mail open for reading at once (a message, an attachment, a download, the HTML frame) | 128 MiB | Before a raw message is read from the bucket: the item's size and the seal's overhead, which is also the bound given to `ReadRaw` | Waits at most 10 seconds, then 429 `too_many_requests` |
 | Searches at once | 4 | Before a search page | Waits at most 10 seconds, then 429 |
@@ -344,6 +344,7 @@ So a crash never loses a message and never stores it twice while its claim lives
 | No TLS | `MAIL FROM` | `530 5.7.0` |
 | `SIZE` over 25 MiB | `MAIL FROM` | `552 5.3.4` |
 | Sessions over 64 | Connection | `421 4.3.2` |
+| A ninth connection from one remote address | Connection, at the host's proxy, before the enclave sees it | `421 4.7.0 Too many connections from your address, try again later`, in plain text before any TLS, closed. Written by the host (`hostproxy.SMTPRefusal`), not the enclave: the one line the untrusted host ever says on port 25, and it says nothing of mail |
 | Past a deadline, or past the session's caps | Anywhere | `421 4.4.2` or `421 4.7.0` ("Deadlines of a session"), closed |
 | An address never made, disconnected, paused, cancelled, unreadable, of another domain, or with a `+tag`; or whose account's list is missing, lost, forked, closed or does not name it | `RCPT TO` | `550 5.1.1 No such mailbox` |
 | The mailbox over 600 messages this hour or 2 GiB today, in this enclave | `RCPT TO` | `451 4.7.1` |
@@ -607,7 +608,7 @@ The admin panel, under `/api/v1/admin/` (ADR 0022: an admin whose account is "pa
 |---|---|
 | `GET admin/accounts/{id}/mailboxes` | `MailboxRecordList` |
 | `GET admin/mailboxes?address=<address>` | `MailboxRecordList` of none or one |
-| `POST admin/mailboxes/{id}/pause`, `POST admin/mailboxes/{id}/resume` | The `MailboxRecord` after it; 403 `confirmation_needed`, `super_admin_only`; 429 past ten changes in thirty days |
+| `POST admin/mailboxes/{id}/pause`, `POST admin/mailboxes/{id}/resume` | The `MailboxRecord` after it, with `changed`: whether this call changed it, and so told the person and was counted (`contracts.MailboxChange`, added after the second staging rehearsal); 403 `confirmation_needed`, `super_admin_only`; 429 past ten changes in thirty days |
 
 `AccountRecord` gains `mailboxes` (a number) and `Stats` gains `mailboxes` (`MailboxCounts`, `{total}`), added by pull request 4.
 

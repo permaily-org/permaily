@@ -25,11 +25,24 @@ import (
 // host can break anyway; the enclave's own budgets hold whatever it does.
 const SMTPPerAddress = 8
 
+// SMTPRefusal is what the host says to a connection to the SMTP port past
+// SMTPPerAddress before closing it: one line in plain text, before any TLS,
+// as an SMTP server refuses a connection (RFC 5321, 3.1; RFC 3463's 4.7.0),
+// so the sender retries later instead of seeing the connection drop. It is
+// the one thing the host ever says on the enclave's SMTP port, and it says
+// nothing of mail: the host reads none and decides nothing about it (ADR
+// 0026, "Admission"; docs/threat-model.md).
+const SMTPRefusal = "421 4.7.0 Too many connections from your address, try again later\r\n"
+
+// refusalDeadline bounds the write of the refusal: it is a courtesy, and its
+// failure changes nothing.
+const refusalDeadline = time.Second
+
 // Forward accepts connections on ln and pipes each one to a connection
 // returned by dial until ctx is done. With perAddress above zero, a remote
-// address that holds that many connections already has its next one closed
-// at once.
-func Forward(ctx context.Context, ln net.Listener, dial func(context.Context) (net.Conn, error), perAddress int, log *slog.Logger) error {
+// address that holds that many connections already has its next one told
+// refusal (when not empty) and closed at once.
+func Forward(ctx context.Context, ln net.Listener, dial func(context.Context) (net.Conn, error), perAddress int, refusal string, log *slog.Logger) error {
 	go func() {
 		<-ctx.Done()
 		ln.Close()
@@ -50,6 +63,12 @@ func Forward(ctx context.Context, ln net.Listener, dial func(context.Context) (n
 		}
 		addr := remoteHost(in)
 		if perAddress > 0 && !held.take(addr, perAddress) {
+			if refusal != "" {
+				// A fresh socket takes one short line without waiting; the
+				// deadline holds if it does not, and a failure changes nothing.
+				_ = in.SetWriteDeadline(time.Now().Add(refusalDeadline))
+				_, _ = io.WriteString(in, refusal)
+			}
 			in.Close()
 			continue
 		}

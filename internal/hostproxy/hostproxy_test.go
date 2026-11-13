@@ -45,7 +45,7 @@ func TestForward(t *testing.T) {
 	go func() {
 		_ = Forward(ctx, ln, func(ctx context.Context) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "tcp", echo.Addr().String())
-		}, 0, slog.New(slog.DiscardHandler))
+		}, 0, "", slog.New(slog.DiscardHandler))
 	}()
 
 	c, err := net.Dial("tcp", ln.Addr().String())
@@ -74,7 +74,7 @@ func TestForwardLimitsConnectionsPerAddress(t *testing.T) {
 	go func() {
 		_ = Forward(ctx, ln, func(ctx context.Context) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "tcp", echo.Addr().String())
-		}, SMTPPerAddress, slog.New(slog.DiscardHandler))
+		}, SMTPPerAddress, SMTPRefusal, slog.New(slog.DiscardHandler))
 	}()
 	open := func() (net.Conn, bool) {
 		c, err := net.Dial("tcp", ln.Addr().String())
@@ -93,6 +93,18 @@ func TestForwardLimitsConnectionsPerAddress(t *testing.T) {
 			t.Fatalf("connection %d refused", i+1)
 		}
 		held = append(held, c)
+	}
+	// The ninth is told why, in plain text before any TLS, as an SMTP server
+	// refuses a connection, and closed: one line, and nothing of the enclave.
+	ninth, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = ninth.SetDeadline(time.Now().Add(2 * time.Second))
+	said, err := io.ReadAll(ninth)
+	ninth.Close()
+	if err != nil || string(said) != "421 4.7.0 Too many connections from your address, try again later\r\n" {
+		t.Fatalf("the ninth connection was told %q (%v)", said, err)
 	}
 	if c, ok := open(); ok {
 		t.Fatal("the ninth connection from one address was forwarded")
