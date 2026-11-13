@@ -160,6 +160,11 @@ type MailboxesConfig struct {
 // and attachments, a download that no browser renders; nothing of a message
 // is in an error or a log.
 func MailboxesAPI(cfg MailboxesConfig) http.Handler {
+	_, h := newMailboxesAPI(cfg)
+	return h
+}
+
+func newMailboxesAPI(cfg MailboxesConfig) (*mailboxesAPI, http.Handler) {
 	if cfg.Deadline <= 0 {
 		cfg.Deadline = mailboxes.RequestDeadline
 	}
@@ -216,7 +221,7 @@ func MailboxesAPI(cfg MailboxesConfig) http.Handler {
 	// The same decision about a path as the app's host makes first (a path
 	// not canonical names nothing here), so this API holds it when mounted
 	// on its own too.
-	return RequireCanonicalPath(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return a, RequireCanonicalPath(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The deadline runs from the request's start, before anything else.
 		ctx, cancel := context.WithTimeout(r.Context(), cfg.Deadline)
 		defer cancel()
@@ -569,6 +574,7 @@ type byteBudget struct {
 	mu      sync.Mutex
 	total   int64
 	free    int64
+	waiting int           // takes waiting for room
 	changed chan struct{} // closed, and replaced, whenever bytes are given back
 }
 
@@ -580,6 +586,19 @@ func newByteBudget(total int64) *byteBudget {
 // passed: contracts.ErrTooManyRequests then, or ctx's error when it ends.
 func (b *byteBudget) take(ctx context.Context, n int64, wait time.Duration) (int64, error) {
 	n = min(max(n, 0), b.total)
+	b.mu.Lock()
+	if b.free >= n {
+		b.free -= n
+		b.mu.Unlock()
+		return n, nil
+	}
+	b.waiting++
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		b.waiting--
+		b.mu.Unlock()
+	}()
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	for {

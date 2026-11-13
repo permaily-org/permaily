@@ -155,8 +155,8 @@ func (a *mailboxesAPI) frameStatus(err error) int {
 }
 
 // frame answers the frame's document: the session's, the mailbox opened as
-// for reading a message, a render slot taken, then the raw message read and
-// rendered under the render's deadline.
+// for reading a message, then the render (renderFrame), and only once its
+// slot is given back, the answer it made.
 func (a *mailboxesAPI) frame(w http.ResponseWriter, r *http.Request) {
 	SetFrameHeaders(w.Header(), a.appOrigin(r))
 	if !fromAFrame(r) {
@@ -181,53 +181,75 @@ func (a *mailboxesAPI) frame(w http.ResponseWriter, r *http.Request) {
 	}
 	held := &heldBudget{budget: a.budget, wait: a.cfg.Wait}
 	defer held.release()
-	ctx, release, err := a.admit(inbox.WithReadBudget(r.Context(), held), c.Account, a.cfg.RenderWait)
-	if err != nil {
-		frameFail(w, a.frameStatus(err))
+	res := a.renderFrame(r.Context(), c.Account, b, r.PathValue("message"), held)
+	if res.status != http.StatusOK {
+		frameFail(w, res.status)
 		return
+	}
+	defer res.done()
+	w.Header().Set("Content-Length", strconv.Itoa(len(res.doc)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(res.doc) //nolint:gosec // the sanitiser's document, served sandboxed by the frame's CSP to the frame alone
+}
+
+// frameResult is what the frame route's render gives its answer: the
+// document, charged to the read budget and to the account's share of
+// documents waiting (done gives the share back; the budget goes back with
+// the request's held bytes), or the status of a refusal, which holds
+// nothing.
+type frameResult struct {
+	status int
+	doc    []byte
+	done   func()
+}
+
+// renderFrame is the first of the frame route's two phases (ADR 0026,
+// "Admission of a render"): under a render slot and the render's deadline,
+// it reads the raw message, renders the document into memory and charges
+// it to the read budget in place of the raw message (waiting for room
+// within the deadline and the admission's wait); a document that cannot be
+// charged is discarded. It gives the slot back before it returns, whatever
+// it returns, so no answer is ever written while a slot is held and no
+// finished document exists that is not charged: one under its slot, or one
+// charged.
+func (a *mailboxesAPI) renderFrame(ctx context.Context, account string, b inbox.Box, id string, held *heldBudget) frameResult {
+	rctx, release, err := a.admit(inbox.WithReadBudget(ctx, held), account, a.cfg.RenderWait)
+	if err != nil {
+		return frameResult{status: a.frameStatus(err)}
 	}
 	defer release()
-	id := r.PathValue("message")
-	raw, err := a.cfg.Reader.Raw(ctx, b, id)
-	if err != nil {
-		frameFail(w, a.frameStatus(err))
-		return
+	refuse := func(status int) frameResult {
+		held.release()
+		return frameResult{status: status}
 	}
-	in, status, ok, err := inbox.HTMLInput(ctx, raw, b, id)
+	raw, err := a.cfg.Reader.Raw(rctx, b, id)
+	if err != nil {
+		return refuse(a.frameStatus(err))
+	}
+	in, status, ok, err := inbox.HTMLInput(rctx, raw, b, id)
 	switch {
 	case err != nil:
-		frameFail(w, a.frameStatus(err))
-		return
+		return refuse(a.frameStatus(err))
 	case !ok || status != "":
-		frameFail(w, http.StatusNotFound)
-		return
+		return refuse(http.StatusNotFound)
 	}
 	var doc bytes.Buffer
-	out, err := mailhtml.Render(ctx, in, &doc)
-	// The slot covers the render, not the transfer: the document is complete
-	// in memory now (at most contracts.MessageHTMLMaxMarkupBytes and the
-	// images' base64, under 11 MiB), and the slot goes back before a byte is
-	// written, however slowly the reader reads.
-	release()
+	out, err := mailhtml.Render(rctx, in, &doc)
 	switch {
 	case err != nil:
-		frameFail(w, a.frameStatus(err))
-		return
+		return refuse(a.frameStatus(err))
 	case out.Status != contracts.HTMLShown:
-		frameFail(w, http.StatusNotFound)
-		return
+		return refuse(http.StatusNotFound)
 	}
-	// What waits for the reader is the document: held against the read
-	// budget in place of the raw message, and within the account's share.
-	done, err := a.waitingDocument(r.Context(), c.Account, held, int64(doc.Len()))
+	// The document (at most contracts.MessageHTMLMaxMarkupBytes and the
+	// images' base64, under 11 MiB) waits for its reader held against the
+	// read budget in place of the raw message, and within the account's
+	// share, both taken while the slot still covers it.
+	done, err := a.waitingDocument(rctx, account, held, int64(doc.Len()))
 	if err != nil {
-		frameFail(w, a.frameStatus(err))
-		return
+		return refuse(a.frameStatus(err))
 	}
-	defer done()
-	w.Header().Set("Content-Length", strconv.Itoa(doc.Len()))
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(doc.Bytes()) //nolint:gosec // the sanitiser's document, served sandboxed by the frame's CSP to the frame alone
+	return frameResult{status: http.StatusOK, doc: doc.Bytes(), done: done}
 }
 
 // waitingDocument admits a finished document of account to wait for its
@@ -259,8 +281,9 @@ func (a *mailboxesAPI) waitingDocument(ctx context.Context, account string, held
 }
 
 // link answers where a link of a message's HTML leads, for the app's link
-// page: the walk of the frame's render again, and the link its token names
-// when its tag still matches.
+// page: the walk of the frame's render again (findLink), and the link its
+// token names when its tag still matches, answered once the render's slot
+// is given back.
 func (a *mailboxesAPI) link(w http.ResponseWriter, r *http.Request, c mailboxes.Caller) {
 	b, ctx, release, ok := a.open(w, r, c, mailboxes.AccessReadMessage)
 	if !ok {
@@ -272,44 +295,51 @@ func (a *mailboxesAPI) link(w http.ResponseWriter, r *http.Request, c mailboxes.
 		failed(w, a.cfg.Log, contracts.ErrNotFound)
 		return
 	}
-	ctx, free, err := a.admit(ctx, c.Account, a.cfg.RenderWait)
-	if err != nil {
+	l, err := a.findLink(ctx, c.Account, b, r.PathValue("message"), token)
+	switch {
+	case errors.Is(err, contracts.ErrLinkChanged):
+		writeError(w, http.StatusConflict, contracts.ErrLinkChanged.Code, contracts.ErrLinkChanged.Message)
+	case err != nil:
 		a.failRender(w, err)
-		return
+	default:
+		writeJSON(w, contracts.MessageLink{Link: token, URL: l.URL, Host: l.Host, Shown: l.Shown})
+	}
+}
+
+// findLink is the first of the link route's two phases: under a render
+// slot and the render's deadline, the walk of the message's HTML and the
+// link token names; contracts.ErrNotFound when the message has no HTML
+// shown, contracts.ErrLinkChanged when the token's tag no longer matches.
+// It gives the slot back before it returns, whatever it returns.
+func (a *mailboxesAPI) findLink(ctx context.Context, account string, b inbox.Box, id, token string) (mailhtml.Link, error) {
+	ctx, free, err := a.admit(ctx, account, a.cfg.RenderWait)
+	if err != nil {
+		return mailhtml.Link{}, err
 	}
 	defer free()
-	id := r.PathValue("message")
 	raw, err := a.cfg.Reader.Raw(ctx, b, id)
 	if err != nil {
-		a.failRender(w, err)
-		return
+		return mailhtml.Link{}, err
 	}
 	in, status, ok, err := inbox.HTMLInput(ctx, raw, b, id)
 	switch {
 	case err != nil:
-		a.failRender(w, err)
-		return
+		return mailhtml.Link{}, err
 	case !ok || status != "":
-		failed(w, a.cfg.Log, contracts.ErrNotFound)
-		return
+		return mailhtml.Link{}, contracts.ErrNotFound
 	}
 	links, err := mailhtml.Links(ctx, in)
 	switch {
 	case errors.Is(err, mailhtml.ErrNotShown):
-		failed(w, a.cfg.Log, contracts.ErrNotFound)
-		return
+		return mailhtml.Link{}, contracts.ErrNotFound
 	case err != nil:
-		a.failRender(w, err)
-		return
+		return mailhtml.Link{}, err
 	}
-	// The slot covers the render: the answer is a few hundred bytes of JSON.
-	free()
 	l, found := mailhtml.Find(links, token)
 	if !found {
-		writeError(w, http.StatusConflict, contracts.ErrLinkChanged.Code, contracts.ErrLinkChanged.Message)
-		return
+		return mailhtml.Link{}, contracts.ErrLinkChanged
 	}
-	writeJSON(w, contracts.MessageLink{Link: token, URL: l.URL, Host: l.Host, Shown: l.Shown})
+	return l, nil
 }
 
 // failRender answers a render that could not run: busy (503) when no slot
