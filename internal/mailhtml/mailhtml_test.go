@@ -169,6 +169,13 @@ func corpusCase(t *testing.T, name string, st contracts.MessageHTML, out string,
 		if st.Links < 1 || strings.Count(out, holderForced) < 2+st.Links || strings.Contains(out, "display:none") {
 			t.Errorf("%+v: %s", st, out)
 		}
+	case "19":
+		// The second review's N4: every link has a box and is on top; no
+		// column display, no details or summary.
+		if st.Links < 1 || strings.Count(out, linkStyle) != st.Links || strings.Contains(out, "table-column") ||
+			strings.Contains(out, "<details") || strings.Contains(out, "<summary") {
+			t.Errorf("%+v: %s", st, out)
+		}
 	case "15":
 		want := contracts.MessageImagesOmitted{TooLarge: 1, Unsupported: 3}
 		if st.InlineImagesOmittedBy != want || st.InlineImages != 1 || !strings.Contains(out, "data:image/gif;base64,") {

@@ -3,19 +3,24 @@ import { corpus, observe, requests, reset, signIn, watchDialogs } from './suite.
 
 // ADR 0026, "Tests", 26 and 27: the hostile corpus run twice, so neither line hides the other's failures.
 
-// Run A's known failures: an engine that opens a connection or looks a name up for a resource hint of the raw message
-// under the frame's CSP. The sanitiser drops every <link>, so the document the frame is given never has one (run B
-// asserts zero connections and lookups in every engine); what fails is the frame's own line for that hint.
-const knownHint: Record<string, string> = {
-  'webkit 05-remote-references':
-    "WebKit (Playwright 1.65) opens a CONNECT to the host of <link rel=preconnect> under the frame's CSP default-src 'none', and sends nothing through it (seen 2026-11-12)",
+// Run A's known failures: an engine that opens a connection for a resource hint of the raw message under the frame's
+// CSP. The sanitiser drops every <link>, so the document the frame is given never has one (run B asserts zero
+// connections and lookups in every engine); what fails is the frame's own line for that hint. Only that one assertion
+// is isolated: every other assertion of the test holds in that engine too, and the connections opened must be exactly
+// the known ones, so the test fails if the engine opens another, or stops opening this one.
+const knownHint: Record<string, { reason: string; connects: string[] }> = {
+  'webkit 05-remote-references': {
+    reason:
+      "WebKit (Playwright 1.65) opens a CONNECT to the host of <link rel=preconnect> under the frame's CSP default-src 'none', and sends nothing through it (seen 2026-11-12)",
+    connects: ['pre.evil.example:443'],
+  },
 }
 
 test.describe('26: run A, the frame alone', () => {
   for (const name of corpus) {
     test(name, async ({ page, browserName }, info) => {
       const known = knownHint[`${browserName} ${name}`]
-      test.fail(known !== undefined, known)
+      if (known) info.annotations.push({ type: 'known', description: known.reason })
       const dialogs = watchDialogs(page)
       await signIn(page)
       await reset(page)
@@ -49,12 +54,12 @@ test.describe('26: run A, the frame alone', () => {
       ])
       // No connection was opened and no name looked up, prefetch hints included. Where an engine does it anyway for a
       // hint under the frame's CSP, that is a finding against the frame's line for that hint (ADR 0026, "What holds
-      // each guarantee"), kept as a known failure of that engine with its reason (knownHint below).
+      // each guarantee"), kept as a known failure of that engine with its reason (knownHint above).
       if (seen.connects.length > 0)
         observe(info, `run A ${name}: connections opened`, seen.connects)
       if (seen.lookups.length > 0)
         observe(info, `run A ${name}: names looked up`, [...new Set(seen.lookups)])
-      expect(seen.connects).toEqual([])
+      expect(seen.connects).toEqual(known?.connects ?? [])
       expect(seen.lookups).toEqual([])
     })
   }
@@ -64,7 +69,7 @@ test.describe('26: run A, the frame alone', () => {
 // what covers what.
 function inspect() {
   const allowed = new Set(
-    'html head body meta style a abbr address article aside b bdi bdo big blockquote br caption center cite code col colgroup dd del details dfn div dl dt em figcaption figure font footer h1 h2 h3 h4 h5 h6 header hr i img ins kbd li main mark nav ol p pre q rp rt ruby s samp section small span strike strong sub summary sup table tbody td tfoot th thead time tr tt u ul var wbr'.split(
+    'html head body meta style a abbr address article aside b bdi bdo big blockquote br caption center cite code col colgroup dd del dfn div dl dt em figcaption figure font footer h1 h2 h3 h4 h5 h6 header hr i img ins kbd li main mark nav ol p pre q rp rt ruby s samp section small span strike strong sub sup table tbody td tfoot th thead time tr tt u ul var wbr'.split(
       ' ',
     ),
   )
@@ -119,13 +124,16 @@ function inspect() {
       problems.push(`a link's style: ${s.color} on ${s.backgroundColor}, ${s.textDecorationLine}`)
     // A float the sender wrote stays (ADR 0026, "CSS"): a floated box's display is blockified to block.
     const display = s.cssFloat === 'none' ? 'inline-block' : 'block'
+    // Every link is positioned with the largest z-index: painted above everything the message draws, and the target
+    // of the click at every point of its box (ADR 0026, "What each link carries").
     if (
       s.display !== display ||
       s.visibility !== 'visible' ||
       s.opacity !== '1' ||
-      s.position !== 'static'
+      s.position !== 'relative' ||
+      s.zIndex !== '2147483647'
     )
-      problems.push(`a link's box: ${s.display} ${s.visibility} ${s.opacity} ${s.position}`)
+      problems.push(`a link's box: ${s.display} ${s.visibility} ${s.opacity} ${s.position} ${s.zIndex}`)
     a.scrollIntoView({ block: 'center', inline: 'center' })
     // A link that holds something to show and has no box at all (an ancestor hidden it) fails.
     if (a.getClientRects().length === 0 && (a.textContent?.trim() || a.querySelector('img')))
@@ -175,16 +183,40 @@ function inspect() {
         problems.push(`a link over "${t.textContent.trim().slice(0, 30)}" at ${x},${y}`)
     }
   }
-  // Nothing positioned, layered or hidden in any computed style.
+  // Nothing but the links positioned, layered or hidden in any computed style. The properties that make a box
+  // positioned or give it a stacking context (CSS 2.1 9.9 and Appendix E; CSS Positioned Layout 3; MDN, "Stacking
+  // context", looked up on 2026-11-13): position, z-index, opacity, transform and its individual properties,
+  // perspective, filter, backdrop-filter, clip-path, mask, mix-blend-mode, isolation, will-change, contain,
+  // container-type, view-transition-name, offset-path; and a flex or grid container's children with a z-index.
+  const stacking: Array<[string, (v: string) => boolean]> = [
+    ['position', (v) => v === 'static'],
+    ['z-index', (v) => v === 'auto'],
+    ['opacity', (v) => v === '1'],
+    ['transform', (v) => v === 'none'],
+    ['translate', (v) => v === 'none' || v === ''],
+    ['rotate', (v) => v === 'none' || v === ''],
+    ['scale', (v) => v === 'none' || v === ''],
+    ['perspective', (v) => v === 'none'],
+    ['filter', (v) => v === 'none'],
+    ['backdrop-filter', (v) => v === 'none' || v === ''],
+    ['clip-path', (v) => v === 'none'],
+    ['mask-image', (v) => v === 'none' || v === ''],
+    ['mix-blend-mode', (v) => v === 'normal'],
+    ['isolation', (v) => v === 'auto'],
+    ['will-change', (v) => v === 'auto'],
+    ['contain', (v) => v === 'none'],
+    ['container-type', (v) => v === 'normal' || v === ''],
+    ['view-transition-name', (v) => v === 'none' || v === ''],
+    ['offset-path', (v) => v === 'none' || v === ''],
+    ['display', (v) => !/flex|grid/.test(v)],
+  ]
   for (const el of document.body.querySelectorAll('*')) {
+    if (el.localName === 'a') continue
     const s = getComputedStyle(el)
-    if (
-      s.position !== 'static' ||
-      s.transform !== 'none' ||
-      s.opacity !== '1' ||
-      s.zIndex !== 'auto'
-    )
-      problems.push(`<${el.localName}> ${s.position} ${s.transform} ${s.opacity} ${s.zIndex}`)
+    for (const [prop, ok] of stacking) {
+      const v = s.getPropertyValue(prop)
+      if (!ok(v)) problems.push(`<${el.localName}> ${prop}: ${v}`)
+    }
   }
   return problems
 }
