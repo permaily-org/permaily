@@ -452,6 +452,15 @@ type MailboxRecord struct {
 	Verified bool `json:"verified"`
 }
 
+// MailboxChange answers a pause or a resume: the mailbox's record after it,
+// and whether this call changed it. Only a call that changed it told its
+// person, and was counted and logged; one that found it paused already, or
+// not paused, did none of that (ADR 0026, "Pause and resume").
+type MailboxChange struct {
+	MailboxRecord
+	Changed bool `json:"changed"`
+}
+
 // MailboxRecordList is mailboxes as the operator sees them.
 type MailboxRecordList struct {
 	Mailboxes []MailboxRecord `json:"mailboxes"`

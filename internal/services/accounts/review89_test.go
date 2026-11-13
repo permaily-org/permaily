@@ -66,21 +66,21 @@ func TestReview89ACommittedPauseIsCountedLoggedAndToldOnce(t *testing.T) {
 	for _, who := range []struct {
 		name   string
 		skip   int32 // an admin's change reads the settings once first, for the guard
-		pause  func(context.Context, string) (*contracts.MailboxRecord, error)
-		resume func(context.Context, string) (*contracts.MailboxRecord, error)
+		pause  func(context.Context, string) (*contracts.MailboxChange, error)
+		resume func(context.Context, string) (*contracts.MailboxChange, error)
 	}{
 		{"the operator", 0, w.svc.PauseMailbox, w.svc.ResumeMailbox},
-		{"an admin", 1, func(ctx context.Context, id string) (*contracts.MailboxRecord, error) {
+		{"an admin", 1, func(ctx context.Context, id string) (*contracts.MailboxChange, error) {
 			return w.as(boss).PauseMailbox(ctx, id)
 		},
-			func(ctx context.Context, id string) (*contracts.MailboxRecord, error) {
+			func(ctx context.Context, id string) (*contracts.MailboxChange, error) {
 				return w.as(boss).ResumeMailbox(ctx, id)
 			}},
 	} {
 		for _, step := range []struct {
 			kind   string
 			notice mailboxes.NoticeKind
-			act    func(context.Context, string) (*contracts.MailboxRecord, error)
+			act    func(context.Context, string) (*contracts.MailboxChange, error)
 		}{
 			{ActionMailboxPaused, mailboxes.NoticePaused, who.pause},
 			{ActionMailboxResumed, mailboxes.NoticeResumed, who.resume},
@@ -127,7 +127,7 @@ func TestReview89ANoOpPauseOrResumeIsNeitherCountedNorLogged(t *testing.T) {
 	me, _ := w.signUp("ann@example.org")
 	m := f.Add(me.Account.ID, "Work Gmail")
 	before := w.logs.Len()
-	for i, act := range []func(context.Context, string) (*contracts.MailboxRecord, error){
+	for i, act := range []func(context.Context, string) (*contracts.MailboxChange, error){
 		w.svc.PauseMailbox, w.svc.PauseMailbox, w.svc.ResumeMailbox, w.svc.ResumeMailbox,
 		w.as(boss).PauseMailbox, w.as(boss).PauseMailbox, w.as(boss).ResumeMailbox, w.as(boss).ResumeMailbox,
 	} {

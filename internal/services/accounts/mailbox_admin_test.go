@@ -92,7 +92,10 @@ func TestTheOperatorPausesAndResumesAMailbox(t *testing.T) {
 	noAddressOrLabel(t, "the paused record", paused, address, "Work Gmail")
 	// Pausing one that is paused changes nothing, answers it as it is, and
 	// is neither counted nor logged: only the call that changed it is.
-	if again, err := w.svc.PauseMailbox(ctx, m.ID); err != nil || again.State != contracts.MailboxPaused {
+	if !paused.Changed {
+		t.Fatalf("the pause that changed it says it did not: %+v", paused)
+	}
+	if again, err := w.svc.PauseMailbox(ctx, m.ID); err != nil || again.State != contracts.MailboxPaused || again.Changed {
 		t.Fatalf("pause again: %+v %v", again, err)
 	}
 	resumed, err := w.svc.ResumeMailbox(ctx, m.ID)
@@ -288,7 +291,7 @@ func TestOnlyTheSuperAdminActsOnAnAdminsMailbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{bossBox.ID, anaBox.ID, beaBox.ID} {
-		for name, act := range map[string]func(context.Context, string) (*contracts.MailboxRecord, error){"pause": stale.PauseMailbox, "resume": stale.ResumeMailbox} {
+		for name, act := range map[string]func(context.Context, string) (*contracts.MailboxChange, error){"pause": stale.PauseMailbox, "resume": stale.ResumeMailbox} {
 			// Told before being asked to confirm: confirming would be for nothing.
 			if _, err := act(ctx, id); !errors.Is(err, contracts.ErrSuperAdminOnly) {
 				t.Errorf("%s %s without a proof: %v", name, id, err)

@@ -286,7 +286,20 @@ case $action in
       fi
     fi
     ask POST "/v1/admin/mailboxes/$target/$path"
-    echo "Done. The mailbox now:" >&2
+    # Only the call that changed the mailbox told its person and was counted
+    # (changed); one that found it as asked did neither. An enclave of an
+    # earlier release does not say, and nothing is claimed then.
+    case $(jq -r 'if has("changed") then .changed else "unknown" end' "$work/response.json") in
+      true) echo "Done. The mailbox now:" >&2 ;;
+      false)
+        if [[ $path == pause ]]; then
+          echo "It was already paused: nothing was sent and nothing was counted. The mailbox now:" >&2
+        else
+          echo "It was not paused: nothing was sent and nothing was counted. The mailbox now:" >&2
+        fi
+        ;;
+      *) echo "The mailbox now:" >&2 ;;
+    esac
     echo >&2
     show_mailbox "$work/response.json"
     ;;

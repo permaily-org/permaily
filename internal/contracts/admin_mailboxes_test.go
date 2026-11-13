@@ -26,6 +26,8 @@ func TestAdminMailboxShapes(t *testing.T) {
 			`{"at":"2026-11-12T10:00:00Z","kind":"block","admin":{"id":"acc_a"}}`},
 		{"a mailbox's record, paused", MailboxRecord{ID: "mbx_m", Account: "acc_b", State: MailboxPaused, CreatedAt: at, RetentionDays: 90, PausedAt: at, Verified: true},
 			`{"id":"mbx_m","account":"acc_b","state":"paused","created_at":"2026-11-12T10:00:00Z","retention_days":90,"paused_at":"2026-11-12T10:00:00Z","verified":true}`},
+		{"a pause that found it paused already", MailboxChange{MailboxRecord: MailboxRecord{ID: "mbx_m", Account: "acc_b", State: MailboxPaused, CreatedAt: at, RetentionDays: 90, PausedAt: at}},
+			`{"id":"mbx_m","account":"acc_b","state":"paused","created_at":"2026-11-12T10:00:00Z","retention_days":90,"paused_at":"2026-11-12T10:00:00Z","verified":false,"changed":false}`},
 	}
 	for _, c := range cases {
 		got, err := json.Marshal(c.v)

@@ -109,17 +109,18 @@ func (s *Service) MailboxRecordByAddress(ctx context.Context, address string) (*
 }
 
 // PauseMailbox makes a mailbox refuse new mail, keeping what it holds; its
-// person is told. One paused already stays as it is.
-func (s *Service) PauseMailbox(ctx context.Context, id string) (*contracts.MailboxRecord, error) {
+// person is told. One paused already stays as it is, and the answer says
+// it changed nothing.
+func (s *Service) PauseMailbox(ctx context.Context, id string) (*contracts.MailboxChange, error) {
 	return s.pauseMailbox(ctx, nil, id, true)
 }
 
 // ResumeMailbox undoes PauseMailbox.
-func (s *Service) ResumeMailbox(ctx context.Context, id string) (*contracts.MailboxRecord, error) {
+func (s *Service) ResumeMailbox(ctx context.Context, id string) (*contracts.MailboxChange, error) {
 	return s.pauseMailbox(ctx, nil, id, false)
 }
 
-func (s *Service) pauseMailbox(ctx context.Context, by *acting, id string, pause bool) (*contracts.MailboxRecord, error) {
+func (s *Service) pauseMailbox(ctx context.Context, by *acting, id string, pause bool) (*contracts.MailboxChange, error) {
 	if !mailboxIDRE.MatchString(id) || s.mailboxesOf() == nil {
 		return nil, contracts.ErrNotFound
 	}
@@ -164,7 +165,7 @@ func (s *Service) pauseMailbox(ctx context.Context, by *acting, id string, pause
 		s.acted(kind, 1)
 		s.logged(ctx, by, logDoc{Kind: kind, Account: rec.Account, Mailbox: rec.ID})
 	}
-	return rec, nil
+	return &contracts.MailboxChange{MailboxRecord: *rec, Changed: changed}, nil
 }
 
 // What an admin looks at of mailboxes, without a proof and without the log.
@@ -179,10 +180,10 @@ func (a *Admin) MailboxRecordByAddress(ctx context.Context, address string) (*co
 
 // What an admin changes of mailboxes, each with a fresh proof.
 
-func (a *Admin) PauseMailbox(ctx context.Context, id string) (*contracts.MailboxRecord, error) {
+func (a *Admin) PauseMailbox(ctx context.Context, id string) (*contracts.MailboxChange, error) {
 	return a.s.pauseMailbox(ctx, a.by, id, true)
 }
 
-func (a *Admin) ResumeMailbox(ctx context.Context, id string) (*contracts.MailboxRecord, error) {
+func (a *Admin) ResumeMailbox(ctx context.Context, id string) (*contracts.MailboxChange, error) {
 	return a.s.pauseMailbox(ctx, a.by, id, false)
 }
