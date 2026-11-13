@@ -3,9 +3,16 @@ import { corpus, observe, requests, reset, signIn, watchDialogs } from './suite.
 
 // ADR 0026, "Tests", 26 and 27: the hostile corpus run twice, so neither line hides the other's failures.
 
+// Run A's known failures: an engine that opens a connection or looks a name up for a resource hint of the raw message
+// under the frame's CSP. The sanitiser drops every <link>, so the document the frame is given never has one (run B
+// asserts zero connections and lookups in every engine); what fails is the frame's own line for that hint.
+const knownHint: Record<string, string> = {}
+
 test.describe('26: run A, the frame alone', () => {
   for (const name of corpus) {
-    test(name, async ({ page }, info) => {
+    test(name, async ({ page, browserName }, info) => {
+      const known = knownHint[`${browserName} ${name}`]
+      test.fail(known !== undefined, known)
       const dialogs = watchDialogs(page)
       await signIn(page)
       await reset(page)
@@ -26,6 +33,9 @@ test.describe('26: run A, the frame alone', () => {
       expect(await state()).toEqual(before)
       expect(before.cookie).toBe('marker=app')
       expect(dialogs).toEqual([])
+      // No script ran: the marker a script of the corpus would set (17-execution-marker) is unset in the frame's
+      // document, read through the automation API, which needs no script of the page's.
+      expect(await page.frameLocator('iframe').locator('html').getAttribute('data-ran')).toBeNull()
       const seen = await requests(page)
       // No request reached the internet: no image, font, stylesheet, media or frame, and no script ran to send one.
       expect(seen.internet).toEqual([])
@@ -34,12 +44,13 @@ test.describe('26: run A, the frame alone', () => {
         `/test/viewer-raw/${name}`,
         `/test/raw/${name}`,
       ])
-      // DNS and connections of prefetch hints are recorded per browser, not asserted: their first line is the
-      // sanitiser (ADR 0026).
-      if (seen.connects.length > 0)
-        observe(info, `run A ${name}: connections opened`, seen.connects)
-      if (seen.lookups.length > 0)
-        observe(info, `run A ${name}: names looked up`, [...new Set(seen.lookups)])
+      // No connection was opened and no name looked up, prefetch hints included. Where an engine does it anyway for a
+      // hint under the frame's CSP, that is a finding against the frame's line for that hint (ADR 0026, "What holds
+      // each guarantee"), kept as a known failure of that engine with its reason (knownHint below).
+      if (seen.connects.length > 0) observe(info, `run A ${name}: connections opened`, seen.connects)
+      if (seen.lookups.length > 0) observe(info, `run A ${name}: names looked up`, [...new Set(seen.lookups)])
+      expect(seen.connects).toEqual([])
+      expect(seen.lookups).toEqual([])
     })
   }
 })
@@ -111,6 +122,9 @@ function inspect() {
     )
       problems.push(`a link's box: ${s.display} ${s.visibility} ${s.opacity} ${s.position}`)
     a.scrollIntoView({ block: 'center', inline: 'center' })
+    // A link that holds something to show and has no box at all (an ancestor hidden it) fails.
+    if (a.getClientRects().length === 0 && (a.textContent?.trim() || a.querySelector('img')))
+      problems.push(`a link with no box: ${a.textContent?.trim().slice(0, 40)}`)
     for (const r of a.getClientRects()) {
       // A link with something to show must show it at a size one can see and press.
       if (r.width < 4 || r.height < 4) {
@@ -138,6 +152,24 @@ function inspect() {
       }
     }
   }
+  // No link lies over content that is not its own: the text of everything outside the links, hit-tested at the
+  // centre of each of its line boxes, is not under a link (a link escaped from a box of height 0 would be).
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+  for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+    const parent = t.parentElement
+    if (!parent || parent.closest('a') || !t.textContent?.trim()) continue
+    parent.scrollIntoView({ block: 'center', inline: 'center' })
+    const range = document.createRange()
+    range.selectNodeContents(t)
+    for (const r of range.getClientRects()) {
+      if (r.width < 4 || r.height < 4) continue
+      const [x, y] = [r.left + r.width / 2, r.top + r.height / 2]
+      if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) continue
+      const hit = document.elementFromPoint(x, y)
+      if (hit?.closest('a'))
+        problems.push(`a link over "${t.textContent.trim().slice(0, 30)}" at ${x},${y}`)
+    }
+  }
   // Nothing positioned, layered or hidden in any computed style.
   for (const el of document.body.querySelectorAll('*')) {
     const s = getComputedStyle(el)
@@ -162,6 +194,8 @@ test.describe('27: run B, the sanitiser alone', () => {
       expect(page.url()).toBe(`https://app.permaily.test/test/plain/${name}`)
       expect(dialogs).toEqual([])
       expect(await page.evaluate(inspect)).toEqual([])
+      // No script ran: the marker 17-execution-marker's vectors would set.
+      expect(await page.locator('html').getAttribute('data-ran')).toBeNull()
       const seen = await requests(page)
       // Nothing at all reached anywhere else, no connection or lookup included.
       expect(seen.internet).toEqual([])

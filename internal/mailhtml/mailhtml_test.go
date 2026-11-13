@@ -153,6 +153,22 @@ func corpusCase(t *testing.T, name string, st contracts.MessageHTML, out string,
 		if got := bodyText(t, out); got != "a b c d e f g h i j k l m" {
 			t.Errorf("not kept as text: %q", got)
 		}
+	case "17":
+		// The execution marker: nothing that would set it is kept.
+		for _, bad := range []string{"data-ran", "__ran", "marker.example", "onload", "onfocus", "ontoggle", "srcdoc", "<svg", "<iframe", "<input"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("%q in the output", bad)
+			}
+		}
+		if st.Links != 0 || st.RemoteImages != 0 {
+			t.Errorf("%+v", st)
+		}
+	case "18":
+		// What holds the link carries the forced declarations, and nothing
+		// of the sender hides it.
+		if st.Links < 1 || strings.Count(out, holderForced) < 2+st.Links || strings.Contains(out, "display:none") {
+			t.Errorf("%+v: %s", st, out)
+		}
 	case "15":
 		want := contracts.MessageImagesOmitted{TooLarge: 1, Unsupported: 3}
 		if st.InlineImagesOmittedBy != want || st.InlineImages != 1 || !strings.Contains(out, "data:image/gif;base64,") {

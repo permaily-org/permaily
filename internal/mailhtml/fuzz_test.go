@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,13 +108,34 @@ func FuzzCSS(f *testing.F) {
 // image that reads has a size and a type.
 func FuzzImageStructure(f *testing.F) {
 	f.Add(pngImage(f, 3, 2, false, "acTL"))
+	f.Add(pngImage(f, 3, 2, true))
 	f.Add(gifImage(f, 3, 2, 2, false))
+	f.Add(gifImage(f, 3, 2, 1, false))
 	f.Add(webpImage(3, 2, 2, "VP8L", "ANMF"))
+	f.Add(jpegImage(f, 3, 2))
 	f.Add([]byte{0xFF, 0xD8, 0xFF, 0xC0, 0, 11, 8, 0, 2, 0, 3, 1, 1, 0x11, 0})
+	// The ambiguities of finding 2 of the review, each refused.
+	for _, b := range ambiguousImages(f) {
+		f.Add(b)
+	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		info, ok := imageStructure(b)
-		if ok && (info.Width <= 0 || info.Height <= 0 || info.Type == "") {
+		if !ok {
+			return
+		}
+		if info.Width <= 0 || info.Height <= 0 || info.Type == "" {
 			t.Fatalf("%+v", info)
+		}
+		// The differential: where Go's own decoder (PNG, JPEG, GIF) reads
+		// a file the walker accepted, the size it decodes is the size the
+		// walker measured. A file it cannot decode shows nothing in a
+		// browser either. Pixels are decoded only for small images.
+		if info.Animated || info.Type == "image/webp" || info.Width*info.Height > 1<<16 {
+			return
+		}
+		img, _, err := image.Decode(bytes.NewReader(b))
+		if err == nil && (img.Bounds().Dx() != info.Width || img.Bounds().Dy() != info.Height) {
+			t.Fatalf("measured %dx%d, decoded %v", info.Width, info.Height, img.Bounds())
 		}
 	})
 }

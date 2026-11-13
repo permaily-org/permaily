@@ -7,6 +7,7 @@ import (
 	"errors"
 	"hash/crc32"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -226,38 +227,7 @@ func sof0(w, h int) []byte {
 // WebP of an 8193 x 1 lossless image followed by a 1 x 1 one's chunk was
 // measured 1 x 1; libwebp opens it as 8193 x 1.
 func TestReview2AnImageMeansOneThing(t *testing.T) {
-	jpg := jpegImage(t, 3, 2)
-	sof := bytes.Index(jpg, []byte{0xFF, 0xC0})
-	sofLen := int(binary.BigEndian.Uint16(jpg[sof+2:])) + 2
-	eoi := len(jpg) - 2
-	splice := func(at int, add []byte) []byte {
-		return append(append(append([]byte{}, jpg[:at]...), add...), jpg[at:]...)
-	}
-	refused := map[string][]byte{
-		"WebP: two lossless payloads":              riff(vp8l(8193, 1), vp8l(1, 1)),
-		"WebP: lossless then lossy":                riff(vp8l(8193, 1), vp8(1, 1)),
-		"WebP: a chunk after the payload":          riff(vp8l(2, 2), other("ABCD")),
-		"WebP: EXIF in the simple form":            riff(vp8l(2, 2), other("EXIF")),
-		"WebP: a canvas that is not the payload's": riff(vp8x(0, 1, 1), vp8l(8193, 1)),
-		"WebP: two payloads under VP8X":            riff(vp8x(0, 2, 2), vp8l(2, 2), vp8l(2, 2)),
-		"WebP: an unknown chunk under VP8X":        riff(vp8x(0, 2, 2), other("ABCD"), vp8l(2, 2)),
-		"WebP: two ICCP":                           riff(vp8x(0x20, 2, 2), other("ICCP"), other("ICCP"), vp8l(2, 2)),
-		"WebP: ICCP after the payload":             riff(vp8x(0x20, 2, 2), vp8l(2, 2), other("ICCP")),
-		"WebP: ALPH with a lossless payload":       riff(vp8x(0x10, 2, 2), other("ALPH"), vp8l(2, 2)),
-		"WebP: two EXIF":                           riff(vp8x(0x08, 2, 2), vp8l(2, 2), other("EXIF"), other("EXIF")),
-		"WebP: VP8X twice":                         riff(vp8x(0, 2, 2), vp8x(0, 2, 2), vp8l(2, 2)),
-		"WebP: no payload":                         riff(vp8x(0, 2, 2)),
-		"PNG: two IHDR":                            pngChunks("IHDR:1x1", "IHDR:8193x1", "IDAT", "IEND"),
-		"PNG: IHDR again after IDAT":               pngChunks("IHDR:1x1", "IDAT", "IHDR:8193x1", "IDAT", "IEND"),
-		"PNG: IDAT not contiguous":                 pngChunks("IHDR:1x1", "IDAT", "tEXt", "IDAT", "IEND"),
-		"PNG: PLTE after IDAT":                     pngChunks("IHDR:1x1", "IDAT", "PLTE", "IEND"),
-		"PNG: no IDAT":                             pngChunks("IHDR:1x1", "IEND"),
-		"PNG: a chunk after IEND":                  pngChunks("IHDR:1x1", "IDAT", "IEND", "IHDR:8193x1"),
-		"PNG: bytes after IEND":                    append(pngChunks("IHDR:1x1", "IDAT", "IEND"), 0),
-		"JPEG: two frame headers":                  splice(sof+sofLen, sof0(8193, 1)),
-		"JPEG: a frame header after the scan":      splice(eoi, sof0(8193, 1)),
-		"JPEG: no end of image":                    jpg[:eoi],
-	}
+	refused := ambiguousImages(t)
 	for name, b := range refused {
 		if info, ok := imageStructure(b); ok {
 			t.Errorf("%s: read as %+v", name, info)
@@ -268,6 +238,7 @@ func TestReview2AnImageMeansOneThing(t *testing.T) {
 			t.Errorf("%s: %+v", name, st)
 		}
 	}
+	jpg := jpegImage(t, 3, 2)
 	accepted := map[string]struct {
 		b    []byte
 		w, h int
@@ -609,5 +580,129 @@ func TestReview3AncestorsCannotHideOrMoveALink(t *testing.T) {
 	}
 	if style, _ := styleOf(t, out, "y"); !strings.Contains(style, "display:none") {
 		t.Errorf("a block without a link: %q", style)
+	}
+}
+
+// Test weakness of the review: the deadline was shown stopping the HTML
+// parser's reader only. The image walkers check it in every loop: a PNG of
+// many chunks, a JPEG of many markers and scans, a GIF of many blocks and a
+// WebP of many chunks, read under an ended context, stop with its error,
+// and the walk answers it.
+func TestReviewTheImageWalkStopsAtTheDeadline(t *testing.T) {
+	ended, end := context.WithCancel(context.Background())
+	end()
+	png := pngChunks(append(append([]string{"IHDR:2x2"}, slices.Repeat([]string{"tEXt"}, 5000)...), "IDAT", "IEND")...)
+	jpg := jpegImage(t, 2, 2)
+	app := []byte{0xFF, 0xE1, 0, 4, 0, 0}
+	jpgMany := append(append(append([]byte{}, jpg[:2]...), bytes.Repeat(app, 5000)...), jpg[2:]...)
+	gifMany := gifImage(t, 2, 2, 1, false)
+	ext := []byte{0x21, 0xFE, 1, 'x', 0}
+	gifMany = append(append(append([]byte{}, gifMany[:len(gifMany)-1]...), bytes.Repeat(ext, 5000)...), 0x3B)
+	chunks := []riffChunk{vp8x(0, 2, 2)}
+	for range 5000 {
+		chunks = append(chunks, other("ANMF"))
+	}
+	for name, b := range map[string][]byte{"PNG": png, "JPEG": jpgMany, "GIF": gifMany, "WebP": riff(chunks...)} {
+		if _, ok := imageStructure(b); !ok && name != "WebP" {
+			t.Errorf("%s does not read without a deadline", name)
+		}
+		if _, ok, err := readImage(ended, b); ok || !errors.Is(err, context.Canceled) {
+			t.Errorf("%s: %v %v", name, ok, err)
+		}
+	}
+	if _, err := Render(ended, input(imgs(dataURI("image/png", png))), nil); !errors.Is(err, context.Canceled) {
+		t.Errorf("Render: %v", err)
+	}
+}
+
+// ambiguousImages are the images of finding 2, built here: each one a
+// decoder could read as something else than the walker measures.
+func ambiguousImages(t testing.TB) map[string][]byte {
+	jpg := jpegImage(t, 3, 2)
+	sof := bytes.Index(jpg, []byte{0xFF, 0xC0})
+	sofLen := int(binary.BigEndian.Uint16(jpg[sof+2:])) + 2
+	eoi := len(jpg) - 2
+	splice := func(at int, add []byte) []byte {
+		return append(append(append([]byte{}, jpg[:at]...), add...), jpg[at:]...)
+	}
+	return map[string][]byte{
+		"WebP: two lossless payloads":              riff(vp8l(8193, 1), vp8l(1, 1)),
+		"WebP: lossless then lossy":                riff(vp8l(8193, 1), vp8(1, 1)),
+		"WebP: a chunk after the payload":          riff(vp8l(2, 2), other("ABCD")),
+		"WebP: EXIF in the simple form":            riff(vp8l(2, 2), other("EXIF")),
+		"WebP: a canvas that is not the payload's": riff(vp8x(0, 1, 1), vp8l(8193, 1)),
+		"WebP: two payloads under VP8X":            riff(vp8x(0, 2, 2), vp8l(2, 2), vp8l(2, 2)),
+		"WebP: an unknown chunk under VP8X":        riff(vp8x(0, 2, 2), other("ABCD"), vp8l(2, 2)),
+		"WebP: two ICCP":                           riff(vp8x(0x20, 2, 2), other("ICCP"), other("ICCP"), vp8l(2, 2)),
+		"WebP: ICCP after the payload":             riff(vp8x(0x20, 2, 2), vp8l(2, 2), other("ICCP")),
+		"WebP: ALPH with a lossless payload":       riff(vp8x(0x10, 2, 2), other("ALPH"), vp8l(2, 2)),
+		"WebP: two EXIF":                           riff(vp8x(0x08, 2, 2), vp8l(2, 2), other("EXIF"), other("EXIF")),
+		"WebP: VP8X twice":                         riff(vp8x(0, 2, 2), vp8x(0, 2, 2), vp8l(2, 2)),
+		"WebP: no payload":                         riff(vp8x(0, 2, 2)),
+		"PNG: two IHDR":                            pngChunks("IHDR:1x1", "IHDR:8193x1", "IDAT", "IEND"),
+		"PNG: IHDR again after IDAT":               pngChunks("IHDR:1x1", "IDAT", "IHDR:8193x1", "IDAT", "IEND"),
+		"PNG: IDAT not contiguous":                 pngChunks("IHDR:1x1", "IDAT", "tEXt", "IDAT", "IEND"),
+		"PNG: PLTE after IDAT":                     pngChunks("IHDR:1x1", "IDAT", "PLTE", "IEND"),
+		"PNG: no IDAT":                             pngChunks("IHDR:1x1", "IEND"),
+		"PNG: a chunk after IEND":                  pngChunks("IHDR:1x1", "IDAT", "IEND", "IHDR:8193x1"),
+		"PNG: bytes after IEND":                    append(pngChunks("IHDR:1x1", "IDAT", "IEND"), 0),
+		"JPEG: two frame headers":                  splice(sof+sofLen, sof0(8193, 1)),
+		"JPEG: a frame header after the scan":      splice(eoi, sof0(8193, 1)),
+		"JPEG: no end of image":                    jpg[:eoi],
+	}
+}
+
+// Test weakness of the review: the CSS oracle of test 18 reads the output
+// with the production tokeniser, so a tokeniser bug would hide from it.
+// These expectations are written by hand from CSS Syntax Level 3, token by
+// token, and the filter's output for each hostile spelling written out.
+func TestReviewCSSExpectationsWrittenByHand(t *testing.T) {
+	type tk struct {
+		kind  cssKind
+		value string
+	}
+	for in, want := range map[string][]tk{
+		`\75 rl(x)`:      {{cssURL, "x"}},
+		`u\72l( "a" )`:   {{cssFunction, "url"}, {cssWhitespace, ""}, {cssString, "a"}, {cssWhitespace, ""}, {cssRParen, ""}},
+		`u/**/rl(x)`:     {{cssIdent, "u"}, {cssFunction, "rl"}, {cssIdent, "x"}, {cssRParen, ""}},
+		`exp\72 ession(`: {{cssFunction, "expression"}},
+		`\@import`:       {{cssIdent, "@import"}},
+		`@\69mport`:      {{cssAtKeyword, "import"}},
+		`"a\"b`:          {{cssString, `a"b`}},
+		"'line\nbreak'":  {{cssBadString, ""}, {cssWhitespace, ""}, {cssIdent, "break"}, {cssString, ""}},
+		`url(a b)`:       {{cssBadURL, ""}},
+		`#-x #1a`:        {{cssHash, "-x"}, {cssWhitespace, ""}, {cssHash, "1a"}},
+		`<!-- -->`:       {{cssCDO, ""}, {cssWhitespace, ""}, {cssCDC, ""}},
+		`-moz-binding:x`: {{cssIdent, "-moz-binding"}, {cssColon, ""}, {cssIdent, "x"}},
+		`\3c /style>`:    {{cssIdent, "<"}, {cssDelim, "/"}, {cssIdent, "style"}, {cssDelim, ">"}},
+	} {
+		got := tokenize(t, in)
+		if len(got) != len(want) {
+			t.Errorf("%q: %d tokens %+v, want %+v", in, len(got), got, want)
+			continue
+		}
+		for i := range want {
+			if got[i].Kind != want[i].kind || want[i].value != "" && got[i].Value != want[i].value {
+				t.Errorf("%q: token %d is %+v, want %+v", in, i, got[i], want[i])
+			}
+		}
+	}
+	// The filter, on hostile spellings: what is kept, written by hand.
+	for in, want := range map[string]string{
+		`p{background:\75 rl(https://e.example/x)}`:   ``,
+		`p{width:exp\72 ession(alert(1))}`:            ``,
+		`p{color:red;-moz-binding:url(x.xml#y)}`:      `p{color:red}`,
+		`p{color:red}</style><script>x</script>`:      `p{color:red}`,
+		`p{font-family:"<\/style>"}`:                  `p{font-family:"\3c /style\3e "}`,
+		`a{display:none}b{display:block}`:             `b{display:block}`,
+		`p{color:#ABC;margin:0 auto;padding:1px 2px}`: `p{color:#abc;margin:0 auto;padding:1px 2px}`,
+		`p{margin:-5px;text-indent:-9999px}`:          ``,
+		`p{position:fixed;top:0;z-index:9;color:red}`: `p{color:red}`,
+		`@import url(x.css);p{color:red}`:             `p{color:red}`,
+		`div>p+a~b c{color:red}`:                      `div>p+a~b c{color:red}`,
+	} {
+		if got := sheet(in); got != want {
+			t.Errorf("%q: %q, want %q", in, got, want)
+		}
 	}
 }

@@ -2,6 +2,7 @@ package mailhtml
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 )
 
@@ -28,17 +29,43 @@ const (
 // imageStructure reads b's structure. ok is false when b is not PNG, JPEG,
 // GIF or WebP by its bytes, or its structure does not read to its end.
 func imageStructure(b []byte) (imageInfo, bool) {
+	info, ok, _ := readImage(context.Background(), b)
+	return info, ok
+}
+
+// readImage is imageStructure under ctx: every loop of the walkers checks
+// it, and err is its error once it has ended.
+func readImage(ctx context.Context, b []byte) (info imageInfo, ok bool, err error) {
+	s := &imageSteps{ctx: ctx}
 	switch {
 	case bytes.HasPrefix(b, []byte("\x89PNG\r\n\x1a\n")):
-		return pngStructure(b)
+		info, ok = pngStructure(s, b)
 	case bytes.HasPrefix(b, []byte{0xFF, 0xD8, 0xFF}):
-		return jpegStructure(b)
+		info, ok = jpegStructure(s, b)
 	case bytes.HasPrefix(b, []byte("GIF87a")) || bytes.HasPrefix(b, []byte("GIF89a")):
-		return gifStructure(b)
+		info, ok = gifStructure(s, b)
 	case len(b) >= 12 && bytes.Equal(b[:4], []byte("RIFF")) && bytes.Equal(b[8:12], []byte("WEBP")):
-		return webpStructure(b)
+		info, ok = webpStructure(s, b)
 	}
-	return imageInfo{}, false
+	if s.err != nil {
+		return imageInfo{}, false, s.err
+	}
+	return info, ok, nil
+}
+
+// imageSteps counts the steps of a walker and checks its context every
+// ctxEvery of them; stop says the walk must end (and err why).
+type imageSteps struct {
+	ctx context.Context
+	n   int
+	err error
+}
+
+func (s *imageSteps) stop() bool {
+	if s.n++; s.n%ctxEvery == 0 && s.err == nil {
+		s.err = s.ctx.Err()
+	}
+	return s.err != nil
 }
 
 // The walkers are structural checks, not validators: they accept a file
@@ -51,12 +78,12 @@ func imageStructure(b []byte) (imageInfo, bool) {
 // to IEND: PLTE once and before the image data, the IDAT chunks one after
 // another, at least one, and nothing after IEND. An acTL, fcTL or fdAT
 // chunk is APNG.
-func pngStructure(b []byte) (imageInfo, bool) {
+func pngStructure(s *imageSteps, b []byte) (imageInfo, bool) {
 	info := imageInfo{Type: "image/png"}
 	p := 8
 	idat, idatEnded, plte := false, false, false
 	for first := true; ; first = false {
-		if len(b)-p < 12 {
+		if s.stop() || len(b)-p < 12 {
 			return imageInfo{}, false
 		}
 		n := int(binary.BigEndian.Uint32(b[p:]))
@@ -107,7 +134,7 @@ func pngStructure(b []byte) (imageInfo, bool) {
 // (EOI), the entropy-coded data of each scan skipped to the next marker:
 // exactly one frame header (SOFn), before the first scan, and no second
 // start of image. What follows EOI is not read; a decoder stops there.
-func jpegStructure(b []byte) (imageInfo, bool) {
+func jpegStructure(s *imageSteps, b []byte) (imageInfo, bool) {
 	var info imageInfo
 	p := 2
 	frames, scans := 0, 0
@@ -116,7 +143,7 @@ func jpegStructure(b []byte) (imageInfo, bool) {
 		for p+1 < len(b) && b[p] == 0xFF && b[p+1] == 0xFF {
 			p++
 		}
-		if len(b)-p < 2 || b[p] != 0xFF {
+		if s.stop() || len(b)-p < 2 || b[p] != 0xFF {
 			return imageInfo{}, false
 		}
 		m := b[p+1]
@@ -163,7 +190,7 @@ func jpegStructure(b []byte) (imageInfo, bool) {
 		// 0x00 (a stuffed byte), a restart marker or more fill is data.
 		for {
 			i := bytes.IndexByte(b[p:], 0xFF)
-			if i < 0 || p+i+1 >= len(b) {
+			if s.stop() || i < 0 || p+i+1 >= len(b) {
 				return imageInfo{}, false
 			}
 			p += i
@@ -180,7 +207,7 @@ func jpegStructure(b []byte) (imageInfo, bool) {
 // the trailer. More than one image, a NETSCAPE2.0 or ANIMEXTS1.0
 // application extension, is animated; an image outside the logical screen
 // does not read (refused, unsupported).
-func gifStructure(b []byte) (imageInfo, bool) {
+func gifStructure(s *imageSteps, b []byte) (imageInfo, bool) {
 	if len(b) < 13 {
 		return imageInfo{}, false
 	}
@@ -196,7 +223,7 @@ func gifStructure(b []byte) (imageInfo, bool) {
 	}
 	images := 0
 	for {
-		if p >= len(b) {
+		if s.stop() || p >= len(b) {
 			return imageInfo{}, false
 		}
 		switch b[p] {
@@ -227,7 +254,7 @@ func gifStructure(b []byte) (imageInfo, bool) {
 			}
 			p++ // LZW minimum code size
 			var ok bool
-			if p, ok = gifSubBlocks(b, p); !ok {
+			if p, ok = gifSubBlocks(s, b, p); !ok {
 				return imageInfo{}, false
 			}
 		case 0x21:
@@ -243,7 +270,7 @@ func gifStructure(b []byte) (imageInfo, bool) {
 				}
 			}
 			var ok bool
-			if p, ok = gifSubBlocks(b, p); !ok {
+			if p, ok = gifSubBlocks(s, b, p); !ok {
 				return imageInfo{}, false
 			}
 		default:
@@ -253,9 +280,9 @@ func gifStructure(b []byte) (imageInfo, bool) {
 }
 
 // gifSubBlocks skips data sub-blocks to their terminator.
-func gifSubBlocks(b []byte, p int) (int, bool) {
+func gifSubBlocks(s *imageSteps, b []byte, p int) (int, bool) {
 	for {
-		if p >= len(b) {
+		if s.stop() || p >= len(b) {
 			return 0, false
 		}
 		n := int(b[p])
@@ -277,7 +304,7 @@ func gifSubBlocks(b []byte, p int) (int, bool) {
 // VP8X's canvas), EXIF, XMP. Any other chunk, or one repeated or out of
 // that order, refuses the file. The animation flag, or an ANIM or ANMF
 // chunk, is animation.
-func webpStructure(b []byte) (imageInfo, bool) {
+func webpStructure(s *imageSteps, b []byte) (imageInfo, bool) {
 	size := int(binary.LittleEndian.Uint32(b[4:]))
 	if size < 4 || size > len(b)-8 {
 		return imageInfo{}, false
@@ -290,7 +317,7 @@ func webpStructure(b []byte) (imageInfo, bool) {
 	var chunks []chunk
 	p := 12
 	for p < len(b) {
-		if len(b)-p < 8 {
+		if s.stop() || len(b)-p < 8 {
 			return imageInfo{}, false
 		}
 		n := int(binary.LittleEndian.Uint32(b[p+4:]))

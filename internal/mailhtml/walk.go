@@ -870,8 +870,10 @@ func (w *walker) image(c, dst *html.Node, depth int, inLink bool) error {
 	if len(data) > contracts.MessageInlineImageMaxBytes {
 		return w.omitted(dst, depth, omitTooLarge, alt)
 	}
-	info, ok := imageStructure(data)
+	info, ok, err := readImage(w.ctx, data)
 	switch {
+	case err != nil:
+		return err
 	case !ok:
 		return w.omitted(dst, depth, omitUnsupported, alt)
 	case info.Animated:
