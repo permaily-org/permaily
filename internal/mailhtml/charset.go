@@ -26,9 +26,9 @@ import (
 //  4. UTF-8, when the whole part is valid UTF-8;
 //  5. Windows-1252.
 //
-// A header label that names the "replacement" encoding or no WHATWG
-// encoding (UTF-7 among them) makes the HTML unreadable, as does a <meta>
-// that names "replacement". The size limit applies before and after. status
+// A label, in the header or in a <meta>, that names the "replacement"
+// encoding or no WHATWG encoding (UTF-7 among them) makes the HTML
+// unreadable. The size limit applies before and after. status
 // is "" when the result can be rendered, else contracts.HTMLTooLarge or
 // contracts.HTMLUnreadable.
 func DecodeCharset(part []byte, mimeCharset string) (out []byte, status string) {
@@ -75,15 +75,14 @@ func chooseEncoding(part []byte, mimeCharset string) (encoding.Encoding, []byte,
 		return unicode.UTF16(unicode.BigEndian, unicode.IgnoreBOM), part[2:], ""
 	}
 	if label := prescan(part[:min(len(part), 1024)]); label != "" {
-		if enc, err := htmlindex.Get(label); err == nil {
-			if enc == encoding.Replacement {
-				return nil, nil, contracts.HTMLUnreadable
-			}
-			if name, _ := htmlindex.Name(enc); name == "utf-16le" || name == "utf-16be" {
-				return nil, part, "" // the prescan's rule: UTF-16 named in the document is UTF-8
-			}
-			return utf8OrNil(enc), part, ""
+		enc, err := htmlindex.Get(label)
+		if err != nil || enc == encoding.Replacement {
+			return nil, nil, contracts.HTMLUnreadable // as a header's label: UTF-7, or a name of nothing
 		}
+		if name, _ := htmlindex.Name(enc); name == "utf-16le" || name == "utf-16be" {
+			return nil, part, "" // the prescan's rule: UTF-16 named in the document is UTF-8
+		}
+		return utf8OrNil(enc), part, ""
 	}
 	if utf8.Valid(part) {
 		return nil, part, ""

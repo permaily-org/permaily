@@ -107,7 +107,7 @@ func sheet(s string) string { return (&cssBudget{}).filterStylesheet(s) }
 func TestCSSRules(t *testing.T) {
 	cases := map[string]string{
 		"p{color:red}":                                                        "p{color:red}",
-		"P , .x > #y + a ~ b * {color:red}":                                   "p , .x > #y + a ~ b *{color:red}",
+		"P , .x > #y + a ~ b * {color:red}":                                   "p,.x>#y+a~b *{color:red}",
 		"a:hover,a:link,a:visited{color:red}":                                 "a:hover,a:link,a:visited{color:red}",
 		"li:first-child,li:last-child{color:red}":                             "li:first-child,li:last-child{color:red}",
 		"li:nth-child(2n+1){color:red}":                                       "li:nth-child(2n+1){color:red}",

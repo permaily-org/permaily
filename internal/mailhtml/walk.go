@@ -41,6 +41,21 @@ var droppedElements = setAtoms(
 	atom.Noembed, atom.Noframes, atom.Listing,
 )
 
+// droppedNames are elements dropped with everything inside that x/net/html's
+// atom table does not know, by name: <portal> and <fencedframe> embed
+// another document, <permission> and <geolocation> ask the browser for a
+// capability.
+var droppedNames = set("portal", "fencedframe", "permission", "geolocation")
+
+// dropped says whether an element of the HTML namespace goes with
+// everything inside it.
+func dropped(n *html.Node) bool {
+	if n.DataAtom != 0 {
+		return droppedElements[n.DataAtom]
+	}
+	return droppedNames[strings.ToLower(n.Data)]
+}
+
 func setAtoms(as ...atom.Atom) map[atom.Atom]bool {
 	m := make(map[atom.Atom]bool, len(as))
 	for _, a := range as {
@@ -175,7 +190,7 @@ func (w *walker) element(c, dst *html.Node, depth int, inLink bool) error {
 			}
 		}
 		return nil
-	case droppedElements[a]:
+	case dropped(c):
 		return w.countDropped(c)
 	case a == atom.Html:
 		if v, ok := attr(c, "lang"); ok && validLang(v) {
@@ -248,7 +263,7 @@ func needsDiv(p *html.Node) bool {
 			if budget--; budget < 0 {
 				return true
 			}
-			if c.Type != html.ElementNode || c.Namespace != "" || droppedElements[c.DataAtom] {
+			if c.Type != html.ElementNode || c.Namespace != "" || dropped(c) {
 				continue
 			}
 			kept := keptElements[c.DataAtom]
@@ -598,7 +613,7 @@ func textOf(n *html.Node, max int) string {
 			switch {
 			case c.Type == html.TextNode:
 				b.WriteString(c.Data)
-			case c.Type == html.ElementNode && c.Namespace == "" && !droppedElements[c.DataAtom]:
+			case c.Type == html.ElementNode && c.Namespace == "" && !dropped(c):
 				walk(c)
 			}
 		}

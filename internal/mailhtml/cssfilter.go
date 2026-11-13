@@ -712,9 +712,41 @@ func writeSelector(prelude []cssNode) (string, bool) {
 		return "", false
 	}
 	var b strings.Builder
+	// Each boundary between two compound selectors counts once: a comma, an
+	// explicit combinator with or without white space around it, or white
+	// space alone (the descendant combinator), written when the next
+	// compound starts.
 	compounds := 1
+	space := false
 	for i := 0; i < len(prelude); i++ {
 		n := prelude[i]
+		if !n.isBlock() {
+			switch n.tok.Kind {
+			case cssWhitespace:
+				space = true
+				continue
+			case cssComma:
+				space = false
+				b.WriteByte(',')
+				compounds++
+				continue
+			case cssDelim:
+				switch n.tok.Value {
+				case ">", "+", "~":
+					space = false
+					b.WriteString(n.tok.Value)
+					compounds++
+					continue
+				}
+			}
+		}
+		if space {
+			space = false
+			if last := b.String(); last != "" && !strings.ContainsRune(",>+~", rune(last[len(last)-1])) {
+				b.WriteByte(' ')
+				compounds++
+			}
+		}
 		if n.isBlock() {
 			if n.block != cssLBracket || !writeAttributeSelector(n.children, &b) {
 				return "", false
@@ -722,12 +754,6 @@ func writeSelector(prelude []cssNode) (string, bool) {
 			continue
 		}
 		switch t := n.tok; t.Kind {
-		case cssWhitespace:
-			b.WriteByte(' ')
-			compounds++
-		case cssComma:
-			b.WriteByte(',')
-			compounds++
 		case cssIdent:
 			cssWriteIdent(&b, strings.ToLower(t.Value))
 		case cssHash:
