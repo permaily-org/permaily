@@ -50,8 +50,10 @@ test.describe('26: run A, the frame alone', () => {
       // No connection was opened and no name looked up, prefetch hints included. Where an engine does it anyway for a
       // hint under the frame's CSP, that is a finding against the frame's line for that hint (ADR 0026, "What holds
       // each guarantee"), kept as a known failure of that engine with its reason (knownHint below).
-      if (seen.connects.length > 0) observe(info, `run A ${name}: connections opened`, seen.connects)
-      if (seen.lookups.length > 0) observe(info, `run A ${name}: names looked up`, [...new Set(seen.lookups)])
+      if (seen.connects.length > 0)
+        observe(info, `run A ${name}: connections opened`, seen.connects)
+      if (seen.lookups.length > 0)
+        observe(info, `run A ${name}: names looked up`, [...new Set(seen.lookups)])
       expect(seen.connects).toEqual([])
       expect(seen.lookups).toEqual([])
     })
