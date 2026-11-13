@@ -1100,24 +1100,39 @@ func writeMedia(prelude []cssNode) (string, bool) {
 		return "", false
 	}
 	var b strings.Builder
+	// apart says that what was written last keeps the next word or feature
+	// from being read as part of it: nothing yet, a space or a comma. Two
+	// that only a comment kept apart get a space ("screen" and "and" are not
+	// "screenand", a word and a feature are not a function).
+	apart := true
 	for _, n := range prelude {
 		if n.isBlock() {
+			if !apart {
+				b.WriteByte(' ')
+			}
 			if n.block != cssLParen || !writeMediaFeature(n.children, &b) {
 				return "", false
 			}
+			apart = false
 			continue
 		}
 		switch t := n.tok; t.Kind {
 		case cssWhitespace:
 			b.WriteByte(' ')
+			apart = true
 		case cssComma:
 			b.WriteByte(',')
+			apart = true
 		case cssIdent:
 			w := strings.ToLower(t.Value)
 			if w == "" || w[0] == '-' {
 				return "", false
 			}
+			if !apart {
+				b.WriteByte(' ')
+			}
 			cssWriteIdent(&b, w)
+			apart = false
 		default:
 			return "", false
 		}
@@ -1142,11 +1157,16 @@ func writeMediaFeature(nodes []cssNode, b *strings.Builder) bool {
 			return false
 		}
 		b.WriteByte(':')
+		last := cssEOF // the kind of the token written last, for cssGlues
 		for _, n := range trimSpace(rest[1:]) {
 			if n.isBlock() {
 				return false
 			}
-			switch t := n.tok; t.Kind {
+			t := n.tok
+			if cssGlues(last, t.Kind) {
+				b.WriteByte(' ')
+			}
+			switch t.Kind {
 			case cssWhitespace:
 				b.WriteByte(' ')
 			case cssIdent:
@@ -1171,6 +1191,7 @@ func writeMediaFeature(nodes []cssNode, b *strings.Builder) bool {
 			default:
 				return false
 			}
+			last = t.Kind
 		}
 	}
 	b.WriteByte(')')

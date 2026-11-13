@@ -251,6 +251,34 @@ func TestCSSAdjacentTokensStaySeparate(t *testing.T) {
 	}
 }
 
+// Found by CI's fuzzing of FuzzCSS: in the prelude of @media, two tokens that
+// a comment or a sign kept apart were written with nothing between, and read
+// back as one ("0" and "0" as "00", then "0"; "a" and "b" as "ab"; a word and
+// a feature as a function). What is written must be read back as it was.
+func TestFuzzFoundMediaTokensStaySeparate(t *testing.T) {
+	for _, in := range []string{
+		"@media (a-aaaa:0+0){a0{width:0 a0000000000}}",
+		"@media (min-width:0/**/0){a{color:red}}",
+		"@media (min-width:1/**/px){a{color:red}}",
+		"@media (orientation:a/**/b){a{color:red}}",
+		"@media (min-width:1px/**/2px){a{color:red}}",
+		"@media screen/**/and (min-width:1px){a{color:red}}",
+		"@media screen/**/(min-width:1px){a{color:red}}",
+		"@media (min-width:1px)/**/and (max-width:2px){a{color:red}}",
+		"@media (min-width:1px)/**/(max-width:2px){a{color:red}}",
+	} {
+		out := (&cssBudget{}).filterStylesheet(in)
+		if again := (&cssBudget{}).filterStylesheet(out); again != out {
+			t.Errorf("%q: written %q, read back %q", in, out, again)
+		}
+		for _, glued := range []string{":00", ":1px2", "ab)", "screenand", "screen(", ")and", ")("} {
+			if strings.Contains(out, glued) {
+				t.Errorf("%q: written %q, with %q glued", in, out, glued)
+			}
+		}
+	}
+}
+
 // tokenize is cssTokenize of s, without a deadline, within cssMaxTokens.
 func tokenize(t testing.TB, s string) []cssToken {
 	t.Helper()
