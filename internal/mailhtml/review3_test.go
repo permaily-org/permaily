@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
+
 	"github.com/permaily-org/permaily/internal/contracts"
 )
 
@@ -95,5 +98,54 @@ func TestReview3ATextIsJoinedInLinearWork(t *testing.T) {
 				t.Errorf("%s, %s: %d bytes with %.1f MiB of heap, over the %d MiB of a render", name, pass, len(src), float64(heap)/(1<<20), renderMemory>>20)
 			}
 		}
+	}
+}
+
+// shownText is the text a browser shows of src's body: its text nodes in
+// order, as x/net/html (a parser of the HTML standard) builds them.
+func shownText(t *testing.T, src string) string {
+	t.Helper()
+	doc, err := parse(context.Background(), []byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	var body *html.Node
+	for n := doc; n != nil; n = next(n, doc) {
+		if n.Type == html.ElementNode && n.DataAtom == atom.Body {
+			body = n
+			break
+		}
+	}
+	for n := body; n != nil; n = next(n, body) {
+		if n.Type == html.TextNode {
+			b.WriteString(n.Data)
+		}
+	}
+	return b.String()
+}
+
+// F: the prepared stream left comments out, so the text on either side of
+// one was read as one text: "&am<!>p;", which a browser shows as "&amp;",
+// was shown "&". A dropped comment leaves an empty comment in its place,
+// charged as one node, and no comment reaches the output: the text shown is
+// the original's, for this input and the joins fuzzing found before.
+func TestReview3FADroppedCommentJoinsNothing(t *testing.T) {
+	for _, src := range []string{
+		"&am<!>p;", "&am<!---->p;", "x&lt<!-- y -->;z", "<<!>td>x", "<<!---->/p>", "a<<!-- x -->b>c",
+		"<table><tr><td>&am<!>p;</td></tr></table>",
+	} {
+		st, out := renderOK(t, input(src))
+		if st.Status != contracts.HTMLShown {
+			t.Errorf("%q: %s", src, st.Status)
+			continue
+		}
+		if got, want := shownText(t, out), shownText(t, src); got != want {
+			t.Errorf("%q: shows %q, a browser %q", src, got, want)
+		}
+		if strings.Contains(out, "<!--") {
+			t.Errorf("%q: a comment in the output: %s", src, out)
+		}
+		boundHolds(t, src)
 	}
 }

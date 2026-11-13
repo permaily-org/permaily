@@ -58,6 +58,9 @@ type prepared struct {
 	attrBytes int
 }
 
+// emptyComment is what a comment of the input is written as in the stream.
+const emptyComment = "<!---->"
+
 // documentNodes are what the parser makes at most once a document, charged
 // once: the document, its html, head and body (implied or not), and the
 // one text token split between the head and the body (its leading white
@@ -69,8 +72,9 @@ const documentNodes = 5
 // tokenizer read it, with these changes, none of which changes an element
 // or text the walk keeps:
 //
-//   - comments are left out (the walk drops them), and a text's final "<"
-//     is written "&lt;", so two texts they separated never join into a tag;
+//   - a comment is written as an empty comment (emptyComment), which the
+//     walk drops, so nothing on either side of a comment is joined by its
+//     removal; and a text's final "<" is written "&lt;";
 //   - the formatting elements are renamed (formattingPrefix), so the parser
 //     never clones one; a second <a> while one is open is preceded by the
 //     end tag of the first, as the parser would end it;
@@ -91,7 +95,7 @@ const documentNodes = 5
 //
 // The bound is a sum over the stream's tokens, read off the places in
 // x/net/html v0.62.0's parse.go that create a node (TestTheBoundsChecklist
-// lists them): one for each start tag, text and doctype, two more for a <td>
+// lists them): one for each start tag, text, comment and doctype, two more for a <td>
 // or <th> (the tbody and tr it may imply), one more for a <tr> (its tbody),
 // two more for a <col> (its colgroup, and the white space a following text
 // may leave in it) and one more for a <colgroup>; one for </p> and </br>
@@ -156,7 +160,11 @@ func prepare(ctx context.Context, b []byte, limits bool) (prepared, error) {
 				}
 			}
 		case html.CommentToken:
-			// Left out.
+			// An empty comment in its place, one node: what was on either
+			// side of it stays apart ("&am<!>p;" is not "&amp;"), and the
+			// walk drops it.
+			p.nodes++
+			out.WriteString(emptyComment)
 		case html.DoctypeToken:
 			p.nodes++
 			d := z.Raw()

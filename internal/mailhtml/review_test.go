@@ -715,16 +715,19 @@ func TestReviewCSSExpectationsWrittenByHand(t *testing.T) {
 // Found by FuzzSanitise after the review (testdata/fuzz/FuzzSanitise/
 // a26e07e044c78bc2): comments and doctypes are nodes of the tree too, and
 // the bound did not count them, so a part of 2 MiB of "<!>" made about
-// 700,000 nodes past the 200,000 of the bound. Since the second review the
-// prepared stream leaves comments out (the walk drops them), and a doctype
-// counts one.
+// 700,000 nodes past the 200,000 of the bound. Since the third review the
+// prepared stream writes each comment as an empty one, charged one node (the
+// walk drops it), and a doctype counts one: such a part is too large.
 func TestFuzzFoundCommentsAreNodesToTheBound(t *testing.T) {
 	for _, src := range []string{"<!><!><!><!><!0", "<!--a--><!DOCTYPE x><!--b--><p>x</p><!---->", "<!DOCTYPE html><!DOCTYPE html>"} {
 		boundHolds(t, src)
 	}
 	src := strings.Repeat("<!>", contracts.MessageHTMLMaxBytes/3)
 	p, nodes, _, err := measure(src)
-	if err != nil || nodes > p.nodes || nodes > documentNodes {
+	if err != nil || nodes > p.nodes {
 		t.Errorf("2 MiB of comments: bound %d, %d nodes: %v", p.nodes, nodes, err)
+	}
+	if st, err := Render(context.Background(), input(src), nil); err != nil || st.Status != contracts.HTMLTooLarge {
+		t.Errorf("2 MiB of comments: %s, %v", st.Status, err)
 	}
 }
