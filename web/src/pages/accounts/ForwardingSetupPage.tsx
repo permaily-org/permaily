@@ -117,10 +117,16 @@ export function ForwardingSetupPage() {
     )
   }
 
+  // Each step is marked done only on what the mailbox shows. Mail arriving shows that the address is in use, not
+  // that it comes through Gmail: anyone can send to it. Gmail's code for this address (or the Gmail account
+  // Google confirmed) shows that Gmail was asked to forward here, and mail arriving after it that the code was
+  // entered, since Gmail forwards only then. A code for another address says nothing about this mailbox.
   const receiving = mailbox.state === 'receiving' || Boolean(mailbox.receiving_since)
   const confirmed = mailbox.confirmations.length > 0
-  const step1: StepState = receiving || confirmed ? 'done' : 'current'
-  const step2: StepState = receiving ? 'done' : confirmed ? 'current' : 'next'
+  const gmailAsked =
+    Boolean(mailbox.source) || mailbox.confirmations.some((c) => !c.for_another_address)
+  const step1: StepState = receiving || gmailAsked ? 'done' : 'current'
+  const step2: StepState = receiving && gmailAsked ? 'done' : step1 === 'done' ? 'current' : 'next'
   const step3: StepState = receiving ? 'done' : 'next'
   return (
     // The heading stands where it stood while the mailbox loaded, so the focus it took stays.
@@ -176,12 +182,17 @@ export function ForwardingSetupPage() {
                     Check again
                   </TextAction>
                 </div>
-              ) : (
-                !receiving && (
-                  <p role="status" className="mt-3 text-small text-ink-2">
-                    Waiting for Gmail's message. This page checks every few seconds.
+              ) : receiving ? (
+                step2 !== 'done' && (
+                  <p className="mt-3 text-small text-ink-2">
+                    No code from Gmail is listed here, so this page can't tell whether this step was
+                    done.
                   </p>
                 )
+              ) : (
+                <p role="status" className="mt-3 text-small text-ink-2">
+                  Waiting for Gmail's message. This page checks every few seconds.
+                </p>
               )}
             </Step>
 
