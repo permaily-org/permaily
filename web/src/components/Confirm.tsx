@@ -38,7 +38,7 @@ export type Confirmed = <T>(action: () => Promise<T>, why?: ConfirmWhy) => Promi
  */
 export type ConfirmWhy = 'account' | 'admin' | { says: string }
 
-const reasons: Record<ConfirmWhy, string> = {
+const reasons: Record<Exclude<ConfirmWhy, { says: string }>, string> = {
   account:
     "This change decides who can get into your account, so Permaily asks you to show it's you again. It counts for the next 10 minutes.",
   admin:
