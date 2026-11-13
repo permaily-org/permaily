@@ -68,6 +68,12 @@ PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem scripts/handoff.sh /tmp/stg-a /tmp/
 
 The staging table keeps its root secret from one test to the next, and only the key of an image that holds it can open it. When the key of the last staging image that ran is gone (removed from `release_keys` and applied: it is disabled at once and deleted after seven days), nothing can open that secret again: start the staging table over as in "A new deployment, or losing everything", on `permaily-mail-staging`, before the next staging image.
 
+`tofu plan` removes the TLS-RPT record (`_smtp._tls.inbox`) unless `tls_rpt_address` is set. For the length of the test, set it, without committing, to the address the record has now (`dig +short TXT _smtp._tls.inbox.permaily.com`, the part after `mailto:`), and take the change out when the test ends.
+
+Give every test account a contact address that exists and takes mail. A notice sent to one that no longer does bounces, and SES then puts that address on the account's suppression list, which production shares: production stops writing to it too. See it with `AWS_PROFILE=permaily aws sesv2 get-suppressed-destination --region us-east-2 --email-address <address>` and remove it with `AWS_PROFILE=permaily aws sesv2 delete-suppressed-destination --region us-east-2 --email-address <address>`.
+
+The test mailbox's token is gone, so a rehearsal reads mail only through an account that is signed in. Its first one is an account made under the old release and kept signed in through the handoff, or the super admin's, signed in and read by the person who owns its address.
+
 Two staging images built at the same time may be logged in either order, and a handoff only goes forward in that order. Afterwards deploy the production release again, remove the staging keys from `release_keys`, restore the CAA records and delete the `staging/` branches.
 
 ## Records that cannot go back
