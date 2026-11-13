@@ -345,8 +345,12 @@ const (
 	renderMemory = 64 << 20
 	renderStack  = 4 << 20
 	// deadlineMargin is how long past its deadline a render may take to
-	// stop: one check of the context in each loop, on a loaded machine.
-	deadlineMargin = 150 * time.Millisecond
+	// stop. It is wide on purpose: on a shared CI runner the bounded work
+	// of these shapes alone took 250 to 310 ms, so a tight margin measures
+	// the machine and not the code. What it still catches is work that is
+	// not bounded at all; that each pass checks its context is shown, without
+	// a clock, by TestReview1EveryCSSPassChecksItsContext.
+	deadlineMargin = 2 * time.Second
 )
 
 // Finding 1: CSS nesting was bounded after the recursion, a stylesheet over
