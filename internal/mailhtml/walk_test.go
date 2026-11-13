@@ -16,6 +16,7 @@ func TestAttributes(t *testing.T) {
 		`<p dir="sideways" lang="e n" id="a b" align="left;x">p</p>`:                       `<p>p</p>`,
 		`<table width="600px" height="50%" border="0" cellpadding="4" cellspacing="0" bgcolor="FFFFFF"><tr><td nowrap="nowrap" colspan="2" rowspan="1" scope="col" headers="h1 h2" valign="top" bgcolor="red">x</td></tr></table>`: `<table bgcolor="#ffffff" border="0" cellpadding="4" cellspacing="0" height="50%" width="600"><tbody><tr><td bgcolor="red" colspan="2" headers="h1 h2" nowrap="" rowspan="1" scope="col" valign="top">x</td></tr></tbody></table>`,
 		`<table width="-1" bgcolor="#12" border="x"><tr><td colspan="99999" scope="cell">x</td></tr></table>`:                                                                                                                      `<table><tbody><tr><td>x</td></tr></tbody></table>`,
+
 		`<ol start="3" type="i" reversed><li value="7">x</li></ol>`:                                                        `<ol reversed="" start="3" type="i"><li value="7">x</li></ol>`,
 		`<font color="#00F" face="Arial, 'Helvetica'" size="+1">x</font><font face="a;b" size="9" color="url(x)">y</font>`: `<font color="#00f" face="Arial, &#39;Helvetica&#39;" size="+1">x</font><font>y</font>`,
 		`<time datetime="2026-11-12T09:00Z">t</time><time datetime="soon">u</time>`:                                        `<time datetime="2026-11-12T09:00Z">t</time><time>u</time>`,
