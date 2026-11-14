@@ -46,6 +46,38 @@ func googleSigned(t *testing.T, to, requester string) []byte {
 	return out.Bytes()
 }
 
+// gmailAsSent is Gmail's confirmation as Google sends it today (captured on
+// 2026-11-14, internal/inbox/testdata/gmail): no code anywhere, a link to
+// confirm. Signed by the test key when signed is set.
+func gmailAsSent(t *testing.T, to, requester string, signed bool) []byte {
+	t.Helper()
+	raw := "From: Gmail Team <forwarding-noreply@google.com>\r\nTo: " + to + "\r\n" +
+		"Subject: (Gmail Forwarding Confirmation - Receive Mail from " + requester + "\r\n" +
+		"Content-Type: text/plain; charset=\"UTF-8\"\r\n\r\n" +
+		requester + " has requested to automatically forward mail to\r\nyour email\r\naddress " + to + ".\r\n\r\n" +
+		"please click the link below to confirm the request:\r\n\r\n" + gmailLink + "\r\n"
+	if !signed {
+		return []byte(raw)
+	}
+	var out bytes.Buffer
+	if err := dkim.Sign(&out, strings.NewReader(raw), &dkim.SignOptions{Domain: "google.com", Selector: "test", Signer: googleKey, HeaderKeys: []string{"From", "To", "Subject"}}); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+const gmailLink = "https://mail-settings.google.com/mail/vf-%5BAbC_-1%5D-xyz"
+
+// markOn says the mark that Google confirmed a confirmation is on, as the
+// release has it since the capture of 2026-11-14 (inbox.VerifyGmail): these
+// tests are about what it does.
+func markOn(t *testing.T) {
+	t.Helper()
+	if !inbox.VerifyGmail {
+		t.Fatal("the mark is off in this build")
+	}
+}
+
 func googleDKIM() inbox.Authenticator {
 	return msgauth.DKIM(func(_ context.Context, name string) ([]string, error) {
 		if name != "test._domainkey.google.com" {
@@ -58,8 +90,7 @@ func googleDKIM() inbox.Authenticator {
 // M15: two confirmations signed by Google arrive through A and B at once for
 // a waiting mailbox, with the mark on: one verified_at, one notice.
 func TestM15TwoVerifiedConfirmationsAtOnce(t *testing.T) {
-	inbox.VerifyGmail = true
-	t.Cleanup(func() { inbox.VerifyGmail = false })
+	markOn(t)
 	w := newWorld(t)
 	w.auth = googleDKIM()
 	a, b := w.enclave(), w.enclave()
@@ -109,6 +140,53 @@ func TestM15TwoVerifiedConfirmationsAtOnce(t *testing.T) {
 	}
 	got, _ = b.Get(ctx, me, m.ID)
 	if got.State != contracts.MailboxReceiving || got.Source.Address != "second@gmail.com" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// Gmail's confirmation as Google sends it, with no code: it is a
+// confirmation, listed with its link, and it does not start the mailbox
+// receiving; signed by Google it is verified and its requester becomes the
+// mailbox's source; for another address it shows neither code nor link.
+func TestAConfirmationWithoutACodeKeepsTheMailboxWaiting(t *testing.T) {
+	w := newWorld(t)
+	w.auth = googleDKIM()
+	a := w.enclave()
+	me := caller("acc_me", w.clock)
+	m := a.mustCreate(t, me)
+	if err := a.deliver(t, gmailAsSent(t, m.Address, "forged@gmail.com", false), m.Address); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := a.Get(ctx, me, m.ID)
+	if got.State != contracts.MailboxWaiting || !got.ReceivingSince.IsZero() || got.Source != nil || len(got.Confirmations) != 1 {
+		t.Fatalf("%+v", got)
+	}
+	if c := got.Confirmations[0]; c.Code != "" || c.Link != gmailLink || c.Requester != "forged@gmail.com" || c.Verified || c.Message == "" {
+		t.Fatalf("%+v", c)
+	}
+	w.clock.add(time.Second)
+	if err := a.deliver(t, gmailAsSent(t, m.Address, "me@gmail.com", true), m.Address); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = a.Get(ctx, me, m.ID)
+	if got.State != contracts.MailboxWaiting || got.Source == nil || got.Source.Address != "me@gmail.com" || len(got.Confirmations) != 2 {
+		t.Fatalf("%+v", got)
+	}
+	if c := got.Confirmations[0]; !c.Verified || c.Link != gmailLink || c.Code != "" {
+		t.Fatalf("%+v", c)
+	}
+	if n := count(w.kinds(), mailboxes.NoticeForwarding); n != 1 {
+		t.Fatalf("%d notices", n)
+	}
+	w.clock.add(time.Second)
+	if err := a.deliver(t, gmailAsSent(t, "someone@elsewhere.example", "x@gmail.com", true), m.Address); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = a.Get(ctx, me, m.ID)
+	if c := got.Confirmations[0]; !c.ForAnotherAddress || c.Code != "" || c.Link != "" || c.Verified {
+		t.Fatalf("%+v", c)
+	}
+	if got.State != contracts.MailboxWaiting {
 		t.Fatalf("%+v", got)
 	}
 }
@@ -751,8 +829,7 @@ func TestEverythingKeepsChanging(t *testing.T) {
 		t.Fatal("remove")
 	}
 	a.records.set(nil)
-	inbox.VerifyGmail = true
-	defer func() { inbox.VerifyGmail = false }()
+	markOn(t)
 	w2 := newWorld(t)
 	w2.auth = googleDKIM()
 	b := w2.enclave()
@@ -851,8 +928,7 @@ func TestDisconnectingAReservationRaces(t *testing.T) {
 // Whoever reads the table and the bucket finds no address, label, sender,
 // subject, text or Gmail account, only identifiers, sizes and times.
 func TestTheStoreNeverHoldsPlaintext(t *testing.T) {
-	inbox.VerifyGmail = true
-	t.Cleanup(func() { inbox.VerifyGmail = false })
+	markOn(t)
 	w := newWorld(t)
 	w.auth = googleDKIM()
 	a := w.enclave()

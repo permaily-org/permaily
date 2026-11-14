@@ -1,6 +1,7 @@
 import { createContext, type ReactNode, useContext, useState } from 'react'
 import { NavLink, Outlet } from 'react-router'
 import { AppShell } from '../../components/AppShell.tsx'
+import { Logo } from '../../components/Logo.tsx'
 import { Button, ButtonLink } from '../../components/ui/index.ts'
 import * as api from '../../lib/api.ts'
 import { closesAt, formatFullDay } from '../../lib/closing.ts'
@@ -39,7 +40,7 @@ export function FlowFrame({ children }: { children: ReactNode }) {
   return (
     <div className="mx-auto w-full max-w-[1296px] px-4 pt-6 pb-10 sm:px-8 sm:pt-8 sm:pb-16 lg:px-12">
       <header className="flex items-center justify-between gap-6">
-        <span className="text-wordmark font-semibold">Permaily</span>
+        <Logo />
         <NavLink
           to="/accounts"
           className={cx(
@@ -66,7 +67,7 @@ function LimitedShell({ standing, children }: { standing: Standing; children: Re
   return (
     <div className="flex min-h-svh flex-col">
       <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-rule px-4 py-2.5 sm:px-8 lg:px-14">
-        <span className="text-wordmark font-semibold">Permaily</span>
+        <Logo />
         <nav aria-label="Mailboxes" className="flex gap-1">
           <NavLink to="/inbox" className={tab}>
             Inbox

@@ -3,9 +3,11 @@ import { cx } from '../../lib/styles.ts'
 import { CopyButton, formatWhen } from './shared.tsx'
 
 /**
- * One forwarding confirmation Gmail sent: its code to copy into Gmail, the Gmail account that asked, when, and
- * whether Google confirmed it. Its link is never shown: Permaily never follows it, and neither should anyone
- * who did not ask. One for another address shows no code.
+ * One forwarding confirmation Gmail sent: the link to confirm (as Gmail sends it since 2026) or the code to copy
+ * into Gmail, the Gmail account that asked, when, and whether Google confirmed it. One for another address shows
+ * neither. The link is text to copy, never a link of the app: the server keeps it only when it is Gmail's own
+ * confirmation page (`https://mail-settings.google.com/mail/vf-…`), Permaily never follows it, and the person opens
+ * it in the browser where they use Gmail, having read which account asked (ADR 0026).
  */
 export function Confirmation({ confirmation }: { confirmation: api.ForwardingConfirmation }) {
   const when = formatWhen(confirmation.received_at)
@@ -19,14 +21,16 @@ export function Confirmation({ confirmation }: { confirmation: api.ForwardingCon
       </div>
     )
   }
-  const requester = confirmation.requester
+  const { requester, code, link } = confirmation
   return (
     <div className="border-b border-rule py-3">
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <span className="font-mono text-title font-medium tracking-wide">{confirmation.code}</span>
-        <CopyButton value={confirmation.code} what="the code" />
-      </div>
-      <p className="mt-1 text-small text-ink-2">
+      {code && (
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+          <span className="font-mono text-title font-medium tracking-wide">{code}</span>
+          <CopyButton value={code} what="the code" />
+        </div>
+      )}
+      <p className={cx('text-small text-ink-2', code && 'mt-1')}>
         {requester ? (
           <>
             Asked by <span className="font-mono text-ink wrap-anywhere">{requester}</span>,{' '}
@@ -39,7 +43,28 @@ export function Confirmation({ confirmation }: { confirmation: api.ForwardingCon
           ? 'Google confirmed this request.'
           : "Not confirmed by Google: if you didn't ask Gmail to forward here, ignore it."}
       </p>
-      {requester && (
+      {link && (
+        <>
+          {confirmation.verified && (
+            <p className="mt-1 text-body">
+              Google sent a link to confirm it. Copy it into the browser where you use Gmail.
+            </p>
+          )}
+          <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 bg-sunken px-3 py-2.5">
+            <span className="min-w-0 font-mono text-small wrap-anywhere select-all">
+              <bdi dir="ltr">{link}</bdi>
+            </span>
+            <CopyButton value={link} what="the link" />
+          </div>
+          {requester && (
+            <p className="mt-1 text-body">
+              Open this link only if <span className="font-mono wrap-anywhere">{requester}</span> is
+              your account.
+            </p>
+          )}
+        </>
+      )}
+      {code && requester && (
         <p className="mt-1 text-body">
           Copy this code into Gmail only if{' '}
           <span className="font-mono wrap-anywhere">{requester}</span> is your account.

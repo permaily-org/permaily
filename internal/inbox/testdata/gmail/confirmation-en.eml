@@ -1,0 +1,102 @@
+Received: by mail-pl1-f169.google.com with SMTP id d9443c01a7336-2ed0890476fso21751985ad.0
+        for <yf2kwd4jkcs2e8y9yez9@inbox.permaily.com>; Sat, 14 Nov 2026 12:00:34 -0800 (PST)
+ARC-Seal: i=1; a=rsa-sha256; t=1794686434; cv=none;
+        d=google.com; s=arc-20260327;
+        b=A66FLLtfxlRKFlaNTEFDlihwtzIgnIzBemReIFUWr5jo4YCnKwIm+3UVjEpygAv5I0
+         5AbacRkoYKbO1j0zEyXtV2EBv9u4qfBk3+OqrgW0LQsurhOBSHqtvS8aOf9e8Z5NjL5S
+         YfgXooBnTmN+cTJoYPThV6TnW/0Ryd74LRzOdS2hBTdYlk26ECKPu87ec+BuVz0xYG02
+         GbqRrSU2J5LjwZ+wFZ/dPIzr2/auHUDMLZ23UEyfK+UewicMEodD0yJWCTbTJoXqiXj0
+         lKI8WwVgPYxWQreCaZVzo28TOKnDzrzbczBmHg03vijj0QZeYs7Ru8UBsMs7/IaroKIK
+         1keQ==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20260327;
+        h=to:from:subject:message-id:date:mime-version:dkim-signature;
+        bh=NIVEkH+rDAbv4nrrkDsNZrOSO4c789glPDUIIteNbvw=;
+        fh=4SC+jcTW3HiKQpnIZRarVyLuR/mwgpx9/TfkDZUOUhw=;
+        b=d8ZgToyOALeFZxJKjeYfQUhD+yS3e7Qqcm5UbJMOETH5eUVDvmPhkU3Ra10MSvQMxb
+         Ee//r36kw16UCANSZsbpeQpm9LHv4o6UKkTVsj/cBzcPbPL3m5cIjaZ+iSDgaPNPmWII
+         3Dg28XeJu+9jKbEC8dkJod+vpnLBmg2D9giM05PzP75+77u1Wku+uZjMM8hRSE4IKUXq
+         XaVwdW+3OOtrux2a9tB3Mk3fjcybiBYqYfRnLYejIuL+zQE4uPoLvMscTCrunwQLKLlb
+         74piCHbU6/0LT032eIE2Rzw3VODug+Av3i3rie9jMqZsZYZ9I7MFOUWwISqEG26aozbP
+         p/yw==;
+        darn=inbox.permaily.com
+ARC-Authentication-Results: i=1; mx.google.com; arc=none
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=google.com; s=20260707; t=1794686434; x=1795291234; darn=inbox.permaily.com;
+        h=content-type:to:from:subject:message-id:date:mime-version:from:to
+         :cc:subject:date:message-id:reply-to:content-type;
+        bh=NIVEkH+rDAbv4nrrkDsNZrOSO4c789glPDUIIteNbvw=;
+        b=oeOKVZag8IWir1zUg1LuS2cS7MXhxqzfP0fiUkuQx+Xiayoez4GFAvqYwQnAh3JaaQ
+         qWOGkPxCVzB7L/78/7KgBLwJqgBFZIDC+cWellirSR4ps+Vvxk461Sd81oe1N/5l76qy
+         Xk0raVZOvvDsA1cakKMW9m1bCHTzvWo8up1VpE3ZdKAUWNsqWHcHFsMz8pUwBqySpp+k
+         RF6JrWsSqMngBvT1i8Xg7a1UYdbA6AtXkePnc7OFyZphj4sr9PGN0go4jZvLa9svZdvD
+         h3D+cqY8vjvm08nt9nMztbApa8ZBDEsk97ayoT3KJ6i3Uy5mznMWR5upkS5GPYQozk79
+         wmXw==
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20260707; t=1794686434; x=1795291234;
+        h=content-type:to:from:subject:message-id:date:mime-version:x-gm-gg
+         :x-gm-message-state:from:to:cc:subject:date:message-id:reply-to
+         :content-type;
+        bh=NIVEkH+rDAbv4nrrkDsNZrOSO4c789glPDUIIteNbvw=;
+        b=Y0oPxQn9iwFnCh1RLfqCaXlE2em5ShvNc1iJRJakKaVS+s2XsKatid+3OfX1/XWM84
+         AfVokErTaQMt7Qe199QCaq9F/XcMlq9+OIGKNpM2pff4ut31zNvIkGLb+p/32H0S68BN
+         DYSLNSEYc+D8p0JpBTSdqacx4PBUnYhKli9mQVFMxSjRQFOVu2FUbYxl30dYY6/O6k3C
+         1LIoKp6A/x6qVD2/wXoA54J8ylle/UTYpwwDgJDNGeOax62Ow4UIei46CvG9uT5BEzVn
+         Fo4QFg6OGwM2e6g8T2MriZqZgTP1+lU/IcKLpwleXXMORrUg78zyHG7CwqPmFEaTNVNe
+         m9Tg==
+X-Gm-Message-State: APuU4Z8pegtouoYvRXTQRYjXYHixtCME2Wrjc65CziwGck5esmziIkpX
+	+sy1kayfkOwTfyA3ebBCkuvN2e51X6TxeRb7W9eV7kI3I9Pk9mXPGhiM4agx8+7uLTVQX7aS5Ea
+	Sk40O40uT/my9cOjYEUPcT5E+ZTAQ1HiqtgdDn0DgGQ0hpa/qG8sTt/VhYpKsv4z//C6oEijhtH
+	9R
+X-Gm-Gg: AYBFou2UPSPVKdbjU/9hy9FAguCUFPv+qOdB2ZiprUARUFg2mxnU5Rc7sGcOMykSUWQ
+	yr1gjVLOA/AdbUP9sYtY+uZBv4b7naP8luTekRPiRuieK0p1x5OHWi0VBo7vdnlFJPm0nKNdncJ
+	+94eHdh/xTiqnrc0Hh5WlsQ0CaI4Tr0zplPYs22BaPO+Euntg217QhDlUuxmgLvBPwCrg1xmJIW
+	3vtV9bYBu4itKOLyrS48Xb6XHzvUIYGHJ8NOzlKiDZJtIehckGUE0ePF8kJ7meBRM8BkmzeYsX2
+	ilaUzECm4CjeIEOpnELm5WcXfbn3UZfeIu4lohhzoDC4/Zt3W5tyh5AmdsztZFgmx5B9PeioQto
+	bqi5oMSAzwIX54QPIZzo7wadF0eq+/osUOCxhO34iQxtSiXujBggJXg==
+MIME-Version: 1.0
+X-Received: by 2002:a17:90b:17ca:b0:3b1:fad:b1bc with SMTP id
+ 98e67ed59e1d1-3b1b0d77ad2mr6558647a91.63.1794686433895; Sat, 14 Nov 2026
+ 12:00:33 -0800 (PST)
+X-Google-Address-Confirmation: 2Osfq1KEPdTVc8XTRN7r3i5UHe8
+Date: Sat, 14 Nov 2026 14:00:33 -0600
+X-Gm-Features: AclHuK_gqB8YnktWjWX8dssqrIZTZsA-qaU9cpBymd9hdDRzwACZ5mCW-wn2ixI
+Message-ID: <CAFJ9ObfxZ2w7Yc1RbO2xOzF_xzm-40zLmaqRybSS_Lj=611NRg@mail.gmail.com>
+Subject: (Gmail Forwarding Confirmation - Receive Mail from permailycheck@gmail.com
+From: Gmail Team <forwarding-noreply@google.com>
+To: yf2kwd4jkcs2e8y9yez9@inbox.permaily.com
+Content-Type: text/plain; charset="UTF-8"
+
+permailycheck@gmail.com has requested to automatically forward mail to
+your email
+address yf2kwd4jkcs2e8y9yez9@inbox.permaily.com.
+
+To allow permailycheck@gmail.com to automatically forward mail to your address,
+please click the link below to confirm the request:
+
+https://mail-settings.google.com/mail/vf-%5BANGjdJ8Jeg5FHoqQyZzVMdKtVq8qWqnuUVeaMhAMt6ezTaoGyN-l5g1YiBq-B9avyGs3FHu-nmW_Pq3_CHVMEJscV3OKL1Mv_RtxSZAo9VPuhme2P6b9FbjE5z4wQZs%5D-QD553HeKe4DopLZ5ESMRUQrzKZ8
+
+If you click the link and it appears to be broken, please copy and paste it
+into a new browser window.
+
+Thanks for using Gmail!
+
+Sincerely,
+
+The Gmail Team
+
+If you do not approve of this request, no further action is required.
+permailycheck@gmail.com cannot automatically forward messages to your
+email address
+unless you confirm the request by clicking the link above. If you accidentally
+clicked the link, but you do not want to allow permailycheck@gmail.com to
+automatically forward messages to your address, click this link to cancel this
+verification:
+https://mail-settings.google.com/mail/uf-%5BANGjdJ8abWppU2hx1IpcEFRyy55gmaSuRchP3_VZJvxkEqngk4V5ujQTwHClb8CPr6OJA5zyouKg_GRR4nWr5V0FohV2z9HuE8bx6XUFd4TiMrmNmzLCsiUdOC_Qnas%5D-QD553HeKe4DopLZ5ESMRUQrzKZ8
+
+To learn more about why you might have received this message, please
+visit: http://support.google.com/mail/bin/answer.py?answer=184973.
+
+Please do not respond to this message. If you'd like to contact the
+Google.com Team, please log in to your account and click 'Help' at
+the top of any page. Then, click 'Contact Us' along the bottom of the
+Help Center.

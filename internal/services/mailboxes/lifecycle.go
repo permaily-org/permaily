@@ -248,9 +248,9 @@ func (s *Service) confirmations(ctx context.Context, b inbox.Box) ([]contracts.F
 		if c == nil {
 			continue
 		}
-		f := contracts.ForwardingConfirmation{Code: c.Code, Requester: c.Requester, ReceivedAt: c.ReceivedAt, Verified: c.Verified, ForAnotherAddress: c.ForAnotherAddress, Message: e.Key[len(inbox.KeyConfirm):]}
+		f := contracts.ForwardingConfirmation{Code: c.Code, Requester: c.Requester, Link: c.Link, ReceivedAt: c.ReceivedAt, Verified: c.Verified, ForAnotherAddress: c.ForAnotherAddress, Message: e.Key[len(inbox.KeyConfirm):]}
 		if c.ForAnotherAddress {
-			f.Code = ""
+			f.Code, f.Link = "", ""
 		}
 		out = append(out, f)
 	}

@@ -9,4 +9,9 @@
 release_keys = {
   "v0.10.0" = "c2999bd871d98ddd75e2c505b5e15cf6d978c227aa9fde535568641026149d5982b4200af66191d5759dffc25d2a5bbb"
   "v0.11.0" = "d8572f3a6bfb12162e89aac19d2609cb53992da8d898b28c7a5dbd5519f8d55a29f9eb03abe3e92cabbe619e777f304d"
+  "v0.12.0" = "cdf58b7769634d74cad6c69e9535ccf6fbb2644db9863eafccdf6c030d0dcbc998985336cdea6eb188090b43560302c7"
 }
+
+# Where senders send SMTP TLS reports: the "TLS reports" mailbox the super admin
+# made after v0.12.0 (docs/operations.md). Public on purpose.
+tls_rpt_address = "skr25i9u9s364ra7a6a9@inbox.permaily.com"

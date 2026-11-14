@@ -126,7 +126,7 @@ export type MailboxState = 'waiting' | 'receiving' | 'paused' | 'unreadable'
 
 /** A forwarding confirmation Gmail sent to the mailbox. Anyone can send one that looks like it. */
 export type ForwardingConfirmation = {
-  /** Empty when `for_another_address`: it confirms nothing here. */
+  /** Empty when the message carries none (Gmail's carry none since 2026), and when `for_another_address`. */
   code: string
   /** The Gmail account that asked, as the message says. */
   requester?: string
@@ -137,6 +137,12 @@ export type ForwardingConfirmation = {
   for_another_address?: boolean
   /** The message that carried it, in the mailbox's inbox. */
   message?: string
+  /**
+   * The link that confirms the request, read from the message: only an https URL on `mail-settings.google.com`
+   * under `/mail/vf-`. Absent when it carries none, and when `for_another_address`. Shown as text to copy, never
+   * in an `href`.
+   */
+  link?: string
 }
 
 export type Mailbox = {
