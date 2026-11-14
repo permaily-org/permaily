@@ -238,7 +238,7 @@ describe('W1: connecting a mailbox and its forwarding set-up', () => {
     expect(confirmation.getByText(/^Asked by/).textContent).toBe(
       'Asked by ana.ruiz@example.com, 12 Nov 2026, 10:04 UTC',
     )
-    // Google's check is off: no confirmation is said to be verified.
+    // This one Google did not confirm: it is said to be not verified.
     expect(
       confirmation.getByText(
         "Not confirmed by Google: if you didn't ask Gmail to forward here, ignore it.",
@@ -247,8 +247,9 @@ describe('W1: connecting a mailbox and its forwarding set-up', () => {
     expect(confirmation.getByText(/is your account\.$/).textContent).toBe(
       'Copy this code into Gmail only if ana.ruiz@example.com is your account.',
     )
-    // The confirmation's link is never shown.
+    // A confirmation with a code and no link shows no link, and nothing of Google is a link of the app.
     expect(screen.queryByRole('link', { name: /google|gmail|verify/i })).toBeNull()
+    expect(confirmation.queryByRole('button', { name: /^Copy ?the link$/ })).toBeNull()
     expectNotKept('836104527', personalAddress)
 
     // Still waiting for the first mail: it goes on asking, for fifteen minutes in all.
@@ -263,6 +264,65 @@ describe('W1: connecting a mailbox and its forwarding set-up', () => {
     await open('/accounts/mbx_personal/forwarding')
     await screen.findByText('Receiving since 12 Nov 2026.', { selector: '[role="status"]' })
     expect(screen.getByRole('link', { name: 'Open the inbox' })).toBeTruthy()
+    await expectAccessible()
+  })
+
+  it('shows the link Gmail sends today as text to copy, never as a link, whether Google confirmed it or not', async () => {
+    const link =
+      'https://mail-settings.google.com/mail/vf-%5BANGjdJ8Jeg5FHoqQyZzVMdKtVq8qWqnuUVeaMhAMt6ezTaoGyN%5D-QD553HeKe4DopLZ5'
+    const waiting = mailboxOf({ state: 'waiting', receiving_since: undefined })
+    const withLink = (overrides: Record<string, unknown>) =>
+      confirmationOf({ code: '', requester: 'permailycheck@gmail.com', link, ...overrides })
+    server.signedIn().on(
+      'GET /api/v1/mailboxes/mbx_personal',
+      ok({
+        ...waiting,
+        confirmations: [
+          withLink({ verified: true }),
+          withLink({ received_at: '2026-11-12T10:00:00Z', message: 'a'.repeat(32) }),
+        ],
+      }),
+    )
+    const { user } = await open('/accounts/mbx_personal/forwarding')
+    const items = within(
+      await screen.findByRole('list', { name: "Gmail's confirmations" }),
+    ).getAllByRole('listitem')
+    expect(items).toHaveLength(2)
+    for (const item of items) {
+      const shown = within(item)
+      // The link is text: no element of the app points at it, and there is no code to copy.
+      expect(shown.getByText(link).closest('a')).toBeNull()
+      expect(shown.getByText(link).closest('bdi')?.getAttribute('dir')).toBe('ltr')
+      expect(shown.queryByRole('button', { name: /^Copy ?the code$/ })).toBeNull()
+      expect(shown.getByRole('button', { name: /^Copy ?the link$/ })).toBeTruthy()
+      expect(shown.getByText(/^Open this link only if/).textContent).toBe(
+        'Open this link only if permailycheck@gmail.com is your account.',
+      )
+    }
+    for (const element of document.querySelectorAll('[href], [src], [action], [formaction]')) {
+      for (const name of ['href', 'src', 'action', 'formaction']) {
+        expect(element.getAttribute(name) ?? '').not.toContain('mail-settings')
+      }
+    }
+    expect(within(items[0]).getByText('Google confirmed this request.')).toBeTruthy()
+    expect(
+      within(items[0]).getByText(
+        'Google sent a link to confirm it. Copy it into the browser where you use Gmail.',
+      ),
+    ).toBeTruthy()
+    expect(
+      within(items[1]).getByText(
+        "Not confirmed by Google: if you didn't ask Gmail to forward here, ignore it.",
+      ),
+    ).toBeTruthy()
+    expect(within(items[1]).queryByText(/^Google sent a link/)).toBeNull()
+    // After the page opened: the library that plays the person brings a clipboard of its own.
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    await user.click(within(items[0]).getByRole('button', { name: /^Copy ?the link$/ }))
+    expect(writeText).toHaveBeenCalledWith(link)
+    Reflect.deleteProperty(navigator, 'clipboard')
+    expectNotKept(link)
     await expectAccessible()
   })
 
@@ -305,7 +365,7 @@ describe('W1: connecting a mailbox and its forwarding set-up', () => {
     expect(await shown(personal)).toEqual(['Step 1: Done', 'Step 2: Current step', 'Step 3: Done'])
     expect(
       screen.getByText(
-        "No code from Gmail is listed here, so this page can't tell whether this step was done.",
+        "Nothing from Gmail is listed here, so this page can't tell whether this step was done.",
       ),
     ).toBeTruthy()
     await expectAccessible()
@@ -315,7 +375,7 @@ describe('W1: connecting a mailbox and its forwarding set-up', () => {
       'Step 2: Done',
       'Step 3: Done',
     ])
-    expect(screen.queryByText(/No code from Gmail is listed here/)).toBeNull()
+    expect(screen.queryByText(/Nothing from Gmail is listed here/)).toBeNull()
     // So does a Gmail account Google confirmed, whose code may be gone since.
     expect(
       await shown({

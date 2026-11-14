@@ -118,9 +118,9 @@ export function ForwardingSetupPage() {
   }
 
   // Each step is marked done only on what the mailbox shows. Mail arriving shows that the address is in use, not
-  // that it comes through Gmail: anyone can send to it. Gmail's code for this address (or the Gmail account
-  // Google confirmed) shows that Gmail was asked to forward here, and mail arriving after it that the code was
-  // entered, since Gmail forwards only then. A code for another address says nothing about this mailbox.
+  // that it comes through Gmail: anyone can send to it. Gmail's confirmation for this address (or the Gmail
+  // account Google confirmed) shows that Gmail was asked to forward here, and mail arriving after it that the
+  // request was confirmed, since Gmail forwards only then. One for another address says nothing about this mailbox.
   const receiving = mailbox.state === 'receiving' || Boolean(mailbox.receiving_since)
   const confirmed = mailbox.confirmations.length > 0
   const gmailAsked =
@@ -164,10 +164,10 @@ export function ForwardingSetupPage() {
               </ol>
             </Step>
 
-            <Step number={2} state={step2} title="Enter Gmail's code">
+            <Step number={2} state={step2} title="Confirm Gmail's request">
               <p className="text-body text-ink-2">
-                Gmail sends a code to the address. It shows here: type it in Gmail, then choose
-                Verify.
+                Gmail sends a message to the address with a link to confirm, or a code to type in
+                Gmail. It shows here.
               </p>
               {confirmed ? (
                 <div className="mt-3">
@@ -185,7 +185,7 @@ export function ForwardingSetupPage() {
               ) : receiving ? (
                 step2 !== 'done' && (
                   <p className="mt-3 text-small text-ink-2">
-                    No code from Gmail is listed here, so this page can't tell whether this step was
+                    Nothing from Gmail is listed here, so this page can't tell whether this step was
                     done.
                   </p>
                 )
