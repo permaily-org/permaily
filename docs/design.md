@@ -16,6 +16,17 @@ Fonts are Instrument Sans for text and JetBrains Mono for machine facts, both bu
 - No explanatory text on the page. A fact worth keeping but not worth the space goes behind an info icon (`InfoTip`), and only when people may need it.
 - Every screen works from a 375px phone up, and nothing scrolls sideways. Below 768px the sidebar becomes a top bar with a drawer, and below 1024px an icon rail. Pages use `pagePadding` from `web/src/lib/styles.ts`. Tables drop their secondary columns before they would overflow, by the width they get rather than the window's, and hide a column in every row so the rest stay aligned.
 
+## The logo
+
+An iceberg in two pieces beside the name: a small tip above a gap, and a large mass below it. It is measured from the name's own letters, in Instrument Sans at weight 600: the flat top of the mass sits on the x-height, the gap is the gap under the dot of the i, and the keel reaches the foot of the y.
+
+- **Where it is.** The headers of the web app (`Logo` in `web/src/components/Logo.tsx`: the sidebar, the top bar and the pages that stand outside the shell) and of the public site and its docs (`site/src/components/Logo.astro`, in `Header.astro`). The mail keeps the name as text (see "Mail").
+- **Its size.** The mark is 20px high, which sets the letters at the size the name had as text, so a header keeps its height. It is the drawing made for that size, with the tip, the gap and the mass on whole pixels: don't scale it.
+- **Its colour.** The colour of the text around it. On a dark surface the tip alone takes the highlight: the tip is the part that shows, so the colour rule holds. On a light surface the logo is one colour.
+- **Its name.** In the web app it is a picture named "Permaily"; on the site the link around it carries the name and the picture is hidden from assistive technology. It is not text, so it does not grow with the text size.
+- **The icon.** `favicon.svg` (the drawing made for 16px), `favicon.ico` (16, 32 and 48px) and `apple-touch-icon.png` (180px, a full square with no alpha channel), in `web/public` and `site/public`: an ink tile, the mass in paper and the tip in the highlight. The two folders hold the same bytes.
+- **Generated files.** `logo.ts` beside each component and the six icon files are made with the logo, outside this repository. Never edit them by hand, and replace them together. The icon files hold the values `--ink`, `--paper` and `--highlight` had when they were made, so they are made again when one of those changes.
+
 ## Mail
 
 The messages the enclave sends (sign-in, codes, notices) look like the app: paper, ink and hairlines, 2px corners, no shadow, a single left-aligned column of 560px at most that works from 320px. The wordmark is text. Each message is a few blocks (ADR 0025): a lead in semibold, paragraphs at 16px, a code, a link, facts and small print in `--ink-2`.
