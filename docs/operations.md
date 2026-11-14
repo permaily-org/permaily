@@ -68,7 +68,7 @@ PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem scripts/handoff.sh /tmp/stg-a /tmp/
 
 The staging table keeps its root secret from one test to the next, and only the key of an image that holds it can open it. When the key of the last staging image that ran is gone (removed from `release_keys` and applied: it is disabled at once and deleted after seven days), nothing can open that secret again: start the staging table over as in "A new deployment, or losing everything", on `permaily-mail-staging`, before the next staging image.
 
-`tofu plan` removes the TLS-RPT record (`_smtp._tls.inbox`) unless `tls_rpt_address` is set. For the length of the test, set it, without committing, to the address the record has now (`dig +short TXT _smtp._tls.inbox.permaily.com`, the part after `mailto:`), and take the change out when the test ends.
+The TLS-RPT record (`_smtp._tls.inbox`) is published only while `tls_rpt_address` is set; v0.12.0's deployment removed it (2026-11-14), and it comes back when the "TLS reports" mailbox is made ("Mailboxes per account" below). Leave `tls_rpt_address` as committed during a test, so that `tofu plan` changes no record but the ones the test needs.
 
 Give every test account a contact address that exists and takes mail. A notice sent to one that no longer does bounces, and SES then puts that address on the account's suppression list, which production shares: production stops writing to it too. See it with `AWS_PROFILE=permaily aws sesv2 get-suppressed-destination --region us-east-2 --email-address <address>` and remove it with `AWS_PROFILE=permaily aws sesv2 delete-suppressed-destination --region us-east-2 --email-address <address>`.
 
@@ -194,7 +194,7 @@ Check that the next run starts, then delete the old token. Other applies run wit
 
 ## Read the test mailbox
 
-Until the release that builds mailboxes per account (ADR 0026), which retires it: see the next section. That release has no `/v1/mailbox` and no `-mailbox-*` flags; what follows works only against v0.11.0 and before.
+Retired by v0.12.0, the release that builds mailboxes per account (ADR 0026), in production since 2026-11-14: see the next section. That release has no `/v1/mailbox` and no `-mailbox-*` flags; what follows works only against v0.11.0 and before, as after a rollback to it.
 
 ```sh
 token=$(cat ~/.config/permaily/test-mailbox-token)
@@ -210,7 +210,7 @@ To forward a Gmail account: in Gmail, Settings > Forwarding > Add a forwarding a
 
 ## Mailboxes per account: what changes for the operator
 
-Takes effect with the release that builds ADR 0026; until then nothing here applies.
+Takes effect with v0.12.0, the release that builds ADR 0026, in production since 2026-11-14.
 
 - **The test mailbox is retired.** The release reads nothing of it: `/v1/mailbox` answers 404, the token reads nothing, and `u-9b393600758a2985dae3@inbox.permaily.com` refuses mail like any unknown address. Turn off any Gmail forwarding to it. Mail is read in the app, by the account that owns the mailbox; the operator's token reads nobody's.
 - **TLS-RPT.** The release removes the `_smtp._tls.inbox` record (`tls_rpt_address` is empty by default in `deploy/tofu`). After it is verified: sign in as the super admin, make a mailbox labelled "TLS reports", then set `tls_rpt_address` to its address and apply. Reports arrive there as attachments, read with "Download". This is the one mailbox whose address is public, by design: anyone can send to it, and only its account reads it.
