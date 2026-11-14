@@ -164,11 +164,11 @@ func (s *Service) deliver(ctx context.Context, id, from string, p *inbox.Parsed,
 		var other bool
 		verified, other = c.Verdict(auth, priv.Address)
 		confirm = &inbox.ConfirmEntry{
-			Code: c.Code, Requester: c.Requester, ReceivedAt: claim.Seen.ReceivedAt, Verified: verified,
+			Code: c.Code, Requester: c.Requester, Link: c.Link, ReceivedAt: claim.Seen.ReceivedAt, Verified: verified,
 			ForAnotherAddress: other, Ends: claim.Seen.ReceivedAt.Add(ConfirmFor),
 		}
 		if other {
-			confirm.Code = ""
+			confirm.Code, confirm.Link = "", ""
 		}
 	}
 	if err := s.writer.Store(ctx, b, claim, p, raw, confirm); err != nil {

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -46,11 +47,12 @@ type AuthResult struct {
 type Authenticator func(ctx context.Context, raw []byte) []AuthResult
 
 // VerifyGmail turns on the mark that Google confirmed a forwarding
-// confirmation (ADR 0026, "Gmail's forwarding confirmation"). It stays off
-// until a real confirmation captured in a staging rehearsal passes the
-// predicate and its altered copies fail it: until then every confirmation is
-// stored with Verified false.
-var VerifyGmail = false
+// confirmation (ADR 0026, "Gmail's forwarding confirmation"). It is on since
+// two real confirmations, captured in production on 2026-11-14 (Gmail in
+// English and in Spanish, testdata/gmail), pass the predicate against the DNS
+// records of their keys at capture time and their altered copies fail it
+// (gmail_test.go). Tests may turn it off to see the product without it.
+var VerifyGmail = true
 
 // snippetRunes is how much of a message's text its summary shows.
 const snippetRunes = 200
@@ -70,8 +72,13 @@ type Parsed struct {
 // Confirmation is what a message recognised as Gmail's forwarding
 // confirmation says, and what the check that Google sent it needs.
 type Confirmation struct {
+	// Code is the code the subject or the body carries; Gmail's message as
+	// it is sent since 2026 carries none.
 	Code      string
 	Requester string
+	// Link is the confirmation link of the message's text: an https URL on
+	// mail-settings.google.com whose path starts /mail/vf-, or "".
+	Link string
 	// What the check reads: how many of each header field there are, the
 	// From address, the addresses of To, and the address the body names as
 	// where mail will be forwarded ("" when the body is not the template).
@@ -79,31 +86,85 @@ type Confirmation struct {
 	from                 string
 	to                   []string
 	named                string
-	// fromSubject: the code and the requester come from a Subject that is
-	// the template. Only such a confirmation may be verified: the body is
-	// what recognition may read, never what verification decides by.
-	fromSubject bool
+	// template is the language of the forwarding template the Subject is
+	// ("" when it is none), and the requester comes from that Subject. Only
+	// such a confirmation may be verified, and only with a body in the same
+	// template: the body is what recognition may read, never what
+	// verification decides by.
+	template string
 }
 
 const gmailForwarding = "forwarding-noreply@google.com"
 
-// Gmail's forwarding confirmation: the subject "(#123456789) Gmail Forwarding
-// Confirmation - Receive Mail from someone@gmail.com", and a body that says
-// "someone@gmail.com has requested to automatically forward mail to your
-// email address you@example.com" and "Confirmation code: 123456789".
+// Gmail's forwarding confirmation, in the templates it is known in (ADR 0026,
+// "Gmail's forwarding confirmation"). In English the subject is
+// "(#123456789) Gmail Forwarding Confirmation - Receive Mail from
+// someone@gmail.com", or, as Google sends it since 2026, the same with no code
+// and a "(" left of its prefix, and the body says "someone@gmail.com has
+// requested to automatically forward mail to your email address
+// you@example.com". In Spanish the subject is "Confirmación de reenvío de
+// Gmail: recibir correo de someone@gmail.com" and the body says
+// "someone@gmail.com ha solicitado reenviar automáticamente el correo a tu
+// dirección you@example.com". Either body then carries the link that
+// confirms the request (https://mail-settings.google.com/mail/vf-…), and once
+// carried "Confirmation code: 123456789". Another language is recognised only
+// by a code in its subject or its body, and is never verified.
 var (
-	reForwardSubject = regexp.MustCompile(`^\(#(\d{6,12})\) Gmail Forwarding Confirmation - Receive Mail from (\S+@\S+)$`)
-	reForwardCode    = regexp.MustCompile(`(?i)confirmation code:\s*(\d{6,12})`)
-	reForwardBody    = regexp.MustCompile(`(?i)(\S+@\S+)\s+has\s+requested\s+to\s+automatically\s+forward\s+mail\s+to\s+your\s+email\s+address\s+<?([^\s<>]+@[^\s<>]+?)>?[.,]?(?:\s|$)`)
+	// gmailTemplates: each subject's first group is the code (always empty
+	// in Spanish, whose template never carried one) and its second the
+	// requester; each body's second group is the address it names.
+	gmailTemplates = []struct {
+		lang          string
+		subject, body *regexp.Regexp
+	}{
+		{
+			"en",
+			regexp.MustCompile(`^(?:\(#(\d{6,12})\) |\()?Gmail Forwarding Confirmation - Receive Mail from (\S+@\S+)$`),
+			regexp.MustCompile(`(?i)(\S+@\S+)\s+has\s+requested\s+to\s+automatically\s+forward\s+mail\s+to\s+your\s+email\s+address\s+<?([^\s<>]+@[^\s<>]+?)>?[.,]?(?:\s|$)`),
+		},
+		{
+			"es",
+			regexp.MustCompile(`^()Confirmación de reenvío de Gmail: recibir correo de (\S+@\S+)$`),
+			regexp.MustCompile(`(?i)(\S+@\S+)\s+ha\s+solicitado\s+reenviar\s+automáticamente\s+el\s+correo\s+a\s+tu\s+dirección\s+<?([^\s<>]+@[^\s<>]+?)>?[.,]?(?:\s|$)`),
+		},
+	}
+	reSubjectCode = regexp.MustCompile(`^\(#(\d{6,12})\) `)
+	reForwardCode = regexp.MustCompile(`(?i)confirmation code:\s*(\d{6,12})`)
+	// reForwardLink finds the confirmation link in the text; gmailLink then
+	// checks what it found.
+	reForwardLink = regexp.MustCompile(`https://mail-settings\.google\.com/mail/vf-[A-Za-z0-9%._~-]*`)
 )
+
+// MaxConfirmationLink bounds the confirmation link kept (Google's are about
+// 200 bytes): a longer one is not kept at all.
+const MaxConfirmationLink = 1024
+
+// gmailLink is the first confirmation link of text, or "": an https URL whose
+// host is exactly mail-settings.google.com and whose path starts /mail/vf-,
+// with no user, port, query or fragment, at most MaxConfirmationLink bytes,
+// written only with letters, digits, "%", ".", "_", "~" and "-". The
+// expression stops at the first character outside them, so a link written in
+// a sentence loses its final "." too.
+func gmailLink(text string) string {
+	l := strings.TrimRight(reForwardLink.FindString(text), ".")
+	if len(l) > MaxConfirmationLink {
+		return ""
+	}
+	u, err := url.Parse(l)
+	if l == "" || err != nil || u.Scheme != "https" || u.Host != "mail-settings.google.com" || u.User != nil ||
+		u.RawQuery != "" || u.Fragment != "" || !strings.HasPrefix(u.EscapedPath(), "/mail/vf-") || len(u.EscapedPath()) == len("/mail/vf-") {
+		return ""
+	}
+	return l
+}
 
 // Verdict says what the enclave may say of a confirmation that arrived for
 // the mailbox at address, with the signatures checked at delivery: verified
 // when Google signed exactly this message for this mailbox, and for another
 // address when Google signed it for someone else's (ADR 0026). Both are false
-// while VerifyGmail is off.
+// while VerifyGmail is off. A code plays no part.
 func (c *Confirmation) Verdict(auth []AuthResult, address string) (verified, forAnother bool) {
-	if !VerifyGmail || !c.fromSubject || !c.signed(auth) || len(c.to) != 1 || c.named == "" {
+	if !VerifyGmail || c.template == "" || !c.signed(auth) || len(c.to) != 1 || c.named == "" {
 		return false, false
 	}
 	to, named := strings.ToLower(c.to[0]), strings.ToLower(c.named)
@@ -119,8 +180,8 @@ func (c *Confirmation) Verdict(auth []AuthResult, address string) (verified, for
 // signed is every check but which address: one From, To and Subject; From
 // exactly Gmail's forwarding service; and a passing signature of google.com
 // over From, To and Subject and the whole body. Verdict also needs the
-// signed Subject to be the template, which the code and the requester come
-// from.
+// signed Subject to be a template, which the requester comes from, and the
+// body to be the same template.
 func (c *Confirmation) signed(auth []AuthResult) bool {
 	if c.froms != 1 || c.tos != 1 || c.subjects != 1 || c.from != gmailForwarding {
 		return false
@@ -327,8 +388,9 @@ func addressList(h mail.Header, key string, partial *bool) []contracts.MailAddre
 }
 
 // recognise returns the confirmation a message is, or nil: exactly one From
-// header, its address exactly Gmail's forwarding service, and a code in the
-// subject or the body. The envelope sender plays no part: nobody signs it.
+// header, its address exactly Gmail's forwarding service, and a subject that
+// is one of Gmail's forwarding templates or a code in the subject or the body.
+// The envelope sender plays no part: nobody signs it.
 func recognise(h mail.Header, m *StoredMeta, plain, text string) *Confirmation {
 	c := &Confirmation{
 		froms:    len(h.Values("From")),
@@ -339,19 +401,33 @@ func recognise(h mail.Header, m *StoredMeta, plain, text string) *Confirmation {
 		return nil
 	}
 	c.from = gmailForwarding
-	if s := reForwardSubject.FindStringSubmatch(m.Subject); s != nil {
-		c.Code, c.Requester, c.fromSubject = s[1], s[2], true
-	} else if s := reForwardCode.FindStringSubmatch(text); s != nil {
-		c.Code = s[1]
-	} else {
-		return nil
+	var body *regexp.Regexp
+	for _, t := range gmailTemplates {
+		if s := t.subject.FindStringSubmatch(m.Subject); s != nil {
+			c.Code, c.Requester, c.template, body = s[1], s[2], t.lang, t.body
+			break
+		}
+	}
+	if c.template == "" {
+		if s := reSubjectCode.FindStringSubmatch(m.Subject); s != nil {
+			c.Code = s[1]
+		} else if s := reForwardCode.FindStringSubmatch(text); s != nil {
+			c.Code = s[1]
+		} else {
+			return nil
+		}
 	}
 	for _, a := range m.To {
 		c.to = append(c.to, a.Address)
 	}
-	if s := reForwardBody.FindStringSubmatch(plain); s != nil {
-		c.named = s[2]
+	if body != nil {
+		// The body's requester must be the subject's: the address named is
+		// read only from a body that speaks of the same request.
+		if s := body.FindStringSubmatch(plain); s != nil && strings.EqualFold(s[1], c.Requester) {
+			c.named = s[2]
+		}
 	}
+	c.Link = gmailLink(plain)
 	return c
 }
 

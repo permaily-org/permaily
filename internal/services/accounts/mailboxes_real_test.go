@@ -178,12 +178,13 @@ func (w *world) noticesSince(n int) []mailboxes.NoticeKind {
 // O1 on the real service: each of the five notices is sent once, by the
 // lifecycle that causes it, to the account's contact address, and names
 // nothing of the mailbox. "Forwarding asked" is sent when a confirmation
-// Google signed for exactly this mailbox is verified. While inbox.VerifyGmail
-// is off, as it is in every release until a staging rehearsal turns it on,
-// no confirmation is verified, so the real service sends no "forwarding
-// asked" at all: the confirmation is stored, unverified, and shown to the
-// person in their mailbox. With the mark on (here only in the test), it is
-// sent once, for the first verified confirmation.
+// Google signed for exactly this mailbox is verified. With inbox.VerifyGmail
+// off (turned off here, as it was in every release until two real
+// confirmations captured on 2026-11-14 turned it on), no confirmation is
+// verified, so the real service sends no "forwarding asked" at all: the
+// confirmation is stored, unverified, and shown to the person in their
+// mailbox. With the mark on, as the release has it, it is sent once, for the
+// first verified confirmation.
 func TestTheRealMailboxesSendEachNoticeOnce(t *testing.T) {
 	w, ctx := newWorld(t), context.Background()
 	r := w.realBoxes()
@@ -209,9 +210,12 @@ func TestTheRealMailboxesSendEachNoticeOnce(t *testing.T) {
 	only(n, mailboxes.NoticeAdded)
 
 	// Forwarding asked, with the mark off: stored, not verified, no notice.
-	if inbox.VerifyGmail {
-		t.Fatal("the mark is on in this build")
+	if !inbox.VerifyGmail {
+		t.Fatal("the mark is off in this build")
 	}
+	was := inbox.VerifyGmail
+	t.Cleanup(func() { inbox.VerifyGmail = was })
+	inbox.VerifyGmail = false
 	n = w.count()
 	if err := deliver(a, googleSigned(t, m.Address, "someone@gmail.com"), m.Address); err != nil {
 		t.Fatal(err)
@@ -225,10 +229,9 @@ func TestTheRealMailboxesSendEachNoticeOnce(t *testing.T) {
 		t.Fatalf("the operator sees it verified: %+v %v", rec, err)
 	}
 
-	// With the mark on: one notice for the first verified confirmation, none
-	// for the next.
+	// With the mark on, as the release has it: one notice for the first
+	// verified confirmation, none for the next.
 	inbox.VerifyGmail = true
-	t.Cleanup(func() { inbox.VerifyGmail = false })
 	w.now = w.now.Add(time.Second)
 	n = w.count()
 	if err := deliver(a, googleSigned(t, m.Address, "first@gmail.com"), m.Address); err != nil {
@@ -241,7 +244,6 @@ func TestTheRealMailboxesSendEachNoticeOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	none(n, "a second verified confirmation")
-	inbox.VerifyGmail = false
 
 	// Paused and resumed by the operator: one each; doing it again tells
 	// nobody, since nothing changed.

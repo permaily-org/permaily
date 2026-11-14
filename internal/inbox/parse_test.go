@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -196,10 +197,17 @@ func verdict(t *testing.T, raw string) (recognised, verified, other bool) {
 	return true, verified, other
 }
 
-func withVerify(t *testing.T) {
+// withVerify and withoutVerify set the mark for one test, and put back what
+// it was: on in the release since the capture of 2026-11-14.
+func withVerify(t *testing.T) { setVerify(t, true) }
+
+func withoutVerify(t *testing.T) { setVerify(t, false) }
+
+func setVerify(t *testing.T, on bool) {
 	t.Helper()
-	inbox.VerifyGmail = true
-	t.Cleanup(func() { inbox.VerifyGmail = false })
+	was := inbox.VerifyGmail
+	inbox.VerifyGmail = on
+	t.Cleanup(func() { inbox.VerifyGmail = was })
 }
 
 func TestGmailConfirmationIsRecognised(t *testing.T) {
@@ -219,8 +227,11 @@ func TestGmailConfirmationIsRecognised(t *testing.T) {
 	}
 }
 
-// The mark is off: every confirmation is stored not verified.
+// With the mark off, every confirmation is stored not verified. The release
+// turned it on (TestGmailConfirmationAsGoogleSendsIt); this keeps the switch
+// meaning what it says.
 func TestGmailVerifiedIsOff(t *testing.T) {
+	withoutVerify(t)
 	if recognised, verified, other := verdict(t, sign(t, confirmation("forwarding-noreply@google.com", address, template(address)), "From", "To", "Subject")); !recognised || verified || other {
 		t.Fatal(recognised, verified, other)
 	}
@@ -286,6 +297,13 @@ func TestCalendarInvitationIsNoConfirmation(t *testing.T) {
 func FuzzParse(f *testing.F) {
 	f.Add([]byte(plainMessage))
 	f.Add([]byte(confirmation("forwarding-noreply@google.com", address, template(address))))
+	for _, name := range []string{"confirmation-en.eml", "confirmation-es.eml"} {
+		raw, err := os.ReadFile("testdata/gmail/" + name)
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(raw)
+	}
 	f.Add([]byte("Content-Type: text/html\r\n\r\n<p>x<a href=y>z</a>"))
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		p := inbox.Parse(context.Background(), raw)
