@@ -271,3 +271,47 @@ func TestGmailTemplatesWithoutACode(t *testing.T) {
 		}
 	}
 }
+
+// The clock that atCapture sets is the one the DKIM verifier reads: the same
+// message passes at capture and fails once its x= has passed. Without this, a
+// renamed variable in a new version of the library would leave dkimNow
+// unused, and these tests would start failing only a week after a capture.
+func TestTheDKIMClockIsTheVerifiers(t *testing.T) {
+	if dkimNow == nil {
+		t.Fatal("dkim.now is not linked")
+	}
+	dns := googleDNS(t)
+	raw := fixture(t, gmailFixtures["English"].file)
+	result := func() string {
+		auth := msgauth.DKIM(dns)(context.Background(), []byte(raw))
+		if len(auth) != 1 {
+			t.Fatalf("signatures: %+v", auth)
+		}
+		return auth[0].Result
+	}
+	atCapture(t)
+	if r := result(); r != "pass" {
+		t.Fatalf("at capture: %s", r)
+	}
+	dkimNow = func() time.Time { return time.Unix(gmailSigned+8*24*3600, 0) }
+	if r := result(); r == "pass" {
+		t.Fatal("a signature past its x= still passes: the verifier does not read dkimNow")
+	}
+}
+
+// A body that speaks of another requester than the subject names no address:
+// the confirmation is recognised and never verified, not even for another
+// address.
+func TestGmailBodyOfAnotherRequesterIsNotVerified(t *testing.T) {
+	withVerify(t)
+	body := strings.Replace(template(address), "someone@gmail.com", "other@gmail.com", 1)
+	raw := sign(t, confirmation("forwarding-noreply@google.com", address, body), "From", "To", "Subject")
+	if recognised, verified, other := verdict(t, raw); !recognised || verified || other {
+		t.Fatalf("recognised %v, verified %v, for another %v", recognised, verified, other)
+	}
+	// The same message with the subject's requester in the body is verified.
+	raw = sign(t, confirmation("forwarding-noreply@google.com", address, template(address)), "From", "To", "Subject")
+	if recognised, verified, _ := verdict(t, raw); !recognised || !verified {
+		t.Fatalf("the control: recognised %v, verified %v", recognised, verified)
+	}
+}

@@ -298,9 +298,9 @@ var mailboxNotices = map[mailboxes.NoticeKind]struct {
 	mailboxes.NoticeForwarding: {
 		subject:   "Gmail asked to forward to your Permaily mailbox",
 		lead:      "Google confirmed that a Gmail account asked to forward its mail to one of your Permaily mailboxes.",
-		paragraph: "Open Accounts in the app to see which Gmail account asked. Enter the code in Gmail only if that account is yours.",
+		paragraph: "Open Accounts in the app to see which Gmail account asked. Confirm the request in Gmail, with the link or the code shown there, only if that account is yours.",
 		note: func(string) string {
-			return "If you didn't ask, do nothing: no mail is forwarded until the code is entered in Gmail."
+			return "If you didn't ask, do nothing: no mail is forwarded until the request is confirmed in Gmail."
 		},
 	},
 	mailboxes.NoticeDisconnected: {

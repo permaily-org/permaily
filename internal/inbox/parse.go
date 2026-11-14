@@ -421,7 +421,9 @@ func recognise(h mail.Header, m *StoredMeta, plain, text string) *Confirmation {
 		c.to = append(c.to, a.Address)
 	}
 	if body != nil {
-		if s := body.FindStringSubmatch(plain); s != nil {
+		// The body's requester must be the subject's: the address named is
+		// read only from a body that speaks of the same request.
+		if s := body.FindStringSubmatch(plain); s != nil && strings.EqualFold(s[1], c.Requester) {
 			c.named = s[2]
 		}
 	}
