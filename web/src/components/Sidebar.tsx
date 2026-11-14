@@ -5,6 +5,7 @@ import { errorCode } from '../lib/api.ts'
 import { useSession } from '../lib/session.tsx'
 import { cx, focusRing } from '../lib/styles.ts'
 import { type Section, sections } from '../sections.ts'
+import { Logo } from './Logo.tsx'
 
 type SidebarProps =
   | { variant: 'static'; collapsed: boolean; onToggle: () => void }
@@ -39,7 +40,7 @@ export function Sidebar(props: SidebarProps) {
     <div
       className={cx('flex items-center', collapsed ? 'justify-center' : 'justify-between pl-2.5')}
     >
-      {!collapsed && <div className="text-wordmark font-semibold">Permaily</div>}
+      {!collapsed && <Logo />}
       <button
         type="button"
         aria-label={drawer ? 'Close menu' : 'Sidebar'}

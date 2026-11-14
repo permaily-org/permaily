@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Logo } from '../../components/Logo.tsx'
 import { Button, Tile } from '../../components/ui/index.ts'
 
 /**
@@ -18,7 +19,7 @@ export function ConsentLayout({
     <main className="flex min-h-svh flex-col xl:flex-row">
       <div className="w-full max-w-[600px] px-4 pt-6 pb-10 sm:px-8 lg:px-14 lg:pt-7 lg:pb-14 xl:sticky xl:top-0 xl:max-h-svh xl:shrink-0 xl:self-start xl:overflow-y-auto">
         <header className="flex items-center justify-between gap-4">
-          <span className="text-wordmark font-semibold">Permaily</span>
+          <Logo />
           {mailbox}
         </header>
         {children}

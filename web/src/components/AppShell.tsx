@@ -2,6 +2,7 @@ import { Menu } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation } from 'react-router'
 import { cx, focusRing } from '../lib/styles.ts'
+import { Logo } from './Logo.tsx'
 import { Sidebar } from './Sidebar.tsx'
 
 const wide = '(min-width: 64rem)'
@@ -54,7 +55,7 @@ export function AppShell() {
     <>
       <div inert={drawerOpen} className="flex min-h-svh flex-col md:flex-row">
         <header className="sticky top-0 z-10 flex items-center justify-between border-b border-rule bg-paper py-2 pl-4 pr-2 md:hidden">
-          <div className="text-wordmark font-semibold">Permaily</div>
+          <Logo />
           <button
             ref={menuRef}
             type="button"
