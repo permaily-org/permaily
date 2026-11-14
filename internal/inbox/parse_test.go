@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -296,6 +297,13 @@ func TestCalendarInvitationIsNoConfirmation(t *testing.T) {
 func FuzzParse(f *testing.F) {
 	f.Add([]byte(plainMessage))
 	f.Add([]byte(confirmation("forwarding-noreply@google.com", address, template(address))))
+	for _, name := range []string{"confirmation-en.eml", "confirmation-es.eml"} {
+		raw, err := os.ReadFile("testdata/gmail/" + name)
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(raw)
+	}
 	f.Add([]byte("Content-Type: text/html\r\n\r\n<p>x<a href=y>z</a>"))
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		p := inbox.Parse(context.Background(), raw)

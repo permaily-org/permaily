@@ -58,8 +58,8 @@ export function Confirmation({ confirmation }: { confirmation: api.ForwardingCon
           </div>
           {requester && (
             <p className="mt-1 text-body">
-              Open this link only if <span className="font-mono wrap-anywhere">{requester}</span>{' '}
-              is your account.
+              Open this link only if <span className="font-mono wrap-anywhere">{requester}</span> is
+              your account.
             </p>
           )}
         </>

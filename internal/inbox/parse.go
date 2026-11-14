@@ -110,6 +110,9 @@ const gmailForwarding = "forwarding-noreply@google.com"
 // carried "Confirmation code: 123456789". Another language is recognised only
 // by a code in its subject or its body, and is never verified.
 var (
+	// gmailTemplates: each subject's first group is the code (always empty
+	// in Spanish, whose template never carried one) and its second the
+	// requester; each body's second group is the address it names.
 	gmailTemplates = []struct {
 		lang          string
 		subject, body *regexp.Regexp
