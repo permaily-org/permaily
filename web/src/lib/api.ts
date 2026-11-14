@@ -327,7 +327,8 @@ export type FormulaProblem = { at: string; reason: string }
 
 /**
  * Fixed words of a template, or a value of the formula (`value`), shown set apart and isolated. `model` marks the
- * parts of a condition a model decides.
+ * parts of a condition a model decides. A mailbox is a value part: its label, its address, or, once disconnected,
+ * its identifier between the fixed parts "a mailbox you disconnected (" and ")".
  */
 export type SentencePart = { text: string; value?: boolean; model?: boolean }
 

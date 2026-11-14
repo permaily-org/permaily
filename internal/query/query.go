@@ -178,7 +178,11 @@ type Result struct {
 	Value Value
 	// Needs are the sources not read yet that could change an Unknown value;
 	// none when Value is True or False, or when only conditions a model
-	// decides are Unknown.
+	// decides are Unknown. FromText is named only for a body condition on a
+	// text the entry cut, never for a size condition alone: the size of a
+	// message stored before ADR 0027 stays Unknown unless its raw message is
+	// read for its body anyway, which then makes the size known (ADR 0027,
+	// "The exception of old messages").
 	Needs Sources
 	// Model are the atoms without an answer that an Unknown value still
 	// depends on, each once, in the order of the canonical formulas. Step 4
@@ -218,16 +222,19 @@ func Classify(p float64, mode Mode) Value {
 // Context is what a sentence needs besides the formula: its language and
 // the account's mailboxes, by identifier, so a condition on a mailbox names
 // it (ADR 0027, "The sentence"). Every mailbox of the account is listed, so
-// the sentence can tell whether a label is unique.
+// the sentence can tell whether a label is unique; a mailbox of the formula
+// that is not listed is one the account disconnected, and the sentence names
+// it by its identifier: "a mailbox you disconnected (mbx_…)".
 type Context struct {
 	Lang      string
 	Mailboxes map[string]MailboxName
 }
 
-// MailboxName is what a sentence may call a mailbox: its label, shown as a
-// text value is (quoted, with quotation marks and backslashes escaped), when
-// it is not empty and no other mailbox of the account has it, and otherwise
-// its address.
+// MailboxName is what a sentence may call a mailbox, after the fixed words
+// "your mailbox": its label, shown as a text value is (quoted, with
+// quotation marks and backslashes escaped), when it is not empty and no
+// other mailbox of the account has it, and otherwise its address. Either is
+// the value part of the structured sentence, so no two mailboxes read alike.
 type MailboxName struct {
 	Label   string
 	Address string

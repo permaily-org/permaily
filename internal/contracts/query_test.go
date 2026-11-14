@@ -37,6 +37,9 @@ func TestQueryShapes(t *testing.T) {
 		}, `{"formula":{"v":1,"all":[{"any":[{"var":"from_address","op":"is","value":"ann@example.org"}]}]},"id":"qry_x","sentence":{"lang":"en","text":"Mail sent from “ann@example.org”.","lead":[],"lines":[{"parts":[{"text":"Mail sent from "},{"text":"ann@example.org","value":true},{"text":"."}]}]},"model":false}`},
 		{"a part a model decides", SentencePart{Text: "my car", Value: true, Model: true},
 			`{"text":"my car","value":true,"model":true}`},
+		{"a disconnected mailbox", SentenceLine{Parts: []SentencePart{
+			{Text: "Mail that arrived at a mailbox you disconnected ("}, {Text: "mbx_ajcz4q2wrtv5xb3d6f7hkmnpsu", Value: true}, {Text: ")."},
+		}}, `{"parts":[{"text":"Mail that arrived at a mailbox you disconnected ("},{"text":"mbx_ajcz4q2wrtv5xb3d6f7hkmnpsu","value":true},{"text":")."}]}`},
 		{"a match request", MatchRequest{Formula: Formula{V: 1, All: []Group{}}, After: "m9", Limit: 20},
 			`{"formula":{"v":1,"all":[]},"after":"m9","limit":20}`},
 		{"a page of matches", MatchPage{

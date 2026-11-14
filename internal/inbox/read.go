@@ -18,11 +18,16 @@ import (
 
 // ReadStore is what the inbox's Reader needs of the store (ADR 0026, "The
 // inbox"): message items scanned and read without their raw objects, raw
-// objects read bounded, entries scanned for search, and deletions.
+// objects read bounded, entries scanned for search, an entry read by its key
+// (a message's search entry, which ADR 0027's Matcher reads by the
+// identifier of an item whose meta it has opened), and deletions.
 // *store.Memory and *store.AWS implement it.
 type ReadStore interface {
 	store.Scanner
 	Item(ctx context.Context, mailboxID, id string) (*store.Message, error)
+	// GetEntry returns store.ErrNotFound for an entry that is not there or
+	// expired, as store.Entries does.
+	GetEntry(ctx context.Context, partition, key string) (*store.Entry, error)
 	ReadRaw(ctx context.Context, mailboxID, id string, max int64) ([]byte, error)
 	DeleteMessage(ctx context.Context, mailboxID, id string) error
 	DeleteEntry(ctx context.Context, partition, key string) error

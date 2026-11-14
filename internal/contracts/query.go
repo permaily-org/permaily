@@ -170,7 +170,10 @@ type SentenceLine struct {
 
 // SentencePart is fixed words of a template, or a value of the formula
 // (Value), which the app shows set apart and isolated (bdi). Model marks the
-// parts of a condition a model decides.
+// parts of a condition a model decides. A mailbox is a value part (its
+// label, its address, or, once the account disconnected it, its identifier
+// between the fixed parts "a mailbox you disconnected (" and ")"), so two
+// mailboxes never read alike.
 type SentencePart struct {
 	Text  string `json:"text"`
 	Value bool   `json:"value,omitempty"`

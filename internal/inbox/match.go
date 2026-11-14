@@ -28,7 +28,11 @@ import (
 // MatchSoftDeadline. A message is either considered whole on a page or left
 // for the next: Next is the last message considered, so pages skip nothing. A
 // received condition that bounds every match bounds the scan by the time in
-// the message identifiers.
+// the message identifiers: before is where the scan starts; since stops it
+// after the first batch that crosses it (the scan has no lower bound, so at
+// most one batch is read below it), and nothing below it is evaluated or
+// listed. Search entries are read by key (ReadStore.GetEntry), never
+// scanned.
 //
 // Each raw read takes its bound from the request's read budget through
 // ReadGrants and gives it back as soon as that message's text is taken out,
