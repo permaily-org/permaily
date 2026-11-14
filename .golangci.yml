@@ -46,6 +46,16 @@ linters:
             - $gostd
             - github.com/permaily-org/permaily/internal/contracts
             - github.com/permaily-org/permaily/internal/domain
+        query-is-pure:
+          # The query language (ADR 0027): pure like domain, plus the Unicode and IDNA tables it normalises with.
+          files: ["**/internal/query/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/permaily-org/permaily/internal/contracts
+            - github.com/permaily-org/permaily/internal/query
+            - golang.org/x/text/unicode/norm
+            - golang.org/x/net/idna
         services-know-no-adapter:
           # A service is used by the API, MCP and the command line alike: it knows none of them, and no cloud.
           files: ["**/internal/services/**", "!$test"]
