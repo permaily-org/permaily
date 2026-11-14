@@ -1,8 +1,8 @@
 // Package query is the query language of connections and rules (ADR 0019,
 // how in ADR 0027): reading a formula a vendor sends, normalising its values,
 // simplifying it to its canonical form, deciding whether one formula fits
-// inside another, the conjunction of an agent's search and its scope, the
-// sentence a person reads, and the value of a formula on one message.
+// inside another, the sentence a person reads, and the value of formulas on
+// one message.
 //
 // It is pure: it needs nothing but its arguments, as internal/domain, and
 // knows nothing of storage, keys, HTTP or a model. It is a package of its own,
@@ -11,9 +11,11 @@
 // depguard's query-is-pure rule lists what it may (.golangci.yml).
 //
 // This file is the seam, committed with the design: the types its pull
-// requests and internal/inbox share. The functions are written by ADR 0027's
-// pull requests 1 (Parse, Canonicalise, And, Contains, Eval, Resolve) and 2
-// (Render); "The contract and the seams" there gives their signatures.
+// requests and internal/inbox share, and Classify, which maps a model's
+// probability to a value and so is part of what a formula means. The other
+// functions are written by ADR 0027's pull requests 1 (Parse, Canonicalise,
+// Contains, Eval, Resolve) and 2 (Render); "The contract and the seams" there
+// gives their signatures.
 package query
 
 import (
@@ -49,10 +51,15 @@ const (
 
 // Canonical is a formula in its canonical form (ADR 0027, "Simplification"):
 // every value normalised, every rewrite applied, the conditions and groups in
-// their order. Only Canonicalise and And make one; a Canonical built by hand
-// is not one. Never is the formula no message matches: Parse refuses it for a
-// vendor (contracts.FormulaNeverMatches), and And may make it (the search then
-// finds nothing).
+// their order. Only Canonicalise makes one; a Canonical built by hand is not
+// one. Never is the formula no message matches: Parse refuses it for a vendor
+// (contracts.FormulaNeverMatches), and Canonicalise returns it.
+//
+// Two canonical formulas are never simplified together: a connection's
+// consented scope, a request accepted without fresh consent because it fits
+// inside that scope, and an agent's search are each canonical on their own,
+// and evaluated together by Eval, which takes the least of their values (ADR
+// 0027, "What a connection widened without consent is evaluated as").
 type Canonical struct {
 	Formula contracts.Formula
 	// ID is "qry_" and 26 base32 characters of the SHA-256 of the canonical
@@ -64,20 +71,29 @@ type Canonical struct {
 }
 
 // Sources are the parts of a stored message a value is read from, in the
-// order evaluation reads them (ADR 0027, "Evaluation over stored mail").
+// order evaluation reads them (ADR 0027, "Evaluation over stored mail"). A
+// message is classified only once FromItem and FromMeta are both read: until
+// then Eval answers Unknown with them in Needs, whatever the other sources say.
 type Sources uint8
 
 const (
-	// FromItem: the message item's plain fields and its identifier: when it
-	// was received, its size, its mailbox. Always read first.
+	// FromItem: the message item's identifier and partition: when it was
+	// received and the mailbox it is in. Both are bound to the sealed meta
+	// (the meta's AAD names the mailbox and the identifier), so they are
+	// authenticated once FromMeta is read.
 	FromItem Sources = 1 << iota
-	// FromEntry: the sealed txt# entry: senders, subject, the first 16 KiB
-	// of the text and whether it was cut there.
+	// FromEntry: the sealed txt# entry, for the first 16 KiB of the text and
+	// whether it was cut there. Its senders and subject are not used: the
+	// meta's are.
 	FromEntry
-	// FromMeta: the sealed meta of the item (inbox.StoredMeta).
+	// FromMeta: the sealed meta of the item (inbox.StoredMeta): senders,
+	// recipients, subject, attachments, DKIM results, the list, the size as
+	// delivered (format 2), and the flags Partial, Unparsed and Confirmation.
 	FromMeta
-	// FromText: the text taken out of the raw message, read under the read
-	// budget, when the first 16 KiB did not settle a condition on the body.
+	// FromText: the raw message, read under the read budget and opened, when
+	// a body condition depends on a text the entry cut: its text, up to
+	// inbox.MessageTextMax, and its length, which is the size when the meta
+	// has none. It is never read for the size alone.
 	FromText
 )
 
@@ -90,16 +106,27 @@ type Message struct {
 
 	Mailbox  string
 	Received time.Time
-	Size     int64
+	// Size is the size of the message as delivered, from the sealed meta
+	// (format 2), or the length of the raw message when it was read and
+	// opened (FromText). SizeKnown is false otherwise, and every size
+	// condition is then Unknown: the size stored beside the item is written
+	// by whoever writes the table, and is never used.
+	Size      int64
+	SizeKnown bool
 
-	From       []string // addresses of the From header, as stored
-	Recipients []string // addresses of the To and Cc headers, as stored
+	// From and Recipients are the addresses of the From header and of the To
+	// and Cc headers, as stored. Eval makes one decision per address, on the
+	// whole address: one that does not normalise makes every condition over
+	// it Unknown, on its address and on its domain alike.
+	From       []string
+	Recipients []string
 	SignedBy   []string // the domain (d=) of each DKIM signature that passed at delivery
 	Subject    string
 	// Body is the text: the first 16 KiB from the entry, or up to
 	// inbox.MessageTextMax from the raw message. BodyCut says the entry's
 	// text was cut at 16 KiB (or, for an entry written before ADR 0027, may
-	// have been), so a body condition it does not settle needs FromText.
+	// have been): then every body condition the value depends on is Unknown,
+	// and needs FromText, whatever the first 16 KiB hold.
 	Body        string
 	BodyCut     bool
 	Attachments []Attachment
@@ -126,23 +153,66 @@ type Attachment struct {
 	Type string
 }
 
-// Result is a formula's value on one message, and what would change it.
+// Atom is the identity of a condition a model decides, without its sign:
+// its variable, its operator (contracts.OpAbout or contracts.OpMentions) and
+// its normalised topic. Two conditions with one Atom are one question, asked
+// once per message, and get one answer, wherever they appear and in whichever
+// formula: that is what makes "identical conditions are equal" true in
+// containment. A kept answer (step 4) is keyed by the message, a hash of the
+// content the model saw, the Atom, and the model's and the prompt's versions;
+// never by a formula.
+type Atom struct {
+	Var   contracts.Variable
+	Op    contracts.Operator
+	Topic string
+}
+
+// Answers are a model's probabilities for one message, by Atom. An Atom
+// without an answer is Unknown and listed in Result.Model; a probability is
+// read by Classify in the mode of the evaluation.
+type Answers map[Atom]float64
+
+// Result is the value on one message of the formulas evaluated together, and
+// what would change it.
 type Result struct {
 	Value Value
 	// Needs are the sources not read yet that could change an Unknown value;
 	// none when Value is True or False, or when only conditions a model
 	// decides are Unknown.
 	Needs Sources
-	// Model are the conditions a model decides that an Unknown value still
-	// depends on, by their place in the canonical formula (group, condition),
-	// in its order. Step 4 asks the model of these, and no other.
-	Model []Place
+	// Model are the atoms without an answer that an Unknown value still
+	// depends on, each once, in the order of the canonical formulas. Step 4
+	// asks the model of these, and no other.
+	Model []Atom
 }
 
-// Place is where a condition is in a canonical formula.
-type Place struct {
-	Group     int
-	Condition int
+// Classify is the value of a condition a model decides, from the model's
+// probability p that it holds, in a mode (ADR 0020's thresholds, as ADR 0027
+// reads them in three values): for a query True at 0.80 or more and False at
+// 0.20 or less; for a rule True at 0.70 or more and False below 0.30;
+// Unknown between, for a probability that is not a number or outside 0 to
+// 1, and for any other mode. The sign of the condition is applied after, so
+// a negated condition is True for a query only at 0.20 or less.
+func Classify(p float64, mode Mode) Value {
+	if p >= 0 && p <= 1 { // false for NaN
+		switch mode {
+		case ForQuery:
+			if p >= 0.80 {
+				return True
+			}
+			if p <= 0.20 {
+				return False
+			}
+		case ForRule:
+			if p >= 0.70 {
+				return True
+			}
+			if p < 0.30 {
+				return False
+			}
+		}
+	}
+	return Unknown
 }
 
 // Context is what a sentence needs besides the formula: its language and
@@ -154,9 +224,10 @@ type Context struct {
 	Mailboxes map[string]MailboxName
 }
 
-// MailboxName is what a sentence may call a mailbox: its label when it is
-// not empty and no other mailbox of the account has it, and otherwise its
-// address.
+// MailboxName is what a sentence may call a mailbox: its label, shown as a
+// text value is (quoted, with quotation marks and backslashes escaped), when
+// it is not empty and no other mailbox of the account has it, and otherwise
+// its address.
 type MailboxName struct {
 	Label   string
 	Address string

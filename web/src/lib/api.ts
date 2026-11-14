@@ -351,8 +351,9 @@ export type FormulaCheck = {
 }
 
 /**
- * A page of what a formula matches in one mailbox. `needs_model` and `unknown` are messages it did not settle;
- * `next` goes on below the last message the page considered.
+ * A page of what a formula matches in one mailbox, for the owner's own previews only (never a vendor's result: its
+ * `next`, `searched_to`, `needs_model` and `unknown` name messages outside any approved scope). `needs_model` and
+ * `unknown` are messages it did not settle; `next` goes on below the last message the page considered.
  */
 export type MatchPage = {
   messages: MessageSummary[]

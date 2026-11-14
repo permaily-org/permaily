@@ -48,10 +48,25 @@ linters:
             - github.com/permaily-org/permaily/internal/domain
         query-is-pure:
           # The query language (ADR 0027): pure like domain, plus the Unicode and IDNA tables it normalises with.
-          files: ["**/internal/query/**"]
+          # Not $gostd, which holds os, net and io: only what parsing, normalising, hashing and sorting need
+          # (entries match as prefixes: unicode also allows unicode/utf8 and unicode/utf16).
+          files: ["**/internal/query/**", "!$test", "!**/internal/query/querytest/**"]
           list-mode: strict
           allow:
-            - $gostd
+            - bytes
+            - cmp
+            - crypto/sha256
+            - encoding/base32
+            - encoding/json
+            - errors
+            - fmt
+            - maps
+            - slices
+            - sort
+            - strconv
+            - strings
+            - time
+            - unicode
             - github.com/permaily-org/permaily/internal/contracts
             - github.com/permaily-org/permaily/internal/query
             - golang.org/x/text/unicode/norm

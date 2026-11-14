@@ -59,7 +59,7 @@ const (
 	VarAttachmentType   Variable = "attachment_type"   // the media types of its attachments
 	VarList             Variable = "list"              // the mailing list of its List-Id header
 	VarReceived         Variable = "received"          // when Permaily received it
-	VarSize             Variable = "size"              // its size as received, in bytes
+	VarSize             Variable = "size"              // its size as delivered, in bytes, as the sealed meta records it
 	VarMailbox          Variable = "mailbox"           // the mailbox it arrived at
 )
 
@@ -79,9 +79,10 @@ const (
 	OpMentions Operator = "mentions"
 )
 
-// The limits of a formula (ADR 0027, "Limits"). A vendor's formula past one
-// is refused; a formula the system makes (an agent's search AND its scope) may
-// hold twice MaxConditions.
+// The limits of a formula (ADR 0027, "Limits"). A formula past one is
+// refused. Formulas evaluated together (a consented scope, a request that
+// fits in it, an agent's search) are each within them, and are never merged
+// into one.
 const (
 	// MaxFormulaBytes bounds the JSON of a formula as it is sent.
 	MaxFormulaBytes = 64 << 10
@@ -95,8 +96,8 @@ const (
 	// statement put to the model for every message the exact conditions do
 	// not settle (ADR 0020).
 	MaxModelConditions = 8
-	// MaxTextRunes and MaxTextBytes bound a word, a phrase or a topic after
-	// normalisation.
+	// MaxTextRunes and MaxTextBytes bound a text (the value of contains,
+	// matched as a substring) or a topic after normalisation.
 	MaxTextRunes = 100
 	MaxTextBytes = 400
 )
@@ -134,7 +135,7 @@ const (
 	FormulaUnexpectedValue    FormulaReason = "unexpected_value"     // a value for OpExists
 	FormulaInvalidValue       FormulaReason = "invalid_value"        // a value that is not of the variable's type
 	FormulaValueTooLong       FormulaReason = "value_too_long"       // past MaxTextRunes or MaxTextBytes, or the type's own bound
-	FormulaConfusableValue    FormulaReason = "confusable_value"     // a word or a label that mixes Latin, Greek and Cyrillic letters
+	FormulaConfusableValue    FormulaReason = "confusable_value"     // a word, an address's local part or a domain's label that mixes Latin, Greek and Cyrillic letters
 	FormulaUnknownMailbox     FormulaReason = "unknown_mailbox"      // a mailbox that is not the account's
 	FormulaNeverMatches       FormulaReason = "never_matches"        // a formula that no message can match
 )
@@ -186,7 +187,13 @@ type MatchRequest struct {
 }
 
 // MatchPage is a page of a formula's matches over stored mail (ADR 0027,
-// "Evaluation over stored mail"). Messages are the ones every exact
+// "Evaluation over stored mail"), for the owner's own previews only: the
+// rule editor's and the consent screen's, in the owner's session. Its Next,
+// SearchedTo, NeedsModel and Unknown name messages outside any approved
+// scope (that they exist, their identifiers, when they arrived), so no
+// vendor route may answer it: a vendor's result and its continuation are a
+// separate contract, designed in step 5, that reveals only approved
+// messages. Messages are the ones every exact
 // condition settles as a match. NeedsModel are the ones whose answer depends
 // on a condition a model decides, not asked yet; Unknown the ones whose
 // answer depends on data that could not be read. Next is the identifier of

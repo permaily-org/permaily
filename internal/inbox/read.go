@@ -41,6 +41,22 @@ type ReadBudget interface {
 	Take(ctx context.Context, n int64) error
 }
 
+// ReadGrants is the read budget taken one raw read at a time, for a page of
+// matches (ADR 0027, "Budgets of a page"), which reads up to
+// MatchMaxTextReads raw messages in one request and must not hold them all
+// until its response is released. The adapter's budget set with
+// WithReadBudget implements it as well as ReadBudget; Matcher uses only this.
+// ADR 0027's pull request 3 makes the reader's raw reads for Matcher use it,
+// and its pull request 4 implements it on internal/httpapi's budget.
+type ReadGrants interface {
+	// Grant waits a bounded time, as Take does, until n bytes are free, and
+	// takes them. release gives exactly those n bytes back; it is called
+	// once the read's text has been taken out, and a second call does
+	// nothing. A grant not released is given back with the request's
+	// response, as what Take took is.
+	Grant(ctx context.Context, n int64) (release func(), err error)
+}
+
 type budgetKey struct{}
 
 // WithReadBudget makes the Reader take from b, before every raw read made
