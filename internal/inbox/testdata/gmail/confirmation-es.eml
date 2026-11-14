@@ -1,0 +1,116 @@
+Received: by mail-pg1-f173.google.com with SMTP id 41be03b00d2f7-cdac6d19ddaso958041a12.2
+        for <yf2kwd4jkcs2e8y9yez9@inbox.permaily.com>; Sat, 14 Nov 2026 11:55:31 -0800 (PST)
+ARC-Seal: i=1; a=rsa-sha256; t=1794686130; cv=none;
+        d=google.com; s=arc-20260327;
+        b=oHgyCJl7pWOqbq+STn7rBxSVFZmuyeJ49pShvIAsRDJP9OdbYKRFk9c6LANPo0893J
+         hZChnAo++X3H/qG/1ElgZxV9RsXy9GSOlnmjb9gJIl9QjG597K07ZLU94I/QghTgtpih
+         q/+DmfnMkxSbR9xos9G1dRwA6xoM1PkjxmYJeN6F3Z9q4bYCBsgpe2cSpnBpefvPW48i
+         7iYXCOa9jfXm5BvayPNn9UKG+9HXSfc3gfhwLSmgZs7/ogajpSIK2ut1k6sIkpQq/dvo
+         mRa0k1lRT4w+AXRklsUtDCXIjZaVGQGFzonJdTk4lqeVPWttTHISaY8Pv5JhnTo/zyOo
+         27ww==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20260327;
+        h=content-transfer-encoding:to:from:subject:message-id:date
+         :mime-version:dkim-signature;
+        bh=0J/4zg7Vdsh5PCIKjKrjfVCRc2DIJaVx/lrFmifaIUc=;
+        fh=4SC+jcTW3HiKQpnIZRarVyLuR/mwgpx9/TfkDZUOUhw=;
+        b=SMTFP16GOaqOZO8fK+icC7r1KIgtViAzxTNe3qOZIxUUpCigzO2vsMZPNUkqF2I0b+
+         Hx6QDUdlQz0+iwy8CQLdp894nu7p/+zYIJ3qQGvdgmvs7riMEZ3H/vOK0Am5+laFuZPm
+         uDjs5z72tEvumKHf5+d0aOQNUWYFCQTnzJ0b0tD7c4Pkb4T5TgNAyi0MDzyuBQQAGkLO
+         +LjghGw9AnuL0DgDNCP4TLimPfqIc926kXmDcfHb2HLw/ojh1rKZflf3zNE8hw8JNSUB
+         SQq1RFlMd1hWM57voXyZUfFvguivsdUG4WeszsqF4wlw0riXXgf8wv1E16P74RmPSS+U
+         eevg==;
+        darn=inbox.permaily.com
+ARC-Authentication-Results: i=1; mx.google.com; arc=none
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=google.com; s=20260707; t=1794686130; x=1795290930; darn=inbox.permaily.com;
+        h=content-transfer-encoding:content-type:to:from:subject:message-id
+         :date:mime-version:from:to:cc:subject:date:message-id:reply-to
+         :content-type;
+        bh=0J/4zg7Vdsh5PCIKjKrjfVCRc2DIJaVx/lrFmifaIUc=;
+        b=nYx9OuRADpGYDgjxLYzPFBg6t8QDLqqRpYDsXqwbr0o/67iC/1f96+11LFZBrEVgwr
+         aV86lqba2ScS7UqSKq2iqkDZISg6njk8/P8wErBUQFljQO11wWO/EcmqwqMH53FDxXk0
+         V8nmr3RbXNxGhaiLrtn76cnDMqOo14JatPnfBVDgOmfoyCWK6eMPQAZRaj720XpEnXLL
+         UCgOJ/e7iWQobCyMLGGt4Xl0eiAQmSXQvfvJKCypf8PHdaQ7rwEGyCz0b5U3jiXKpB0z
+         Z9/nQcB8gsewsoLd8MXjBDSZ+TNkTQTorlJHwMhr78jQBAKFRSl6662D/oPNm1jgn6yn
+         styg==
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20260707; t=1794686130; x=1795290930;
+        h=content-transfer-encoding:content-type:to:from:subject:message-id
+         :date:mime-version:x-gm-gg:x-gm-message-state:from:to:cc:subject
+         :date:message-id:reply-to:content-type;
+        bh=0J/4zg7Vdsh5PCIKjKrjfVCRc2DIJaVx/lrFmifaIUc=;
+        b=qPPZryKBq+MYyu/6NN3p//1XDZLsholoDxvNSTsAamZwiScf0Kw8ryFp0DFNm71103
+         qIOraZz4uG0OMZzk7W9xnWWHH/CAIZOX9fZV4HbUHkJ/Nv/iSCx0ke89+YaKT75B49Ie
+         gfy9jM5LcrrY6bn5T77bP34+MuLuJ3sIp4BML/CwnSa0F6X/5qdDI8RaYgKC/HgbzADo
+         I1y7f6oYH/rTYzaOhfutgxvOepY2kySF44xbyg1sFCjOPzpN2oLLqHDweBW/0Z9Ts9gF
+         BikJQEhQIzIfRJNTWjUd96fpKieS/BEQRFGvE3eRAYsDEiTwsGbQ21Af+40UQky4dOCm
+         oyBA==
+X-Gm-Message-State: APuU4Z/sdZuxFWRqdMYKlCbN4dWxJNdXWLvr5Dh1Zuf4WULoiEOtRSzw
+	2Mxy+2vOc2V/0PVI4jTghYWctrpOn9CCHMvr4SXC2ciRCcYgePWjp0ZWnPuBQMlHt4AKMh+3G5d
+	TiRHtDf5blp4vqUXytXaNL0vDZKueW3jV6Txu61XlMbV4k3t2ouzrj+73eaaQQO9cEM4ozMF95B
+	wG
+X-Gm-Gg: AYBFou0et1Kvu2Hh3Nc/F7P2+y78WcohU27fwioYC95bV2AKcQcsaZXz4BBa68IB58W
+	RrQ52tq3MByxq+gMKqx7rPbi8HrhHwMe8ePnjKTHzdlny/RooSvNg1zSKp1m9cL6h0ZnSaEfumw
+	3DCa2UheAsrI2dYvMRha/BYuW7FURPbL4IZoAKXwdTyVh83iuEPOpxQqYAY0r07ZCbsD1OYRwEW
+	H/tlYGlfv/fa67kIsLFKT5Ot/7iXKc9IKerbjnMEiY1aGoEOurUVjBIE2GbqrDrGoR2wBGhMt3Y
+	R/T+c+tF/V+/8QN3GeWmxeRAWtm4HoCb4M5O9Ir9FYuvM6ZZqKjaZZi3RB/5hFWTd7uxob6BktM
+	RXq49xkOOlgZckA9u50y5Hj+SNJYerNPxAhLTrkapRHw0PXxtB2JG
+MIME-Version: 1.0
+X-Received: by 2002:a17:90b:1cce:b0:3b1:64d3:f308 with SMTP id
+ 98e67ed59e1d1-3b1b0a3c0f6mr6420475a91.43.1794686130553; Sat, 14 Nov 2026
+ 11:55:30 -0800 (PST)
+X-Google-Address-Confirmation: 2Osfq1KEPdTVc8XTRN7r3i5UHe8
+Date: Sat, 14 Nov 2026 13:55:30 -0600
+X-Gm-Features: AclHuK9fkJEZf425nP_F8jspbNjxDZX9S9a1sRxjJgJ-ZJZDQiKJsloeORoOwnM
+Message-ID: <CAFJ9ObcbqbFV9Cm5m2cnq_3tTjkMxDZek6QsFL5TVDjPEt+p=g@mail.gmail.com>
+Subject: =?UTF-8?Q?Confirmaci=C3=B3n_de_reenv=C3=ADo_de_Gmail=3A_recibir_correo_d?=
+	=?UTF-8?Q?e_permailycheck=40gmail=2Ecom?=
+From: Equipo de Gmail <forwarding-noreply@google.com>
+To: yf2kwd4jkcs2e8y9yez9@inbox.permaily.com
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+permailycheck@gmail.com ha solicitado reenviar autom=C3=A1ticamente el
+correo a tu direcci=C3=B3n yf2kwd4jkcs2e8y9yez9@inbox.permaily.com.
+
+Para permitir que permailycheck@gmail.com reenv=C3=ADe autom=C3=A1ticamente=
+ el
+correo a tu direcci=C3=B3n, haz clic en el enlace que aparece m=C3=A1s abaj=
+o
+para confirmar la solicitud:
+
+https://mail-settings.google.com/mail/vf-%5BANGjdJ-2QCN0V3cF29b0jEg97lpixYk=
+aS4glGDOp3LkzMrxcIRWWg5oIPgjV1nbSBDR9w_1qvExaOYa8NQwgPg0sHKBJcb2hyQFXPIu5wE=
+KMRcQy2TKZvwXBpbL8atA%5D-p6WIW6DiI-shTnWro2LqRP_i_J4
+
+Si el enlace no funciona, c=C3=B3pialo y p=C3=A9galo en una ventana nueva d=
+el navegador.
+
+Gracias por usar Gmail.
+
+Atentamente,
+
+El equipo de Gmail
+
+Si no apruebas esta solicitud, no tienes que hacer nada m=C3=A1s.
+permailycheck@gmail.com no puede reenviar mensajes autom=C3=A1ticamente a
+tu direcci=C3=B3n de correo, a menos que confirmes la solicitud haciendo
+clic en el enlace de arriba. Si has hecho clic en el enlace por error,
+pero no quieres permitir que permailycheck@gmail.com reenv=C3=ADe mensajes
+autom=C3=A1ticamente a tu direcci=C3=B3n, haz clic en este enlace para canc=
+elar
+la verificaci=C3=B3n:
+https://mail-settings.google.com/mail/uf-%5BANGjdJ-qiUk7n7fnXGVDW-byqkT_6K2=
+w4xBBzpJuxMTEHWsKejcAldlhXeGqO_x-o2VEL228Ux6de85-M2EtvT4fq1KrepJpQ08FA7KKPz=
+8VNTU2pbJ93D7Lt5GPDRM%5D-p6WIW6DiI-shTnWro2LqRP_i_J4.
+
+Para obtener m=C3=A1s informaci=C3=B3n sobre por qu=C3=A9 puedes haber reci=
+bido este
+mensaje, visita
+http://support.google.com/mail/bin/answer.py?answer=3D184973.
+
+No respondas a este correo. Si quieres ponerte en contacto con el
+equipo de Google.com, inicia sesi=C3=B3n en tu cuenta y haz clic en Ayuda,
+en la parte superior de cualquier p=C3=A1gina. A continuaci=C3=B3n, haz cli=
+c en
+Contactar, en la parte inferior del Centro de Ayuda.

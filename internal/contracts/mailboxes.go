@@ -144,6 +144,11 @@ type ForwardingConfirmation struct {
 	ForAnotherAddress bool `json:"for_another_address,omitempty"`
 	// Message is the message that carried it, in the mailbox's inbox.
 	Message string `json:"message,omitempty"`
+	// Link is the confirmation link the message carries: only an https URL
+	// on mail-settings.google.com under /mail/vf-, read from its text, and
+	// absent when it carries none or when ForAnotherAddress. The app shows
+	// it as text to copy, never as a link (ADR 0026).
+	Link string `json:"link,omitempty"`
 }
 
 // MailboxList is the mailboxes of an account, the oldest first, and how many

@@ -370,8 +370,9 @@ func TestR3ReadingWhatDeliveryWrote(t *testing.T) {
 // through the mailbox and the inbox; one signed for another address keeps no
 // code; deleting the message takes its confirmation away.
 func TestR3ConfirmationsWrittenByDelivery(t *testing.T) {
-	inbox.VerifyGmail = true // for this test only: the release keeps it off
-	t.Cleanup(func() { inbox.VerifyGmail = false })
+	if !inbox.VerifyGmail {
+		t.Fatal("the mark is off in this build")
+	}
 	w := newRealWorld(t)
 	a := w.instance()
 	box := a.make("alice", "Gmail")

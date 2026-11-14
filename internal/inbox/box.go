@@ -150,8 +150,13 @@ type SearchEntry struct {
 // entry. Verified and ForAnotherAddress are what ADR 0026 ("Gmail's
 // forwarding confirmation") lets the enclave say of it.
 type ConfirmEntry struct {
-	Code              string    `json:"code"`
-	Requester         string    `json:"requester,omitempty"`
+	// Code is empty when the message carries none, as Gmail's does since
+	// 2026, and when ForAnotherAddress.
+	Code      string `json:"code"`
+	Requester string `json:"requester,omitempty"`
+	// Link is the confirmation link the message carries (Confirmation.Link),
+	// empty when it carries none and when ForAnotherAddress.
+	Link              string    `json:"link,omitempty"`
 	ReceivedAt        time.Time `json:"received_at"`
 	Verified          bool      `json:"verified"`
 	ForAnotherAddress bool      `json:"for_another_address,omitempty"`
