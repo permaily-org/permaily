@@ -40,7 +40,7 @@ Each step ends deployed and verified, like the releases so far. The estimates ar
 |---|---|---|
 | 1 | Layers (`contracts`, `domain`, `services`, adapters) and accounts: passkeys, email and providers, sessions, invitations with the operator's tool, outgoing mail through SES | 3 |
 | 2 | Mailboxes per account, moving the test mailbox into the first account; the inbox in the app. Made by a write that only creates, and every change written at the version read, never with a plain write: two enclaves may run at once (ADR 0024 did this for the test mailbox) | 1.5 |
-| 3 | The query language: grammar, simplification, whether one formula fits inside another, the sentence, and evaluating exact conditions over stored mail | 2 |
+| 3 | The query language: grammar, simplification, whether one formula fits inside another, the sentence, and evaluating exact conditions over stored mail (designed in ADR 0027) | 2 |
 | 4 | Spike, then the piece that asks OpenAI: `about`, kept decisions, the spending alarm | 1.5 |
 | 5 | Spike of the authorization server (ADR 0007), then connections, the consent screen, the API and MCP | 3.5 |
 | 6 | Delivery on new mail and on a schedule: webhook queue and scheduler | 1.5 |
@@ -84,6 +84,14 @@ Step 2, designed in ADR 0026 (2026-11-12, revised after three adversarial review
 - [x] Google's confirmation marked verified: two real confirmations, captured in production on 2026-11-14 (Gmail in English and in Spanish), are fixtures that the predicate of ADR 0026 passes and its altered copies fail (#98), and `inbox.VerifyGmail` is on from v0.13.0, in production since 2026-11-14. No confirmation has been received and marked "Confirmed by Google" by v0.13.0 in production yet.
 - [x] After the release: the super admin made the "TLS reports" mailbox and `tls_rpt_address` is set to its address; the TLS-RPT record is published again (2026-11-14, docs/operations.md).
 - [ ] Once a rollback to v0.11.0 is no longer wanted, F1's items are deleted (`pk=mailbox#test`, `raw/test/`) and the KMS keys of v0.11.0 and before are retired, which the guarantees of mailboxes assume.
+
+Step 3, designed in ADR 0027 (2026-11-14, revised the same day after its first design review and the owner's answers, and after its second, after which it is final for building). Five pull requests; their scope, the files each owns, their seams, numbered tests and definition of done are in ADR 0027, "Implementation pull requests". The design and its seams go first and alone; then the language, the sentence and stored mail are written at the same time, the language merging first; the routes last. The owner decided its six product choices on 2026-11-14 (ADR 0027, "The owner's decisions"): all fifteen variables, `mentions`, `contains` as a substring, JSON only, English first, a rule as any of its criteria.
+
+- [x] The design, the contract and the seams: ADR 0027, `internal/contracts/query.go`, the same types in `web/src/lib/api.ts`, `internal/query/query.go` with `Classify`, `inbox.Matcher`, `inbox.ReadGrants`, `GetEntry` in `inbox.ReadStore`, depguard's `query-is-pure` (2026-11-14).
+- [ ] **1. The language.** Parsing, normalisation, simplification, containment and three-valued evaluation of formulas evaluated together, with a model's answers as input, in `internal/query`, with property and fuzz tests (Q1 to Q19, Q26, Q37 to Q40, Q46).
+- [ ] **2. The sentence.** Templates in English, one presentation per value type, faithful by a parser in the tests, values that cannot add words (Q20 to Q25, Q43).
+- [ ] **3. Stored mail.** `inbox.Matcher` over a mailbox's messages, each classified after its sealed meta, raw reads one grant at a time, pages that skip nothing, `received` bounding the scan; delivery records `List-Id`, the size, the meta's format and whether the search entry's text was cut (Q26 to Q32, Q40 to Q42, Q44).
+- [ ] **4. Routes.** `POST /api/v1/queries/check` and `POST /api/v1/mailboxes/{id}/matches` (the owner's previews), the error's details, `inbox.ReadGrants` on the adapter's read budget, `TestMailEndToEnd`, and a staging check (Q34 to Q36, Q44, Q45); then the release.
 
 Step 9 keeps the notices about connections (one approved, one about to end), which need step 5, and the wording of every message reviewed with the designer.
 

@@ -278,6 +278,92 @@ export function isMessageLinkToken(link: string): boolean {
   return /^(0|[1-9][0-9]{0,2})\.[A-Za-z0-9_-]{16}$/.test(link)
 }
 
+/**
+ * The query language (ADR 0027), the shapes of `internal/contracts/query.go`. A formula is an AND of groups, each
+ * an OR of conditions; an empty `all` matches every message. The calls that use them come with the screens that do.
+ */
+
+export type QueryVariable =
+  | 'from_address'
+  | 'from_domain'
+  | 'recipient_address'
+  | 'recipient_domain'
+  | 'signed_by'
+  | 'subject'
+  | 'body'
+  | 'message'
+  | 'attachments'
+  | 'attachment_name'
+  | 'attachment_type'
+  | 'list'
+  | 'received'
+  | 'size'
+  | 'mailbox'
+
+/** `about` and `mentions` are decided by a model; every other operator is exact. */
+export type QueryOperator =
+  | 'is'
+  | 'contains'
+  | 'exists'
+  | 'since'
+  | 'before'
+  | 'at_least'
+  | 'below'
+  | 'about'
+  | 'mentions'
+
+/** A variable, an operator and a value (absent for `exists`), negated when `not` is set. */
+export type QueryCondition = {
+  var: QueryVariable
+  op: QueryOperator
+  value?: string
+  not?: boolean
+}
+
+export type QueryFormula = { v: 1; all: { any: QueryCondition[] }[] }
+
+/** Where a formula was refused and why, in the `details` of an `invalid_formula` error. Never a value of it. */
+export type FormulaProblem = { at: string; reason: string }
+
+/**
+ * Fixed words of a template, or a value of the formula (`value`), shown set apart and isolated. `model` marks the
+ * parts of a condition a model decides. A mailbox is a value part: its label, its address, or, once disconnected,
+ * its identifier between the fixed parts "a mailbox you disconnected (" and ")".
+ */
+export type SentencePart = { text: string; value?: boolean; model?: boolean }
+
+/**
+ * What a person reads of a formula, written by the server: show `lead` and `lines`, never words of the app's own.
+ * With one group `lead` is empty and the one line is the whole sentence.
+ */
+export type QuerySentence = {
+  lang: string
+  text: string
+  lead: SentencePart[]
+  lines: { parts: SentencePart[] }[]
+}
+
+/** A formula the server accepted: its canonical form, its identifier, its sentence, whether a model decides any of it. */
+export type FormulaCheck = {
+  formula: QueryFormula
+  id: string
+  sentence: QuerySentence
+  model: boolean
+}
+
+/**
+ * A page of what a formula matches in one mailbox, for the owner's own previews only (never a vendor's result: its
+ * `next`, `searched_to`, `needs_model` and `unknown` name messages outside any approved scope). `needs_model` and
+ * `unknown` are messages it did not settle; `next` goes on below the last message the page considered.
+ */
+export type MatchPage = {
+  messages: MessageSummary[]
+  needs_model: string[]
+  unknown: string[]
+  next?: string
+  searched_to?: string
+}
+
 /** The codes the server answers with, plus `network` for a request that got no answer. */
 export type ApiErrorCode =
   | 'invalid_address'
