@@ -1,0 +1,50 @@
+/*
+  The cursor, shared by the web app and the public site (docs/design.md, "Design language").
+  Everything a person can click shows the hand, and a control that cannot be used shows that it cannot.
+  Tailwind v4's preflight no longer gives buttons the hand, so it is said here once for both.
+  Every selector is inside :where(), with no specificity: a component's own cursor still wins.
+  Text fields keep the browser's text cursor: nothing here names them.
+*/
+
+:where(
+  a[href],
+  area[href],
+  button,
+  summary,
+  select,
+  input:is(
+    [type='checkbox'],
+    [type='radio'],
+    [type='file'],
+    [type='submit'],
+    [type='reset'],
+    [type='button'],
+    [type='image'],
+    [type='color'],
+    [type='range']
+  ),
+  label:has(input:is([type='checkbox'], [type='radio'], [type='file']), select),
+  [role='button'],
+  [role='link'],
+  [role='tab'],
+  [role='menuitem'],
+  [role='menuitemcheckbox'],
+  [role='menuitemradio'],
+  [role='option'],
+  [role='switch'],
+  [role='checkbox'],
+  [role='radio'],
+  [role='treeitem']
+) {
+  cursor: pointer;
+}
+
+/* A pseudo-element cannot sit inside :where(); the file field's button inherits its field's cursor otherwise. */
+input[type='file']::file-selector-button {
+  cursor: inherit;
+}
+
+/* After the rule above, so it wins at the same specificity. The web app's buttons already said not-allowed. */
+:where(:disabled, [disabled], [aria-disabled='true'], label:has(:disabled)) {
+  cursor: not-allowed;
+}

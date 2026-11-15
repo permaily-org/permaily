@@ -34,7 +34,7 @@ function ChoiceDialog({
             {choices.map((choice) => (
               <label
                 key={choice.value}
-                className="flex cursor-pointer items-start gap-3 border-b border-rule py-3"
+                className="flex items-start gap-3 border-b border-rule py-3"
               >
                 <input
                   type="radio"
@@ -42,7 +42,7 @@ function ChoiceDialog({
                   value={choice.value}
                   checked={draft === choice.value}
                   onChange={() => setDraft(choice.value)}
-                  className={cx('mt-0.5 size-4 shrink-0 cursor-pointer accent-ink', focusRing)}
+                  className={cx('mt-0.5 size-4 shrink-0 accent-ink', focusRing)}
                 />
                 <span className="flex flex-col gap-0.5">
                   <span>{choice.label}</span>

@@ -1,5 +1,8 @@
 /* Base styles and the parts shared across pages. Each demo and page keeps its own styles beside its markup. */
 
+/* The hand on everything clickable, and not-allowed on what is disabled. */
+@import '../../../packages/ui/interaction.css';
+
 *,
 *::before,
 *::after {
@@ -52,7 +55,6 @@ button {
   background: none;
   border: 0;
   padding: 0;
-  cursor: pointer;
 }
 
 input,

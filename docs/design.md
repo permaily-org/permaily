@@ -14,6 +14,7 @@ Fonts are Instrument Sans for text and JetBrains Mono for machine facts, both bu
 - Monospace is for machine facts, such as addresses, hashes and timestamps.
 - Hairline rules instead of cards, 2px corners, and no shadows or gradients.
 - No explanatory text on the page. A fact worth keeping but not worth the space goes behind an info icon (`InfoTip`), and only when people may need it.
+- Everything a person can click shows the hand cursor, and a disabled control (`disabled` or `aria-disabled="true"`) shows not-allowed; text fields keep the text cursor. One rule says it for the web app and the site, `packages/ui/interaction.css`, with no specificity, so a component that needs another cursor sets it itself. Something clickable gets a proper element or role, never a cursor alone; `scripts/interaction.test.ts` checks the rule.
 - Every screen works from a 375px phone up, and nothing scrolls sideways. Below 768px the sidebar becomes a top bar with a drawer, and below 1024px an icon rail. Pages use `pagePadding` from `web/src/lib/styles.ts`. Tables drop their secondary columns before they would overflow, by the width they get rather than the window's, and hide a column in every row so the rest stay aligned.
 
 ## The logo

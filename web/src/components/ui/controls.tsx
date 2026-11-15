@@ -95,19 +95,13 @@ export function Checkbox({
   top?: boolean
 }) {
   return (
-    <label
-      className={cx(
-        'inline-flex cursor-pointer gap-2.5',
-        top ? 'items-start' : 'items-center',
-        className,
-      )}
-    >
+    <label className={cx('inline-flex gap-2.5', top ? 'items-start' : 'items-center', className)}>
       <span className={cx('relative inline-flex size-[18px] shrink-0', top && 'mt-0.5')}>
         <input
           type="checkbox"
           {...props}
           className={cx(
-            'peer size-[18px] cursor-pointer appearance-none rounded-sm border border-ink bg-transparent checked:bg-ink',
+            'peer size-[18px] appearance-none rounded-sm border border-ink bg-transparent checked:bg-ink',
             focusRing,
           )}
         />
