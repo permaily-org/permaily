@@ -9,18 +9,18 @@ import (
 	"github.com/permaily-org/permaily/internal/query"
 )
 
-// TestPromptP1IsWhatTheSpikeMeasured pins every byte of the prompt's first
-// version against the spike's own client (its lib.py, wording v2, Python's
-// json.dumps with ensure_ascii off), so the answers the spike measured and
-// the canary expects are answers to these words (ADR 0028, "The prompt").
-// A change here is a new PromptVersion, never an edit.
-func TestPromptP1IsWhatTheSpikeMeasured(t *testing.T) {
-	if PromptVersion != "p1-2026-11-15" {
+// TestPromptP2IsWhatWasMeasured pins every byte of the prompt's second
+// version against the re-measure's own client (the spike's lib.py, wording
+// "p2c", Python's json.dumps with ensure_ascii off), so the answers measured
+// and the canary expects are answers to these words (ADR 0028, "The
+// prompt"). A change here is a new PromptVersion, never an edit.
+func TestPromptP2IsWhatWasMeasured(t *testing.T) {
+	if PromptVersion != "p2-2026-11-15" {
 		t.Fatalf("PromptVersion = %q", PromptVersion)
 	}
 	sum := sha256.Sum256([]byte(Developer))
-	if got := hex.EncodeToString(sum[:]); got != "e425301ec86f862d36baa1a5e29a8d2b5c2caff61a41d1a79c489ed0269edae1" || len(Developer) != 578 {
-		t.Fatalf("Developer is not the spike's: sha256 %s, %d bytes", got, len(Developer))
+	if got := hex.EncodeToString(sum[:]); got != "6b8a586600409e3b36981e8b67723f5b15487c0b7328199507153ad276a8d860" || len(Developer) != 897 {
+		t.Fatalf("Developer is not what was measured: sha256 %s, %d bytes", got, len(Developer))
 	}
 	subject := func(topic string) query.Atom {
 		return query.Atom{Var: contracts.VarSubject, Op: contracts.OpAbout, Topic: topic}
@@ -64,9 +64,14 @@ func TestPromptP1IsWhatTheSpikeMeasured(t *testing.T) {
 }
 
 // TestContentIsTheJSONTheModelSees pins the content's bytes and their hash,
-// which a kept decision is keyed by: compact, subject then body, HTML not
-// escaped, as Python writes them with separators (",", ":").
+// which a kept decision is keyed by: compact, subject then body, as Python
+// writes them with separators (",", ":") and ensure_ascii off, which is what
+// was measured: HTML, DEL, U+2028 and U+2029 not escaped, \b and \f by their
+// letters, other control bytes as \u00XX. encoding/json differs on several
+// of these, so decide writes its own strings.
 func TestContentIsTheJSONTheModelSees(t *testing.T) {
+	odd := "a\"b\\c\nd\re\tf\bg\fh\x00\x01\x1f\x7fi\u2028j\u2029k<&>ñ😀"
+	oddJSON := `"a\"b\\c\nd\re\tf\bg\fh\u0000\u0001\u001f` + "\x7fi\u2028j\u2029k<&>ñ😀" + `"`
 	for _, c := range []struct {
 		content    Content
 		json, hash string
@@ -77,11 +82,18 @@ func TestContentIsTheJSONTheModelSees(t *testing.T) {
 		{Content{Kind: ContentSubject, Subject: "Hola", Body: "never sent with a subject content"},
 			`{"subject":"Hola"}`,
 			"e7ec37aec30e8507863d1e80a769314b054bebcb1d7968d565edccd23205671f"},
+		{Content{Kind: ContentMessage, Subject: odd, Body: odd},
+			`{"subject":` + oddJSON + `,"body":` + oddJSON + `}`,
+			"deb7ec810edb6fa4350af21984b204ac678467960ca43364e805fccd95c9eeec"},
+		// A byte that is not UTF-8 is U+FFFD, as encoding/json makes it.
+		{Content{Kind: ContentSubject, Subject: "a\xffb\xc3"},
+			`{"subject":"a` + "\ufffd" + `b` + "\ufffd" + `"}`,
+			""},
 	} {
 		if got := string(ContentJSON(c.content)); got != c.json {
 			t.Errorf("ContentJSON = %s, want %s", got, c.json)
 		}
-		if got := ContentHash(c.content); got != c.hash {
+		if got := ContentHash(c.content); c.hash != "" && got != c.hash {
 			t.Errorf("ContentHash = %s, want %s", got, c.hash)
 		}
 	}

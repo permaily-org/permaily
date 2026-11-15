@@ -2,6 +2,8 @@ package inbox
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/query"
@@ -16,10 +18,12 @@ import (
 
 // Asker answers, for one message, the atoms its value still depends on. It
 // uses what was kept for the message first, asks the model only for what was
-// not, within the spend guard and the account's share of it, and keeps what
-// the model answered (ADR 0028, "Kept decisions"). It never fails for the
-// model's sake: an atom it could not get an answer for is simply not in
-// Asked.Answers, and is unknown. An error is the storage's or the request's.
+// not, within the spend guard and the account's share of it, and uses an
+// answer of the model only once it is kept (ADR 0028, "Kept decisions"). It
+// never fails for the model's sake: an atom it could not get a kept answer
+// for is simply not in Asked.Answers, and is unknown; Asked.Outcome says
+// why when it is not the model's own failure. An error is the storage's or
+// the request's.
 type Asker interface {
 	Ask(ctx context.Context, q *Question) (*Asked, error)
 }
@@ -27,9 +31,10 @@ type Asker interface {
 // Question is what Asker is given of one message, and all it is given: the
 // box it is in (for its kept decisions, sealed under the box's key), the
 // message's identifier and expiry (the kept entry's key and expiry), the
-// atoms a value depends on, the subject, and a way to get the text that is
-// called only when a message atom has no kept answer. Never a sender, a
-// recipient or an attachment.
+// atoms a value depends on, the subject, which view of the text is meant,
+// and a way to get that text that is called only when the view cannot
+// prove a kept answer is for it. Never a sender, a recipient or an
+// attachment.
 type Question struct {
 	Box       Box
 	MessageID string
@@ -39,28 +44,103 @@ type Question struct {
 	Account string
 	Atoms   []query.Atom
 	Subject string
-	// Text is the message's text as a connection receives it: the search
-	// entry's when it was not cut, otherwise the text taken out of the raw
-	// message, at most MessageTextMax, read under the read budget (ADR 0028,
-	// the owner's decision 3). ok is false when it cannot be read (no raw
-	// message, past its bound, or the page cannot afford the read); the
-	// message atoms are then unknown and the subject atoms still asked.
-	Text func(ctx context.Context) (text string, ok bool, err error)
+	// View names the bytes Text gives (ADR 0028, "Changed after the design
+	// review", 3): in step 4 always ViewOriginal. A kept answer for a
+	// message atom is used without calling Text only when it was kept for
+	// this view, under the same subject; otherwise Text is read and its
+	// content hashed.
+	View TextView
+	// Text is the message's text in View as a connection receives it: the
+	// search entry's when it was not cut, otherwise the text taken out of
+	// the raw message, at most MessageTextMax, read under the page's read
+	// budget (ADR 0028, the owner's decision 3). TextUnavailable when it
+	// cannot be read (no raw message, past its bound): the message atoms are
+	// then unknown and the subject atoms still asked. TextUnaffordable when
+	// the page cannot afford the read: Ask then asks nothing of the message
+	// and answers AskStop, and the page ends before it.
+	Text func(ctx context.Context) (text string, st TextState, err error)
 }
+
+// TextState is what became of reading a message's text for the model.
+type TextState int8
+
+const (
+	// TextRead: text is the message's text in the view.
+	TextRead TextState = iota + 1
+	// TextUnavailable: the message has no text that can be read (its raw
+	// message is missing or past its bound). Its message atoms are unknown.
+	TextUnavailable
+	// TextUnaffordable: the page has no raw read left for it. Nothing of
+	// the message is asked; a later page reads it with a fresh budget.
+	TextUnaffordable
+)
+
+// TextView names one view of a message's text: which (Name: "original"
+// for the text as it came; step 7's removals add views of their own, named
+// by what they removed) and how it is taken out of the message (Version,
+// TextVersion for the original). Under one message identifier, one view
+// is always the same bytes: that is what lets a kept answer be used without
+// reading the text again. A change of how the text is taken out of a
+// message, or of what a view removes, is a new Version or a new Name.
+type TextView struct {
+	Name    string
+	Version int
+}
+
+// TextVersion is the version of how MessageText takes a message's text out
+// of it; a change of it is a new view, so answers kept for the old one are
+// not used for the new one.
+const TextVersion = 1
+
+// ViewOriginal is the text as it came, the one view of step 4.
+var ViewOriginal = TextView{Name: "original", Version: TextVersion}
+
+// Key is how a view is named in KeptDecisions.Views, after the prompt
+// version: "original/1".
+func (v TextView) Key() string { return v.Name + "/" + strconv.Itoa(v.Version) }
 
 // Asked is what Ask got for a message.
 type Asked struct {
-	// Answers are the probabilities it has, kept or new, by atom.
+	// Answers are the probabilities it has, kept before or kept now, by
+	// atom: never an answer that could not be kept.
 	Answers query.Answers
-	// Held lists the atoms it did not ask because the spend guard or the
-	// account's share did not let it (contracts.MatchModelLimit): the
-	// message is listed as needing a model, not as unknown, so a later page
-	// asks again.
+	// Held lists the atoms it did not ask because of Outcome AskOff or
+	// AskLimit: the message is listed as needing a model, not as unknown,
+	// so a later page asks again. An atom left out for any other reason (a
+	// failure, a refusal, a full entry, a text that cannot be read) is in
+	// neither Answers nor Held: it is unknown.
 	Held []query.Atom
-	// Called is how many calls to the model it made (0 when every atom was
-	// kept).
+	// Outcome is why atoms were held, by the precedence of AskOutcome.
+	Outcome AskOutcome
+	// Called is how many attempts to the model it made (0 when every atom
+	// was kept).
 	Called int
 }
+
+// AskOutcome says why Ask did not ask the model of every atom it had no
+// kept answer for (ADR 0028, "What the page says"). One message has one,
+// the first that applies of AskStop, AskOff, AskLimit and AskAnswered; a
+// page of matches says MatchModelOff when one of its messages was AskOff,
+// otherwise MatchModelLimit when one was AskLimit, otherwise
+// MatchModelAsked.
+type AskOutcome int8
+
+const (
+	// AskAnswered: every atom was kept, asked or left unknown for a reason
+	// of its own; Held is empty.
+	AskAnswered AskOutcome = iota + 1
+	// AskLimit: the month's limit, the provider's limit, the account's
+	// share or a spend record that cannot be read held some atoms.
+	AskLimit
+	// AskOff: no key is set, or the provider refused it; the atoms without
+	// a kept answer are all held.
+	AskOff
+	// AskStop: the text could not be afforded on this page
+	// (TextUnaffordable). Nothing was asked or spent for the message, and
+	// Answers holds only what was kept; the page ends before the message
+	// and its next points at the message before it.
+	AskStop
+)
 
 type askerKey struct{}
 
@@ -87,9 +167,9 @@ func AskerFrom(ctx context.Context) (Asking, bool) {
 }
 
 // MatchMaxModelMessages is how many messages one page of matches asks the
-// model about at most (ADR 0028, "Pages"). The next message that needs it
-// ends the page before it, as a raw read the page cannot afford does, so
-// pages skip nothing.
+// model about at most (ADR 0028, "Bounds of a page"). The next message that
+// needs it ends the page before it, as a raw read the page cannot afford
+// does (AskStop), so pages skip nothing.
 const MatchMaxModelMessages = 25
 
 // KeyDecision is the key of a message's kept decisions in its mailbox's
@@ -101,24 +181,58 @@ const KeyDecision = "dec#"
 // mailbox and the message (envelope.AAD(PurposeDecision, mailbox, id)).
 const PurposeDecision = "message-decisions"
 
+// GonePartition holds a mark for each message being deleted (key
+// "<mailbox id>#<message id>", expiring after a day), written by
+// Reader.Delete before it deletes anything (ADR 0028, "Changed after the
+// design review", 10). KeptStore.Keep reads it after its write and deletes
+// what it wrote when the mark is there; the mailboxes' sweep deletes
+// dec#<id> once more after SweepGrace, when every Keep that read the
+// message before the mark has ended, and then the mark. The store has no
+// write conditional on another item, so this is how a decision is never
+// kept for a message that is gone.
+const GonePartition = "message-gone"
+
 // KeptMaxAnswers is how many answers one message's entry keeps. Past it a
-// new answer is used for the request and not kept (ADR 0028, "Kept
-// decisions").
+// new atom is not asked and stays unknown, and an answer the entry has no
+// room for when it is written is not used (ADR 0028, "Kept decisions").
 const KeptMaxAnswers = 256
+
+// KeepTries is how many times Keep reads the entry again after another
+// writer changed it (store.ErrConflict on an update, store.ErrExists on a
+// create) before it gives up; it then keeps nothing and the caller uses
+// none of its new answers.
+const KeepTries = 4
+
+// ErrGone is Keep's answer when the message was deleted while it was asked
+// about: nothing is kept, and nothing new is used.
+var ErrGone = errors.New("inbox: the message was deleted while it was asked about")
 
 // KeptStore reads and writes a message's kept decisions. Pull request 3
 // implements it on the store (NewKeptStore); Asker uses it.
+//
+// What whoever writes the table can do to an entry (ADR 0028, "What it
+// guarantees"): delete it, damage it or put back an earlier copy. Kept
+// then reads none, or the earlier one; what is missing is asked again, and
+// a different answer is possible only if the model's behaviour changed,
+// which the canary samples. Never an error that delivers, and never an
+// answer they wrote. In step 4 only the owner's previews use kept answers;
+// before a rule that protects relies on one (step 7), rule-mode answers
+// need rollback resistance (docs/plan.md, step 7).
 type KeptStore interface {
 	// Kept is the message's kept decisions; nil and no error when it has
 	// none, or when its entry does not open (it is then asked again, and
 	// what is asked replaces it).
 	Kept(ctx context.Context, b Box, id string) (*KeptDecisions, error)
-	// Keep adds add's content hashes and answers to the message's entry,
-	// written at the version read and read again when another enclave
-	// changed it, a bounded number of times. An answer whose key is already
-	// kept is not added: the kept one stays. It returns the entry as
-	// written, which is what the caller evaluates with, so two enclaves that
-	// asked at once use one answer. The entry expires at expires.
+	// Keep adds add's views and answers to the message's entry, written at
+	// the version read and read again when another writer changed it (at
+	// most KeepTries times). An answer whose key is already kept is not
+	// added: the kept one stays. An answer past KeptMaxAnswers is not
+	// added. It then reads the message's mark in GonePartition: when there
+	// is one, it deletes what it wrote and returns ErrGone. Otherwise it
+	// returns the entry as written, which is what the caller evaluates
+	// with, so two enclaves that asked at once use one answer and an
+	// answer that could not be kept is used by neither. The entry expires
+	// at expires.
 	Keep(ctx context.Context, b Box, id string, expires time.Time, add *KeptDecisions) (*KeptDecisions, error)
 }
 
@@ -129,12 +243,22 @@ type KeptStore interface {
 // is the one every enclave uses from then on.
 type KeptDecisions struct {
 	V int `json:"v"`
-	// Content is the hash of the content each kind of call gave the model
-	// for this message, by prompt version and kind ("p1-2026-11-15/subject",
-	// "p1-2026-11-15/message"), so a later ask finds its kept answers
-	// without reading the text again.
-	Content map[string]string `json:"content"`
-	Answers []KeptAnswer      `json:"answers"`
+	// Views says, for each prompt version and view of the text
+	// ("p2-2026-11-15/original/1"), the hash of the message content that
+	// view gave the model, so a later ask for the same view finds its kept
+	// answers without reading the text again. A subject content is never
+	// here: its hash is taken from Question.Subject each time.
+	Views   map[string]KeptView `json:"views"`
+	Answers []KeptAnswer        `json:"answers"`
+}
+
+// KeptView is the content one view of the text gave the model.
+type KeptView struct {
+	// Content is decide.ContentHash of the message content.
+	Content string `json:"content"`
+	// Subject is the hex SHA-256 of the subject in it: a Question with
+	// another subject does not use Content, and reads the text.
+	Subject string `json:"subject"`
 }
 
 // KeptAnswer is one answer of the model, or its refusal.
@@ -150,7 +274,12 @@ type KeptAnswer struct {
 	// read, and the atom is unknown for as long as this is kept.
 	Refused bool      `json:"refused,omitempty"`
 	At      time.Time `json:"at"`
-	// Since is the day the canary last saw the model change, or the day it
-	// was first run: what a receipt says as "behaviour as of".
-	Since string `json:"since"`
+	// CanaryChecked is the day (UTC, YYYY-MM-DD) of the last canary check
+	// that had completed when this was asked, and CanaryChange the last day
+	// a check observed a change ("" for none since the canary's baseline):
+	// what a receipt says of the model, a heuristic sample of 156 fixed
+	// statements, never a proof of when the model changed (ADR 0028, "The
+	// canary").
+	CanaryChecked string `json:"canary_checked"`
+	CanaryChange  string `json:"canary_change,omitempty"`
 }

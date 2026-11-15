@@ -1,7 +1,9 @@
 package decide
 
 import (
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math"
@@ -13,17 +15,19 @@ import (
 // The canary (ADR 0028, "The canary"): fixed synthetic messages and
 // statements, never mail, put to the model once a day with this prompt
 // version. The model cannot be pinned (only gpt-6-luna exists, with no dated
-// snapshot) and its answers are repeatable, so an answer that moves by more
-// than Tolerance says the model changed under the same name. It alerts the
-// operator; it does not stop the service.
+// snapshot) and its answers are repeatable, so an answer that moves (Moved)
+// says the model changed under the same name. It is a heuristic sample of
+// 156 statements, not a proof of when the model changed or of how it reads
+// other mail. It alerts the operator; it does not stop the service.
 //
 // canary.json holds four messages of the spike's corpus
 // (testdata/corpus.jsonl: inv01, inv08, mkt11 and pwd13), chosen for answers
 // inside the bands of doubt and for the weaknesses the spike found (a
 // business address, the novel "The Invoice", a Spanish sign-in alert), with
-// every one of their 39 atoms and the probability the spike measured for
-// each. ADR 0028's pull request 2 measures them again with the enclave's own
-// client before the first release that runs it, and commits what it finds.
+// every one of their 39 atoms and the probability the re-measure found for
+// each with this prompt version (ADR 0028, "The re-measure"). ADR 0028's
+// pull request 2 measures them again with the enclave's own client before
+// the first release that runs it, and commits what it finds.
 //
 //go:embed canary.json
 var canaryJSON []byte
@@ -37,6 +41,10 @@ type Canary struct {
 	MeasuredBy    string          `json:"measured_by"`
 	Tolerance     float64         `json:"tolerance"`
 	Messages      []CanaryMessage `json:"messages"`
+	// Baseline is the hex SHA-256 of canary.json as compiled in: the
+	// canary's state is bound to it (ADR 0028, "The canary"), so a state
+	// recorded against another baseline is not this one's.
+	Baseline string `json:"-"`
 }
 
 // CanaryMessage is one synthetic message and what is expected of it.
@@ -57,6 +65,25 @@ type CanaryAtom struct {
 
 // Atom is the query language's atom of a.
 func (a CanaryAtom) Atom() query.Atom { return query.Atom{Var: a.Var, Op: a.Op, Topic: a.Topic} }
+
+// Moved reports whether p, the probability the model answered now, is not
+// the one expected: it is further than tolerance from a.P, or it classifies
+// differently from a.P in either mode (query.Classify with ForQuery or
+// ForRule), however small the move. A move of 0.02 across a threshold
+// changes what a query delivers or a rule protects, so it is a change (ADR
+// 0028, "Changed after the design review", 14). A p that is not a number
+// between 0 and 1 has moved.
+func (a CanaryAtom) Moved(p, tolerance float64) bool {
+	if math.IsNaN(p) || p < 0 || p > 1 || math.Abs(p-a.P) > tolerance {
+		return true
+	}
+	for _, mode := range []query.Mode{query.ForQuery, query.ForRule} {
+		if query.Classify(p, mode) != query.Classify(a.P, mode) {
+			return true
+		}
+	}
+	return false
+}
 
 // LoadCanary reads the canary compiled into the image, and refuses one
 // that is not for this prompt version or holds a statement no model
@@ -79,5 +106,7 @@ func LoadCanary() (*Canary, error) {
 			}
 		}
 	}
+	sum := sha256.Sum256(canaryJSON)
+	c.Baseline = hex.EncodeToString(sum[:])
 	return &c, nil
 }

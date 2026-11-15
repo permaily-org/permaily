@@ -368,8 +368,8 @@ export type MatchPage = {
   next?: string
   searched_to?: string
   /**
-   * Only when the request asked the model (ADR 0028): `asked` when every message that needed it was asked,
-   * `limit` when the spend guard held some back (they stay in `needs_model`), `off` when the model has no key.
+   * Only when the request asked the model (ADR 0028): `off` when the model has no key or the provider refused it,
+   * otherwise `limit` when a spend limit held some back, otherwise `asked`. Held messages stay in `needs_model`.
    */
   model?: MatchModel
 }

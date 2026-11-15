@@ -1,9 +1,9 @@
 {
   "v": 1,
-  "prompt_version": "p1-2026-11-15",
+  "prompt_version": "p2-2026-11-15",
   "model": "gpt-6-luna",
   "measured": "2026-11-15",
-  "measured_by": "the spike of ADR 0028 (v2 wording, prompt cache at its default; the spike found the same answers with it off)",
+  "measured_by": "the re-measure of ADR 0028 after its design review (prompt p2 on its wire form, the prompt cache off, each message's subject atoms in one call and its message atoms in another, twice, identical)",
   "tolerance": 0.02,
   "messages": [
     {
@@ -21,7 +21,7 @@
           "var": "subject",
           "op": "about",
           "topic": "facturas",
-          "p": 0.94
+          "p": 0.98
         },
         {
           "var": "subject",
@@ -99,7 +99,7 @@
           "var": "message",
           "op": "about",
           "topic": "facturas",
-          "p": 0.82
+          "p": 0.95
         },
         {
           "var": "message",
@@ -129,7 +129,7 @@
           "var": "message",
           "op": "about",
           "topic": "bank account activity",
-          "p": 0.05
+          "p": 0.06
         },
         {
           "var": "message",
@@ -153,7 +153,7 @@
           "var": "message",
           "op": "about",
           "topic": "a home address",
-          "p": 0.0
+          "p": 0.01
         },
         {
           "var": "message",
@@ -177,7 +177,7 @@
           "var": "message",
           "op": "mentions",
           "topic": "facturas",
-          "p": 0.59
+          "p": 0.99
         },
         {
           "var": "message",
@@ -207,7 +207,7 @@
           "var": "message",
           "op": "mentions",
           "topic": "bank account activity",
-          "p": 0.28
+          "p": 0.7
         },
         {
           "var": "message",
@@ -231,7 +231,7 @@
           "var": "message",
           "op": "mentions",
           "topic": "a home address",
-          "p": 0.1
+          "p": 0.03
         },
         {
           "var": "message",
@@ -262,7 +262,7 @@
           "var": "subject",
           "op": "about",
           "topic": "facturas",
-          "p": 0.76
+          "p": 0.12
         },
         {
           "var": "subject",
@@ -286,13 +286,13 @@
           "var": "subject",
           "op": "about",
           "topic": "marketing promotions",
-          "p": 0.53
+          "p": 0.42
         },
         {
           "var": "subject",
           "op": "about",
           "topic": "bank account activity",
-          "p": 0.04
+          "p": 0.01
         },
         {
           "var": "subject",
@@ -326,90 +326,90 @@
         },
         {
           "var": "subject",
+          "op": "about",
+          "topic": "a personal message from family or friends",
+          "p": 0.04
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "invoices",
+          "p": 0.74
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "facturas",
+          "p": 0.05
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "package delivery",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "password reset",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "sign-in code",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "marketing promotions",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "bank account activity",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "job offers",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "medical appointments",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "travel bookings",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a home address",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a phone number",
+          "p": 0.0
+        },
+        {
+          "var": "message",
           "op": "about",
           "topic": "a personal message from family or friends",
           "p": 0.01
         },
         {
           "var": "message",
-          "op": "about",
-          "topic": "invoices",
-          "p": 0.87
-        },
-        {
-          "var": "message",
-          "op": "about",
-          "topic": "facturas",
-          "p": 0.54
-        },
-        {
-          "var": "message",
-          "op": "about",
-          "topic": "package delivery",
-          "p": 0.0
-        },
-        {
-          "var": "message",
-          "op": "about",
-          "topic": "password reset",
-          "p": 0.0
-        },
-        {
-          "var": "message",
-          "op": "about",
-          "topic": "sign-in code",
-          "p": 0.0
-        },
-        {
-          "var": "message",
-          "op": "about",
-          "topic": "marketing promotions",
-          "p": 0.0
-        },
-        {
-          "var": "message",
-          "op": "about",
-          "topic": "bank account activity",
-          "p": 0.0
-        },
-        {
-          "var": "message",
-          "op": "about",
-          "topic": "job offers",
-          "p": 0.0
-        },
-        {
-          "var": "message",
-          "op": "about",
-          "topic": "medical appointments",
-          "p": 0.0
-        },
-        {
-          "var": "message",
-          "op": "about",
-          "topic": "travel bookings",
-          "p": 0.0
-        },
-        {
-          "var": "message",
-          "op": "about",
-          "topic": "a home address",
-          "p": 0.0
-        },
-        {
-          "var": "message",
-          "op": "about",
-          "topic": "a phone number",
-          "p": 0.0
-        },
-        {
-          "var": "message",
-          "op": "about",
-          "topic": "a personal message from family or friends",
-          "p": 0.0
-        },
-        {
-          "var": "message",
           "op": "mentions",
           "topic": "invoices",
           "p": 1.0
@@ -442,7 +442,7 @@
           "var": "message",
           "op": "mentions",
           "topic": "marketing promotions",
-          "p": 0.0
+          "p": 0.01
         },
         {
           "var": "message",
@@ -527,7 +527,7 @@
           "var": "subject",
           "op": "about",
           "topic": "marketing promotions",
-          "p": 0.95
+          "p": 0.9
         },
         {
           "var": "subject",
@@ -569,7 +569,7 @@
           "var": "subject",
           "op": "about",
           "topic": "a personal message from family or friends",
-          "p": 0.0
+          "p": 0.05
         },
         {
           "var": "message",
@@ -605,7 +605,7 @@
           "var": "message",
           "op": "about",
           "topic": "marketing promotions",
-          "p": 0.97
+          "p": 0.95
         },
         {
           "var": "message",
@@ -713,7 +713,7 @@
           "var": "message",
           "op": "mentions",
           "topic": "a home address",
-          "p": 0.95
+          "p": 0.67
         },
         {
           "var": "message",
@@ -756,13 +756,13 @@
           "var": "subject",
           "op": "about",
           "topic": "password reset",
-          "p": 0.05
+          "p": 0.06
         },
         {
           "var": "subject",
           "op": "about",
           "topic": "sign-in code",
-          "p": 0.23
+          "p": 0.21
         },
         {
           "var": "subject",
@@ -774,7 +774,7 @@
           "var": "subject",
           "op": "about",
           "topic": "bank account activity",
-          "p": 0.13
+          "p": 0.71
         },
         {
           "var": "subject",
@@ -810,7 +810,7 @@
           "var": "subject",
           "op": "about",
           "topic": "a personal message from family or friends",
-          "p": 0.0
+          "p": 0.04
         },
         {
           "var": "message",
@@ -834,13 +834,13 @@
           "var": "message",
           "op": "about",
           "topic": "password reset",
-          "p": 0.24
+          "p": 0.18
         },
         {
           "var": "message",
           "op": "about",
           "topic": "sign-in code",
-          "p": 0.02
+          "p": 0.04
         },
         {
           "var": "message",
@@ -852,7 +852,7 @@
           "var": "message",
           "op": "about",
           "topic": "bank account activity",
-          "p": 0.85
+          "p": 0.08
         },
         {
           "var": "message",
@@ -912,13 +912,13 @@
           "var": "message",
           "op": "mentions",
           "topic": "password reset",
-          "p": 0.93
+          "p": 0.72
         },
         {
           "var": "message",
           "op": "mentions",
           "topic": "sign-in code",
-          "p": 0.02
+          "p": 0.01
         },
         {
           "var": "message",
@@ -930,7 +930,7 @@
           "var": "message",
           "op": "mentions",
           "topic": "bank account activity",
-          "p": 0.58
+          "p": 0.19
         },
         {
           "var": "message",
@@ -954,7 +954,7 @@
           "var": "message",
           "op": "mentions",
           "topic": "a home address",
-          "p": 0.0
+          "p": 0.02
         },
         {
           "var": "message",
@@ -966,7 +966,7 @@
           "var": "message",
           "op": "mentions",
           "topic": "a personal message from family or friends",
-          "p": 0.0
+          "p": 0.03
         }
       ]
     }

@@ -64,7 +64,7 @@ type ModelStatus struct {
 	Provider      string `json:"provider"`       // "openai"
 	Endpoint      string `json:"endpoint"`       // "https://api.openai.com/v1/decisions"
 	Model         string `json:"model"`          // "gpt-6-luna"
-	PromptVersion string `json:"prompt_version"` // "p1-2026-11-15"
+	PromptVersion string `json:"prompt_version"` // "p2-2026-11-15"
 	// PromptCache is "off": every request turns the provider's prompt cache
 	// off, so no copy of the input is kept as cache state.
 	PromptCache  string `json:"prompt_cache"`
@@ -95,26 +95,39 @@ const (
 	ModelGuardMonthLimit    = "month_limit"    // the month's limit is reached: nothing new is asked until the next month (UTC)
 	ModelGuardProviderLimit = "provider_limit" // the provider said its own spend or credit limit is reached
 	ModelGuardKeyRefused    = "key_refused"    // no key is set, or the provider refused it
-	ModelGuardUnreadable    = "unreadable"     // the month's counter cannot be read: nothing new is asked
+	ModelGuardUnreadable    = "unreadable"     // the month's spend record cannot be read (lost, forked, or does not open): nothing new is asked
 )
 
-// CanaryStatus is what the daily canary last found.
+// CanaryStatus is what the daily canary last found: a heuristic sample of
+// fixed synthetic statements, compared with the answers measured for this
+// prompt version (ADR 0028, "The canary"). It says what a check observed,
+// never when the model changed or how it reads other mail.
 type CanaryStatus struct {
+	// Baseline is the hex SHA-256 of the canary compiled into the image
+	// (decide.Canary.Baseline); the state below is for it, this model and
+	// this prompt version, and is none for any other.
+	Baseline string `json:"baseline"`
+	// CheckedAt is when the last check completed; zero before one did.
 	CheckedAt time.Time `json:"checked_at,omitzero"`
-	// State is CanarySame, CanaryChanged or CanaryFailed; CanaryNone
-	// before it first ran.
+	// State is what that check found (CanarySame, CanaryChanged), or why
+	// there is nothing to go by: CanaryNone before a check completed,
+	// CanaryFailed when the latest attempt did not complete, CanaryStale
+	// when no check completed in the last two days (UTC), CanaryUnreadable
+	// when the state's record cannot be read.
 	State string `json:"state"`
-	// ChangedAt is the first day an answer was seen to move, until a
-	// release takes the new answers as expected.
-	ChangedAt time.Time `json:"changed_at,omitzero"`
+	// ChangeSeenAt is the last day a check observed an answer that moved,
+	// until a release takes new answers as expected (a new baseline).
+	ChangeSeenAt time.Time `json:"change_seen_at,omitzero"`
 }
 
 // What the canary found (CanaryStatus.State).
 const (
-	CanaryNone    = "none"
-	CanarySame    = "same"
-	CanaryChanged = "changed"
-	CanaryFailed  = "failed"
+	CanaryNone       = "none"
+	CanarySame       = "same"
+	CanaryChanged    = "changed"
+	CanaryFailed     = "failed"
+	CanaryStale      = "stale"
+	CanaryUnreadable = "unreadable"
 )
 
 // The kinds of calls the enclave counts (ModelStatus.Calls). A later image

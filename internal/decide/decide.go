@@ -6,8 +6,9 @@
 // and knows nothing of HTTP, storage, keys or a provider's wire format.
 // depguard's decide-is-pure rule lists what it may import (.golangci.yml).
 // The provider is an adapter of its own (internal/decide/openai, ADR 0028's
-// pull request 1), and what asks it for a message, keeps its answers and
-// counts what they cost is internal/services/decisions (pull request 2).
+// pull request 1) that makes one attempt a call; what asks it for a message,
+// tries a call again, keeps its answers and reserves what each attempt may
+// cost before it is sent is internal/services/decisions (pull request 2).
 //
 // This file and prompt.go are the seam, committed with the design: the
 // types the pull requests share, the limits of a call, the prices the guard
@@ -27,10 +28,14 @@ import (
 // asks for, with the provider, the model and its address compiled into the
 // image. Another provider is another implementation, in a release.
 type Model interface {
-	// Decide puts c's statements to the model and returns one Answer per
-	// statement, in their order, and what the call cost. An error means no
-	// statement was answered: every one is unknown (ADR 0028, "Failures").
-	// A refusal or an answer that does not check is an Answer with OK false,
+	// Decide makes one attempt: it sends c once and returns one Answer per
+	// statement, in their order, and what the attempt cost. It never tries
+	// again by itself, so that every transmission is reserved for before it
+	// is sent (ADR 0028, "Spend"): the caller retries, after the guard let
+	// it. An error means no statement was answered: every one is unknown
+	// (ADR 0028, "Failures"); it is an *AttemptError, which says whether the
+	// attempt may have been billed and whether it may be tried again. A
+	// refusal or an answer that does not check is an Answer with OK false,
 	// never an error, and the others still count.
 	Decide(ctx context.Context, c Call) (*Result, error)
 	// Name is the model as receipts and kept decisions name it, such as
@@ -88,7 +93,7 @@ type Result struct {
 	// names another than Model.Name fails (ErrInvalidAnswer).
 	Model string
 	Usage Usage
-	// Took is how long the call took, retries included.
+	// Took is how long the attempt took.
 	Took time.Duration
 }
 
@@ -98,7 +103,7 @@ type Usage struct {
 	CachedTokens     int64
 	CacheWriteTokens int64
 	// Reported is false when the answer said nothing of its usage: the
-	// call is then charged its estimate (Estimate).
+	// attempt is then charged its estimate (Estimate).
 	Reported bool
 }
 
@@ -113,20 +118,26 @@ const (
 	// contracts.MaxModelConditions (ADR 0027).
 	MaxAtomsPerMessage = 24
 	// CallTimeout is how long one attempt waits for its answer, for a
-	// content of at most LongContent bytes; LongCallTimeout beyond.
+	// content (ContentJSON) of at most LongContent bytes; LongCallTimeout
+	// beyond. The re-measure's 256 KiB texts took at most 1.6 s (ADR 0028,
+	// "The re-measure"); pull request 1's eval sets LongCallTimeout from
+	// calls of 64, 128 and 256 KiB, as about five times their p99.
 	CallTimeout     = 3 * time.Second
-	LongCallTimeout = 6 * time.Second
+	LongCallTimeout = 8 * time.Second
 	LongContent     = 32 << 10
-	// Retries is how many times a call is tried again after a timeout, a
-	// transport error, a 500, a 502, a 503, a 504 or a 429 that only asks to
-	// slow down; never after anything else (ADR 0028, "Failures").
+	// Retries is how many times the service tries a call again after an
+	// AttemptError with Retry set (a timeout, a transport error, a 500, a
+	// 502, a 503, a 504 or a 429 that only asks to slow down); never after
+	// anything else (ADR 0028, "Failures"). Each attempt is reserved for
+	// before it is sent.
 	Retries = 2
 	// MaxRetryAfter is the longest Retry-After honoured.
 	MaxRetryAfter = 5 * time.Second
 	// MessageDeadline is how long the calls for one message may take
 	// together, retries and waiting for a slot included.
-	MessageDeadline = 10 * time.Second
-	// Concurrent is how many calls one enclave has open at once.
+	MessageDeadline = 20 * time.Second
+	// Concurrent is how many attempts one enclave has open at once; the
+	// service holds the slots.
 	Concurrent = 16
 )
 
@@ -142,11 +153,31 @@ const (
 	LongRequestTokens         = 272_000
 )
 
-// Failures of a call, as Decide returns them. None says why in words of the
+// AttemptError is how Decide fails: one of the failures below (Err), and
+// what the service needs to charge and retry the attempt (ADR 0028,
+// "Spend" and "Failures"). Decide returns no other error; one that is not
+// an AttemptError is read as ErrUnavailable, sent, and not tried again.
+type AttemptError struct {
+	Err error
+	// Sent is false only when the request certainly never left the enclave
+	// (no key, a context that ended before it was written): the attempt is
+	// then not charged. Otherwise the provider may have billed it, and it is
+	// charged its estimate, whatever came back.
+	Sent bool
+	// Retry says the call may be tried again (ErrUnavailable only), after
+	// RetryAfter when the provider asked for one (at most MaxRetryAfter).
+	Retry      bool
+	RetryAfter time.Duration
+}
+
+func (e *AttemptError) Error() string { return e.Err.Error() }
+func (e *AttemptError) Unwrap() error { return e.Err }
+
+// Failures of an attempt, as AttemptError.Err. None says why in words of the
 // provider: an error's text may echo a key or a request.
 var (
-	// ErrUnavailable: no answer within the deadline, after the retries
-	// allowed (timeouts, transport errors, 5xx, 429 slow_down).
+	// ErrUnavailable: no answer within the attempt's timeout (timeouts,
+	// transport errors, 5xx, 429 slow_down); the service may try again.
 	ErrUnavailable = errors.New("decide: the model did not answer")
 	// ErrKeyRefused: the provider refused the key (401, 403), or none is
 	// set. Nothing is asked until the operator sets one again, or until a

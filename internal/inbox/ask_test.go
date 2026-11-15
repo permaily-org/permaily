@@ -29,3 +29,15 @@ func TestTheAskerTravelsWithTheRequest(t *testing.T) {
 		t.Fatalf("AskerFrom = %+v, %v", got, ok)
 	}
 }
+
+// TestAViewIsNamedWithItsVersion: answers kept for one view of a text are
+// found by its name and version, so another version of how the text is
+// taken out is another view (ADR 0028, "Changed after the design review", 3).
+func TestAViewIsNamedWithItsVersion(t *testing.T) {
+	if got := inbox.ViewOriginal.Key(); got != "original/1" || inbox.TextVersion != 1 {
+		t.Fatalf("ViewOriginal.Key() = %q", got)
+	}
+	if (inbox.TextView{Name: "original", Version: 2}).Key() == inbox.ViewOriginal.Key() {
+		t.Fatal("another version of the text is another view")
+	}
+}
