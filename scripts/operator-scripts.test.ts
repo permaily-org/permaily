@@ -1,7 +1,19 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { createHash, createPublicKey } from 'node:crypto'
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { createServer as createHTTPServer } from 'node:http'
+import { connect, createServer as createTCPServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -34,7 +46,9 @@ function openssl(...args: string[]) {
   execFileSync('openssl', args, { cwd: dir, stdio: 'pipe' })
 }
 
-// leaf makes a key and a certificate for 127.0.0.1 and localhost, signed by the test CA.
+// leaf makes a key and a certificate for 127.0.0.1, ::1, localhost, the dev
+// names the tests use and two public names, signed by the test CA: the
+// impostor's is valid for every name a script could be led to.
 function leaf(name: string) {
   openssl(
     'req',
@@ -52,7 +66,7 @@ function leaf(name: string) {
   )
   writeFileSync(
     join(dir, `${name}.ext`),
-    'subjectAltName=IP:127.0.0.1,DNS:localhost\nextendedKeyUsage=serverAuth\n',
+    'subjectAltName=IP:127.0.0.1,IP:::1,DNS:localhost,DNS:dev.localhost,DNS:dev.permaily.test,DNS:api.permaily.com,DNS:remote.example\nextendedKeyUsage=serverAuth\n',
   )
   openssl(
     'x509',
@@ -148,8 +162,17 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+// How a script is run: from another copy of the scripts (scripts), under
+// bash -x (trace), or with something on standard input (input).
+type How = { scripts?: string; trace?: boolean; input?: string }
+
 async function runWith(env: Record<string, string>, script: string, ...args: string[]) {
-  const child = Bun.spawn(['bash', join(import.meta.dir, script), ...args], {
+  return runHow({}, env, script, ...args)
+}
+
+async function runHow(how: How, env: Record<string, string>, script: string, ...args: string[]) {
+  const bash = how.trace ? ['bash', '-x'] : ['bash']
+  const child = Bun.spawn([...bash, join(how.scripts ?? import.meta.dir, script), ...args], {
     env: {
       PATH: process.env.PATH ?? '',
       HOME: '/nonexistent',
@@ -161,7 +184,7 @@ async function runWith(env: Record<string, string>, script: string, ...args: str
       STUB_ATTESTED: attested,
       ...env,
     },
-    stdin: 'ignore',
+    stdin: how.input === undefined ? 'ignore' : new Blob([how.input]),
     stdout: 'pipe',
     stderr: 'pipe',
   })
@@ -742,4 +765,566 @@ test('every request that carries the admin token goes through enclave_curl, afte
     'provider.sh',
     'sigstore-trust-root.sh',
   ])
+})
+
+// Proxies that lead every connection to the impostor, as a hostile proxy, a
+// hijacked DNS answer or a mistaken hosts entry would: each records where it
+// was asked to connect.
+let proxied: string[] = []
+let httpProxy: ReturnType<typeof createHTTPServer>
+let socksProxy: Server
+const sockets = new Set<Socket>()
+
+function toImpostor(socket: Socket, ready: () => void, head?: Buffer) {
+  sockets.add(socket)
+  const upstream = connect(impostor.port ?? 0, '127.0.0.1', () => {
+    ready()
+    if (head?.length) upstream.write(head)
+    socket.pipe(upstream).pipe(socket)
+  })
+  sockets.add(upstream)
+  socket.on('error', () => upstream.destroy())
+  upstream.on('error', () => socket.destroy())
+  socket.on('close', () => upstream.destroy())
+}
+
+async function listen(server: Server | ReturnType<typeof createHTTPServer>) {
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  return (server.address() as { port: number }).port
+}
+
+let proxies: Record<string, Record<string, string>> = {}
+
+beforeAll(async () => {
+  httpProxy = createHTTPServer()
+  httpProxy.on('connect', (request, socket: Socket, head) => {
+    proxied.push(`http ${request.url}`)
+    toImpostor(socket, () => socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'), head)
+  })
+  // SOCKS5 without authentication: enough for curl's socks5 and socks5h.
+  socksProxy = createTCPServer((socket) => {
+    sockets.add(socket)
+    socket.once('data', () => {
+      socket.write(Buffer.from([5, 0]))
+      socket.once('data', (ask: Buffer) => {
+        let host = `atyp ${ask[3]}`
+        let at = 4
+        if (ask[3] === 1) {
+          host = [...ask.subarray(4, 8)].join('.')
+          at = 8
+        } else if (ask[3] === 3) {
+          host = ask.subarray(5, 5 + ask[4]).toString()
+          at = 5 + ask[4]
+        } else if (ask[3] === 4) at = 20
+        proxied.push(`socks ${host}:${ask.readUInt16BE(at)}`)
+        toImpostor(socket, () => socket.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0])))
+      })
+    })
+  })
+  const http = `http://127.0.0.1:${await listen(httpProxy)}`
+  const socks = `127.0.0.1:${await listen(socksProxy)}`
+  const none = { NO_PROXY: '', no_proxy: '' }
+  proxies = {
+    HTTPS_PROXY: { ...none, HTTPS_PROXY: http },
+    https_proxy: { ...none, https_proxy: http },
+    'ALL_PROXY socks5h': { ...none, ALL_PROXY: `socks5h://${socks}` },
+    'all_proxy socks5': { ...none, all_proxy: `socks5://${socks}` },
+  }
+})
+
+afterAll(async () => {
+  for (const socket of sockets) socket.destroy()
+  httpProxy.closeAllConnections()
+  await new Promise((resolve) => httpProxy.close(resolve))
+  await new Promise((resolve) => socksProxy.close(resolve))
+})
+
+describe('PERMAILY_API and the dev mode lead only where they say', () => {
+  const list = { 'GET /v1/admin/invitations': { status: 200, body: { invitations: [] } } }
+
+  test('PERMAILY_DEV_UNVERIFIED is 1 or unset; any other value is refused, and nothing is verified or sent', async () => {
+    answers = list
+    for (const value of ['0', 'false', 'no', 'true', 'yes', '01', ' 1', '1 ']) {
+      seen = []
+      rmSync(join(dir, 'verify-runs'), { force: true })
+      const out = await runWith({ PERMAILY_DEV_UNVERIFIED: value }, 'invite.sh', 'list')
+      expect({ value, exit: out.exit }).toEqual({ value, exit: 2 })
+      expect({ value, seen }).toEqual({ value, seen: [] })
+      expect(out.stderr).toContain('PERMAILY_DEV_UNVERIFIED')
+      expect(out.stderr).toContain('Nothing was sent')
+      expect(existsSync(join(dir, 'verify-runs'))).toBe(false)
+    }
+  })
+
+  test('PERMAILY_API is https://host[:port] and nothing else, in both modes, before anything runs', async () => {
+    answers = list
+    const refused = [
+      // userinfo, which curl takes for a name and a password, and connects past
+      'https://localhost:unused@api.permaily.com',
+      'https://localhost:password@remote.example',
+      'https://localhost@api.permaily.com',
+      'https://user@localhost',
+      'https://[::1]:443@api.permaily.com',
+      'https://[::1]@api.permaily.com',
+      'https://127.0.0.1:1@remote.example',
+      'https://localhost\\@api.permaily.com',
+      // encoded delimiters, and anything percent-encoded
+      'https://localhost%2f@api.permaily.com',
+      'https://localhost%3a443',
+      'https://localhost%40api.permaily.com',
+      'https://api.permaily.com%2f.localhost',
+      'https://%6cocalhost',
+      // a path, a query or a fragment
+      'https://localhost/path',
+      'https://localhost/?q=1',
+      'https://localhost?q=1',
+      'https://localhost#f',
+      'https://localhost//',
+      // ports that are none
+      'https://localhost:0',
+      'https://localhost:65536',
+      'https://localhost:',
+      'https://localhost:443x',
+      'https://localhost:+443',
+      'https://localhost:0443',
+      // spellings: case, a trailing dot, other IP forms
+      'https://LOCALHOST',
+      'https://Localhost',
+      'https://localhost.',
+      'https://dev.permaily.test.',
+      'https://API.permaily.com',
+      'HTTPS://localhost',
+      'https://[::ffff:127.0.0.1]',
+      'https://[0:0:0:0:0:0:0:1]',
+      'https://2130706433',
+      'https://0x7f.1',
+      'https://127.1',
+      'https://127.000.000.001',
+      // no host, or not one
+      'https://',
+      'https://:443',
+      'https://local host',
+      'https://-localhost',
+      'https://localhost..test',
+    ]
+    for (const mode of [{}, { PERMAILY_DEV_UNVERIFIED: '1' }]) {
+      for (const api of refused) {
+        seen = []
+        proxied = []
+        rmSync(join(dir, 'verify-runs'), { force: true })
+        const out = await runWith(
+          { ...mode, ...proxies.HTTPS_PROXY, PERMAILY_API: api },
+          'invite.sh',
+          'list',
+        )
+        const what = { mode, api }
+        expect({ ...what, exit: out.exit }).toEqual({ ...what, exit: 2 })
+        expect({ ...what, seen, proxied }).toEqual({ ...what, seen: [], proxied: [] })
+        expect({ ...what, verified: existsSync(join(dir, 'verify-runs')) }).toEqual({
+          ...what,
+          verified: false,
+        })
+        expect(out.stderr).toContain('Nothing was sent')
+      }
+    }
+  })
+
+  test('an origin with a port or a trailing slash is verified and asked as one origin', async () => {
+    answers = list
+    for (const api of [
+      `https://127.0.0.1:${enclave.port}/`,
+      `https://localhost:${enclave.port}`,
+      `https://localhost:${enclave.port}/`,
+    ]) {
+      seen = []
+      asked = []
+      rmSync(join(dir, 'verify-runs'), { force: true })
+      const out = await runWith({ PERMAILY_API: api }, 'invite.sh', 'list')
+      expect({ api, exit: out.exit }).toEqual({ api, exit: 0 })
+      expect(asked).toEqual(['GET /v1/admin/invitations'])
+      expect(readFileSync(join(dir, 'verify-runs'), 'utf8')).toEndWith(
+        ` -json ${api.replace(/\/$/, '')}\n`,
+      )
+    }
+  })
+
+  test('in dev mode a request reaches only this machine, whatever DNS or the proxy variables say', async () => {
+    answers = list
+    // dev.permaily.test has no loopback answer in DNS (none at all, or a
+    // resolver's own); the proxies lead to the impostor.
+    for (const host of ['localhost', 'dev.localhost', 'dev.permaily.test', '127.0.0.1']) {
+      for (const [name, proxy] of [['none', {}], ...Object.entries(proxies)] as const) {
+        seen = []
+        proxied = []
+        const out = await runWith(
+          {
+            ...proxy,
+            PERMAILY_DEV_UNVERIFIED: '1',
+            STUB_VERIFY_FAILS: '1',
+            PERMAILY_API: `https://${host}:${enclave.port}`,
+          },
+          'invite.sh',
+          'list',
+        )
+        const what = { host, proxy: name }
+        expect({ ...what, exit: out.exit, servers: seen.map((s) => s.server), proxied }).toEqual({
+          ...what,
+          exit: 0,
+          servers: ['enclave'],
+          proxied: [],
+        })
+      }
+    }
+  })
+
+  test('in dev mode [::1] is reached directly, never through a proxy', async () => {
+    let six: ReturnType<typeof Bun.serve> | undefined
+    try {
+      six = Bun.serve({
+        port: 0,
+        hostname: '::1',
+        tls: {
+          cert: readFileSync(join(dir, 'a.pem'), 'utf8'),
+          key: readFileSync(join(dir, 'a.key'), 'utf8'),
+        },
+        fetch: () => Response.json({ invitations: [] }),
+      })
+    } catch {
+      console.log('no IPv6 loopback here: [::1] is not exercised')
+      return
+    }
+    try {
+      for (const [name, proxy] of Object.entries(proxies)) {
+        proxied = []
+        seen = []
+        const out = await runWith(
+          { ...proxy, PERMAILY_DEV_UNVERIFIED: '1', PERMAILY_API: `https://[::1]:${six.port}` },
+          'invite.sh',
+          'list',
+        )
+        expect({ name, exit: out.exit, proxied, seen }).toEqual({
+          name,
+          exit: 0,
+          proxied: [],
+          seen: [],
+        })
+      }
+    } finally {
+      six.stop(true)
+    }
+  })
+})
+
+describe('the token and a secret are never traced', () => {
+  const secret = 'client-secret-7f3a9c'
+
+  test('under bash -x, neither the token nor a provider secret is printed', async () => {
+    answers = {
+      'GET /v1/admin/invitations': { status: 200, body: { invitations: [] } },
+      'PUT /v1/admin/providers/google': {
+        status: 200,
+        body: { provider: 'google', client_id: 'id-1', set_at: '2026-11-15T10:00:00Z' },
+      },
+    }
+    const file = join(dir, 'secret')
+    writeFileSync(file, `${secret}\n`)
+    for (const [how, args] of [
+      [{ trace: true }, ['invite.sh', 'list']],
+      [{ trace: true }, ['accounts.sh', 'stats']],
+      [{ trace: true }, ['provider.sh', 'set', 'google', 'id-1', file]],
+      [{ trace: true, input: `${secret}\n` }, ['provider.sh', 'set', 'google', 'id-1']],
+      [{ trace: true }, ['provider.sh', 'remove', 'google']],
+    ] as const) {
+      seen = []
+      const out = await runHow(how, {}, ...(args as unknown as [string, ...string[]]))
+      const printed = out.stdout + out.stderr
+      expect(out.stderr).toContain('+ ')
+      expect({
+        args,
+        token: printed.includes('test-token'),
+        secret: printed.includes(secret),
+      }).toEqual({
+        args,
+        token: false,
+        secret: false,
+      })
+      expect(seen.length).toBeGreaterThan(0)
+    }
+  })
+})
+
+// A copy of the repository with two releases: v0.1.0, built with Sigstore's
+// TUF targets 12 compiled in, and the checkout after it, with targets 14. go
+// is a stub that "builds" a verifier that knows only which targets were
+// compiled into the source it was built from, and decides about the
+// enclave's trust root as checkSigstore does (cmd/permaily-verify; the Go
+// test TestTheVerifierMustBeTheRunningRelease shows the same with the real
+// function and Sigstore's real metadata).
+describe('the verifier is the running release', () => {
+  let repo: string
+  let bin: string
+
+  const git = (...args: string[]) =>
+    execFileSync('git', args, {
+      cwd: repo,
+      stdio: 'pipe',
+      env: {
+        PATH: process.env.PATH ?? '',
+        HOME: '/nonexistent',
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_AUTHOR_NAME: 't',
+        GIT_AUTHOR_EMAIL: 't@example.com',
+        GIT_COMMITTER_NAME: 't',
+        GIT_COMMITTER_EMAIL: 't@example.com',
+      },
+    }).toString()
+
+  beforeAll(() => {
+    repo = mkdtempSync(join(tmpdir(), 'operator-release-'))
+    bin = join(repo, '..', `${repo.split('/').pop()}-bin`)
+    mkdirSync(bin)
+    for (const sub of ['scripts', 'pkg/provenance', 'cmd/permaily-verify']) {
+      mkdirSync(join(repo, sub), { recursive: true })
+    }
+    for (const f of readdirSync(import.meta.dir).filter((f) => f.endsWith('.sh'))) {
+      copyFileSync(join(import.meta.dir, f), join(repo, 'scripts', f))
+    }
+    const compiled = join(import.meta.dir, '../pkg/provenance')
+    for (const f of [
+      'sigstore_tuf_root.json',
+      'sigstore_tuf_targets.json',
+      'sigstore_trusted_root.json',
+    ]) {
+      copyFileSync(join(compiled, f), join(repo, 'pkg/provenance', f))
+    }
+    git('init', '-q', '-b', 'main')
+    writeFileSync(join(repo, 'cmd/permaily-verify/compiled'), '12\n')
+    git('add', '.')
+    git('commit', '-q', '-m', 'v0.1.0')
+    git('tag', 'v0.1.0')
+    writeFileSync(join(repo, 'cmd/permaily-verify/compiled'), '14\n')
+    git('commit', '-q', '-am', 'targets 14')
+
+    // go build -C <source> ... -o <out> ./cmd/permaily-verify
+    writeFileSync(
+      join(bin, 'go'),
+      `#!/usr/bin/env bash
+src=. out=
+while [[ $# -gt 0 ]]; do
+  case $1 in -C) src=$2; shift ;; -o) out=$2; shift ;; esac
+  shift
+done
+own=$(cat "$src/cmd/permaily-verify/compiled")
+printf '%s %s\\n' "$(cd "$src" && pwd)" "$own" >> '${bin}/go-builds'
+cat > "$out" <<VERIFIER
+#!/usr/bin/env bash
+own=$own
+printf '%s %s\\\\n' "\\$own" "\\$*" >> '${bin}/verifications'
+url=\\\${!#}
+if [[ \\$1 == -trust-update ]]; then echo '{"ok":true,"newer":false}'; exit 0; fi
+# STUB_SIGSTORE: the enclave's targets, and "updated" when it was given a newer trust root.
+read -r targets updated <<< "\\$STUB_SIGSTORE"
+if [[ -z \\$updated ]] && (( targets != own )) || [[ -n \\$updated ]] && (( targets <= own )); then
+  jq -n --arg url "\\$url" --arg e "trust root of TUF targets \\$targets does not follow the one of this release, targets \\$own" \\\\
+    '{ok: false, hosts: [{url: \\$url, ok: false, error: \\$e}]}'
+  exit 1
+fi
+jq -n --arg url "\\$url" --arg spki "\\$STUB_ATTESTED" '{ok: true, hosts: [{url: \\$url, ok: true, tls_spki_sha256: \\$spki}]}'
+VERIFIER
+chmod +x "$out"
+`,
+    )
+    // gh: the release's pcrs.json, its provenance (checked), and its bundle.
+    writeFileSync(
+      join(bin, 'gh'),
+      `#!/usr/bin/env bash
+if [[ $1 == release && $2 == download ]]; then
+  while [[ $# -gt 0 ]]; do if [[ $1 == --dir ]]; then printf '{"PCR0":"%s"}' "$3" > "$2/pcrs.json"; exit 0; fi; shift; done
+elif [[ $1 == attestation && $2 == verify ]]; then exit 0
+elif [[ $1 == attestation && $2 == download ]]; then
+  echo '{"dsseEnvelope":{"payload":"eyJwcmVkaWNhdGVUeXBlIjoiaHR0cHM6Ly9zbHNhLmRldi9wcm92ZW5hbmNlL3YxIn0="},"verificationMaterial":{"tlogEntries":[{}]}}' > fixture.jsonl
+else exit 1; fi
+`,
+    )
+    // curl: Sigstore's TUF repository is served from the compiled files; the rest is curl.
+    const targets = JSON.parse(readFileSync(join(compiled, 'sigstore_tuf_targets.json'), 'utf8'))
+      .signed.version
+    const curl = execFileSync('bash', ['-c', 'command -v curl']).toString().trim()
+    writeFileSync(
+      join(bin, 'curl'),
+      `#!/usr/bin/env bash
+out= url=
+for a in "$@"; do [[ $prev == -o ]] && out=$a; [[ $a == https://* ]] && url=$a; prev=$a; done
+if [[ $url == https://tuf-repo-cdn.sigstore.dev/* ]]; then
+  case $url in
+    */timestamp.json) printf '%s' '{"signed":{"meta":{"snapshot.json":{"version":1}}}}' > "$out" ;;
+    */1.snapshot.json) printf '%s' '{"signed":{"meta":{"targets.json":{"version":${targets}}}}}' > "$out" ;;
+    */${targets}.targets.json) cp '${compiled}/sigstore_tuf_targets.json' "$out" ;;
+    */targets/*.trusted_root.json) cp '${compiled}/sigstore_trusted_root.json' "$out" ;;
+    *) exit 22 ;;
+  esac
+  exit 0
+fi
+exec '${curl}' "$@"
+`,
+    )
+    for (const f of ['go', 'gh', 'curl']) chmodSync(join(bin, f), 0o755)
+  })
+
+  afterAll(() => {
+    rmSync(repo, { recursive: true, force: true })
+    rmSync(bin, { recursive: true, force: true })
+  })
+
+  const flow = () => {
+    const compiled = join(import.meta.dir, '../pkg/provenance')
+    const root = JSON.parse(readFileSync(join(compiled, 'sigstore_tuf_root.json'), 'utf8')).signed
+      .version
+    answers = {
+      'GET /status': { status: 200, body: { sigstore: { tuf_root_version: root } } },
+      'POST /v1/admin/trust-root': {
+        status: 200,
+        body: {
+          trusted_root_sha256: 'ab'.repeat(32),
+          tuf_root_version: root,
+          tuf_targets_version: 14,
+        },
+      },
+      'POST /v1/admin/handoff': {
+        status: 200,
+        body: {
+          image: 'ab'.repeat(48),
+          commit: 'cd'.repeat(20),
+          published_at: '2026-11-15T00:00:00Z',
+          key_arn: 'arn:test:key',
+          created: true,
+        },
+      },
+      'GET /v1/admin/invitations': { status: 200, body: { invitations: [] } },
+    }
+    for (const f of ['go-builds', 'verifications']) rmSync(join(bin, f), { force: true })
+    return { PATH: `${bin}:${process.env.PATH}`, PERMAILY_VERIFY: '' }
+  }
+  const lines = (name: string) =>
+    existsSync(join(bin, name)) ? readFileSync(join(bin, name), 'utf8').trim().split('\n') : []
+
+  for (const [state, sigstore] of [
+    ['with the trust root compiled into it', '12'],
+    ['after it was given a newer trust root in place', '14 updated'],
+  ] as const) {
+    test(`a handoff from an older release, ${state}, is verified by that release's verifier, built from its tag`, async () => {
+      const env = flow()
+      seen = []
+      const out = await runHow(
+        { scripts: join(repo, 'scripts'), trace: true },
+        { ...env, STUB_SIGSTORE: sigstore },
+        'handoff.sh',
+        'v0.1.0',
+        'v0.2.0',
+      )
+      expect({ exit: out.exit, stderr: out.exit === 0 ? '' : out.stderr }).toEqual({
+        exit: 0,
+        stderr: '',
+      })
+      // Built once, from the tag's source in a worktree that is gone after.
+      const builds = lines('go-builds')
+      expect(builds.length).toBe(1)
+      expect(builds[0]).toEndWith(' 12')
+      expect(builds[0].startsWith(`${repo} `)).toBe(false)
+      expect(git('worktree', 'list', '--porcelain').match(/^worktree /gm)?.length).toBe(1)
+      // That one binary verified the enclave twice (handoff, then --send) and decided the trust root.
+      const runs = lines('verifications')
+      expect(runs.filter((r) => r.includes(' -json ')).length).toBe(2)
+      expect(runs.every((r) => r.startsWith('12 '))).toBe(true)
+      expect(runs.some((r) => r.includes('-trust-update'))).toBe(true)
+      expect(seen.map((s) => s.request.split('\n')[0])).toEqual([
+        'GET /status',
+        'POST /v1/admin/trust-root',
+        'POST /v1/admin/handoff',
+      ])
+      expect(out.stdout + out.stderr).not.toContain('test-token')
+    })
+  }
+
+  test("the checkout's verifier is not taken for the running release's", async () => {
+    // What happened before: the verifier built from the checkout (targets 14)
+    // refuses a running release with targets 12, before and after its update.
+    for (const sigstore of ['12', '14 updated']) {
+      const env = flow()
+      seen = []
+      const checkout = join(bin, 'checkout-verify')
+      execFileSync(join(bin, 'go'), ['build', '-C', repo, '-o', checkout, './cmd/permaily-verify'])
+      const out = await runWith(
+        { ...env, PERMAILY_VERIFY: checkout, STUB_SIGSTORE: sigstore },
+        'invite.sh',
+        'list',
+      )
+      expect({ sigstore, exit: out.exit }).toEqual({ sigstore, exit: 1 })
+      expect(out.stderr).toContain('does not follow the one of this release')
+      expect(seen).toEqual([])
+    }
+  })
+
+  test('PERMAILY_RELEASE builds the verifier from that tag; PERMAILY_VERIFY, given, wins', async () => {
+    let env = flow()
+    let out = await runHow(
+      { scripts: join(repo, 'scripts') },
+      { ...env, PERMAILY_RELEASE: 'v0.1.0', PERMAILY_PCRS: '', STUB_SIGSTORE: '12' },
+      'invite.sh',
+      'list',
+    )
+    expect(out.exit).toBe(0)
+    expect(lines('go-builds').map((b) => b.split(' ')[1])).toEqual(['12'])
+    expect(lines('verifications')[0]).toStartWith('12 -release v0.1.0 ')
+    // Measurements of your own build, and the verifier of the tag.
+    env = flow()
+    out = await runHow(
+      { scripts: join(repo, 'scripts') },
+      { ...env, PERMAILY_RELEASE: 'v0.1.0', STUB_SIGSTORE: '12' },
+      'invite.sh',
+      'list',
+    )
+    expect(out.exit).toBe(0)
+    expect(lines('verifications')[0]).toStartWith(`12 -pcrs ${join(dir, 'pcrs.json')} `)
+    // An explicit verifier is used as it is.
+    env = flow()
+    out = await runHow(
+      { scripts: join(repo, 'scripts') },
+      { ...env, PERMAILY_RELEASE: 'v0.1.0', PERMAILY_VERIFY: join(dir, 'permaily-verify') },
+      'invite.sh',
+      'list',
+    )
+    expect(out.exit).toBe(0)
+    expect(lines('go-builds')).toEqual([])
+  })
+
+  test('PERMAILY_PCRS alone builds from the checkout, and says it must be the running release', async () => {
+    const env = flow()
+    const out = await runHow(
+      { scripts: join(repo, 'scripts') },
+      { ...env, STUB_SIGSTORE: '14' },
+      'invite.sh',
+      'list',
+    )
+    expect(out.exit).toBe(0)
+    expect(lines('go-builds')).toEqual([`${repo} 14`])
+    expect(out.stderr).toContain('must be the source of the release the enclave runs')
+  })
+
+  test('a release that is not a tag here, or not a release tag, is refused before anything is sent', async () => {
+    for (const release of ['v9.9.9', '--upload-pack=x', 'v0.1.0^', 'main']) {
+      const env = flow()
+      seen = []
+      const out = await runHow(
+        { scripts: join(repo, 'scripts') },
+        { ...env, PERMAILY_RELEASE: release, STUB_SIGSTORE: '12' },
+        'invite.sh',
+        'list',
+      )
+      expect({ release, exit: out.exit }).toEqual({ release, exit: 2 })
+      expect(seen).toEqual([])
+      expect(lines('verifications')).toEqual([])
+      expect(out.stderr).toContain('Nothing was sent')
+    }
+  })
 })
