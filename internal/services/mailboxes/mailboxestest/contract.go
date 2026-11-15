@@ -17,6 +17,7 @@ import (
 // import this package. fake_test.go checks that it matches both.
 type Service interface {
 	List(ctx context.Context, c mailboxes.Caller) (*contracts.MailboxList, error)
+	Catalogue(ctx context.Context, c mailboxes.Caller, names bool) ([]mailboxes.Named, error)
 	Create(ctx context.Context, c mailboxes.Caller, in contracts.MailboxCreate) (*contracts.Mailbox, error)
 	Get(ctx context.Context, c mailboxes.Caller, id string) (*contracts.Mailbox, error)
 	Update(ctx context.Context, c mailboxes.Caller, id string, in contracts.MailboxUpdate) (*contracts.Mailbox, error)
@@ -128,11 +129,30 @@ func count(t *testing.T, s *Subject, account string) int {
 	return n
 }
 
+// listed is the caller's list. Every case that reads it also checks that
+// the catalogue, read first (before List settles anything), names the same
+// mailboxes in the same order, with the labels and addresses List shows.
 func listed(t *testing.T, s *Subject, c mailboxes.Caller) []contracts.Mailbox {
 	t.Helper()
+	named, err := s.Service.Catalogue(ctx, c, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare, err := s.Service.Catalogue(ctx, c, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	l, err := s.Service.List(ctx, c)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(named) != len(l.Mailboxes) || len(bare) != len(l.Mailboxes) {
+		t.Fatalf("the catalogue names %d (%d without names), the list %d", len(named), len(bare), len(l.Mailboxes))
+	}
+	for i, m := range l.Mailboxes {
+		if want := (mailboxes.Named{ID: m.ID, Label: m.Label, Address: m.Address}); named[i] != want || bare[i] != (mailboxes.Named{ID: m.ID}) {
+			t.Fatalf("the catalogue's %d: %+v (%+v without names), the list's %+v", i, named[i], bare[i], want)
+		}
 	}
 	return l.Mailboxes
 }
@@ -244,6 +264,23 @@ var contractCases = []contractCase{
 		is(t, "disconnect another's", s.Service.Disconnect(ctx, me, m.ID), contracts.ErrUnauthorized)
 		_, err = s.Service.Open(ctx, me, m.ID, mailboxes.AccessDownload)
 		is(t, "open another's", err, contracts.ErrUnauthorized)
+		_, err = s.Service.Catalogue(ctx, me, false)
+		is(t, "catalogue", err, contracts.ErrUnauthorized)
+	}},
+	{"C19 the catalogue names the account's own mailboxes, in every standing", func(t *testing.T, s *Subject) {
+		me, other := caller("acc_me"), caller("acc_other")
+		if l := listed(t, s, me); len(l) != 0 {
+			t.Fatalf("an account without mailboxes: %+v", l)
+		}
+		create(t, s, other)
+		m := create(t, s, me)
+		for _, standing := range []mailboxes.Standing{{TermsAgreed: true}, {Closing: true, TermsAgreed: true}, {}, {Closing: true}} {
+			s.Accounts.Set(me.Account, standing)
+			named, err := s.Service.Catalogue(ctx, me, true)
+			if err != nil || len(named) != 1 || named[0].ID != m.ID || named[0].Label != "Work" || named[0].Address != m.Address {
+				t.Fatalf("%+v: %+v %v", standing, named, err)
+			}
+		}
 	}},
 	{"C5 five mailboxes, and a slot freed by disconnecting", func(t *testing.T, s *Subject) {
 		me := caller("acc_me")

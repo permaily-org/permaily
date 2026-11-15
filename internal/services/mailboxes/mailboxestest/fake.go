@@ -207,7 +207,7 @@ func (f *Fake) listOf(account string) *list {
 func (f *Fake) add(account, label string) contracts.Mailbox {
 	f.made++
 	now := f.now()
-	id := fmt.Sprintf("mbx_%026d", f.made)
+	id := "mbx_" + strings.Map(func(r rune) rune { return r - '0' + 'a' }, fmt.Sprintf("%026d", f.made)) // base32, as the service writes them
 	m := contracts.Mailbox{
 		ID: id, Address: fmt.Sprintf("fake%016d@inbox.permaily.test", f.made), Label: label,
 		State: contracts.MailboxWaiting, CreatedAt: now,
@@ -324,6 +324,25 @@ func (f *Fake) List(ctx context.Context, c mailboxes.Caller) (*contracts.Mailbox
 	out := &contracts.MailboxList{Mailboxes: []contracts.Mailbox{}, Limit: mailboxes.MaxMailboxes}
 	for _, b := range f.mine(c.Account) {
 		out.Mailboxes = append(out.Mailboxes, b.view())
+	}
+	return out, nil
+}
+
+// Catalogue implements httpapi.MailboxesService: the identifiers List
+// shows, in its order, with their labels and addresses when names is set.
+func (f *Fake) Catalogue(ctx context.Context, c mailboxes.Caller, names bool) ([]mailboxes.Named, error) {
+	if _, err := f.Accounts.Standing(ctx, c.Account); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := []mailboxes.Named{}
+	for _, b := range f.mine(c.Account) {
+		n := mailboxes.Named{ID: b.mailbox.ID}
+		if names && !b.unreadable() {
+			n.Label, n.Address = b.mailbox.Label, b.mailbox.Address
+		}
+		out = append(out, n)
 	}
 	return out, nil
 }

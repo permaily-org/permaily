@@ -62,8 +62,10 @@ const snippetRunes = 200
 // confirmation when it is one.
 type Parsed struct {
 	Meta StoredMeta
-	// Text is the message's text, at most SearchTextMax bytes.
-	Text string
+	// Text is the message's text, at most SearchTextMax bytes, and TextCut
+	// says it was longer (SearchEntry.Cut).
+	Text    string
+	TextCut bool
 	// Confirmation is set when the message is recognised as Gmail's
 	// forwarding confirmation.
 	Confirmation *Confirmation
@@ -203,7 +205,7 @@ func Parse(ctx context.Context, raw []byte) Parsed {
 	// An unknown charset or transfer encoding still gives a message to read.
 	e, _ := readEntity(head)
 	if e == nil {
-		p.Meta = StoredMeta{Unparsed: true, From: []contracts.MailAddress{}, To: []contracts.MailAddress{}, Cc: []contracts.MailAddress{}, ReplyTo: []contracts.MailAddress{}, Attachments: []contracts.MessageAttachment{}, Auth: []contracts.AuthCheck{}}
+		p.Meta = StoredMeta{Unparsed: true, From: []contracts.MailAddress{}, To: []contracts.MailAddress{}, Cc: []contracts.MailAddress{}, ReplyTo: []contracts.MailAddress{}, Attachments: []contracts.MessageAttachment{}, Auth: []contracts.AuthCheck{}, Format: MetaFormat, Size: int64(len(raw))}
 		return p
 	}
 	h := mail.Header{Header: e.Header}
@@ -218,11 +220,15 @@ func Parse(ctx context.Context, raw []byte) Parsed {
 	m.Cc = addressList(h, "Cc", &partial)
 	m.ReplyTo = addressList(h, "Reply-To", &partial)
 	m.Auth = []contracts.AuthCheck{}
+	list, listOK := listID(h)
+	m.List, m.ListUnknown = list, !listOK
+	m.Size = int64(len(raw))
+	m.Format = MetaFormat
 
 	w := walkMessage(ctx, raw, MessageTextMax, true, false)
 	partial = partial || w.partial
-	text, _, _ := w.text(ctx, SearchTextMax)
-	p.Text = text
+	text, _, cutHere := w.text(ctx, SearchTextMax)
+	p.Text, p.TextCut = text, cutHere
 	m.Snippet = snippet(text)
 	m.Attachments = w.attachments
 	if m.Attachments == nil {
@@ -363,6 +369,124 @@ func cut(s string, n int, partial *bool) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// listIDMax is the longest list identifier kept (ADR 0027, "List
+// identifiers"): a longer one is not read.
+const listIDMax = 255
+
+// listID reads the first List-Id header as RFC 2919 writes it (§3): an
+// optional phrase, then the identifier in angle brackets, the first "<"
+// outside quoted strings and comments, without the whitespace that folding
+// left inside them, in lower case. A header written without brackets is read
+// when it is one word, comments aside. ok is false when there is a List-Id
+// that is not that (no brackets and more than one word, a bracket, a quoted
+// string or a comment that does not end, an identifier empty, past
+// listIDMax or of characters RFC 2919 does not allow): whether the message is
+// on a list is then unknown. No List-Id at all is "", true.
+func listID(h mail.Header) (id string, ok bool) {
+	if !h.Has("List-Id") {
+		return "", true
+	}
+	v := h.Get("List-Id")
+	var word strings.Builder // what is outside quotes, comments and brackets
+	words, inWord, quoted := 0, false, false
+	for i := 0; i < len(v); i++ {
+		switch c := v[i]; c {
+		case '"':
+			if i, ok = skipQuoted(v, i); !ok {
+				return "", false
+			}
+			quoted, inWord = true, false
+		case '(':
+			if i, ok = skipComment(v, i); !ok {
+				return "", false
+			}
+			inWord = false
+		case '<':
+			j := strings.IndexByte(v[i+1:], '>')
+			if j < 0 {
+				return "", false
+			}
+			return listIdentifier(v[i+1 : i+1+j])
+		case ')', '>':
+			return "", false
+		case ' ', '\t', '\r', '\n':
+			inWord = false
+		default:
+			if !inWord {
+				words, inWord = words+1, true
+			}
+			word.WriteByte(c)
+		}
+	}
+	if words != 1 || quoted {
+		return "", false
+	}
+	return listIdentifier(word.String())
+}
+
+// skipQuoted is the index of the quote that ends the quoted string starting
+// at v[i], past its escaped characters; false when it does not end.
+func skipQuoted(v string, i int) (int, bool) {
+	for i++; i < len(v); i++ {
+		switch v[i] {
+		case '\\':
+			i++
+		case '"':
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// skipComment is the index of the parenthesis that ends the comment starting
+// at v[i], comments nest and escaped characters aside; false when it does not
+// end.
+func skipComment(v string, i int) (int, bool) {
+	depth := 0
+	for ; i < len(v); i++ {
+		switch v[i] {
+		case '\\':
+			i++
+		case '(':
+			depth++
+		case ')':
+			if depth--; depth == 0 {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// listIdentifier is s without whitespace, in lower case, when it is 1 to
+// listIDMax bytes of RFC 2919's dot-atom text; false otherwise.
+func listIdentifier(s string) (string, bool) {
+	id := strings.Map(func(r rune) rune {
+		if r == ' ' || r == '\t' || r == '\r' || r == '\n' {
+			return -1
+		}
+		return r
+	}, s)
+	if id == "" || len(id) > listIDMax {
+		return "", false
+	}
+	for i := range len(id) {
+		if !listIDByte(id[i]) {
+			return "", false
+		}
+	}
+	return strings.ToLower(id), true
+}
+
+// listIDByte reports whether c is one of RFC 5322's atext, or a dot.
+func listIDByte(c byte) bool {
+	switch {
+	case 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z', '0' <= c && c <= '9':
+		return true
+	}
+	return strings.IndexByte(".!#$%&'*+-/=?^_`{|}~", c) >= 0
 }
 
 func addressList(h mail.Header, key string, partial *bool) []contracts.MailAddress {

@@ -12,6 +12,7 @@ let
     root = ../.;
     fileset = lib.fileset.unions [
       ../packages/ui/colors.css
+      ../packages/ui/interaction.css
       ../web/package.json
       ../web/bun.lock
       ../web/index.html

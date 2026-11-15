@@ -377,9 +377,7 @@ function Details({ message }: { message: api.Message }) {
   }
   return (
     <details className="group mt-3">
-      <summary className="w-fit cursor-pointer text-small text-ink-2 hover:text-ink">
-        Details
-      </summary>
+      <summary className="w-fit text-small text-ink-2 hover:text-ink">Details</summary>
       <dl className="mt-2 max-w-3xl text-small">
         {rows.map(([label, value]) => (
           <div key={label} className="flex gap-4 border-b border-rule py-1.5">

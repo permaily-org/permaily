@@ -278,6 +278,92 @@ export function isMessageLinkToken(link: string): boolean {
   return /^(0|[1-9][0-9]{0,2})\.[A-Za-z0-9_-]{16}$/.test(link)
 }
 
+/**
+ * The query language (ADR 0027), the shapes of `internal/contracts/query.go`. A formula is an AND of groups, each
+ * an OR of conditions; an empty `all` matches every message. The calls that use them come with the screens that do.
+ */
+
+export type QueryVariable =
+  | 'from_address'
+  | 'from_domain'
+  | 'recipient_address'
+  | 'recipient_domain'
+  | 'signed_by'
+  | 'subject'
+  | 'body'
+  | 'message'
+  | 'attachments'
+  | 'attachment_name'
+  | 'attachment_type'
+  | 'list'
+  | 'received'
+  | 'size'
+  | 'mailbox'
+
+/** `about` and `mentions` are decided by a model; every other operator is exact. */
+export type QueryOperator =
+  | 'is'
+  | 'contains'
+  | 'exists'
+  | 'since'
+  | 'before'
+  | 'at_least'
+  | 'below'
+  | 'about'
+  | 'mentions'
+
+/** A variable, an operator and a value (absent for `exists`), negated when `not` is set. */
+export type QueryCondition = {
+  var: QueryVariable
+  op: QueryOperator
+  value?: string
+  not?: boolean
+}
+
+export type QueryFormula = { v: 1; all: { any: QueryCondition[] }[] }
+
+/** Where a formula was refused and why, in the `details` of an `invalid_formula` error. Never a value of it. */
+export type FormulaProblem = { at: string; reason: string }
+
+/**
+ * Fixed words of a template, or a value of the formula (`value`), shown set apart and isolated. `model` marks the
+ * parts of a condition a model decides. A mailbox is a value part: its label, its address, or, once disconnected,
+ * its identifier between the fixed parts "a mailbox you disconnected (" and ")".
+ */
+export type SentencePart = { text: string; value?: boolean; model?: boolean }
+
+/**
+ * What a person reads of a formula, written by the server: show `lead` and `lines`, never words of the app's own.
+ * With one group `lead` is empty and the one line is the whole sentence.
+ */
+export type QuerySentence = {
+  lang: string
+  text: string
+  lead: SentencePart[]
+  lines: { parts: SentencePart[] }[]
+}
+
+/** A formula the server accepted: its canonical form, its identifier, its sentence, whether a model decides any of it. */
+export type FormulaCheck = {
+  formula: QueryFormula
+  id: string
+  sentence: QuerySentence
+  model: boolean
+}
+
+/**
+ * A page of what a formula matches in one mailbox, for the owner's own previews only (never a vendor's result: its
+ * `next`, `searched_to`, `needs_model` and `unknown` name messages outside any approved scope). `needs_model` and
+ * `unknown` are messages it did not settle; `next` goes on below the last message the page considered.
+ */
+export type MatchPage = {
+  messages: MessageSummary[]
+  needs_model: string[]
+  unknown: string[]
+  next?: string
+  searched_to?: string
+}
+
 /** The codes the server answers with, plus `network` for a request that got no answer. */
 export type ApiErrorCode =
   | 'invalid_address'
@@ -313,6 +399,7 @@ export type ApiErrorCode =
   | 'invalid_label'
   | 'invalid_retention'
   | 'invalid_query'
+  | 'invalid_formula'
   | 'too_many_messages'
   | 'mailbox_unreadable'
   | 'link_changed'
@@ -354,6 +441,7 @@ const known: ReadonlySet<string> = new Set([
   'invalid_label',
   'invalid_retention',
   'invalid_query',
+  'invalid_formula',
   'too_many_messages',
   'mailbox_unreadable',
   'link_changed',
@@ -362,11 +450,21 @@ const known: ReadonlySet<string> = new Set([
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode
-  constructor(code: ApiErrorCode) {
+  /** Where a refused formula was refused and why: only with `invalid_formula`, and only when the server said both. */
+  readonly problem?: FormulaProblem
+  constructor(code: ApiErrorCode, problem?: FormulaProblem) {
     super(code)
     this.name = 'ApiError'
     this.code = code
+    if (problem) this.problem = problem
   }
+}
+
+/** The `details` of an `invalid_formula` answer, when they have the shape of one: a path and a reason, both text. */
+function problemOf(details: unknown): FormulaProblem | undefined {
+  if (typeof details !== 'object' || details === null) return undefined
+  const { at, reason } = details as { at?: unknown; reason?: unknown }
+  return typeof at === 'string' && typeof reason === 'string' ? { at, reason } : undefined
 }
 
 /** The code of a failure, whatever was thrown. */
@@ -428,13 +526,17 @@ async function request<T>(
     }
   }
   let code: unknown
+  let details: unknown
   try {
-    code = (await response.json())?.error?.code
+    const error = (await response.json())?.error
+    code = error?.code
+    details = error?.details
   } catch {
     // An answer that is not the API's own, such as a proxy's error page.
   }
   if (code === 'account_closing') closingHeard?.()
   if (code === 'terms_needed' && response.status === 400) termsHeard?.()
+  if (code === 'invalid_formula') throw new ApiError('invalid_formula', problemOf(details))
   if (typeof code === 'string' && known.has(code)) throw new ApiError(code as ApiErrorCode)
   if (response.status === 401) throw new ApiError('unauthorized')
   if (response.status === 404) throw new ApiError('not_found')
@@ -937,6 +1039,48 @@ export async function deleteMessages(mailbox: string, ids: string[]): Promise<nu
     { ids },
   )
   return typeof answer?.deleted === 'number' ? answer.deleted : 0
+}
+
+/**
+ * A formula's canonical form, its identifier and the sentence a person reads of it, naming the account's
+ * mailboxes (ADR 0027). A refusal is `invalid_formula` with its `problem`: where and why, never a value of it.
+ */
+export async function checkQuery(formula: QueryFormula): Promise<FormulaCheck> {
+  const answer = await request<Partial<FormulaCheck> | null>('POST', '/api/v1/queries/check', {
+    formula,
+  })
+  if (typeof answer?.id !== 'string' || typeof answer.sentence?.text !== 'string')
+    throw new ApiError('other')
+  return answer as FormulaCheck
+}
+
+/**
+ * A page of what a formula matches in one mailbox, newest first: the owner's own preview, never a vendor's result.
+ * Read the page's `next` to go on, even when it holds no message.
+ */
+export async function matches(
+  mailbox: string,
+  formula: QueryFormula,
+  page: { after?: string; limit?: number } = {},
+): Promise<MatchPage> {
+  const answer = await request<Partial<MatchPage> | null>(
+    'POST',
+    `${mailboxPath(mailbox)}/matches`,
+    {
+      formula,
+      ...(page.after ? { after: page.after } : {}),
+      limit: page.limit ?? messagesPerPage,
+    },
+  )
+  if (!Array.isArray(answer?.messages)) throw new ApiError('other')
+  const list = (value: unknown): string[] => (Array.isArray(value) ? value : [])
+  return {
+    messages: answer.messages,
+    needs_model: list(answer.needs_model),
+    unknown: list(answer.unknown),
+    ...(typeof answer.next === 'string' && answer.next !== '' ? { next: answer.next } : {}),
+    ...(typeof answer.searched_to === 'string' ? { searched_to: answer.searched_to } : {}),
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------

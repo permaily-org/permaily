@@ -56,6 +56,10 @@ fuzz:
 	go test -run='^$$' -fuzz='^FuzzSanitise$$' -fuzztime=100000x ./internal/mailhtml
 	go test -run='^$$' -fuzz='^FuzzCSS$$' -fuzztime=1000000x ./internal/mailhtml
 	go test -run='^$$' -fuzz='^FuzzImageStructure$$' -fuzztime=1000000x ./internal/mailhtml
+	go test -run='^$$' -fuzz='^FuzzParse$$' -fuzztime=300000x ./internal/query
+	go test -run='^$$' -fuzz='^FuzzNormalise$$' -fuzztime=500000x ./internal/query
+	go test -run='^$$' -fuzz='^FuzzEval$$' -fuzztime=200000x ./internal/query
+	go test -run='^$$' -fuzz='^FuzzSentenceReadsBack$$' -fuzztime=300000x ./internal/query
 
 notices:
 	bun scripts/third-party-notices.ts

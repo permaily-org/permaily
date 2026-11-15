@@ -163,7 +163,7 @@ export function MenuItem({
         onSelect()
       }}
       className={cx(
-        'flex w-full items-center gap-2 py-1.5 pr-3 text-left text-small outline-none hover:bg-sunken focus-visible:bg-sunken disabled:cursor-default disabled:text-ink-3 disabled:hover:bg-transparent',
+        'flex w-full items-center gap-2 py-1.5 pr-3 text-left text-small outline-none hover:bg-sunken focus-visible:bg-sunken disabled:text-ink-3 disabled:hover:bg-transparent',
         indent ? 'pl-[44px]' : 'pl-3',
       )}
     >

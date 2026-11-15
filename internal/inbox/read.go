@@ -18,11 +18,16 @@ import (
 
 // ReadStore is what the inbox's Reader needs of the store (ADR 0026, "The
 // inbox"): message items scanned and read without their raw objects, raw
-// objects read bounded, entries scanned for search, and deletions.
+// objects read bounded, entries scanned for search, an entry read by its key
+// (a message's search entry, which ADR 0027's Matcher reads by the
+// identifier of an item whose meta it has opened), and deletions.
 // *store.Memory and *store.AWS implement it.
 type ReadStore interface {
 	store.Scanner
 	Item(ctx context.Context, mailboxID, id string) (*store.Message, error)
+	// GetEntry returns store.ErrNotFound for an entry that is not there or
+	// expired, as store.Entries does.
+	GetEntry(ctx context.Context, partition, key string) (*store.Entry, error)
 	ReadRaw(ctx context.Context, mailboxID, id string, max int64) ([]byte, error)
 	DeleteMessage(ctx context.Context, mailboxID, id string) error
 	DeleteEntry(ctx context.Context, partition, key string) error
@@ -39,6 +44,22 @@ type storeReader struct{ st ReadStore }
 // with contracts.ErrTooManyRequests when the budget has no room.
 type ReadBudget interface {
 	Take(ctx context.Context, n int64) error
+}
+
+// ReadGrants is the read budget taken one raw read at a time, for a page of
+// matches (ADR 0027, "Budgets of a page"), which reads up to
+// MatchMaxTextReads raw messages in one request and must not hold them all
+// until its response is released. The adapter's budget set with
+// WithReadBudget implements it as well as ReadBudget; Matcher uses only this.
+// ADR 0027's pull request 3 makes the reader's raw reads for Matcher use it,
+// and its pull request 4 implements it on internal/httpapi's budget.
+type ReadGrants interface {
+	// Grant waits a bounded time, as Take does, until n bytes are free, and
+	// takes them. release gives exactly those n bytes back; it is called
+	// once the read's text has been taken out, and a second call does
+	// nothing. A grant not released is given back with the request's
+	// response, as what Take took is.
+	Grant(ctx context.Context, n int64) (release func(), err error)
 }
 
 type budgetKey struct{}
@@ -202,15 +223,53 @@ func (r *storeReader) item(ctx context.Context, b Box, id string) (*store.Messag
 // raw reads a message's raw object, bounded by the size its item says and
 // the seal, after taking that bound from the request's budget.
 func (r *storeReader) raw(ctx context.Context, b Box, m *store.Message) ([]byte, error) {
-	bound := int64(RawReadMax)
-	if m.Size >= 0 && int64(m.Size) < RawReadMax-rawSealOverhead {
-		bound = int64(m.Size) + rawSealOverhead
-	}
+	bound := rawBound(m)
 	if budget, ok := ctx.Value(budgetKey{}).(ReadBudget); ok {
 		if err := budget.Take(ctx, bound); err != nil {
 			return nil, err
 		}
 	}
+	return r.readRaw(ctx, b, m, bound)
+}
+
+// grantedRaw reads a message's raw object as raw does, for a page of
+// matches (ADR 0027, "Budgets of a page"): the bound is taken through
+// ReadGrants, use is given the raw message to take out what it needs, and
+// the grant is given back once use returns, before the page's next raw read.
+// A budget in ctx that is not a ReadGrants is refused with
+// contracts.ErrTooManyRequests before anything is read.
+func (r *storeReader) grantedRaw(ctx context.Context, b Box, m *store.Message, use func(raw []byte)) error {
+	bound := rawBound(m)
+	if budget := ctx.Value(budgetKey{}); budget != nil {
+		grants, ok := budget.(ReadGrants)
+		if !ok {
+			return contracts.ErrTooManyRequests
+		}
+		release, err := grants.Grant(ctx, bound)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	raw, err := r.readRaw(ctx, b, m, bound)
+	if err != nil {
+		return err
+	}
+	use(raw)
+	return nil
+}
+
+// rawBound is the bound a message's raw read is given: the size its item
+// says and the seal, at most RawReadMax.
+func rawBound(m *store.Message) int64 {
+	if m.Size >= 0 && int64(m.Size) < RawReadMax-rawSealOverhead {
+		return int64(m.Size) + rawSealOverhead
+	}
+	return RawReadMax
+}
+
+// readRaw reads and opens a message's raw object within bound.
+func (r *storeReader) readRaw(ctx context.Context, b Box, m *store.Message, bound int64) ([]byte, error) {
 	sealed, err := r.st.ReadRaw(ctx, b.MailboxID, m.ID, bound)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
