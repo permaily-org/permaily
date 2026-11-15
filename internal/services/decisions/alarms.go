@@ -49,17 +49,17 @@ func (d *alarmsDoc) drop(now time.Time) {
 }
 
 // addAlarm makes an alarm due in RecordAlarms, at the version read; adding
-// one that is there changes nothing. An alarm that cannot be added is kept
-// in memory and added by the next RunAlarms, and the error says the cause
-// must not be recorded.
+// one that is there changes nothing. It returns nil only once a fresh
+// strict read found the alarm in the record, every time it is asked: what
+// this enclave added before is no evidence once the record was lost or
+// forked since. An alarm that cannot be added is kept in memory and added
+// by the next RunAlarms, and the error says the cause must not be
+// recorded.
 func (s *Service) addAlarm(ctx context.Context, kind AlarmKind, day, baseline string) error {
 	e := alarmEntry{Kind: kind, Day: day, Baseline: baseline, DueAt: s.now()}
 	k := e.key()
 	s.alarmMu.Lock()
 	defer s.alarmMu.Unlock()
-	if _, ok := s.alarmsAdded[k]; ok {
-		return nil
-	}
 	if err := s.putAlarm(ctx, e); err != nil {
 		s.alarmsPending[k] = e
 		return err
@@ -68,30 +68,42 @@ func (s *Service) addAlarm(ctx context.Context, kind AlarmKind, day, baseline st
 	return nil
 }
 
-// putAlarm writes e to RecordAlarms unless its key is there. s.alarmMu is
-// held.
+// errAlarmUnconfirmed is an alarm whose write returned but which the read
+// after it did not find.
+var errAlarmUnconfirmed = errors.New("decisions: an alarm was not found in the record after its write")
+
+// putAlarm writes e to RecordAlarms unless its key is there, and returns
+// nil only when a fresh strict read finds it: the read that found it there
+// already, or a read after the write. A write that returned nil is not yet
+// an alarm, as it is not yet a grant (Records): an append over a delete
+// marker can return nil on a line no read accepts. s.alarmMu is held.
 func (s *Service) putAlarm(ctx context.Context, e alarmEntry) error {
 	k := e.key()
 	now := s.now()
+	wrote := false
 	_, err := changeRecord(ctx, s, RecordAlarms, purposeAlarms, func(d *alarmsDoc, found bool) bool {
 		if !found {
 			*d = alarmsDoc{V: 1}
 		}
 		if d.find(k) >= 0 {
+			wrote = false
 			return false
 		}
 		d.drop(now)
 		d.Entries = append(d.Entries, e)
+		wrote = true
 		return true
 	})
-	if err != nil {
+	if err != nil || !wrote {
 		return err
 	}
-	s.alarmsAdded[k] = e.Day
-	for key, day := range s.alarmsAdded {
-		if t, err := time.Parse(time.DateOnly, day); err == nil && now.Sub(t) > alarmKeep {
-			delete(s.alarmsAdded, key)
-		}
+	var after alarmsDoc
+	_, found, err := readRecord(ctx, s, RecordAlarms, purposeAlarms, &after)
+	switch {
+	case err != nil:
+		return err
+	case !found || after.find(k) < 0:
+		return errAlarmUnconfirmed
 	}
 	return nil
 }

@@ -131,7 +131,6 @@ func TestA15TheAlarmsInTheOneRecordOfAlarms(t *testing.T) {
 		if err := e.addAlarm(ctx, AlarmCanaryFailed, today, "b1"); err != nil {
 			t.Fatal(err)
 		}
-		e.alarmsAdded = map[string]string{} // forget, as a restart would
 		if err := e.addAlarm(ctx, AlarmCanaryFailed, today, "b1"); err != nil {
 			t.Fatal(err)
 		}

@@ -37,10 +37,9 @@ type Service struct {
 	guard guard
 
 	alarmMu sync.Mutex
-	// alarmsAdded are the alarms this enclave knows to be in RecordAlarms,
-	// by key; alarmsPending the ones it could not add yet, which RunAlarms
-	// adds first.
-	alarmsAdded   map[string]string
+	// alarmsPending are the alarms this enclave could not add yet, by key,
+	// which RunAlarms adds first. What it added before is not remembered:
+	// each cause reads the record again (addAlarm).
 	alarmsPending map[string]alarmEntry
 
 	canaryMu sync.Mutex
@@ -71,7 +70,6 @@ func New(cfg Config) (*Service, error) {
 		slots:         make(chan struct{}, decide.Concurrent),
 		sleep:         sleepCtx,
 		jitter:        randomJitter,
-		alarmsAdded:   map[string]string{},
 		alarmsPending: map[string]alarmEntry{},
 		calls:         map[string]int{},
 	}
