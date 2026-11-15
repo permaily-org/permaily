@@ -89,7 +89,7 @@ func (s *Service) call(ctx context.Context, c decide.Call, account string, canar
 			} else {
 				r.settle(est)
 			}
-			s.answered()
+			s.answered(r)
 			if !canary {
 				s.count(attestation.ModelCallAnswered, 1)
 			}

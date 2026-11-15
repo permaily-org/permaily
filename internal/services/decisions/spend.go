@@ -86,10 +86,13 @@ type guard struct {
 	forkedMonth, unreadableMonth, limitMonth string
 	// provider and refused are the provider's answers: its limit reached,
 	// the key refused (refusedFP is that key's fingerprint, so a new key is
-	// tried at once). probeAt is when the last probe was let through.
+	// tried at once). probeAt is when the last probe was let through. gen
+	// counts the stops: only the probe admitted under the current one
+	// clears it, never an answer to an attempt reserved before it.
 	provider, refused bool
 	refusedFP         string
 	probeAt           time.Time
+	gen               uint64
 	// shares is what each account reserved by day, in this enclave.
 	shares map[string]map[string]int64
 }
@@ -106,13 +109,16 @@ const (
 )
 
 // reservation is one attempt's estimate, taken from a grant and an
-// account's share, settled once.
+// account's share, settled once. gen is the guard's stop when it was
+// reserved, and probe whether it was let through as that stop's probe.
 type reservation struct {
 	s       *Service
 	g       *grant
 	account string
 	day     string
 	est     int64
+	gen     uint64
+	probe   bool
 	once    sync.Once
 }
 
@@ -217,7 +223,7 @@ func (s *Service) reserve(ctx context.Context, est int64, account, fp string) (*
 	if probe {
 		g.probeAt = now
 	}
-	return &reservation{s: s, g: from, account: account, day: day, est: est}, holdNone
+	return &reservation{s: s, g: from, account: account, day: day, est: est, gen: g.gen, probe: probe}, holdNone
 }
 
 // prune forgets the grants and shares of other days: what is left of a
@@ -346,22 +352,32 @@ func (s *Service) makeGrant(ctx context.Context, month, day string, blocks int64
 	return nil, holdLimit
 }
 
-// answered clears what the provider said once an attempt got an answer.
-func (s *Service) answered() {
+// answered clears what the provider said once the probe let through under
+// the current stop got an answer. An answer to an attempt reserved before
+// the stop, or under an earlier one, settles its own reservation and keeps
+// its answer, but clears nothing.
+func (s *Service) answered(r *reservation) {
 	g := &s.guard
 	g.mu.Lock()
-	g.provider, g.refused = false, false
+	if r.probe && r.gen == g.gen {
+		g.provider, g.refused = false, false
+	}
 	g.mu.Unlock()
 }
 
 // keyRefused notes that the provider refused the key in use: nothing new
 // is asked with it, one probe every probeEvery. Its alarm is added; one
-// that cannot be added now is added by RunAlarms.
+// that cannot be added now is added by RunAlarms. A refusal of a key
+// already replaced says nothing of the key in use, and changes nothing.
 func (s *Service) keyRefused(ctx context.Context, fp string) {
+	if s.keyState(ctx).fp != fp {
+		return
+	}
 	g := &s.guard
 	g.mu.Lock()
 	was := g.refused && g.refusedFP == fp
 	g.refused, g.refusedFP, g.probeAt = true, fp, s.now()
+	g.gen++
 	g.mu.Unlock()
 	if !was {
 		s.logKind(slog.LevelError, "decisions: the provider refused the model's key", "key_refused")
@@ -377,6 +393,7 @@ func (s *Service) providerLimit(ctx context.Context) {
 	g.mu.Lock()
 	was := g.provider
 	g.provider, g.probeAt = true, s.now()
+	g.gen++
 	g.mu.Unlock()
 	if !was {
 		s.logKind(slog.LevelError, "decisions: the provider's limit was reached", "provider_limit")
@@ -390,7 +407,7 @@ func (s *Service) providerLimit(ctx context.Context) {
 // unreadable, month_limit, provider_limit, key_refused (none set, or
 // refused) and ok.
 func (s *Service) guardState(ctx context.Context) string {
-	set := s.keyState(ctx).set
+	k := s.keyState(ctx)
 	g := &s.guard
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -402,7 +419,7 @@ func (s *Service) guardState(ctx context.Context) string {
 		return attestation.ModelGuardMonthLimit
 	case g.provider:
 		return attestation.ModelGuardProviderLimit
-	case g.refused || !set || s.model == nil:
+	case g.refused && g.refusedFP == k.fp, !k.set, s.model == nil:
 		return attestation.ModelGuardKeyRefused
 	}
 	return attestation.ModelGuardOK
