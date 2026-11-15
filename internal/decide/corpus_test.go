@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"math"
 	"os"
@@ -56,6 +58,67 @@ func readCorpus(t *testing.T, name string) []corpusMessage {
 	return out
 }
 
+// topicsHash is the SHA-256 of testdata/topics.json: which topic each
+// label's short key stands for. The labels name a key ("inv"); the model is
+// asked the topic ("invoices"). A file with two topics swapped keeps every
+// key and every topic and still asks each label's statements about the
+// other's topic, so the mapping is pinned whole, not only its keys (ADR
+// 0028, "Changed after the second design review", 8).
+const topicsHash = "7e2f8d9421f5086ccc3148bef1065f9cebee440aec329b9ee16be32c16dbf637"
+
+// readTopics reads topics.json as the spike fixed it, or says why not.
+func readTopics(data []byte) (map[string]string, error) {
+	if sha(data) != topicsHash {
+		return nil, errors.New("topics.json is not the mapping of labels to topics the spike asked")
+	}
+	var topics map[string]string
+	if err := json.Unmarshal(data, &topics); err != nil {
+		return nil, err
+	}
+	if len(topics) != 13 {
+		return nil, fmt.Errorf("topics.json: %d topics, want 13", len(topics))
+	}
+	return topics, nil
+}
+
+func loadTopics(t *testing.T) map[string]string {
+	t.Helper()
+	data, err := os.ReadFile("testdata/topics.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	topics, err := readTopics(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return topics
+}
+
+// TestSwappedTopicsAreRefused: the mutation the second design review ran
+// (the topics of "inv" and "pwd" swapped, every key and every topic kept)
+// fails the check every test of the corpus reads its topics through.
+func TestSwappedTopicsAreRefused(t *testing.T) {
+	data, err := os.ReadFile("testdata/topics.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var topics map[string]string
+	if err := json.Unmarshal(data, &topics); err != nil {
+		t.Fatal(err)
+	}
+	topics["inv"], topics["pwd"] = topics["pwd"], topics["inv"]
+	swapped, err := json.MarshalIndent(topics, "", " ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readTopics(swapped); err == nil {
+		t.Fatal("a mapping with two topics swapped was read as the spike's")
+	}
+	if _, err := readTopics(data); err != nil {
+		t.Fatalf("the committed mapping: %v", err)
+	}
+}
+
 func TestCorpusIsTheSpikes(t *testing.T) {
 	for name, want := range map[string]string{
 		"corpus.jsonl":   "4cd1dd5535c02261a77ce283a7d6016fa0fa78166f3f941606651a7004951f02",
@@ -69,11 +132,7 @@ func TestCorpusIsTheSpikes(t *testing.T) {
 			t.Errorf("%s is not the file whose labels the spike fixed before its runs", name)
 		}
 	}
-	var topics map[string]string
-	data, err := os.ReadFile("testdata/topics.json")
-	if err != nil || json.Unmarshal(data, &topics) != nil || len(topics) != 13 {
-		t.Fatalf("topics.json: 13 topics, got %d (%v)", len(topics), err)
-	}
+	topics := loadTopics(t)
 	kinds := []string{"subject_about", "message_about", "message_mentions"}
 	count := func(ms []corpusMessage) (atoms, positive, excluded int) {
 		for _, m := range ms {
@@ -118,9 +177,7 @@ func TestTheCanaryIsTheCorpusAsMeasured(t *testing.T) {
 	if c.Model != "gpt-6-luna" || c.Tolerance != 0.02 || len(c.Messages) != 4 {
 		t.Fatalf("canary: model %q, tolerance %v, %d messages", c.Model, c.Tolerance, len(c.Messages))
 	}
-	var topics map[string]string
-	data, _ := os.ReadFile("testdata/topics.json")
-	_ = json.Unmarshal(data, &topics)
+	topics := loadTopics(t)
 	names := map[string]bool{}
 	for _, name := range topics {
 		names[name] = true
@@ -226,8 +283,10 @@ func sha(data []byte) string {
 
 // TestTheHostileTopicsAreTheReMeasures pins the hostile-topic cases by the
 // hash taken before any call, and checks that every topic is one the query
-// language could hold (lower case, 1 to 100 characters) and every label the
-// corpus's.
+// language could hold (lower case, 1 to 100 characters), every label the
+// corpus's, and every target's topic the one its label's key stands for
+// in topics.json, so a target is scored against the label of the topic it
+// asks.
 func TestTheHostileTopicsAreTheReMeasures(t *testing.T) {
 	data, err := os.ReadFile("testdata/hostile.jsonl")
 	if err != nil {
@@ -236,6 +295,7 @@ func TestTheHostileTopicsAreTheReMeasures(t *testing.T) {
 	if sha(data) != "c6268cecae984aa5560c4224e199d6359dbc51193cc4ceac82887e5179c02ff0" {
 		t.Fatal("hostile.jsonl is not the file whose labels were fixed before the re-measure")
 	}
+	topics := loadTopics(t)
 	byID := map[string]corpusMessage{}
 	for _, m := range readCorpus(t, "corpus.jsonl") {
 		byID[m.ID] = m
@@ -253,11 +313,17 @@ func TestTheHostileTopicsAreTheReMeasures(t *testing.T) {
 			if n := len([]rune(a.Topic)); n == 0 || n > 100 || a.Topic != string(bytes.ToLower([]byte(a.Topic))) {
 				t.Errorf("%s: topic %q is not one the query language holds", c.ID, a.Topic)
 			}
+			if _, ok := topics[a.Core]; !ok {
+				t.Errorf("%s: %q is not a topic of the corpus", c.ID, a.Core)
+			}
 			switch a.Role {
 			case "target":
 				targets++
 				if want := m.Labels[a.Core][a.Kind]; want == nil || a.Label == nil || *want != *a.Label {
 					t.Errorf("%s: a target's label is not the corpus's", c.ID)
+				}
+				if a.Topic != topics[a.Core] {
+					t.Errorf("%s: a target asks %q under the label of %q", c.ID, a.Topic, topics[a.Core])
 				}
 			case "hostile":
 				hostile++

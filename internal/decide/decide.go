@@ -12,8 +12,8 @@
 //
 // This file and prompt.go are the seam, committed with the design: the
 // types the pull requests share, the limits of a call, the prices the guard
-// counts with, and the prompt's first version, whose words are part of what
-// a kept decision is keyed by. Nothing implements Model yet.
+// counts with, and the prompt's version in force, whose words are part of
+// what a kept decision is keyed by. Nothing implements Model yet.
 package decide
 
 import (
@@ -36,7 +36,10 @@ type Model interface {
 	// (ADR 0028, "Failures"); it is an *AttemptError, which says whether the
 	// attempt may have been billed and whether it may be tried again. A
 	// refusal or an answer that does not check is an Answer with OK false,
-	// never an error, and the others still count.
+	// never an error, and the others still count. It sends the request to
+	// its compiled address only: a redirect is never followed (ErrRequest),
+	// so one attempt is one transmission (ADR 0028, "Changed after the
+	// second design review", 6).
 	Decide(ctx context.Context, c Call) (*Result, error)
 	// Name is the model as receipts and kept decisions name it, such as
 	// "gpt-6-luna". It never changes for the life of the value.
@@ -89,8 +92,9 @@ type Answer struct {
 // Result is what one call answered and cost.
 type Result struct {
 	Answers []Answer
-	// Model is the model the provider says answered; a call whose answer
-	// names another than Model.Name fails (ErrInvalidAnswer).
+	// Model is the model the provider says answered: always Model.Name. An
+	// answer that names another fails with ErrModelChanged, and none of its
+	// probabilities is returned.
 	Model string
 	Usage Usage
 	// Took is how long the attempt took.
@@ -157,12 +161,15 @@ const (
 // what the service needs to charge and retry the attempt (ADR 0028,
 // "Spend" and "Failures"). Decide returns no other error; one that is not
 // an AttemptError is read as ErrUnavailable, sent, and not tried again.
+// The service tells the failures apart with errors.Is, never by their
+// words.
 type AttemptError struct {
 	Err error
 	// Sent is false only when the request certainly never left the enclave
 	// (no key, a context that ended before it was written): the attempt is
 	// then not charged. Otherwise the provider may have billed it, and it is
-	// charged its estimate, whatever came back.
+	// charged its estimate, whatever came back: a failed attempt's usage is
+	// never read.
 	Sent bool
 	// Retry says the call may be tried again (ErrUnavailable only), after
 	// RetryAfter when the provider asked for one (at most MaxRetryAfter).
@@ -188,9 +195,25 @@ var (
 	// retried; the guard stops asking (ADR 0028, "Spend").
 	ErrProviderLimit = errors.New("decide: the provider's spend limit was reached")
 	// ErrRequest: the provider refused the request as malformed (400, 404,
-	// 422): a bug of the enclave. Never retried.
+	// 422), or answered it with a redirect (3xx), which is never followed:
+	// the request goes to the compiled address once, and nowhere else.
+	// Never retried.
 	ErrRequest = errors.New("decide: the provider refused the request")
 	// ErrInvalidAnswer: a 200 whose body does not read as an answer to the
-	// call (not JSON, another number of answers, another model).
+	// call (not JSON, over its bound, another number of answers, names out
+	// of order).
 	ErrInvalidAnswer = errors.New("decide: the answer does not match the call")
+	// ErrModelChanged: a 200 that checks but names another model than
+	// Model.Name. None of its probabilities is used, and it is not tried
+	// again. It is not ErrInvalidAnswer: the canary reads it as a change of
+	// the model, never as a failed run (ADR 0028, "The canary").
+	ErrModelChanged = errors.New("decide: another model answered")
 )
+
+// Credential gives the provider's client the key for one attempt: the
+// key, or ok false when there is none to use, in which case the client
+// sends nothing and fails with ErrKeyRefused, not Sent. The service of
+// internal/services/decisions makes it and hands it to the client it
+// builds (decisions.Config.NewModel); it is never on a route, the
+// operator's interface or a log line (ADR 0028, "The key").
+type Credential func(ctx context.Context) (key string, ok bool)

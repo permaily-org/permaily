@@ -106,9 +106,11 @@ type Asked struct {
 	Answers query.Answers
 	// Held lists the atoms it did not ask because of Outcome AskOff or
 	// AskLimit: the message is listed as needing a model, not as unknown,
-	// so a later page asks again. An atom left out for any other reason (a
-	// failure, a refusal, a full entry, a text that cannot be read) is in
-	// neither Answers nor Held: it is unknown.
+	// so a later page asks again. A held atom is never in Answers, never
+	// with a probability of zero or any other: it is unknown to Eval. An
+	// atom left out for any other reason (a failure, a refusal, a full
+	// entry, a text that cannot be read) is in neither Answers nor Held: it
+	// is unknown.
 	Held []query.Atom
 	// Outcome is why atoms were held, by the precedence of AskOutcome.
 	Outcome AskOutcome
@@ -182,13 +184,18 @@ const KeyDecision = "dec#"
 const PurposeDecision = "message-decisions"
 
 // GonePartition holds a mark for each message being deleted (key
-// "<mailbox id>#<message id>", expiring after a day), written by
-// Reader.Delete before it deletes anything (ADR 0028, "Changed after the
-// design review", 10). KeptStore.Keep reads it after its write and deletes
-// what it wrote when the mark is there; the mailboxes' sweep deletes
-// dec#<id> once more after SweepGrace, when every Keep that read the
-// message before the mark has ended, and then the mark. The store has no
-// write conditional on another item, so this is how a decision is never
+// "<mailbox id>#<message id>"), written by Reader.Delete before it deletes
+// anything (ADR 0028, "Changed after the design review", 10). KeptStore.Keep
+// reads it after its write and deletes what it wrote when the mark is
+// there. The mark is also the work of deleting dec#<id> once more after
+// SweepGrace, when every Keep that read the message before the mark has
+// ended, for a Keep that stopped between its write and its read: the
+// mailboxes' sweep does it, and deletes the mark only once that deletion
+// succeeded. So a mark expires no earlier than the message it is for (its
+// ExpiresAt, which a kept entry shares; none when the message has none),
+// and a sweep that cannot run for days, or fails, leaves it for the next
+// (ADR 0028, "Changed after the second design review", 3). The store has
+// no write conditional on another item, so this is how a decision is never
 // kept for a message that is gone.
 const GonePartition = "message-gone"
 

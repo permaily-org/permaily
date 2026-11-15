@@ -95,7 +95,7 @@ const (
 	ModelGuardMonthLimit    = "month_limit"    // the month's limit is reached: nothing new is asked until the next month (UTC)
 	ModelGuardProviderLimit = "provider_limit" // the provider said its own spend or credit limit is reached
 	ModelGuardKeyRefused    = "key_refused"    // no key is set, or the provider refused it
-	ModelGuardUnreadable    = "unreadable"     // the month's spend record cannot be read (lost, forked, or does not open): nothing new is asked
+	ModelGuardUnreadable    = "unreadable"     // the month's spend record cannot be read (lost, forked, or does not open): nothing new is asked this month
 )
 
 // CanaryStatus is what the daily canary last found: a heuristic sample of
@@ -105,18 +105,22 @@ const (
 type CanaryStatus struct {
 	// Baseline is the hex SHA-256 of the canary compiled into the image
 	// (decide.Canary.Baseline); the state below is for it, this model and
-	// this prompt version, and is none for any other.
+	// this prompt version, kept apart from any other's.
 	Baseline string `json:"baseline"`
 	// CheckedAt is when the last check completed; zero before one did.
 	CheckedAt time.Time `json:"checked_at,omitzero"`
-	// State is what that check found (CanarySame, CanaryChanged), or why
-	// there is nothing to go by: CanaryNone before a check completed,
-	// CanaryFailed when the latest attempt did not complete, CanaryStale
-	// when no check completed in the last two days (UTC), CanaryUnreadable
-	// when the state's record cannot be read.
+	// State is the first that applies of: CanaryUnreadable when the state's
+	// record cannot be read; CanaryStale when no check completed in the
+	// last two days (UTC), counted from the last completed check or, before
+	// one, from when the first enclave of this baseline started;
+	// CanaryChanged when any completed check of this baseline observed a
+	// change (it stays until a release takes new answers as expected, a new
+	// baseline); CanaryFailed when this enclave's latest run did not
+	// complete and no check completed today; CanarySame when the last
+	// completed check found none; CanaryNone before any completed.
 	State string `json:"state"`
 	// ChangeSeenAt is the last day a check observed an answer that moved,
-	// until a release takes new answers as expected (a new baseline).
+	// or another model answer; it never goes back.
 	ChangeSeenAt time.Time `json:"change_seen_at,omitzero"`
 }
 
@@ -140,8 +144,9 @@ const (
 	ModelCallUnavailable = "unavailable" // 5xx or 429 slow_down after the retries
 	ModelCallKeyRefused  = "key_refused" // 401 or 403
 	ModelCallLimit       = "limit"       // the provider's spend or credit limit
-	ModelCallRequest     = "request"     // 400, 404 or 422: the enclave's own mistake
+	ModelCallRequest     = "request"     // 400, 404, 422 or a redirect, never followed: the enclave's own mistake
 	ModelCallInvalid     = "invalid"     // a 200 that did not read as an answer to the call
+	ModelCallOtherModel  = "other_model" // a 200 that named another model: none of its answers is used
 	ModelCallHeld        = "held"        // not asked: the guard or the account's share held it
 	ModelCallCanary      = "canary"      // a call of the canary
 )
@@ -149,7 +154,8 @@ const (
 // ModelCalls lists the kinds this package knows, in the order they are shown.
 var ModelCalls = []string{
 	ModelCallAnswered, ModelCallKept, ModelCallRefusal, ModelCallTimeout, ModelCallUnavailable,
-	ModelCallKeyRefused, ModelCallLimit, ModelCallRequest, ModelCallInvalid, ModelCallHeld, ModelCallCanary,
+	ModelCallKeyRefused, ModelCallLimit, ModelCallRequest, ModelCallInvalid, ModelCallOtherModel, ModelCallHeld,
+	ModelCallCanary,
 }
 
 // AdminStatus is what the enclave reports of what its operator did to
