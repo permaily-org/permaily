@@ -32,7 +32,7 @@ Then delete the key of the previous release (below), and open the pull request t
 - **The handoff is refused** (HTTP 422): the answer says why. Nothing was written and the running enclave keeps serving. The usual causes are a key that was not created yet, or files of the wrong release.
 - **The new image was started first**: it logs `waiting for the running release to hand over the root secret` and serves nothing. Start the old image again, run the handoff, start the new one.
 - **Step 2 can be repeated**; the second time it answers `"created": false`.
-- **Verify before step 2** when in doubt about what is answering on `api.permaily.com`: the admin token only lets someone ask for a handoff, which the enclave decides alone, but there is no reason to give it to an impostor.
+- **Step 2 verifies first.** `scripts/handoff.sh` runs `permaily-verify` against the `pcrs.json` of `$old` and sends the admin token only to the TLS key it attested ("The operator's scripts verify first", below). When what answers on `api.permaily.com` is not `$old`, it stops and nothing is sent.
 
 ## Roll back
 
@@ -64,7 +64,7 @@ go run ./cmd/permaily-verify -pcrs /tmp/stg-a/pcrs.json -ca-file letsencrypt-stg
 PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem scripts/handoff.sh /tmp/stg-a /tmp/stg-b    # to a second image, built later
 ```
 
-`letsencrypt-stg-root-x1.pem` is the root of Let's Encrypt staging, fetched with `curl -sO https://letsencrypt.org/certs/staging/letsencrypt-stg-root-x1.pem` (as in [verification.md](verification.md)). Every operator script needs it against a staging image, as `PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem`: `scripts/invite.sh`, `scripts/accounts.sh`, `scripts/provider.sh` and `scripts/handoff.sh` (which passes it on to `scripts/sigstore-trust-root.sh --send`).
+`letsencrypt-stg-root-x1.pem` is the root of Let's Encrypt staging, fetched with `curl -sO https://letsencrypt.org/certs/staging/letsencrypt-stg-root-x1.pem` (as in [verification.md](verification.md)). Every operator script needs it against a staging image, as `PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem`: `scripts/invite.sh`, `scripts/accounts.sh`, `scripts/provider.sh` and `scripts/handoff.sh` (which passes it on to `scripts/sigstore-trust-root.sh --send`). The first three also need `PERMAILY_PCRS=/tmp/stg-a/pcrs.json`, the staging image that runs, to verify it before they send anything; `scripts/handoff.sh` takes it from its first argument.
 
 The staging table keeps its root secret from one test to the next, and only the key of an image that holds it can open it. When the key of the last staging image that ran is gone (removed from `release_keys` and applied: it is disabled at once and deleted after seven days), nothing can open that secret again: start the staging table over as in "A new deployment, or losing everything", on `permaily-mail-staging`, before the next staging image.
 
@@ -219,6 +219,20 @@ Takes effect with v0.12.0, the release that builds ADR 0026, in production since
 - **Pausing a mailbox** for abuse: `scripts/accounts.sh mailbox find <address>`, then `mailbox pause <id>` and later `mailbox resume <id>`; ten changes of one mailbox in thirty days at most. Its person is told by mail; nothing is deleted. The operator cannot disconnect a mailbox or read mail ("See and manage the accounts", "Mailboxes").
 - **A regression marked `fork` in `/status`**, under the name `mailbox`, means two commits of different digests at one version of a mailbox's record or an account's list: someone wrote to the anchors bucket. That mailbox stops for good, for the lock period (ten years): it refuses mail, nobody opens it, its person sees "Can't be read" and cannot disconnect it, and it keeps its slot. Nothing makes it readable again; tell its person through support. One marked `lost` means the newest commit of a mailbox's record or an account's list names a value the table no longer holds: someone deleted or changed the item in DynamoDB. A lost mailbox refuses mail and nobody opens it; it shows as `unreadable` in `scripts/accounts.sh mailboxes` and in the admin panel, with its identifier and when it was added, and its person can disconnect it, which frees its slot. A lost account list stops delivery to every mailbox of that account. One marked `unlocked` means S3 holds a commit without the lock the enclave wrote it with: report it to AWS and look at the bucket's configuration. Accounts and the TLS identity are not strict records: a fork there shows as a regression without the mark, as before (ADR 0016), and the TLS identity's is handled as ADR 0024 says.
 
+## The operator's scripts verify first
+
+`scripts/invite.sh`, `scripts/accounts.sh`, `scripts/provider.sh`, `scripts/handoff.sh` and `scripts/sigstore-trust-root.sh --send` send the admin token, and `provider.sh set` a provider's secret. Before they send anything, each runs `permaily-verify` against the enclave, and then sends only on connections with the TLS key it attested (`curl --pinnedpubkey`, the CA and hostname checked too, no redirects; ADR 0029). A server with another valid certificate for `api.permaily.com` gets nothing. They need to know what the enclave must measure:
+
+```sh
+export PERMAILY_RELEASE=v0.14.0                        # the running release's tag: its verifier is built from the commit its provenance names
+export PERMAILY_PCRS=/tmp/permaily-v0.14.0/pcrs.json   # and its pcrs.json from scripts/release-image.sh <tag> <dir>;
+                                                       # without it, the release's, authenticated by its provenance (trusts CI)
+```
+
+The verifier must be the running release's: it checks the Sigstore trust root the enclave reports against the one compiled into itself, so one built from a later checkout refuses an older release, and above all during a trust-root update or a handoff. With `PERMAILY_RELEASE` (or `handoff.sh`'s `<running>` tag) the scripts never build from the tag's name: they authenticate the release's `pcrs.json` with `gh attestation verify` (the repository `permaily-org/permaily`, the release workflow, `main`), take the source commit from that attestation, check that the tag at `github.com/permaily-org/permaily` names the same commit, fetch that commit by its id from `github.com/permaily-org/permaily` into a private repository in the run's temporary directory (never from `origin` or the clone: its replacement refs, hooks, configuration and `GIT_*` variables are not used), and build it with go in a fixed environment (no `GOFLAGS`, `go.env` file or workspace, `go.mod`'s toolchain line, no cgo, `-trimpath`); the log names the commit. Without `PERMAILY_PCRS`, the `pcrs.json` whose provenance they verified is the very file the verifier checks, not a second download. A compromised go, git or computer is not defended against. That needs git 2.32 or later. That needs `gh` and GitHub: without them, or for a tag with no release, nothing is sent, and you set `PERMAILY_VERIFY=<permaily-verify binary>`, which is used as it is whenever it is set. With only `PERMAILY_PCRS`, as for a staging image, it is built from the checkout as it is, uncommitted changes included; the script says so. Nothing checks that the checkout is the running image's source: you trust it as such, as you would a `PERMAILY_VERIFY` you give. A trusted verifier of another release fails closed (it refuses, and nothing is sent); code you have not reviewed does not. When the enclave does not verify, or no measurements are given, the script says why and that nothing was sent. A failure unrelated to the token, such as the SES state, stops them too: read it as you would a failed `scripts/verify.sh`. What the enclave answers is printed field by field, never whole, and under `bash -x` neither the token nor a secret is traced.
+
+`PERMAILY_API` is an origin and nothing else: `https://<host>` or `https://<host>:<port>`, with or without a `/` at the end, in lowercase, with no user, password, path, query, fragment or percent-encoding; anything else is refused before anything runs. `PERMAILY_DEV_UNVERIFIED=1` (only `1`; any other value is refused) is for an enclave in dev mode on your machine: it skips the verification, is refused for any name but `localhost`, `127.0.0.1`, `[::1]`, a `.localhost` or a `.test` name, and connects to `127.0.0.1` whatever DNS or a proxy variable says.
+
 ## Invite someone
 
 Signing up needs an invitation: a code that works once, for thirty days, for one new account.
@@ -298,7 +312,7 @@ Every change in the panel asks the admin to confirm with a passkey when their la
 A provider is on once the enclave has been given the application registered there:
 
 ```sh
-scripts/verify.sh                                          # first: the secret goes to whoever answers
+export PERMAILY_PCRS=<dir>/pcrs.json                       # the running release: verified before the secret is sent
 scripts/provider.sh                                        # which are set, with their client ids
 scripts/provider.sh set google <client id>                 # asks for the secret without showing it
 pass show permaily/github | scripts/provider.sh set github <client id>
