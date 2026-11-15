@@ -3,8 +3,11 @@ package mailboxes
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
+	"weak"
 
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/store"
@@ -13,7 +16,9 @@ import (
 // The sweep (ADR 0026, "Disconnecting"): every enclave goes through the
 // disconnect entries, the oldest first, and deletes what is left of each
 // mailbox; once SweepGrace has passed since it was disconnected, and a last
-// pass left nothing, its record is removed and its entry deleted.
+// pass left nothing, its record is removed and its entry deleted. Then it
+// goes on through the marks of deleted messages (ADR 0028, "Deleted with the
+// message, never written after"; sweepGone).
 
 // What one sweep does at most.
 const (
@@ -24,6 +29,9 @@ const (
 	// stuckFor is how long a disconnect entry of a mailbox that is still
 	// active stays: the disconnect failed before its commit.
 	stuckFor = time.Hour
+	// sweepMarks is how many marks of deleted messages one sweep goes
+	// through; the next goes on from there.
+	sweepMarks = 100
 )
 
 // Run sweeps every SweepInterval, and soon after a disconnect, until ctx
@@ -57,7 +65,91 @@ func (s *Service) Sweep(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 	}
+	if err := s.sweepGone(ctx); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
+}
+
+// sweepGone goes through up to sweepMarks marks of deleted messages
+// (inbox.GonePartition), from where this enclave's last sweep stopped: for
+// each written at least SweepGrace ago (its UpdatedAt, when the deletion
+// started), when every Keep that read the message before the mark has
+// ended, it deletes the message's dec# entry once more, for a Keep that
+// stopped between its write and its read of the mark, and only once that
+// succeeded the mark, as it was read. A mark whose cleanup fails stays for a
+// later sweep; so does one that is not old enough. The marks expire with
+// their messages, so an outage longer than any grace leaves them, and their
+// work, to the next sweep. A key this deployment does not write is left
+// alone. The cursor is in memory: after a restart it starts again from the
+// first mark, and once a sweep reads fewer than sweepMarks it starts again
+// from the first the next time, so every mark is reached in turn.
+func (s *Service) sweepGone(ctx context.Context) error {
+	c := goneCursorOf(s)
+	marks, err := s.cfg.Storage.ListEntries(ctx, inbox.GonePartition, "", c.get(), sweepMarks)
+	if err != nil {
+		return err
+	}
+	next := ""
+	if len(marks) == sweepMarks {
+		next = marks[len(marks)-1].Key
+	}
+	c.set(next)
+	now := s.now()
+	var errs []error
+	for i := range marks {
+		e := &marks[i]
+		mailbox, id, ok := strings.Cut(e.Key, "#")
+		if !ok || !validMailboxID(mailbox) || !inbox.IsMessageID(id) || now.Sub(e.UpdatedAt) < SweepGrace {
+			continue
+		}
+		if err := s.cfg.Storage.DeleteEntry(ctx, inbox.Partition(mailbox), inbox.KeyDecision+id); err != nil && !errors.Is(err, store.ErrNotFound) {
+			errs = append(errs, err)
+			continue // the mark stays: it is that work's only record
+		}
+		// ErrConflict: a deletion tried again wrote it anew since it was
+		// read, and its own grace counts from then.
+		if err := s.cfg.Storage.DeleteEntryAt(ctx, e); err != nil && !errors.Is(err, store.ErrConflict) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// goneCursor is where an enclave's next sweep goes on through the marks of
+// deleted messages: the key of the last it read, "" for the first.
+type goneCursor struct {
+	mu    sync.Mutex
+	after string
+}
+
+func (c *goneCursor) get() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.after
+}
+
+func (c *goneCursor) set(after string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.after = after
+}
+
+// goneCursors holds each Service's cursor beside it, for as long as the
+// Service lives, without keeping it alive: the sweep is the one thing that
+// reads it.
+var goneCursors sync.Map // weak.Pointer[Service] → *goneCursor
+
+func goneCursorOf(s *Service) *goneCursor {
+	key := weak.Make(s)
+	if c, ok := goneCursors.Load(key); ok {
+		return c.(*goneCursor)
+	}
+	c, loaded := goneCursors.LoadOrStore(key, &goneCursor{})
+	if !loaded {
+		runtime.AddCleanup(s, func(k weak.Pointer[Service]) { goneCursors.Delete(k) }, key)
+	}
+	return c.(*goneCursor)
 }
 
 func (s *Service) sweepOne(ctx context.Context, e *store.Entry) error {
@@ -143,11 +235,11 @@ func (s *Service) forget(ctx context.Context, e *store.Entry) error {
 }
 
 // partitionPrefixes are the keys of a mailbox's partition that are entries
-// (inbox.Writer, the settings). Its messages (msg#) are deleted only through
+// (inbox.Writer, the kept decisions, the settings). Its messages (msg#) are deleted only through
 // the message path, the raw object first: on AWS a listing of entries without
 // a prefix reads the message rows too, and deleting those as entries would
 // leave their raw objects.
-var partitionPrefixes = []string{inbox.KeySearch, inbox.KeyConfirm, inbox.KeySeen, inbox.KeySettings}
+var partitionPrefixes = []string{inbox.KeySearch, inbox.KeyConfirm, inbox.KeyDecision, inbox.KeySeen, inbox.KeySettings}
 
 // clean deletes a mailbox's messages, a page at a time (the raw object, then
 // the item), then its entries, kind by kind, within sweepPages pages in all:

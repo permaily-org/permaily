@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/decide"
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/store"
 )
@@ -44,6 +47,19 @@ import (
 // contracts.ErrTooManyRequests before the first raw read; with no budget in
 // ctx, nothing is taken (tests of the reader alone).
 //
+// With an Asker on ctx (WithAsker, ADR 0028, "Matching asks the model"), a
+// message that needs a model once its exact sources are read is asked about,
+// at most MatchMaxModelMessages a page, one after the other, each under
+// decide.MessageDeadline or what is left of ctx's, whichever is first; the
+// text it is asked with is read only when the Asker calls Question.Text, the
+// raw message's under its own grant, counted in MatchMaxTextReads. A message
+// asked is listed by its answers (query.Classify, ForQuery): a match,
+// nothing, needing a model when atoms the Asker held (AskOff, AskLimit)
+// could still make it true, unknown otherwise. AskStop, and the message past
+// MatchMaxModelMessages, end the page before the message, with Next the
+// message before it. The page then says Model (MatchModelOff, before
+// MatchModelLimit, before MatchModelAsked); without an Asker it has none.
+//
 // The page it answers is the owner's own preview (contracts.MatchPage), never
 // a vendor's result. It checks nothing of who asks: mailboxes.Service.Open
 // did.
@@ -79,16 +95,16 @@ type Evaluate func(fs []*query.Canonical, m *query.Message, answers query.Answer
 // NewMatcher returns the Matcher on a store, which evaluates with eval
 // (query.Eval).
 func NewMatcher(st ReadStore, eval Evaluate) Matcher {
-	return &storeMatcher{r: &storeReader{st: st}, eval: eval, bounds: defaultMatchBounds, now: time.Now}
+	return &storeMatcher{r: &storeReader{st: st, now: time.Now}, eval: eval, bounds: defaultMatchBounds, now: time.Now}
 }
 
 // matchBounds are a page's bounds; tests set them low.
 type matchBounds struct {
-	read, textReads, undecided int
-	soft                       time.Duration
+	read, textReads, undecided, asked int
+	soft                              time.Duration
 }
 
-var defaultMatchBounds = matchBounds{read: MatchMaxRead, textReads: MatchMaxTextReads, undecided: MatchMaxUndecided, soft: MatchSoftDeadline}
+var defaultMatchBounds = matchBounds{read: MatchMaxRead, textReads: MatchMaxTextReads, undecided: MatchMaxUndecided, asked: MatchMaxModelMessages, soft: MatchSoftDeadline}
 
 type storeMatcher struct {
 	r      *storeReader
@@ -120,9 +136,11 @@ func (mt *storeMatcher) Match(ctx context.Context, b Box, fs []*query.Canonical,
 		return nil, contracts.ErrInvalidCursor
 	}
 	page := &contracts.MatchPage{Messages: []contracts.MessageSummary{}, NeedsModel: []string{}, Unknown: []string{}}
+	p := matchRun{mt: mt, b: b, fs: fs, page: page}
+	p.asking, p.askOK = AskerFrom(ctx)
 	for _, f := range fs {
 		if f != nil && f.Never {
-			return answerMatch(ctx, page) // no message matches it, nor them together
+			return p.answer(ctx) // no message matches it, nor them together
 		}
 	}
 	upper, lower := receivedBounds(fs)
@@ -130,10 +148,9 @@ func (mt *storeMatcher) Match(ctx context.Context, b Box, fs []*query.Canonical,
 		before = upper
 	}
 	if lower != "" && before != "" && before <= lower {
-		return answerMatch(ctx, page) // everything below before is below since
+		return p.answer(ctx) // everything below before is below since
 	}
 	start := mt.now()
-	p := matchRun{mt: mt, b: b, fs: fs, page: page}
 	// last is the identifier of the last item the page consumed: a message
 	// considered, or the last item of a batch it went through whole.
 	last := ""
@@ -210,7 +227,24 @@ func (mt *storeMatcher) Match(ctx context.Context, b Box, fs []*query.Canonical,
 	if last != "" {
 		page.SearchedTo = timeOfMessageID(last)
 	}
-	return answerMatch(ctx, page)
+	return p.answer(ctx)
+}
+
+// answer is the page, with what became of asking the model when an Asker
+// was set (ADR 0028, "What the page says"): off when one message was
+// AskOff, otherwise limit when one was AskLimit, otherwise asked.
+func (p *matchRun) answer(ctx context.Context) (*contracts.MatchPage, error) {
+	if p.askOK {
+		switch {
+		case p.off:
+			p.page.Model = contracts.MatchModelOff
+		case p.limit:
+			p.page.Model = contracts.MatchModelLimit
+		default:
+			p.page.Model = contracts.MatchModelAsked
+		}
+	}
+	return answerMatch(ctx, p.page)
 }
 
 // answerMatch is a page, unless the request's context ended while it was
@@ -222,13 +256,22 @@ func answerMatch(ctx context.Context, page *contracts.MatchPage) (*contracts.Mat
 	return page, nil
 }
 
-// matchRun is one page in progress: what it read and what it listed.
+// matchRun is one page in progress: what it read and what it listed, and
+// what became of asking the model.
 type matchRun struct {
 	mt              *storeMatcher
 	b               Box
 	fs              []*query.Canonical
 	page            *contracts.MatchPage
 	read, textReads int
+
+	asking Asking
+	askOK  bool
+	// asked is how many messages were asked about; off and limit whether one
+	// of them was AskOff or AskLimit; listed how many messages the page
+	// considered whole.
+	asked, listed int
+	off, limit    bool
 }
 
 // full reports whether the page has its limit of matches or of undecided
@@ -248,6 +291,9 @@ func (p *matchRun) consider(ctx context.Context, m *store.Message) (verdict, err
 	v, meta, err := p.classify(ctx, m)
 	if err != nil {
 		return verdictNone, err
+	}
+	if v != verdictStop {
+		p.listed++
 	}
 	switch v {
 	case verdictMatch:
@@ -272,9 +318,10 @@ func (p *matchRun) classify(ctx context.Context, m *store.Message) (verdict, *St
 	}
 	qm := QueryMessage(m, meta, nil, nil)
 	res := p.mt.eval(p.fs, qm, nil, query.ForQuery)
+	src := &textSource{p: p, m: m}
 	if meta.Unparsed {
 		// Nothing but the item is known of it, and no other source changes
-		// that.
+		// that; it is never asked about (ADR 0028, "What is never asked").
 		return p.verdictOf(res, qm), meta, nil
 	}
 	var entry *SearchEntry
@@ -282,20 +329,9 @@ func (p *matchRun) classify(ctx context.Context, m *store.Message) (verdict, *St
 		if p.read >= p.mt.bounds.read {
 			return verdictStop, meta, nil
 		}
-		p.read++
-		e, err := p.mt.r.st.GetEntry(ctx, boxPartition(p.b.MailboxID), KeySearch+m.ID)
-		switch {
-		case err == nil:
-			if se, ok := openSearchEntry(p.b, m.ID, e.Value); ok {
-				entry = &se.SearchEntry
-			}
-		case !errors.Is(err, store.ErrNotFound):
+		entry, err = p.readEntry(ctx, m)
+		if err != nil {
 			return verdictNone, meta, err
-		}
-		if entry == nil {
-			// Missing, or does not open: the body is read from the raw
-			// message, as a cut text's is.
-			entry = &SearchEntry{Cut: true}
 		}
 		qm = QueryMessage(m, meta, entry, nil)
 		res = p.mt.eval(p.fs, qm, nil, query.ForQuery)
@@ -321,8 +357,195 @@ func (p *matchRun) classify(ctx context.Context, m *store.Message) (verdict, *St
 		}
 		qm = QueryMessage(m, meta, entry, text)
 		res = p.mt.eval(p.fs, qm, nil, query.ForQuery)
+		src.raw = text
 	}
-	return p.verdictOf(res, qm), meta, nil
+	v := p.verdictOf(res, qm)
+	if v != verdictNeedsModel || !p.askOK {
+		return v, meta, nil
+	}
+	src.entry = entry
+	v, err = p.ask(ctx, m, meta, qm, res.Model, src)
+	return v, meta, err
+}
+
+// readEntry reads a message's search entry, counted in the page's reads:
+// one that is missing, or does not open, is a cut text with nothing in it,
+// so the body is read from the raw message.
+func (p *matchRun) readEntry(ctx context.Context, m *store.Message) (*SearchEntry, error) {
+	p.read++
+	e, err := p.mt.r.st.GetEntry(ctx, boxPartition(p.b.MailboxID), KeySearch+m.ID)
+	switch {
+	case err == nil:
+		if se, ok := openSearchEntry(p.b, m.ID, e.Value); ok {
+			return &se.SearchEntry, nil
+		}
+	case !errors.Is(err, store.ErrNotFound):
+		return nil, err
+	}
+	return &SearchEntry{Cut: true}, nil
+}
+
+// ask asks the request's Asker about a message that needs a model (ADR
+// 0028, "What the matcher does"), and lists it by the answers.
+func (p *matchRun) ask(ctx context.Context, m *store.Message, meta *StoredMeta, qm *query.Message, atoms []query.Atom, src *textSource) (verdict, error) {
+	if p.asked >= p.mt.bounds.asked {
+		return verdictStop, nil // the next page asks it
+	}
+	q := &Question{
+		Box: p.b, MessageID: m.ID, ExpiresAt: m.ExpiresAt, Account: p.asking.Account,
+		Atoms: slices.Clone(atoms), Subject: meta.Subject, View: ViewOriginal, Text: src.text,
+	}
+	actx, cancel := context.WithTimeout(ctx, decide.MessageDeadline)
+	asked, err := p.asking.Asker.Ask(actx, q)
+	src.close()
+	cancel()
+	if err != nil {
+		if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+			// The message's own deadline, not the request's: it was asked,
+			// and nothing came of it.
+			p.asked++
+			return verdictUnknown, nil
+		}
+		return verdictNone, err
+	}
+	if asked == nil {
+		asked = &Asked{Outcome: AskAnswered}
+	}
+	if asked.Outcome == AskStop {
+		if p.listed == 0 {
+			// The first message of a page has every read of a page left: an
+			// Asker that stops it anyway would stop every page there, so it
+			// is listed as unknown and the pages go on.
+			return verdictUnknown, nil
+		}
+		return verdictStop, nil // nothing was asked or spent: the next page reads it
+	}
+	p.asked++
+	switch asked.Outcome {
+	case AskOff:
+		p.off = true
+	case AskLimit:
+		p.limit = true
+	}
+	held := make(map[query.Atom]bool, len(asked.Held))
+	for _, a := range asked.Held {
+		held[a] = true
+	}
+	answers := make(query.Answers, len(asked.Answers))
+	for a, pr := range asked.Answers {
+		if !held[a] { // a held atom is unknown, whatever probability came with it
+			answers[a] = pr
+		}
+	}
+	res := p.mt.eval(p.fs, qm, answers, query.ForQuery)
+	switch res.Value {
+	case query.True:
+		return verdictMatch, nil
+	case query.False:
+		return verdictNone, nil
+	}
+	// Unknown: it needs a model only when the atoms held back, which a
+	// later page asks again, could still make it true; an atom left unknown
+	// for any other reason stays so.
+	var open []query.Atom
+	for _, a := range res.Model {
+		if held[a] {
+			open = append(open, a)
+		}
+	}
+	switch {
+	case len(open) == 0:
+		return verdictUnknown, nil
+	case len(open) > maxModelAtoms:
+		return verdictNeedsModel, nil
+	}
+	for bits := range 1 << len(open) {
+		for i, a := range open {
+			answers[a] = float64(bits >> i & 1)
+		}
+		if p.mt.eval(p.fs, qm, answers, query.ForQuery).Value == query.True {
+			return verdictNeedsModel, nil
+		}
+	}
+	return verdictUnknown, nil
+}
+
+// textSource is Question.Text for one message of a page (ADR 0028, "What
+// the matcher does"): the text the page already has (the raw message's,
+// read for a body condition, or the entry's when it was not cut); otherwise
+// the entry, read if the page has not yet, and when its text was cut the
+// raw message's, under its own grant, counted in MatchMaxTextReads and
+// given back before it returns. It reads once, and nothing once Ask
+// returned.
+type textSource struct {
+	p     *matchRun
+	m     *store.Message
+	entry *SearchEntry
+	raw   *RawText
+
+	mu     sync.Mutex
+	done   bool
+	closed bool
+	got    string
+	st     TextState
+	err    error
+}
+
+func (s *textSource) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+}
+
+func (s *textSource) text(ctx context.Context) (string, TextState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return "", TextUnaffordable, nil // the page has moved on
+	}
+	if !s.done {
+		s.got, s.st, s.err = s.read(ctx)
+		s.done = true
+	}
+	return s.got, s.st, s.err
+}
+
+func (s *textSource) read(ctx context.Context) (string, TextState, error) {
+	p := s.p
+	if s.raw != nil {
+		return s.raw.Text, TextRead, nil
+	}
+	if s.entry == nil {
+		if p.read >= p.mt.bounds.read {
+			return "", TextUnaffordable, nil
+		}
+		e, err := p.readEntry(ctx, s.m)
+		if err != nil {
+			return "", 0, err
+		}
+		s.entry = e
+	}
+	if !entryCut(s.entry) {
+		return s.entry.Text, TextRead, nil
+	}
+	if p.textReads >= p.mt.bounds.textReads {
+		return "", TextUnaffordable, nil
+	}
+	p.textReads++
+	var text string
+	err := p.mt.r.grantedRaw(ctx, p.b, s.m, func(raw []byte) {
+		text, _, _ = MessageText(ctx, raw, MessageTextMax)
+	})
+	switch {
+	case errors.Is(err, contracts.ErrNotFound), errors.Is(err, errRawTooLarge):
+		return "", TextUnavailable, nil
+	case err != nil:
+		return "", 0, err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", 0, err // the text may have been cut by the deadline
+	}
+	return text, TextRead, nil
 }
 
 // maxModelAtoms is how many unanswered atoms verdictOf tries every answer
