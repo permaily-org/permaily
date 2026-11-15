@@ -151,8 +151,11 @@ func TestQ12SimplificationKeepsTheMeaning(t *testing.T) {
 	t.Parallel()
 	r := querytest.New(12)
 	n, changed := 0, 0
-	for range generatedFormulas {
+	for i := range generatedFormulas {
 		f := r.Formula(5, 4)
+		if i%2 == 1 {
+			f = r.Respell(f) // as a vendor might spell it: repeated, reordered, in other cases and forms
+		}
 		c := canonOf(t, f)
 		if !sameShape(f, c.Formula) {
 			changed++

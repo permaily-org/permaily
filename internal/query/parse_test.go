@@ -349,31 +349,44 @@ func FuzzParse(f *testing.F) {
 		f.Add([]byte(s))
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
-		c, err := query.Parse(data, nil)
-		if err != nil {
-			var p *query.Problem
-			if !errors.As(err, &p) || !errors.Is(err, contracts.ErrInvalidFormula) {
-				t.Fatalf("a refusal that is not a Problem: %v", err)
-			}
-			return
-		}
-		b := jsonOf(c)
-		again, err := query.Parse([]byte(b), nil)
-		if err != nil {
-			t.Fatalf("the canonical form %s does not parse: %v", b, err)
-		}
-		if jsonOf(again) != b || again.ID != c.ID {
-			t.Fatalf("the canonical form %s parses to %s", b, jsonOf(again))
-		}
-		if c2, _ := query.Parse(data, nil); jsonOf(c2) != b || c2.ID != c.ID {
-			t.Fatalf("two parses of one input differ")
-		}
-		var f contracts.Formula
-		if err := json.Unmarshal([]byte(b), &f); err != nil {
-			t.Fatal(err)
-		}
-		if c3 := canonOf(t, f); jsonOf(c3) != b {
-			t.Fatalf("Canonicalise of the canonical form differs: %s", jsonOf(c3))
+		roundTrip(t, data)
+		// The same bytes as the value of every kind of condition, so that
+		// every normaliser is fuzzed through Parse too.
+		for _, vo := range [][2]string{{"subject", "contains"}, {"message", "about"}, {"from_address", "is"}, {"signed_by", "is"}, {"attachment_type", "is"}, {"list", "is"}, {"received", "since"}, {"size", "at_least"}, {"mailbox", "is"}} {
+			b, _ := json.Marshal(contracts.Formula{V: 1, All: []contracts.Group{{Any: []contracts.Condition{{Var: contracts.Variable(vo[0]), Op: contracts.Operator(vo[1]), Value: string(data)}}}}})
+			roundTrip(t, b)
 		}
 	})
+}
+
+// roundTrip parses data and, when it is accepted, checks that its canonical
+// form parses to itself and is deterministic.
+func roundTrip(t *testing.T, data []byte) {
+	t.Helper()
+	c, err := query.Parse(data, nil)
+	if err != nil {
+		var p *query.Problem
+		if !errors.As(err, &p) || !errors.Is(err, contracts.ErrInvalidFormula) {
+			t.Fatalf("a refusal that is not a Problem: %v", err)
+		}
+		return
+	}
+	b := jsonOf(c)
+	again, err := query.Parse([]byte(b), nil)
+	if err != nil {
+		t.Fatalf("the canonical form %s does not parse: %v", b, err)
+	}
+	if jsonOf(again) != b || again.ID != c.ID {
+		t.Fatalf("the canonical form %s parses to %s", b, jsonOf(again))
+	}
+	if c2, _ := query.Parse(data, nil); jsonOf(c2) != b || c2.ID != c.ID {
+		t.Fatalf("two parses of one input differ")
+	}
+	var f contracts.Formula
+	if err := json.Unmarshal([]byte(b), &f); err != nil {
+		t.Fatal(err)
+	}
+	if c3 := canonOf(t, f); jsonOf(c3) != b {
+		t.Fatalf("Canonicalise of the canonical form differs: %s", jsonOf(c3))
+	}
 }
