@@ -280,6 +280,54 @@ func (s *Service) List(ctx context.Context, c Caller) (*contracts.MailboxList, e
 	return out, nil
 }
 
+// Catalogue implements httpapi.MailboxesService: the mailboxes List shows,
+// in its order, read from the account's list and each one's record alone.
+// It reads no confirmations and, without names, no key and no settings; it
+// fences no reservation and takes nothing out of the list (List does that):
+// a reservation is not listed, and neither is a mailbox that is leaving or
+// whose record is another account's. With names, each readable one's label
+// and address are read, as List reads them.
+func (s *Service) Catalogue(ctx context.Context, c Caller, names bool) ([]Named, error) {
+	if _, err := s.standing(ctx, c.Account); err != nil {
+		return nil, err
+	}
+	out := []Named{}
+	list, _, err := s.loadList(ctx, c.Account)
+	if errors.Is(err, store.ErrNotFound) {
+		return out, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range list.Mailboxes {
+		l, err := s.load(ctx, e.ID)
+		if err != nil {
+			return nil, err
+		}
+		if (l.doc != nil && l.doc.Account != list.Account) || l.state == stNone || l.state.leaving() {
+			continue
+		}
+		n := Named{ID: e.ID}
+		if names && l.state == stActive {
+			key, err := s.mailboxKey(ctx, l)
+			if err != nil {
+				return nil, err
+			}
+			p, err := s.private(key, l)
+			if err != nil {
+				return nil, err
+			}
+			set, err := s.readSettings(ctx, l.id, key)
+			if err != nil {
+				return nil, err
+			}
+			n.Label, n.Address = set.label, p.Address
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
 // own is the caller's mailbox that is not leaving, as its slot: an active
 // record of the caller's, or an unreadable one the caller's list names.
 // contracts.ErrNotFound otherwise, the same for every reason.

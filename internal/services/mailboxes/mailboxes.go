@@ -87,6 +87,16 @@ type Caller struct {
 	ConfirmedUntil time.Time
 }
 
+// Named is one of an account's mailboxes as a formula names it (ADR 0027,
+// "The routes"): its identifier and, when Catalogue is asked for names, its
+// label and address, which a sentence calls it by. One whose record cannot
+// be read has neither, as List shows it.
+type Named struct {
+	ID      string
+	Label   string
+	Address string
+}
+
 // Standing is what decides which mailbox requests an account may make now
 // (ADR 0026, "Access while an account is closing or has not agreed").
 type Standing struct {

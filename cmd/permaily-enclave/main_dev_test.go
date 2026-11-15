@@ -1178,7 +1178,8 @@ func TestMailEndToEnd(t *testing.T) {
 	}
 	const app = "https://app.permaily.test"
 	fixed := map[string]bool{"no such endpoint": true, "internal error": true, "this request did not come from the app": true}
-	for _, e := range []*contracts.Error{contracts.ErrUnauthorized, contracts.ErrNotFound, contracts.ErrConfirmationNeeded, contracts.ErrInvalidQuery, contracts.ErrTooManyMessages} {
+	for _, e := range []*contracts.Error{contracts.ErrUnauthorized, contracts.ErrNotFound, contracts.ErrConfirmationNeeded, contracts.ErrInvalidQuery, contracts.ErrTooManyMessages,
+		contracts.ErrInvalidFormula, contracts.ErrInvalidLimit, contracts.ErrInvalidCursor} {
 		fixed[e.Message] = true
 	}
 	// A browser of its own for each person, whose requests go to one enclave
@@ -1230,7 +1231,7 @@ func TestMailEndToEnd(t *testing.T) {
 		out, _ := io.ReadAll(res.Body)
 		a := mailAnswer{code: res.StatusCode, header: res.Header, body: string(out)}
 		// What every answer of the mailbox routes keeps for the frame.
-		if strings.HasPrefix(path, "/api/v1/mailboxes") {
+		if strings.HasPrefix(path, "/api/v1/mailboxes") || strings.HasPrefix(path, "/api/v1/queries") {
 			if a.header.Get("X-Content-Type-Options") != "nosniff" {
 				t.Errorf("%s %s: no nosniff", method, path)
 			}
@@ -1477,6 +1478,45 @@ func TestMailEndToEnd(t *testing.T) {
 		t.Fatalf("after Bea: %+v", page)
 	}
 
+	// A formula (ADR 0027, "The routes", Q36): mail with a list, an
+	// attachment and a text past the 16 KiB of its search entry reaches Bea's
+	// mailbox; the check names her mailbox and writes the sentence, and the
+	// matches find it through the other enclave, reading its raw text.
+	news := "From: News <news@example.org>\r\nTo: " + beas.Address + "\r\nSubject: Quarterly news\r\nList-Id: The news <news.example.org>\r\n" +
+		"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n" +
+		"--b\r\nContent-Type: text/plain\r\n\r\n" + strings.Repeat("lorem ipsum dolor sit amet\r\n", 1<<10) + "walrus-4b1d\r\n" +
+		"--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"quarterly.pdf\"\r\n\r\n%PDF\r\n--b--\r\n"
+	if err := send(0, news, beas.Address); err != nil {
+		t.Fatal(err)
+	}
+	formula := `{"v":1,"all":[{"any":[{"var":"list","op":"is","value":"NEWS.example.org"}]},{"any":[{"var":"body","op":"contains","value":"Walrus-4b1d"}]},` +
+		`{"any":[{"var":"attachment_name","op":"contains","value":"quarterly"},{"var":"subject","op":"contains","value":"<script>\\\"x"}]},{"any":[{"var":"mailbox","op":"is","value":"` + beas.ID + `"}]}]}`
+	var check contracts.FormulaCheck
+	decode(call(bea, 0, "POST", "/api/v1/queries/check", `{"formula":`+formula+`}`), 200, &check)
+	if !strings.HasPrefix(check.ID, "qry_") || check.Model || check.Sentence.Lang != "en" || len(check.Sentence.Lines) != 4 ||
+		!strings.Contains(check.Sentence.Text, "your mailbox “Bea”") || !strings.Contains(check.Sentence.Text, `“<script>\\\"x”`) {
+		t.Fatalf("check: %+v", check)
+	}
+	if a := call(ana, 1, "POST", "/api/v1/queries/check", `{"formula":`+formula+`}`); a.code != 400 || !strings.Contains(a.body, `"details":{"at":"all[3].any[0].value","reason":"unknown_mailbox"}`) || strings.Contains(a.body, beas.ID) {
+		t.Fatalf("another account's mailbox: %d %s", a.code, a.body)
+	}
+	if a := call(bea, 1, "POST", "/api/v1/mailboxes/"+beas.ID+"/matches", `{"formula":{"v":1,"all":[{"any":[{"var":"subject","op":"contains","value":"inv\u043eice-4b1d"}]}]}}`); a.code != 400 ||
+		!strings.Contains(a.body, `"reason":"confusable_value"`) || strings.Contains(a.body, "4b1d") {
+		t.Fatalf("a confusable value: %d %s", a.code, a.body)
+	}
+	var matched contracts.MatchPage
+	decode(call(bea, 1, "POST", "/api/v1/mailboxes/"+beas.ID+"/matches", `{"formula":`+formula+`,"limit":10}`), 200, &matched)
+	if len(matched.Messages) != 1 || matched.Messages[0].Subject != "Quarterly news" || matched.Messages[0].Attachments != 1 || len(matched.NeedsModel) != 0 || len(matched.Unknown) != 0 {
+		t.Fatalf("matches: %+v", matched)
+	}
+	newsID := matched.Messages[0].ID
+	if a := call(ana, 0, "POST", "/api/v1/mailboxes/"+beas.ID+"/matches", `{"formula":`+formula+`}`); a.code != 404 {
+		t.Fatalf("Ana, Bea's matches: %d %s", a.code, a.body)
+	}
+	if a := call(newBrowser(), 1, "POST", "/api/v1/queries/check", `{"formula":`+formula+`}`); a.code != 401 {
+		t.Fatalf("a check without a session: %d", a.code)
+	}
+
 	// Deleting one, then many.
 	ids := []string{page.Messages[0].ID, page.Messages[1].ID, page.Messages[2].ID}
 	if a := call(ana, 0, "DELETE", base+"/messages/"+ids[0], ""); a.code != 204 {
@@ -1543,7 +1583,8 @@ func TestMailEndToEnd(t *testing.T) {
 		t.Fatalf("the log does not record the deliveries:\n%s", out)
 	}
 	for _, secret := range []string{"alice", "ana@", "bea@", "example.org", work.Address, home.Address, beas.Address, work.ID, home.ID, beas.ID, msg,
-		"Booking", "Friday", "zebra", "Receipt", "onerror", "evil", "script", started.Attempt} {
+		"Booking", "Friday", "zebra", "Receipt", "onerror", "evil", "script", started.Attempt,
+		"walrus", "Walrus", "quarterly", "Quarterly", "news", "NEWS", "4b1d", check.ID, check.ID[len("qry_"):], check.Sentence.Text, "your mailbox", newsID} {
 		if strings.Contains(out, secret) {
 			t.Fatalf("the log contains %q", secret)
 		}

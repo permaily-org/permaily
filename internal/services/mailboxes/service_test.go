@@ -963,3 +963,31 @@ func TestTheStoreNeverHoldsPlaintext(t *testing.T) {
 		}
 	}
 }
+
+// A list that names a mailbox whose record is another account's (a list
+// written over by an earlier copy, say) does not make it the caller's:
+// neither the catalogue, which a formula's mailboxes and a sentence's names
+// come from (ADR 0027), nor List names it, and the catalogue changes nothing.
+func TestAnotherAccountsMailboxInTheListIsNotNamed(t *testing.T) {
+	w := newWorld(t)
+	a := w.enclave()
+	me, other := caller("acc_me", w.clock), caller("acc_other", w.clock)
+	mine, theirs := a.mustCreate(t, me), a.mustCreate(t, other)
+	list := "mailboxes-acc_me"
+	at := w.clock.now().Format(time.RFC3339Nano)
+	w.commit(list, w.signed(list, `{"v":1,"account":"acc_me","state":"open","made":[],"mailboxes":[`+
+		`{"id":"`+mine.ID+`","rcpt":"x","added_at":"`+at+`"},{"id":"`+theirs.ID+`","rcpt":"y","added_at":"`+at+`"}]}`), nil)
+	named, err := a.Catalogue(ctx, me, true)
+	if err != nil || len(named) != 1 || named[0].ID != mine.ID || named[0].Label != "Work" || named[0].Address != mine.Address {
+		t.Fatalf("%+v %v", named, err)
+	}
+	if again, err := a.Catalogue(ctx, me, false); err != nil || len(again) != 1 || again[0] != (mailboxes.Named{ID: mine.ID}) {
+		t.Fatalf("%+v %v", again, err)
+	}
+	if l := listed(t, a, me); len(l) != 1 || l[0].ID != mine.ID {
+		t.Fatalf("%+v", l)
+	}
+	if l := listed(t, a, other); len(l) != 1 || l[0].ID != theirs.ID {
+		t.Fatalf("%+v", l)
+	}
+}

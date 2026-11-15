@@ -29,6 +29,7 @@ import (
 	"github.com/permaily-org/permaily/internal/msgauth"
 	"github.com/permaily-org/permaily/internal/nsm"
 	"github.com/permaily-org/permaily/internal/nsm/fakensm"
+	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
@@ -44,10 +45,12 @@ type platform struct {
 	smtpListener net.Listener
 	attester     nsm.Attester
 	certs        *tlsacme.Manager
-	// mailboxes is the mailboxes of accounts (ADR 0026), and reader reads
-	// their stored mail; nil without accounts.
+	// mailboxes is the mailboxes of accounts (ADR 0026), reader reads
+	// their stored mail and matcher evaluates formulas over it (ADR 0027);
+	// nil without accounts.
 	mailboxes *mailboxes.Service
 	reader    inbox.Reader
+	matcher   inbox.Matcher
 	// rootStatus describes the key that holds the root secret, and handoff
 	// gives the root secret to the next release; nil without a root secret.
 	rootStatus func(context.Context) (*attestation.RootStatus, error)
@@ -232,6 +235,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	}
 	p.accounts.SetMailboxes(p.mailboxes)
 	p.reader = inbox.NewReader(mem)
+	p.matcher = inbox.NewMatcher(mem, query.Eval)
 	port := cfg.smtpPort
 	if port == 25 {
 		port = 2525 // unprivileged default for local runs

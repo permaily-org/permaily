@@ -399,6 +399,7 @@ export type ApiErrorCode =
   | 'invalid_label'
   | 'invalid_retention'
   | 'invalid_query'
+  | 'invalid_formula'
   | 'too_many_messages'
   | 'mailbox_unreadable'
   | 'link_changed'
@@ -440,6 +441,7 @@ const known: ReadonlySet<string> = new Set([
   'invalid_label',
   'invalid_retention',
   'invalid_query',
+  'invalid_formula',
   'too_many_messages',
   'mailbox_unreadable',
   'link_changed',
@@ -448,11 +450,21 @@ const known: ReadonlySet<string> = new Set([
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode
-  constructor(code: ApiErrorCode) {
+  /** Where a refused formula was refused and why: only with `invalid_formula`, and only when the server said both. */
+  readonly problem?: FormulaProblem
+  constructor(code: ApiErrorCode, problem?: FormulaProblem) {
     super(code)
     this.name = 'ApiError'
     this.code = code
+    if (problem) this.problem = problem
   }
+}
+
+/** The `details` of an `invalid_formula` answer, when they have the shape of one: a path and a reason, both text. */
+function problemOf(details: unknown): FormulaProblem | undefined {
+  if (typeof details !== 'object' || details === null) return undefined
+  const { at, reason } = details as { at?: unknown; reason?: unknown }
+  return typeof at === 'string' && typeof reason === 'string' ? { at, reason } : undefined
 }
 
 /** The code of a failure, whatever was thrown. */
@@ -514,13 +526,17 @@ async function request<T>(
     }
   }
   let code: unknown
+  let details: unknown
   try {
-    code = (await response.json())?.error?.code
+    const error = (await response.json())?.error
+    code = error?.code
+    details = error?.details
   } catch {
     // An answer that is not the API's own, such as a proxy's error page.
   }
   if (code === 'account_closing') closingHeard?.()
   if (code === 'terms_needed' && response.status === 400) termsHeard?.()
+  if (code === 'invalid_formula') throw new ApiError('invalid_formula', problemOf(details))
   if (typeof code === 'string' && known.has(code)) throw new ApiError(code as ApiErrorCode)
   if (response.status === 401) throw new ApiError('unauthorized')
   if (response.status === 404) throw new ApiError('not_found')
@@ -1023,6 +1039,48 @@ export async function deleteMessages(mailbox: string, ids: string[]): Promise<nu
     { ids },
   )
   return typeof answer?.deleted === 'number' ? answer.deleted : 0
+}
+
+/**
+ * A formula's canonical form, its identifier and the sentence a person reads of it, naming the account's
+ * mailboxes (ADR 0027). A refusal is `invalid_formula` with its `problem`: where and why, never a value of it.
+ */
+export async function checkQuery(formula: QueryFormula): Promise<FormulaCheck> {
+  const answer = await request<Partial<FormulaCheck> | null>('POST', '/api/v1/queries/check', {
+    formula,
+  })
+  if (typeof answer?.id !== 'string' || typeof answer.sentence?.text !== 'string')
+    throw new ApiError('other')
+  return answer as FormulaCheck
+}
+
+/**
+ * A page of what a formula matches in one mailbox, newest first: the owner's own preview, never a vendor's result.
+ * Read the page's `next` to go on, even when it holds no message.
+ */
+export async function matches(
+  mailbox: string,
+  formula: QueryFormula,
+  page: { after?: string; limit?: number } = {},
+): Promise<MatchPage> {
+  const answer = await request<Partial<MatchPage> | null>(
+    'POST',
+    `${mailboxPath(mailbox)}/matches`,
+    {
+      formula,
+      ...(page.after ? { after: page.after } : {}),
+      limit: page.limit ?? messagesPerPage,
+    },
+  )
+  if (!Array.isArray(answer?.messages)) throw new ApiError('other')
+  const list = (value: unknown): string[] => (Array.isArray(value) ? value : [])
+  return {
+    messages: answer.messages,
+    needs_model: list(answer.needs_model),
+    unknown: list(answer.unknown),
+    ...(typeof answer.next === 'string' && answer.next !== '' ? { next: answer.next } : {}),
+    ...(typeof answer.searched_to === 'string' ? { searched_to: answer.searched_to } : {}),
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------

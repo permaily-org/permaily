@@ -75,7 +75,7 @@ jobs:
       - run: go test -race ./...
       - name: End to end in dev mode (SMTP to API)
         run: go test -race -tags dev ./cmd/permaily-enclave
-      - name: Fuzz the parsers (attestation, KMS policy, release bundles, CMS, mail, mail's HTML)
+      - name: Fuzz the parsers (attestation, KMS policy, release bundles, CMS, mail, mail's HTML, the query language)
         # A number of executions, not a duration: Go's fuzzer sometimes fails with
         # "context deadline exceeded" when a time limit ends mid-execution.
         run: |
@@ -102,6 +102,10 @@ jobs:
           go test -run='^$' -fuzz='^FuzzSanitise$' -fuzztime=100000x ./internal/mailhtml
           go test -run='^$' -fuzz='^FuzzCSS$' -fuzztime=1000000x ./internal/mailhtml
           go test -run='^$' -fuzz='^FuzzImageStructure$' -fuzztime=1000000x ./internal/mailhtml
+          go test -run='^$' -fuzz='^FuzzParse$' -fuzztime=300000x ./internal/query
+          go test -run='^$' -fuzz='^FuzzNormalise$' -fuzztime=500000x ./internal/query
+          go test -run='^$' -fuzz='^FuzzEval$' -fuzztime=200000x ./internal/query
+          go test -run='^$' -fuzz='^FuzzSentenceReadsBack$' -fuzztime=300000x ./internal/query
 
   # pkg/provenance verifies release bundles with the standard library, inside
   # the enclave. Here it must give the same answers as sigstore-go, which lives
