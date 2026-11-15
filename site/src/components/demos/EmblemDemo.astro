@@ -1,0 +1,333 @@
+---
+// Home, security: an emblem for each of four features, cut out of rows of sample mail, beside the list of
+// the features. The mail is one field that drifts to the left. Picking a feature changes only the shape
+// cut out of it: the outline melts from one emblem into the next, and the mail is never swapped and never
+// starts again.
+//   open source        a pair of code brackets
+//   self-hosted        a rack of servers
+//   verifiable builds  a seal with a check mark
+//   zero trust         a padlock
+// Like the tip of the hero's iceberg, the emblem is highlighted mail with nothing around it, built from
+// whole characters, so its outline steps along the letters. Its mail is drawn from attributes, not written
+// as text, so it is not part of the page's words.
+// The features take turns until one is picked. Only the one that shows says its piece.
+import { rowText, sharedOf } from '../../data/mail';
+import { FEATURES } from '../../data/security';
+import { between, EMBLEMS, ROWS, stretches } from '../../scripts/demos/emblems';
+
+const PER_ROW = 9;
+
+/** A number from 0 to 1 that a row keeps at every build. */
+const hash = (n: number) => {
+  const s = Math.sin(n * 127.1 + 11.7) * 43758.5453;
+  return s - Math.floor(s);
+};
+// The page is written with the first emblem whole, which is what a visitor without the script sees.
+const whole = between(null, EMBLEMS[FEATURES[0]!.key], 1);
+const rows = Array.from({ length: ROWS }, (_, r) => {
+  // The emblem is on the highlight, which says an app can read it, so it holds only mail an app asked for.
+  const text = rowText(sharedOf(r, PER_ROW));
+  // Characters a second, and the characters the row is ahead by when it starts.
+  const v = Number((0.45 + hash(r * 3.1)).toFixed(3));
+  const o = Math.floor(hash(r) * 200) % text.length;
+  // The row at the start: the stretches of its mail that are in the emblem, and the gaps before them.
+  const parts: { lit: boolean; text: string }[] = [];
+  let at = 0;
+  for (const [first, last] of stretches(whole, r)) {
+    if (first > at) parts.push({ lit: false, text: ' '.repeat(first - at) });
+    const mail = Array.from(
+      { length: last - first + 1 },
+      (_, c) => text[(o + first + c) % text.length],
+    );
+    parts.push({ lit: true, text: mail.join('') });
+    at = last + 1;
+  }
+  return { text, v, o, parts };
+});
+---
+
+<div class="trust" data-emblem>
+  <div class="stack trust-head"><slot /></div>
+  <div class="trust-list">
+    <ul class="feats" role="list">
+      {
+        FEATURES.map((feature, k) => (
+          <li>
+            <button class="feat" type="button" data-key={feature.key} aria-pressed={k === 0 ? 'true' : 'false'}>
+              <i class="bar" />
+              <span class="t">{feature.title}</span>
+              <span class="d">{feature.text}</span>
+            </button>
+          </li>
+        ))
+      }
+    </ul>
+    <slot name="more" />
+  </div>
+  <div class="em-col">
+    <div class="em-fit">
+      <figure
+        class="emblem demo"
+        data-demo="emblem"
+        aria-label="An emblem made of lines of highlighted mail that drift to the left, with nothing around it. It changes with the feature picked beside it: a pair of code brackets for open source, a rack of servers for self-hosted, a seal with a check mark for verifiable builds, and a padlock for zero trust. The mail is the same throughout. Only the emblem's outline moves."
+      >
+        {
+          rows.map((row) => (
+            <div class="em-row" data-t={row.text} data-v={row.v} data-o={row.o} aria-hidden="true">
+              {row.parts.map((part) => (
+                <i class={part.lit ? 'h' : undefined} data-t={part.text} />
+              ))}
+            </div>
+          ))
+        }
+      </figure>
+      <div class="demo-foot"><span></span><button class="demo-ctl">Replay</button></div>
+    </div>
+  </div>
+</div>
+
+<style is:global>
+  /* The section: its heading, and under it the features, beside the emblem. Where the two columns become
+     one, the emblem stands between the heading and the features, so that a feature and the emblem it
+     changes are seen together. */
+  .trust {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    grid-template-rows: auto 1fr;
+    gap: var(--space-20) clamp(32px, 5vw, 72px);
+  }
+
+  .trust-head {
+    grid-area: 1 / 1;
+  }
+
+  .trust-list {
+    grid-area: 2 / 1;
+    display: grid;
+    align-content: start;
+    gap: var(--space-20);
+  }
+
+  /* The emblem's type is sized from the column it stands in. */
+  .em-col {
+    grid-area: 1 / 2 / 3 / 3;
+    align-self: center;
+    container-type: inline-size;
+  }
+
+  /* The emblem and the control under it, as wide as the emblem. */
+  .em-fit {
+    width: fit-content;
+    margin-inline: auto;
+  }
+
+  @media (max-width: 980px) {
+    .trust {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: none;
+      row-gap: var(--space-32);
+    }
+
+    .trust-head,
+    .trust-list,
+    .em-col {
+      grid-area: auto;
+    }
+
+    .em-col {
+      order: 1;
+    }
+
+    .trust-list {
+      order: 2;
+    }
+  }
+
+  /* The features: a list of buttons. The one that shows is in ink, under a line that fills while it waits. */
+  .feats {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    border-bottom: var(--hair) solid var(--rule);
+    list-style: none;
+  }
+
+  .feat {
+    position: relative;
+    display: grid;
+    gap: var(--space-4);
+    width: 100%;
+    padding-block: var(--space-14) var(--space-16);
+    border-top: var(--hair) solid var(--rule);
+    color: var(--ink-3);
+    text-align: left;
+  }
+
+  .feat .t {
+    font-size: var(--text-title);
+    font-weight: 500;
+    line-height: var(--leading-snug);
+  }
+
+  .feat .d {
+    max-width: 34em;
+    font-size: var(--text-lead);
+    line-height: var(--leading-body);
+  }
+
+  /* Only the feature that shows says its piece. Without the script nothing can be picked, so all four do. */
+  .trust[data-ready] .feat:not([aria-pressed='true']) .d {
+    display: none;
+  }
+
+  .feat:hover .t,
+  .feat[aria-pressed='true'] .t {
+    color: var(--ink);
+  }
+
+  .feat[aria-pressed='true'] .d {
+    color: var(--ink-2);
+  }
+
+  /* The line over a feature. It is full over the one that shows. While that one waits its turn, the script
+     has the browser fill it from the left, which costs the page nothing. */
+  .feat .bar {
+    position: absolute;
+    inset: calc(-1 * var(--hair)) 0 auto;
+    height: 2px;
+    background: var(--ink);
+    transform: scaleX(0);
+    transform-origin: left;
+  }
+
+  .feat[aria-pressed='true'] .bar {
+    transform: scaleX(1);
+  }
+
+  /* The emblem: 18 rows of mail, and as wide as it is high. Nothing is drawn around it. While it is far
+     from the window the browser does not draw it at all, so its rows cost the page nothing until it comes
+     near. */
+  .emblem {
+    --lh: 17px;
+    overflow: hidden;
+    content-visibility: auto;
+    width: calc(18 * var(--lh));
+    height: calc(18 * var(--lh));
+    font-family: var(--font-mono);
+    font-size: 11.9px;
+    font-weight: 500;
+    line-height: var(--lh);
+    user-select: none;
+  }
+
+  .em-row {
+    position: relative;
+    display: flex;
+    height: var(--lh);
+  }
+
+  .em-row i,
+  .em-x {
+    flex: none;
+    font-style: normal;
+    white-space: pre;
+  }
+
+  .em-row i::before {
+    content: attr(data-t);
+  }
+
+  /* Mail in the emblem: the highlight, a hair short of the row so the rows read as lines, with its own
+     dark text. */
+  .em-row .h,
+  .em-x {
+    background: linear-gradient(var(--highlight), var(--highlight)) 0 1px / 100% calc(100% - 2px) no-repeat;
+    color: var(--on-highlight);
+  }
+
+  /* With the script, a row is one run that the browser moves by itself, and in it the row's mail, shown
+     through a window. The run moves and the mail is cut, so neither gets in the other's way. The mail is
+     there twice, so the run can move by one copy's length and look the same again. */
+  .em-run {
+    position: absolute;
+    inset: 0 auto 0 0;
+    will-change: transform;
+  }
+
+  .em-x {
+    display: block;
+    height: 100%;
+  }
+
+  .em-x::before {
+    content: attr(data-t) attr(data-t);
+  }
+
+  /* For a browser without container queries: one size for a narrow phone. */
+  @media (max-width: 380px) {
+    .emblem {
+      --lh: 15px;
+      font-size: 10.5px;
+    }
+  }
+
+  /* As large as its column lets it be, in steps. Each size is seven tenths of a whole number of pixels,
+     which is its row's height, so every row starts on a pixel and a character keeps its shape. */
+  @container (min-width: 320px) {
+    .emblem {
+      --lh: 17px;
+      font-size: 11.9px;
+    }
+  }
+
+  @container (min-width: 520px) {
+    .emblem {
+      --lh: 18px;
+      font-size: 12.6px;
+    }
+  }
+
+  @container (min-width: 580px) {
+    .emblem {
+      --lh: 19px;
+      font-size: 13.3px;
+    }
+  }
+
+  @container (min-width: 640px) {
+    .emblem {
+      --lh: 20px;
+      font-size: 14px;
+    }
+  }
+
+  /* Where the two columns are one, the column is as wide as the page, and the emblem keeps its middle size. */
+  @media (max-width: 980px) {
+    @container (min-width: 320px) {
+      .emblem {
+        --lh: 17px;
+        font-size: 11.9px;
+      }
+    }
+  }
+
+  @container (max-width: 319px) {
+    .emblem {
+      --lh: 15px;
+      font-size: 10.5px;
+    }
+  }
+
+  @container (max-width: 283px) {
+    .emblem {
+      --lh: 13px;
+      font-size: 9.1px;
+    }
+  }
+</style>
+
+<script>
+  import { initEmblem } from '../../scripts/demos/emblem';
+
+  document.querySelectorAll<HTMLElement>('[data-demo="emblem"]').forEach(initEmblem);
+</script>

@@ -30,8 +30,10 @@ const { title, body, primary, secondary } = Astro.props;
     padding-block: clamp(64px, 6.67vw, 96px);
   }
 
+  /* A title that takes two lines splits evenly, so no word is left alone on the second. */
   .cta .h-xl {
     margin-bottom: var(--space-20);
+    text-wrap: balance;
   }
 
   .cta .intro {

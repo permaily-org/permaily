@@ -48,6 +48,10 @@ export default defineConfig({
       },
     },
   },
+  // The "Sign up with Google" button takes Google's colours and font from the web app's folder for providers'
+  // marks (docs/design.md, "Providers' marks"), so the dev server may read that one folder beside its own.
+  // The build needs no such leave.
+  vite: { server: { fs: { allow: ['.', '../web/src/components/brands'] } } },
   integrations: [
     sitemap(),
     cspInlineHashes(),

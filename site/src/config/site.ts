@@ -20,6 +20,7 @@ export const LINKS = {
   login: `${APP}/sign-in`,
   docs: `${DOCS}/`,
   queries: `${DOCS}/queries/`,
+  remoteMcp: `${DOCS}/remote-mcp/`,
   selfHosting: `${DOCS}/self-hosting/`,
   trustModel: `${DOCS}/trust-model/`,
   verify: `${DOCS}/verifying-the-build/`,
