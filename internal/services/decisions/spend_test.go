@@ -924,3 +924,32 @@ func TestA17AnOlderAnswerNeverClearsANewerStop(t *testing.T) {
 		}
 	})
 }
+
+// A14. The boundary of the once-a-minute read (ADR 0028, "Choices made
+// while building pull request 2"): a fork made after this enclave's last
+// read of the month lets it go on spending from the credit it holds,
+// already confirmed, until spendCheck has passed; then it stops and burns
+// that credit. The stop is not instant; a new grant always reads the
+// record first, so none is made over the fork (the forked last block,
+// above).
+func TestA14AForkIsFoundWithinSpendCheck(t *testing.T) {
+	w := newWorld(t)
+	e := w.keyed()
+	if h := e.reserveOnce(1, ""); h != holdNone {
+		t.Fatal(h)
+	}
+	w.commits.Fork(RecordSpend+month, 1, sha256.Sum256([]byte("another append at the same version")))
+	w.advance(spendCheck - time.Second)
+	if h := e.reserveOnce(1, ""); h != holdNone {
+		t.Fatalf("held credit stopped before spendCheck: %v", h)
+	}
+	w.advance(time.Second)
+	if h := e.reserveOnce(1, ""); h != holdLimit {
+		t.Fatalf("the fork not found once spendCheck passed: %v", h)
+	}
+	e.guard.mu.Lock()
+	defer e.guard.mu.Unlock()
+	if len(e.guard.grants) != 0 {
+		t.Fatal("the held credit was not burnt")
+	}
+}
