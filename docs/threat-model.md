@@ -55,7 +55,7 @@ The host proxy only tunnels to:
 | `github.com:443`, `api.github.com:443` | Signing in with GitHub: the code for an access token, who holds it and their verified address |
 | `graph.facebook.com:443` | Signing in with Meta: the code for an access token, and who holds it |
 | `login.microsoftonline.com:443` | Signing in with Microsoft: the code for an ID token, and the keys it is signed with |
-| `api.openai.com:443` | The model (ADR 0028, designed, not built): OpenAI's Decisions API, for the conditions a model decides |
+| `api.openai.com:443` | The model (ADR 0028): OpenAI's Decisions API, for the conditions a model decides; allowed by the host and called by `internal/decide/openai`, which follows no redirect; not composed into the enclave yet (pull request 5) |
 
 ## Mail (F1)
 
