@@ -84,7 +84,8 @@ go test ./...
 go run -tags dev ./cmd/permaily-enclave -port 8443   # needs web/dist copied to internal/webui/dist for the SPA
 go run -tags dev ./cmd/permaily-enclave -port 8443   # SMTP on :2525 for mailboxes of accounts (ADR 0026); make them through the app
 go test -tags dev ./cmd/permaily-enclave             # whole service end to end
-# Dev mode has accounts on: make an invitation with scripts/invite.sh (PERMAILY_API, PERMAILY_ADMIN_TOKEN, -admin-token-sha256),
+# Dev mode has accounts on: make an invitation with scripts/invite.sh (PERMAILY_API, PERMAILY_ADMIN_TOKEN, -admin-token-sha256,
+# and PERMAILY_DEV_UNVERIFIED=1: dev mode has no attestation, and that sends without verifying to localhost or a .test name only),
 # and read the sign-in message, which is kept instead of sent, at https://app.<domain>:8443/dev/outbox (the notices are there too).
 # scripts/accounts.sh finds, blocks, unblocks, deletes and signs out, lists an account's mailboxes and finds, pauses
 # and resumes one; scripts/invite.sh list and revoke.

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { createHash, createPublicKey } from 'node:crypto'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -36,10 +36,45 @@ function openssl(...args: string[]) {
 
 // leaf makes a key and a certificate for 127.0.0.1 and localhost, signed by the test CA.
 function leaf(name: string) {
-  openssl('req', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes', '-keyout', `${name}.key`, '-subj', '/CN=127.0.0.1', '-out', `${name}.csr`)
-  writeFileSync(join(dir, `${name}.ext`), 'subjectAltName=IP:127.0.0.1,DNS:localhost\nextendedKeyUsage=serverAuth\n')
-  openssl('x509', '-req', '-in', `${name}.csr`, '-CA', 'ca.pem', '-CAkey', 'ca.key', '-CAcreateserial', '-days', '2', '-extfile', `${name}.ext`, '-out', `${name}.pem`)
-  return { cert: readFileSync(join(dir, `${name}.pem`), 'utf8'), key: readFileSync(join(dir, `${name}.key`), 'utf8') }
+  openssl(
+    'req',
+    '-newkey',
+    'ec',
+    '-pkeyopt',
+    'ec_paramgen_curve:P-256',
+    '-nodes',
+    '-keyout',
+    `${name}.key`,
+    '-subj',
+    '/CN=127.0.0.1',
+    '-out',
+    `${name}.csr`,
+  )
+  writeFileSync(
+    join(dir, `${name}.ext`),
+    'subjectAltName=IP:127.0.0.1,DNS:localhost\nextendedKeyUsage=serverAuth\n',
+  )
+  openssl(
+    'x509',
+    '-req',
+    '-in',
+    `${name}.csr`,
+    '-CA',
+    'ca.pem',
+    '-CAkey',
+    'ca.key',
+    '-CAcreateserial',
+    '-days',
+    '2',
+    '-extfile',
+    `${name}.ext`,
+    '-out',
+    `${name}.pem`,
+  )
+  return {
+    cert: readFileSync(join(dir, `${name}.pem`), 'utf8'),
+    key: readFileSync(join(dir, `${name}.key`), 'utf8'),
+  }
 }
 
 function serve(name: Seen['server'], tls: { cert: string; key: string }) {
@@ -50,8 +85,12 @@ function serve(name: Seen['server'], tls: { cert: string; key: string }) {
     async fetch(request) {
       const url = new URL(request.url)
       const body = await request.text()
-      seen.push({ server: name, request: `${request.method} ${url.pathname}${url.search}\n${JSON.stringify([...request.headers])}\n${body}` })
-      if (name === 'impostor') return Response.json({ error: { message: 'thanks' } }, { status: 200 })
+      seen.push({
+        server: name,
+        request: `${request.method} ${url.pathname}${url.search}\n${JSON.stringify([...request.headers])}\n${body}`,
+      })
+      if (name === 'impostor')
+        return Response.json({ error: { message: 'thanks' } }, { status: 200 })
       asked.push(`${request.method} ${url.pathname}${url.search}`)
       const answer = answers[`${request.method} ${url.pathname}`]
       if (!answer) return Response.json({ error: { message: 'no such endpoint' } }, { status: 404 })
@@ -62,7 +101,23 @@ function serve(name: Seen['server'], tls: { cert: string; key: string }) {
 
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), 'operator-scripts-'))
-  openssl('req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes', '-keyout', 'ca.key', '-subj', '/CN=Permaily test CA', '-days', '2', '-out', 'ca.pem')
+  openssl(
+    'req',
+    '-x509',
+    '-newkey',
+    'ec',
+    '-pkeyopt',
+    'ec_paramgen_curve:P-256',
+    '-nodes',
+    '-keyout',
+    'ca.key',
+    '-subj',
+    '/CN=Permaily test CA',
+    '-days',
+    '2',
+    '-out',
+    'ca.pem',
+  )
   const a = leaf('a')
   const b = leaf('b')
   attested = createHash('sha256')
@@ -527,7 +582,10 @@ describe('the token and secrets go only to the attested key', () => {
       ['accounts.sh', 'mailbox', 'pause', 'mbx_bbbbbbbbbbbbbbbbbbbbbbbbbb', '--yes'],
     ]) {
       seen = []
-      const { stdout, stderr, exit } = await runWith(impostorAPI, ...(args as [string, ...string[]]))
+      const { stdout, stderr, exit } = await runWith(
+        impostorAPI,
+        ...(args as [string, ...string[]]),
+      )
       // The impostor saw no request at all: the connection ends at its key.
       expect({ args, seen }).toEqual({ args, seen: [] })
       expect({ args, exit: exit !== 0 }).toEqual({ args, exit: true })
@@ -546,7 +604,10 @@ describe('the token and secrets go only to the attested key', () => {
       ['sigstore-trust-root.sh', '--send'],
     ]) {
       seen = []
-      const { stderr, exit } = await runWith({ STUB_VERIFY_FAILS: '1' }, ...(args as [string, ...string[]]))
+      const { stderr, exit } = await runWith(
+        { STUB_VERIFY_FAILS: '1' },
+        ...(args as [string, ...string[]]),
+      )
       expect({ args, exit: exit !== 0 }).toEqual({ args, exit: true })
       expect({ args, seen }).toEqual({ args, seen: [] })
       expect(stderr).toContain('PCR0 does not match')
@@ -572,9 +633,41 @@ describe('the token and secrets go only to the attested key', () => {
     )
   })
 
+  test('an enclave in dev mode, which cannot be verified, is reached only on a name that is never production', async () => {
+    answers = { 'GET /v1/admin/invitations': { status: 200, body: { invitations: [] } } }
+    rmSync(join(dir, 'verify-runs'), { force: true })
+    const dev = await runWith(
+      { PERMAILY_DEV_UNVERIFIED: '1', STUB_VERIFY_FAILS: '1' },
+      'invite.sh',
+      'list',
+    )
+    expect(dev.exit).toBe(0)
+    expect(dev.stderr).toContain('Not verified (PERMAILY_DEV_UNVERIFIED)')
+    for (const api of [
+      'https://api.permaily.com',
+      'https://api.permaily.com:443/',
+      'https://test.example.com',
+      'https://localhost.example.com',
+      'https://127.0.0.1.example.com',
+    ]) {
+      seen = []
+      const out = await runWith(
+        { PERMAILY_DEV_UNVERIFIED: '1', PERMAILY_API: api },
+        'invite.sh',
+        'list',
+      )
+      expect({ api, exit: out.exit }).toEqual({ api, exit: 2 })
+      expect(out.stderr).toContain('Nothing was sent')
+    }
+    expect(() => readFileSync(join(dir, 'verify-runs'))).toThrow()
+  })
+
   test('a plain http address is refused before anything is sent', async () => {
     seen = []
-    const { exit } = await runWith({ PERMAILY_API: `http://127.0.0.1:${enclave.port}` }, 'accounts.sh')
+    const { exit } = await runWith(
+      { PERMAILY_API: `http://127.0.0.1:${enclave.port}` },
+      'accounts.sh',
+    )
     expect(exit).toBe(2)
     expect(seen).toEqual([])
   })
@@ -614,4 +707,39 @@ describe('the token and secrets go only to the attested key', () => {
     expect(out.stderr).toContain('client_id is required')
     expect(out.stderr).not.toContain('\u001b')
   })
+})
+
+test('every request that carries the admin token goes through enclave_curl, after attest', () => {
+  const scripts = readdirSync(import.meta.dir).filter(
+    (f) => f.endsWith('.sh') && f !== 'attested.sh',
+  )
+  const carriers = []
+  for (const name of scripts) {
+    const text = readFileSync(join(import.meta.dir, name), 'utf8')
+    // One command a line: continuations joined.
+    const commands = text.replace(/\\\n/g, ' ').split('\n')
+    const sending = commands.filter((c) => c.includes('Authorization'))
+    if (sending.length === 0) continue
+    carriers.push(name)
+    for (const command of sending) {
+      expect({
+        name,
+        command,
+        pinned:
+          /\benclave_curl\b/.test(command) &&
+          !/(^|[^_])\bcurl\b(?!_)/.test(command.replace(/enclave_curl/g, '')),
+      }).toEqual({ name, command, pinned: true })
+    }
+    expect({
+      name,
+      sources: text.includes('source "$(dirname "$0")/attested.sh"') && /^\s*attest$/m.test(text),
+    }).toEqual({ name, sources: true })
+  }
+  expect(carriers.sort()).toEqual([
+    'accounts.sh',
+    'handoff.sh',
+    'invite.sh',
+    'provider.sh',
+    'sigstore-trust-root.sh',
+  ])
 })

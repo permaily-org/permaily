@@ -22,6 +22,8 @@ For each host, `permaily-verify`:
 7. Checks that the document's `user_data` equals `sha256(SubjectPublicKeyInfo)` of the TLS certificate presented on the same connection. This proves the TLS session ends inside the attested enclave.
 8. Reads `GET /status` over a connection with that same TLS key and checks the KMS key that locks the root secret everything stored is sealed under (below). When the enclave sends mail of its own, it also checks who else SES would give a copy to (below). When it has accounts, it prints what the operator did to them through the enclave, and fails on nothing (below).
 
+The operator's scripts hold themselves to the same rule before they send the admin token or a secret (ADR 0028): each runs `permaily-verify -json` against the enclave first, in the same run, takes the attested key (`tls_spki_sha256` of the host) and sends every request only with that key (`curl --pinnedpubkey`), with the CA and hostname checks as well and no redirects. If the enclave does not verify, nothing is sent. A server with another valid certificate for the name gets no request.
+
 ## Who can read stored mail
 
 Stored mail is sealed under a root secret that only enclaves hold, locked for each image by a KMS key of its own. The verifier checks that key ([The root secret](#the-root-secret)): only the image you verified can use it, and nobody can change that. So there is no list of allowed images to watch, and an upgrade does not open anything: the running enclave hands the root secret to the next release itself, after checking that it is a public one.
