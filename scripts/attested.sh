@@ -36,10 +36,13 @@
 #                     build (scripts/release-image.sh <tag> <dir>, or
 #                     scripts/verify.sh): what the enclave must measure
 #   PERMAILY_RELEASE  the tag of that release. The verifier is built from the
-#                     commit that release's build provenance names (below);
-#                     without PERMAILY_PCRS it also downloads the release's
-#                     pcrs.json from GitHub (weaker: trusts CI, as -release
-#                     does). Set both for the strongest check.
+#                     commit that release's build provenance names (below).
+#                     Without PERMAILY_PCRS, the release's pcrs.json is
+#                     downloaded once, authenticated by that provenance, and
+#                     that same file is what the verifier checks (-pcrs; never
+#                     -release, which would download it again): weaker than
+#                     your own build, as it trusts CI. Set both for the
+#                     strongest check; PERMAILY_PCRS, given, is what is checked.
 #   PERMAILY_VERIFY   permaily-verify binary; used as it is, whatever else is set
 #   PERMAILY_CA_FILE  extra CA certificate, for a staging image
 #   PERMAILY_DEV_UNVERIFIED=1
@@ -56,15 +59,22 @@
 # for a named release it is built from the commit that the release's pcrs.json
 # build provenance names (gh attestation verify, for permaily-org/permaily, its
 # release workflow and main), when the release's tag at
-# github.com/permaily-org/permaily names that same commit, fetched by that
-# commit from there; never a tag here or at origin. Without gh, or offline, or
-# for a tag with no release, nothing is built: set PERMAILY_VERIFY. Without
-# PERMAILY_VERIFY or PERMAILY_RELEASE it is built from this checkout, with a
-# warning: that trusts the checkout, uncommitted changes included, to be the
-# running release's source.
+# github.com/permaily-org/permaily names that same commit; never a tag here or
+# at origin. That commit is fetched by its id from there into a new private
+# repository in $work and checked out there: nothing of this checkout is used
+# (its objects, replacement refs, hooks, configuration or attributes), no GIT_*
+# variable reaches git, replacement objects are off, and the checkout reads no
+# git configuration at all; only the fetch reads yours (a proxy, a mirror),
+# since what it brings is checked by its id. It is compiled with a fixed Go
+# environment (verifier_build). Without gh, or offline, or for a tag with no
+# release, nothing is built: set PERMAILY_VERIFY. Without PERMAILY_VERIFY or
+# PERMAILY_RELEASE it is built from this checkout, with a warning: that trusts
+# the checkout, uncommitted changes included, to be the running release's
+# source. None of this defends against a compromised go, git or system: they
+# are trusted, as is the operator's computer.
 #
-# The caller sets its EXIT trap to attested_cleanup, which removes $work and
-# the verifier's temporary worktree when a run stops while it builds.
+# The caller sets its EXIT trap to attested_cleanup, which removes $work (and
+# with it the verifier's private repository) when a run stops.
 
 # The repository whose release workflow, on main, builds every release.
 release_repository=permaily-org/permaily
@@ -72,7 +82,7 @@ release_url=https://github.com/$release_repository
 
 # What attest sets, cleared first: nothing of it comes from the environment.
 pin="" attested_key="" unverified_dev="" verifier="" enclave_ca="" enclave_host="" enclave_port=""
-release_tag="" release_commit="" verifier_root="" verifier_source=""
+release_tag="" release_commit="" release_file=""
 dev_route=()
 
 # attest checks $api, runs permaily-verify against it and sets $pin, the
@@ -100,7 +110,11 @@ attest() {
   if [[ -n ${PERMAILY_PCRS:-} ]]; then
     measured=(-pcrs "$PERMAILY_PCRS")
   elif [[ -n ${PERMAILY_RELEASE:-} ]]; then
-    measured=(-release "$PERMAILY_RELEASE")
+    # The release's pcrs.json, authenticated by its build provenance, and those
+    # very bytes are what the verifier checks: -release would download it again,
+    # and what it got then is what nothing authenticated.
+    release_pcrs "$PERMAILY_RELEASE" "$work/release"
+    measured=(-pcrs "$release_file")
   else
     echo "Nothing is sent before the enclave at $api is verified, and that needs what it must measure:" >&2
     echo "set PERMAILY_PCRS to the pcrs.json of the release it runs (scripts/release-image.sh <tag> <dir> leaves it in <dir>)," >&2
@@ -190,8 +204,8 @@ attest_dev() {
 }
 
 # enclave_verifier sets $verifier: PERMAILY_VERIFY, or permaily-verify built
-# with go from the commit PERMAILY_RELEASE's build provenance names (in a
-# temporary git worktree, removed after), or from this checkout.
+# from the commit PERMAILY_RELEASE's build provenance names (in a private
+# repository in $work), or from this checkout.
 enclave_verifier() {
   if [[ -n ${PERMAILY_VERIFY:-} ]]; then
     verifier=$PERMAILY_VERIFY
@@ -210,43 +224,83 @@ enclave_verifier() {
     exit 2
   fi
   verifier=$work/permaily-verify
-  local source=$root status=0
+  local source=$root
   if [[ -n $tag ]]; then
-    # The commit the release's provenance names; handoff.sh has it already for <running>.
+    # The commit the release's provenance names; attest or handoff.sh may have it already.
     [[ $release_tag == "$tag" && -n $release_commit ]] || release_pcrs "$tag" "$work/release"
     local commit=$release_commit
-    # A commit is its content: one here is the same as the repository's. If it
-    # is not here, it is fetched by its id from the repository, not from origin.
-    if ! git -C "$root" cat-file -e "$commit^{commit}" 2>/dev/null; then
-      git -C "$root" fetch -q --no-tags --no-write-fetch-head "$release_url" "$commit" || {
-        echo "Could not fetch commit $commit, the source of $tag, from $release_url. Nothing was sent." >&2
-        exit 2
-      }
-    fi
     source=$work/verifier-source
-    verifier_root=$root verifier_source=$source
-    git -C "$root" worktree add -q --detach "$source" "$commit" || {
-      echo "Could not check out commit $commit, the source of $tag. Nothing was sent." >&2
+    verifier_checkout "$commit" "$source" || {
+      echo "Could not fetch and check out commit $commit, the source of $tag, from $release_url. Nothing was sent." >&2
       exit 2
     }
-    if [[ $(git -C "$source" rev-parse HEAD) != "$commit" ]]; then
-      echo "The checkout of $tag's source is not commit $commit. Nothing was sent." >&2
-      exit 2
-    fi
   else
     echo "permaily-verify is built from this checkout ($(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo "not a git checkout")), uncommitted changes included: it must be the source of the release the enclave runs, or its Sigstore check refuses that release, and you trust it as that source. Set PERMAILY_RELEASE to the release's tag to build the source its build provenance names, or PERMAILY_VERIFY." >&2
   fi
-  # Without VCS stamping, which fails in a git worktree and the verifier does not read.
-  go build -C "$source" -buildvcs=false -o "$verifier" ./cmd/permaily-verify || status=$?
-  if [[ $source != "$root" ]]; then
-    git -C "$root" worktree remove --force "$source" || true
-    verifier_source=""
-  fi
-  if [[ $status -ne 0 ]]; then
+  verifier_build "$source" "$verifier" || {
     echo "Could not build permaily-verify${tag:+ of $tag}. Nothing was sent." >&2
     exit 2
-  fi
+  }
   [[ -z $tag ]] || echo "permaily-verify built from commit $commit, the source of $tag by its build provenance." >&2
+}
+
+# release_git [--no-config] <git arguments> runs git with no GIT_* variable from
+# the environment (none can point it at another repository, index, worktree,
+# object store or configuration), replacement objects off, no hook and no
+# prompt. With --no-config it reads no configuration file either (system,
+# global, an attributes file): only the repository's own, which is ours.
+release_git() {
+  (
+    for name in $(compgen -e); do
+      case $name in GIT_*) unset "$name" ;; esac
+    done
+    export GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0
+    if [[ $1 == --no-config ]]; then
+      shift
+      export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+      set -- -c core.attributesFile=/dev/null "$@"
+    fi
+    exec git --no-replace-objects -c core.hooksPath=/dev/null "$@"
+  )
+}
+
+# verifier_checkout <commit> <dir> fetches <commit> by its id from the
+# repository into a new repository at <dir> and checks it out there, so <dir>
+# holds exactly that commit's tree. A working tree, not git archive: the files
+# are what a checkout of the commit writes, as in the release workflow, the
+# commit's own .gitattributes applied and nothing else (archive would also
+# apply its export-ignore and export-subst); no filter runs, as no
+# configuration is read to define one; and the new repository has no hook,
+# attributes file or replacement ref. What arrives is checked by its object id.
+verifier_checkout() {
+  local commit=$1 dir=$2
+  mkdir "$dir" &&
+    release_git --no-config init -q --template= "$dir" &&
+    release_git -C "$dir" fetch -q --depth=1 --no-tags "$release_url" "$commit" &&
+    release_git --no-config -C "$dir" -c advice.detachedHead=false checkout -q --detach "$commit" &&
+    [[ $(release_git --no-config -C "$dir" rev-parse HEAD) == "$commit" ]] || return 1
+}
+
+# verifier_build <source> <out> compiles permaily-verify in a fixed Go
+# environment, so nothing outside <source> changes what is compiled: no GO* or
+# CGO_* variable is kept but where go keeps its caches and modules (GOPATH,
+# GOMODCACHE, GOCACHE, GOTMPDIR) and GOPROXY (go.sum checks every module); no
+# go.env file (GOENV=off), so no GOFLAGS: no -overlay, -modfile or -toolexec;
+# no workspace (GOWORK=off); GOTOOLCHAIN=auto, so go.mod's toolchain line
+# applies (an older go downloads that one, checked against the checksum
+# database); no cgo, as the release builds it; -trimpath; and no VCS stamp,
+# which the verifier does not read.
+verifier_build() {
+  (
+    for name in $(compgen -e); do
+      case $name in
+        GOPATH | GOMODCACHE | GOCACHE | GOTMPDIR | GOPROXY) ;;
+        GO* | CGO_*) unset "$name" ;;
+      esac
+    done
+    export GOENV=off GOWORK=off GOTOOLCHAIN=auto CGO_ENABLED=0
+    exec go build -C "$1" -trimpath -buildvcs=false -o "$2" ./cmd/permaily-verify
+  )
 }
 
 # release_tag_format refuses what is not a release's tag (or empty), before it
@@ -261,14 +315,16 @@ release_tag_format() {
 # release_pcrs <tag> <dir> downloads the release's pcrs.json into <dir> and
 # authenticates it: GitHub's build provenance for it, made by the release
 # workflow of permaily-org/permaily on main (gh attestation verify). It sets
-# $release_commit to the source commit that provenance names, which must be
-# the one the release's tag names at github.com/permaily-org/permaily (the
-# release workflow tags the commit it built), and $release_tag. It exits when
-# any of that cannot be had: nothing is sent then.
+# $release_file to that file (the one to verify against: it is never
+# downloaded again), $release_commit to the source commit that provenance
+# names, which must be the one the release's tag names at
+# github.com/permaily-org/permaily (the release workflow tags the commit it
+# built), and $release_tag. It exits when any of that cannot be had: nothing is
+# sent then.
 release_pcrs() {
   local tag=$1 dir=$2
   release_tag_format "$tag"
-  release_tag="" release_commit=""
+  release_tag="" release_commit="" release_file=""
   local without="Set PERMAILY_VERIFY to a permaily-verify binary you trust as $tag's. Nothing was sent."
   if ! command -v gh >/dev/null; then
     echo "No gh, to authenticate $tag's build provenance before building its verifier. $without" >&2
@@ -296,7 +352,7 @@ release_pcrs() {
     exit 2
   fi
   local refs tagged
-  refs=$(git ls-remote "$release_url" "refs/tags/$tag" "refs/tags/$tag^{}") || {
+  refs=$(release_git ls-remote "$release_url" "refs/tags/$tag" "refs/tags/$tag^{}") || {
     echo "Could not read tag $tag at $release_url. $without" >&2
     exit 2
   }
@@ -307,19 +363,13 @@ release_pcrs() {
     echo "Tag $tag at $release_url names ${tagged:-no commit}, but the build provenance of $tag names $(tr '\n' ' ' <<< "$attested")and nothing else. $without" >&2
     exit 2
   fi
-  release_tag=$tag release_commit=$tagged
+  release_tag=$tag release_commit=$tagged release_file=$dir/pcrs.json
 }
 
-# attested_cleanup is the caller's EXIT trap: it removes the verifier's
-# worktree when the run stopped while it was there, and $work.
+# attested_cleanup is the caller's EXIT trap: it removes $work, the verifier's
+# private repository with it.
 attested_cleanup() {
-  if [[ -n $verifier_source ]]; then
-    git -C "$verifier_root" worktree remove --force "$verifier_source" 2>/dev/null || true
-  fi
   rm -rf "$work"
-  if [[ -n $verifier_root ]]; then
-    git -C "$verifier_root" worktree prune 2>/dev/null || true
-  fi
 }
 
 # load_token sets $token: PERMAILY_ADMIN_TOKEN, or ~/.config/permaily/admin-token.
