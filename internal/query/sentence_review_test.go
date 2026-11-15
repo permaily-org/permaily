@@ -1,14 +1,11 @@
 package query
 
 import (
-	"errors"
 	"fmt"
 	"testing"
 	"unicode"
 
 	"golang.org/x/net/idna"
-
-	"github.com/permaily-org/permaily/internal/contracts"
 )
 
 // The code review of pull request 2 (the sentence). Every expected sentence
@@ -199,20 +196,10 @@ func TestReviewTheReaderFindsEveryReading(t *testing.T) {
 	}
 }
 
-// Q43: a local part with a Cyrillic а among Latin letters is refused at
-// Parse, so it never reaches a sentence.
-func TestReviewAMixedScriptLocalPartIsRefused(t *testing.T) {
-	_, err := Parse([]byte(`{"v":1,"all":[{"any":[{"var":"from_address","op":"is","value":"inv\u043eice@example.com"}]}]}`), nil)
-	var p *Problem
-	if !errors.As(err, &p) || p.Reason != contracts.FormulaConfusableValue {
-		t.Fatalf("got %v", err)
-	}
-}
-
 // Finding 3, domains: a Unicode form that would hold an invisible character
 // is never shown; the domain reads in ASCII.
 func TestReviewADomainNeverShowsAnInvisibleCharacter(t *testing.T) {
-	for _, label := range []string{"a͏b", "a⠀b", "aㅤb", "a️b", "a­b", "a​b"} {
+	for _, label := range []string{"a\u034fb", "a\u2800b", "a\u3164b", "a\ufe0fb", "a\u00adb", "a\u200bb"} {
 		ascii, err := idna.Punycode.ToASCII(label)
 		if err != nil {
 			t.Fatal(err)

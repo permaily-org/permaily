@@ -13,9 +13,9 @@ import (
 // canonical values, and values a Canonical built by hand may hold.
 const generated = 2000
 
-// Q21: injective. The sentence of every generated formula, in its plain text
-// and in its parts, is read back as that formula and as no other; for every
-// language with a table; with two mailboxes of the formulas outside the
+// Q21: injective. The sentence of every generated formula, canonical and
+// built by hand, in its plain text and in its parts, is read back as that
+// formula and as no other; for every language with a table; with two mailboxes of the formulas outside the
 // context, which read back as two.
 func TestNoTwoFormulasReadAlike(t *testing.T) {
 	for tag := range languages {
@@ -23,7 +23,7 @@ func TestNoTwoFormulasReadAlike(t *testing.T) {
 			g := newGen(21, hostile)
 			disconnected := map[string]bool{}
 			for range generated {
-				f, c := g.formula(), g.context()
+				f, c := g.next(), g.context()
 				c.Lang = tag
 				readsBack(t, f, c)
 				for _, grp := range f.Formula.All {
@@ -179,7 +179,7 @@ func TestTheLongestSentenceIsUnder100KiB(t *testing.T) {
 	}
 	g := newGen(43, false)
 	for range generated {
-		if s := Render(g.formula(), g.context()); len(s.Text) >= sentenceMax {
+		if s := Render(g.canonical(), g.context()); len(s.Text) >= sentenceMax {
 			t.Fatalf("%d bytes", len(s.Text))
 		}
 	}
@@ -242,7 +242,7 @@ func TestTheReaderRefusesWhatRenderDoesNotWrite(t *testing.T) {
 // the plain text and from the parts.
 func FuzzSentenceReadsBack(f *testing.F) {
 	f.Add(uint8(0), uint8(5), true, "a”, or b", `\“`, "Work")
-	f.Add(uint8(12), uint8(16), false, "2026-01-01T00:00:00Z", "x‮", "")
+	f.Add(uint8(12), uint8(16), false, "2026-01-01T00:00:00Z", "x\u202e", "")
 	f.Add(uint8(9), uint8(1), true, "application/x.", "xn--bcher-kva.example", "”")
 	f.Fuzz(func(t *testing.T, k1, k2 uint8, neg bool, v1, v2, label string) {
 		c := func(k uint8, v string) contracts.Condition {

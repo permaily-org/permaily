@@ -40,10 +40,10 @@ func escapedQuote(r rune) bool {
 // printable code point that shows as itself, distinctly. White space other
 // than U+0020, U+2800 (a blank Braille pattern), the Hangul fillers U+115F,
 // U+1160, U+3164 and U+FFA0, and every default-ignorable code point read as
-// a gap or as nothing, so a person could not tell "a⠀b" from "a b"; they
-// and anything not printable, which only a value that was not normalised
-// holds, are written as \u{hex}, so they can neither hide nor reorder the
-// words around them.
+// a gap or as nothing, which a person cannot tell from a space; they, and
+// anything not printable, which only a value that was not normalised holds,
+// are written as \u{hex}, so they can neither hide nor reorder the words
+// around them.
 func shownAsIs(r rune) bool {
 	switch {
 	case r == ' ':

@@ -12,15 +12,16 @@ import (
 	"github.com/permaily-org/permaily/internal/contracts"
 )
 
-// Generators of canonical formulas for the sentence's tests, adversarial in
-// their values: labels and values that are the templates' own words, quotes
+// Generators of formulas for the sentence's tests, adversarial in their
+// values: labels and values that are the templates' own words, quotes
 // escaped and not, backslashes, right-to-left text, the longest values, and
-// two mailboxes the context does not have. They build a Canonical by hand,
-// as ADR 0027 ("What truly runs in parallel") lets pull request 2 do until
-// querytest's generators (pull request 1) merge; switching to those is a
-// follow-up. Render needs no canonical order or simplification to be read
-// back, so these draw any formula within the limits whose conditions have a
-// template.
+// two mailboxes the context does not have. Formulas over querytest's
+// universe, canonicalised, are read back by sentence_querytest_test.go;
+// querytest's values are chosen to collide in meaning, not to be read as a
+// sentence's words, so these add the values that are. canonical gives them as
+// Canonicalise writes them, the formulas a sentence is written from; formula
+// builds a Canonical by hand, which may hold what normalisation refuses, and
+// which Render must still write so that no two read alike.
 
 // The mailboxes of the generated formulas: the context has the first three,
 // and the last two are disconnected.
@@ -290,4 +291,23 @@ func (g *gen) formula() *Canonical {
 		f.All = append(f.All, grp)
 	}
 	return &Canonical{Formula: f}
+}
+
+// canonical is a generated formula as Canonicalise writes it, with the
+// adversarial values normalisation accepts; one it refuses is drawn again.
+func (g *gen) canonical() *Canonical {
+	for {
+		if c, err := Canonicalise(g.formula().Formula); err == nil {
+			return c
+		}
+	}
+}
+
+// next is a formula of the generator's kind: canonical, or built by hand
+// with values past what normalisation leaves.
+func (g *gen) next() *Canonical {
+	if g.hostile {
+		return g.formula()
+	}
+	return g.canonical()
 }

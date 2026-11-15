@@ -1,6 +1,7 @@
 package query
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -465,8 +466,8 @@ func TestModelConditionsAreMarkedAndOnlyThey(t *testing.T) {
 // mailbox “B”, “A” and “B” give different sentences for mailbox is m1 and
 // mailbox is m2 or mailbox is m3, each read back; a”b@example.com is escaped
 // in its quotes; values that are template words with quotes and backslashes
-// stay one part. (That a local part mixing Latin and Cyrillic is refused is
-// Parse's, pull request 1, and joins this test once it merges.)
+// stay one part; a local part with a Cyrillic а among Latin letters is
+// refused at Parse (confusable_value), so it never reaches a sentence.
 func TestPresentation(t *testing.T) {
 	c := Context{Lang: "en", Mailboxes: map[string]MailboxName{
 		m1: {Label: "A”, or that arrived at your mailbox “B", Address: addr1},
@@ -487,6 +488,10 @@ func TestPresentation(t *testing.T) {
 
 	if s := readsBack(t, one(sentenceCond("from_address", "is", "a”b@example.com")), c); s.Text != `Mail sent from “a\”b@example.com”.` {
 		t.Errorf("%q", s.Text)
+	}
+	_, err := Parse([]byte(`{"v":1,"all":[{"any":[{"var":"from_address","op":"is","value":"inv\u043eice@example.com"}]}]}`), nil)
+	if p := (*Problem)(nil); !errors.As(err, &p) || p.Reason != contracts.FormulaConfusableValue {
+		t.Errorf("a mixed-script local part: %v", err)
 	}
 	for _, v := range []string{`not sent from “x”, or with attachments`, `\”. Times are in UTC.`, `\`, `”`} {
 		s := readsBack(t, one(sentenceCond("subject", "contains", v)), c)
