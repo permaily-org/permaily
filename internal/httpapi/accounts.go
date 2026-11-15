@@ -13,6 +13,7 @@ import (
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/idp"
+	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/services/accounts"
 )
 
@@ -132,8 +133,13 @@ const DeviceCookie = "__Host-permaily-device"
 
 // failed answers a request with the error of a service. An error a caller
 // can act on goes out with its code; anything else is logged and answered
-// with nothing of its own.
+// with nothing of its own. A refused formula goes out with where and why
+// (writeFormulaProblem).
 func failed(w http.ResponseWriter, r *http.Request, log *slog.Logger, err error) {
+	if p, ok := errors.AsType[*query.Problem](err); ok {
+		writeFormulaProblem(w, p.FormulaProblem)
+		return
+	}
 	var known *contracts.Error
 	if !errors.As(err, &known) {
 		internal(r, log, err)

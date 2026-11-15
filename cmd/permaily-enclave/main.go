@@ -182,9 +182,16 @@ func run(cfg config, log *slog.Logger) error {
 		var mine http.Handler
 		if p.mailboxes != nil {
 			// The person's mailboxes and their mail (ADR 0026, "The API").
-			mine = httpapi.MailboxesAPI(httpapi.MailboxesConfig{Service: p.mailboxes, Reader: p.reader, Sessions: p.accounts, Log: log, AppOrigin: appOrigin(hosts.App, cfg.port)})
+			mine = httpapi.MailboxesAPI(httpapi.MailboxesConfig{
+				Service: p.mailboxes, Reader: p.reader, Matcher: p.matcher, Sessions: p.accounts, Log: log, AppOrigin: appOrigin(hosts.App, cfg.port),
+			})
 			app.Handle("/api/v1/mailboxes", mine)
 			app.Handle("/api/v1/mailboxes/", mine)
+			// A formula's canonical form and sentence, for the owner's own
+			// screens (ADR 0027, "The routes"); its matches are a mailbox's.
+			queries := httpapi.QueriesAPI(httpapi.QueriesConfig{Sessions: p.accounts, Mailboxes: p.mailboxes, Accounts: p.accounts, Log: log})
+			app.Handle("/api/v1/queries", queries)
+			app.Handle("/api/v1/queries/", queries)
 		}
 		for path, h := range p.devRoutes {
 			app.Handle(path, h)

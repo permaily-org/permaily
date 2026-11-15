@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/permaily-org/permaily/internal/buildinfo"
+	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/nsm"
 	"github.com/permaily-org/permaily/pkg/attestation"
 )
@@ -82,21 +83,35 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// APIError is the error body of every API response that fails.
+// APIError is the error body of every API response that fails. Details is
+// there only for invalid_formula (ADR 0027, "Errors"): where in the formula
+// and why, a path and a fixed reason, never a value of it.
 type APIError struct {
 	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code    string                   `json:"code"`
+		Message string                   `json:"message"`
+		Details contracts.FormulaProblem `json:"details,omitzero"`
 	} `json:"error"`
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
+	writeErrorWith(w, status, code, message, contracts.FormulaProblem{})
+}
+
+func writeErrorWith(w http.ResponseWriter, status int, code, message string, details contracts.FormulaProblem) {
 	var e APIError
-	e.Error.Code, e.Error.Message = code, message
+	e.Error.Code, e.Error.Message, e.Error.Details = code, message, details
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(e)
+}
+
+// writeFormulaProblem answers a refused formula: 400 invalid_formula, its
+// fixed words, and where and why as its details. The path is the one Parse
+// gave, into the formula as sent; nothing of what the formula holds is in it.
+func writeFormulaProblem(w http.ResponseWriter, p contracts.FormulaProblem) {
+	writeErrorWith(w, http.StatusBadRequest, contracts.ErrInvalidFormula.Code, contracts.ErrInvalidFormula.Message, p)
 }
 
 // TokenAuth accepts requests whose bearer token hashes (SHA-256, hex) to

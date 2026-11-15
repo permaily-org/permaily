@@ -15,6 +15,7 @@ import (
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/inbox"
+	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
 )
@@ -127,8 +128,12 @@ const (
 // MailboxesConfig is what the person's mailbox routes are made of. The zero
 // values of the limits are the ones above; tests set smaller ones.
 type MailboxesConfig struct {
-	Service  MailboxesService
-	Reader   inbox.Reader
+	Service MailboxesService
+	Reader  inbox.Reader
+	// Matcher answers POST .../matches (ADR 0027, "The routes"): inbox's
+	// matcher on the same store, evaluating with query.Eval. Without one, the
+	// route is not there.
+	Matcher  inbox.Matcher
 	Sessions Sessions
 	Log      *slog.Logger
 	// Deadline bounds every request from its start (mailboxes.RequestDeadline).
@@ -214,6 +219,10 @@ func newMailboxesAPI(cfg MailboxesConfig) (*mailboxesAPI, http.Handler) {
 	mux.HandleFunc(base+"/{id}/messages/{message}/raw", refuse(http.MethodGet))
 	mux.HandleFunc("GET "+base+"/{id}/messages/{message}/attachments/{index}", in(a.attachment))
 	mux.HandleFunc(base+"/{id}/messages/{message}/attachments/{index}", refuse(http.MethodGet))
+	if cfg.Matcher != nil {
+		mux.HandleFunc("POST "+base+"/{id}/matches", in(a.matches))
+		mux.HandleFunc(base+"/{id}/matches", refuse(http.MethodPost))
+	}
 	mux.HandleFunc("GET "+base+"/{id}/messages/{message}/html", a.frame)            // mailboxes_html.go
 	mux.HandleFunc("GET "+base+"/{id}/messages/{message}/links/{link}", in(a.link)) // mailboxes_html.go
 	mux.HandleFunc(base+"/", noSuchEndpoint)
@@ -250,9 +259,8 @@ type mailboxesAPI struct {
 // identifiers and answered with nothing of its own. A request its client
 // left is not the service's failure (clientLeft) and is not logged.
 func (a *mailboxesAPI) fail(w http.ResponseWriter, r *http.Request, err error) {
-	var known *contracts.Error
-	if errors.As(err, &known) {
-		failed(w, r, a.cfg.Log, known)
+	if _, ok := errors.AsType[*contracts.Error](err); ok {
+		failed(w, r, a.cfg.Log, err) // a refused formula's details included
 		return
 	}
 	if clientLeft(r, err) {
@@ -396,21 +404,103 @@ func (a *mailboxesAPI) messages(w http.ResponseWriter, r *http.Request, c mailbo
 		failed(w, r, a.cfg.Log, contracts.ErrInvalidQuery)
 		return
 	}
-	if !a.searchAllowed(c.Account) {
-		failed(w, r, a.cfg.Log, contracts.ErrTooManyRequests)
+	done, ok := a.searchSlot(ctx, w, r, c.Account)
+	if !ok {
 		return
 	}
+	defer done()
+	page, err := a.cfg.Reader.Search(ctx, b, q, after, limit)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	writeJSON(w, page)
+}
+
+// searchSlot admits a search page or a page of matches, which share both
+// bounds (ADR 0027, "Budgets of a page"): the account's SearchPagesPerMinute,
+// counted first, then one of the enclave's SearchesAtOnce slots, waited for
+// at most Wait. Either refusal is contracts.ErrTooManyRequests. done gives
+// the slot back.
+func (a *mailboxesAPI) searchSlot(ctx context.Context, w http.ResponseWriter, r *http.Request, account string) (done func(), ok bool) {
+	if !a.searchAllowed(account) {
+		failed(w, r, a.cfg.Log, contracts.ErrTooManyRequests)
+		return nil, false
+	}
+	timer := time.NewTimer(a.cfg.Wait)
+	defer timer.Stop()
 	select {
 	case a.searches <- struct{}{}:
-	case <-time.After(a.cfg.Wait):
+		return func() { <-a.searches }, true
+	case <-timer.C:
 		failed(w, r, a.cfg.Log, contracts.ErrTooManyRequests)
-		return
 	case <-ctx.Done():
 		a.fail(w, r, ctx.Err())
+	}
+	return nil, false
+}
+
+// matches is a page of what a formula matches in one of the person's
+// mailboxes, newest first: the owner's own preview (contracts.MatchPage),
+// never a vendor's result (ADR 0027, "The routes"). In ADR 0026's order:
+// 401 (the session); 404 for a mailbox that is not the account's, before
+// anything of it is read; the standing of a search (terms_needed to an
+// account that has not agreed); mailbox_unreadable; then the request's own
+// input: the body (invalid_body), the formula (invalid_formula with where and
+// why, its mailboxes held to the account's), the limit (invalid_limit, 1 to
+// 100, 50 when absent or 0) and the cursor (invalid_cursor); then the limits
+// it shares with the inbox's search, the account's thirty pages a minute and
+// a search slot (429). Each raw message the page reads takes its grant of
+// the read budget and gives it back before the next (heldBudget.Grant).
+func (a *mailboxesAPI) matches(w http.ResponseWriter, r *http.Request, c mailboxes.Caller) {
+	b, ctx, release, ok := a.open(w, r, c, mailboxes.AccessSearch)
+	if !ok {
 		return
 	}
-	defer func() { <-a.searches }()
-	page, err := a.cfg.Reader.Search(ctx, b, q, after, limit)
+	defer release()
+	list, err := a.cfg.Service.List(ctx, c)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	members, ok := readObject(w, r, "formula", "after", "limit")
+	if !ok {
+		return
+	}
+	raw, ok := members["formula"]
+	if !ok {
+		writeInvalidBody(w)
+		return
+	}
+	f, err := query.Parse(raw, mailboxIDs(list))
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	limit := DefaultMessagesLimit
+	if v, ok := members["limit"]; ok {
+		n, err := strconv.Atoi(string(v))
+		if err != nil || n < 0 || n > MaxMessagesLimit {
+			failed(w, r, a.cfg.Log, contracts.ErrInvalidLimit)
+			return
+		}
+		if n > 0 {
+			limit = n
+		}
+	}
+	after := ""
+	if v, ok := members["after"]; ok {
+		if json.Unmarshal(v, &after) != nil || string(v) == "null" || (after != "" && !inbox.IsMessageID(after)) {
+			failed(w, r, a.cfg.Log, contracts.ErrInvalidCursor)
+			return
+		}
+	}
+	done, ok := a.searchSlot(ctx, w, r, c.Account)
+	if !ok {
+		return
+	}
+	defer done()
+	page, err := a.cfg.Matcher.Match(ctx, b, []*query.Canonical{f}, after, limit)
 	if err != nil {
 		a.fail(w, r, err)
 		return
@@ -636,12 +726,52 @@ func (b *byteBudget) give(n int64) {
 	b.mu.Unlock()
 }
 
-// heldBudget is what one request took from the budget, given back once.
+// heldBudget is what one request took from the budget, given back once:
+// what Take took is held until the response is written (release); what a
+// Grant took goes back as soon as its own release is called, and with the
+// response at the latest.
 type heldBudget struct {
-	budget *byteBudget
-	wait   time.Duration
-	mu     sync.Mutex
-	held   int64
+	budget  *byteBudget
+	wait    time.Duration
+	mu      sync.Mutex
+	held    int64 // taken by Take and Resize, given back by release
+	granted int64 // taken by grants not released yet
+	done    bool  // release ran: a grant released after it gives nothing back
+}
+
+// Grant implements inbox.ReadGrants: n bytes (the whole budget at most),
+// waiting at most the request's wait for room, then
+// contracts.ErrTooManyRequests. Its release gives exactly those bytes back,
+// once; a second call does nothing, and one after the response's release
+// does nothing either, since that gave them back.
+func (h *heldBudget) Grant(ctx context.Context, n int64) (func(), error) {
+	got, err := h.budget.take(ctx, n, h.wait)
+	if err != nil {
+		return nil, err
+	}
+	h.mu.Lock()
+	if h.done {
+		// The response was released while this grant waited: nothing would
+		// give it back.
+		h.mu.Unlock()
+		h.budget.give(got)
+		return nil, context.Canceled
+	}
+	h.granted += got
+	h.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			h.mu.Lock()
+			if h.done {
+				h.mu.Unlock()
+				return
+			}
+			h.granted -= got
+			h.mu.Unlock()
+			h.budget.give(got)
+		})
+	}, nil
 }
 
 // Take implements inbox.ReadBudget.
@@ -674,8 +804,8 @@ func (h *heldBudget) Resize(ctx context.Context, n int64) error {
 
 func (h *heldBudget) release() {
 	h.mu.Lock()
-	n := h.held
-	h.held = 0
+	n := h.held + h.granted
+	h.held, h.granted, h.done = 0, 0, true
 	h.mu.Unlock()
 	h.budget.give(n)
 }
