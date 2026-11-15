@@ -14,6 +14,7 @@ import (
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/decide"
+	"github.com/permaily-org/permaily/internal/decide/decidetest"
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/store"
@@ -358,7 +359,7 @@ func TestA16TheAccountsShare(t *testing.T) {
 	limits := DefaultLimits
 	limits.AccountDay = 10 * decide.Estimate(decide.Call{Content: decide.Content{Kind: decide.ContentSubject, Subject: "Hi"}, Statements: atomsN(1)})
 	e := w.keyed(withLimits(limits))
-	e.model.reported = false // charged at the estimate
+	e.model.tab.OmitUsage(true) // charged at the estimate
 	for i := range 10 {
 		q := newQuestion("m"+itoa(i), "Hi", "", subj("x"))
 		if out := e.ask(q); out.Outcome != inbox.AskAnswered {
@@ -574,7 +575,7 @@ func TestA37AttemptsAndTheirSpend(t *testing.T) {
 			return nil, nil
 		})
 		out := e.ask(newQuestion("m1", "Hi", "", subj("x")))
-		if out.Called != 2 || len(out.Answers) != 1 || charged(t, e) != est+decide.Cost(decide.Usage{InputTokens: 500}) {
+		if out.Called != 2 || len(out.Answers) != 1 || charged(t, e) != est+decide.Cost(decidetest.Usage(decide.Call{Content: decide.Content{Kind: decide.ContentSubject, Subject: "Hi"}, Statements: []query.Atom{subj("x")}})) {
 			t.Fatalf("%+v, charged %d", out, charged(t, e))
 		}
 	})

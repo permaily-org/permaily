@@ -132,7 +132,7 @@ func TestA12TheKeyOfAnAnswer(t *testing.T) {
 		}
 	})
 	t.Run("a kept refusal stays unknown and is not asked again", func(t *testing.T) {
-		e.model.refuse[about("job offers")] = true
+		e.model.tab.Refuse(about("job offers"))
 		q := newQuestion("m4", "Hi", "text", about("job offers"))
 		out := e.ask(q)
 		if _, ok := out.Answers[about("job offers")]; ok || out.Called != 1 || len(out.Held) != 0 {

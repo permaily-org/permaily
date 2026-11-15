@@ -15,6 +15,7 @@ import (
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/decide"
+	"github.com/permaily-org/permaily/internal/decide/decidetest"
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/store"
@@ -25,10 +26,9 @@ import (
 // enclaves of a deployment are; one KeptStore that keeps its contract; a
 // clock the test moves; and a model that answers from a table.
 //
-// The fake of decide.Model is this package's own, kept minimal until ADR
-// 0028's pull request 1 merges decidetest: it answers by atom, counts its
-// calls, reads the key through the credential the service gives it, and
-// fails on demand with the AttemptErrors the real client returns.
+// The model is decidetest's Fake behind a hook of this package's
+// (fakeModel), or the real client (internal/decide/openai) against
+// decidetest's played provider (withProvider).
 
 const testKey = "sk-test-0123456789abcdef-the-model-key"
 
@@ -265,35 +265,29 @@ func (h *hookRecords) onPut(f func(name string) error) {
 	h.mu.Unlock()
 }
 
-// fakeModel answers from a table by atom: 0.05 for an atom it does not
-// know. Its key is read through the service's credential.
+// fakeModel is decidetest's Fake, answering from its Table (0 for an atom
+// the table does not know), with what decidetest has no word for: a hook
+// that answers the nth attempt instead (one that blocks, or fails in a way
+// a test arranges), and each attempt's key and deadline as the model saw
+// them. Its key is read through the service's credential, once an attempt.
 type fakeModel struct {
-	key  decide.Credential
-	mu   sync.Mutex
-	name string
-	// answer is the probability of an atom; refuse its refusals.
-	answer map[query.Atom]float64
-	refuse map[query.Atom]bool
+	key decide.Credential
+	tab *decidetest.Table
+	mu  sync.Mutex
 	// fail answers the nth call (from 1) instead of the table, when set.
-	fail     func(ctx context.Context, n int, c decide.Call) (*decide.Result, error)
-	calls    []decide.Call
-	keys     []string
-	ctxs     []time.Time // each call's deadline
-	reported bool
-	tokens   int64
+	fail  func(ctx context.Context, n int, c decide.Call) (*decide.Result, error)
+	calls []decide.Call
+	keys  []string
+	ctxs  []time.Time // each call's deadline
 }
 
 func newFakeModel() *fakeModel {
-	return &fakeModel{name: "gpt-6-luna", answer: map[query.Atom]float64{}, refuse: map[query.Atom]bool{}, reported: true, tokens: 500}
+	return &fakeModel{tab: decidetest.NewTable()}
 }
 
-func (m *fakeModel) Name() string { return "gpt-6-luna" }
+func (m *fakeModel) Name() string { return decidetest.Name }
 
-func (m *fakeModel) set(a query.Atom, p float64) {
-	m.mu.Lock()
-	m.answer[a] = p
-	m.mu.Unlock()
-}
+func (m *fakeModel) set(a query.Atom, p float64) { m.tab.Set(a, p) }
 
 func (m *fakeModel) onCall(f func(ctx context.Context, n int, c decide.Call) (*decide.Result, error)) {
 	m.mu.Lock()
@@ -314,27 +308,14 @@ func (m *fakeModel) Decide(ctx context.Context, c decide.Call) (*decide.Result, 
 	m.keys = append(m.keys, key)
 	d, _ := ctx.Deadline()
 	m.ctxs = append(m.ctxs, d)
-	n, fail, name := len(m.calls), m.fail, m.name
-	res := &decide.Result{Model: name, Usage: decide.Usage{InputTokens: m.tokens, Reported: m.reported}}
-	for _, a := range c.Statements {
-		switch {
-		case m.refuse[a]:
-			res.Answers = append(res.Answers, decide.Answer{Refused: true})
-		default:
-			p, known := m.answer[a]
-			if !known {
-				p = 0.05
-			}
-			res.Answers = append(res.Answers, decide.Answer{P: p, OK: true})
-		}
-	}
+	n, fail := len(m.calls), m.fail
 	m.mu.Unlock()
 	if fail != nil {
 		if r, err := fail(ctx, n, c); r != nil || err != nil {
 			return r, err
 		}
 	}
-	return res, nil
+	return decidetest.NewFake(m.tab, func(context.Context) (string, bool) { return key, true }).Decide(ctx, c)
 }
 
 func (m *fakeModel) count() int {
