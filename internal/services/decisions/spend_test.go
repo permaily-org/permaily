@@ -356,7 +356,7 @@ func TestA14TheMonthInAStrictAnchoredRecord(t *testing.T) {
 func TestA16TheAccountsShare(t *testing.T) {
 	w := newWorld(t)
 	limits := DefaultLimits
-	limits.AccountDay = 10 * estimate(decide.Call{Content: decide.Content{Kind: decide.ContentSubject, Subject: "Hi"}, Statements: atomsN(1)})
+	limits.AccountDay = 10 * decide.Estimate(decide.Call{Content: decide.Content{Kind: decide.ContentSubject, Subject: "Hi"}, Statements: atomsN(1)})
 	e := w.keyed(withLimits(limits))
 	e.model.reported = false // charged at the estimate
 	for i := range 10 {
@@ -563,7 +563,7 @@ func TestA37AttemptsAndTheirSpend(t *testing.T) {
 		}
 		return used
 	}
-	est := estimate(decide.Call{Content: decide.Content{Kind: decide.ContentSubject, Subject: "Hi"}, Statements: atomsN(1)})
+	est := decide.Estimate(decide.Call{Content: decide.Content{Kind: decide.ContentSubject, Subject: "Hi"}, Statements: atomsN(1)})
 	t.Run("an attempt that may have been sent and timed out is charged its estimate; its retry is reserved again", func(t *testing.T) {
 		w := newWorld(t)
 		e := w.keyed()
@@ -574,7 +574,7 @@ func TestA37AttemptsAndTheirSpend(t *testing.T) {
 			return nil, nil
 		})
 		out := e.ask(newQuestion("m1", "Hi", "", subj("x")))
-		if out.Called != 2 || len(out.Answers) != 1 || charged(t, e) != est+cost(decide.Usage{InputTokens: 500}) {
+		if out.Called != 2 || len(out.Answers) != 1 || charged(t, e) != est+decide.Cost(decide.Usage{InputTokens: 500}) {
 			t.Fatalf("%+v, charged %d", out, charged(t, e))
 		}
 	})
@@ -762,7 +762,7 @@ func TestA42TheLargestRequestsThroughTheGuard(t *testing.T) {
 		q := maxsize(t)[id]
 		return q
 	}
-	if got := estimate(callOf(fresh("max04"), bodies["max04"])); got != 106_029_200 {
+	if got := decide.Estimate(callOf(fresh("max04"), bodies["max04"])); got != 106_029_200 {
 		t.Fatalf("max04's estimate %d, ADR 0028 says 0.1060292 USD", got)
 	}
 	t.Run("each sent once, max04 from one grant of two blocks, the others of one", func(t *testing.T) {
@@ -795,8 +795,8 @@ func TestA42TheLargestRequestsThroughTheGuard(t *testing.T) {
 		}
 		q := newQuestion("largest", strings.Repeat("\x01", 2048), ctl, list...)
 		c := callOf(q, ctl)
-		if n := len(decide.ContentJSON(c.Content)); n != 1_585_176 || estimate(c) != 319_155_200 {
-			t.Fatalf("%d bytes, estimate %d", n, estimate(c))
+		if n := len(decide.ContentJSON(c.Content)); n != 1_585_176 || decide.Estimate(c) != 319_155_200 {
+			t.Fatalf("%d bytes, estimate %d", n, decide.Estimate(c))
 		}
 		if out := e.ask(q); out.Called != 1 {
 			t.Fatalf("%+v", out)

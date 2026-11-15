@@ -34,7 +34,7 @@ type called struct {
 // call makes the attempts of one call, account's ("" for the canary).
 // canary counts its attempts as the canary's.
 func (s *Service) call(ctx context.Context, c decide.Call, account string, canary bool) called {
-	est := estimate(c)
+	est := decide.Estimate(c)
 	var out called
 	var retryAfter time.Duration
 	for attempt := 0; ; attempt++ {
@@ -85,7 +85,7 @@ func (s *Service) call(ctx context.Context, c decide.Call, account string, canar
 		}
 		if err == nil {
 			if res.Usage.Reported {
-				r.settle(cost(res.Usage))
+				r.settle(decide.Cost(res.Usage))
 			} else {
 				r.settle(est)
 			}

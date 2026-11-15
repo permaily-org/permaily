@@ -204,7 +204,7 @@ func (s *Service) Ask(ctx context.Context, q *inbox.Question) (*inbox.Asked, err
 		}
 	}
 	setRule()
-	calls, rule := plan(missing, q.Subject, text, hasText)
+	calls, rule := decide.Plan(missing, q.Subject, text, hasText)
 	for atom, p := range rule {
 		a.out.Answers[atom] = p
 	}

@@ -270,7 +270,7 @@ func (s *Service) check(ctx context.Context, today string) error {
 			expected[ca.Atom()] = ca
 			atoms = append(atoms, ca.Atom())
 		}
-		calls, _ := plan(atoms, m.Subject, m.Body, true)
+		calls, _ := decide.Plan(atoms, m.Subject, m.Body, true)
 		for _, c := range calls {
 			s.renewLease(ctx)
 			r := s.call(ctx, c, "", true)

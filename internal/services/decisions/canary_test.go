@@ -184,7 +184,7 @@ func TestA20TheCanary(t *testing.T) {
 		used := e.guard.grants[0].used
 		e.guard.mu.Unlock()
 		c1, c2 := canaryCalls(e)
-		if used != cost(decide.Usage{InputTokens: 900})+estimate(c2) || c1.Content.Subject == "" {
+		if used != decide.Cost(decide.Usage{InputTokens: 900})+decide.Estimate(c2) || c1.Content.Subject == "" {
 			t.Fatalf("charged %d", used)
 		}
 		// An answer that is not a number between 0 and 1 is a failed run too.
