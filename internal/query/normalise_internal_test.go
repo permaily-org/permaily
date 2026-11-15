@@ -115,14 +115,18 @@ func TestQ6AddressesAndDomains(t *testing.T) {
 			}
 		}
 	}
-	// A message's mixed-script domain is valid, equals no value, and is
-	// still under the domains it is under.
-	m.From = []string{"x@p\u0430ypal.example.com"}
-	if v := Eval([]*Canonical{mustOne(t, "from_domain is example.com", false)}, m, nil, ForQuery).Value; v != True {
-		t.Errorf("a mixed-script subdomain: %d", v)
-	}
-	if v := Eval([]*Canonical{mustOne(t, "from_domain is paypal.example.com", false)}, m, nil, ForQuery).Value; v != False {
-		t.Errorf("a mixed-script domain against its look-alike: %d", v)
+	// A message's mixed-script domain or local part makes the address not
+	// valid: Unknown for its address and its domain conditions, under the
+	// domains it is under too.
+	for _, addr := range []string{"x@p\u0430ypal.example.com", "p\u0430ypal@example.com"} {
+		m.From = []string{addr}
+		for _, s := range []string{"from_domain is example.com", "from_domain is paypal.example.com", "from_address is paypal@example.com"} {
+			for _, not := range []bool{false, true} {
+				if v := Eval([]*Canonical{mustOne(t, s, not)}, m, nil, ForQuery).Value; v != Unknown {
+					t.Errorf("%s (not %v) on a mixed-script address: %d", s, not, v)
+				}
+			}
+		}
 	}
 	// Invalid UTF-8 in a message's address makes it not valid.
 	m.From = []string{"a\xff@example.com"}
@@ -344,8 +348,9 @@ func TestTypesListsAndMailboxes(t *testing.T) {
 	}
 	mb := contracts.VarMailbox
 	accepts(t, mb, "is", "MBX_AAAAAAAAAAAAAAAAAAAAAAAAAA", "mbx_aaaaaaaaaaaaaaaaaaaaaaaaaa")
-	accepts(t, mb, "is", "mbx_00000000000000000000000001", "mbx_00000000000000000000000001")
-	for _, bad := range []string{"mbx_short", "box_aaaaaaaaaaaaaaaaaaaaaaaaaa", "mbx_aaaaaaaaaaaaaaaaaaaaaaaaa-", "mbx_aaaaaaaaaaaaaaaaaaaaaaaaaaa"} {
+	accepts(t, mb, "is", "mbx_abcdefghijklmnopqrstuvwxyz", "mbx_abcdefghijklmnopqrstuvwxyz")
+	accepts(t, mb, "is", "mbx_22345677777777777777777777", "mbx_22345677777777777777777777")
+	for _, bad := range []string{"mbx_00000000000000000000000001", "mbx_aaaaaaaaaaaaaaaaaaaaaaaaa8", "mbx_short", "box_aaaaaaaaaaaaaaaaaaaaaaaaaa", "mbx_aaaaaaaaaaaaaaaaaaaaaaaaa-", "mbx_aaaaaaaaaaaaaaaaaaaaaaaaaaa"} {
 		refuses(t, mb, "is", bad, contracts.FormulaInvalidValue)
 	}
 	// The account's mailboxes: one of them, or unknown_mailbox; a mailbox

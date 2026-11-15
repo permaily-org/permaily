@@ -35,9 +35,9 @@ func problem(at string, reason contracts.FormulaReason) *Problem {
 // (FormulaNeverMatches).
 //
 // It answers the first problem in the order of the formula as sent: what
-// the JSON says as it is read, and each condition once its object closes,
-// its variable, then its operator, then its value. So the answer does not
-// depend on the order the checks run in.
+// the JSON says as it is read, and inside a condition the earliest of its
+// members' problems, each placed where its member was (reader.condition).
+// So the answer does not depend on the order the checks run in.
 func Parse(data []byte, mailboxes []string) (*Canonical, error) {
 	groups, p := read(data, mailboxes)
 	if p != nil {
@@ -273,55 +273,210 @@ func (r *reader) conditions(at string) ([]cond, *Problem) {
 	return g, nil
 }
 
-// condition reads {"var", "op", "value", "not"} and checks it once its
-// object closes. A group inside a group ("any" in a condition) is
-// wrong_type.
+// condition reads {"var", "op", "value", "not"} and answers its first
+// problem in the order of its members as sent. The variable and the
+// operator are decided when they are read (unknown_variable,
+// unknown_operator, wrong_type); what needs more of the condition
+// (operator_not_allowed, the value's checks) is placed where its member
+// was, and decided once what it needs was read; what is missing is placed
+// at the end. A group inside a group ("any" in a condition) is wrong_type.
+// The object is read to its end, so a problem placed earlier is answered
+// before one a later member brings; a syntax error ends the reading where
+// it is.
 func (r *reader) condition(at string) (cond, *Problem) {
 	if p := r.open(at, '{'); p != nil {
 		return cond{}, p
 	}
-	var c contracts.Condition
-	sawValue := false
-	p := r.members(at, []string{"var", "op", "value", "not", "any"}, func(key, path string) *Problem {
-		if key == "any" {
-			return problem(path, contracts.FormulaWrongType)
+	cr := conditionReader{at: at, mailboxes: r.mailboxes, pos: map[string]int{}, refused: map[string]bool{}}
+	i := 0
+	for ; r.dec.More(); i++ {
+		t, err := r.dec.Token()
+		if err != nil {
+			return cond{}, cr.first(i, problem("", contracts.FormulaNotJSON))
 		}
-		t, p := r.token()
-		if p != nil {
-			return p
+		key, _ := t.(string) // the decoder gives an object only string keys
+		t, err = r.dec.Token()
+		if err == nil {
+			err = skip(r.dec, t)
 		}
-		if key == "not" {
-			b, ok := t.(bool)
-			if !ok {
-				return problem(path, contracts.FormulaWrongType)
-			}
-			c.Not = b
-			return nil
+		if err != nil {
+			return cond{}, cr.first(i, problem("", contracts.FormulaNotJSON))
 		}
-		s, ok := t.(string)
-		if !ok {
-			return problem(path, contracts.FormulaWrongType)
-		}
-		switch key {
-		case "var":
-			c.Var = contracts.Variable(s)
-		case "op":
-			c.Op = contracts.Operator(s)
-		default:
-			c.Value, sawValue = s, true
-		}
-		return nil
-	})
+		cr.member(i, key, t)
+	}
+	if _, err := r.dec.Token(); err != nil { // '}'
+		return cond{}, cr.first(i, problem("", contracts.FormulaNotJSON))
+	}
+	out, p := cr.end()
 	if p != nil {
 		return cond{}, p
-	}
-	// A missing var or op is "" and refused as unknown below.
-	out, where, reason := checkCondition(c, sawValue, r.mailboxes)
-	if reason != "" {
-		return cond{}, problem(at+where, reason)
 	}
 	if p := r.limits.model(at, out); p != nil {
 		return cond{}, p
 	}
 	return out, nil
+}
+
+// skip reads the rest of a value that began with t, when t opens an object
+// or an array.
+func skip(dec *json.Decoder, t json.Token) error {
+	if t != json.Delim('{') && t != json.Delim('[') {
+		return nil
+	}
+	for depth := 1; depth > 0; {
+		t, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		switch t {
+		case json.Delim('{'), json.Delim('['):
+			depth++
+		case json.Delim('}'), json.Delim(']'):
+			depth--
+		}
+	}
+	return nil
+}
+
+// conditionReader is what is known of one condition while its members are
+// read: each member's position (the first of a key sent twice), the members
+// refused on their own, and the earliest problem met.
+type conditionReader struct {
+	at        string
+	mailboxes []string
+	c         contracts.Condition
+	pos       map[string]int
+	refused   map[string]bool
+	p         *Problem
+	pAt       int
+
+	whole bool // the checks that need the variable, the operator and the value were done
+	out   cond // the condition without its sign, once whole and accepted
+}
+
+// note keeps p, placed at position i, when it is the earliest problem met.
+func (cr *conditionReader) note(i int, p *Problem) {
+	if cr.p == nil || i < cr.pAt {
+		cr.p, cr.pAt = p, i
+	}
+}
+
+// first is the earliest of the problems met and p, placed at i, once what
+// was read so far is checked.
+func (cr *conditionReader) first(i int, p *Problem) *Problem {
+	cr.check(false)
+	cr.note(i, p)
+	return cr.p
+}
+
+// member reads the member key, whose value is t, at position i.
+func (cr *conditionReader) member(i int, key string, t json.Token) {
+	path := cr.at + "." + key
+	switch {
+	case !slices.Contains([]string{"var", "op", "value", "not"}, key):
+		if key == "any" {
+			cr.note(i, problem(path, contracts.FormulaWrongType))
+		} else {
+			cr.note(i, problem(cr.at, contracts.FormulaUnknownField)) // the key is the sender's: it is not echoed
+		}
+		return
+	case cr.has(key):
+		cr.note(i, problem(path, contracts.FormulaDuplicateField))
+		return
+	}
+	cr.pos[key] = i
+	if key == "not" {
+		b, ok := t.(bool)
+		if !ok {
+			cr.refuse(i, key, problem(path, contracts.FormulaWrongType))
+		}
+		cr.c.Not = b
+		return
+	}
+	s, ok := t.(string)
+	if !ok {
+		cr.refuse(i, key, problem(path, contracts.FormulaWrongType))
+		return
+	}
+	switch key {
+	case "var":
+		cr.c.Var = contracts.Variable(s)
+		if _, ok := allowed[cr.c.Var]; !ok {
+			cr.refuse(i, key, problem(path, contracts.FormulaUnknownVariable))
+		}
+	case "op":
+		cr.c.Op = contracts.Operator(s)
+		if !slices.Contains(operators, cr.c.Op) {
+			cr.refuse(i, key, problem(path, contracts.FormulaUnknownOperator))
+		}
+	default:
+		cr.c.Value = s
+	}
+}
+
+func (cr *conditionReader) has(key string) bool {
+	_, ok := cr.pos[key]
+	return ok
+}
+
+func (cr *conditionReader) refuse(i int, key string, p *Problem) {
+	cr.refused[key] = true
+	cr.note(i, p)
+}
+
+// usable reports a member read and not refused on its own.
+func (cr *conditionReader) usable(key string) bool {
+	return cr.has(key) && !cr.refused[key]
+}
+
+// check does what needs more than one member, once those members were
+// read: the operator for the variable, at the operator's position; then the
+// value for the operator, at the value's position. Whether a value is
+// missing, or none was sent where none is wanted, is known only at the end
+// (final).
+func (cr *conditionReader) check(final bool) {
+	if cr.whole || !cr.usable("var") || !cr.usable("op") {
+		return
+	}
+	k, ok := allowed[cr.c.Var][cr.c.Op]
+	if !ok {
+		cr.whole = true
+		cr.note(cr.pos["op"], problem(cr.at+".op", contracts.FormulaOperatorNotAllowed))
+		return
+	}
+	if !cr.has("value") && (!final || k != kindNone) {
+		return // missing_value, if it stays missing, is placed at the end
+	}
+	cr.whole = true
+	if cr.refused["value"] {
+		return
+	}
+	c := cr.c
+	c.Not = false // "not" may come after: end applies it
+	out, where, reason := checkCondition(c, cr.has("value"), cr.mailboxes)
+	if reason != "" {
+		cr.note(cr.pos["value"], problem(cr.at+where, reason))
+		return
+	}
+	cr.out = out
+}
+
+// end is the condition once its object closed: the earliest problem, or
+// what is missing (the variable, the operator, then the value), or the
+// condition.
+func (cr *conditionReader) end() (cond, *Problem) {
+	cr.check(true)
+	switch {
+	case cr.p != nil:
+		return cond{}, cr.p
+	case !cr.has("var"):
+		return cond{}, problem(cr.at+".var", contracts.FormulaUnknownVariable)
+	case !cr.has("op"):
+		return cond{}, problem(cr.at+".op", contracts.FormulaUnknownOperator)
+	case !cr.whole:
+		return cond{}, problem(cr.at+".value", contracts.FormulaMissingValue)
+	}
+	out := cr.out
+	out.Not = cr.c.Not
+	return positive(out), nil
 }

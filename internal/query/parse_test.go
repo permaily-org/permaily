@@ -146,7 +146,7 @@ func TestQ2EveryReasonWithItsPath(t *testing.T) {
 		{"invalid_value", formula(`{"var":"from_domain","op":"is","value":"secret_value!"}`), "all[0].any[0].value", contracts.FormulaInvalidValue, "secret_value"},
 		{"value_too_long", formula(`{"var":"subject","op":"contains","value":"` + strings.Repeat("secret", 17) + `"}`), "all[0].any[0].value", contracts.FormulaValueTooLong, "secret"},
 		{"confusable_value", formula(`{"var":"subject","op":"contains","value":"secret inv\u043eice"}`), "all[0].any[0].value", contracts.FormulaConfusableValue, "secret"},
-		{"unknown_mailbox", formula(`{"var":"mailbox","op":"is","value":"mbx_secretsecretsecretsecret12"}`), "all[0].any[0].value", contracts.FormulaUnknownMailbox, "mbx_secret"},
+		{"unknown_mailbox", formula(`{"var":"mailbox","op":"is","value":"mbx_secretsecretsecretsecret22"}`), "all[0].any[0].value", contracts.FormulaUnknownMailbox, "mbx_secret"},
 		{"never_matches", []byte(`{"v":1,"all":[{"any":[{"var":"received","op":"since","value":"2026-03-01T00:00:00Z"}]},{"any":[{"var":"received","op":"before","value":"2026-02-01T00:00:00Z"}]}]}`), "", contracts.FormulaNeverMatches, "2026"},
 	} {
 		t.Run(c.name, func(t *testing.T) {

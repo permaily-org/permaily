@@ -182,8 +182,7 @@ const (
 // STD3 rules, the hyphen, joiner and bidi checks), lower case, at least two
 // labels of at most 63 bytes, at most 253 in all. confusable is set when a
 // label's Unicode form mixes Latin, Greek and Cyrillic: a value is refused
-// for it, a message's domain is not (it equals no value, and it is still
-// under the domains it is under).
+// for it, and a message's domain is not valid (messageDomain).
 func normaliseDomain(s string) (ascii string, confusable bool, reason contracts.FormulaReason) {
 	if !utf8.ValidString(s) {
 		return "", false, contracts.FormulaInvalidValue
@@ -224,6 +223,15 @@ func normaliseDomain(s string) (ascii string, confusable bool, reason contracts.
 	return a, confusable, ""
 }
 
+// messageDomain is a domain of a message (a signer's) as it is compared:
+// its canonical ASCII form, or ok false when it does not normalise or a
+// label mixes Latin, Greek and Cyrillic, which makes every condition on it
+// Unknown (ADR 0027, "Domains").
+func messageDomain(s string) (ascii string, ok bool) {
+	d, confusable, reason := normaliseDomain(s)
+	return d, reason == "" && !confusable
+}
+
 // underDomain reports whether domain d is parent or one of its subdomains;
 // both canonical.
 func underDomain(d, parent string) bool {
@@ -233,20 +241,15 @@ func underDomain(d, parent string) bool {
 // Addresses (ADR 0027, "Addresses").
 const maxLocalBytes = 64
 
-// normaliseAddress is an address's canonical form, local part and ASCII
-// domain: split at the last @; the domain as normaliseDomain; the local part
+// normaliseAddress is the canonical form of an address a vendor or a person
+// writes, local part and ASCII domain: split at the last @; the local part
 // unquoted when it is one quoted string (its quotes and quoting backslashes
-// removed), NFC and folded (until it settles), of 1 to 64 bytes, printable,
-// with no space, control, quotation mark or backslash left. An address is
-// decided once, whole: when either half fails, the address is not valid, and
-// a message's address that is not valid makes every condition over it,
-// address and domain alike, Unknown. confusable is set when the local part's
-// letters or a label of the domain mix Latin, Greek and Cyrillic.
+// removed), then as addressParts says. confusable is set when the local
+// part's letters or a label of the domain mix Latin, Greek and Cyrillic: the
+// value is refused for it.
 //
 // A quotation mark or a backslash left in the local part once unquoted is
-// refused (and a message's makes the address not valid): the canonical form
-// has no quoting, so it reads back as itself, and a message's address as
-// stored (unquoted by net/mail) is never read as another.
+// refused: the canonical form has no quoting, so it reads back as itself.
 func normaliseAddress(s string) (local, domain string, confusable bool, reason contracts.FormulaReason) {
 	if !utf8.ValidString(s) {
 		return "", "", false, contracts.FormulaInvalidValue
@@ -259,10 +262,41 @@ func normaliseAddress(s string) (local, domain string, confusable bool, reason c
 	if !ok {
 		return "", "", false, contracts.FormulaInvalidValue
 	}
+	return addressParts(l, s[at+1:])
+}
+
+// messageAddress is an address of a message as stored, as it is compared:
+// already decoded (net/mail through go-message took it out of its quotes),
+// so it is never unquoted again, and a quotation mark or a backslash in its
+// local part is a character of it, which no canonical local part holds. ok
+// is false for such an address, for one whose halves do not normalise, and
+// for one whose local part or a label of its domain mixes Latin, Greek and
+// Cyrillic: an address is decided once, whole, and one that is not valid
+// makes every condition over it, on its address and on its domain alike,
+// Unknown (ADR 0027, "Addresses").
+func messageAddress(s string) (local, domain string, ok bool) {
+	if !utf8.ValidString(s) {
+		return "", "", false
+	}
+	at := strings.LastIndexByte(s, '@')
+	if at < 0 || strings.ContainsAny(s[:at], `"\`) {
+		return "", "", false
+	}
+	local, domain, confusable, reason := addressParts(s[:at], s[at+1:])
+	return local, domain, reason == "" && !confusable
+}
+
+// addressParts normalises an address's halves once its local part is out of
+// any quoting: the domain as normaliseDomain; the local part NFC and folded
+// (until it settles), of 1 to 64 bytes, printable, with no space, control,
+// quotation mark or backslash. When either half fails, the address is not
+// valid. confusable is set when the local part's letters or a label of the
+// domain mix Latin, Greek and Cyrillic.
+func addressParts(l, d string) (local, domain string, confusable bool, reason contracts.FormulaReason) {
 	if len(l) > 4*maxLocalBytes {
 		return "", "", false, contracts.FormulaValueTooLong
 	}
-	l, ok = fixpoint(l, func(x string) string { return foldString(norm.NFC.String(x)) })
+	l, ok := fixpoint(l, func(x string) string { return foldString(norm.NFC.String(x)) })
 	if !ok || l == "" {
 		return "", "", false, contracts.FormulaInvalidValue
 	}
@@ -271,7 +305,7 @@ func normaliseAddress(s string) (local, domain string, confusable bool, reason c
 			return "", "", false, contracts.FormulaInvalidValue
 		}
 	}
-	d, dc, reason := normaliseDomain(s[at+1:])
+	d, dc, reason := normaliseDomain(d)
 	if reason != "" {
 		return "", "", false, reason
 	}
@@ -465,15 +499,14 @@ func checkSize(s string) (string, int64, contracts.FormulaReason) {
 const mailboxIDLen = len("mbx_") + 26
 
 // checkMailbox is a mailbox value: mbx_ and 26 characters of the lower-case
-// base32 the service writes them in (a-z, 2-7; and 0, 1, 8, 9, which the
-// test fakes write), lowered.
+// base32 the service writes them in (a-z, 2-7), lowered.
 func checkMailbox(s string) (string, contracts.FormulaReason) {
 	s = strings.ToLower(s)
 	if len(s) != mailboxIDLen || !strings.HasPrefix(s, "mbx_") {
 		return "", contracts.FormulaInvalidValue
 	}
 	for i := len("mbx_"); i < len(s); i++ {
-		if c := s[i]; (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+		if c := s[i]; (c < 'a' || c > 'z') && (c < '2' || c > '7') {
 			return "", contracts.FormulaInvalidValue
 		}
 	}

@@ -207,7 +207,7 @@ func (f *Fake) listOf(account string) *list {
 func (f *Fake) add(account, label string) contracts.Mailbox {
 	f.made++
 	now := f.now()
-	id := fmt.Sprintf("mbx_%026d", f.made)
+	id := "mbx_" + strings.Map(func(r rune) rune { return r - '0' + 'a' }, fmt.Sprintf("%026d", f.made)) // base32, as the service writes them
 	m := contracts.Mailbox{
 		ID: id, Address: fmt.Sprintf("fake%016d@inbox.permaily.test", f.made), Label: label,
 		State: contracts.MailboxWaiting, CreatedAt: now,

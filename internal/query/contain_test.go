@@ -228,7 +228,9 @@ func universes() []*universe {
 		c("from_address", "is", "alice@example.com"), c("from_address", "is", "bob@sub.example.com"),
 		c("from_domain", "is", "example.com"), c("from_domain", "is", "sub.example.com"), c("from_domain", "is", "other.example"),
 	}}
-	for _, from := range subsets([]string{"alice@example.com", "bob@sub.example.com", "carol@other.example", "bad local@example.com"}) {
+	// Not valid as stored: a space, a literal quotation mark, a Cyrillic o (U+043E) in
+	// the local part, a Cyrillic a (U+0430) in a label under sub.example.com.
+	for _, from := range subsets([]string{"alice@example.com", "bob@sub.example.com", "carol@other.example", "bad local@example.com", `"alice"@example.com`, "inv\u043eice@example.com", "bob@p\u0430y.sub.example.com"}) {
 		for _, partial := range []bool{false, true} {
 			for _, unparsed := range []bool{false, true} {
 				addr.add(&query.Message{From: from, Partial: partial, Unparsed: unparsed}, nil)
@@ -241,7 +243,7 @@ func universes() []*universe {
 		c("signed_by", "is", "example.com"), c("signed_by", "is", "sub.example.com"),
 		c("recipient_address", "is", "alice@example.com"), c("recipient_domain", "is", "example.com"), c("from_domain", "is", "example.com"),
 	}}
-	for _, sb := range subsets([]string{"example.com", "sub.example.com", "bad_domain!"}) {
+	for _, sb := range subsets([]string{"example.com", "sub.example.com", "bad_domain!", "p\u0430y.example.com"}) {
 		for _, rc := range subsets([]string{"alice@example.com", "bad local@example.com"}) {
 			for _, from := range subsets([]string{"alice@example.com"}) {
 				sign.add(&query.Message{SignedBy: sb, Recipients: rc, From: from}, nil)
@@ -425,7 +427,7 @@ func TestQ18ContainmentIsSoundByBruteForce(t *testing.T) {
 			compiled *query.Compiled
 			values   valueSet
 		}
-		byID := map[string]bool{}
+		byID := map[string]valueSet{} // the values of the first formula sent with each canonical identifier
 		var entries []entry
 		words := (points + 63) / 64
 		for _, fm := range formulas {
@@ -455,10 +457,16 @@ func TestQ18ContainmentIsSoundByBruteForce(t *testing.T) {
 				sent.All = append(sent.All, grp)
 			}
 			c := canonOf(t, sent)
-			if byID[c.ID] {
+			if kept, ok := byID[c.ID]; ok {
+				// One identifier, one meaning: the formula left out has the
+				// values of the one kept, on every message and mode.
+				if !vs.inside(kept) || !kept.inside(vs) {
+					sj, _ := json.Marshal(sent)
+					t.Fatalf("%s: %s has the identifier of another formula and not its values: canonical %s", u.name, sj, jsonOf(c))
+				}
 				continue
 			}
-			byID[c.ID] = true
+			byID[c.ID] = vs
 			compiled, ok := query.Compile(c)
 			if !ok {
 				t.Fatalf("a canonical form does not compile: %s", jsonOf(c))

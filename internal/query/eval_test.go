@@ -73,7 +73,7 @@ func TestQ26EvalPerVariable(t *testing.T) {
 		{"from_address true though partial", "from_address is alice@example.com", msg(from("alice@example.com"), partial), query.True, 0, nil},
 		{"from_address not valid", "from_address is alice@example.com", msg(from("bad local@example.com")), query.Unknown, 0, nil},
 		{"from_address unparsed", "from_address is alice@example.com", msg(from("alice@example.com"), unparsed), query.Unknown, 0, nil},
-		{"from_address with a quoted local part", "from_address is alice@example.com", msg(from(`"alice"@example.com`)), query.True, 0, nil},
+		{"from_address stored with a quotation mark", "from_address is alice@example.com", msg(from(`"alice"@example.com`)), query.Unknown, 0, nil},
 		{"from_domain under it", "from_domain is example.com", msg(from("a@mail.example.com")), query.True, 0, nil},
 		{"from_domain not a suffix of a label", "from_domain is example.com", msg(from("a@badexample.com")), query.False, 0, nil},
 		{"from_domain Unicode", "from_domain is xn--bcher-kva.example", msg(from("a@Bücher.example")), query.True, 0, nil},
@@ -335,4 +335,54 @@ func TestQ40NoDecisionFromACutText(t *testing.T) {
 			t.Errorf("%s after the raw message: %+v, want %s", c.formula, after, name(c.after))
 		}
 	}
+}
+
+// FuzzEval: Eval on a generated formula's canonical form and the brute
+// force on the formula as sent agree, in three values and both modes, on a
+// generated message one of whose fields is an arbitrary string: the two
+// evaluators normalise it each with its own code, from ADR 0027's
+// definitions.
+func FuzzEval(f *testing.F) {
+	for i, s := range []string{
+		"a\u00ad\u0301", "ς", "image/p ng", "a@other..example", `"alice"@example.com`, `"al\ice"@example.com`,
+		"inv\u043eice@example.com", "p\u0430ypal.example.com", "\u212a", "ﬁ", "A\u034f\u030a", "\xff", "", "x@" + strings.Repeat("\u00ad", 1100) + "example.com",
+	} {
+		f.Add(uint64(i), uint8(i), s)
+	}
+	f.Fuzz(func(t *testing.T, seed uint64, field uint8, s string) {
+		r := querytest.New(seed)
+		sent := r.Formula(3, 3)
+		if seed%2 == 1 {
+			sent = r.Respell(sent)
+		}
+		c, err := query.Canonicalise(sent)
+		if err != nil {
+			t.Fatalf("a generated formula refused: %v", err)
+		}
+		m, a := r.Message(), r.Answers()
+		switch field % 8 {
+		case 0:
+			m.Subject = s
+		case 1:
+			m.Body = s
+		case 2:
+			m.From = append(m.From, s)
+		case 3:
+			m.Recipients = []string{s}
+		case 4:
+			m.SignedBy = append(m.SignedBy, s)
+		case 5:
+			m.Attachments = append(m.Attachments, query.Attachment{Name: s, Type: "text/plain"})
+		case 6:
+			m.Attachments = append(m.Attachments, query.Attachment{Name: "x", Type: s})
+		default:
+			m.List = append(m.List, s)
+		}
+		for _, mode := range []query.Mode{query.ForQuery, query.ForRule} {
+			got := query.Eval([]*query.Canonical{c}, m, a, mode).Value
+			if want := querytest.Eval([]contracts.Formula{sent}, m, a, mode); got != want {
+				t.Fatalf("mode %d, field %d %q\ncanonical %s\nEval %s, brute force %s", mode, field%8, s, jsonOf(c), name(got), name(want))
+			}
+		}
+	})
 }

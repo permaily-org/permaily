@@ -128,8 +128,8 @@ type texts struct {
 func normaliseAddresses(list []string) *addresses {
 	out := &addresses{}
 	for _, a := range list {
-		local, domain, _, reason := normaliseAddress(a)
-		if reason != "" {
+		local, domain, ok := messageAddress(a)
+		if !ok {
 			out.invalid = true
 			continue
 		}
@@ -145,9 +145,19 @@ func normaliseTextField(s string) *text {
 
 // condition is the value of one condition on the message, the sources that
 // would settle it when it is Unknown, and its atom when a model decides it
-// and has not answered. Every value is read before the sign is applied.
+// and has not answered. Every value is read before the sign is applied. In
+// order: the item's conditions, always known; then, on a message whose
+// header could not be read, every other condition is Unknown, a model's too,
+// whatever it answered, and no atom is asked of it; then a model's answers
+// and the exact conditions.
 func (v *view) condition(c cond, answers Answers, mode Mode) (Value, Sources, *Atom) {
 	m := v.m
+	if alwaysKnown(c.Var) {
+		return sign(v.item(c), c.Not), 0, nil
+	}
+	if m.Unparsed {
+		return Unknown, 0, nil
+	}
 	if isModel(c.Op) {
 		a := Atom{Var: c.Var, Op: c.Op, Topic: c.Value}
 		p, ok := answers[a]
@@ -155,12 +165,6 @@ func (v *view) condition(c cond, answers Answers, mode Mode) (Value, Sources, *A
 			return Unknown, 0, &a
 		}
 		return sign(Classify(p, mode), c.Not), 0, nil
-	}
-	if alwaysKnown(c.Var) {
-		return sign(v.item(c), c.Not), 0, nil
-	}
-	if m.Unparsed {
-		return Unknown, 0, nil // the header could not be read: only the item's conditions are known
 	}
 	var val Value
 	var needs Sources
@@ -179,8 +183,8 @@ func (v *view) condition(c cond, answers Answers, mode Mode) (Value, Sources, *A
 		if v.signedBy == nil {
 			v.signedBy = &domains{}
 			for _, d := range m.SignedBy {
-				n, _, reason := normaliseDomain(d)
-				if reason != "" {
+				n, ok := messageDomain(d)
+				if !ok {
 					v.signedBy.invalid = true
 					continue
 				}

@@ -4,11 +4,11 @@
 // implication table or containment. It is for tests only (depguard's
 // no-fakes-in-production keeps it out of the image).
 //
-// The brute force normalises values with its own plain code: enough for the
-// universe here (ASCII, a Unicode domain, case, full-width letters, white
-// space, soft hyphens and zero-width spaces), not for every string. What
-// internal/query does with every string is tested by its own tables and
-// fuzz targets; what the brute force checks is the logic.
+// The brute force normalises with its own code, from the ADR's definitions
+// of texts, domains, addresses and media types (calling x/text's norm and
+// x/net's idna, as they say, and nothing of internal/query's), so it is
+// held to agree with Eval on any string: FuzzEval puts arbitrary strings in
+// generated messages' fields.
 package querytest
 
 import (
@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/query"
@@ -32,13 +33,24 @@ var (
 	// BadAddress is an address that is not valid (its local part has a
 	// space once unquoted), as net/mail stores "bad local"@example.com.
 	BadAddress = "bad local@example.com"
+	// StoredAddresses are addresses of messages as stored that are not
+	// valid although they look like the universe's: literal quotation marks
+	// and a backslash left by net/mail ("\"alice\""@example.com and
+	// "\"al\\ice\""@example.com as sent), a Cyrillic o (U+043E) in a local part, a
+	// Cyrillic a (U+0430) in a label under sub.example.com, an empty label, a domain
+	// that does not normalise.
+	StoredAddresses = []string{
+		BadAddress, `"alice"@example.com`, `"al\ice"@example.com`, "inv\u043eice@example.com",
+		"bob@p\u0430y.sub.example.com", "a@other..example", "x@bad_domain!",
+	}
 	// Texts are values of contains, substrings of each other.
-	Texts = []string{"invoice", "invoices", "car", "scar", "e 2", "invoice 2026"}
+	Texts = []string{"invoice", "invoices", "car", "scar", "e 2", "invoice 2026", "á", "σ"}
 	// Fields are subjects, bodies and attachment names that hold them or
 	// not, respelled.
 	Fields = []string{
 		"Your INVOICES for 2026", "invoice 2026", "Ｉｎｖｏｉｃｅ", "re-invoiced", "scar tissue", "careful",
 		"in\u00advoice", "nothing here", "the  car", "", "e\n2",
+		"a\u00ad\u0301", "ς", "ΣΊΣΥΦΟΣ", "cafe\u0301",
 	}
 	// Topics are what a model decides on.
 	Topics = []string{"invoices", "travel"}
@@ -55,7 +67,9 @@ var (
 	OtherMailbox = "mbx_cccccccccccccccccccccccccc"
 	// Types are media types of conditions; MessageTypes those of messages.
 	Types        = []string{"application/pdf", "application/*", "image/png", "image/*"}
-	MessageTypes = []string{"application/pdf", "Application/PDF; name=x", "image/png", "text/plain", "foo/bar", "application"}
+	MessageTypes = []string{"application/pdf", "Application/PDF; name=x", "image/png", "text/plain", "foo/bar", "application", "image/p ng"}
+	// Signers are the domains of messages' signatures, some not valid.
+	Signers = []string{"bad_domain!", "SUB.Example.COM.", "p\u0430y.example.com", "other..example"}
 	// Lists are list identifiers.
 	Lists = []string{"news.example.com", "deals.other.example"}
 	// AttachmentNames are names of attachments of messages.
@@ -251,8 +265,8 @@ func (r *Rand) text(s string) string {
 	case 1:
 		s = strings.ReplaceAll(s, " ", " \n ")
 	case 2:
-		if len(s) > 1 {
-			s = s[:1] + "\u00ad" + s[1:] // a soft hyphen, removed
+		if rs := []rune(s); len(rs) > 1 {
+			s = string(rs[:1]) + "\u00ad" + string(rs[1:]) // a soft hyphen, removed
 		}
 	case 3:
 		s = "\u200b" + s // a zero-width space, removed
@@ -262,7 +276,7 @@ func (r *Rand) text(s string) string {
 
 // Message is a random message over the universe, with every source read
 // or not, Partial, Unparsed, cut texts, sizes recorded or not, addresses
-// that are not valid, and now and then a Gmail confirmation.
+// and signers that are not valid, and now and then a Gmail confirmation.
 func (r *Rand) Message() *query.Message {
 	m := &query.Message{Have: query.FromItem | query.FromMeta}
 	switch r.IntN(20) {
@@ -292,7 +306,7 @@ func (r *Rand) Message() *query.Message {
 	m.From = r.addresses()
 	m.Recipients = r.addresses()
 	for range r.IntN(3) {
-		m.SignedBy = append(m.SignedBy, pick(r, append([]string{"bad_domain!", "SUB.Example.COM."}, Domains...)))
+		m.SignedBy = append(m.SignedBy, pick(r, append(slices.Clone(Signers), Domains...)))
 	}
 	m.Subject = pick(r, Fields)
 	m.Body = pick(r, Fields)
@@ -308,7 +322,7 @@ func (r *Rand) Message() *query.Message {
 		}
 	}
 	m.Partial = r.IntN(6) == 0
-	m.Unparsed = r.IntN(15) == 0
+	m.Unparsed = r.IntN(8) == 0
 	m.Confirmation = r.IntN(40) == 0
 	return m
 }
@@ -316,7 +330,11 @@ func (r *Rand) Message() *query.Message {
 func (r *Rand) addresses() []string {
 	var out []string
 	for range r.IntN(3) {
-		out = append(out, pick(r, append([]string{BadAddress, "ALICE@Example.COM", "x@bad_domain!"}, Addresses...)))
+		if r.IntN(3) == 0 {
+			out = append(out, pick(r, StoredAddresses))
+		} else {
+			out = append(out, pick(r, append([]string{"ALICE@Example.COM"}, Addresses...)))
+		}
 	}
 	return out
 }
@@ -405,7 +423,13 @@ func strongerPositive(c contracts.Condition) []contracts.Condition {
 		out = append(out, contracts.Condition{Var: c.Var, Op: contracts.OpIs, Value: "deep." + c.Value})
 	case contracts.VarSubject, contracts.VarBody, contracts.VarAttachmentName:
 		if c.Op == contracts.OpContains {
-			out = append(out, contracts.Condition{Var: c.Var, Op: c.Op, Value: c.Value + "s"}, contracts.Condition{Var: c.Var, Op: c.Op, Value: "x" + c.Value})
+			// Lengthened on either side, in the value's script (a word that
+			// mixes Latin with Greek is refused).
+			x := "x"
+			if r, _ := utf8.DecodeRuneInString(c.Value); r >= utf8.RuneSelf {
+				x = string(r)
+			}
+			out = append(out, contracts.Condition{Var: c.Var, Op: c.Op, Value: c.Value + x}, contracts.Condition{Var: c.Var, Op: c.Op, Value: x + c.Value})
 		}
 	case contracts.VarAttachments:
 		out = append(out, contracts.Condition{Var: contracts.VarAttachmentName, Op: contracts.OpContains, Value: "car"},
@@ -456,8 +480,8 @@ func weakerPositive(c contracts.Condition) []contracts.Condition {
 			out = append(out, contracts.Condition{Var: c.Var, Op: contracts.OpIs, Value: p})
 		}
 	case contracts.VarSubject, contracts.VarBody, contracts.VarAttachmentName:
-		if c.Op == contracts.OpContains && len(c.Value) > 1 {
-			for _, v := range []string{c.Value[1:], c.Value[:len(c.Value)-1]} {
+		if rs := []rune(c.Value); c.Op == contracts.OpContains && len(rs) > 1 {
+			for _, v := range []string{string(rs[1:]), string(rs[:len(rs)-1])} {
 				if strings.TrimSpace(v) != "" { // a text of white space alone is no value
 					out = append(out, contracts.Condition{Var: c.Var, Op: c.Op, Value: v})
 				}
