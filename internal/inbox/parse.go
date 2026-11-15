@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/emersion/go-message"
@@ -62,8 +63,10 @@ const snippetRunes = 200
 // confirmation when it is one.
 type Parsed struct {
 	Meta StoredMeta
-	// Text is the message's text, at most SearchTextMax bytes.
-	Text string
+	// Text is the message's text, at most SearchTextMax bytes, and TextCut
+	// says it was longer (SearchEntry.Cut).
+	Text    string
+	TextCut bool
 	// Confirmation is set when the message is recognised as Gmail's
 	// forwarding confirmation.
 	Confirmation *Confirmation
@@ -203,7 +206,7 @@ func Parse(ctx context.Context, raw []byte) Parsed {
 	// An unknown charset or transfer encoding still gives a message to read.
 	e, _ := readEntity(head)
 	if e == nil {
-		p.Meta = StoredMeta{Unparsed: true, From: []contracts.MailAddress{}, To: []contracts.MailAddress{}, Cc: []contracts.MailAddress{}, ReplyTo: []contracts.MailAddress{}, Attachments: []contracts.MessageAttachment{}, Auth: []contracts.AuthCheck{}}
+		p.Meta = StoredMeta{Unparsed: true, From: []contracts.MailAddress{}, To: []contracts.MailAddress{}, Cc: []contracts.MailAddress{}, ReplyTo: []contracts.MailAddress{}, Attachments: []contracts.MessageAttachment{}, Auth: []contracts.AuthCheck{}, Format: MetaFormat, Size: int64(len(raw))}
 		return p
 	}
 	h := mail.Header{Header: e.Header}
@@ -218,11 +221,14 @@ func Parse(ctx context.Context, raw []byte) Parsed {
 	m.Cc = addressList(h, "Cc", &partial)
 	m.ReplyTo = addressList(h, "Reply-To", &partial)
 	m.Auth = []contracts.AuthCheck{}
+	m.List = listID(h, &partial)
+	m.Size = int64(len(raw))
+	m.Format = MetaFormat
 
 	w := walkMessage(ctx, raw, MessageTextMax, true, false)
 	partial = partial || w.partial
-	text, _, _ := w.text(ctx, SearchTextMax)
-	p.Text = text
+	text, _, cutHere := w.text(ctx, SearchTextMax)
+	p.Text, p.TextCut = text, cutHere
 	m.Snippet = snippet(text)
 	m.Attachments = w.attachments
 	if m.Attachments == nil {
@@ -363,6 +369,23 @@ func cut(s string, n int, partial *bool) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// listID is the identifier of the first List-Id header (RFC 2919), in lower
+// case: what is inside its last angle brackets, or, from a header written
+// without them, its value when that is one word; "" when there is none.
+func listID(h mail.Header, partial *bool) string {
+	v := strings.TrimSpace(h.Get("List-Id"))
+	if i := strings.LastIndexByte(v, '<'); i >= 0 {
+		j := strings.IndexByte(v[i:], '>')
+		if j < 0 {
+			return ""
+		}
+		v = strings.TrimSpace(v[i+1 : i+j])
+	} else if strings.ContainsFunc(v, unicode.IsSpace) {
+		return ""
+	}
+	return strings.ToLower(cut(v, MaxHeaderFieldBytes, partial))
 }
 
 func addressList(h mail.Header, key string, partial *bool) []contracts.MailAddress {

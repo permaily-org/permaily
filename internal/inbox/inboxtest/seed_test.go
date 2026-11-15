@@ -3,6 +3,7 @@ package inboxtest
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,5 +60,48 @@ func TestSeedWritesTheFormat(t *testing.T) {
 		if _, err := envelope.OpenText(b.Key, e.Value, envelope.AAD(c.purpose, "mbx_other", m.ID)); err == nil {
 			t.Errorf("%s opens as another mailbox's", c.key)
 		}
+	}
+}
+
+// Seed writes what delivery adds for ADR 0027 (the meta's format and size)
+// unless the message is Old; FromRaw is what delivery stores for a raw
+// message, its list and its cut text included.
+func TestSeedWritesWhatDeliveryAdds(t *testing.T) {
+	ctx := context.Background()
+	at := time.Now().UTC().Truncate(time.Second)
+	b := inbox.Box{MailboxID: "mbx_a", Key: make([]byte, envelope.KeySize)}
+	meta := func(mem *store.Memory, id string) inbox.StoredMeta {
+		rec, err := mem.Item(ctx, b.MailboxID, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m inbox.StoredMeta
+		plain, err := envelope.Open(b.Key, rec.Meta, envelope.AAD(inbox.PurposeMeta, b.MailboxID, id))
+		if err != nil || json.Unmarshal(plain, &m) != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	mem := store.NewMemory()
+	raw := []byte("List-Id: <News.Example.com>\r\nSubject: Hi\r\n\r\n" + strings.Repeat("a", inbox.SearchTextMax+1))
+	for i, m := range []Message{
+		{ID: "0000000000000001aaaaaaaaaaaaaaaa", ReceivedAt: at, RetentionDays: 30, Raw: raw},
+		{ID: "0000000000000002aaaaaaaaaaaaaaaa", ReceivedAt: at, RetentionDays: 30, Raw: raw, Old: true},
+		FromRaw(ctx, "0000000000000003aaaaaaaaaaaaaaaa", at, 30, raw),
+	} {
+		if err := Seed(ctx, mem, mem, b, m); err != nil {
+			t.Fatal(err)
+		}
+		got := meta(mem, m.ID)
+		wantFormat, wantSize := inbox.MetaFormat, int64(len(raw))
+		if m.Old {
+			wantFormat, wantSize = 0, 0
+		}
+		if got.Format != wantFormat || got.Size != wantSize || (i == 2) != (got.List == "news.example.com") {
+			t.Errorf("message %d: %+v", i, got)
+		}
+	}
+	if m := FromRaw(ctx, "0000000000000003aaaaaaaaaaaaaaaa", at, 30, raw); !m.Search.Cut || len(m.Search.Text) != inbox.SearchTextMax || !m.Search.ReceivedAt.Equal(at) {
+		t.Errorf("the entry %+v", m.Search.Cut)
 	}
 }

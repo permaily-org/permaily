@@ -134,7 +134,26 @@ type StoredMeta struct {
 	// Partial: a parse limit was reached (ADR 0026, "What a message may
 	// hold"); what is here is what was read before it.
 	Partial bool `json:"partial,omitempty"`
+
+	// What delivery records for the query language (ADR 0027, "What
+	// delivery adds"). Format is MetaFormat for a meta written since; a meta
+	// without it was written before, recorded neither List nor Size, and
+	// every list and size condition on it is unknown (a size is then known
+	// only from its raw message, when that is read for its body anyway).
+	Format int `json:"format,omitempty"`
+	// List is the identifier of the message's first List-Id header (RFC
+	// 2919): what is inside its angle brackets, in lower case; "" when it has
+	// none.
+	List string `json:"list,omitempty"`
+	// Size is the size of the message as delivered, in bytes: the length of
+	// the raw message sealed with it. The size stored beside the item is
+	// whoever writes the table's to set, and is never read for a condition.
+	Size int64 `json:"size,omitempty"`
 }
+
+// MetaFormat is the format of StoredMeta that delivery writes: 2 since ADR
+// 0027 (List, Size). A meta without a format is of format 1.
+const MetaFormat = 2
 
 // SearchEntry is what search reads of a message, sealed in its txt# entry.
 type SearchEntry struct {
@@ -144,6 +163,11 @@ type SearchEntry struct {
 	Text string `json:"text"`
 	// ReceivedAt is the message's: what SearchedTo says.
 	ReceivedAt time.Time `json:"received_at"`
+	// Cut says the message's text was longer than the SearchTextMax bytes
+	// kept in Text (ADR 0027, "What delivery adds"). An entry written before
+	// does not say: it is taken as cut when its text ends within
+	// searchCutSlack bytes of SearchTextMax, where a cut text ends.
+	Cut bool `json:"cut,omitempty"`
 }
 
 // ConfirmEntry is a Gmail forwarding confirmation, sealed in its confirm#
