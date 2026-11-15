@@ -185,7 +185,7 @@ export function TargetSearch({
                 onClick={() => !off && add(option.target)}
                 onMouseEnter={() => !off && setActive(option.target)}
                 className={cx(
-                  'flex cursor-default items-center gap-2 py-1.5 pr-3 text-small',
+                  'flex items-center gap-2 py-1.5 pr-3 text-small',
                   option.nested ? 'pl-[44px]' : 'pl-3',
                   off ? 'text-ink-3' : 'text-ink',
                   isActive && 'bg-sunken',

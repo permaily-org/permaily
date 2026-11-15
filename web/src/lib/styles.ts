@@ -36,7 +36,7 @@ export function buttonClass(
   extra?: string,
 ): string {
   return cx(
-    'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-sm font-medium disabled:cursor-not-allowed',
+    'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-sm font-medium',
     sizes[size],
     buttonVariants[variant],
     focusRing,

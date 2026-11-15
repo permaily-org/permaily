@@ -32,7 +32,7 @@ export function ProviderButton({
       type="button"
       {...props}
       className={cx(
-        'group inline-flex items-center justify-center gap-2.5 whitespace-nowrap rounded-sm px-3 font-medium text-body leading-5 disabled:cursor-not-allowed',
+        'group inline-flex items-center justify-center gap-2.5 whitespace-nowrap rounded-sm px-3 font-medium text-body leading-5',
         signInHeight,
         looks[provider],
         focusRing,
