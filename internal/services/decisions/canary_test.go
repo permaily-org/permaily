@@ -688,3 +688,85 @@ func TestA20ACompletionRetriedAfterErrChanged(t *testing.T) {
 		})
 	}
 }
+
+// A20: the completion's own read failing, after the run's earlier reads
+// succeeded, is unreadable too, until a read succeeds (the second review of
+// pull request 2, finding 6 again).
+func TestA20ACompletionWhoseReadFailsIsUnreadable(t *testing.T) {
+	w := newWorld(t)
+	e := w.keyed()
+	ctx := context.Background()
+	answersAsMeasured(e, nil)
+	if err := e.RunCanary(ctx); err != nil {
+		t.Fatal(err)
+	}
+	w.advance(24 * time.Hour)
+	reads := 0
+	e.records.onGet(func(name string, _ int) (bool, *store.Record, store.Mark, error) {
+		if name == e.canaryName() {
+			reads++
+			if reads >= 3 {
+				return true, nil, store.Mark{}, errors.New("storage timed out at completion")
+			}
+		}
+		return false, nil, store.Mark{}, nil
+	})
+	if err := e.RunCanary(ctx); err == nil {
+		t.Fatal("completion unexpectedly succeeded")
+	}
+	if reads != 3 {
+		t.Fatalf("expected pre-run, post-lease, completion reads; got %d", reads)
+	}
+	if st := e.Status(ctx).Canary; st.State != attestation.CanaryUnreadable {
+		t.Fatalf("failed completion read reports %s, checked_at=%s; no read succeeded after failure", st.State, st.CheckedAt)
+	}
+}
+
+// A20: an alarm added for one stale episode does not let /status show a
+// later one, after another enclave's check ended the first, before the later
+// episode's own alarm is in the record (the second review of pull request
+// 2, new finding 1).
+func TestA20AnAlarmOfAnEarlierStaleEpisodeDoesNotShowALaterOne(t *testing.T) {
+	w := newWorld(t)
+	a, b := w.keyed(), w.keyed()
+	ctx := context.Background()
+	answersAsMeasured(a, nil)
+	if err := a.RunCanary(ctx); err != nil {
+		t.Fatal(err)
+	}
+	w.advance(48 * time.Hour)
+	a.model.onCall(func(context.Context, int, decide.Call) (*decide.Result, error) {
+		return nil, &decide.AttemptError{Err: decide.ErrRequest, Sent: true}
+	})
+	if err := a.RunCanary(ctx); err == nil {
+		t.Fatal("expected failed run")
+	}
+	if st := a.Status(ctx).Canary; st.State != attestation.CanaryStale {
+		t.Fatal(st)
+	}
+	w.advance(CanaryLease)
+	answersAsMeasured(b, nil)
+	if err := b.RunCanary(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st := a.Status(ctx).Canary; st.State != attestation.CanarySame {
+		t.Fatal(st)
+	}
+	// A sees B's recovery only through Status. Later it sees another stale
+	// episode, but the new episode's alarm cannot be persisted.
+	w.advance(48 * time.Hour)
+	a.records.onPut(func(name string) error {
+		if name == RecordAlarms {
+			return errors.New("alarm storage offline")
+		}
+		return nil
+	})
+	_ = a.RunCanary(ctx)
+	todayKey := (alarmEntry{Kind: AlarmCanaryFailed, Day: dayOf(w.clock()), Baseline: a.canary.Baseline}).key()
+	if w.alarms().find(todayKey) >= 0 {
+		t.Fatal("new episode's alarm unexpectedly present")
+	}
+	if st := a.Status(ctx).Canary; st.State == attestation.CanaryStale {
+		t.Fatalf("publishes a new stale episode before its alarm, reusing a prior episode's staleSeen: %+v", st)
+	}
+}
