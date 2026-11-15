@@ -180,9 +180,9 @@ func (w *writer) group(g contracts.Group) []contracts.SentencePart {
 	return parts
 }
 
-// positive is a received or size condition made positive, as Canonicalise
+// sentencePositive is a received or size condition made positive, as Canonicalise
 // makes it: not since is before, not at_least is below, and the reverse.
-func positive(c contracts.Condition) contracts.Condition {
+func sentencePositive(c contracts.Condition) contracts.Condition {
 	if !c.Not {
 		return c
 	}
@@ -198,7 +198,7 @@ func positive(c contracts.Condition) contracts.Condition {
 
 func (w *writer) condition(c contracts.Condition) []contracts.SentencePart {
 	l := w.l
-	c = positive(c)
+	c = sentencePositive(c)
 	key := templateKey{Var: c.Var, Op: c.Op, Not: c.Not}
 	value := c.Value
 	if c.Var == contracts.VarAttachmentType && c.Op == contracts.OpIs {

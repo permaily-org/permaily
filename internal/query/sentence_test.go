@@ -31,7 +31,7 @@ var goldenContext = Context{Lang: "en", Mailboxes: map[string]MailboxName{
 	m2: {Label: "", Address: addr2},
 }}
 
-func cond(v contracts.Variable, op contracts.Operator, value string) contracts.Condition {
+func sentenceCond(v contracts.Variable, op contracts.Operator, value string) contracts.Condition {
 	return contracts.Condition{Var: v, Op: op, Value: value}
 }
 
@@ -75,59 +75,59 @@ func TestGoldenSentences(t *testing.T) {
 	}{
 		{&Canonical{Formula: contracts.Formula{V: 1}}, "All mail."},
 		{&Canonical{Never: true}, "No mail."},
-		{one(cond("from_address", "is", "ann@example.com")), "Mail sent from “ann@example.com”."},
-		{one(not(cond("from_address", "is", "ann@example.com"))), "Mail not sent from “ann@example.com”."},
-		{one(cond("from_address", "is", "ann@xn--bcher-kva.example")), "Mail sent from “ann@bücher.example” (xn--bcher-kva.example)."},
-		{one(cond("from_domain", "is", "holded.com")), "Mail sent from an address at holded.com or a subdomain of it."},
-		{one(not(cond("from_domain", "is", "holded.com"))), "Mail not sent from any address at holded.com or a subdomain of it."},
-		{one(cond("recipient_address", "is", "me+bills@example.com")), "Mail addressed to “me+bills@example.com”."},
-		{one(not(cond("recipient_address", "is", "me@example.com"))), "Mail not addressed to “me@example.com”."},
-		{one(cond("recipient_domain", "is", "xn--bcher-kva.example")), "Mail addressed to an address at bücher.example (xn--bcher-kva.example) or a subdomain of it."},
-		{one(not(cond("recipient_domain", "is", "example.com"))), "Mail not addressed to any address at example.com or a subdomain of it."},
-		{one(cond("signed_by", "is", "holded.com")), "Mail signed by holded.com or a subdomain of it."},
-		{one(not(cond("signed_by", "is", "holded.com"))), "Mail not signed by holded.com or any subdomain of it."},
-		{one(cond("subject", "contains", "invoice")), "Mail whose subject contains the text “invoice”."},
-		{one(not(cond("subject", "contains", "invoice"))), "Mail whose subject doesn't contain the text “invoice”."},
-		{one(cond("body", "contains", "calle falsa 123")), "Mail whose body contains the text “calle falsa 123”."},
-		{one(not(cond("body", "contains", "unsubscribe"))), "Mail whose body doesn't contain the text “unsubscribe”."},
-		{one(cond("attachments", "exists", "")), "Mail with attachments."},
-		{one(not(cond("attachments", "exists", ""))), "Mail without attachments."},
-		{one(cond("attachment_name", "contains", ".pdf")), "Mail with an attachment whose name contains the text “.pdf”."},
-		{one(not(cond("attachment_name", "contains", ".exe"))), "Mail with no attachment whose name contains the text “.exe”."},
-		{one(cond("attachment_type", "is", "application/pdf")), "Mail with an attachment of type application/pdf."},
-		{one(not(cond("attachment_type", "is", "application/pdf"))), "Mail with no attachment of type application/pdf."},
-		{one(cond("attachment_type", "is", "image/*")), "Mail with an attachment of any image type."},
-		{one(not(cond("attachment_type", "is", "image/*"))), "Mail with no attachment of any image type."},
-		{one(cond("list", "exists", "")), "Mail sent to a mailing list."},
-		{one(not(cond("list", "exists", ""))), "Mail not sent to a mailing list."},
-		{one(cond("list", "is", "news.example.com")), "Mail sent to the mailing list “news.example.com”."},
-		{one(not(cond("list", "is", "news.example.com"))), "Mail not sent to the mailing list “news.example.com”."},
-		{one(cond("received", "since", "2026-01-01T00:00:00Z")), "Mail received on or after 1 January 2026. Times are in UTC."},
-		{one(cond("received", "before", "2026-03-05T09:30:00Z")), "Mail received before 5 March 2026, 09:30. Times are in UTC."},
-		{one(cond("received", "since", "2026-12-31T23:59:15Z")), "Mail received on or after 31 December 2026, 23:59:15. Times are in UTC."},
-		{one(cond("size", "at_least", "1000000")), "Mail of 1 MB or more."},
-		{one(cond("size", "at_least", "5000")), "Mail of 5 KB or more."},
-		{one(cond("size", "below", "2048")), "Mail smaller than 2,048 bytes."},
-		{one(cond("size", "below", "1")), "Mail smaller than 1 byte."},
-		{one(cond("size", "at_least", "1048576")), "Mail of 1,048,576 bytes or more."},
-		{one(cond("size", "below", "33554432")), "Mail smaller than 33,554,432 bytes."},
-		{one(cond("size", "below", "1500000000")), "Mail smaller than 1,500 MB."},
-		{one(cond("mailbox", "is", m1)), "Mail that arrived at your mailbox “Work”."},
-		{one(not(cond("mailbox", "is", m1))), "Mail that didn't arrive at your mailbox “Work”."},
-		{one(cond("mailbox", "is", m2)), "Mail that arrived at your mailbox " + addr2 + "."},
-		{one(cond("mailbox", "is", m4)), "Mail that arrived at a mailbox you disconnected (" + m4 + ")."},
-		{one(cond("subject", "about", "travel")), "Mail whose subject is about “travel” (a model decides)."},
-		{one(not(cond("subject", "about", "travel"))), "Mail whose subject is not about “travel” (a model decides)."},
-		{one(cond("message", "about", "invoices")), "Mail about “invoices” (a model decides)."},
-		{one(not(cond("message", "about", "invoices"))), "Mail not about “invoices” (a model decides)."},
-		{one(cond("message", "mentions", "my home address")), "Mail that mentions “my home address” (a model decides)."},
-		{one(not(cond("message", "mentions", "my home address"))), "Mail that doesn't mention “my home address” (a model decides)."},
-		{one(cond("from_domain", "is", "holded.com"), cond("subject", "contains", "invoice")), "Mail sent from an address at holded.com or a subdomain of it, or whose subject contains the text “invoice”."},
+		{one(sentenceCond("from_address", "is", "ann@example.com")), "Mail sent from “ann@example.com”."},
+		{one(not(sentenceCond("from_address", "is", "ann@example.com"))), "Mail not sent from “ann@example.com”."},
+		{one(sentenceCond("from_address", "is", "ann@xn--bcher-kva.example")), "Mail sent from “ann@bücher.example” (xn--bcher-kva.example)."},
+		{one(sentenceCond("from_domain", "is", "holded.com")), "Mail sent from an address at holded.com or a subdomain of it."},
+		{one(not(sentenceCond("from_domain", "is", "holded.com"))), "Mail not sent from any address at holded.com or a subdomain of it."},
+		{one(sentenceCond("recipient_address", "is", "me+bills@example.com")), "Mail addressed to “me+bills@example.com”."},
+		{one(not(sentenceCond("recipient_address", "is", "me@example.com"))), "Mail not addressed to “me@example.com”."},
+		{one(sentenceCond("recipient_domain", "is", "xn--bcher-kva.example")), "Mail addressed to an address at bücher.example (xn--bcher-kva.example) or a subdomain of it."},
+		{one(not(sentenceCond("recipient_domain", "is", "example.com"))), "Mail not addressed to any address at example.com or a subdomain of it."},
+		{one(sentenceCond("signed_by", "is", "holded.com")), "Mail signed by holded.com or a subdomain of it."},
+		{one(not(sentenceCond("signed_by", "is", "holded.com"))), "Mail not signed by holded.com or any subdomain of it."},
+		{one(sentenceCond("subject", "contains", "invoice")), "Mail whose subject contains the text “invoice”."},
+		{one(not(sentenceCond("subject", "contains", "invoice"))), "Mail whose subject doesn't contain the text “invoice”."},
+		{one(sentenceCond("body", "contains", "calle falsa 123")), "Mail whose body contains the text “calle falsa 123”."},
+		{one(not(sentenceCond("body", "contains", "unsubscribe"))), "Mail whose body doesn't contain the text “unsubscribe”."},
+		{one(sentenceCond("attachments", "exists", "")), "Mail with attachments."},
+		{one(not(sentenceCond("attachments", "exists", ""))), "Mail without attachments."},
+		{one(sentenceCond("attachment_name", "contains", ".pdf")), "Mail with an attachment whose name contains the text “.pdf”."},
+		{one(not(sentenceCond("attachment_name", "contains", ".exe"))), "Mail with no attachment whose name contains the text “.exe”."},
+		{one(sentenceCond("attachment_type", "is", "application/pdf")), "Mail with an attachment of type application/pdf."},
+		{one(not(sentenceCond("attachment_type", "is", "application/pdf"))), "Mail with no attachment of type application/pdf."},
+		{one(sentenceCond("attachment_type", "is", "image/*")), "Mail with an attachment of any image type."},
+		{one(not(sentenceCond("attachment_type", "is", "image/*"))), "Mail with no attachment of any image type."},
+		{one(sentenceCond("list", "exists", "")), "Mail sent to a mailing list."},
+		{one(not(sentenceCond("list", "exists", ""))), "Mail not sent to a mailing list."},
+		{one(sentenceCond("list", "is", "news.example.com")), "Mail sent to the mailing list “news.example.com”."},
+		{one(not(sentenceCond("list", "is", "news.example.com"))), "Mail not sent to the mailing list “news.example.com”."},
+		{one(sentenceCond("received", "since", "2026-01-01T00:00:00Z")), "Mail received on or after 1 January 2026. Times are in UTC."},
+		{one(sentenceCond("received", "before", "2026-03-05T09:30:00Z")), "Mail received before 5 March 2026, 09:30. Times are in UTC."},
+		{one(sentenceCond("received", "since", "2026-12-31T23:59:15Z")), "Mail received on or after 31 December 2026, 23:59:15. Times are in UTC."},
+		{one(sentenceCond("size", "at_least", "1000000")), "Mail of 1 MB or more."},
+		{one(sentenceCond("size", "at_least", "5000")), "Mail of 5 KB or more."},
+		{one(sentenceCond("size", "below", "2048")), "Mail smaller than 2,048 bytes."},
+		{one(sentenceCond("size", "below", "1")), "Mail smaller than 1 byte."},
+		{one(sentenceCond("size", "at_least", "1048576")), "Mail of 1,048,576 bytes or more."},
+		{one(sentenceCond("size", "below", "33554432")), "Mail smaller than 33,554,432 bytes."},
+		{one(sentenceCond("size", "below", "1500000000")), "Mail smaller than 1,500 MB."},
+		{one(sentenceCond("mailbox", "is", m1)), "Mail that arrived at your mailbox “Work”."},
+		{one(not(sentenceCond("mailbox", "is", m1))), "Mail that didn't arrive at your mailbox “Work”."},
+		{one(sentenceCond("mailbox", "is", m2)), "Mail that arrived at your mailbox " + addr2 + "."},
+		{one(sentenceCond("mailbox", "is", m4)), "Mail that arrived at a mailbox you disconnected (" + m4 + ")."},
+		{one(sentenceCond("subject", "about", "travel")), "Mail whose subject is about “travel” (a model decides)."},
+		{one(not(sentenceCond("subject", "about", "travel"))), "Mail whose subject is not about “travel” (a model decides)."},
+		{one(sentenceCond("message", "about", "invoices")), "Mail about “invoices” (a model decides)."},
+		{one(not(sentenceCond("message", "about", "invoices"))), "Mail not about “invoices” (a model decides)."},
+		{one(sentenceCond("message", "mentions", "my home address")), "Mail that mentions “my home address” (a model decides)."},
+		{one(not(sentenceCond("message", "mentions", "my home address"))), "Mail that doesn't mention “my home address” (a model decides)."},
+		{one(sentenceCond("from_domain", "is", "holded.com"), sentenceCond("subject", "contains", "invoice")), "Mail sent from an address at holded.com or a subdomain of it, or whose subject contains the text “invoice”."},
 		{
 			formula(
-				[]contracts.Condition{cond("from_domain", "is", "holded.com"), cond("subject", "contains", "invoice")},
-				[]contracts.Condition{cond("received", "since", "2026-01-01T00:00:00Z")},
-				[]contracts.Condition{not(cond("attachments", "exists", ""))},
+				[]contracts.Condition{sentenceCond("from_domain", "is", "holded.com"), sentenceCond("subject", "contains", "invoice")},
+				[]contracts.Condition{sentenceCond("received", "since", "2026-01-01T00:00:00Z")},
+				[]contracts.Condition{not(sentenceCond("attachments", "exists", ""))},
 			),
 			"Mail that meets all of these:\n" +
 				"- sent from an address at holded.com or a subdomain of it, or whose subject contains the text “invoice”\n" +
@@ -136,8 +136,8 @@ func TestGoldenSentences(t *testing.T) {
 		},
 		{
 			formula(
-				[]contracts.Condition{cond("mailbox", "is", m1), cond("mailbox", "is", m5)},
-				[]contracts.Condition{cond("message", "about", "travel")},
+				[]contracts.Condition{sentenceCond("mailbox", "is", m1), sentenceCond("mailbox", "is", m5)},
+				[]contracts.Condition{sentenceCond("message", "about", "travel")},
 			),
 			"Mail that meets all of these:\n" +
 				"- that arrived at your mailbox “Work”, or that arrived at a mailbox you disconnected (" + m5 + ")\n" +
@@ -161,8 +161,8 @@ func TestGoldenSentences(t *testing.T) {
 // are several groups.
 func TestTheSentencesParts(t *testing.T) {
 	s := Render(formula(
-		[]contracts.Condition{cond("from_domain", "is", "xn--bcher-kva.example"), cond("message", "about", "travel")},
-		[]contracts.Condition{cond("mailbox", "is", m4)},
+		[]contracts.Condition{sentenceCond("from_domain", "is", "xn--bcher-kva.example"), sentenceCond("message", "about", "travel")},
+		[]contracts.Condition{sentenceCond("mailbox", "is", m4)},
 	), goldenContext)
 	want := contracts.Sentence{
 		Lang: "en",
@@ -190,7 +190,7 @@ func TestTheSentencesParts(t *testing.T) {
 	if !reflect.DeepEqual(s, want) {
 		t.Fatalf("got  %#v\nwant %#v", s, want)
 	}
-	s1 := Render(one(cond("size", "below", "2048")), goldenContext)
+	s1 := Render(one(sentenceCond("size", "below", "2048")), goldenContext)
 	if len(s1.Lead) != 0 || len(s1.Lines) != 1 || s1.Lines[0].Parts[0].Text != "Mail " {
 		t.Fatalf("one group: %#v", s1)
 	}
@@ -199,8 +199,8 @@ func TestTheSentencesParts(t *testing.T) {
 // Q20: a rule of several formulas reads "Any of these:" and each formula's
 // sentence; a rule of one reads as its formula, and of none as no mail.
 func TestARulesSentence(t *testing.T) {
-	a := one(cond("from_address", "is", "a@b.com"))
-	b := formula([]contracts.Condition{cond("attachments", "exists", "")}, []contracts.Condition{cond("size", "at_least", "1000000")})
+	a := one(sentenceCond("from_address", "is", "a@b.com"))
+	b := formula([]contracts.Condition{sentenceCond("attachments", "exists", "")}, []contracts.Condition{sentenceCond("size", "at_least", "1000000")})
 	r := RenderRule([]*Canonical{a, b}, goldenContext)
 	want := "Any of these:\nMail sent from “a@b.com”.\nMail that meets all of these:\n- with attachments\n- of 1 MB or more."
 	if r.Text != want || len(r.Formulas) != 2 || !reflect.DeepEqual(r.Lead, []contracts.SentencePart{{Text: "Any of these:"}}) {
@@ -228,25 +228,25 @@ func TestARulesSentence(t *testing.T) {
 // value, quoted.
 func TestWhatIsNotCanonicalStillSaysWhatItMeans(t *testing.T) {
 	for f, want := range map[*Canonical]string{
-		one(not(cond("received", "since", "2026-01-01T00:00:00Z"))):            "Mail received before 1 January 2026. Times are in UTC.",
-		one(not(cond("received", "before", "2026-01-01T00:00:00Z"))):           "Mail received on or after 1 January 2026. Times are in UTC.",
-		one(not(cond("size", "at_least", "1000"))):                             "Mail smaller than 1 KB.",
-		one(not(cond("size", "below", "1000"))):                                "Mail of 1 KB or more.",
-		formula([]contracts.Condition{cond("attachments", "exists", "")}, nil): "No mail.",
-		nil:                                         "No mail.",
-		one(cond("subject", "is", "x")):             "Mail meeting the condition “subject” “is” “x”.",
-		one(not(cond("body", "about", "x"))):        "Mail not meeting the condition “body” “about” “x” (a model decides).",
-		one(cond("received", "since", "today")):     "Mail received on or after “today”.",
-		one(cond("size", "below", "007")):           "Mail smaller than “007”.",
-		one(cond("from_domain", "is", "a b")):       "Mail sent from an address at “a b” or a subdomain of it.",
-		one(cond("attachment_type", "is", "image")): "Mail with an attachment of type “image”.",
-		one(cond("mailbox", "is", "Work")):          "Mail that arrived at a mailbox you disconnected (“Work”).",
+		one(not(sentenceCond("received", "since", "2026-01-01T00:00:00Z"))):            "Mail received before 1 January 2026. Times are in UTC.",
+		one(not(sentenceCond("received", "before", "2026-01-01T00:00:00Z"))):           "Mail received on or after 1 January 2026. Times are in UTC.",
+		one(not(sentenceCond("size", "at_least", "1000"))):                             "Mail smaller than 1 KB.",
+		one(not(sentenceCond("size", "below", "1000"))):                                "Mail of 1 KB or more.",
+		formula([]contracts.Condition{sentenceCond("attachments", "exists", "")}, nil): "No mail.",
+		nil:                                     "No mail.",
+		one(sentenceCond("subject", "is", "x")): "Mail meeting the condition “subject” “is” “x”.",
+		one(not(sentenceCond("body", "about", "x"))):        "Mail not meeting the condition “body” “about” “x” (a model decides).",
+		one(sentenceCond("received", "since", "today")):     "Mail received on or after “today”.",
+		one(sentenceCond("size", "below", "007")):           "Mail smaller than “007”.",
+		one(sentenceCond("from_domain", "is", "a b")):       "Mail sent from an address at “a b” or a subdomain of it.",
+		one(sentenceCond("attachment_type", "is", "image")): "Mail with an attachment of type “image”.",
+		one(sentenceCond("mailbox", "is", "Work")):          "Mail that arrived at a mailbox you disconnected (“Work”).",
 	} {
 		if got := Render(f, goldenContext).Text; got != want {
 			t.Errorf("got  %q\nwant %q", got, want)
 		}
 	}
-	for _, f := range []*Canonical{one(cond("subject", "is", "x")), one(not(cond("body", "about", "x”, or y"))), one(cond("size", "below", "007"))} {
+	for _, f := range []*Canonical{one(sentenceCond("subject", "is", "x")), one(not(sentenceCond("body", "about", "x”, or y"))), one(sentenceCond("size", "below", "007"))} {
 		readsBack(t, f, goldenContext)
 	}
 }
@@ -262,7 +262,7 @@ func TestTheTables(t *testing.T) {
 		for _, k := range conditionKinds {
 			for _, neg := range []bool{false, true} {
 				if neg && !k.neg {
-					c := positive(contracts.Condition{Var: k.v, Op: k.op, Not: true})
+					c := sentencePositive(contracts.Condition{Var: k.v, Op: k.op, Not: true})
 					if _, ok := l.templates[templateKey{Var: c.Var, Op: c.Op}]; !ok || c.Not {
 						t.Errorf("%s: %s %s negated is not made positive", tag, k.v, k.op)
 					}
@@ -327,7 +327,7 @@ func TestMailboxNames(t *testing.T) {
 	ctx := func(l1, a1, l2, a2 string) Context {
 		return Context{Lang: "en", Mailboxes: map[string]MailboxName{m1: {l1, a1}, m2: {l2, a2}}}
 	}
-	text := func(c Context, id string) string { return readsBack(t, one(cond("mailbox", "is", id)), c).Text }
+	text := func(c Context, id string) string { return readsBack(t, one(sentenceCond("mailbox", "is", id)), c).Text }
 
 	same := ctx("Work", addr1, "Work", addr2)
 	if a, b := text(same, m1), text(same, m2); a != "Mail that arrived at your mailbox "+addr1+"." || b != "Mail that arrived at your mailbox "+addr2+"." {
@@ -362,7 +362,7 @@ func TestMailboxNames(t *testing.T) {
 	text(odd, m1)
 
 	// Two disconnected mailboxes.
-	s4, s5 := Render(one(cond("mailbox", "is", m4)), goldenContext), Render(one(cond("mailbox", "is", m5)), goldenContext)
+	s4, s5 := Render(one(sentenceCond("mailbox", "is", m4)), goldenContext), Render(one(sentenceCond("mailbox", "is", m5)), goldenContext)
 	if s4.Text == s5.Text || reflect.DeepEqual(s4.Lines, s5.Lines) {
 		t.Fatal("two disconnected mailboxes read alike")
 	}
@@ -371,7 +371,7 @@ func TestMailboxNames(t *testing.T) {
 			t.Errorf("%s is not a value part: %#v", id, p)
 		}
 	}
-	both := readsBack(t, one(cond("mailbox", "is", m4), cond("mailbox", "is", m5)), goldenContext)
+	both := readsBack(t, one(sentenceCond("mailbox", "is", m4), sentenceCond("mailbox", "is", m5)), goldenContext)
 	if strings.Count(both.Text, "a mailbox you disconnected") != 2 {
 		t.Errorf("%q", both.Text)
 	}
@@ -382,7 +382,7 @@ func TestMailboxNames(t *testing.T) {
 		c := g.context()
 		seen := map[string]string{}
 		for _, id := range append(genMailboxes, "mbx_”x", "Work") {
-			s := Render(one(cond("mailbox", "is", id)), c).Text
+			s := Render(one(sentenceCond("mailbox", "is", id)), c).Text
 			if other, ok := seen[s]; ok {
 				t.Fatalf("%s and %s read alike in %+v: %q", id, other, c, s)
 			}
@@ -479,8 +479,8 @@ func TestPresentation(t *testing.T) {
 		m2: {Label: "A", Address: addr2},
 		m3: {Label: "B", Address: addr3},
 	}}
-	a := readsBack(t, one(cond("mailbox", "is", m1)), c)
-	b := readsBack(t, one(cond("mailbox", "is", m2), cond("mailbox", "is", m3)), c)
+	a := readsBack(t, one(sentenceCond("mailbox", "is", m1)), c)
+	b := readsBack(t, one(sentenceCond("mailbox", "is", m2), sentenceCond("mailbox", "is", m3)), c)
 	if a.Text == b.Text || reflect.DeepEqual(a.Lines, b.Lines) {
 		t.Fatalf("read alike: %q", a.Text)
 	}
@@ -491,11 +491,11 @@ func TestPresentation(t *testing.T) {
 		t.Errorf("%q", b.Text)
 	}
 
-	if s := readsBack(t, one(cond("from_address", "is", "a”b@example.com")), c); s.Text != `Mail sent from “a\”b@example.com”.` {
+	if s := readsBack(t, one(sentenceCond("from_address", "is", "a”b@example.com")), c); s.Text != `Mail sent from “a\”b@example.com”.` {
 		t.Errorf("%q", s.Text)
 	}
 	for _, v := range []string{`not sent from “x”, or with attachments`, `\”. Times are in UTC.`, `\`, `”`} {
-		s := readsBack(t, one(cond("subject", "contains", v)), c)
+		s := readsBack(t, one(sentenceCond("subject", "contains", v)), c)
 		var vals []contracts.SentencePart
 		for _, p := range s.Lines[0].Parts {
 			if p.Value {

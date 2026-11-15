@@ -178,9 +178,6 @@ func presentMediaType(v string) string {
 	return presentText(v)
 }
 
-// canonicalTime is the layout of a canonical time.
-const canonicalTime = "2006-01-02T15:04:05Z"
-
 // presentTime writes a canonical time in UTC, to the minute or the second
 // only when it has them, and reports whether it was a time; anything else is
 // quoted.

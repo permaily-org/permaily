@@ -30,7 +30,7 @@ var (
 
 // parseSentence reads a sentence's plain text.
 func parseSentence(text string, c Context) (*Canonical, error) {
-	r := newReader(c, nil)
+	r := newSentenceReader(c, nil)
 	var found []*Canonical
 	for _, f := range r.readText(text) {
 		if Render(f, c).Text == text {
@@ -127,7 +127,7 @@ const maxReadings = 3
 // part does (a NUL in a value is written \u{0}).
 const placeholder = "\x00"
 
-type reader struct {
+type sentenceReader struct {
 	l *language
 	c Context
 	// names are the context's mailbox names, by their fixed words around
@@ -138,9 +138,9 @@ type reader struct {
 	memo   map[string]map[int][][]contracts.Condition
 }
 
-func newReader(c Context, values []string) *reader {
+func newSentenceReader(c Context, values []string) *sentenceReader {
 	l := languageOf(c.Lang)
-	r := &reader{l: l, c: c, values: values, names: map[[2]string]map[string][]string{}, memo: map[string]map[int][][]contracts.Condition{}}
+	r := &sentenceReader{l: l, c: c, values: values, names: map[[2]string]map[string][]string{}, memo: map[string]map[int][][]contracts.Condition{}}
 	for id, n := range mailboxNames(c, l) {
 		k := [2]string{n.before, n.after}
 		if r.names[k] == nil {
@@ -152,7 +152,7 @@ func newReader(c Context, values []string) *reader {
 }
 
 // readText finds every formula the plain text could be the sentence of.
-func (r *reader) readText(text string) []*Canonical {
+func (r *sentenceReader) readText(text string) []*Canonical {
 	l := r.l
 	var out []*Canonical
 	for _, body := range withoutUTC(text, l) {
@@ -206,7 +206,7 @@ func readParts(s contracts.Sentence, c Context) []*Canonical {
 	for _, line := range s.Lines {
 		lines = append(lines, flat(line.Parts))
 	}
-	r := newReader(c, values)
+	r := newSentenceReader(c, values)
 	l := r.l
 	if len(lines) == 0 {
 		return nil
@@ -240,7 +240,7 @@ func withoutUTC(text string, l *language) []string {
 
 // formulas is every formula of one group per line, each line read every way
 // it can be.
-func (r *reader) formulas(lines []string) []*Canonical {
+func (r *sentenceReader) formulas(lines []string) []*Canonical {
 	combos := [][]contracts.Group{nil}
 	for _, line := range lines {
 		readings := r.conditions(line, 0)
@@ -265,7 +265,7 @@ func (r *reader) formulas(lines []string) []*Canonical {
 
 // conditions is every way s[pos:] reads as conditions joined by the
 // separator.
-func (r *reader) conditions(s string, pos int) [][]contracts.Condition {
+func (r *sentenceReader) conditions(s string, pos int) [][]contracts.Condition {
 	if m, ok := r.memo[s][pos]; ok {
 		return m
 	}
@@ -296,7 +296,7 @@ type match struct {
 
 // condition is every condition s[pos:] starts with: by every template whose
 // fixed words it has, and every way its values can end.
-func (r *reader) condition(s string, pos int) []match {
+func (r *sentenceReader) condition(s string, pos int) []match {
 	var out []match
 	try := func(key templateKey, tpl template) {
 		if !strings.HasPrefix(s[pos:], tpl[0]) {
@@ -336,7 +336,7 @@ type filled struct {
 }
 
 // slots reads the values of a template and the fixed words after each.
-func (r *reader) slots(s string, pos int, key templateKey, after []string) []filled {
+func (r *sentenceReader) slots(s string, pos int, key templateKey, after []string) []filled {
 	if len(after) == 0 {
 		return []filled{{end: pos}}
 	}
@@ -359,7 +359,7 @@ type cand struct {
 
 // value is every value of the key's type that s[pos:] starts with. quoted
 // says the slot is one of a condition with no template, always a text.
-func (r *reader) value(s string, pos int, key templateKey, quoted bool) []cand {
+func (r *sentenceReader) value(s string, pos int, key templateKey, quoted bool) []cand {
 	if quoted {
 		return r.part(s, pos, scanQuoted)
 	}
@@ -385,7 +385,7 @@ func (r *reader) value(s string, pos int, key templateKey, quoted bool) []cand {
 
 // part reads one value: from the text itself, or, reading parts, from the
 // value part at pos, which the scanner must read whole.
-func (r *reader) part(s string, pos int, scan func(string, int) []cand) []cand {
+func (r *sentenceReader) part(s string, pos int, scan func(string, int) []cand) []cand {
 	if r.values == nil {
 		return scan(s, pos)
 	}
@@ -410,7 +410,7 @@ func (r *reader) part(s string, pos int, scan func(string, int) []cand) []cand {
 
 // mailbox reads a mailbox: the fixed words of one of the context's names
 // and its value, or the words of a disconnected mailbox and an identifier.
-func (r *reader) mailbox(s string, pos int) []cand {
+func (r *sentenceReader) mailbox(s string, pos int) []cand {
 	var out []cand
 	for k, byValue := range r.names {
 		if !strings.HasPrefix(s[pos:], k[0]) {
@@ -585,7 +585,7 @@ func digits(s string, pos int) string {
 
 // scanTime reads a time as presentTime writes it: day, month and year, and
 // the time of day to the minute or the second.
-func (r *reader) scanTime(s string, pos int) []cand {
+func (r *sentenceReader) scanTime(s string, pos int) []cand {
 	out := scanQuoted(s, pos)
 	day := digits(s, pos)
 	p := pos + len(day)
@@ -638,7 +638,7 @@ func (r *reader) scanTime(s string, pos int) []cand {
 }
 
 // scanSize reads a size as presentSize writes it.
-func (r *reader) scanSize(s string, pos int) []cand {
+func (r *sentenceReader) scanSize(s string, pos int) []cand {
 	out := scanQuoted(s, pos)
 	num := token(s, pos, func(c rune) bool { return c >= '0' && c <= '9' || strings.ContainsRune(r.l.thousands, c) })
 	n, err := strconv.ParseInt(strings.ReplaceAll(num, r.l.thousands, ""), 10, 64)

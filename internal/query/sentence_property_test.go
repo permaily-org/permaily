@@ -75,21 +75,27 @@ func TestValuesCannotAddWords(t *testing.T) {
 		vals = append(vals, v, "x"+v+"y")
 	}
 	slots := []func(v string) (contracts.Condition, string){
-		func(v string) (contracts.Condition, string) { return cond("subject", "contains", v), presentText(v) },
-		func(v string) (contracts.Condition, string) { return not(cond("body", "contains", v)), presentText(v) },
 		func(v string) (contracts.Condition, string) {
-			return cond("attachment_name", "contains", v), presentText(v)
-		},
-		func(v string) (contracts.Condition, string) { return cond("list", "is", v), presentText(v) },
-		func(v string) (contracts.Condition, string) { return cond("message", "about", v), presentText(v) },
-		func(v string) (contracts.Condition, string) {
-			return not(cond("message", "mentions", v)), presentText(v)
+			return sentenceCond("subject", "contains", v), presentText(v)
 		},
 		func(v string) (contracts.Condition, string) {
-			return cond("from_address", "is", v+"@example.com"), presentText(v + "@example.com")
+			return not(sentenceCond("body", "contains", v)), presentText(v)
 		},
 		func(v string) (contracts.Condition, string) {
-			return cond("recipient_address", "is", v+"@xn--bcher-kva.example"), presentText(v+"@bücher.example") + " (xn--bcher-kva.example)"
+			return sentenceCond("attachment_name", "contains", v), presentText(v)
+		},
+		func(v string) (contracts.Condition, string) { return sentenceCond("list", "is", v), presentText(v) },
+		func(v string) (contracts.Condition, string) {
+			return sentenceCond("message", "about", v), presentText(v)
+		},
+		func(v string) (contracts.Condition, string) {
+			return not(sentenceCond("message", "mentions", v)), presentText(v)
+		},
+		func(v string) (contracts.Condition, string) {
+			return sentenceCond("from_address", "is", v+"@example.com"), presentText(v + "@example.com")
+		},
+		func(v string) (contracts.Condition, string) {
+			return sentenceCond("recipient_address", "is", v+"@xn--bcher-kva.example"), presentText(v+"@bücher.example") + " (xn--bcher-kva.example)"
 		},
 	}
 	for _, v := range vals {
@@ -97,7 +103,7 @@ func TestValuesCannotAddWords(t *testing.T) {
 			c, want := slot(v)
 			for _, f := range []*Canonical{
 				one(c),
-				one(cond("attachments", "exists", ""), c, cond("list", "exists", "")),
+				one(sentenceCond("attachments", "exists", ""), c, sentenceCond("list", "exists", "")),
 				formula([]contracts.Condition{c}, []contracts.Condition{c, not(c)}),
 			} {
 				s := readsBack(t, f, goldenContext)
@@ -114,7 +120,7 @@ func TestValuesCannotAddWords(t *testing.T) {
 			}
 		}
 		label := Context{Lang: "en", Mailboxes: map[string]MailboxName{m1: {v, addr1}, m2: {"Work", addr2}}}
-		s := readsBack(t, one(cond("mailbox", "is", m1), cond("mailbox", "is", m2)), label)
+		s := readsBack(t, one(sentenceCond("mailbox", "is", m1), sentenceCond("mailbox", "is", m2)), label)
 		if mailboxLabel(v) && !slices.Contains(s.Lines[0].Parts, contracts.SentencePart{Text: presentText(v), Value: true}) {
 			t.Fatalf("label %q is not one value part: %#v", v, s.Lines[0].Parts)
 		}
@@ -143,11 +149,11 @@ func TestTheLongestSentenceIsUnder100KiB(t *testing.T) {
 		t.Fatalf("the longest domain is %d bytes, Unicode form %v", len(d), unicodeDomain(d) != d)
 	}
 	worst := map[string]contracts.Condition{
-		"address": not(cond("recipient_address", "is", strings.Repeat(`\`, 64)+"@"+d)),
-		"domain":  not(cond("recipient_domain", "is", d)),
-		"text":    not(cond("attachment_name", "contains", strings.Repeat("〝", contracts.MaxTextRunes))),
-		"topic":   not(cond("subject", "about", strings.Repeat("〝", contracts.MaxTextRunes))),
-		"mailbox": not(cond("mailbox", "is", m1)),
+		"address": not(sentenceCond("recipient_address", "is", strings.Repeat(`\`, 64)+"@"+d)),
+		"domain":  not(sentenceCond("recipient_domain", "is", d)),
+		"text":    not(sentenceCond("attachment_name", "contains", strings.Repeat("〝", contracts.MaxTextRunes))),
+		"topic":   not(sentenceCond("subject", "about", strings.Repeat("〝", contracts.MaxTextRunes))),
+		"mailbox": not(sentenceCond("mailbox", "is", m1)),
 	}
 	label := Context{Lang: "en", Mailboxes: map[string]MailboxName{m1: {strings.Repeat("〝", 64), addr1}}}
 	longest := 0
@@ -179,7 +185,7 @@ func TestTheLongestSentenceIsUnder100KiB(t *testing.T) {
 // sentence one character off, and parts with a value made fixed or a fixed
 // part made a value are not read back.
 func TestTheReaderRefusesWhatRenderDoesNotWrite(t *testing.T) {
-	good := Render(formula([]contracts.Condition{cond("subject", "contains", "x")}, []contracts.Condition{cond("size", "below", "2048")}), goldenContext)
+	good := Render(formula([]contracts.Condition{sentenceCond("subject", "contains", "x")}, []contracts.Condition{sentenceCond("size", "below", "2048")}), goldenContext)
 	for _, text := range []string{
 		"", "Mail.", "Mail sent from.", "Mail whose subject contains the text “x”",
 		"Mail whose subject contains the text “x”, or.", "Mail whose subject contains the text “x\\”.",
@@ -209,7 +215,7 @@ func TestTheReaderRefusesWhatRenderDoesNotWrite(t *testing.T) {
 	}
 	for i, line := range good.Lines {
 		for j := range line.Parts {
-			bad := Render(formula([]contracts.Condition{cond("subject", "contains", "x")}, []contracts.Condition{cond("size", "below", "2048")}), goldenContext)
+			bad := Render(formula([]contracts.Condition{sentenceCond("subject", "contains", "x")}, []contracts.Condition{sentenceCond("size", "below", "2048")}), goldenContext)
 			bad.Lines[i].Parts[j].Value = !bad.Lines[i].Parts[j].Value
 			if _, err := parseParts(bad, goldenContext); err == nil {
 				t.Errorf("parts with %q flipped were read", line.Parts[j].Text)
@@ -217,7 +223,7 @@ func TestTheReaderRefusesWhatRenderDoesNotWrite(t *testing.T) {
 		}
 	}
 	// Two mailboxes that read alike are two readings.
-	r := newReader(goldenContext, nil)
+	r := newSentenceReader(goldenContext, nil)
 	r.names[[2]string{english.yourMailbox, ""}]["“Work”"] = []string{m1, m2}
 	if got := r.readText("Mail that arrived at your mailbox “Work”."); len(got) != 2 {
 		t.Errorf("%d readings", len(got))
@@ -244,8 +250,8 @@ func FuzzSentenceReadsBack(f *testing.F) {
 		}
 		ctx := Context{Lang: "en", Mailboxes: map[string]MailboxName{m1: {label, addr1}, m2: {v2, addr2}}}
 		for _, fm := range []*Canonical{
-			one(c(k1, v1), c(k2, v2), cond("mailbox", "is", m1)),
-			formula([]contracts.Condition{c(k1, v2)}, []contracts.Condition{c(k2, v1), cond("mailbox", "is", m2)}),
+			one(c(k1, v1), c(k2, v2), sentenceCond("mailbox", "is", m1)),
+			formula([]contracts.Condition{c(k1, v2)}, []contracts.Condition{c(k2, v1), sentenceCond("mailbox", "is", m2)}),
 		} {
 			readsBack(t, fm, ctx)
 		}
