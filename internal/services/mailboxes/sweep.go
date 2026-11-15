@@ -108,7 +108,8 @@ func (s *Service) sweepGone(ctx context.Context) error {
 			continue // the mark stays: it is that work's only record
 		}
 		// ErrConflict: a deletion tried again wrote it anew since it was
-		// read, and its own grace counts from then.
+		// read, with a generation of its own (even at the same version),
+		// and its own grace counts from then.
 		if err := s.cfg.Storage.DeleteEntryAt(ctx, e); err != nil && !errors.Is(err, store.ErrConflict) {
 			errs = append(errs, err)
 		}

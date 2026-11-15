@@ -398,12 +398,14 @@ func (p *matchRun) ask(ctx context.Context, m *store.Message, meta *StoredMeta, 
 	}
 	actx, cancel := context.WithTimeout(ctx, p.mt.bounds.ask)
 	asked, err := p.asking.Asker.Ask(actx, q)
+	ranOut := errors.Is(actx.Err(), context.DeadlineExceeded) // before cancel, which sets it
 	src.close()
 	cancel()
 	if err != nil {
-		if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
-			// The message's own deadline, not the request's: it was asked,
-			// and nothing came of it.
+		if ranOut && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+			// The message's own deadline ran out, not the request's: it was
+			// asked, and nothing came of it. Any other error, a storage
+			// call's own context.DeadlineExceeded included, fails the page.
 			p.asked++
 			return verdictUnknown, nil
 		}

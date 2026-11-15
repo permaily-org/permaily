@@ -2,8 +2,10 @@ package inbox
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"time"
@@ -426,10 +428,17 @@ func (r *storeReader) Delete(ctx context.Context, b Box, ids []string) (int, err
 // it is the work of deleting; its UpdatedAt is when the deletion started,
 // from which the sweep counts SweepGrace. A message whose item is not there
 // gets none: it was deleted already (by a deletion that wrote its own mark
-// first), or expired with its decisions, or never was. A mark already there
-// (a deletion tried again) is written again at the version read, so the
-// grace counts from this deletion; one another deletion changes meanwhile is
-// that deletion's, as good as this one's.
+// first), or expired with its decisions, or never was.
+//
+// A mark already there (a deletion tried again) is written again at the
+// version read, so the grace counts from this deletion. Every writing holds
+// a generation of its own (goneMark), so a sweep that read an earlier mark
+// and deletes it as it read it (DeleteEntryAt) cannot take this one, even
+// once the mark was deleted and made again at the same version. A write
+// that fails because the mark changed or went in between (the sweep deleted
+// it, or another deletion wrote it) is tried again from the start: the
+// message is deleted only once this deletion's own write succeeded, and
+// after markTries tries the deletion fails.
 func (r *storeReader) markGone(ctx context.Context, b Box, id string) error {
 	m, err := r.st.Item(ctx, b.MailboxID, id)
 	if errors.Is(err, store.ErrNotFound) {
@@ -438,27 +447,42 @@ func (r *storeReader) markGone(ctx context.Context, b Box, id string) error {
 	if err != nil {
 		return err
 	}
-	mark := &store.Entry{Partition: GonePartition, Key: GoneKey(b.MailboxID, id), Value: []byte(goneValue), ExpiresAt: m.ExpiresAt, UpdatedAt: r.now()}
-	err = r.st.PutEntry(ctx, mark)
-	if !errors.Is(err, store.ErrExists) {
-		return err
-	}
-	old, err := r.st.GetEntry(ctx, GonePartition, mark.Key)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		// The sweep's pass deleted it in between: write it anew.
-		mark.Version = 0
-	case err != nil:
-		return err
-	default:
+	key := GoneKey(b.MailboxID, id)
+	for range markTries {
+		mark := &store.Entry{Partition: GonePartition, Key: key, Value: goneMark(), ExpiresAt: m.ExpiresAt, UpdatedAt: r.now()}
+		err := r.st.PutEntry(ctx, mark)
+		if !errors.Is(err, store.ErrExists) {
+			return err // written, or failed
+		}
+		old, err := r.st.GetEntry(ctx, GonePartition, key)
+		if errors.Is(err, store.ErrNotFound) {
+			continue // the sweep deleted it in between: write it anew
+		}
+		if err != nil {
+			return err
+		}
 		mark.Version = old.Version
-	}
-	if err := r.st.PutEntry(ctx, mark); err != nil && !errors.Is(err, store.ErrConflict) && !errors.Is(err, store.ErrExists) {
+		err = r.st.PutEntry(ctx, mark)
+		if errors.Is(err, store.ErrConflict) || errors.Is(err, store.ErrExists) {
+			continue // it changed or went since it was read: again
+		}
 		return err
 	}
-	return nil
+	return errMarkContended
 }
 
-// goneValue is what a mark holds: nothing but that it is one. Its key names
-// the message, its UpdatedAt the start of the deletion.
-const goneValue = `{"gone":true}`
+// markTries is how many times markGone writes a mark that changes or goes
+// while it is written before the deletion fails.
+const markTries = 4
+
+// errMarkContended is a deletion's answer when its mark changed markTries
+// times while it was written: nothing of the message is deleted.
+var errMarkContended = fmt.Errorf("inbox: the mark of a deletion changed %d times while it was written: %w", markTries, store.ErrConflict)
+
+// goneMark is what one writing of a mark holds: that it is one, and a
+// generation drawn for this writing alone, which the sweep's deletion of the
+// mark as it read it compares. Its key names the message, its UpdatedAt the
+// start of the deletion.
+func goneMark() []byte {
+	return []byte(`{"gone":true,"generation":"` + rand.Text() + `"}`)
+}
