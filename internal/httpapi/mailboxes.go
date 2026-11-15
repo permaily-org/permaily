@@ -141,9 +141,20 @@ type MailboxesConfig struct {
 	// Matcher answers POST .../matches (ADR 0027, "The routes"): inbox's
 	// matcher on the same store, evaluating with query.Eval. Without one, the
 	// route is not there.
-	Matcher  inbox.Matcher
-	Sessions Sessions
-	Log      *slog.Logger
+	Matcher inbox.Matcher
+	// Asker is what a page of matches asks the model through when its
+	// request asks for it (contracts.MatchRequest.AskModel, ADR 0028):
+	// internal/services/decisions in the image. Without one the model is
+	// off: a page that asks for it asks nothing, says MatchModelOff and
+	// lists what needs the model in needs_model.
+	Asker inbox.Asker
+	// ModelNotices says whether an account agreed to the model's notice in
+	// force (*accounts.Service). Without one no agreement can be read, and
+	// every request that asks for the model is refused
+	// (contracts.ErrModelNoticeNeeded).
+	ModelNotices ModelNotices
+	Sessions     Sessions
+	Log          *slog.Logger
 	// Deadline bounds every request from its start (mailboxes.RequestDeadline).
 	Deadline time.Duration
 	// ReadBudget is MailReadBudget; Wait is AdmissionWait.
@@ -210,6 +221,9 @@ func newMailboxesAPI(cfg MailboxesConfig) (*mailboxesAPI, http.Handler) {
 			next(w, r, mailboxes.Caller{Account: who.AccountID, ConfirmedUntil: who.Session.ConfirmedUntil})
 		})
 	}
+	signedIn := func(next func(http.ResponseWriter, *http.Request, *accounts.Authenticated)) http.HandlerFunc {
+		return withSession(cfg.Sessions, cfg.Log, next)
+	}
 	mux.HandleFunc("GET "+base, in(a.list))
 	mux.HandleFunc("POST "+base, in(a.create))
 	mux.HandleFunc(base, refuse("GET, POST"))
@@ -228,7 +242,7 @@ func newMailboxesAPI(cfg MailboxesConfig) (*mailboxesAPI, http.Handler) {
 	mux.HandleFunc("GET "+base+"/{id}/messages/{message}/attachments/{index}", in(a.attachment))
 	mux.HandleFunc(base+"/{id}/messages/{message}/attachments/{index}", refuse(http.MethodGet))
 	if cfg.Matcher != nil {
-		mux.HandleFunc("POST "+base+"/{id}/matches", in(a.matches))
+		mux.HandleFunc("POST "+base+"/{id}/matches", signedIn(a.matches))
 		mux.HandleFunc(base+"/{id}/matches", refuse(http.MethodPost))
 	}
 	mux.HandleFunc("GET "+base+"/{id}/messages/{message}/html", a.frame)            // mailboxes_html.go
@@ -460,7 +474,17 @@ func (a *mailboxesAPI) searchSlot(ctx context.Context, w http.ResponseWriter, r 
 // it shares with the inbox's search, the account's thirty pages a minute and
 // a search slot (429). Each raw message the page reads takes its grant of
 // the read budget and gives it back before the next (heldBudget.Grant).
-func (a *mailboxesAPI) matches(w http.ResponseWriter, r *http.Request, c mailboxes.Caller) {
+//
+// With ask_model (ADR 0028, "Matching asks the model"), the account's
+// agreement to the model's notice in force is read once the body is read,
+// after the standing and before the formula and anything of the mailbox's
+// mail: without it, 400 model_notice_needed. With it, the page asks the
+// model through Asker, counted in the account's share, and says what became
+// of it (model). Without ask_model, nothing is asked and the page has no
+// model, as before ADR 0028; ask_model is a JSON boolean, anything else is
+// invalid_body.
+func (a *mailboxesAPI) matches(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+	c := mailboxes.Caller{Account: who.AccountID, ConfirmedUntil: who.Session.ConfirmedUntil}
 	b, ctx, release, ok := a.open(w, r, c, mailboxes.AccessSearch)
 	if !ok {
 		return
@@ -471,7 +495,7 @@ func (a *mailboxesAPI) matches(w http.ResponseWriter, r *http.Request, c mailbox
 		a.fail(w, r, err)
 		return
 	}
-	members, ok := readObject(w, r, "formula", "after", "limit")
+	members, ok := readObject(w, r, "formula", "after", "limit", "ask_model")
 	if !ok {
 		return
 	}
@@ -479,6 +503,20 @@ func (a *mailboxesAPI) matches(w http.ResponseWriter, r *http.Request, c mailbox
 	if !ok {
 		writeInvalidBody(w)
 		return
+	}
+	askModel := false
+	if v, ok := members["ask_model"]; ok {
+		if s := string(v); s != "true" && s != "false" {
+			writeInvalidBody(w)
+			return
+		}
+		askModel = string(v) == "true"
+	}
+	if askModel {
+		if !a.noticeAgreed(w, r, who) {
+			return
+		}
+		ctx = inbox.WithAsker(ctx, inbox.Asking{Asker: a.asker(), Account: c.Account})
 	}
 	f, err := query.Parse(raw, mailboxIDs(mine))
 	if err != nil {

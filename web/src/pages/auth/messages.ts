@@ -45,6 +45,8 @@ const messages: Record<ApiErrorCode, string> = {
   not_cancellable: 'The person asked for this deletion, so only they can cancel it.',
   terms_needed:
     "Permaily's terms changed since this page opened. Reload it to read them, then agree to go on.",
+  model_notice_needed:
+    'A model decides part of this. Read what is sent to it, and agree, before it is asked.',
   invalid_provider_app:
     "Permaily couldn't use that client ID and secret. Check them, then enter the secret again.",
   too_many_mailboxes: 'This account has as many mailboxes as it can have. Disconnect one first.',

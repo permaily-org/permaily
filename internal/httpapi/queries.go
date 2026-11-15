@@ -168,7 +168,12 @@ func writeInvalidBody(w http.ResponseWriter) {
 // member twice is refused, as Parse refuses one inside a formula: two
 // readers would read it differently. Anything else is answered invalid_body.
 func readObject(w http.ResponseWriter, r *http.Request, names ...string) (map[string]json.RawMessage, bool) {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxQueryBody))
+	return readObjectUpTo(w, r, maxQueryBody, names...)
+}
+
+// readObjectUpTo is readObject with a body of at most limit bytes.
+func readObjectUpTo(w http.ResponseWriter, r *http.Request, limit int64, names ...string) (map[string]json.RawMessage, bool) {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	out := map[string]json.RawMessage{}
 	ok := func() bool {
 		if t, err := dec.Token(); err != nil || t != json.Delim('{') {

@@ -208,6 +208,10 @@ const (
 	// which mailbox: the operator cannot read, disconnect or delete one.
 	AdminMailboxPaused  = "mailbox_paused"
 	AdminMailboxResumed = "mailbox_resumed"
+	// AdminModelKeySet and AdminModelKeyRemoved: the model's API key was
+	// given to the enclave, or taken away (ADR 0028). Never the key.
+	AdminModelKeySet     = "model_key_set"
+	AdminModelKeyRemoved = "model_key_removed"
 )
 
 // AdminActions lists the kinds this package knows, in the order they are shown.
@@ -215,6 +219,7 @@ var AdminActions = []string{
 	AdminBlock, AdminUnblock, AdminDelete, AdminDeleteCancel, AdminSessionsClose,
 	AdminInvitationsMade, AdminInvitationRevoked, AdminProviderAppSet, AdminProviderAppRemoved,
 	AdminMade, AdminRemoved, AdminMailboxPaused, AdminMailboxResumed,
+	AdminModelKeySet, AdminModelKeyRemoved,
 }
 
 // What SES says about an identity, a domain or an address mail is sent from

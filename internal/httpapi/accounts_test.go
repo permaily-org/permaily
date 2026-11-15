@@ -48,6 +48,9 @@ type app struct {
 	// far the service's clock runs ahead of the real one.
 	mem   *store.Memory
 	ahead time.Duration
+	// keys plays the model's key service behind the operator's routes
+	// (model_test.go).
+	keys *keyFake
 }
 
 func newApp(t *testing.T) *app {
@@ -57,7 +60,7 @@ func newApp(t *testing.T) *app {
 		t.Fatal(err)
 	}
 	mem := store.NewMemory()
-	a := &app{t: t, out: &accounts.Outbox{}, logs: &bytes.Buffer{}, mem: mem, idp: &providers{who: map[string]idp.Identity{}}}
+	a := &app{t: t, out: &accounts.Outbox{}, logs: &bytes.Buffer{}, mem: mem, idp: &providers{who: map[string]idp.Identity{}}, keys: &keyFake{}}
 	log := slog.New(slog.NewTextHandler(a.logs, nil))
 	a.svc, err = accounts.New(accounts.Config{
 		// As the enclave sets it up: only the newest version of a record is kept.
