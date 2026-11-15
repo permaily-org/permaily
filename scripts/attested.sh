@@ -35,10 +35,11 @@
 #   PERMAILY_PCRS     pcrs.json of the release the enclave runs, from your own
 #                     build (scripts/release-image.sh <tag> <dir>, or
 #                     scripts/verify.sh): what the enclave must measure
-#   PERMAILY_RELEASE  the tag of that release. The verifier is built from that
-#                     tag's source; without PERMAILY_PCRS it also downloads the
-#                     release's pcrs.json from GitHub (weaker: trusts CI, as
-#                     -release does). Set both for the strongest check.
+#   PERMAILY_RELEASE  the tag of that release. The verifier is built from the
+#                     commit that release's build provenance names (below);
+#                     without PERMAILY_PCRS it also downloads the release's
+#                     pcrs.json from GitHub (weaker: trusts CI, as -release
+#                     does). Set both for the strongest check.
 #   PERMAILY_VERIFY   permaily-verify binary; used as it is, whatever else is set
 #   PERMAILY_CA_FILE  extra CA certificate, for a staging image
 #   PERMAILY_DEV_UNVERIFIED=1
@@ -50,12 +51,28 @@
 #
 # The verifier must be the running release's: it checks the Sigstore trust
 # root the enclave reports against the one compiled into itself, and one built
-# from a later source refuses an older release (ADR 0029). Without
+# from a later source refuses an older release (ADR 0029). The verifier decides
+# which key the secrets go to, so its source is never taken from a tag's name:
+# for a named release it is built from the commit that the release's pcrs.json
+# build provenance names (gh attestation verify, for permaily-org/permaily, its
+# release workflow and main), when the release's tag at
+# github.com/permaily-org/permaily names that same commit, fetched by that
+# commit from there; never a tag here or at origin. Without gh, or offline, or
+# for a tag with no release, nothing is built: set PERMAILY_VERIFY. Without
 # PERMAILY_VERIFY or PERMAILY_RELEASE it is built from this checkout, with a
-# warning that the checkout must be that release's source.
+# warning: that trusts the checkout, uncommitted changes included, to be the
+# running release's source.
+#
+# The caller sets its EXIT trap to attested_cleanup, which removes $work and
+# the verifier's temporary worktree when a run stops while it builds.
+
+# The repository whose release workflow, on main, builds every release.
+release_repository=permaily-org/permaily
+release_url=https://github.com/$release_repository
 
 # What attest sets, cleared first: nothing of it comes from the environment.
 pin="" attested_key="" unverified_dev="" verifier="" enclave_ca="" enclave_host="" enclave_port=""
+release_tag="" release_commit="" verifier_root="" verifier_source=""
 dev_route=()
 
 # attest checks $api, runs permaily-verify against it and sets $pin, the
@@ -173,8 +190,8 @@ attest_dev() {
 }
 
 # enclave_verifier sets $verifier: PERMAILY_VERIFY, or permaily-verify built
-# with go from the source of PERMAILY_RELEASE (in a temporary git worktree of
-# its tag, removed after), or from this checkout.
+# with go from the commit PERMAILY_RELEASE's build provenance names (in a
+# temporary git worktree, removed after), or from this checkout.
 enclave_verifier() {
   if [[ -n ${PERMAILY_VERIFY:-} ]]; then
     verifier=$PERMAILY_VERIFY
@@ -187,10 +204,7 @@ enclave_verifier() {
   fi
   local root tag=${PERMAILY_RELEASE:-}
   root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-  if [[ -n $tag && ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "PERMAILY_RELEASE is the tag of a release, such as v0.14.0. Nothing was sent." >&2
-    exit 2
-  fi
+  release_tag_format "$tag"
   if ! command -v go >/dev/null; then
     echo "No verifier: install go, or set PERMAILY_VERIFY to a permaily-verify binary. Nothing was sent." >&2
     exit 2
@@ -198,28 +212,114 @@ enclave_verifier() {
   verifier=$work/permaily-verify
   local source=$root status=0
   if [[ -n $tag ]]; then
-    if ! git -C "$root" rev-parse -q --verify "refs/tags/$tag^{commit}" >/dev/null; then
-      git -C "$root" fetch -q --no-tags origin "refs/tags/$tag:refs/tags/$tag" || {
-        echo "No tag $tag here or at origin, to build its permaily-verify. Nothing was sent." >&2
+    # The commit the release's provenance names; handoff.sh has it already for <running>.
+    [[ $release_tag == "$tag" && -n $release_commit ]] || release_pcrs "$tag" "$work/release"
+    local commit=$release_commit
+    # A commit is its content: one here is the same as the repository's. If it
+    # is not here, it is fetched by its id from the repository, not from origin.
+    if ! git -C "$root" cat-file -e "$commit^{commit}" 2>/dev/null; then
+      git -C "$root" fetch -q --no-tags --no-write-fetch-head "$release_url" "$commit" || {
+        echo "Could not fetch commit $commit, the source of $tag, from $release_url. Nothing was sent." >&2
         exit 2
       }
     fi
     source=$work/verifier-source
-    git -C "$root" worktree add -q --detach "$source" "refs/tags/$tag^{commit}" || {
-      echo "Could not check out $tag to build its permaily-verify. Nothing was sent." >&2
+    verifier_root=$root verifier_source=$source
+    git -C "$root" worktree add -q --detach "$source" "$commit" || {
+      echo "Could not check out commit $commit, the source of $tag. Nothing was sent." >&2
       exit 2
     }
+    if [[ $(git -C "$source" rev-parse HEAD) != "$commit" ]]; then
+      echo "The checkout of $tag's source is not commit $commit. Nothing was sent." >&2
+      exit 2
+    fi
   else
-    echo "permaily-verify is built from this checkout ($(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo "not a git checkout")): it must be the source of the release the enclave runs, or its Sigstore check refuses that release. Set PERMAILY_RELEASE to the release's tag to build that one, or PERMAILY_VERIFY." >&2
+    echo "permaily-verify is built from this checkout ($(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo "not a git checkout")), uncommitted changes included: it must be the source of the release the enclave runs, or its Sigstore check refuses that release, and you trust it as that source. Set PERMAILY_RELEASE to the release's tag to build the source its build provenance names, or PERMAILY_VERIFY." >&2
   fi
   # Without VCS stamping, which fails in a git worktree and the verifier does not read.
   go build -C "$source" -buildvcs=false -o "$verifier" ./cmd/permaily-verify || status=$?
-  [[ $source == "$root" ]] || git -C "$root" worktree remove --force "$source" || true
+  if [[ $source != "$root" ]]; then
+    git -C "$root" worktree remove --force "$source" || true
+    verifier_source=""
+  fi
   if [[ $status -ne 0 ]]; then
     echo "Could not build permaily-verify${tag:+ of $tag}. Nothing was sent." >&2
     exit 2
   fi
-  [[ -z $tag ]] || echo "permaily-verify built from the source of $tag ($(git -C "$root" rev-parse --short "refs/tags/$tag^{commit}"))." >&2
+  [[ -z $tag ]] || echo "permaily-verify built from commit $commit, the source of $tag by its build provenance." >&2
+}
+
+# release_tag_format refuses what is not a release's tag (or empty), before it
+# reaches git or gh.
+release_tag_format() {
+  if [[ -n $1 && ! $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "PERMAILY_RELEASE is the tag of a release, such as v0.14.0. Nothing was sent." >&2
+    exit 2
+  fi
+}
+
+# release_pcrs <tag> <dir> downloads the release's pcrs.json into <dir> and
+# authenticates it: GitHub's build provenance for it, made by the release
+# workflow of permaily-org/permaily on main (gh attestation verify). It sets
+# $release_commit to the source commit that provenance names, which must be
+# the one the release's tag names at github.com/permaily-org/permaily (the
+# release workflow tags the commit it built), and $release_tag. It exits when
+# any of that cannot be had: nothing is sent then.
+release_pcrs() {
+  local tag=$1 dir=$2
+  release_tag_format "$tag"
+  release_tag="" release_commit=""
+  local without="Set PERMAILY_VERIFY to a permaily-verify binary you trust as $tag's. Nothing was sent."
+  if ! command -v gh >/dev/null; then
+    echo "No gh, to authenticate $tag's build provenance before building its verifier. $without" >&2
+    exit 2
+  fi
+  mkdir -p "$dir"
+  rm -f "$dir/pcrs.json"
+  gh release download "$tag" --repo "$release_repository" --pattern pcrs.json --dir "$dir" || {
+    echo "Could not download the pcrs.json of release $tag of $release_repository. $without" >&2
+    exit 2
+  }
+  gh attestation verify "$dir/pcrs.json" --repo "$release_repository" \
+    --signer-workflow "$release_repository/.github/workflows/release.yml" --source-ref refs/heads/main \
+    --deny-self-hosted-runners --format json > "$dir/provenance.json" || {
+    echo "The pcrs.json of $tag has no build provenance from $release_repository's release workflow on main. $without" >&2
+    exit 2
+  }
+  # Every commit an attestation of this file names (one, unless two releases built the same image).
+  local attested
+  attested=$(jq -r --arg url "$release_url" '.[].verificationResult.signature.certificate
+    | select(.sourceRepositoryURI == $url and .sourceRepositoryRef == "refs/heads/main")
+    | .sourceRepositoryDigest | strings | select(test("^[0-9a-f]{40}$"))' "$dir/provenance.json" 2>/dev/null || true)
+  if [[ -z $attested ]]; then
+    echo "The build provenance of $tag names no commit of $release_url. $without" >&2
+    exit 2
+  fi
+  local refs tagged
+  refs=$(git ls-remote "$release_url" "refs/tags/$tag" "refs/tags/$tag^{}") || {
+    echo "Could not read tag $tag at $release_url. $without" >&2
+    exit 2
+  }
+  # An annotated tag's commit is on its ^{} line.
+  tagged=$(awk -v t="refs/tags/$tag^{}" '$2 == t { print $1 }' <<< "$refs")
+  [[ -n $tagged ]] || tagged=$(awk -v t="refs/tags/$tag" '$2 == t { print $1 }' <<< "$refs")
+  if [[ -z $tagged ]] || ! grep -qx "$tagged" <<< "$attested"; then
+    echo "Tag $tag at $release_url names ${tagged:-no commit}, but the build provenance of $tag names $(tr '\n' ' ' <<< "$attested")and nothing else. $without" >&2
+    exit 2
+  fi
+  release_tag=$tag release_commit=$tagged
+}
+
+# attested_cleanup is the caller's EXIT trap: it removes the verifier's
+# worktree when the run stopped while it was there, and $work.
+attested_cleanup() {
+  if [[ -n $verifier_source ]]; then
+    git -C "$verifier_root" worktree remove --force "$verifier_source" 2>/dev/null || true
+  fi
+  rm -rf "$work"
+  if [[ -n $verifier_root ]]; then
+    git -C "$verifier_root" worktree prune 2>/dev/null || true
+  fi
 }
 
 # load_token sets $token: PERMAILY_ADMIN_TOKEN, or ~/.config/permaily/admin-token.

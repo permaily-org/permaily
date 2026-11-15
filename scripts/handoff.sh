@@ -9,11 +9,12 @@
 #
 # Before it sends anything, it verifies the enclave at PERMAILY_API with
 # permaily-verify against the pcrs.json of <running> (for a tag, the release's,
-# after checking its build provenance), and the token then goes only to the TLS
-# key that verification attested (scripts/attested.sh). When the enclave does
-# not verify as <running>, nothing is sent. The verifier is <running>'s own:
-# for a tag, built from that tag's source, and the same binary verifies again
-# and decides about the trust root in sigstore-trust-root.sh --send.
+# after authenticating its build provenance), and the token then goes only to
+# the TLS key that verification attested (scripts/attested.sh). When the
+# enclave does not verify as <running>, nothing is sent. The verifier is
+# <running>'s own: for a tag, built from the commit that provenance names (never
+# from the tag's name alone), and the same binary verifies again and decides
+# about the trust root in sigstore-trust-root.sh --send.
 #
 # The enclave decides alone whether to hand over: it checks, offline, that
 # <next> was built by the release workflow and published in the public
@@ -26,35 +27,33 @@
 #   PERMAILY_API          base URL of the enclave (default https://api.permaily.com)
 #   PERMAILY_ADMIN_TOKEN  admin token (default: ~/.config/permaily/admin-token)
 #   PERMAILY_CA_FILE      extra CA certificate, for a staging image
-#   PERMAILY_REPO         repository (default permaily-org/permaily)
-#   PERMAILY_VERIFY       permaily-verify binary (default: built from the source of
-#                         <running>'s tag, or for a directory from this checkout,
-#                         which must then be the staging image's source)
+#   PERMAILY_VERIFY       permaily-verify binary (default: built from the commit
+#                         <running>'s build provenance names, or for a directory
+#                         from this checkout, which must then be the staging
+#                         image's source and is trusted as such)
 #
-# Needs gh, jq and curl, and go and git unless PERMAILY_VERIFY is set.
+# Needs gh, jq, curl and git, and go unless PERMAILY_VERIFY is set.
 set -euo pipefail
 
-[[ $# -eq 2 ]] || { sed -n '2,34p' "$0"; exit 2; }
-repo=${PERMAILY_REPO:-permaily-org/permaily}
+[[ $# -eq 2 ]] || { sed -n '2,35p' "$0"; exit 2; }
 api=${PERMAILY_API:-https://api.permaily.com}
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
-
 # shellcheck source=scripts/attested.sh
 source "$(dirname "$0")/attested.sh"
+work=$(mktemp -d)
+trap attested_cleanup EXIT
 load_token
 
 # measurements NAME SOURCE: leaves $work/NAME/pcrs.json. A release's is
-# checked against its build provenance before anything relies on it.
+# authenticated by its build provenance before anything relies on it, the one
+# way every script does (release_pcrs, scripts/attested.sh): for <running>, that
+# also names the commit its verifier is built from.
 measurements() {
   local src=$2 dir=$work/$1
   mkdir -p "$dir"
   if [[ -d $src ]]; then
     cp "$src/pcrs.json" "$dir/pcrs.json"
   else
-    gh release download "$src" --repo "$repo" --pattern pcrs.json --dir "$dir"
-    gh attestation verify "$dir/pcrs.json" --repo "$repo" \
-      --signer-workflow "$repo/.github/workflows/release.yml" --source-ref refs/heads/main >/dev/null
+    release_pcrs "$src" "$dir"
   fi
 }
 
@@ -62,7 +61,7 @@ measurements() {
 # enclave is given with that pcrs.json.
 bundle() {
   local dir=$work/$1
-  PERMAILY_REPO=$repo "$(dirname "$0")/provenance-bundle.sh" "$dir/pcrs.json" "$dir/bundle.json"
+  PERMAILY_REPO=$release_repository "$(dirname "$0")/provenance-bundle.sh" "$dir/pcrs.json" "$dir/bundle.json"
   echo "$1: $2, PCR0 $(jq -r .PCR0 "$dir/pcrs.json")"
 }
 

@@ -38,11 +38,11 @@
 #   PERMAILY_CA_FILE      extra CA certificate, for a staging image
 #   PERMAILY_PCRS         pcrs.json of the release the enclave runs, and/or PERMAILY_RELEASE, its tag:
 #                         nothing is sent before permaily-verify attests the enclave against it
-#   PERMAILY_VERIFY       permaily-verify binary (default: built from the source of PERMAILY_RELEASE,
-#                         or else from this checkout, which must then be the running release's)
+#   PERMAILY_VERIFY       permaily-verify binary (default: built from the commit PERMAILY_RELEASE's build provenance
+#                         names, never from its tag; or else from this checkout, trusted as the running release's)
 #   PERMAILY_DEV_UNVERIFIED=1  for an enclave in dev mode on this machine (scripts/attested.sh)
 #
-# Needs curl and jq, and go and git unless PERMAILY_VERIFY is set.
+# Needs curl and jq, and go and git (and gh with PERMAILY_RELEASE) unless PERMAILY_VERIFY is set.
 set -euo pipefail
 
 usage() { sed -n '2,45p' "$0"; exit 2; }
@@ -66,10 +66,10 @@ if [[ ${1:-} == --yes ]]; then yes=1; shift; fi
 [[ -z $yes || $action =~ ^(block|unblock|delete|cancel|close-sessions|mailbox-pause|mailbox-resume)$ ]] || usage
 
 api=${PERMAILY_API:-https://api.permaily.com}
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
 # shellcheck source=scripts/attested.sh
 source "$(dirname "$0")/attested.sh"
+work=$(mktemp -d)
+trap attested_cleanup EXIT
 load_token
 attest
 

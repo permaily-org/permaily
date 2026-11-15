@@ -27,7 +27,8 @@
 #   PERMAILY_VERIFY       the verifier to decide with (default: go run
 #                         ./cmd/permaily-verify, the one of this checkout; with
 #                         --send, the one that attested the enclave, built from
-#                         the source of PERMAILY_RELEASE when it is set)
+#                         the commit PERMAILY_RELEASE's build provenance names
+#                         when it is set)
 #   PERMAILY_API          base URL of the enclave (default https://api.permaily.com)
 #   PERMAILY_ADMIN_TOKEN  admin token (default: ~/.config/permaily/admin-token)
 #   PERMAILY_CA_FILE      extra CA certificate, for a staging image
@@ -49,6 +50,7 @@ if [[ $mode == --send ]]; then
   api=${PERMAILY_API:-https://api.permaily.com}
   # shellcheck source=scripts/attested.sh
   source "$(dirname "$0")/attested.sh"
+  trap attested_cleanup EXIT
   load_token
   attest
 fi
