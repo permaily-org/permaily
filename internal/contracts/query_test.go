@@ -48,6 +48,15 @@ func TestQueryShapes(t *testing.T) {
 		}, `{"messages":[{"id":"m1","received_at":"2026-11-14T10:00:00Z","expires_at":"2026-11-14T10:00:00Z","size":10,"from":[{"address":"a@example.org"}],"subject":"Hi","snippet":"Hello","attachments":0,"confirmation":false}],"needs_model":["m2"],"unknown":[],"next":"m3","searched_to":"2026-11-14T10:00:00Z"}`},
 		{"the last page of matches", MatchPage{Messages: []MessageSummary{}, NeedsModel: []string{}, Unknown: []string{}},
 			`{"messages":[],"needs_model":[],"unknown":[]}`},
+		// ADR 0028: asking the model, and what became of it.
+		{"a match request that asks the model", MatchRequest{Formula: Formula{V: 1, All: []Group{}}, AskModel: true},
+			`{"formula":{"v":1,"all":[]},"ask_model":true}`},
+		{"a page that asked the model", MatchPage{Messages: []MessageSummary{}, NeedsModel: []string{"m4"}, Unknown: []string{"m5"}, Model: MatchModelLimit},
+			`{"messages":[],"needs_model":["m4"],"unknown":["m5"],"model":"limit"}`},
+		{"the model's key, set", ModelKey{Set: true, SetAt: at, Fingerprint: "0123456789abcdef"},
+			`{"set":true,"set_at":"2026-11-14T10:00:00Z","fingerprint":"0123456789abcdef"}`},
+		{"the model's key, not set", ModelKey{}, `{"set":false}`},
+		{"a key given", ModelKeySet{Key: "k"}, `{"key":"k"}`},
 	}
 	for _, c := range cases {
 		got, err := json.Marshal(c.v)

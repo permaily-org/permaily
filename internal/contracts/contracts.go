@@ -92,6 +92,11 @@ var (
 	// agree to the one in force; and an account that agrees to a version that
 	// is not that one is told the same.
 	ErrTermsChanged = &Error{"terms_needed", "the terms changed; agree to them to go on"}
+	// ErrModelNoticeNeeded refuses asking the model about a person's mail
+	// (contracts.MatchRequest.AskModel) to an account that did not agree to
+	// the model's notice in force (ADR 0028, "Consent"): what is sent to
+	// OpenAI, and what OpenAI may keep.
+	ErrModelNoticeNeeded = &Error{"model_notice_needed", "read and accept what is sent to the model before asking it"}
 )
 
 // The failures of signing in with a provider (Google, GitHub, Meta,
@@ -157,6 +162,10 @@ type Account struct {
 	// Terms is the version of the terms the person agreed to; absent when
 	// they agreed to none, as the accounts made before there were terms.
 	Terms string `json:"terms,omitempty"`
+	// ModelNotice is the version of the model's notice the person agreed
+	// to (ADR 0028, "Consent"), with the shapes of the terms' agreement
+	// (TermsAgreement, TermsAgree); absent when they agreed to none.
+	ModelNotice string `json:"model_notice,omitempty"`
 }
 
 // TermsAgreement is which version of the terms a person agreed to, and when.
