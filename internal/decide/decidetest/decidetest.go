@@ -81,6 +81,7 @@ type Table struct {
 	byAtom     map[query.Atom]float64
 	byContent  map[contentAtom]float64
 	refused    map[query.Atom]bool
+	unknown    map[query.Atom]bool
 	key        string
 	next       []Failure
 	always     Failure
@@ -100,10 +101,16 @@ type contentAtom struct {
 // NewTable is a table that answers 0 to every statement and accepts any
 // key.
 func NewTable() *Table {
-	return &Table{byAtom: map[query.Atom]float64{}, byContent: map[contentAtom]float64{}, refused: map[query.Atom]bool{}}
+	return &Table{byAtom: map[query.Atom]float64{}, byContent: map[contentAtom]float64{}, refused: map[query.Atom]bool{}, unknown: map[query.Atom]bool{}}
 }
 
-// Set makes every content answer p for a.
+// Set makes every content answer p for a. A p that is not a probability
+// (below 0, above 1, NaN or infinite) is an answer for a that cannot be
+// used, its siblings answered as usual: the fake answers it
+// decide.Answer{} (not OK), as the real client reads what the played
+// provider sends for it (the number when it is finite, null for NaN, the
+// string "Infinity" or "-Infinity"). An answer that is not the call's as a
+// whole is the Invalid failure.
 func (t *Table) Set(a query.Atom, p float64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -112,7 +119,8 @@ func (t *Table) Set(a query.Atom, p float64) {
 
 // SetFor makes the content of a message with this subject and text answer
 // p for a, over Set: the subject alone for a subject atom, the subject and
-// the text for a message atom (decide.KindOf).
+// the text for a message atom (decide.KindOf). A p that is not a
+// probability is as in Set.
 func (t *Table) SetFor(subject, text string, a query.Atom, p float64) {
 	c := decide.Content{Kind: decide.KindOf(a), Subject: subject}
 	if c.Kind == decide.ContentMessage {
@@ -128,6 +136,16 @@ func (t *Table) Refuse(a query.Atom) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.refused[a] = true
+}
+
+// Unknown makes a answered with no probability on every content, over Set
+// and SetFor: a predicate whose probability is missing, which neither the
+// fake nor the real client can use (decide.Answer{}); its siblings are
+// answered as usual.
+func (t *Table) Unknown(a query.Atom) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.unknown[a] = true
 }
 
 // RequireKey makes every attempt with another key a KeyRefused; "" accepts
@@ -201,7 +219,7 @@ func (t *Table) Keys() []string {
 // says it its own way.
 type outcome struct {
 	failure    Failure
-	answers    []decide.Answer
+	answers    []reply
 	usage      decide.Usage
 	delay      time.Duration
 	retryAfter time.Duration
@@ -226,22 +244,45 @@ func (t *Table) attempt(call decide.Call, key string) outcome {
 		o.failure = t.always
 	}
 	hash := decide.ContentHash(call.Content)
-	o.answers = make([]decide.Answer, len(call.Statements))
+	o.answers = make([]reply, len(call.Statements))
 	for i, a := range call.Statements {
-		if t.refused[a] {
-			o.answers[i] = decide.Answer{Refused: true}
-			continue
+		switch {
+		case t.refused[a]:
+			o.answers[i] = reply{refused: true}
+		case t.unknown[a]:
+			o.answers[i] = reply{missing: true}
+		default:
+			p, ok := t.byContent[contentAtom{hash, a}]
+			if !ok {
+				p = t.byAtom[a]
+			}
+			o.answers[i] = reply{p: p}
 		}
-		p, ok := t.byContent[contentAtom{hash, a}]
-		if !ok {
-			p = t.byAtom[a]
-		}
-		o.answers[i] = decide.Answer{P: p, OK: true}
 	}
 	if !t.noUsage {
 		o.usage = Usage(call)
 	}
 	return o
+}
+
+// reply is the table's answer to one statement, before the fake or the
+// played provider says it.
+type reply struct {
+	refused bool
+	missing bool    // no probability
+	p       float64 // any value: one that is not a probability is no answer
+}
+
+// answer is what the real client reads of r: a probability from 0 to 1, a
+// refusal, or no answer.
+func (r reply) answer() decide.Answer {
+	switch {
+	case r.refused:
+		return decide.Answer{Refused: true}
+	case r.missing || !(r.p >= 0 && r.p <= 1): // NaN too
+		return decide.Answer{}
+	}
+	return decide.Answer{P: r.p, OK: true}
 }
 
 // Usage is what the played provider reports a call used: the re-measure's

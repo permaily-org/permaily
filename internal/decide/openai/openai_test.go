@@ -1006,6 +1006,7 @@ func TestA7TheFakeAndTheClientAgree(t *testing.T) {
 		"negative infinite": func(tab *decidetest.Table) { tab.Set(aboutInvoices, math.Inf(-1)) },
 		"a probability":     func(tab *decidetest.Table) { tab.Set(aboutInvoices, 0.25) },
 		"refused":           func(tab *decidetest.Table) { tab.Refuse(aboutInvoices) },
+		"no probability":    func(tab *decidetest.Table) { tab.Unknown(aboutInvoices) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			tab := decidetest.NewTable()

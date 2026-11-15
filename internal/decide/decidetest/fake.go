@@ -77,7 +77,11 @@ func (f *Fake) Decide(ctx context.Context, call decide.Call) (*decide.Result, er
 	case OtherModel:
 		return nil, sent(decide.ErrModelChanged)
 	}
-	return &decide.Result{Answers: o.answers, Model: Name, Usage: o.usage, Took: time.Since(start)}, nil
+	answers := make([]decide.Answer, len(o.answers))
+	for i, r := range o.answers {
+		answers[i] = r.answer()
+	}
+	return &decide.Result{Answers: answers, Model: Name, Usage: o.usage, Took: time.Since(start)}, nil
 }
 
 // unavailable is no answer to an attempt that was sent: tried again only

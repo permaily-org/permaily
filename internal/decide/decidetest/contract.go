@@ -83,6 +83,7 @@ func Contract(t *testing.T, newModel NewModel) {
 		{"infinite", func(tab *Table) { tab.Set(about, math.Inf(1)) }},
 		{"negative infinite", func(tab *Table) { tab.Set(about, math.Inf(-1)) }},
 		{"above 1 for this content", func(tab *Table) { tab.Set(about, 0.3); tab.SetFor(message.Subject, message.Body, about, 2) }},
+		{"no probability", func(tab *Table) { tab.Set(about, 0.3); tab.Unknown(about) }},
 	} {
 		t.Run("not a probability: "+c.name, func(t *testing.T) {
 			tab, m := setup(t)

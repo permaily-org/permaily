@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"math"
 	"math/big"
 	"net"
 	"net/http"
@@ -263,24 +264,29 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeAnswer writes a 200 as the Decisions API does; extra, with one
-// answer more than the call's statements.
+// answer more than the call's statements. Every answer is valid JSON: a
+// value that is not a probability is the number when it is finite, null
+// for NaN and a string for an infinity, each of which the real client
+// reads as no answer for that statement alone.
 func writeAnswer(w http.ResponseWriter, model string, o outcome, extra bool) {
 	type item struct {
-		Type        string   `json:"type"`
-		Name        string   `json:"name"`
-		Probability *float64 `json:"probability,omitempty"`
+		Type        string          `json:"type"`
+		Name        string          `json:"name"`
+		Probability json.RawMessage `json:"probability,omitempty"`
 	}
 	answers := o.answers
 	if extra {
-		answers = append(answers, decide.Answer{OK: true})
+		answers = append(answers, reply{})
 	}
 	items := make([]item, len(answers))
 	for i, a := range answers {
 		items[i] = item{Type: "predicate", Name: "s" + strconv.Itoa(i)}
-		if a.Refused {
+		switch {
+		case a.refused:
 			items[i].Type = "refusal"
-		} else {
-			items[i].Probability = &a.P
+		case a.missing:
+		default:
+			items[i].Probability = probability(a.p)
 		}
 	}
 	out := map[string]any{"model": model, "answers": items}
@@ -294,6 +300,21 @@ func writeAnswer(w http.ResponseWriter, model string, o outcome, extra bool) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+// probability is p as JSON: the number, or for a value JSON has no number
+// for, null (NaN) or a string (an infinity).
+func probability(p float64) json.RawMessage {
+	switch {
+	case math.IsNaN(p):
+		return json.RawMessage("null")
+	case math.IsInf(p, 1):
+		return json.RawMessage(`"Infinity"`)
+	case math.IsInf(p, -1):
+		return json.RawMessage(`"-Infinity"`)
+	}
+	b, _ := json.Marshal(p) // finite: it cannot fail
+	return b
 }
 
 // writeError writes an error as the Decisions API does, with words that
