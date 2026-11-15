@@ -150,6 +150,7 @@ func TestQ16ContainmentTable(t *testing.T) {
 // Contains(A, B), Eval([B]) ≤ Eval([A]) on every generated message, in three
 // values and both modes, with one Answers per message.
 func TestQ17ContainmentIsSoundOnGeneratedFormulas(t *testing.T) {
+	t.Parallel()
 	r := querytest.New(17)
 	const pairs, messages = 2000, 25
 	yes, strengthened := 0, 0
@@ -382,6 +383,7 @@ func (b valueSet) inside(a valueSet) bool {
 // containment the brute force finds and the table does not list is a known
 // gap, logged, not a failure.
 func TestQ18ContainmentIsSoundByBruteForce(t *testing.T) {
+	t.Parallel()
 	r := querytest.New(18)
 	total, proven, contained := 0, 0, 0
 	for _, u := range universes() {

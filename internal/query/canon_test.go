@@ -127,6 +127,7 @@ const (
 // Q11: the canonical form of a generated formula's canonical form is
 // itself, byte for byte, and so is its identifier.
 func TestQ11CanonicaliseIsIdempotent(t *testing.T) {
+	t.Parallel()
 	r := querytest.New(11)
 	for range generatedFormulas {
 		c := canonOf(t, r.Formula(5, 4))
@@ -147,6 +148,7 @@ func TestQ11CanonicaliseIsIdempotent(t *testing.T) {
 // sent and Eval on its canonical form give the same value, in three values
 // and in both modes, so the same Resolve.
 func TestQ12SimplificationKeepsTheMeaning(t *testing.T) {
+	t.Parallel()
 	r := querytest.New(12)
 	n, changed := 0, 0
 	for range generatedFormulas {
@@ -193,6 +195,7 @@ func sameShape(f, c contracts.Formula) bool {
 // and groups shuffled, repeated and its values respelled gives the same
 // bytes and identifier.
 func TestQ13OneFormForEveryOrderAndSpelling(t *testing.T) {
+	t.Parallel()
 	r := querytest.New(13)
 	for range generatedFormulas {
 		f := r.Formula(5, 4)

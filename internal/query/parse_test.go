@@ -25,7 +25,7 @@ func TestQ1ValidFormulasAndTheirCanonicalForm(t *testing.T) {
 			]}`,
 			`{"v":1,"all":[{"any":[{"var":"from_domain","op":"is","value":"holded.com"},{"var":"subject","op":"contains","value":"invoice"}]},{"any":[{"var":"attachments","op":"exists","not":true}]},{"any":[{"var":"received","op":"since","value":"2026-01-01T00:00:00Z"}]}]}`},
 		{"values normalised",
-			`{"v":1,"all":[{"any":[{"var":"from_address","op":"is","value":"\"Ann+Tag\"@Bücher.Example."},{"var":"signed_by","op":"is","value":"MAIL.Example.com"},{"var":"subject","op":"contains","value":"  Ｉｎ­voice\n 2026 "}]}]}`,
+			`{"v":1,"all":[{"any":[{"var":"from_address","op":"is","value":"\"Ann+Tag\"@Bücher.Example."},{"var":"signed_by","op":"is","value":"MAIL.Example.com"},{"var":"subject","op":"contains","value":"  Ｉｎ\u00advoice\n 2026 "}]}]}`,
 			`{"v":1,"all":[{"any":[{"var":"from_address","op":"is","value":"ann+tag@xn--bcher-kva.example"},{"var":"signed_by","op":"is","value":"mail.example.com"},{"var":"subject","op":"contains","value":"invoice 2026"}]}]}`},
 		{"times in UTC, sizes, types, lists, mailboxes",
 			`{"v":1,"all":[{"any":[{"var":"received","op":"before","value":"2026-03-01T09:30:00+01:00"}]},{"any":[{"var":"size","op":"at_least","value":"1048576"}]},{"any":[{"var":"attachment_type","op":"is","value":"Application/*"},{"var":"list","op":"is","value":"News.Example.com"}]},{"any":[{"var":"mailbox","op":"is","value":"mbx_ajcz4qajcz4qajcz4qajcz4qaj"}]}]}`,
@@ -145,7 +145,7 @@ func TestQ2EveryReasonWithItsPath(t *testing.T) {
 		{"unexpected_value", formula(`{"var":"attachments","op":"exists","value":"secretvalue"}`), "all[0].any[0].value", contracts.FormulaUnexpectedValue, "secretvalue"},
 		{"invalid_value", formula(`{"var":"from_domain","op":"is","value":"secret_value!"}`), "all[0].any[0].value", contracts.FormulaInvalidValue, "secret_value"},
 		{"value_too_long", formula(`{"var":"subject","op":"contains","value":"` + strings.Repeat("secret", 17) + `"}`), "all[0].any[0].value", contracts.FormulaValueTooLong, "secret"},
-		{"confusable_value", formula(`{"var":"subject","op":"contains","value":"secret invоice"}`), "all[0].any[0].value", contracts.FormulaConfusableValue, "secret"},
+		{"confusable_value", formula(`{"var":"subject","op":"contains","value":"secret inv\u043eice"}`), "all[0].any[0].value", contracts.FormulaConfusableValue, "secret"},
 		{"unknown_mailbox", formula(`{"var":"mailbox","op":"is","value":"mbx_secretsecretsecretsecret12"}`), "all[0].any[0].value", contracts.FormulaUnknownMailbox, "mbx_secret"},
 		{"never_matches", []byte(`{"v":1,"all":[{"any":[{"var":"received","op":"since","value":"2026-03-01T00:00:00Z"}]},{"any":[{"var":"received","op":"before","value":"2026-02-01T00:00:00Z"}]}]}`), "", contracts.FormulaNeverMatches, "2026"},
 	} {
@@ -318,7 +318,9 @@ func TestQ5EveryLimitAtItsValueAndOnePast(t *testing.T) {
 	refused(t, addr(strings.Repeat("l", 65)+"@example.com"), nil, "all[0].any[0].value", contracts.FormulaValueTooLong)
 	refused(t, addr(strings.Repeat("l", 300)+"@example.com"), nil, "all[0].any[0].value", contracts.FormulaValueTooLong)
 	// A media type: a subtype of 127.
-	typ := func(s string) []byte { return formula(`{"var":"attachment_type","op":"is","value":"application/` + s + `"}`) }
+	typ := func(s string) []byte {
+		return formula(`{"var":"attachment_type","op":"is","value":"application/` + s + `"}`)
+	}
 	canon(t, string(typ(strings.Repeat("x", 127))))
 	refused(t, typ(strings.Repeat("x", 128)), nil, "all[0].any[0].value", contracts.FormulaValueTooLong)
 	// A list: 255 bytes.
@@ -342,7 +344,7 @@ func FuzzParse(f *testing.F) {
 		`{"v":1,"all":[{"any":[{"var":"subject","op":"contains","value":"invoice"},{"var":"subject","op":"contains","value":"invoices"}]},{"any":[{"var":"subject","op":"contains","value":"invoice"}]}]}`,
 		`{"v":1,"all":[{"any":[{"var":"mailbox","op":"is","value":"mbx_aaaaaaaaaaaaaaaaaaaaaaaaaa"}]},{"any":[{"var":"mailbox","op":"is","value":"mbx_bbbbbbbbbbbbbbbbbbbbbbbbbb"},{"var":"size","op":"below","value":"9"}]}]}`,
 		`{"v":1,"all":[{"any":[{"var":"attachment_type","op":"is","value":"image/*"},{"var":"attachment_type","op":"is","value":"image/png"},{"var":"attachments","op":"exists"}]}]}`,
-		`{"v":1,"all":[{"any":[{"var":"subject","op":"contains","value":"a­́"}]}]}`,
+		`{"v":1,"all":[{"any":[{"var":"subject","op":"contains","value":"a\u00ad\u0301"}]}]}`,
 	} {
 		f.Add([]byte(s))
 	}

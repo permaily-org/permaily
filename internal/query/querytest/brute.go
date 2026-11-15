@@ -178,7 +178,7 @@ var invisible = strings.NewReplacer("\u00ad", "", "\u200b", "")
 // and zero-width spaces removed, lower case, white space made one.
 func text(s string) string {
 	s = norm.NFKC.String(s)
-	s = strings.NewReplacer("­", "", "​", "").Replace(s)
+	s = invisible.Replace(s)
 	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
 }
 

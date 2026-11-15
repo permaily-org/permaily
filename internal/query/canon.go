@@ -120,9 +120,6 @@ func checkCondition(c contracts.Condition, valueSent bool, mailboxes []string) (
 	if reason != "" {
 		return cond{}, ".value", reason
 	}
-	if out.Value == "" { // a value that normalises to nothing is no value
-		return cond{}, ".value", contracts.FormulaInvalidValue
-	}
 	return positive(out), "", ""
 }
 

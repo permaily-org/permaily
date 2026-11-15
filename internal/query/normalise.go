@@ -143,9 +143,10 @@ func checkText(s string) (string, contracts.FormulaReason) {
 }
 
 // assigned reports a code point Unicode assigned (in the standard library's
-// version of it): one of a general category other than Cn.
+// version of it): one of a general category other than Cn. The standard
+// library's C holds Cn too, so its other parts are named.
 func assigned(r rune) bool {
-	return unicode.In(r, unicode.L, unicode.M, unicode.N, unicode.P, unicode.S, unicode.Z, unicode.C)
+	return unicode.In(r, unicode.L, unicode.M, unicode.N, unicode.P, unicode.S, unicode.Z, unicode.Cc, unicode.Cf, unicode.Co, unicode.Cs)
 }
 
 // mixedScripts reports whether the letters of s are of more than one of
@@ -428,7 +429,7 @@ func checkTime(s string) (string, time.Time, contracts.FormulaReason) {
 	if len(s) == 25 && (s[20:22] > "23" || s[23:25] > "59") {
 		return "", time.Time{}, contracts.FormulaInvalidValue
 	}
-	t, err := time.Parse(time.RFC3339, s)
+	t, err := time.Parse(time.RFC3339, strings.ToUpper(s)) // RFC 3339 allows t and z
 	if err != nil {
 		return "", time.Time{}, contracts.FormulaInvalidValue
 	}

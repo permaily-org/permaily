@@ -38,7 +38,7 @@ var (
 	// not, respelled.
 	Fields = []string{
 		"Your INVOICES for 2026", "invoice 2026", "Ｉｎｖｏｉｃｅ", "re-invoiced", "scar tissue", "careful",
-		"in­voice", "nothing here", "the  car", "", "e\n2",
+		"in\u00advoice", "nothing here", "the  car", "", "e\n2",
 	}
 	// Topics are what a model decides on.
 	Topics = []string{"invoices", "travel"}
@@ -82,7 +82,7 @@ type Rand struct{ *rand.Rand }
 
 // New is a generator seeded with seed.
 func New(seed uint64) *Rand {
-	return &Rand{rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))}
+	return &Rand{rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))} //nolint:gosec // G404: seeded on purpose, so a failure can be run again
 }
 
 func pick[T any](r *Rand, s []T) T { return s[r.IntN(len(s))] }
@@ -252,10 +252,10 @@ func (r *Rand) text(s string) string {
 		s = strings.ReplaceAll(s, " ", " \n ")
 	case 2:
 		if len(s) > 1 {
-			s = s[:1] + "­" + s[1:] // a soft hyphen, removed
+			s = s[:1] + "\u00ad" + s[1:] // a soft hyphen, removed
 		}
 	case 3:
-		s = "​" + s // a zero-width space, removed
+		s = "\u200b" + s // a zero-width space, removed
 	}
 	return s
 }
@@ -457,7 +457,11 @@ func weakerPositive(c contracts.Condition) []contracts.Condition {
 		}
 	case contracts.VarSubject, contracts.VarBody, contracts.VarAttachmentName:
 		if c.Op == contracts.OpContains && len(c.Value) > 1 {
-			out = append(out, contracts.Condition{Var: c.Var, Op: c.Op, Value: c.Value[1:]}, contracts.Condition{Var: c.Var, Op: c.Op, Value: c.Value[:len(c.Value)-1]})
+			for _, v := range []string{c.Value[1:], c.Value[:len(c.Value)-1]} {
+				if strings.TrimSpace(v) != "" { // a text of white space alone is no value
+					out = append(out, contracts.Condition{Var: c.Var, Op: c.Op, Value: v})
+				}
+			}
 		}
 		if c.Var == contracts.VarAttachmentName {
 			out = append(out, contracts.Condition{Var: contracts.VarAttachments, Op: contracts.OpExists})
