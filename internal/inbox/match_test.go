@@ -15,6 +15,7 @@ import (
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/inbox/inboxtest"
 	"github.com/permaily-org/permaily/internal/query"
+	"github.com/permaily-org/permaily/internal/query/querytest"
 	"github.com/permaily-org/permaily/internal/store"
 )
 
@@ -30,15 +31,23 @@ func rfc(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
 var qLong = strings.Repeat("filler ", 2400) // 16,800 bytes: past what an entry keeps
 
-// genMessage is a message over a universe chosen so conditions collide.
+// genMessage is a message over a universe chosen so conditions collide:
+// this test's, and querytest's (ADR 0027's pull request 1) for addresses as
+// delivery stores them (some not valid: a quotation mark or a backslash left,
+// scripts mixed), signers, subjects, attachments and lists.
 func genMessage(rng *rand.Rand, i int, spoil bool) *qMsg {
 	q := &qMsg{at: qAt(i), n: i}
-	q.from = pick(rng, []string{"alice@example.com"}, []string{"bob@other.example"}, []string{"carol@sub.example.com", "bob@other.example"})
-	q.to = pick(rng, nil, []string{"team@example.com"})
-	q.subject = pick(rng, "Invoice 2026", "hello", "Re: invoices")
-	q.body = pick(rng, "pay the invoice", "nothing here", "", qLong+"invoices at the end", qLong+"café", strings.Repeat(" ", 16377)+"invoices")
-	q.list = pick(rng, "", "news.example.com")
-	q.attach = pick(rng, nil, []contracts.MessageAttachment{{Index: 0, Name: "bill.pdf", Type: "application/pdf", Size: 3}})
+	q.from = pick(rng, []string{"alice@example.com"}, []string{"bob@other.example"}, []string{"carol@sub.example.com", "bob@other.example"},
+		[]string{pick(rng, querytest.Addresses...)}, []string{pick(rng, querytest.StoredAddresses...), "alice@example.com"})
+	q.to = pick(rng, nil, []string{"team@example.com"}, []string{pick(rng, querytest.Addresses...)}, []string{pick(rng, querytest.StoredAddresses...)})
+	for range rng.IntN(3) {
+		q.signedBy = append(q.signedBy, pick(rng, append(slices.Clone(querytest.Signers), querytest.Domains...)...))
+	}
+	q.subject = pick(rng, "Invoice 2026", "hello", "Re: invoices", pick(rng, querytest.Fields...))
+	q.body = pick(rng, "pay the invoice", "nothing here", "", qLong+"invoices at the end", qLong+"cafe\u0301", strings.Repeat(" ", 16377)+"invoices", pick(rng, querytest.Fields...))
+	q.list = pick(rng, "", "news.example.com", pick(rng, querytest.Lists...))
+	q.attach = pick(rng, nil, []contracts.MessageAttachment{{Index: 0, Name: "bill.pdf", Type: "application/pdf", Size: 3}},
+		[]contracts.MessageAttachment{{Index: 0, Name: pick(rng, querytest.AttachmentNames...), Type: pick(rng, querytest.MessageTypes...), Size: 3}})
 	q.old = rng.IntN(3) == 0
 	q.partial = rng.IntN(8) == 0
 	if spoil {
@@ -57,8 +66,12 @@ func genMessage(rng *rand.Rand, i int, spoil bool) *qMsg {
 }
 
 // genFormulas is one or two formulas evaluated together (a scope and a
-// request), each of one to three groups of one or two conditions.
+// request), each of one to three groups of one or two conditions: this
+// test's, bound to the mailbox's times and identifier, or querytest's, over
+// its universe (received and mailbox excepted, whose values are not this
+// mailbox's); respelled by querytest, then canonical.
 func genFormulas(rng *rand.Rand, b inbox.Box, size bool) []*query.Canonical {
+	qt := querytest.New(rng.Uint64())
 	pool := []contracts.Condition{
 		cond(contracts.VarFromAddress, contracts.OpIs, "alice@example.com"),
 		cond(contracts.VarFromDomain, contracts.OpIs, "example.com"),
@@ -89,11 +102,25 @@ func genFormulas(rng *rand.Rand, b inbox.Box, size bool) []*query.Canonical {
 				if c.Var != contracts.VarReceived && rng.IntN(3) == 0 {
 					c = not(c)
 				}
+				if rng.IntN(3) == 0 {
+					c = qt.Condition()
+					for c.Var == contracts.VarReceived || c.Var == contracts.VarMailbox || (!size && c.Var == contracts.VarSize) {
+						c = qt.Condition()
+					}
+				}
 				g = append(g, c)
 			}
 			groups = append(groups, g)
 		}
-		fs = append(fs, formula(groups...))
+		f := contracts.Formula{V: contracts.FormulaVersion, All: []contracts.Group{}}
+		for _, g := range groups {
+			f.All = append(f.All, contracts.Group{Any: g})
+		}
+		c, err := query.Canonicalise(qt.Respell(f))
+		if err != nil {
+			panic(err)
+		}
+		fs = append(fs, c)
 	}
 	return fs
 }
@@ -117,7 +144,7 @@ func TestQ27StagedEqualsWhole(t *testing.T) {
 		msgs = append(msgs, q)
 		seedQ(t, st, b, q)
 	}
-	mt := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{})
+	mt := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{})
 	exceptions := 0
 	for trial := range 120 {
 		fs := genFormulas(rng, b, true)
@@ -162,7 +189,7 @@ func TestQ27TheExceptionOfOldMessages(t *testing.T) {
 	b := qBox(t)
 	q := &qMsg{at: qAt(0), from: []string{"a@example.com"}, subject: "big", body: "invoices " + strings.Repeat("words ", (2<<20)/6), old: true}
 	seedQ(t, st, b, q)
-	mt := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{})
+	mt := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{})
 	sizeA := []contracts.Condition{cond(contracts.VarSize, contracts.OpAtLeast, "1048576")}
 	a := formula(sizeA)
 	page, err := mt.Match(context.Background(), b, []*query.Canonical{a}, "", 50)
@@ -170,7 +197,7 @@ func TestQ27TheExceptionOfOldMessages(t *testing.T) {
 		t.Fatalf("A alone: %+v %v, raw reads %d", page, err, len(st.raws))
 	}
 	m := inbox.QueryMessage(&store.Message{MailboxID: b.MailboxID, ID: q.id()}, &inbox.StoredMeta{}, nil, nil)
-	if res := standIn([]*query.Canonical{a}, m, nil, query.ForQuery); res.Value != query.Unknown || res.Needs&query.FromText != 0 {
+	if res := query.Eval([]*query.Canonical{a}, m, nil, query.ForQuery); res.Value != query.Unknown || res.Needs&query.FromText != 0 {
 		t.Fatalf("A alone needs %v", res)
 	}
 	bf := formula(sizeA, group(cond(contracts.VarBody, contracts.OpContains, "invoices")))
@@ -213,7 +240,7 @@ func TestQ28PagesSkipNothing(t *testing.T) {
 		for trial := range trials {
 			fs := genFormulas(rng, b, false)
 			st.PageItems = rng.IntN(4)
-			mt := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{Read: 7, TextReads: 2, Undecided: 1 + rng.IntN(5)})
+			mt := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{Read: 7, TextReads: 2, Undecided: 1 + rng.IntN(5)})
 			got, _ := pages(t, mt, b, fs, func() int { return 1 + rng.IntN(5) }, 3*n+10)
 			for _, q := range msgs {
 				l, listed := got[q.id()]
@@ -243,7 +270,7 @@ func TestQ28APageOfExpiredItemsAdvancesNext(t *testing.T) {
 			live = append(live, id)
 		}
 	}
-	mt := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{Read: 7})
+	mt := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{Read: 7})
 	got, all := pages(t, mt, b, []*query.Canonical{formula()}, func() int { return 10 }, 10)
 	if len(all) != 3 || len(all[0].Messages)+len(all[1].Messages) != 0 || all[0].Next != (&qMsg{at: qAt(5), n: 5}).id() ||
 		all[1].Next != (&qMsg{at: qAt(11), n: 11}).id() || !all[0].SearchedTo.Equal(qAt(5).Truncate(time.Nanosecond)) || len(got) != 2 ||
@@ -252,7 +279,7 @@ func TestQ28APageOfExpiredItemsAdvancesNext(t *testing.T) {
 	}
 }
 
-// recordingEval is standIn, recording which messages it evaluated.
+// recordingEval is query.Eval, recording which messages it evaluated.
 type recordingEval struct {
 	mu   sync.Mutex
 	seen []time.Time
@@ -262,7 +289,7 @@ func (r *recordingEval) eval(fs []*query.Canonical, m *query.Message, a query.An
 	r.mu.Lock()
 	r.seen = append(r.seen, m.Received)
 	r.mu.Unlock()
-	return standIn(fs, m, a, mode)
+	return query.Eval(fs, m, a, mode)
 }
 
 // Q29 (ADR 0027): the received bounds are used. With received before t the
@@ -282,8 +309,11 @@ func TestQ29TheReceivedBoundsAreUsed(t *testing.T) {
 		"since":             {formula(group(cond(contracts.VarReceived, contracts.OpSince, rfc(since))))},
 		"both":              {formula(group(cond(contracts.VarReceived, contracts.OpSince, rfc(since))), group(cond(contracts.VarReceived, contracts.OpBefore, rfc(before))))},
 		"scope and request": {formula(group(cond(contracts.VarReceived, contracts.OpBefore, rfc(before)))), formula(group(cond(contracts.VarReceived, contracts.OpSince, rfc(since))))},
-		"neither": {formula(group(cond(contracts.VarReceived, contracts.OpBefore, rfc(before)), cond(contracts.VarSubject, contracts.OpContains, "x")),
-			group(not(cond(contracts.VarReceived, contracts.OpSince, rfc(since)))), group(cond(contracts.VarReceived, contracts.OpBefore, "not a time")))},
+		// Not canonical, so Eval says Unknown of every message: the matcher
+		// still bounds the scan by none of these groups.
+		"neither": {handBuilt(group(cond(contracts.VarReceived, contracts.OpBefore, rfc(before)), cond(contracts.VarSubject, contracts.OpContains, "x")),
+			group(not(cond(contracts.VarReceived, contracts.OpSince, rfc(since)))), group(cond(contracts.VarReceived, contracts.OpBefore, "not a time")),
+			group(cond(contracts.VarReceived, contracts.OpBefore, "1969-12-31T23:59:59Z")))},
 	} {
 		rec := &recordingEval{}
 		mt := inbox.NewMatcherWith(st, rec.eval, inbox.MatchBounds{})
@@ -352,13 +382,15 @@ func TestQ29TheReceivedBoundsAreUsed(t *testing.T) {
 	}
 	// A cursor below since, or since after before, is the end at once.
 	st.reset()
-	mt := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{})
+	mt := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{})
 	for _, c := range []struct {
 		fs     []*query.Canonical
 		cursor string
 	}{
 		{[]*query.Canonical{formula(group(cond(contracts.VarReceived, contracts.OpSince, rfc(since))))}, (&qMsg{at: qAt(280), n: 280}).id()},
-		{[]*query.Canonical{formula(group(cond(contracts.VarReceived, contracts.OpSince, rfc(before))), group(cond(contracts.VarReceived, contracts.OpBefore, rfc(since))))}, ""},
+		// Two formulas, never simplified together (in one, the canonical form
+		// is never).
+		{[]*query.Canonical{formula(group(cond(contracts.VarReceived, contracts.OpSince, rfc(before)))), formula(group(cond(contracts.VarReceived, contracts.OpBefore, rfc(since))))}, ""},
 	} {
 		page, err := mt.Match(context.Background(), b, c.fs, c.cursor, 10)
 		if err != nil || page.Next != "" || len(page.Messages) != 0 || len(st.scans) != 0 {
@@ -386,7 +418,7 @@ func TestQ30TheBudgetsOfAPage(t *testing.T) {
 		}
 		return nil
 	}
-	mt := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{})
+	mt := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{})
 	ctx := inbox.WithReadBudget(context.Background(), g)
 	page, err := mt.Match(ctx, b, body, "", 50)
 	if err != nil || len(page.Messages) != 5 || g.granted != 5 || g.given != 5 || g.maxHeld != 1 || g.heldNow() != 0 {
@@ -403,7 +435,7 @@ func TestQ30TheBudgetsOfAPage(t *testing.T) {
 		mu.Lock()
 		clock = clock.Add(25 * time.Second)
 		mu.Unlock()
-		return standIn(fs, m, a, mode)
+		return query.Eval(fs, m, a, mode)
 	}
 	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
 	mt = inbox.NewMatcherWith(st, slow, inbox.MatchBounds{Now: now})
@@ -414,12 +446,12 @@ func TestQ30TheBudgetsOfAPage(t *testing.T) {
 	// The request's deadline, before the page and in the middle of it.
 	done, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{}).Match(done, b, body, "", 50); !errors.Is(err, context.Canceled) {
+	if _, err := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{}).Match(done, b, body, "", 50); !errors.Is(err, context.Canceled) {
 		t.Fatalf("an ended request: %v", err)
 	}
 	for _, at := range []string{"eval", "raw", "last eval"} {
 		ctx, cancel := context.WithCancel(context.Background())
-		eval, fs, st := standIn, body, st
+		eval, fs, st := query.Eval, body, st
 		st.onRaw = nil
 		if at != "raw" {
 			// A formula of the meta alone: the page notices before its next
@@ -431,7 +463,7 @@ func TestQ30TheBudgetsOfAPage(t *testing.T) {
 			}
 			eval = func(fs []*query.Canonical, m *query.Message, a query.Answers, mode query.Mode) query.Result {
 				cancel()
-				return standIn(fs, m, a, mode)
+				return query.Eval(fs, m, a, mode)
 			}
 		} else {
 			st.onRaw = func(string) error { cancel(); return nil }
@@ -455,7 +487,7 @@ func TestQ31AGmailConfirmationIsNeverListed(t *testing.T) {
 	always := func([]*query.Canonical, *query.Message, query.Answers, query.Mode) query.Result {
 		return query.Result{Value: query.True}
 	}
-	for i, eval := range []inbox.Evaluate{standIn, always} {
+	for i, eval := range []inbox.Evaluate{query.Eval, always} {
 		for _, fs := range [][]*query.Canonical{
 			nil, {formula()},
 			{formula(group(cond(contracts.VarBody, contracts.OpContains, "invoices")))},
@@ -510,11 +542,11 @@ func TestQ40NoDecisionFromACutText(t *testing.T) {
 				fs := []*query.Canonical{formula(group(cd))}
 				meta := c.q.meta()
 				m := inbox.QueryMessage(item(c.q), &meta, c.q.entry(), nil)
-				if res := standIn(fs, m, nil, query.ForQuery); res.Value != query.Unknown || res.Needs != query.FromText || !m.BodyCut {
+				if res := query.Eval(fs, m, nil, query.ForQuery); res.Value != query.Unknown || res.Needs != query.FromText || !m.BodyCut {
 					t.Fatalf("old %v, %q not %v, before the raw read: %+v", old, c.text, neg, res)
 				}
 				st.reset()
-				page, err := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{}).Match(ctx, b, fs, "", 50)
+				page, err := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{}).Match(ctx, b, fs, "", 50)
 				if err != nil || !slices.Contains(st.raws, c.q.id()) {
 					t.Fatalf("raw reads %v %v", st.raws, err)
 				}
@@ -561,9 +593,9 @@ func TestQ41NoClassificationFromAnEntryAlone(t *testing.T) {
 		if m.Have&query.FromEntry == 0 {
 			return query.Result{Value: query.Unknown, Needs: query.FromEntry}
 		}
-		return standIn(fs, m, a, mode)
+		return query.Eval(fs, m, a, mode)
 	}
-	for _, eval := range []inbox.Evaluate{standIn, entryFirst} {
+	for _, eval := range []inbox.Evaluate{query.Eval, entryFirst} {
 		st.reset()
 		page, err := inbox.NewMatcherWith(st, eval, inbox.MatchBounds{}).Match(ctx, b, fs, "", 50)
 		if err != nil || len(page.Messages) != 0 || slices.Compare(page.Unknown, []string{many.ID, bad}) != 0 ||
@@ -573,7 +605,7 @@ func TestQ41NoClassificationFromAnEntryAlone(t *testing.T) {
 	}
 	if m := inbox.QueryMessage(&store.Message{MailboxID: b.MailboxID, ID: conf}, nil, &inbox.SearchEntry{Text: "hello"}, nil); m.Have&query.FromMeta != 0 || m.Confirmation {
 		t.Fatalf("an entry without its meta: %+v", m)
-	} else if res := standIn(fs, m, nil, query.ForQuery); res.Value != query.Unknown || res.Needs != query.FromItem|query.FromMeta {
+	} else if res := query.Eval(fs, m, nil, query.ForQuery); res.Value != query.Unknown || res.Needs != query.FromItem|query.FromMeta {
 		t.Fatalf("%+v", res)
 	}
 }
@@ -596,7 +628,7 @@ func TestQ42SizeFromTheSealedMeta(t *testing.T) {
 		if err := st.PutItem(ctx, item); err != nil {
 			t.Fatal(err)
 		}
-		mt := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{})
+		mt := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{})
 		for _, c := range []struct {
 			f    *query.Canonical
 			want listing
@@ -621,7 +653,7 @@ func TestQ42SizeFromTheSealedMeta(t *testing.T) {
 	withBody := func(c contracts.Condition) []*query.Canonical {
 		return []*query.Canonical{formula(group(c), group(cond(contracts.VarBody, contracts.OpContains, "zzz")))}
 	}
-	mt := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{})
+	mt := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{})
 	for c, want := range map[contracts.Condition]listing{
 		cond(contracts.VarSize, contracts.OpAtLeast, "20000"): listedMatch,
 		cond(contracts.VarSize, contracts.OpBelow, "21000"):   listedMatch,
@@ -660,13 +692,13 @@ func TestQ44RawReadsReleasedOneByOne(t *testing.T) {
 		}
 		return nil
 	}
-	page, err := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{}).Match(inbox.WithReadBudget(ctx, g), b, fs, "", 50)
+	page, err := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{}).Match(inbox.WithReadBudget(ctx, g), b, fs, "", 50)
 	if err != nil || slices.Compare(ids(page.Messages), want) != 0 || g.granted != 6 || g.maxHeld != 1 || g.heldNow() != 0 || g.free != inbox.RawReadMax {
 		t.Fatalf("%v; granted %d, max held %d, free %d", err, g.granted, g.maxHeld, g.free)
 	}
 	st.reset()
 	st.onRaw = nil
-	if _, err := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{}).Match(inbox.WithReadBudget(ctx, takeOnly{}), b, fs, "", 50); !errors.Is(err, contracts.ErrTooManyRequests) || len(st.raws) != 0 {
+	if _, err := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{}).Match(inbox.WithReadBudget(ctx, takeOnly{}), b, fs, "", 50); !errors.Is(err, contracts.ErrTooManyRequests) || len(st.raws) != 0 {
 		t.Fatalf("a budget that is not a ReadGrants: %v, %d raw reads", err, len(st.raws))
 	}
 }
@@ -682,19 +714,19 @@ func TestMatchListsAndStops(t *testing.T) {
 	for i := range 10 {
 		all = append(all, seedQ(t, st, b, &qMsg{at: qAt(i), n: i, from: []string{"a@example.com"}, subject: "x", body: qLong + "end"}))
 	}
-	mt := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{})
+	mt := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{})
 	about := []*query.Canonical{formula(group(cond(contracts.VarMessage, contracts.OpAbout, "bills")))}
 	page, err := mt.Match(ctx, b, about, "", 50)
 	if err != nil || slices.Compare(page.NeedsModel, all) != 0 || len(page.Unknown)+len(page.Messages) != 0 || page.Next != "" || !page.SearchedTo.Equal(qAt(9)) {
 		t.Fatalf("needs a model: %+v %v", page, err)
 	}
-	page, err = inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{Undecided: 3}).Match(ctx, b, about, "", 50)
+	page, err = inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{Undecided: 3}).Match(ctx, b, about, "", 50)
 	if err != nil || slices.Compare(page.NeedsModel, all[:3]) != 0 || page.Next != all[2] {
 		t.Fatalf("at most undecided: %+v %v", page, err)
 	}
 	// Full at the end of a batch: next is the batch's last item while more
 	// may be left, and nothing when the scan said there is none.
-	page, err = inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{Read: 6}).Match(ctx, b, []*query.Canonical{formula()}, "", 5)
+	page, err = inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{Read: 6}).Match(ctx, b, []*query.Canonical{formula()}, "", 5)
 	if err != nil || slices.Compare(ids(page.Messages), all[:5]) != 0 || page.Next != all[4] {
 		t.Fatalf("full at a batch's end: %+v %v", page, err)
 	}
@@ -711,11 +743,11 @@ func TestMatchListsAndStops(t *testing.T) {
 	// A body condition over cut texts: the entries' reads and the raw reads
 	// end pages before a message, which the next page starts with.
 	body := []*query.Canonical{formula(group(cond(contracts.VarBody, contracts.OpContains, "end")))}
-	page, err = inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{TextReads: 3}).Match(ctx, b, body, "", 50)
+	page, err = inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{TextReads: 3}).Match(ctx, b, body, "", 50)
 	if err != nil || slices.Compare(ids(page.Messages), all[:3]) != 0 || page.Next != all[2] {
 		t.Fatalf("three raw reads: %+v %v", page, err)
 	}
-	page, err = inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{Read: 8}).Match(ctx, b, body, "", 50)
+	page, err = inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{Read: 8}).Match(ctx, b, body, "", 50)
 	if err != nil || slices.Compare(ids(page.Messages), all[:1]) != 0 || page.Next != all[0] {
 		t.Fatalf("eight items read: %+v %v", page, err)
 	}
@@ -734,9 +766,16 @@ func TestMatchListsAndStops(t *testing.T) {
 	if err != nil || len(page.Messages) != 0 || page.Next != "" || len(st.scans) != 0 {
 		t.Fatalf("never: %+v %v", page, err)
 	}
-	// A nil formula among them is no bound.
-	if got, _ := pages(t, mt, b, []*query.Canonical{nil, formula()}, func() int { return 100 }, 3); len(got) != 10 {
+	// A nil formula among them is no bound, and Eval says Unknown of every
+	// message with it: nothing was asked.
+	got, _ := pages(t, mt, b, []*query.Canonical{nil, formula()}, func() int { return 100 }, 3)
+	if len(got) != 10 {
 		t.Fatalf("with a nil formula: %d", len(got))
+	}
+	for id, l := range got {
+		if l != listedUnknown {
+			t.Fatalf("with a nil formula: %s listed %v", id, l)
+		}
 	}
 }
 
@@ -774,7 +813,7 @@ func TestMatchWhatCannotBeRead(t *testing.T) {
 		if m.Unparsed {
 			return query.Result{Value: query.Unknown, Needs: query.FromEntry | query.FromText}
 		}
-		return standIn(fs, m, a, mode)
+		return query.Eval(fs, m, a, mode)
 	}
 	mt := inbox.NewMatcherWith(st, asksEverything, inbox.MatchBounds{})
 	page, err := mt.Match(ctx, b, body, "", 50)
@@ -812,7 +851,7 @@ func TestMatchOnTheEmulators(t *testing.T) {
 		}
 	}
 	g := &qGrants{}
-	page, err := inbox.NewMatcher(w.st, standIn).Match(inbox.WithReadBudget(ctx, g), w.b,
+	page, err := inbox.NewMatcher(w.st, query.Eval).Match(inbox.WithReadBudget(ctx, g), w.b,
 		[]*query.Canonical{formula(group(cond(contracts.VarBody, contracts.OpContains, "end")))}, "", 50)
 	if err != nil || slices.Compare(ids(page.Messages), want) != 0 || g.granted != 2 || g.heldNow() != 0 {
 		t.Fatalf("%+v %v, granted %d", page, err, g.granted)

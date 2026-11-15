@@ -72,8 +72,8 @@ const (
 // Evaluate is the value of formulas evaluated together on what is known of a
 // message: query.Eval, whose contract Matcher reads (ADR 0027, "The
 // functions each pull request writes"). It is a parameter so the reader does
-// not depend on how the language evaluates, and its tests can hold it to
-// that contract alone.
+// not depend on how the language evaluates; the routes (pull request 4) and
+// the matcher's tests pass query.Eval, which tests wrap to count or slow.
 type Evaluate func(fs []*query.Canonical, m *query.Message, answers query.Answers, mode query.Mode) query.Result
 
 // NewMatcher returns the Matcher on a store, which evaluates with eval

@@ -49,7 +49,7 @@ func TestReviewM1AListIDNotReadIsUnknown(t *testing.T) {
 	if err := inboxtest.Seed(ctx, st.Memory, st.Memory, b, m); err != nil {
 		t.Fatal(err)
 	}
-	mt := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{})
+	mt := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{})
 	exists := cond(contracts.VarList, contracts.OpExists, "")
 	for _, c := range []contracts.Condition{exists, not(exists)} {
 		if l := listedFor(t, mt, b, []*query.Canonical{formula(group(c))}, id); l != listedUnknown {
@@ -121,7 +121,7 @@ func TestReviewM3NeedsAModelOnlyWhenAModelCanMakeItTrue(t *testing.T) {
 	b := qBox(t)
 	old := &qMsg{at: qAt(0), from: []string{"a@example.com"}, subject: "x", body: "y", list: "news.example.com", old: true}
 	id := seedQ(t, st, b, old)
-	mt := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{})
+	mt := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{})
 	list := cond(contracts.VarList, contracts.OpIs, "news.example.com")
 	about := cond(contracts.VarMessage, contracts.OpAbout, "invoices")
 	var many []contracts.Condition
@@ -139,7 +139,8 @@ func TestReviewM3NeedsAModelOnlyWhenAModelCanMakeItTrue(t *testing.T) {
 		"about and not about":        {[]*query.Canonical{formula(group(about), group(not(about)))}, listedUnknown},
 		"about, and not about apart": {[]*query.Canonical{formula(group(about)), formula(group(not(about)))}, listedUnknown},
 		"list or about, and about":   {[]*query.Canonical{formula(group(list, about)), formula(group(about))}, listedNeedsModel},
-		"nine atoms":                 {[]*query.Canonical{formula(group(many...))}, listedNeedsModel},
+		// A formula holds at most eight; formulas together may hold more.
+		"nine atoms, in two formulas": {[]*query.Canonical{formula(group(many[:5]...)), formula(group(many[5:]...))}, listedNeedsModel},
 	} {
 		if l := listedFor(t, mt, b, c.fs, id); l != c.want {
 			t.Errorf("%s: listed %v, want %v", name, l, c.want)
@@ -168,7 +169,7 @@ func TestReviewM4RunsOfExpiredItemsKeepTheSoftDeadline(t *testing.T) {
 		return nil
 	}
 	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
-	mt := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{Now: now})
+	mt := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{Now: now})
 	page, err := mt.Match(context.Background(), b, []*query.Canonical{formula()}, "", 50)
 	if err != nil || len(st.scans) != 4 || page.Next != expired[39] || len(page.Messages) != 0 || now().Sub(qNow) > inbox.MatchSoftDeadline {
 		t.Fatalf("%d scans, %s elapsed: %+v %v", len(st.scans), now().Sub(qNow), page, err)
@@ -194,7 +195,7 @@ func TestReviewM5TheLastExpiredBatchKeepsSearchedTo(t *testing.T) {
 		}
 		seedQ(t, st, b, &qMsg{at: qAt(1), n: 1, from: []string{"a@example.com"}, subject: "x", expired: true})
 		st.PageItems = c.pageItems
-		page, err := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{}).Match(context.Background(), b, []*query.Canonical{formula()}, "", 50)
+		page, err := inbox.NewMatcherWith(st, query.Eval, inbox.MatchBounds{}).Match(context.Background(), b, []*query.Canonical{formula()}, "", 50)
 		if err != nil || page.Next != "" || !page.SearchedTo.Equal(qAt(1)) {
 			t.Errorf("%s: %+v %v", c.name, page, err)
 		}

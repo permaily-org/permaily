@@ -4,14 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"golang.org/x/text/unicode/norm"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/inbox"
@@ -21,13 +17,8 @@ import (
 )
 
 // The matcher's tests (ADR 0027, "Evaluation over stored mail") run against
-// standIn, an evaluator written to query.Eval's documented contract, while
-// pull request 1 writes Eval itself: a message without its item and meta is
-// Unknown needing both; a body condition is Unknown needing FromEntry before
-// any text is read and FromText while the text is cut; list and size are
-// Unknown, needing nothing, when not recorded; a condition a model decides
-// is Unknown, listed in Model, without an answer. Q27 runs against the real
-// Eval once pull request 1 merges.
+// the real query.Eval: what the matcher does with a value is what Eval says
+// of the sources it read, and formulas are canonical (Canonicalise).
 
 // qNow is when the matcher's tests read.
 var qNow = time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
@@ -38,9 +29,24 @@ func cond(v contracts.Variable, op contracts.Operator, value string) contracts.C
 
 func not(c contracts.Condition) contracts.Condition { c.Not = true; return c }
 
-// formula is a formula of groups, each the conditions given: canonical as
-// far as standIn is concerned.
+// formula is the canonical form of a formula of groups, each the
+// conditions given; a formula that does not canonicalise is the test's bug.
 func formula(groups ...[]contracts.Condition) *query.Canonical {
+	f := contracts.Formula{V: contracts.FormulaVersion, All: []contracts.Group{}}
+	for _, g := range groups {
+		f.All = append(f.All, contracts.Group{Any: g})
+	}
+	c, err := query.Canonicalise(f)
+	if err != nil {
+		panic(fmt.Sprintf("formula %+v: %v", f, err))
+	}
+	return c
+}
+
+// handBuilt is a formula of groups as given, not canonical: Eval says
+// Unknown of every condition that is not, and the matcher must still read it
+// safely.
+func handBuilt(groups ...[]contracts.Condition) *query.Canonical {
 	f := &query.Canonical{Formula: contracts.Formula{V: contracts.FormulaVersion, All: []contracts.Group{}}}
 	for _, g := range groups {
 		f.Formula.All = append(f.Formula.All, contracts.Group{Any: g})
@@ -49,175 +55,6 @@ func formula(groups ...[]contracts.Condition) *query.Canonical {
 }
 
 func group(cs ...contracts.Condition) []contracts.Condition { return cs }
-
-func fold(s string) string { return strings.ToLower(norm.NFKC.String(s)) }
-
-func known(b bool) query.Value {
-	if b {
-		return query.True
-	}
-	return query.False
-}
-
-// standIn is query.Eval's contract, over what the matcher's tests use.
-func standIn(fs []*query.Canonical, m *query.Message, answers query.Answers, mode query.Mode) query.Result {
-	if m.Have&(query.FromItem|query.FromMeta) != query.FromItem|query.FromMeta {
-		return query.Result{Value: query.Unknown, Needs: query.FromItem | query.FromMeta}
-	}
-	if m.Confirmation {
-		return query.Result{Value: query.False}
-	}
-	total := query.True
-	var needs query.Sources
-	var model []query.Atom
-	for _, f := range fs {
-		if f == nil {
-			continue
-		}
-		v, n, atoms := standInFormula(f, m, answers, mode)
-		total = min(total, v)
-		if v == query.Unknown {
-			needs |= n
-			for _, a := range atoms {
-				if !slices.Contains(model, a) {
-					model = append(model, a)
-				}
-			}
-		}
-	}
-	if total != query.Unknown {
-		return query.Result{Value: total}
-	}
-	return query.Result{Value: total, Needs: needs, Model: model}
-}
-
-func standInFormula(f *query.Canonical, m *query.Message, answers query.Answers, mode query.Mode) (query.Value, query.Sources, []query.Atom) {
-	if f.Never {
-		return query.False, 0, nil
-	}
-	v := query.True
-	var needs query.Sources
-	var atoms []query.Atom
-	for _, g := range f.Formula.All {
-		gv := query.False
-		var gn query.Sources
-		var ga []query.Atom
-		for _, c := range g.Any {
-			cv, cn, atom := standInCondition(c, m, answers, mode)
-			if c.Not {
-				cv = query.True - cv
-			}
-			gv = max(gv, cv)
-			if cv == query.Unknown {
-				gn |= cn
-				if atom != nil {
-					ga = append(ga, *atom)
-				}
-			}
-		}
-		v = min(v, gv)
-		if gv == query.Unknown {
-			needs |= gn
-			atoms = append(atoms, ga...)
-		}
-	}
-	return v, needs, atoms
-}
-
-// anyOf is a condition over a list of values: true when one satisfies it,
-// otherwise unknown when the list may be incomplete, otherwise false.
-func anyOf(values []string, partial bool, ok func(string) bool) (query.Value, query.Sources, *query.Atom) {
-	if slices.ContainsFunc(values, ok) {
-		return query.True, 0, nil
-	}
-	if partial {
-		return query.Unknown, 0, nil
-	}
-	return query.False, 0, nil
-}
-
-func domainOf(v string) func(string) bool {
-	return func(a string) bool {
-		d := strings.ToLower(a[strings.LastIndexByte(a, '@')+1:])
-		return d == v || strings.HasSuffix(d, "."+v)
-	}
-}
-
-func standInCondition(c contracts.Condition, m *query.Message, answers query.Answers, mode query.Mode) (query.Value, query.Sources, *query.Atom) {
-	switch c.Var {
-	case contracts.VarReceived:
-		t, _ := time.Parse(time.RFC3339, c.Value)
-		if c.Op == contracts.OpSince {
-			return known(!m.Received.Before(t)), 0, nil
-		}
-		return known(m.Received.Before(t)), 0, nil
-	case contracts.VarMailbox:
-		return known(m.Mailbox == c.Value), 0, nil
-	}
-	if c.Op == contracts.OpAbout || c.Op == contracts.OpMentions {
-		atom := query.Atom{Var: c.Var, Op: c.Op, Topic: c.Value}
-		p, ok := answers[atom]
-		if !ok {
-			return query.Unknown, 0, &atom
-		}
-		return query.Classify(p, mode), 0, nil
-	}
-	if m.Unparsed {
-		return query.Unknown, 0, nil
-	}
-	switch c.Var {
-	case contracts.VarFromAddress:
-		return anyOf(m.From, m.Partial, func(a string) bool { return strings.EqualFold(a, c.Value) })
-	case contracts.VarFromDomain:
-		return anyOf(m.From, m.Partial, domainOf(c.Value))
-	case contracts.VarRecipientAddress:
-		return anyOf(m.Recipients, m.Partial, func(a string) bool { return strings.EqualFold(a, c.Value) })
-	case contracts.VarRecipientDomain:
-		return anyOf(m.Recipients, m.Partial, domainOf(c.Value))
-	case contracts.VarSignedBy:
-		return anyOf(m.SignedBy, false, func(d string) bool { return domainOf(c.Value)("@" + d) })
-	case contracts.VarSubject:
-		return known(strings.Contains(fold(m.Subject), fold(c.Value))), 0, nil
-	case contracts.VarBody:
-		switch {
-		case m.Have&(query.FromEntry|query.FromText) == 0:
-			return query.Unknown, query.FromEntry, nil
-		case m.BodyCut:
-			return query.Unknown, query.FromText, nil
-		}
-		return known(strings.Contains(fold(m.Body), fold(c.Value))), 0, nil
-	case contracts.VarAttachments:
-		var names []string
-		for _, a := range m.Attachments {
-			names = append(names, a.Name)
-		}
-		return anyOf(names, m.Partial, func(string) bool { return true })
-	case contracts.VarAttachmentName:
-		var names []string
-		for _, a := range m.Attachments {
-			names = append(names, a.Name)
-		}
-		return anyOf(names, m.Partial, func(n string) bool { return strings.Contains(fold(n), fold(c.Value)) })
-	case contracts.VarList:
-		if !m.ListRecorded {
-			return query.Unknown, 0, nil
-		}
-		if c.Op == contracts.OpExists {
-			return known(len(m.List) > 0), 0, nil
-		}
-		return anyOf(m.List, false, func(l string) bool { return l == c.Value })
-	case contracts.VarSize:
-		if !m.SizeKnown {
-			return query.Unknown, 0, nil
-		}
-		n, _ := strconv.ParseInt(c.Value, 10, 64)
-		if c.Op == contracts.OpAtLeast {
-			return known(m.Size >= n), 0, nil
-		}
-		return known(m.Size < n), 0, nil
-	}
-	panic("standIn: " + string(c.Var))
-}
 
 // qStore is the memory store, counting and failing what the matcher reads.
 type qStore struct {
@@ -297,6 +134,11 @@ type qMsg struct {
 	body    string // the message's whole text
 	list    string
 	attach  []contracts.MessageAttachment
+	// header: the From header as sent, for an address as delivery stores
+	// it (parsed); otherwise from is stored as given. signedBy: the domains
+	// of DKIM signatures that passed.
+	header   string
+	signedBy []string
 	// old: written before ADR 0027 (a meta of format 1, an entry without
 	// Cut). size: the meta's size when it is not the raw length.
 	old          bool
@@ -319,7 +161,11 @@ func (q *qMsg) id() string { return fmt.Sprintf("%016x%016x", q.at.UnixNano(), q
 
 func (q *qMsg) raw() []byte {
 	var b strings.Builder
-	b.WriteString("From: " + strings.Join(q.from, ", ") + "\r\n")
+	if q.header != "" {
+		b.WriteString("From: " + q.header + "\r\n")
+	} else {
+		b.WriteString("From: " + strings.Join(q.from, ", ") + "\r\n")
+	}
 	if len(q.to) > 0 {
 		b.WriteString("To: " + strings.Join(q.to, ", ") + "\r\n")
 	}
@@ -331,6 +177,12 @@ func (q *qMsg) meta() inbox.StoredMeta {
 	meta := inbox.StoredMeta{Subject: q.subject, Attachments: q.attach, Partial: q.partial, Unparsed: q.unparsed, Confirmation: q.confirmation}
 	for _, a := range q.from {
 		meta.From = append(meta.From, contracts.MailAddress{Address: a})
+	}
+	if q.header != "" {
+		meta.From = inbox.Parse(context.Background(), q.raw()).Meta.From
+	}
+	for _, d := range q.signedBy {
+		meta.Auth = append(meta.Auth, contracts.AuthCheck{Method: "dkim", Domain: d, Result: "pass"})
 	}
 	for _, a := range q.to {
 		meta.To = append(meta.To, contracts.MailAddress{Address: a})
@@ -425,7 +277,7 @@ func (l listing) String() string {
 // source is left to read and some answers to its atoms (each 1 or 0, every
 // one tried, up to eight) make fs true (the code review of #103, M3).
 func listingOf(fs []*query.Canonical, m *query.Message) listing {
-	res := standIn(fs, m, nil, query.ForQuery)
+	res := query.Eval(fs, m, nil, query.ForQuery)
 	switch {
 	case res.Value == query.True:
 		return listedMatch
@@ -444,7 +296,7 @@ func listingOf(fs []*query.Canonical, m *query.Message) listing {
 				answers[a] = 1
 			}
 		}
-		if standIn(fs, m, answers, query.ForQuery).Value == query.True {
+		if query.Eval(fs, m, answers, query.ForQuery).Value == query.True {
 			return listedNeedsModel
 		}
 	}
@@ -478,7 +330,8 @@ func reference(b inbox.Box, fs []*query.Canonical, q *qMsg) (want, withoutRawSiz
 	for _, f := range fs {
 		for _, g := range f.Formula.All {
 			if len(g.Any) == 1 && g.Any[0].Var == contracts.VarReceived && !g.Any[0].Not {
-				if v, _, _ := standInCondition(g.Any[0], &query.Message{Received: q.at}, nil, query.ForQuery); v == query.False {
+				at := &query.Message{Have: query.FromItem | query.FromMeta, Received: q.at}
+				if query.Eval([]*query.Canonical{formula(g.Any)}, at, nil, query.ForQuery).Value == query.False {
 					return listedNone, listedNone, false
 				}
 			}
