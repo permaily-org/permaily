@@ -36,14 +36,16 @@
 #   PERMAILY_API          base URL of the enclave (default https://api.permaily.com)
 #   PERMAILY_ADMIN_TOKEN  admin token (default: ~/.config/permaily/admin-token)
 #   PERMAILY_CA_FILE      extra CA certificate, for a staging image
-#   PERMAILY_PCRS         pcrs.json of the release the enclave runs (or PERMAILY_RELEASE, its tag):
+#   PERMAILY_PCRS         pcrs.json of the release the enclave runs, and/or PERMAILY_RELEASE, its tag:
 #                         nothing is sent before permaily-verify attests the enclave against it
-#   PERMAILY_VERIFY       permaily-verify binary (default: built from this checkout)
+#   PERMAILY_VERIFY       permaily-verify binary (default: built from the source of PERMAILY_RELEASE,
+#                         or else from this checkout, which must then be the running release's)
+#   PERMAILY_DEV_UNVERIFIED=1  for an enclave in dev mode on this machine (scripts/attested.sh)
 #
-# Needs curl and jq, and go unless PERMAILY_VERIFY is set.
+# Needs curl and jq, and go and git unless PERMAILY_VERIFY is set.
 set -euo pipefail
 
-usage() { sed -n '2,43p' "$0"; exit 2; }
+usage() { sed -n '2,45p' "$0"; exit 2; }
 
 action=list target="" yes=""
 case ${1:-} in
@@ -64,11 +66,11 @@ if [[ ${1:-} == --yes ]]; then yes=1; shift; fi
 [[ -z $yes || $action =~ ^(block|unblock|delete|cancel|close-sessions|mailbox-pause|mailbox-resume)$ ]] || usage
 
 api=${PERMAILY_API:-https://api.permaily.com}
-token=${PERMAILY_ADMIN_TOKEN:-$(cat "${HOME}/.config/permaily/admin-token")}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 # shellcheck source=scripts/attested.sh
 source "$(dirname "$0")/attested.sh"
+load_token
 attest
 
 # ask <method> <path and query> writes the answer to $work/response.json.
@@ -76,8 +78,7 @@ attest
 # an address.
 ask() {
   local code
-  code=$(enclave_curl -o "$work/response.json" -w '%{http_code}' \
-    -X "$1" -H @<(printf 'Authorization: Bearer %s' "$token") "$api$2") || exit 1
+  code=$(enclave_curl --token -o "$work/response.json" -w '%{http_code}' -X "$1" "$api$2") || exit 1
   if [[ $code != 200 ]]; then
     enclave_error "$work/response.json"
     echo "the enclave at $api did not answer $1 ${2%%\?*} (HTTP $code)" >&2

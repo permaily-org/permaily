@@ -21,14 +21,16 @@
 #   PERMAILY_API          base URL of the enclave (default https://api.permaily.com)
 #   PERMAILY_ADMIN_TOKEN  admin token (default: ~/.config/permaily/admin-token)
 #   PERMAILY_CA_FILE      extra CA certificate, for a staging image
-#   PERMAILY_PCRS         pcrs.json of the release the enclave runs (or PERMAILY_RELEASE, its tag):
+#   PERMAILY_PCRS         pcrs.json of the release the enclave runs, and/or PERMAILY_RELEASE, its tag:
 #                         nothing is sent before permaily-verify attests the enclave against it
-#   PERMAILY_VERIFY       permaily-verify binary (default: built from this checkout)
+#   PERMAILY_VERIFY       permaily-verify binary (default: built from the source of PERMAILY_RELEASE,
+#                         or else from this checkout, which must then be the running release's)
+#   PERMAILY_DEV_UNVERIFIED=1  for an enclave in dev mode on this machine (scripts/attested.sh)
 #
-# Needs curl and jq, and go unless PERMAILY_VERIFY is set.
+# Needs curl and jq, and go and git unless PERMAILY_VERIFY is set.
 set -euo pipefail
 
-usage() { sed -n '2,28p' "$0"; exit 2; }
+usage() { sed -n '2,30p' "$0"; exit 2; }
 
 action=${1:-list}
 provider=${2:-}
@@ -44,20 +46,19 @@ if [[ $action != list && ! $provider =~ ^(google|github|meta|microsoft)$ ]]; the
 fi
 
 api=${PERMAILY_API:-https://api.permaily.com}
-token=${PERMAILY_ADMIN_TOKEN:-$(cat "${HOME}/.config/permaily/admin-token")}
 # What is written here holds the secret for a moment: nobody else reads it.
 umask 077
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 # shellcheck source=scripts/attested.sh
 source "$(dirname "$0")/attested.sh"
+load_token
 attest
 
 # ask <method> <path> [file with the body] writes the answer to
 # $work/response.json and its status to $code.
 ask() {
-  code=$(enclave_curl -o "$work/response.json" -w '%{http_code}' \
-    -X "$1" -H @<(printf 'Authorization: Bearer %s' "$token") \
+  code=$(enclave_curl --token -o "$work/response.json" -w '%{http_code}' -X "$1" \
     ${3:+-H "Content-Type: application/json" --data-binary "@$3"} "$api$2") || exit 1
 }
 
@@ -87,11 +88,7 @@ case $action in
       [[ -r $secret_file ]] || { echo "cannot read $secret_file" >&2; exit 2; }
       cat -- "$secret_file" > "$work/secret"
     elif [[ -t 0 ]]; then
-      # read is a builtin, so the secret is in no process's arguments.
-      IFS= read -rs -p "Client secret of the $provider application: " secret
-      echo >&2
-      printf '%s' "$secret" > "$work/secret"
-      unset secret
+      read_secret "Client secret of the $provider application: " "$work/secret"
     else
       cat > "$work/secret"
     fi

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { createHash, createPublicKey } from 'node:crypto'
 import {
@@ -28,6 +28,9 @@ import { join } from 'node:path'
 // the enclave: that key A is the one inside it. An impostor serves the same
 // name with key B, under a certificate of the same CA: valid for every check
 // but the key, like a second certificate a CA was made to issue.
+
+// Some tests run a script dozens of times: more than the default 5 s on a busy runner.
+setDefaultTimeout(30_000)
 
 type Answer = { status: number; body: unknown }
 let answers: Record<string, Answer> = {}
@@ -732,30 +735,38 @@ describe('the token and secrets go only to the attested key', () => {
   })
 })
 
-test('every request that carries the admin token goes through enclave_curl, after attest', () => {
+test('the admin token goes only through attested.sh: enclave_curl --token or with_token, after attest', () => {
   const scripts = readdirSync(import.meta.dir).filter(
     (f) => f.endsWith('.sh') && f !== 'attested.sh',
   )
   const carriers = []
   for (const name of scripts) {
     const text = readFileSync(join(import.meta.dir, name), 'utf8')
-    // One command a line: continuations joined.
-    const commands = text.replace(/\\\n/g, ' ').split('\n')
-    const sending = commands.filter((c) => c.includes('Authorization'))
-    if (sending.length === 0) continue
+    // No script makes the header or expands the token itself: under bash -x
+    // that line would be traced.
+    expect({
+      name,
+      itself: /Authorization|\$\{?token\b|PERMAILY_ADMIN_TOKEN:-/.test(
+        text.replace(/^\s*#.*$/gm, ''),
+      ),
+    }).toEqual({ name, itself: false })
+    if (!/enclave_curl --token|with_token /.test(text)) continue
     carriers.push(name)
-    for (const command of sending) {
-      expect({
+    // One command a line: continuations joined. Every curl that carries it is enclave_curl.
+    for (const command of text.replace(/\\\n/g, ' ').split('\n')) {
+      if (!command.includes('--token')) continue
+      expect({ name, command, pinned: /\benclave_curl --token\b/.test(command) }).toEqual({
         name,
         command,
-        pinned:
-          /\benclave_curl\b/.test(command) &&
-          !/(^|[^_])\bcurl\b(?!_)/.test(command.replace(/enclave_curl/g, '')),
-      }).toEqual({ name, command, pinned: true })
+        pinned: true,
+      })
     }
     expect({
       name,
-      sources: text.includes('source "$(dirname "$0")/attested.sh"') && /^\s*attest$/m.test(text),
+      sources:
+        text.includes('source "$(dirname "$0")/attested.sh"') &&
+        /^\s*load_token$/m.test(text) &&
+        /^\s*attest$/m.test(text),
     }).toEqual({ name, sources: true })
   }
   expect(carriers.sort()).toEqual([
@@ -765,6 +776,9 @@ test('every request that carries the admin token goes through enclave_curl, afte
     'provider.sh',
     'sigstore-trust-root.sh',
   ])
+  // In attested.sh, the header is made in one place, behind the pin.
+  const helper = readFileSync(join(import.meta.dir, 'attested.sh'), 'utf8')
+  expect(helper.match(/Authorization: Bearer/g)?.length).toBe(1)
 })
 
 // Proxies that lead every connection to the impostor, as a hostile proxy, a

@@ -11,7 +11,9 @@
 # permaily-verify against the pcrs.json of <running> (for a tag, the release's,
 # after checking its build provenance), and the token then goes only to the TLS
 # key that verification attested (scripts/attested.sh). When the enclave does
-# not verify as <running>, nothing is sent.
+# not verify as <running>, nothing is sent. The verifier is <running>'s own:
+# for a tag, built from that tag's source, and the same binary verifies again
+# and decides about the trust root in sigstore-trust-root.sh --send.
 #
 # The enclave decides alone whether to hand over: it checks, offline, that
 # <next> was built by the release workflow and published in the public
@@ -25,20 +27,22 @@
 #   PERMAILY_ADMIN_TOKEN  admin token (default: ~/.config/permaily/admin-token)
 #   PERMAILY_CA_FILE      extra CA certificate, for a staging image
 #   PERMAILY_REPO         repository (default permaily-org/permaily)
-#   PERMAILY_VERIFY       permaily-verify binary (default: built from this checkout)
+#   PERMAILY_VERIFY       permaily-verify binary (default: built from the source of
+#                         <running>'s tag, or for a directory from this checkout,
+#                         which must then be the staging image's source)
 #
-# Needs gh, jq and curl, and go unless PERMAILY_VERIFY is set.
+# Needs gh, jq and curl, and go and git unless PERMAILY_VERIFY is set.
 set -euo pipefail
 
-[[ $# -eq 2 ]] || { sed -n '2,29p' "$0"; exit 2; }
+[[ $# -eq 2 ]] || { sed -n '2,34p' "$0"; exit 2; }
 repo=${PERMAILY_REPO:-permaily-org/permaily}
 api=${PERMAILY_API:-https://api.permaily.com}
-token=${PERMAILY_ADMIN_TOKEN:-$(cat "${HOME}/.config/permaily/admin-token")}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 # shellcheck source=scripts/attested.sh
 source "$(dirname "$0")/attested.sh"
+load_token
 
 # measurements NAME SOURCE: leaves $work/NAME/pcrs.json. A release's is
 # checked against its build provenance before anything relies on it.
@@ -62,12 +66,15 @@ bundle() {
   echo "$1: $2, PCR0 $(jq -r .PCR0 "$dir/pcrs.json")"
 }
 
-# The enclave that answers must be <running>, verified now; sigstore-trust-root.sh
-# --send below verifies it again, against the same measurements.
+# The enclave that answers must be <running>, verified now by <running>'s own
+# verifier (for a tag, built from its source); sigstore-trust-root.sh --send
+# below verifies it again, with the same verifier and the same measurements.
 measurements from "$1"
 export PERMAILY_PCRS=$work/from/pcrs.json
+if [[ -d $1 ]]; then unset PERMAILY_RELEASE; else export PERMAILY_RELEASE=$1; fi
 attest
-if [[ -z ${PERMAILY_VERIFY:-} && -x $work/permaily-verify ]]; then export PERMAILY_VERIFY=$work/permaily-verify; fi
+if [[ -n ${verifier:-} ]]; then export PERMAILY_VERIFY=$verifier; fi
+export PERMAILY_API=$api
 bundle from "$1"
 measurements to "$2"
 bundle to "$2"
@@ -76,16 +83,17 @@ bundle to "$2"
 # running image was built. Give the enclave the trust root Sigstore publishes
 # today: it takes it only with the signatures of Sigstore's keyholders, and it
 # is a no-op when it has it already.
-PERMAILY_API=$api PERMAILY_ADMIN_TOKEN=$token "$(dirname "$0")/sigstore-trust-root.sh" --send
+with_token "$(dirname "$0")/sigstore-trust-root.sh" --send
 
-b64() { base64 -w0 "$1" > "$1.b64"; }
+# base64 without line breaks, with GNU's or macOS's.
+b64() { base64 < "$1" | tr -d '\n' > "$1.b64"; }
 for f in from/pcrs.json from/bundle.json to/pcrs.json to/bundle.json; do b64 "$work/$f"; done
 jq -n --rawfile to_pcrs "$work/to/pcrs.json.b64" --rawfile to_bundle "$work/to/bundle.json.b64" \
   --rawfile from_pcrs "$work/from/pcrs.json.b64" --rawfile from_bundle "$work/from/bundle.json.b64" \
   '{to_pcrs: $to_pcrs, to_bundle: $to_bundle, from_pcrs: $from_pcrs, from_bundle: $from_bundle}' > "$work/request.json"
 
-status=$(enclave_curl -o "$work/response.json" -w '%{http_code}' \
-  -X POST -H "Content-Type: application/json" -H @<(printf 'Authorization: Bearer %s' "$token") \
+status=$(enclave_curl --token -o "$work/response.json" -w '%{http_code}' \
+  -X POST -H "Content-Type: application/json" \
   --data-binary @"$work/request.json" "$api/v1/admin/handoff") || exit 1
 if [[ $status != 200 ]]; then
   enclave_error "$work/response.json"

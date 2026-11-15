@@ -25,14 +25,17 @@
 #
 # Environment:
 #   PERMAILY_VERIFY       the verifier to decide with (default: go run
-#                         ./cmd/permaily-verify, the one of this checkout)
+#                         ./cmd/permaily-verify, the one of this checkout; with
+#                         --send, the one that attested the enclave, built from
+#                         the source of PERMAILY_RELEASE when it is set)
 #   PERMAILY_API          base URL of the enclave (default https://api.permaily.com)
 #   PERMAILY_ADMIN_TOKEN  admin token (default: ~/.config/permaily/admin-token)
 #   PERMAILY_CA_FILE      extra CA certificate, for a staging image
 #   PERMAILY_PCRS         with --send: pcrs.json of the release the enclave runs
-#                         (or PERMAILY_RELEASE, its tag), to verify it against
+#                         and/or PERMAILY_RELEASE, its tag, to verify it against
+#                         (scripts/attested.sh)
 #
-# Needs curl and jq, and go unless PERMAILY_VERIFY is set.
+# Needs curl and jq, and go (and git with --send) unless PERMAILY_VERIFY is set.
 set -euo pipefail
 
 repository=https://tuf-repo-cdn.sigstore.dev
@@ -46,6 +49,7 @@ if [[ $mode == --send ]]; then
   api=${PERMAILY_API:-https://api.permaily.com}
   # shellcheck source=scripts/attested.sh
   source "$(dirname "$0")/attested.sh"
+  load_token
   attest
 fi
 cd "$(dirname "$0")/.."
@@ -82,16 +86,24 @@ done
 rm -f "$dir/$((version + 1)).root.json"
 [[ $mode == --fetch ]] && { echo "Fetched TUF targets $targets and TUF roots up to $version into $dir."; exit 0; }
 
-verify=${PERMAILY_VERIFY:-go run ./cmd/permaily-verify}
-if [[ -n ${PERMAILY_VERIFY:-} ]] || command -v go >/dev/null; then
+# With --send, the verifier that attested the enclave: the running release's.
+decide=() decider=""
+if [[ $mode == --send && -n ${verifier:-} ]]; then
+  decide=("$verifier") decider=1
+elif [[ -n ${PERMAILY_VERIFY:-} ]]; then
+  decide=("$PERMAILY_VERIFY") decider=1
+elif command -v go >/dev/null; then
+  decide=(go run ./cmd/permaily-verify) decider=1
+fi
+if [[ -n $decider ]]; then
   status=0
-  $verify -trust-update "$dir" -json > "$work/result.json" || status=$?
+  "${decide[@]}" -trust-update "$dir" -json > "$work/result.json" || status=$?
   if [[ $status -ne 0 ]]; then
-    $verify -trust-update "$dir" || true
+    "${decide[@]}" -trust-update "$dir" || true
     echo "::error::pkg/provenance refuses the trust root Sigstore publishes today. See \"Sigstore changed\" in docs/operations.md."
     exit 1
   fi
-  $verify -trust-update "$dir"
+  "${decide[@]}" -trust-update "$dir"
   if [[ $(jq -r .newer "$work/result.json") != true && $mode != --send ]]; then
     exit 0
   fi
@@ -119,15 +131,15 @@ case $mode in
     echo "Replaced the files compiled into $compiled. Run the tests, and release."
     ;;
   --send)
-    token=${PERMAILY_ADMIN_TOKEN:-$(cat "${HOME}/.config/permaily/admin-token")}
-    # Each file as it was served, in base64; the roots in order.
-    roots=$(for f in $(find "$dir" -name '*.root.json' | sort -V); do base64 -w0 "$f"; echo; done | jq -R . | jq -s .)
-    base64 -w0 "$dir/targets.json" > "$work/targets.b64"
-    base64 -w0 "$dir/trusted_root.json" > "$work/trusted.b64"
+    # Each file as it was served, in base64 without line breaks (GNU's or
+    # macOS's base64); the roots in order.
+    roots=$(for f in $(find "$dir" -name '*.root.json' | sort -V); do base64 < "$f" | tr -d '\n'; echo; done | jq -R . | jq -s .)
+    base64 < "$dir/targets.json" | tr -d '\n' > "$work/targets.b64"
+    base64 < "$dir/trusted_root.json" | tr -d '\n' > "$work/trusted.b64"
     jq -n --argjson roots "$roots" --rawfile targets "$work/targets.b64" --rawfile trusted "$work/trusted.b64" \
       '{roots: $roots, targets: $targets, trusted_root: $trusted}' > "$work/request.json"
-    code=$(enclave_curl -o "$work/response.json" -w '%{http_code}' \
-      -X POST -H "Content-Type: application/json" -H @<(printf 'Authorization: Bearer %s' "$token") \
+    code=$(enclave_curl --token -o "$work/response.json" -w '%{http_code}' \
+      -X POST -H "Content-Type: application/json" \
       --data-binary @"$work/request.json" "$api/v1/admin/trust-root") || exit 1
     case $code in
       200)
@@ -148,7 +160,7 @@ case $mode in
     esac
     ;;
   *)
-    sed -n '2,35p' "$0"
+    sed -n '2,38p' "$0"
     exit 2
     ;;
 esac
