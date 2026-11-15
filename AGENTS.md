@@ -26,7 +26,7 @@ Each layer has its own short AGENTS.md: [internal/](internal/AGENTS.md) (enclave
 ```sh
 nix develop                 # go, golangci-lint, govulncheck, bun, node, opentofu, aws, jq
 make check                  # every gate; must pass before a change is done
-make fuzz                   # short fuzzing of the attestation parser
+make fuzz                   # every fuzz target with CI's executions (scripts/fuzz.sh; CI runs one group a leg)
 nix build .#eif             # enclave image + pcrs.json (x86_64 or arm64 Linux)
 scripts/release-image.sh <tag> <dir>  # build a release's image (releases do not publish it) and check it against its attested pcrs.json
 bun run format              # Biome, whole repo
