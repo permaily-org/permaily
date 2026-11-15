@@ -169,6 +169,12 @@ func (s *Service) readCanary(ctx context.Context, makeIt bool) (*canaryDoc, erro
 		return nil, nil // not made yet
 	}
 	s.doc, s.readAt = doc, now
+	// An alarm accepted for an earlier stale episode is not this one's: a
+	// read that finds the state no longer stale ends that episode, and a
+	// later one is shown only once its own alarm is in the record.
+	if !doc.stale(now) {
+		s.staleSeen = false
+	}
 	return doc, nil
 }
 
@@ -312,7 +318,9 @@ func (s *Service) check(ctx context.Context, today string) error {
 		return true
 	})
 	if err != nil || doc == nil || doc.V == 0 {
-		if errors.Is(err, errUnreadable) {
+		// The completion's own read or write failing leaves /status
+		// unreadable until a read succeeds, as any other failed read.
+		if err != nil {
 			s.canaryMu.Lock()
 			s.unreadableCanary(err)
 			s.canaryMu.Unlock()
