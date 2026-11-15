@@ -2,8 +2,10 @@ package inbox
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"time"
@@ -20,23 +22,34 @@ import (
 // inbox"): message items scanned and read without their raw objects, raw
 // objects read bounded, entries scanned for search, an entry read by its key
 // (a message's search entry, which ADR 0027's Matcher reads by the
-// identifier of an item whose meta it has opened), and deletions.
-// *store.Memory and *store.AWS implement it.
+// identifier of an item whose meta it has opened), and deletions, with the
+// mark a deletion writes first (PutEntry, ADR 0028). *store.Memory and
+// *store.AWS implement it.
 type ReadStore interface {
 	store.Scanner
 	Item(ctx context.Context, mailboxID, id string) (*store.Message, error)
 	// GetEntry returns store.ErrNotFound for an entry that is not there or
 	// expired, as store.Entries does.
 	GetEntry(ctx context.Context, partition, key string) (*store.Entry, error)
+	// PutEntry writes an entry at its version, as store.Entries does.
+	PutEntry(ctx context.Context, e *store.Entry) error
 	ReadRaw(ctx context.Context, mailboxID, id string, max int64) ([]byte, error)
 	DeleteMessage(ctx context.Context, mailboxID, id string) error
 	DeleteEntry(ctx context.Context, partition, key string) error
 }
 
 // NewReader returns the inbox's Reader on a store.
-func NewReader(st ReadStore) Reader { return &storeReader{st: st} }
+func NewReader(st ReadStore) Reader { return NewReaderAt(st, time.Now) }
 
-type storeReader struct{ st ReadStore }
+// NewReaderAt is NewReader with the clock the marks of its deletions are
+// written with (markGone): the one the mailboxes' sweep counts SweepGrace
+// on, for tests and a moved clock.
+func NewReaderAt(st ReadStore, now func() time.Time) Reader { return &storeReader{st: st, now: now} }
+
+type storeReader struct {
+	st  ReadStore
+	now func() time.Time
+}
 
 // ReadBudget is the budget of mail open for reading (ADR 0026, "Admission"):
 // what a request takes before it reads a raw message from the bucket, and
@@ -368,7 +381,13 @@ func (r *storeReader) Attachment(ctx context.Context, b Box, id string, index in
 	return meta.Attachments[at].Name, data, nil
 }
 
-// Delete implements Reader.
+// Delete implements Reader. For each message it first writes the mark of
+// its deletion (ADR 0028, "Deleted with the message, never written after";
+// markGone), then deletes the raw object and the item, then its txt#,
+// confirm# and dec# entries: a Keep of the message's decisions that writes
+// after the mark finds it and deletes what it wrote, one that wrote before
+// is deleted here, and one that stopped between its write and its read of
+// the mark is the sweep's pass over the marks.
 func (r *storeReader) Delete(ctx context.Context, b Box, ids []string) (int, error) {
 	if len(ids) > MaxDelete {
 		return 0, contracts.ErrTooManyMessages
@@ -383,6 +402,9 @@ func (r *storeReader) Delete(ctx context.Context, b Box, ids []string) (int, err
 			continue
 		}
 		seen[id] = true
+		if err := r.markGone(ctx, b, id); err != nil {
+			return deleted, err
+		}
 		err := r.st.DeleteMessage(ctx, b.MailboxID, id)
 		switch {
 		case err == nil:
@@ -391,11 +413,76 @@ func (r *storeReader) Delete(ctx context.Context, b Box, ids []string) (int, err
 		default:
 			return deleted, err
 		}
-		for _, key := range []string{KeySearch + id, KeyConfirm + id} {
+		for _, key := range []string{KeySearch + id, KeyConfirm + id, KeyDecision + id} {
 			if err := r.st.DeleteEntry(ctx, boxPartition(b.MailboxID), key); err != nil && !errors.Is(err, store.ErrNotFound) {
 				return deleted, err
 			}
 		}
 	}
 	return deleted, nil
+}
+
+// markGone writes the mark of a message's deletion in GonePartition before
+// anything of it is deleted, expiring with the message (its item's
+// ExpiresAt, which its kept decisions share), so the mark outlives the data
+// it is the work of deleting; its UpdatedAt is when the deletion started,
+// from which the sweep counts SweepGrace. A message whose item is not there
+// gets none: it was deleted already (by a deletion that wrote its own mark
+// first), or expired with its decisions, or never was.
+//
+// A mark already there (a deletion tried again) is written again at the
+// version read, so the grace counts from this deletion. Every writing holds
+// a generation of its own (goneMark), so a sweep that read an earlier mark
+// and deletes it as it read it (DeleteEntryAt) cannot take this one, even
+// once the mark was deleted and made again at the same version. A write
+// that fails because the mark changed or went in between (the sweep deleted
+// it, or another deletion wrote it) is tried again from the start: the
+// message is deleted only once this deletion's own write succeeded, and
+// after markTries tries the deletion fails.
+func (r *storeReader) markGone(ctx context.Context, b Box, id string) error {
+	m, err := r.st.Item(ctx, b.MailboxID, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	key := GoneKey(b.MailboxID, id)
+	for range markTries {
+		mark := &store.Entry{Partition: GonePartition, Key: key, Value: goneMark(), ExpiresAt: m.ExpiresAt, UpdatedAt: r.now()}
+		err := r.st.PutEntry(ctx, mark)
+		if !errors.Is(err, store.ErrExists) {
+			return err // written, or failed
+		}
+		old, err := r.st.GetEntry(ctx, GonePartition, key)
+		if errors.Is(err, store.ErrNotFound) {
+			continue // the sweep deleted it in between: write it anew
+		}
+		if err != nil {
+			return err
+		}
+		mark.Version = old.Version
+		err = r.st.PutEntry(ctx, mark)
+		if errors.Is(err, store.ErrConflict) || errors.Is(err, store.ErrExists) {
+			continue // it changed or went since it was read: again
+		}
+		return err
+	}
+	return errMarkContended
+}
+
+// markTries is how many times markGone writes a mark that changes or goes
+// while it is written before the deletion fails.
+const markTries = 4
+
+// errMarkContended is a deletion's answer when its mark changed markTries
+// times while it was written: nothing of the message is deleted.
+var errMarkContended = fmt.Errorf("inbox: the mark of a deletion changed %d times while it was written: %w", markTries, store.ErrConflict)
+
+// goneMark is what one writing of a mark holds: that it is one, and a
+// generation drawn for this writing alone, which the sweep's deletion of the
+// mark as it read it compares. Its key names the message, its UpdatedAt the
+// start of the deletion.
+func goneMark() []byte {
+	return []byte(`{"gone":true,"generation":"` + rand.Text() + `"}`)
 }
