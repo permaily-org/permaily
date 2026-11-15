@@ -64,7 +64,7 @@ func (f *Fake) Decide(ctx context.Context, call decide.Call) (*decide.Result, er
 	switch o.failure {
 	case Unavailable, SlowDown:
 		return nil, unavailable(ctx, min(o.retryAfter, decide.MaxRetryAfter))
-	case Drop:
+	case Drop, RefusedStream, ResetStream, GoAway:
 		return nil, unavailable(ctx, 0)
 	case KeyRefused:
 		return nil, sent(decide.ErrKeyRefused)

@@ -56,6 +56,22 @@ const (
 	// Late is an answer that comes only once the attempt's timeout has
 	// passed: decide.ErrUnavailable, sent; the late answer is never used.
 	Late
+	// RefusedStream is a request read whole and then refused: over HTTP/2
+	// a RST_STREAM of REFUSED_STREAM, which Go's
+	// transport resends when it can rewind the body; over HTTP/1.1, as
+	// Drop. decide.ErrUnavailable, sent, tried again by the service, never
+	// by the client.
+	RefusedStream
+	// ResetStream is a request read whole and then reset: over HTTP/2 a
+	// RST_STREAM of PROTOCOL_ERROR, which Go's transport also resends when
+	// it can; over HTTP/1.1, as Drop. decide.ErrUnavailable, sent, tried
+	// again by the service.
+	ResetStream
+	// GoAway is a request read whole and then a GOAWAY that names no stream
+	// as processed, and the connection closed: over HTTP/2 Go's transport
+	// resends it on a new connection when it can; over HTTP/1.1, as Drop.
+	// decide.ErrUnavailable, sent, tried again by the service.
+	GoAway
 )
 
 // Table is what a model for tests answers, and what it was asked. Its

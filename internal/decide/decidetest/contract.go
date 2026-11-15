@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"sync"
 	"testing"
@@ -69,6 +70,36 @@ func Contract(t *testing.T, newModel NewModel) {
 		}
 	})
 
+	// A value that is not a probability is no answer for that statement
+	// alone: its siblings are answered as usual, and the attempt is no
+	// failure.
+	for _, c := range []struct {
+		name string
+		set  func(tab *Table)
+	}{
+		{"below 0", func(tab *Table) { tab.Set(about, -0.01) }},
+		{"above 1", func(tab *Table) { tab.Set(about, 1.01) }},
+		{"NaN", func(tab *Table) { tab.Set(about, math.NaN()) }},
+		{"infinite", func(tab *Table) { tab.Set(about, math.Inf(1)) }},
+		{"negative infinite", func(tab *Table) { tab.Set(about, math.Inf(-1)) }},
+		{"above 1 for this content", func(tab *Table) { tab.Set(about, 0.3); tab.SetFor(message.Subject, message.Body, about, 2) }},
+	} {
+		t.Run("not a probability: "+c.name, func(t *testing.T) {
+			tab, m := setup(t)
+			c.set(tab)
+			tab.Set(mentions, 0.9)
+			tab.Set(mentions2, 1)
+			res, err := m.Decide(context.Background(), onMessage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []decide.Answer{{}, {P: 0.9, OK: true}, {P: 1, OK: true}}
+			if !reflect.DeepEqual(res.Answers, want) || res.Model != Name || res.Usage != Usage(onMessage) {
+				t.Errorf("answers %+v, model %q, usage %+v; want %+v", res.Answers, res.Model, res.Usage, want)
+			}
+		})
+	}
+
 	t.Run("usage not reported", func(t *testing.T) {
 		tab, m := setup(t)
 		tab.OmitUsage(true)
@@ -90,6 +121,9 @@ func Contract(t *testing.T, newModel NewModel) {
 		{SlowDown, decide.ErrUnavailable, true, 2 * time.Second, 2 * time.Second},
 		{SlowDown, decide.ErrUnavailable, true, decide.MaxRetryAfter, 30 * time.Second},
 		{Drop, decide.ErrUnavailable, true, 0, time.Second},
+		{RefusedStream, decide.ErrUnavailable, true, 0, time.Second},
+		{ResetStream, decide.ErrUnavailable, true, 0, time.Second},
+		{GoAway, decide.ErrUnavailable, true, 0, time.Second},
 		{KeyRefused, decide.ErrKeyRefused, false, 0, time.Second},
 		{ProviderLimit, decide.ErrProviderLimit, false, 0, time.Second},
 		{BadRequest, decide.ErrRequest, false, 0, 0},

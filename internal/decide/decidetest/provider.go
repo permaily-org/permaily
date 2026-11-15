@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"log"
@@ -37,41 +38,57 @@ type Provider struct {
 	tab    *Table
 	srv    *httptest.Server
 	client *http.Client
+	pool   *x509.CertPool
+	addr   string
 
 	mu       sync.Mutex
 	requests []Request
 	dials    int
+	resets   []Failure // the HTTP/2 failures waiting for their stream's reset
 }
 
-// Request is one request the played provider received, as it came.
+// Request is one request the played provider received, as it came, its
+// body read whole.
 type Request struct {
 	Method, Host, Path string
-	Header             http.Header
-	Body               []byte
+	// Proto is "HTTP/1.1" or "HTTP/2.0".
+	Proto  string
+	Header http.Header
+	Body   []byte
 }
 
 // NewProvider starts a played provider answering from tab, stopped when the
-// test ends.
+// test ends. It speaks HTTP/2 and HTTP/1.1, as the client's TLS
+// negotiates (ALPN "h2" or "http/1.1"), and on RefusedStream, ResetStream
+// and GoAway it ends an HTTP/2 stream with the frame each names once the
+// request's body was read whole; those three are for one attempt at a
+// time, as the frame goes to the next stream the server aborts.
 func NewProvider(tb testing.TB, tab *Table) *Provider {
 	tb.Helper()
 	cert, pool := certificate(tb)
-	p := &Provider{tab: tab}
+	p := &Provider{tab: tab, pool: pool}
 	p.srv = httptest.NewUnstartedServer(http.HandlerFunc(p.serve))
-	p.srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 	p.srv.Config.ErrorLog = log.New(io.Discard, "", 0)
-	p.srv.StartTLS()
+	// TLS is the listener's, so the server reads plain HTTP/1.1 or HTTP/2
+	// (with prior knowledge) and its frames pass through an h2Conn.
+	p.srv.Config.Protocols = new(http.Protocols)
+	p.srv.Config.Protocols.SetHTTP1(true)
+	p.srv.Config.Protocols.SetUnencryptedHTTP2(true)
+	p.srv.Listener = &h2Listener{
+		Listener: p.srv.Listener,
+		tls:      &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"}},
+		p:        p,
+	}
+	p.srv.Start()
 	tb.Cleanup(p.srv.Close)
-	addr := p.srv.Listener.Addr().String()
-	p.client = &http.Client{Transport: &http.Transport{
-		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			p.mu.Lock()
-			p.dials++
-			p.mu.Unlock()
-			var d net.Dialer
-			return d.DialContext(ctx, network, addr)
-		},
-		TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
-	}}
+	p.addr = p.srv.Listener.Addr().String()
+	tr := &http.Transport{
+		DialContext:       p.DialContext,
+		TLSClientConfig:   &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+		ForceAttemptHTTP2: true, // as the enclave's egress transport
+	}
+	tb.Cleanup(tr.CloseIdleConnections)
+	p.client = &http.Client{Transport: tr}
 	return p
 }
 
@@ -79,6 +96,21 @@ func NewProvider(tb testing.TB, tab *Table) *Provider {
 // provider, over TLS checked against its certificate for Host: what the
 // enclave's egress client is to the real one.
 func (p *Provider) Client() *http.Client { return p.client }
+
+// DialContext opens a connection to the played provider, whatever address
+// is asked, and counts it in Dials: for a transport of the test's own,
+// such as a copy of the one enclave.EgressClient builds.
+func (p *Provider) DialContext(ctx context.Context, network, _ string) (net.Conn, error) {
+	p.mu.Lock()
+	p.dials++
+	p.mu.Unlock()
+	var d net.Dialer
+	return d.DialContext(ctx, network, p.addr)
+}
+
+// RootCAs is a pool that trusts the played provider's certificate for
+// Host.
+func (p *Provider) RootCAs() *x509.CertPool { return p.pool }
 
 // Requests are the requests received, in the order they came.
 func (p *Provider) Requests() []Request {
@@ -165,7 +197,7 @@ func call(body []byte) (decide.Call, bool) {
 func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 16<<20))
 	p.mu.Lock()
-	p.requests = append(p.requests, Request{Method: r.Method, Host: r.Host, Path: r.URL.Path, Header: r.Header.Clone(), Body: body})
+	p.requests = append(p.requests, Request{Method: r.Method, Host: r.Host, Path: r.URL.Path, Proto: r.Proto, Header: r.Header.Clone(), Body: body})
 	p.mu.Unlock()
 
 	const bearer = "Bearer "
@@ -212,8 +244,15 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 	case Redirect:
 		http.Redirect(w, r, "https://elsewhere.example/v1/decisions", http.StatusTemporaryRedirect)
+	case RefusedStream, ResetStream, GoAway:
+		if r.ProtoMajor == 2 {
+			p.mu.Lock()
+			p.resets = append(p.resets, o.failure)
+			p.mu.Unlock()
+		}
+		panic(http.ErrAbortHandler) // HTTP/2: the reset h2Conn turns into this failure; HTTP/1.1: as Drop
 	case Drop:
-		panic(http.ErrAbortHandler) // the connection closed, with no answer
+		panic(http.ErrAbortHandler) // the connection closed, with no answer (HTTP/2: RST_STREAM INTERNAL_ERROR)
 	case Invalid:
 		writeAnswer(w, Name, o, true)
 	case OtherModel:
@@ -296,4 +335,106 @@ func certificate(tb testing.TB) (tls.Certificate, *x509.CertPool) {
 	pool := x509.NewCertPool()
 	pool.AddCert(leaf)
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, pool
+}
+
+// h2Listener accepts the played provider's TLS connections itself, so the
+// server reads and writes plain HTTP through an h2Conn.
+type h2Listener struct {
+	net.Listener
+	tls *tls.Config
+	p   *Provider
+}
+
+func (l *h2Listener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &h2Conn{Conn: tls.Server(c, l.tls), p: l.p}, nil
+}
+
+// The HTTP/2 frames h2Conn reads or writes (RFC 9113, section 6).
+const (
+	frameHeader      = 9
+	frameRSTStream   = 0x3
+	frameGoAway      = 0x7
+	codeNo           = 0x0
+	codeProtocol     = 0x1
+	codeInternal     = 0x2
+	codeRefused      = 0x7
+	rstStreamPayload = 4
+)
+
+// h2Conn is the server's side of a connection. Over HTTP/1.1 it is the TLS
+// connection as it is. Over HTTP/2 every frame the server writes passes as
+// it is, but for the reset of an aborted answer (RST_STREAM
+// INTERNAL_ERROR) when the provider has a failure waiting, which becomes
+// that failure's frame.
+type h2Conn struct {
+	net.Conn
+	p *Provider
+
+	mu     sync.Mutex
+	out    []byte // what was written and is not yet a whole frame
+	closed bool
+}
+
+func (c *h2Conn) Write(b []byte) (int, error) {
+	if tc, ok := c.Conn.(*tls.Conn); ok && tc.ConnectionState().NegotiatedProtocol != "h2" {
+		return c.Conn.Write(b)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return 0, net.ErrClosed
+	}
+	c.out = append(c.out, b...) // c.out is the conn's own: b is never changed
+	for len(c.out) >= frameHeader {
+		n := frameHeader + (int(c.out[0])<<16 | int(c.out[1])<<8 | int(c.out[2]))
+		if len(c.out) < n {
+			break
+		}
+		frame := c.out[:n:n]
+		c.out = c.out[n:]
+		if frame[3] == frameRSTStream && n == frameHeader+rstStreamPayload && binary.BigEndian.Uint32(frame[frameHeader:]) == codeInternal {
+			switch f, _ := c.p.nextReset(); f {
+			case GoAway:
+				return len(b), c.goAway(frame)
+			case RefusedStream:
+				binary.BigEndian.PutUint32(frame[frameHeader:], codeRefused)
+			case ResetStream:
+				binary.BigEndian.PutUint32(frame[frameHeader:], codeProtocol)
+			}
+		}
+		if _, err := c.Conn.Write(frame); err != nil {
+			return 0, err
+		}
+	}
+	c.out = append([]byte(nil), c.out...)
+	return len(b), nil
+}
+
+// goAway writes, in place of the reset frame, a GOAWAY naming no stream
+// from the reset one on as processed, and closes the connection.
+func (c *h2Conn) goAway(reset []byte) error {
+	stream := binary.BigEndian.Uint32(reset[5:frameHeader]) & 0x7fffffff
+	frame := []byte{0, 0, 8, frameGoAway, 0, 0, 0, 0, 0}
+	frame = binary.BigEndian.AppendUint32(frame, stream-1)
+	frame = binary.BigEndian.AppendUint32(frame, codeNo)
+	_, err := c.Conn.Write(frame)
+	c.closed = true
+	_ = c.Close()
+	return err
+}
+
+// nextReset is the failure waiting for the next aborted stream, if any.
+func (p *Provider) nextReset() (Failure, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.resets) == 0 {
+		return 0, false
+	}
+	f := p.resets[0]
+	p.resets = p.resets[1:]
+	return f, true
 }

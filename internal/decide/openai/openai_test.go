@@ -1,24 +1,32 @@
 package openai
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
+	"math"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"net/http/httptrace"
 	"net/url"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,6 +66,7 @@ type played struct {
 	urls    []string
 	headers []http.Header
 	bodies  [][]byte
+	rewinds []bool // a Request.GetBody, so a transport could send the body again
 	offline bool
 	answer  func(r *http.Request) (*http.Response, error)
 }
@@ -74,6 +83,7 @@ func (p *played) RoundTrip(r *http.Request) (*http.Response, error) {
 	p.urls = append(p.urls, r.URL.String())
 	p.headers = append(p.headers, r.Header.Clone())
 	p.bodies = append(p.bodies, body)
+	p.rewinds = append(p.rewinds, r.GetBody != nil)
 	p.mu.Unlock()
 	if p.answer == nil {
 		return respond(r, 200, nil, ok(len(questions(body)))), nil
@@ -145,6 +155,10 @@ func TestA1TheRequestIsGolden(t *testing.T) {
 			if !equalHeaders(p.headers[0], want) {
 				t.Errorf("headers %v, want %v", p.headers[0], want)
 			}
+			// A body no transport can send again (A6).
+			if p.rewinds[0] {
+				t.Error("Request.GetBody is set: a transport could send the body again")
+			}
 			// The four fields and no other, and nothing that names a message,
 			// a mailbox, an account or a person.
 			var fields map[string]json.RawMessage
@@ -194,28 +208,90 @@ func TestA1NoPinWhenNoneIsGiven(t *testing.T) {
 	}
 }
 
-// A1: on the wire, through a real transport to the played provider: the
-// headers the client sets and only those a transport must add, no
-// User-Agent.
+// A1: on the wire, through the transport enclave.EgressClient builds and
+// the played provider's own client: HTTP/2, the headers the client sets
+// and only those a transport must add, no User-Agent, and the connection
+// kept for the next call.
 func TestA1TheHeadersOnTheWire(t *testing.T) {
-	tab := decidetest.NewTable()
-	pr := decidetest.NewProvider(t, tab)
-	c := New(pr.Client(), key(testKey), "org-test", "proj_test")
-	if _, err := c.Decide(context.Background(), messageCall); err != nil {
-		t.Fatal(err)
+	for name, client := range map[string]func(pr *decidetest.Provider) *http.Client{
+		"the egress transport":  func(pr *decidetest.Provider) *http.Client { return egressTo(t, pr.DialContext, pr.RootCAs(), "") },
+		"the provider's client": func(pr *decidetest.Provider) *http.Client { return pr.Client() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			pr := decidetest.NewProvider(t, decidetest.NewTable())
+			c := New(client(pr), key(testKey), "org-test", "proj_test")
+			for range 2 {
+				if _, err := c.Decide(context.Background(), messageCall); err != nil {
+					t.Fatal(err)
+				}
+			}
+			r := pr.Requests()[0]
+			if r.Method != http.MethodPost || r.Host != "api.openai.com" || r.Path != "/v1/decisions" || r.Proto != "HTTP/2.0" {
+				t.Errorf("%s %s%s %s", r.Method, r.Host, r.Path, r.Proto)
+			}
+			var names []string
+			for k := range r.Header {
+				names = append(names, k)
+			}
+			slices.Sort(names)
+			if want := []string{"Accept-Encoding", "Authorization", "Content-Length", "Content-Type", "Openai-Organization", "Openai-Project"}; !slices.Equal(names, want) {
+				t.Errorf("headers on the wire %v, want %v", names, want)
+			}
+			if pr.Dials() != 1 {
+				t.Errorf("two calls, %d connections; want one", pr.Dials())
+			}
+		})
 	}
-	r := pr.Requests()[0]
-	if r.Method != http.MethodPost || r.Host != "api.openai.com" || r.Path != "/v1/decisions" {
-		t.Errorf("%s %s%s", r.Method, r.Host, r.Path)
+}
+
+// egressTo is the client enclave.EgressClient builds, its transport as it
+// is (its proxy, HTTP/2, keep-alives, timeouts) but for the network: the
+// host's CONNECT proxy is played in memory and joins each tunnel to
+// dial's connection, and the certificates are checked against pool (as
+// serverName when not empty). No external address is dialled.
+func egressTo(t *testing.T, dial func(ctx context.Context, network, addr string) (net.Conn, error), pool *x509.CertPool, serverName string) *http.Client {
+	t.Helper()
+	hc := enclave.EgressClient(8001)
+	tr := hc.Transport.(*http.Transport).Clone()
+	if !tr.ForceAttemptHTTP2 || tr.Proxy == nil {
+		t.Fatal("the egress transport changed: this helper proves less")
 	}
-	var names []string
-	for k := range r.Header {
-		names = append(names, k)
+	tr.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		client, proxy := net.Pipe()
+		go connect(context.WithoutCancel(ctx), proxy, dial)
+		return client, nil
 	}
-	slices.Sort(names)
-	if want := []string{"Accept-Encoding", "Authorization", "Content-Length", "Content-Type", "Openai-Organization", "Openai-Project"}; !slices.Equal(names, want) {
-		t.Errorf("headers on the wire %v, want %v", names, want)
+	tr.TLSClientConfig.RootCAs = pool
+	tr.TLSClientConfig.ServerName = serverName
+	hc.Transport = tr
+	t.Cleanup(tr.CloseIdleConnections)
+	return hc
+}
+
+// connect is the host's proxy, played (internal/hostproxy): one CONNECT to
+// api.openai.com:443, its tunnel joined to dial's connection.
+func connect(ctx context.Context, conn net.Conn, dial func(ctx context.Context, network, addr string) (net.Conn, error)) {
+	defer conn.Close()
+	br := bufio.NewReader(conn)
+	req, err := http.ReadRequest(br)
+	if err != nil || req.Method != http.MethodConnect || req.Host != Hosts()[0] {
+		_, _ = io.WriteString(conn, "HTTP/1.1 403 Forbidden\r\n\r\n")
+		return
 	}
+	up, err := dial(ctx, "tcp", req.Host)
+	if err != nil {
+		_, _ = io.WriteString(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
+		return
+	}
+	defer up.Close()
+	if _, err := io.WriteString(conn, "HTTP/1.1 200 OK\r\n\r\n"); err != nil {
+		return
+	}
+	go func() {
+		_, _ = io.Copy(up, br)
+		_ = up.Close()
+	}()
+	_, _ = io.Copy(conn, up)
 }
 
 // maxCase is one of the re-measure's maximum-size requests.
@@ -685,6 +761,107 @@ func TestA4NoWordsOfTheProvider(t *testing.T) {
 	}
 }
 
+// A4: no words of the provider in a log of the transport's either. Go's
+// HTTP/1.1 transport logs the bytes a server sends on an idle connection
+// ("Unsolicited response received on idle HTTP channel"), so the client
+// speaks only HTTP/2, whose transport logs no byte of the provider's: a
+// provider that offers only HTTP/1.1 and would send a whole answer and
+// then the key is never asked, and nothing is logged. The review's
+// TestReview115TransportDoesNotLogProviderText, turned around.
+func TestA4TheTransportLogsNoProviderText(t *testing.T) {
+	const secret = "provider-echo-sk-proj-secret-and-private-mail"
+	var logged syncBuffer
+	saved, savedSlog := log.Writer(), slog.Default()
+	log.SetOutput(&logged)
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Cleanup(func() { log.SetOutput(saved); slog.SetDefault(savedSlog) })
+
+	var reached atomic.Bool
+	done := make(chan struct{}, 1)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Store(true)
+		_, _ = io.Copy(io.Discard, r.Body)
+		conn, buf, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		answer := ok(2)
+		_, _ = fmt.Fprintf(buf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s%s", len(answer), answer, secret)
+		_ = buf.Flush()
+		// Until the client closes the connection, or a second has passed
+		// in which an idle connection would have read the bytes.
+		_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+		_, _ = conn.Read(make([]byte, 1))
+		done <- struct{}{}
+	}))
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	srv.StartTLS() // HTTP/1.1 only
+	defer srv.Close()
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	hc := egressTo(t, func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+	}, pool, srv.Certificate().DNSNames[0])
+	res, err := New(hc, key(testKey), "", "").Decide(context.Background(), messageCall)
+	if reached.Load() {
+		<-done
+	}
+	if s := logged.String(); strings.Contains(s, secret) || strings.Contains(s, "Unsolicited") {
+		t.Errorf("the transport logged the provider's bytes: %s", s)
+	}
+	expect(t, res, err, decide.ErrUnavailable, false, true, 0)
+	if reached.Load() {
+		t.Error("a request went over HTTP/1.1")
+	}
+}
+
+// A4: the client's copy of an *http.Transport (nil is
+// http.DefaultTransport) speaks only HTTP/2, and the transport given is
+// left as it is; another RoundTripper is used as it is given.
+func TestA4OnlyHTTP2(t *testing.T) {
+	protocols := func(rt http.RoundTripper) string {
+		if tr, ok := rt.(*http.Transport); ok && tr.Protocols != nil {
+			return tr.Protocols.String()
+		}
+		return "none set"
+	}
+	egress := enclave.EgressClient(8001)
+	given := egress.Transport
+	before, defaults := protocols(given), protocols(http.DefaultTransport)
+	for _, c := range []*Client{New(egress, key(testKey), "", ""), New(nil, key(testKey), "", ""), New(&http.Client{}, key(testKey), "", "")} {
+		if rt := c.hc.Transport; rt == given || rt == http.DefaultTransport || protocols(rt) != "{HTTP2}" {
+			t.Errorf("the client's transport %T speaks %s", rt, protocols(rt))
+		}
+	}
+	if egress.Transport != given || protocols(given) != before || protocols(http.DefaultTransport) != defaults {
+		t.Error("New changed the transport it was given")
+	}
+	p := &played{}
+	if c := newClient(p); c.hc.Transport != p {
+		t.Error("another RoundTripper is not used as given")
+	}
+}
+
+// syncBuffer is a bytes.Buffer the transport's goroutines can write at
+// once.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
 // A5: the client reaches one host, its endpoint's.
 func TestA5Hosts(t *testing.T) {
 	u, err := url.Parse(Endpoint)
@@ -699,7 +876,7 @@ func TestA5Hosts(t *testing.T) {
 // A6: one attempt a call: the played provider sees exactly one request per
 // Decide, whatever it answers.
 func TestA6OneAttemptACall(t *testing.T) {
-	for _, f := range []decidetest.Failure{decidetest.Late, decidetest.Unavailable, decidetest.SlowDown, decidetest.Drop, decidetest.Redirect, decidetest.KeyRefused, decidetest.ProviderLimit, 0} {
+	for _, f := range []decidetest.Failure{decidetest.Late, decidetest.Unavailable, decidetest.SlowDown, decidetest.Drop, decidetest.RefusedStream, decidetest.ResetStream, decidetest.GoAway, decidetest.Redirect, decidetest.KeyRefused, decidetest.ProviderLimit, 0} {
 		tab := decidetest.NewTable()
 		tab.SetRetryAfter(time.Second)
 		tab.Fail(f)
@@ -710,6 +887,44 @@ func TestA6OneAttemptACall(t *testing.T) {
 		if n := len(pr.Requests()); n != 1 || tab.Attempts() != 1 || pr.Dials() != 1 {
 			t.Errorf("failure %d: %d requests, %d attempts, %d connections; want 1", f, n, tab.Attempts(), pr.Dials())
 		}
+	}
+}
+
+// A6: one transmission a call over HTTP/2 too, through the transport
+// enclave.EgressClient builds. Go's HTTP/2 transport sends a request again
+// by itself when the provider refuses its stream (REFUSED_STREAM), resets
+// it (PROTOCOL_ERROR) or sends a GOAWAY that leaves it out, if it can
+// rewind the body: here each comes once the body was read whole, and each
+// is one request and ErrUnavailable, sent, tried again only by the service
+// (which reserves that attempt first). The review's
+// TestReview115NoHTTP2Replay, turned around.
+func TestA6OneTransmissionOverHTTP2(t *testing.T) {
+	whole, _ := body(messageCall)
+	for _, f := range []decidetest.Failure{decidetest.RefusedStream, decidetest.ResetStream, decidetest.GoAway, decidetest.Drop, decidetest.Unavailable, decidetest.Late, 0} {
+		t.Run(fmt.Sprintf("failure %d", f), func(t *testing.T) {
+			tab := decidetest.NewTable()
+			tab.Fail(f)
+			pr := decidetest.NewProvider(t, tab)
+			c := New(egressTo(t, pr.DialContext, pr.RootCAs(), ""), key(testKey), "", "")
+			c.callTimeout = 200 * time.Millisecond
+			res, err := c.Decide(context.Background(), messageCall)
+			reqs := pr.Requests()
+			if len(reqs) != 1 || tab.Attempts() != 1 {
+				t.Errorf("one Decide: %d whole requests, %d attempts; want 1", len(reqs), tab.Attempts())
+			}
+			for _, r := range reqs {
+				if r.Proto != "HTTP/2.0" || !bytes.Equal(r.Body, whole) {
+					t.Errorf("%s, %d bytes of %d", r.Proto, len(r.Body), len(whole))
+				}
+			}
+			if f == 0 {
+				if err != nil || len(res.Answers) != 2 {
+					t.Fatalf("%+v, %v", res, err)
+				}
+			} else {
+				expect(t, res, err, decide.ErrUnavailable, true, true, 0)
+			}
+		})
 	}
 }
 
@@ -768,4 +983,45 @@ func TestA7TheClientKeepsTheContract(t *testing.T) {
 	decidetest.Contract(t, func(t *testing.T, tab *decidetest.Table, key decide.Credential) decide.Model {
 		return New(decidetest.NewProvider(t, tab).Client(), key, "org-test", "proj_test")
 	})
+}
+
+// A7: and through the transport enclave.EgressClient builds.
+func TestA7TheClientKeepsTheContractOverTheEgressTransport(t *testing.T) {
+	decidetest.Contract(t, func(t *testing.T, tab *decidetest.Table, key decide.Credential) decide.Model {
+		pr := decidetest.NewProvider(t, tab)
+		return New(egressTo(t, pr.DialContext, pr.RootCAs(), ""), key, "org-test", "proj_test")
+	})
+}
+
+// A7: the fake and the client over the played provider return the same
+// for the same table, a value that is not a probability beside a valid
+// one included. The review's
+// TestReview115FakeAndProviderAgreeOnInvalidProbabilities, turned around.
+func TestA7TheFakeAndTheClientAgree(t *testing.T) {
+	for name, set := range map[string]func(*decidetest.Table){
+		"below 0":           func(tab *decidetest.Table) { tab.Set(aboutInvoices, -0.01) },
+		"above 1":           func(tab *decidetest.Table) { tab.Set(aboutInvoices, 1.01) },
+		"NaN":               func(tab *decidetest.Table) { tab.Set(aboutInvoices, math.NaN()) },
+		"infinite":          func(tab *decidetest.Table) { tab.Set(aboutInvoices, math.Inf(1)) },
+		"negative infinite": func(tab *decidetest.Table) { tab.Set(aboutInvoices, math.Inf(-1)) },
+		"a probability":     func(tab *decidetest.Table) { tab.Set(aboutInvoices, 0.25) },
+		"refused":           func(tab *decidetest.Table) { tab.Refuse(aboutInvoices) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			tab := decidetest.NewTable()
+			set(tab)
+			tab.Set(mentionsHome, 0.9)
+			fake, fakeErr := decidetest.NewFake(tab, key(testKey)).Decide(context.Background(), messageCall)
+			real, realErr := New(decidetest.NewProvider(t, tab).Client(), key(testKey), "", "").Decide(context.Background(), messageCall)
+			if fakeErr != nil || realErr != nil {
+				t.Fatalf("fake: %v; client: %v", fakeErr, realErr)
+			}
+			if !reflect.DeepEqual(fake.Answers, real.Answers) || fake.Model != real.Model || fake.Usage != real.Usage {
+				t.Errorf("fake %+v, client %+v", fake, real)
+			}
+			if fake.Answers[1] != (decide.Answer{P: 0.9, OK: true}) {
+				t.Errorf("the valid sibling: %+v", fake.Answers[1])
+			}
+		})
+	}
 }
