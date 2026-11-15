@@ -224,11 +224,14 @@ Takes effect with v0.12.0, the release that builds ADR 0026, in production since
 `scripts/invite.sh`, `scripts/accounts.sh`, `scripts/provider.sh`, `scripts/handoff.sh` and `scripts/sigstore-trust-root.sh --send` send the admin token, and `provider.sh set` a provider's secret. Before they send anything, each runs `permaily-verify` against the enclave, and then sends only on connections with the TLS key it attested (`curl --pinnedpubkey`, the CA and hostname checked too, no redirects; ADR 0029). A server with another valid certificate for `api.permaily.com` gets nothing. They need to know what the enclave must measure:
 
 ```sh
-export PERMAILY_PCRS=/tmp/permaily-v0.14.0/pcrs.json   # the running release's, from scripts/release-image.sh <tag> <dir>
-# or: export PERMAILY_RELEASE=v0.14.0                  # its tag: the verifier downloads its pcrs.json (trusts CI)
+export PERMAILY_RELEASE=v0.14.0                        # the running release's tag: its verifier is built from that tag's source
+export PERMAILY_PCRS=/tmp/permaily-v0.14.0/pcrs.json   # and its pcrs.json from scripts/release-image.sh <tag> <dir>;
+                                                       # without it the verifier downloads the release's (trusts CI)
 ```
 
-The verifier is the one built from the checkout with go, or `PERMAILY_VERIFY=<permaily-verify binary>`. When the enclave does not verify, or neither variable is set, the script says why and that nothing was sent. A failure unrelated to the token, such as the SES state, stops them too: read it as you would a failed `scripts/verify.sh`. What the enclave answers is printed field by field, never whole. `PERMAILY_DEV_UNVERIFIED=1` is for an enclave in dev mode on your machine, and is refused for any other name.
+The verifier must be the running release's: it checks the Sigstore trust root the enclave reports against the one compiled into itself, so one built from a later checkout refuses an older release, and above all during a trust-root update or a handoff. With `PERMAILY_RELEASE` (or `handoff.sh`'s `<running>` tag) the scripts build it with go from that tag's source, in a temporary git worktree they remove; the tag is fetched from `origin` when it is not here. `PERMAILY_VERIFY=<permaily-verify binary>` is used instead when it is set. With only `PERMAILY_PCRS`, as for a staging image, it is built from the checkout, which must then be the running image's source; the script says so. When the enclave does not verify, or no measurements are given, the script says why and that nothing was sent. A failure unrelated to the token, such as the SES state, stops them too: read it as you would a failed `scripts/verify.sh`. What the enclave answers is printed field by field, never whole, and under `bash -x` neither the token nor a secret is traced.
+
+`PERMAILY_API` is an origin and nothing else: `https://<host>` or `https://<host>:<port>`, with or without a `/` at the end, in lowercase, with no user, password, path, query, fragment or percent-encoding; anything else is refused before anything runs. `PERMAILY_DEV_UNVERIFIED=1` (only `1`; any other value is refused) is for an enclave in dev mode on your machine: it skips the verification, is refused for any name but `localhost`, `127.0.0.1`, `[::1]`, a `.localhost` or a `.test` name, and connects to `127.0.0.1` whatever DNS or a proxy variable says.
 
 ## Invite someone
 

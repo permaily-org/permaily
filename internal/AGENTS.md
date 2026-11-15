@@ -85,11 +85,12 @@ go run -tags dev ./cmd/permaily-enclave -port 8443   # needs web/dist copied to 
 go run -tags dev ./cmd/permaily-enclave -port 8443   # SMTP on :2525 for mailboxes of accounts (ADR 0026); make them through the app
 go test -tags dev ./cmd/permaily-enclave             # whole service end to end
 # Dev mode has accounts on: make an invitation with scripts/invite.sh (PERMAILY_API, PERMAILY_ADMIN_TOKEN, -admin-token-sha256,
-# and PERMAILY_DEV_UNVERIFIED=1: dev mode has no attestation, and that sends without verifying to localhost or a .test name only),
+# and PERMAILY_DEV_UNVERIFIED=1: dev mode has no attestation, and that sends without verifying to localhost, a .localhost or a .test name only,
+# connected to 127.0.0.1 without DNS or a proxy),
 # and read the sign-in message, which is kept instead of sent, at https://app.<domain>:8443/dev/outbox (the notices are there too).
 # scripts/accounts.sh finds, blocks, unblocks, deletes and signs out, lists an account's mailboxes and finds, pauses
 # and resumes one; scripts/invite.sh list and revoke.
 # Dev mode can change the version of the terms in force: POST /dev/terms?version=<v> on the app's host (without one, the compiled version again); accounts that agreed to another are then asked again.
-# The super admin of dev mode is admin@permaily.test (-super-admin); sign it up, add a passkey and turn "passkey only" on to use /api/v1/admin/. Without DNS for the dev names,
+# The super admin of dev mode is admin@permaily.test (-super-admin); sign it up, add a passkey and turn "passkey only" on to use /api/v1/admin/. Without DNS for the dev names (the operator's scripts need none),
 # point curl at the enclave: CURL_HOME=<dir with a .curlrc of 'connect-to = "api.<domain>:8443:127.0.0.1:8443"' and 'insecure'>
 ```
