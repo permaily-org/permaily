@@ -120,10 +120,14 @@ func (s *Service) keyState(ctx context.Context) keyView {
 	return keyView{set: true, setAt: setAt, fp: fingerprint(key)}
 }
 
-// remember sets the cache to what this enclave just wrote.
-func (s *Service) remember(doc *keyDoc) {
+// forget empties the cache once this enclave changed the record, so the
+// next use reads the record as it is then. It never installs what was
+// written: a change that returns after a later one landed (a set after a
+// removal, an older set after a newer) would bring its key back. A read
+// in progress holds the cache's lock, so it is forgotten after it too.
+func (s *Service) forget() {
 	s.key.mu.Lock()
-	s.key.key, s.key.setAt, s.key.readAt = doc.Key, doc.SetAt, s.now()
+	s.key.key, s.key.setAt, s.key.readAt = "", time.Time{}, time.Time{}
 	s.key.mu.Unlock()
 }
 
@@ -143,7 +147,7 @@ func (s *Service) SetKey(ctx context.Context, in contracts.ModelKeySet) (*contra
 		s.logKind(slog.LevelError, "decisions: the model's key could not be stored", "key_not_stored")
 		return nil, err
 	}
-	s.remember(doc)
+	s.forget()
 	s.logKind(slog.LevelInfo, "decisions: the model's key was set", "key_set")
 	return &contracts.ModelKey{Set: true, SetAt: doc.SetAt, Fingerprint: fingerprint(doc.Key)}, nil
 }
@@ -153,7 +157,7 @@ func (s *Service) SetKey(ctx context.Context, in contracts.ModelKeySet) (*contra
 // keyFresh.
 func (s *Service) RemoveKey(ctx context.Context) error {
 	now := s.now()
-	doc, err := changeRecord(ctx, s, RecordKey, purposeKey, func(d *keyDoc, found bool) bool {
+	_, err := changeRecord(ctx, s, RecordKey, purposeKey, func(d *keyDoc, found bool) bool {
 		if !found || d.Key == "" {
 			return false
 		}
@@ -164,7 +168,7 @@ func (s *Service) RemoveKey(ctx context.Context) error {
 		s.logKind(slog.LevelError, "decisions: the model's key could not be removed", "key_not_removed")
 		return err
 	}
-	s.remember(doc)
+	s.forget()
 	s.logKind(slog.LevelInfo, "decisions: the model's key was removed", "key_removed")
 	return nil
 }
