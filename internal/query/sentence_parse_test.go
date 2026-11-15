@@ -18,8 +18,20 @@ import (
 // place and every way a value could end there, keeps those whose sentence
 // Render writes is exactly the input, and fails unless there is one. So a
 // value that could be read as fixed words, or two formulas or mailboxes that
-// read alike, show as more than one reading. Test only: nothing in the
-// service reads a sentence to decide anything.
+// read alike, show as more than one reading. Nothing caps the readings
+// before that filter, so an ambiguity cannot hide behind readings it drops.
+// Test only: nothing in the service reads a sentence to decide anything.
+//
+// What the read-back proves: for each formula and Context it is given, no
+// other formula of the templates, signs and values the presentations can
+// write has the same plain text, or the same parts. What it does not: it
+// shares with Render the table of templates, escapedQuote, the escapes it
+// undoes and mailboxNames, so a quotation mark that both take for an
+// ordinary character, a template whose English says something else, or a
+// character a person cannot tell from another (U+2800 from U+0020) reads
+// back and passes; and it reaches only the formulas it is given. Those are
+// for the goldens written by hand (sentence_test.go, sentence_review_test.go)
+// and the adversarial generators (sentence_gen_test.go, querytest).
 
 // errNoReading and errAmbiguous say a sentence was not read back as one
 // formula.
@@ -117,10 +129,6 @@ func sameFormula(a, b *Canonical) bool {
 	}
 	return true
 }
-
-// maxReadings bounds the readings kept at one place: two are already an
-// ambiguity.
-const maxReadings = 3
 
 // placeholder marks a value part in the string parseParts reads: NUL, the
 // part's index, NUL. No fixed text holds a NUL (TestTheTables), and no value
@@ -249,9 +257,6 @@ func (r *sentenceReader) formulas(lines []string) []*Canonical {
 			for _, conds := range readings {
 				g := append(append([]contracts.Group(nil), combo...), contracts.Group{Any: conds})
 				next = append(next, g)
-				if len(next) == maxReadings {
-					break
-				}
 			}
 		}
 		combos = next
@@ -277,9 +282,6 @@ func (r *sentenceReader) conditions(s string, pos int) [][]contracts.Condition {
 			for _, rest := range r.conditions(s, m.end+len(r.l.or)) {
 				out = append(out, append([]contracts.Condition{m.cond}, rest...))
 			}
-		}
-		if len(out) >= maxReadings {
-			break
 		}
 	}
 	if r.memo[s] == nil {
@@ -464,7 +466,7 @@ func scanQuoted(s string, pos int) []cand {
 			}
 			b.WriteString(e)
 			i += 1 + en
-		case isDoubleQuote(r) || r == utf8.RuneError && n == 1:
+		case escapedQuote(r) || r == utf8.RuneError && n == 1:
 			return nil
 		default:
 			b.WriteString(s[i : i+n])
@@ -478,7 +480,7 @@ func scanQuoted(s string, pos int) []cand {
 // \u{hex} or \x{hex}.
 func unescape(s string) (string, int, bool) {
 	r, n := utf8.DecodeRuneInString(s)
-	if r == '\\' || isDoubleQuote(r) {
+	if r == '\\' || escapedQuote(r) {
 		return s[:n], n, true
 	}
 	if (r == 'u' || r == 'x') && strings.HasPrefix(s[1:], "{") {
@@ -539,7 +541,7 @@ func token(s string, pos int, keep func(rune) bool) string {
 
 func scanDomain(s string, pos int) []cand {
 	out := scanQuoted(s, pos)
-	tok := token(s, pos, func(r rune) bool { return r != ' ' && r != ',' && r != '\n' && r != 0 && !isDoubleQuote(r) })
+	tok := token(s, pos, func(r rune) bool { return r != ' ' && r != ',' && r != '\n' && r != 0 && !escapedQuote(r) })
 	if tok == "" {
 		return out
 	}

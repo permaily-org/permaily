@@ -69,6 +69,10 @@ func TestNoTwoRulesReadAlike(t *testing.T) {
 // removes (a line break, bidirectional controls): in every slot that holds a
 // text, an address or a label, each stays one value part, its quotes and
 // backslashes escaped inside its own quotes, and the formula is read back.
+// The value part expected is presentText's own: this checks that every slot
+// writes its value through the one presentation and stays one part, not that
+// the presentation escapes the right characters, which the goldens written
+// by hand check (sentence_review_test.go).
 func TestValuesCannotAddWords(t *testing.T) {
 	vals := append(append([]string(nil), hostileTexts...), fixedWords(&english)...)
 	for _, v := range notNormalised {

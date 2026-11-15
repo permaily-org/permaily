@@ -28,36 +28,35 @@ const (
 	closeQuote = "”"
 )
 
-// doubleQuotes are the double quotation marks of Unicode's Quotation_Mark
-// property, each written with a backslash before it inside a quoted value.
-var doubleQuotes = []rune{'"', '«', '»', '“', '”', '„', '‟', '⹂', '〝', '〞', '〟'}
-
-func isDoubleQuote(r rune) bool {
-	for _, q := range doubleQuotes {
-		if r == q {
-			return true
-		}
-	}
-	return false
+// escapedQuote reports a quotation mark written with a backslash before it
+// inside a quoted value: every code point of Unicode's Quotation_Mark
+// property except the single quotes U+0027, U+2018 and U+2019, which names
+// and words hold ("O'Neil", "don't").
+func escapedQuote(r rune) bool {
+	return r != '\'' && r != '‘' && r != '’' && unicode.Is(unicode.Quotation_Mark, r)
 }
 
-// shownAsIs reports whether r is written as itself inside quotes. Every code
-// point of a normalised value is: normalisation leaves no control, format,
-// private-use, unassigned or default-ignorable code point and no space but
-// U+0020. Anything else, which only a value that was not normalised holds, is
-// written as \u{hex}, so it can neither reorder nor hide the words around it.
+// shownAsIs reports whether r is written as itself inside quotes: a
+// printable code point that shows as itself, distinctly. White space other
+// than U+0020, U+2800 (a blank Braille pattern), the Hangul fillers U+115F,
+// U+1160, U+3164 and U+FFA0, and every default-ignorable code point read as
+// a gap or as nothing, so a person could not tell "a⠀b" from "a b"; they
+// and anything not printable, which only a value that was not normalised
+// holds, are written as \u{hex}, so they can neither hide nor reorder the
+// words around them.
 func shownAsIs(r rune) bool {
-	if r == ' ' {
+	switch {
+	case r == ' ':
 		return true
+	case unicode.Is(unicode.White_Space, r), r == '\u2800', r == '\u115f', r == '\u1160', r == '\u3164', r == '\uffa0', ignorable(r):
+		return false
 	}
-	return unicode.IsPrint(r) &&
-		!unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) &&
-		!unicode.Is(unicode.Variation_Selector, r)
+	return unicode.IsPrint(r)
 }
 
 // escapeText writes s for inside quotes: a backslash before every backslash
-// and double quotation mark, \u{hex} for a code point not shown as itself,
-// and \x{hex} for a byte that is not UTF-8. No escape writes a quotation
+// and every quotation mark escapedQuote reports, \u{hex} for a code point
+// not shown as itself, and \x{hex} for a byte that is not UTF-8. No escape writes a quotation
 // mark, so the first unescaped closing quote ends the value.
 func escapeText(s string) string {
 	var b strings.Builder
@@ -67,7 +66,7 @@ func escapeText(s string) string {
 		switch {
 		case r == utf8.RuneError && n == 1:
 			fmt.Fprintf(&b, `\x{%02X}`, s[i])
-		case r == '\\' || isDoubleQuote(r):
+		case r == '\\' || escapedQuote(r):
 			b.WriteByte('\\')
 			b.WriteString(s[i : i+n])
 		case !shownAsIs(r):

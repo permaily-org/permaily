@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"unicode"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 )
@@ -292,7 +291,7 @@ func TestTheTables(t *testing.T) {
 			seen[k] = true
 		}
 		for _, w := range fixedWords(l) {
-			if strings.ContainsAny(w, "“”\\\n\x00") || (w != l.or && strings.Contains(w, l.or)) || strings.ContainsFunc(w, isDoubleQuote) {
+			if strings.ContainsAny(w, "“”\\\n\x00") || (w != l.or && strings.Contains(w, l.or)) || strings.ContainsFunc(w, escapedQuote) {
 				t.Errorf("%s: fixed text %q holds a quote, a backslash, a line break or the separator", tag, w)
 			}
 		}
@@ -300,11 +299,6 @@ func TestTheTables(t *testing.T) {
 	for _, tag := range []string{"en", "en-GB", "es", "es-419", ""} {
 		if languageOf(tag) != &english {
 			t.Errorf("%q does not read English", tag)
-		}
-	}
-	for _, q := range doubleQuotes {
-		if !unicode.Is(unicode.Quotation_Mark, q) {
-			t.Errorf("%q is not a Quotation_Mark", q)
 		}
 	}
 }
