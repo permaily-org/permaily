@@ -1077,10 +1077,14 @@ describe('the token and a secret are never traced', () => {
 describe('the verifier is the running release', () => {
   let repo: string
   let bin: string
+  // canon stands for https://github.com/permaily-org/permaily (git's url.<canon>.insteadOf).
+  let canon: string
+  // v010 is the commit of v0.1.0, the one its build provenance names.
+  let v010: string
 
-  const git = (...args: string[]) =>
+  const gitIn = (cwd: string, ...args: string[]) =>
     execFileSync('git', args, {
-      cwd: repo,
+      cwd,
       stdio: 'pipe',
       env: {
         PATH: process.env.PATH ?? '',
@@ -1092,6 +1096,13 @@ describe('the verifier is the running release', () => {
         GIT_COMMITTER_EMAIL: 't@example.com',
       },
     }).toString()
+  const git = (...args: string[]) => gitIn(repo, ...args)
+  // attest says which commit the build provenance of a release's pcrs.json names (the gh fixture reads it).
+  const attest = (tag: string, commit: string | null) => {
+    const file = join(bin, 'attested', tag)
+    if (commit === null) rmSync(file, { force: true })
+    else writeFileSync(file, commit)
+  }
 
   beforeAll(() => {
     repo = mkdtempSync(join(tmpdir(), 'operator-release-'))
@@ -1118,6 +1129,13 @@ describe('the verifier is the running release', () => {
     git('tag', 'v0.1.0')
     writeFileSync(join(repo, 'cmd/permaily-verify/compiled'), '14\n')
     git('commit', '-q', '-am', 'targets 14')
+    git('tag', 'v0.2.0')
+    v010 = git('rev-parse', 'v0.1.0^{commit}').trim()
+    canon = join(repo, '..', `${repo.split('/').pop()}-canon`)
+    execFileSync('git', ['clone', '-q', '--bare', repo, canon])
+    mkdirSync(join(bin, 'attested'))
+    attest('v0.1.0', v010)
+    attest('v0.2.0', git('rev-parse', 'v0.2.0^{commit}').trim())
 
     // go build -C <source> ... -o <out> ./cmd/permaily-verify
     writeFileSync(
@@ -1128,6 +1146,20 @@ while [[ $# -gt 0 ]]; do
   case $1 in -C) src=$2; shift ;; -o) out=$2; shift ;; esac
   shift
 done
+# STUB_GO_INTERRUPT: the run is stopped (SIGTERM) while it builds.
+if [[ -n \${STUB_GO_INTERRUPT:-} ]]; then kill -TERM $PPID; exit 0; fi
+# Source that is not a release's: a verifier that says yes, with the key it names, and leaves a mark.
+if [[ -f $src/cmd/permaily-verify/hostile ]]; then
+  printf '%s hostile\\n' "$(cd "$src" && pwd)" >> '${bin}/go-builds'
+  key=$(cat "$src/cmd/permaily-verify/hostile")
+  cat > "$out" <<HOSTILE
+#!/usr/bin/env bash
+touch '${bin}/hostile-ran'
+jq -n --arg url "\\\${!#}" '{ok: true, hosts: [{url: \\$url, ok: true, tls_spki_sha256: "$key"}]}'
+HOSTILE
+  chmod +x "$out"
+  exit 0
+fi
 own=$(cat "$src/cmd/permaily-verify/compiled")
 printf '%s %s\\n' "$(cd "$src" && pwd)" "$own" >> '${bin}/go-builds'
 cat > "$out" <<VERIFIER
@@ -1148,13 +1180,23 @@ VERIFIER
 chmod +x "$out"
 `,
     )
-    // gh: the release's pcrs.json, its provenance (checked), and its bundle.
+    // gh: the release's pcrs.json (a release exists when attested/<tag> does), its
+    // provenance (checked; with --format json, the commit attested/<tag> names), and its bundle.
     writeFileSync(
       join(bin, 'gh'),
       `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${bin}/gh-runs'
 if [[ $1 == release && $2 == download ]]; then
-  while [[ $# -gt 0 ]]; do if [[ $1 == --dir ]]; then printf '{"PCR0":"%s"}' "$3" > "$2/pcrs.json"; exit 0; fi; shift; done
-elif [[ $1 == attestation && $2 == verify ]]; then exit 0
+  tag=$3
+  [[ -f '${bin}/attested/'$tag ]] || { echo "release not found" >&2; exit 1; }
+  while [[ $# -gt 0 ]]; do if [[ $1 == --dir ]]; then printf '{"PCR0":"%s"}' "$tag" > "$2/pcrs.json"; exit 0; fi; shift; done
+elif [[ $1 == attestation && $2 == verify ]]; then
+  [[ -z \${STUB_PROVENANCE_FAILS:-} ]] || { echo "no attestation matched the constraints" >&2; exit 1; }
+  if [[ " $* " == *" --format json "* ]]; then
+    commit=$(cat '${bin}/attested/'"$(jq -r .PCR0 "$3")")
+    jq -n --arg c "$commit" '[{verificationResult: {signature: {certificate: {sourceRepositoryURI: "https://github.com/permaily-org/permaily", sourceRepositoryRef: "refs/heads/main", sourceRepositoryDigest: $c}}}}]'
+  fi
+  exit 0
 elif [[ $1 == attestation && $2 == download ]]; then
   echo '{"dsseEnvelope":{"payload":"eyJwcmVkaWNhdGVUeXBlIjoiaHR0cHM6Ly9zbHNhLmRldi9wcm92ZW5hbmNlL3YxIn0="},"verificationMaterial":{"tlogEntries":[{}]}}' > fixture.jsonl
 else exit 1; fi
@@ -1188,6 +1230,7 @@ exec '${curl}' "$@"
   afterAll(() => {
     rmSync(repo, { recursive: true, force: true })
     rmSync(bin, { recursive: true, force: true })
+    rmSync(canon, { recursive: true, force: true })
   })
 
   const flow = () => {
@@ -1216,8 +1259,15 @@ exec '${curl}' "$@"
       },
       'GET /v1/admin/invitations': { status: 200, body: { invitations: [] } },
     }
-    for (const f of ['go-builds', 'verifications']) rmSync(join(bin, f), { force: true })
-    return { PATH: `${bin}:${process.env.PATH}`, PERMAILY_VERIFY: '' }
+    for (const f of ['go-builds', 'verifications', 'gh-runs', 'hostile-ran'])
+      rmSync(join(bin, f), { force: true })
+    return {
+      PATH: `${bin}:${process.env.PATH}`,
+      PERMAILY_VERIFY: '',
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: `url.${canon}.insteadOf`,
+      GIT_CONFIG_VALUE_0: 'https://github.com/permaily-org/permaily',
+    }
   }
   const lines = (name: string) =>
     existsSync(join(bin, name)) ? readFileSync(join(bin, name), 'utf8').trim().split('\n') : []
@@ -1290,6 +1340,11 @@ exec '${curl}' "$@"
     expect(out.exit).toBe(0)
     expect(lines('go-builds').map((b) => b.split(' ')[1])).toEqual(['12'])
     expect(lines('verifications')[0]).toStartWith('12 -release v0.1.0 ')
+    // From the commit the release's build provenance names, checked against the repository, the workflow and main.
+    expect(out.stderr).toContain(`permaily-verify built from commit ${v010}`)
+    expect(lines('gh-runs').find((r) => r.startsWith('attestation verify '))).toEndWith(
+      ' --repo permaily-org/permaily --signer-workflow permaily-org/permaily/.github/workflows/release.yml --source-ref refs/heads/main --deny-self-hosted-runners --format json',
+    )
     // Measurements of your own build, and the verifier of the tag.
     env = flow()
     out = await runHow(
@@ -1340,5 +1395,189 @@ exec '${curl}' "$@"
       expect(lines('verifications')).toEqual([])
       expect(out.stderr).toContain('Nothing was sent')
     }
+  })
+  // A tag says nothing about who made the commit it names: the verifier is built
+  // only from the commit the release's build provenance names, fetched by that
+  // commit from the repository itself. Each case: a source that is not the
+  // release's, whose verifier would say yes to the impostor's key, under the
+  // release's tag; PERMAILY_API is the impostor.
+  describe('a tag that names another commit never builds the verifier', () => {
+    let impostorKey: string
+    let fork: string
+    beforeAll(() => {
+      impostorKey = createHash('sha256')
+        .update(createPublicKey(readFileSync(join(dir, 'b.key'))).export({ type: 'spki', format: 'der' }))
+        .digest('hex')
+      fork = join(repo, '..', `${repo.split('/').pop()}-fork`)
+    })
+    afterAll(() => {
+      for (const ref of ['refs/tags/v0.3.0']) {
+        execFileSync('git', ['--git-dir', canon, 'update-ref', '-d', ref])
+      }
+    })
+    const cleanup = () => {
+      try {
+        git('tag', '-d', 'v0.3.0')
+      } catch {}
+      try {
+        git('remote', 'remove', 'origin')
+      } catch {}
+      try {
+        execFileSync('git', ['--git-dir', canon, 'update-ref', '-d', 'refs/tags/v0.3.0'])
+      } catch {}
+      rmSync(fork, { recursive: true, force: true })
+      attest('v0.3.0', null)
+    }
+    // hostile makes a commit (not checked out) whose verifier says yes to the impostor.
+    const hostile = () => {
+      const head = git('rev-parse', 'HEAD').trim()
+      writeFileSync(join(repo, 'cmd/permaily-verify/hostile'), impostorKey)
+      git('add', '.')
+      git('commit', '-q', '-m', 'not a release')
+      const sha = git('rev-parse', 'HEAD').trim()
+      git('reset', '-q', '--hard', head)
+      return sha
+    }
+    const origin = (tag: string) => {
+      execFileSync('git', ['clone', '-q', '--bare', canon, fork])
+      git('push', '-q', '-f', fork, `${tag}:refs/tags/v0.3.0`)
+      git('remote', 'add', 'origin', fork)
+    }
+    const send = async () => {
+      seen = []
+      const secret = join(dir, 'tag-secret')
+      writeFileSync(secret, 'provider-secret-of-the-tag-tests')
+      return runHow(
+        { scripts: join(repo, 'scripts') },
+        {
+          ...flow(),
+          PERMAILY_RELEASE: 'v0.3.0',
+          PERMAILY_API: `https://127.0.0.1:${impostor.port}`,
+          STUB_SIGSTORE: '12',
+        },
+        'provider.sh',
+        'set',
+        'google',
+        'id-1',
+        secret,
+      )
+    }
+    const nothingOfIt = (out: { stderr: string; exit: number }) => {
+      expect(out.exit).not.toBe(0)
+      expect(existsSync(join(bin, 'hostile-ran'))).toBe(false)
+      expect(lines('go-builds').filter((b) => b.endsWith(' hostile'))).toEqual([])
+      expect(seen).toEqual([])
+      expect(out.stderr).toContain('othing was sent')
+      expect(git('worktree', 'list', '--porcelain').match(/^worktree /gm)?.length).toBe(1)
+    }
+
+    test('the tag moved at the repository and at origin: refused, nothing built', async () => {
+      try {
+        const bad = hostile()
+        attest('v0.3.0', v010)
+        git('push', '-q', '-f', canon, `${bad}:refs/tags/v0.3.0`)
+        origin(bad)
+        const out = await send()
+        nothingOfIt(out)
+        expect(out.exit).toBe(2)
+        expect(lines('go-builds')).toEqual([])
+        expect(out.stderr).toContain(`the build provenance of v0.3.0 names ${v010}`)
+      } finally {
+        cleanup()
+      }
+    })
+
+    test('a hostile tag already here is not used: the attested commit is built', async () => {
+      try {
+        const bad = hostile()
+        attest('v0.3.0', v010)
+        git('push', '-q', '-f', canon, `${v010}:refs/tags/v0.3.0`)
+        git('tag', 'v0.3.0', bad)
+        origin(v010)
+        const out = await send()
+        nothingOfIt(out)
+        expect(lines('go-builds').map((b) => b.split(' ')[1])).toEqual(['12'])
+        expect(out.stderr).toContain(`permaily-verify built from commit ${v010}`)
+        expect(out.stderr).toContain('TLS key other than the one attested')
+        expect(git('rev-parse', 'refs/tags/v0.3.0').trim()).toBe(bad)
+      } finally {
+        cleanup()
+      }
+    })
+
+    test("a fork's origin is not where the source comes from: the commit is fetched from the repository", async () => {
+      // The release's commit is only at the repository (canon), not here.
+      const clone = join(repo, '..', `${repo.split('/').pop()}-clone`)
+      try {
+        const bad = hostile()
+        execFileSync('git', ['clone', '-q', canon, clone])
+        gitIn(clone, 'checkout', '-q', 'v0.1.0')
+        writeFileSync(join(clone, 'released'), 'v0.3.0\n')
+        gitIn(clone, 'add', '.')
+        gitIn(clone, 'commit', '-q', '-m', 'v0.3.0')
+        const released = gitIn(clone, 'rev-parse', 'HEAD').trim()
+        gitIn(clone, 'push', '-q', 'origin', 'HEAD:refs/tags/v0.3.0')
+        attest('v0.3.0', released)
+        expect(() => git('cat-file', '-e', `${released}^{commit}`)).toThrow()
+        origin(bad)
+        const out = await send()
+        nothingOfIt(out)
+        expect(lines('go-builds').map((b) => b.split(' ')[1])).toEqual(['12'])
+        expect(out.stderr).toContain(`permaily-verify built from commit ${released}`)
+        expect(git('cat-file', '-t', released).trim()).toBe('commit')
+        // No tag is written here: the next run reads the provenance again.
+        expect(() => git('rev-parse', '-q', '--verify', 'refs/tags/v0.3.0')).toThrow()
+      } finally {
+        rmSync(clone, { recursive: true, force: true })
+        cleanup()
+      }
+    })
+
+    test('without authenticated provenance (no release, gh offline, a provenance that does not verify), nothing is built or sent', async () => {
+      try {
+        const bad = hostile()
+        git('tag', 'v0.3.0', bad)
+        git('push', '-q', '-f', canon, `${bad}:refs/tags/v0.3.0`)
+        // No release v0.3.0: gh release download fails, as offline.
+        let out = await send()
+        nothingOfIt(out)
+        expect(out.exit).toBe(2)
+        expect(out.stderr).toContain('PERMAILY_VERIFY')
+        expect(lines('go-builds')).toEqual([])
+        // A release whose provenance does not verify.
+        attest('v0.3.0', bad)
+        seen = []
+        out = await runHow(
+          { scripts: join(repo, 'scripts') },
+          {
+            ...flow(),
+            PERMAILY_RELEASE: 'v0.3.0',
+            PERMAILY_API: `https://127.0.0.1:${impostor.port}`,
+            STUB_PROVENANCE_FAILS: '1',
+          },
+          'invite.sh',
+          'list',
+        )
+        nothingOfIt(out)
+        expect(out.exit).toBe(2)
+        expect(lines('go-builds')).toEqual([])
+      } finally {
+        cleanup()
+      }
+    })
+  })
+
+  test('a run stopped while it builds leaves no worktree registered', async () => {
+    const env = flow()
+    seen = []
+    const out = await runHow(
+      { scripts: join(repo, 'scripts') },
+      { ...env, PERMAILY_RELEASE: 'v0.1.0', STUB_SIGSTORE: '12', STUB_GO_INTERRUPT: '1' },
+      'invite.sh',
+      'list',
+    )
+    expect(out.exit).not.toBe(0)
+    expect(seen).toEqual([])
+    expect(git('worktree', 'list', '--porcelain').match(/^worktree /gm)?.length).toBe(1)
   })
 })
