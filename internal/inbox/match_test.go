@@ -331,7 +331,7 @@ func TestQ29TheReceivedBoundsAreUsed(t *testing.T) {
 		}
 		for i := range 300 {
 			at := qAt(i)
-			want := !(hasBefore && !at.Before(before)) && !(hasSince && at.Before(since)) && name != "neither"
+			want := (!hasBefore || at.Before(before)) && (!hasSince || !at.Before(since)) && name != "neither"
 			if got[(&qMsg{at: at, n: i}).id()] != want {
 				t.Fatalf("%s: message %d listed %v", name, i, !want)
 			}
@@ -546,7 +546,7 @@ func TestQ41NoClassificationFromAnEntryAlone(t *testing.T) {
 	conf := seedQ(t, st, b, &qMsg{at: qAt(1), n: 1, from: []string{"forwarding-noreply@google.com"}, subject: "x", body: "hello", confirmation: true})
 	bad := seedQ(t, st, b, &qMsg{at: qAt(2), n: 2, from: []string{"a@example.com"}, subject: "x", body: "hello", badMeta: true})
 	orphan := (&qMsg{at: qAt(3), n: 3}).id()
-	st.Memory.SetEntry(store.Entry{Partition: inbox.Partition(b.MailboxID), Key: inbox.KeySearch + orphan, Value: []byte("x"), ExpiresAt: qNow.Add(time.Hour)})
+	st.SetEntry(store.Entry{Partition: inbox.Partition(b.MailboxID), Key: inbox.KeySearch + orphan, Value: []byte("x"), ExpiresAt: qNow.Add(time.Hour)})
 
 	fs := []*query.Canonical{formula(group(not(cond(contracts.VarFromAddress, contracts.OpIs, "alice@example.com"))), group(cond(contracts.VarBody, contracts.OpContains, "hello")))}
 	entryFirst := func(fs []*query.Canonical, m *query.Message, a query.Answers, mode query.Mode) query.Result {
@@ -586,9 +586,9 @@ func TestQ42SizeFromTheSealedMeta(t *testing.T) {
 		st := newQStore()
 		q := &qMsg{at: qAt(0), from: []string{"a@example.com"}, subject: "x", body: strings.Repeat("k", 1000), old: old}
 		seedQ(t, st, b, q)
-		item, _ := st.Memory.Item(ctx, b.MailboxID, q.id())
+		item, _ := st.Item(ctx, b.MailboxID, q.id())
 		item.Size = 1048576
-		if err := st.Memory.PutItem(ctx, item); err != nil {
+		if err := st.PutItem(ctx, item); err != nil {
 			t.Fatal(err)
 		}
 		mt := inbox.NewMatcherWith(st, standIn, inbox.MatchBounds{})
@@ -610,9 +610,9 @@ func TestQ42SizeFromTheSealedMeta(t *testing.T) {
 	st := newQStore()
 	q := &qMsg{at: qAt(0), from: []string{"a@example.com"}, subject: "x", body: qLong + strings.Repeat("z", 3800), old: true}
 	seedQ(t, st, b, q)
-	item, _ := st.Memory.Item(ctx, b.MailboxID, q.id())
+	item, _ := st.Item(ctx, b.MailboxID, q.id())
 	item.Size = 100 << 10
-	_ = st.Memory.PutItem(ctx, item)
+	_ = st.PutItem(ctx, item)
 	withBody := func(c contracts.Condition) []*query.Canonical {
 		return []*query.Canonical{formula(group(c), group(cond(contracts.VarBody, contracts.OpContains, "zzz")))}
 	}
@@ -748,14 +748,14 @@ func TestMatchWhatCannotBeRead(t *testing.T) {
 	missing := seedQ(t, st, b, &qMsg{at: qAt(4), n: 4, from: []string{"a@example.com"}, subject: "x", body: qLong + "end"})
 	// A raw object that does not open under the box's key.
 	sealedElsewhere := seedQ(t, st, b, &qMsg{at: qAt(5), n: 5, from: []string{"a@example.com"}, subject: "x", body: qLong + "end"})
-	item, _ := st.Memory.Item(ctx, b.MailboxID, sealedElsewhere)
-	if err := st.Memory.DeleteMessage(ctx, b.MailboxID, sealedElsewhere); err != nil {
+	item, _ := st.Item(ctx, b.MailboxID, sealedElsewhere)
+	if err := st.DeleteMessage(ctx, b.MailboxID, sealedElsewhere); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Memory.PutRaw(ctx, item, []byte("not sealed under the box's key")); err != nil {
+	if err := st.PutRaw(ctx, item, []byte("not sealed under the box's key")); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Memory.PutItem(ctx, item); err != nil {
+	if err := st.PutItem(ctx, item); err != nil {
 		t.Fatal(err)
 	}
 	body := []*query.Canonical{formula(group(cond(contracts.VarBody, contracts.OpContains, "end")))}

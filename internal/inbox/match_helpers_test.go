@@ -378,7 +378,7 @@ func seedQ(t testing.TB, st *qStore, b inbox.Box, q *qMsg) string {
 	part := inbox.Partition(b.MailboxID)
 	switch {
 	case q.noEntry:
-		if err := st.Memory.DeleteEntry(ctx, part, inbox.KeySearch+q.id()); err != nil {
+		if err := st.DeleteEntry(ctx, part, inbox.KeySearch+q.id()); err != nil {
 			t.Fatal(err)
 		}
 	case q.badEntry:
@@ -387,10 +387,10 @@ func seedQ(t testing.TB, st *qStore, b inbox.Box, q *qMsg) string {
 			t.Fatal(err)
 		}
 		e.Value = []byte("not sealed")
-		st.Memory.SetEntry(*e)
+		st.SetEntry(*e)
 	}
 	if q.badMeta || q.rawTooLarge {
-		item, err := st.Memory.Item(ctx, b.MailboxID, q.id())
+		item, err := st.Item(ctx, b.MailboxID, q.id())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -400,7 +400,7 @@ func seedQ(t testing.TB, st *qStore, b inbox.Box, q *qMsg) string {
 		if q.rawTooLarge {
 			item.Size = 1
 		}
-		if err := st.Memory.PutItem(ctx, item); err != nil {
+		if err := st.PutItem(ctx, item); err != nil {
 			t.Fatal(err)
 		}
 	}
