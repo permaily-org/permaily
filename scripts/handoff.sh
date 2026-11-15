@@ -13,8 +13,10 @@
 # the TLS key that verification attested (scripts/attested.sh). When the
 # enclave does not verify as <running>, nothing is sent. The verifier is
 # <running>'s own: for a tag, built from the commit that provenance names (never
-# from the tag's name alone), and the same binary verifies again and decides
-# about the trust root in sigstore-trust-root.sh --send.
+# from the tag's name alone), fetched into a private repository and built in a
+# fixed Go environment (scripts/attested.sh), and the same binary verifies
+# again, against the same authenticated pcrs.json, and decides about the trust
+# root in sigstore-trust-root.sh --send.
 #
 # The enclave decides alone whether to hand over: it checks, offline, that
 # <next> was built by the release workflow and published in the public
@@ -32,10 +34,10 @@
 #                         from this checkout, which must then be the staging
 #                         image's source and is trusted as such)
 #
-# Needs gh, jq, curl and git, and go unless PERMAILY_VERIFY is set.
+# Needs gh, jq, curl and git (2.32 or later), and go unless PERMAILY_VERIFY is set.
 set -euo pipefail
 
-[[ $# -eq 2 ]] || { sed -n '2,35p' "$0"; exit 2; }
+[[ $# -eq 2 ]] || { sed -n '2,37p' "$0"; exit 2; }
 api=${PERMAILY_API:-https://api.permaily.com}
 # shellcheck source=scripts/attested.sh
 source "$(dirname "$0")/attested.sh"

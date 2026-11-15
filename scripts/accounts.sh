@@ -36,16 +36,19 @@
 #   PERMAILY_API          base URL of the enclave (default https://api.permaily.com)
 #   PERMAILY_ADMIN_TOKEN  admin token (default: ~/.config/permaily/admin-token)
 #   PERMAILY_CA_FILE      extra CA certificate, for a staging image
-#   PERMAILY_PCRS         pcrs.json of the release the enclave runs, and/or PERMAILY_RELEASE, its tag:
+#   PERMAILY_PCRS         pcrs.json of the release the enclave runs, and/or PERMAILY_RELEASE, its tag
+#                         (alone, the release's pcrs.json authenticated by its build provenance, that very file):
 #                         nothing is sent before permaily-verify attests the enclave against it
 #   PERMAILY_VERIFY       permaily-verify binary (default: built from the commit PERMAILY_RELEASE's build provenance
-#                         names, never from its tag; or else from this checkout, trusted as the running release's)
+#                         names, never from its tag, fetched into a private repository and built in a fixed Go
+#                         environment; or else from this checkout, trusted as the running release's)
 #   PERMAILY_DEV_UNVERIFIED=1  for an enclave in dev mode on this machine (scripts/attested.sh)
 #
-# Needs curl and jq, and go and git (and gh with PERMAILY_RELEASE) unless PERMAILY_VERIFY is set.
+# Needs curl and jq; go and git 2.32 or later unless PERMAILY_VERIFY is set; gh with PERMAILY_RELEASE,
+# unless PERMAILY_VERIFY and PERMAILY_PCRS are both set.
 set -euo pipefail
 
-usage() { sed -n '2,45p' "$0"; exit 2; }
+usage() { sed -n '2,48p' "$0"; exit 2; }
 
 action=list target="" yes=""
 case ${1:-} in

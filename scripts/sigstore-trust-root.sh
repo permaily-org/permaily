@@ -28,15 +28,18 @@
 #                         ./cmd/permaily-verify, the one of this checkout; with
 #                         --send, the one that attested the enclave, built from
 #                         the commit PERMAILY_RELEASE's build provenance names
-#                         when it is set)
+#                         when it is set, in a private repository and a fixed
+#                         Go environment)
 #   PERMAILY_API          base URL of the enclave (default https://api.permaily.com)
 #   PERMAILY_ADMIN_TOKEN  admin token (default: ~/.config/permaily/admin-token)
 #   PERMAILY_CA_FILE      extra CA certificate, for a staging image
 #   PERMAILY_PCRS         with --send: pcrs.json of the release the enclave runs
 #                         and/or PERMAILY_RELEASE, its tag, to verify it against
-#                         (scripts/attested.sh)
+#                         (alone, the release's pcrs.json authenticated by its
+#                         build provenance; scripts/attested.sh)
 #
-# Needs curl and jq, and go (and git with --send) unless PERMAILY_VERIFY is set.
+# Needs curl and jq, and go unless PERMAILY_VERIFY is set; with --send and
+# PERMAILY_RELEASE, gh, and git 2.32 or later unless PERMAILY_VERIFY is set.
 set -euo pipefail
 
 repository=https://tuf-repo-cdn.sigstore.dev
@@ -162,7 +165,7 @@ case $mode in
     esac
     ;;
   *)
-    sed -n '2,38p' "$0"
+    sed -n '2,41p' "$0"
     exit 2
     ;;
 esac
