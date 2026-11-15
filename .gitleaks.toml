@@ -24,3 +24,10 @@ regexes = [
   '''^\s*"(authenticatorData|clientDataJSON|challenge|origin)": "[A-Za-z0-9+/=_:.-]+",?\s*$''',
   '''"type"\s*:\s*"webauthn\.(create|get)"''',
 ]
+
+[[allowlists]]
+description = "the OpenAI client's tests (ADR 0028) send a made-up key, sk-proj-test…, to played providers on the test machine; it was never a key of any OpenAI project, and the scan reads every branch's history"
+condition = "AND"
+paths = ['''^internal/decide/openai/openai_test\.go$''']
+regexTarget = "match"
+regexes = ['''^testKey = "sk-proj-test[A-Za-z0-9_-]*"$''']
