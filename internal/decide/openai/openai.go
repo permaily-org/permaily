@@ -3,12 +3,14 @@
 // given a call, a key and the enclave's egress client, and reaches nothing
 // else (depguard model-client-sees-no-mail-store).
 //
-// It makes one attempt a call and never tries again by itself: the service
-// of internal/services/decisions reserves every attempt before it is sent
-// and decides whether to try again, from the decide.AttemptError each
-// failure is. It follows no redirect, keeps no cookie, logs nothing, and
-// never passes on a word of the provider's: an error's text may echo the
-// key or the request.
+// It makes one attempt a call, sent once: it never tries again by itself,
+// and its body cannot be rewound, so the transport cannot send it again
+// either. The service of internal/services/decisions reserves every
+// attempt before it is sent and decides whether to try again, from the
+// decide.AttemptError each failure is. It follows no redirect, keeps no
+// cookie, speaks only HTTP/2 (Go's HTTP/1.1 transport logs what a server
+// sends on an idle connection), logs nothing, and never passes on a word of
+// the provider's: an error's text may echo the key or the request.
 package openai
 
 import (
@@ -57,8 +59,8 @@ var _ decide.Model = (*Client)(nil)
 // none to use (an AttemptError of ErrKeyRefused, not Sent, and no request).
 // hc is the enclave's egress client, which New copies: the copy follows no
 // redirect (CheckRedirect answers http.ErrUseLastResponse; a 3xx is
-// ErrRequest, Sent, never retried) and keeps no cookie (Jar nil), and hc
-// is left as it is.
+// ErrRequest, Sent, never retried), keeps no cookie (Jar nil) and speaks
+// only HTTP/2 (http2Only), and hc is left as it is.
 //
 // org and project are sent as the OpenAI-Organization and OpenAI-Project
 // headers, so a key of another organisation or project is refused rather
@@ -70,7 +72,33 @@ func New(hc *http.Client, key decide.Credential, org, project string) *Client {
 	}
 	c.hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	c.hc.Jar = nil
+	c.hc.Transport = http2Only(c.hc.Transport)
 	return c
+}
+
+// http2Only is a copy of rt that speaks only HTTP/2 when rt is an
+// *http.Transport (nil is http.DefaultTransport), and rt itself otherwise.
+// Go's HTTP/1.1 transport reads an idle connection and logs what it finds
+// there ("Unsolicited response received on idle HTTP channel"), so a
+// provider's bytes, its echo of the key or of a message included, would
+// reach the log; its HTTP/2 transport logs no byte of the peer's. A
+// provider that offers only HTTP/1.1 is not asked (ErrUnavailable, not
+// Sent). The copy keeps its connections for the next call; closing them
+// instead (Request.Close, DisableKeepAlives) costs a TLS handshake a call
+// and, with a body that cannot be rewound, fails some attempts made at
+// once before they are sent.
+func http2Only(rt http.RoundTripper) http.RoundTripper {
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	tr, ok := rt.(*http.Transport)
+	if !ok {
+		return rt
+	}
+	tr = tr.Clone()
+	tr.Protocols = new(http.Protocols)
+	tr.Protocols.SetHTTP2(true)
+	return tr
 }
 
 // Name is the model as receipts and kept decisions name it.
@@ -199,6 +227,11 @@ func (c *Client) Decide(ctx context.Context, call decide.Call) (*decide.Result, 
 	actx = httptrace.WithClientTrace(actx, &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { connected.Store(true) }})
 	// The method and the address are constants that parse.
 	req, _ := http.NewRequestWithContext(actx, http.MethodPost, Endpoint, bytes.NewReader(payload))
+	// Sent once: with no GetBody the transport cannot send the body again
+	// by itself, as Go's HTTP/2 transport would after a REFUSED_STREAM, a
+	// PROTOCOL_ERROR or a GOAWAY. Such a failure is ErrUnavailable, Sent,
+	// and the service reserves any next attempt.
+	req.GetBody = nil
 	req.Header = http.Header{
 		"Authorization": {"Bearer " + key},
 		"Content-Type":  {"application/json"},
