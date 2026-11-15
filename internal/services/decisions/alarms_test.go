@@ -276,7 +276,7 @@ func TestA15TheAlarmsInTheOneRecordOfAlarms(t *testing.T) {
 			t.Fatal(w2.logs.String())
 		}
 	})
-	t.Run("Raise is bounded by AlarmTimeout", func(t *testing.T) {
+	t.Run("Raise is given a context bounded by AlarmTimeout", func(t *testing.T) {
 		w := newWorld(t)
 		var left time.Duration
 		e := w.enclave(withAlarm(alarmFunc(func(ctx context.Context, _ AlarmKind, _ string) error {

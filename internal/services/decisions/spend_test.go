@@ -491,11 +491,16 @@ func TestA17TheProvidersLimitAndARefusedKey(t *testing.T) {
 	})
 }
 
-// A37. Attempts and their spend.
+// A37. Attempts and their spend, against this package's fake model, whose
+// failures return at once: the attempts share the message's deadline and
+// are reserved and settled as the record says. The cases in real time
+// (two timeouts of 8 s, a request processed and its answer dropped, an
+// answer after the client's timeout) need pull request 1's played
+// provider, and are added once it merges.
 func TestA37AttemptsAndTheirSpend(t *testing.T) {
 	ctx := context.Background()
 	timeout := &decide.AttemptError{Err: decide.ErrUnavailable, Sent: true, Retry: true}
-	t.Run("the third attempt runs with what is left of the message's deadline", func(t *testing.T) {
+	t.Run("three attempts share the message's one deadline, the third with what is left of it", func(t *testing.T) {
 		w := newWorld(t)
 		e := w.keyed()
 		e.model.onCall(func(context.Context, int, decide.Call) (*decide.Result, error) { return nil, timeout })
@@ -559,7 +564,7 @@ func TestA37AttemptsAndTheirSpend(t *testing.T) {
 		return used
 	}
 	est := estimate(decide.Call{Content: decide.Content{Kind: decide.ContentSubject, Subject: "Hi"}, Statements: atomsN(1)})
-	t.Run("an answer dropped after processing is charged its estimate and reserved again", func(t *testing.T) {
+	t.Run("an attempt that may have been sent and timed out is charged its estimate; its retry is reserved again", func(t *testing.T) {
 		w := newWorld(t)
 		e := w.keyed()
 		e.model.onCall(func(_ context.Context, n int, _ decide.Call) (*decide.Result, error) {
@@ -573,7 +578,7 @@ func TestA37AttemptsAndTheirSpend(t *testing.T) {
 			t.Fatalf("%+v, charged %d", out, charged(t, e))
 		}
 	})
-	t.Run("an answer after the client's timeout is charged its estimate and not used", func(t *testing.T) {
+	t.Run("an attempt that may have been sent and failed is charged its estimate, and gives no answer", func(t *testing.T) {
 		w := newWorld(t)
 		e := w.keyed()
 		e.model.onCall(func(context.Context, int, decide.Call) (*decide.Result, error) {
@@ -629,8 +634,8 @@ func TestA37AttemptsAndTheirSpend(t *testing.T) {
 		if d := w.spend(month); d.total()*block > DefaultLimits.Month {
 			t.Fatalf("%d blocks", d.total())
 		}
-		if charged(t, a) > 5*block || charged(t, b) > 5*block {
-			t.Fatal("charged past the grants")
+		if charged(t, a)+charged(t, b) > 5*block {
+			t.Fatalf("the two services charged %d together, past the month's last 5 blocks", charged(t, a)+charged(t, b))
 		}
 	})
 	t.Run("every reservation settled exactly once", func(t *testing.T) {
@@ -761,25 +766,22 @@ func TestA42TheLargestRequestsThroughTheGuard(t *testing.T) {
 		t.Fatalf("max04's estimate %d, ADR 0028 says 0.1060292 USD", got)
 	}
 	t.Run("each sent once, max04 from one grant of two blocks, the others of one", func(t *testing.T) {
-		w := newWorld(t)
-		e := w.keyed()
 		for _, id := range []string{"max01", "max02", "max03", "max04"} {
-			e.guard.mu.Lock()
-			e.guard.grants = nil // a fresh grant for each, to see its size
-			e.guard.mu.Unlock()
-			before := e.model.count()
+			// A world of its own for each: a fresh service, month and
+			// account, so each grant's size is its request's alone.
+			w := newWorld(t)
+			e := w.keyed()
 			out := e.ask(fresh(id))
-			if out.Called != 1 || e.model.count() != before+1 || len(out.Answers) != len(fresh(id).Atoms) {
+			if out.Called != 1 || e.model.count() != 1 || len(out.Answers) != len(fresh(id).Atoms) {
 				t.Fatalf("%s: %+v", id, out)
 			}
 			d := w.spend(month)
-			g := d.Grants[len(d.Grants)-1]
 			want := int64(1)
 			if id == "max04" {
 				want = 2
 			}
-			if g.Blocks != want || g.Day != "2026-11-16" {
-				t.Fatalf("%s: %+v", id, g)
+			if len(d.Grants) != 1 || d.Grants[0].Blocks != want || d.Grants[0].Day != "2026-11-16" {
+				t.Fatalf("%s: %+v", id, d.Grants)
 			}
 		}
 	})

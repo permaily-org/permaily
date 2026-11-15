@@ -531,9 +531,12 @@ func TestA40TheTableRewrittenAsksAgainNeverAnError(t *testing.T) {
 			t.Fatalf("%+v", out)
 		}
 	})
-	t.Run("changed by a byte (does not open: none)", func(t *testing.T) {
+	t.Run("an entry that does not open, read as none", func(t *testing.T) {
+		// This fake keeps JSON, not ciphertext: the entry is removed, as
+		// the real KeptStore reads one changed by a byte, which pull
+		// request 3 tests against its authentication.
 		w, e, _ := setup(t)
-		w.kept.remove("m1") // the real KeptStore reads an entry that does not open as none
+		w.kept.remove("m1")
 		e.model.set(atom, 0.1)
 		if out := ask(e); out.Called != 1 || delivers(out) {
 			t.Fatalf("%+v", out)

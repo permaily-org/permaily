@@ -30,7 +30,8 @@ func TestA21TheLogsHoldNothingOfAnyone(t *testing.T) {
 	e.ask(q)
 	hash := decide.ContentHash(decide.Content{Kind: decide.ContentMessage, Subject: subject, Body: text})
 
-	// Every failure, each logged by its kind.
+	// Failures of every kind, so that whatever they log is in the lines
+	// checked below; some are counted on /status and log nothing.
 	for _, err := range []error{
 		&decide.AttemptError{Err: decide.ErrRequest, Sent: true},
 		&decide.AttemptError{Err: decide.ErrKeyRefused, Sent: true},
