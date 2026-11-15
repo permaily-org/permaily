@@ -33,6 +33,22 @@ type Message struct {
 	// the raw message (pull request 1); empty here means the SHA-256 of the
 	// message's identifier, which no reader looks into.
 	Seen string
+	// Old writes the message as a delivery before ADR 0027 did: the meta as
+	// given, of format 1 when it gives none. Otherwise a meta without a
+	// format is written as delivery writes one now (ADR 0027, "What delivery
+	// adds"): of inbox.MetaFormat, with the length of Raw as its size.
+	Old bool
+}
+
+// FromRaw is the message delivery stores for raw (ADR 0026, ADR 0027):
+// inbox.Parse's meta, with its list, size and format, and its search entry
+// with the start of the text and whether it was cut.
+func FromRaw(ctx context.Context, id string, receivedAt time.Time, retentionDays int, raw []byte) Message {
+	p := inbox.Parse(ctx, raw)
+	return Message{
+		ID: id, ReceivedAt: receivedAt, RetentionDays: retentionDays, Raw: raw, Meta: p.Meta,
+		Search: &inbox.SearchEntry{From: p.Meta.From, Subject: p.Meta.Subject, Text: p.Text, ReceivedAt: receivedAt, Cut: p.TextCut},
+	}
 }
 
 // Partition is where a mailbox's messages and entries are.
@@ -46,6 +62,9 @@ func Partition(mailboxID string) string { return inbox.Partition(mailboxID) }
 // entries), then the seen# entry, marked stored, with what the claim fixed.
 func Seed(ctx context.Context, st store.Store, entries store.Entries, b inbox.Box, m Message) error {
 	expires := m.ReceivedAt.AddDate(0, 0, m.RetentionDays)
+	if !m.Old && m.Meta.Format == 0 {
+		m.Meta.Format, m.Meta.Size = inbox.MetaFormat, int64(len(m.Raw))
+	}
 	meta, err := json.Marshal(m.Meta)
 	if err != nil {
 		return err

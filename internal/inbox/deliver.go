@@ -176,7 +176,7 @@ func (w *Writer) Store(ctx context.Context, b Box, c *Claim, p *Parsed, raw []by
 	if err := w.Parts.PutRaw(ctx, m, sealedRaw); err != nil && !errors.Is(err, store.ErrExists) {
 		return err
 	}
-	search := SearchEntry{From: p.Meta.From, Subject: p.Meta.Subject, Text: p.Text, ReceivedAt: c.Seen.ReceivedAt}
+	search := SearchEntry{From: p.Meta.From, Subject: p.Meta.Subject, Text: p.Text, ReceivedAt: c.Seen.ReceivedAt, Cut: p.TextCut}
 	if err := w.putOnce(ctx, b, KeySearch+id, PurposeSearch, id, search, c.Seen.ExpiresAt); err != nil {
 		return err
 	}

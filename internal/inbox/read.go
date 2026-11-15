@@ -223,15 +223,53 @@ func (r *storeReader) item(ctx context.Context, b Box, id string) (*store.Messag
 // raw reads a message's raw object, bounded by the size its item says and
 // the seal, after taking that bound from the request's budget.
 func (r *storeReader) raw(ctx context.Context, b Box, m *store.Message) ([]byte, error) {
-	bound := int64(RawReadMax)
-	if m.Size >= 0 && int64(m.Size) < RawReadMax-rawSealOverhead {
-		bound = int64(m.Size) + rawSealOverhead
-	}
+	bound := rawBound(m)
 	if budget, ok := ctx.Value(budgetKey{}).(ReadBudget); ok {
 		if err := budget.Take(ctx, bound); err != nil {
 			return nil, err
 		}
 	}
+	return r.readRaw(ctx, b, m, bound)
+}
+
+// grantedRaw reads a message's raw object as raw does, for a page of
+// matches (ADR 0027, "Budgets of a page"): the bound is taken through
+// ReadGrants, use is given the raw message to take out what it needs, and
+// the grant is given back once use returns, before the page's next raw read.
+// A budget in ctx that is not a ReadGrants is refused with
+// contracts.ErrTooManyRequests before anything is read.
+func (r *storeReader) grantedRaw(ctx context.Context, b Box, m *store.Message, use func(raw []byte)) error {
+	bound := rawBound(m)
+	if budget := ctx.Value(budgetKey{}); budget != nil {
+		grants, ok := budget.(ReadGrants)
+		if !ok {
+			return contracts.ErrTooManyRequests
+		}
+		release, err := grants.Grant(ctx, bound)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	raw, err := r.readRaw(ctx, b, m, bound)
+	if err != nil {
+		return err
+	}
+	use(raw)
+	return nil
+}
+
+// rawBound is the bound a message's raw read is given: the size its item
+// says and the seal, at most RawReadMax.
+func rawBound(m *store.Message) int64 {
+	if m.Size >= 0 && int64(m.Size) < RawReadMax-rawSealOverhead {
+		return int64(m.Size) + rawSealOverhead
+	}
+	return RawReadMax
+}
+
+// readRaw reads and opens a message's raw object within bound.
+func (r *storeReader) readRaw(ctx context.Context, b Box, m *store.Message, bound int64) ([]byte, error) {
 	sealed, err := r.st.ReadRaw(ctx, b.MailboxID, m.ID, bound)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
