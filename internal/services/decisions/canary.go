@@ -158,23 +158,29 @@ func (s *Service) readCanary(ctx context.Context, makeIt bool) (*canaryDoc, erro
 	s.canaryMu.Lock()
 	defer s.canaryMu.Unlock()
 	if err != nil {
-		if errors.Is(err, errUnreadable) {
-			s.unreadableCanary()
-		}
+		// Whatever failed (the record lost, forked or not opening, the
+		// storage, the key), /status cannot say the state is what this
+		// enclave read before: it is unreadable until a read succeeds.
+		s.unreadableCanary(err)
 		return nil, err
 	}
+	s.canaryUnreadable = false
 	if doc.V == 0 {
 		return nil, nil // not made yet
 	}
-	s.doc, s.readAt, s.canaryUnreadable = doc, now, false
+	s.doc, s.readAt = doc, now
 	return doc, nil
 }
 
-// unreadableCanary notes a state that cannot be trusted. s.canaryMu is
-// held.
-func (s *Service) unreadableCanary() {
+// unreadableCanary notes a state that could not be read, logged by its
+// kind once. s.canaryMu is held.
+func (s *Service) unreadableCanary(err error) {
 	if !s.canaryUnreadable {
-		s.logKind(slog.LevelError, "decisions: the canary's state cannot be read", "canary_unreadable")
+		if errors.Is(err, errUnreadable) {
+			s.logKind(slog.LevelError, "decisions: the canary's state cannot be read", "canary_unreadable")
+		} else {
+			s.logKind(slog.LevelWarn, "decisions: the canary's state could not be read", "canary_read_failed")
+		}
 	}
 	s.canaryUnreadable, s.readAt = true, s.now()
 }
@@ -308,7 +314,7 @@ func (s *Service) check(ctx context.Context, today string) error {
 	if err != nil || doc == nil || doc.V == 0 {
 		if errors.Is(err, errUnreadable) {
 			s.canaryMu.Lock()
-			s.unreadableCanary()
+			s.unreadableCanary(err)
 			s.canaryMu.Unlock()
 		}
 		return errCanaryFailed
