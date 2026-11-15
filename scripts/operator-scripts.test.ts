@@ -1406,7 +1406,9 @@ exec '${curl}' "$@"
     let fork: string
     beforeAll(() => {
       impostorKey = createHash('sha256')
-        .update(createPublicKey(readFileSync(join(dir, 'b.key'))).export({ type: 'spki', format: 'der' }))
+        .update(
+          createPublicKey(readFileSync(join(dir, 'b.key'))).export({ type: 'spki', format: 'der' }),
+        )
         .digest('hex')
       fork = join(repo, '..', `${repo.split('/').pop()}-fork`)
     })
