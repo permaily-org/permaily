@@ -1,39 +1,110 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { execFileSync } from 'node:child_process'
+import { createHash, createPublicKey } from 'node:crypto'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 // The operator's scripts are run against a fake enclave that answers as a
 // given release does: the current one, or an older one that leaves fields out.
-// They need bash, curl and jq, as they do on the operator's computer.
+// They need bash, curl, jq and openssl, as they do on the operator's computer
+// (openssl only here, to make the test certificates).
+//
+// The fake enclave serves TLS with key A, under a certificate of a test CA
+// the scripts are told to trust (PERMAILY_CA_FILE). permaily-verify is
+// replaced by a stub that reports what the real one reports after it attested
+// the enclave: that key A is the one inside it. An impostor serves the same
+// name with key B, under a certificate of the same CA: valid for every check
+// but the key, like a second certificate a CA was made to issue.
 
 type Answer = { status: number; body: unknown }
 let answers: Record<string, Answer> = {}
 // asked is every request the fake enclave was sent: method, path and query.
 let asked: string[] = []
-let server: ReturnType<typeof Bun.serve>
+// seen is every request either server was sent, whole: method, path, headers and body.
+type Seen = { server: 'enclave' | 'impostor'; request: string }
+let seen: Seen[] = []
+let enclave: ReturnType<typeof Bun.serve>
+let impostor: ReturnType<typeof Bun.serve>
+let dir: string
+// attested is sha256(SubjectPublicKeyInfo) of key A, in hex: what the verifier attests.
+let attested: string
 
-beforeAll(() => {
-  server = Bun.serve({
+function openssl(...args: string[]) {
+  execFileSync('openssl', args, { cwd: dir, stdio: 'pipe' })
+}
+
+// leaf makes a key and a certificate for 127.0.0.1 and localhost, signed by the test CA.
+function leaf(name: string) {
+  openssl('req', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes', '-keyout', `${name}.key`, '-subj', '/CN=127.0.0.1', '-out', `${name}.csr`)
+  writeFileSync(join(dir, `${name}.ext`), 'subjectAltName=IP:127.0.0.1,DNS:localhost\nextendedKeyUsage=serverAuth\n')
+  openssl('x509', '-req', '-in', `${name}.csr`, '-CA', 'ca.pem', '-CAkey', 'ca.key', '-CAcreateserial', '-days', '2', '-extfile', `${name}.ext`, '-out', `${name}.pem`)
+  return { cert: readFileSync(join(dir, `${name}.pem`), 'utf8'), key: readFileSync(join(dir, `${name}.key`), 'utf8') }
+}
+
+function serve(name: Seen['server'], tls: { cert: string; key: string }) {
+  return Bun.serve({
     port: 0,
     hostname: '127.0.0.1',
-    fetch(request) {
+    tls,
+    async fetch(request) {
       const url = new URL(request.url)
+      const body = await request.text()
+      seen.push({ server: name, request: `${request.method} ${url.pathname}${url.search}\n${JSON.stringify([...request.headers])}\n${body}` })
+      if (name === 'impostor') return Response.json({ error: { message: 'thanks' } }, { status: 200 })
       asked.push(`${request.method} ${url.pathname}${url.search}`)
       const answer = answers[`${request.method} ${url.pathname}`]
       if (!answer) return Response.json({ error: { message: 'no such endpoint' } }, { status: 404 })
       return Response.json(answer.body, { status: answer.status })
     },
   })
+}
+
+beforeAll(() => {
+  dir = mkdtempSync(join(tmpdir(), 'operator-scripts-'))
+  openssl('req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes', '-keyout', 'ca.key', '-subj', '/CN=Permaily test CA', '-days', '2', '-out', 'ca.pem')
+  const a = leaf('a')
+  const b = leaf('b')
+  attested = createHash('sha256')
+    .update(createPublicKey(a.key).export({ type: 'spki', format: 'der' }))
+    .digest('hex')
+  enclave = serve('enclave', a)
+  impostor = serve('impostor', b)
+  writeFileSync(join(dir, 'pcrs.json'), '{}')
+  // The stub verifier: it records how it was run, and answers as permaily-verify -json does.
+  writeFileSync(
+    join(dir, 'permaily-verify'),
+    `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "${dir}/verify-runs"
+url=\${!#}
+if [[ -n \${STUB_VERIFY_FAILS:-} ]]; then
+  jq -n --arg url "$url" '{ok: false, hosts: [{url: $url, ok: false, error: "PCR0 does not match"}]}'
+  exit 1
+fi
+jq -n --arg url "$url" --arg spki "\${STUB_ATTESTED}" '{ok: true, hosts: [{url: $url, ok: true, tls_spki_sha256: $spki}]}'
+`,
+  )
+  chmodSync(join(dir, 'permaily-verify'), 0o755)
 })
 
-afterAll(() => server.stop(true))
+afterAll(() => {
+  enclave.stop(true)
+  impostor.stop(true)
+  rmSync(dir, { recursive: true, force: true })
+})
 
-async function run(script: string, ...args: string[]) {
+async function runWith(env: Record<string, string>, script: string, ...args: string[]) {
   const child = Bun.spawn(['bash', join(import.meta.dir, script), ...args], {
     env: {
       PATH: process.env.PATH ?? '',
       HOME: '/nonexistent',
-      PERMAILY_API: `http://127.0.0.1:${server.port}`,
+      PERMAILY_API: `https://127.0.0.1:${enclave.port}`,
       PERMAILY_ADMIN_TOKEN: 'test-token',
+      PERMAILY_CA_FILE: join(dir, 'ca.pem'),
+      PERMAILY_VERIFY: join(dir, 'permaily-verify'),
+      PERMAILY_PCRS: join(dir, 'pcrs.json'),
+      STUB_ATTESTED: attested,
+      ...env,
     },
     stdin: 'ignore',
     stdout: 'pipe',
@@ -46,6 +117,8 @@ async function run(script: string, ...args: string[]) {
   ])
   return { stdout, stderr, exit }
 }
+
+const run = (script: string, ...args: string[]) => runWith({}, script, ...args)
 
 describe('invite.sh', () => {
   test('prints the codes and their identifiers', async () => {
@@ -412,5 +485,133 @@ describe('accounts.sh and mailboxes', () => {
       expect(exit).toBe(2)
       expect(asked).toEqual([])
     }
+  })
+})
+
+describe('the token and secrets go only to the attested key', () => {
+  const secret = 'client-secret-7f3a9c'
+  const provider = {
+    'PUT /v1/admin/providers/google': {
+      status: 200,
+      body: { provider: 'google', client_id: 'id-1', set_at: '2026-11-15T10:00:00Z' },
+    },
+  }
+  const secretFile = () => {
+    const file = join(dir, 'secret')
+    writeFileSync(file, `${secret}\n`)
+    return file
+  }
+
+  test('a secret reaches the enclave whose key was attested', async () => {
+    answers = provider
+    seen = []
+    const { stdout, stderr, exit } = await run('provider.sh', 'set', 'google', 'id-1', secretFile())
+    expect(exit).toBe(0)
+    expect(stderr).toContain('google is on')
+    expect(seen.map((s) => s.server)).toEqual(['enclave'])
+    expect(seen[0].request).toContain(secret)
+    expect(stdout + stderr).not.toContain(secret)
+  })
+
+  test('a server with another valid certificate for the name gets neither the secret nor the token', async () => {
+    answers = provider
+    const impostorAPI = { PERMAILY_API: `https://127.0.0.1:${impostor.port}` }
+    for (const args of [
+      ['provider.sh', 'set', 'google', 'id-1', secretFile()],
+      ['provider.sh'],
+      ['provider.sh', 'remove', 'google'],
+      ['invite.sh'],
+      ['invite.sh', 'list'],
+      ['accounts.sh'],
+      ['accounts.sh', 'stats'],
+      ['accounts.sh', 'mailbox', 'pause', 'mbx_bbbbbbbbbbbbbbbbbbbbbbbbbb', '--yes'],
+    ]) {
+      seen = []
+      const { stdout, stderr, exit } = await runWith(impostorAPI, ...(args as [string, ...string[]]))
+      // The impostor saw no request at all: the connection ends at its key.
+      expect({ args, seen }).toEqual({ args, seen: [] })
+      expect({ args, exit: exit !== 0 }).toEqual({ args, exit: true })
+      expect(stdout + stderr).not.toContain(secret)
+      expect(stderr).toContain('nothing was sent')
+    }
+  })
+
+  test('when verification fails, nothing is sent', async () => {
+    answers = provider
+    for (const args of [
+      ['provider.sh', 'set', 'google', 'id-1', secretFile()],
+      ['invite.sh'],
+      ['accounts.sh'],
+      ['handoff.sh', dir, dir],
+      ['sigstore-trust-root.sh', '--send'],
+    ]) {
+      seen = []
+      const { stderr, exit } = await runWith({ STUB_VERIFY_FAILS: '1' }, ...(args as [string, ...string[]]))
+      expect({ args, exit: exit !== 0 }).toEqual({ args, exit: true })
+      expect({ args, seen }).toEqual({ args, seen: [] })
+      expect(stderr).toContain('PCR0 does not match')
+      expect(stderr).toContain('Nothing was sent')
+    }
+  })
+
+  test('without the measurements to verify against, nothing is sent', async () => {
+    seen = []
+    const { stderr, exit } = await runWith({ PERMAILY_PCRS: '' }, 'invite.sh')
+    expect(exit).toBe(2)
+    expect(seen).toEqual([])
+    expect(stderr).toContain('PERMAILY_PCRS')
+  })
+
+  test('the verifier is asked about the enclave the requests go to, with the given measurements and CA', async () => {
+    answers = { 'GET /v1/admin/invitations': { status: 200, body: { invitations: [] } } }
+    rmSync(join(dir, 'verify-runs'), { force: true })
+    const { exit } = await run('invite.sh', 'list')
+    expect(exit).toBe(0)
+    expect(readFileSync(join(dir, 'verify-runs'), 'utf8')).toBe(
+      `-pcrs ${join(dir, 'pcrs.json')} -ca-file ${join(dir, 'ca.pem')} -json https://127.0.0.1:${enclave.port}\n`,
+    )
+  })
+
+  test('a plain http address is refused before anything is sent', async () => {
+    seen = []
+    const { exit } = await runWith({ PERMAILY_API: `http://127.0.0.1:${enclave.port}` }, 'accounts.sh')
+    expect(exit).toBe(2)
+    expect(seen).toEqual([])
+  })
+
+  test('a redirect is not followed', async () => {
+    answers = {
+      'GET /v1/admin/invitations': { status: 307, body: { error: { message: 'moved' } } },
+    }
+    seen = []
+    const { exit } = await run('invite.sh', 'list')
+    expect(exit).toBe(1)
+    expect(seen.length).toBe(1)
+  })
+
+  test('what an answer holds besides its fixed fields is never printed', async () => {
+    // An answer that echoes the request back, with no error.message, and one that is not JSON.
+    for (const body of [{ echo: secret, token: 'test-token' }, `${secret} test-token`]) {
+      answers = { 'PUT /v1/admin/providers/google': { status: 400, body } }
+      const out = await run('provider.sh', 'set', 'google', 'id-1', secretFile())
+      expect(out.exit).toBe(1)
+      expect(out.stdout + out.stderr).not.toContain(secret)
+      expect(out.stdout + out.stderr).not.toContain('test-token')
+      expect(out.stderr).toContain('HTTP 400')
+      answers = { 'GET /v1/admin/accounts': { status: 500, body } }
+      const listed = await run('accounts.sh')
+      expect(listed.exit).toBe(1)
+      expect(listed.stdout + listed.stderr).not.toContain('test-token')
+    }
+    // error.message is a fixed field, and is printed without control characters.
+    answers = {
+      'PUT /v1/admin/providers/google': {
+        status: 400,
+        body: { error: { code: 'bad_request', message: 'client_id is required\u001b[2J' } },
+      },
+    }
+    const out = await run('provider.sh', 'set', 'google', 'id-1', secretFile())
+    expect(out.stderr).toContain('client_id is required')
+    expect(out.stderr).not.toContain('\u001b')
   })
 })
