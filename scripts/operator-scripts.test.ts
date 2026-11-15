@@ -1141,6 +1141,10 @@ describe('the verifier is the running release', () => {
     writeFileSync(
       join(bin, 'go'),
       `#!/usr/bin/env bash
+# What go would read besides its arguments, and its arguments.
+printf 'GOFLAGS=%s GOWORK=%s GOENV=%s GOTOOLCHAIN=%s CGO_ENABLED=%s GOEXPERIMENT=%s GOOS=%s GOPROXY=%s ARGS=%s\\n' \\
+  "\${GOFLAGS-unset}" "\${GOWORK-unset}" "\${GOENV-unset}" "\${GOTOOLCHAIN-unset}" "\${CGO_ENABLED-unset}" \\
+  "\${GOEXPERIMENT-unset}" "\${GOOS-unset}" "\${GOPROXY-unset}" "$*" >> '${bin}/go-env'
 src=. out=
 while [[ $# -gt 0 ]]; do
   case $1 in -C) src=$2; shift ;; -o) out=$2; shift ;; esac
@@ -1149,9 +1153,16 @@ done
 # STUB_GO_INTERRUPT: the run is stopped (SIGTERM) while it builds.
 if [[ -n \${STUB_GO_INTERRUPT:-} ]]; then kill -TERM $PPID; exit 0; fi
 # Source that is not a release's: a verifier that says yes, with the key it names, and leaves a mark.
-if [[ -f $src/cmd/permaily-verify/hostile ]]; then
+key=
+[[ ! -f $src/cmd/permaily-verify/hostile ]] || key=$(cat "$src/cmd/permaily-verify/hostile")
+# GOFLAGS=-overlay=<file>, as go reads it: the file it maps cmd/permaily-verify/hostile to is compiled in.
+for flag in \${GOFLAGS:-}; do
+  case $flag in
+    -overlay=*) o=$(jq -r '.Replace["cmd/permaily-verify/hostile"] // empty' "\${flag#-overlay=}"); [[ -z $o ]] || key=$(cat "$o") ;;
+  esac
+done
+if [[ -n $key ]]; then
   printf '%s hostile\\n' "$(cd "$src" && pwd)" >> '${bin}/go-builds'
-  key=$(cat "$src/cmd/permaily-verify/hostile")
   cat > "$out" <<HOSTILE
 #!/usr/bin/env bash
 touch '${bin}/hostile-ran'
@@ -1168,6 +1179,16 @@ own=$own
 printf '%s %s\\\\n' "\\$own" "\\$*" >> '${bin}/verifications'
 url=\\\${!#}
 if [[ \\$1 == -trust-update ]]; then echo '{"ok":true,"newer":false}'; exit 0; fi
+# -release downloads the release's pcrs.json again; STUB_SWAPPED_KEY: it was replaced since, by
+# the measurements of an image whose attested key is that one.
+if [[ \\$1 == -release ]]; then
+  echo "\\$2" >> '${bin}/downloads'
+  if [[ -n \\$STUB_SWAPPED_KEY ]]; then
+    jq -n --arg url "\\$url" --arg spki "\\$STUB_SWAPPED_KEY" '{ok: true, hosts: [{url: \\$url, ok: true, tls_spki_sha256: \\$spki}]}'
+    exit 0
+  fi
+fi
+if [[ \\$1 == -pcrs ]]; then cat "\\$2" >> '${bin}/pcrs-read'; echo >> '${bin}/pcrs-read'; fi
 # STUB_SIGSTORE: the enclave's targets, and "updated" when it was given a newer trust root.
 read -r targets updated <<< "\\$STUB_SIGSTORE"
 if [[ -z \\$updated ]] && (( targets != own )) || [[ -n \\$updated ]] && (( targets <= own )); then
@@ -1225,6 +1246,12 @@ exec '${curl}' "$@"
 `,
     )
     for (const f of ['go', 'gh', 'curl']) chmodSync(join(bin, f), 0o755)
+    // The operator's git configuration sends github.com/permaily-org/permaily to canon.
+    mkdirSync(join(bin, 'home'))
+    writeFileSync(
+      join(bin, 'home', '.gitconfig'),
+      `[url "${canon}"]\n\tinsteadOf = https://github.com/permaily-org/permaily\n`,
+    )
   })
 
   afterAll(() => {
@@ -1259,14 +1286,20 @@ exec '${curl}' "$@"
       },
       'GET /v1/admin/invitations': { status: 200, body: { invitations: [] } },
     }
-    for (const f of ['go-builds', 'verifications', 'gh-runs', 'hostile-ran'])
+    for (const f of [
+      'go-builds',
+      'go-env',
+      'verifications',
+      'gh-runs',
+      'hostile-ran',
+      'downloads',
+      'pcrs-read',
+    ])
       rmSync(join(bin, f), { force: true })
     return {
       PATH: `${bin}:${process.env.PATH}`,
       PERMAILY_VERIFY: '',
-      GIT_CONFIG_COUNT: '1',
-      GIT_CONFIG_KEY_0: `url.${canon}.insteadOf`,
-      GIT_CONFIG_VALUE_0: 'https://github.com/permaily-org/permaily',
+      HOME: join(bin, 'home'),
     }
   }
   const lines = (name: string) =>
@@ -1339,7 +1372,9 @@ exec '${curl}' "$@"
     )
     expect(out.exit).toBe(0)
     expect(lines('go-builds').map((b) => b.split(' ')[1])).toEqual(['12'])
-    expect(lines('verifications')[0]).toStartWith('12 -release v0.1.0 ')
+    // The release's pcrs.json whose provenance was verified, given as a file: never -release.
+    expect(lines('verifications')[0]).toMatch(/^12 -pcrs \S+\/release\/pcrs\.json /)
+    expect(lines('pcrs-read')).toEqual(['{"PCR0":"v0.1.0"}'])
     // From the commit the release's build provenance names, checked against the repository, the workflow and main.
     expect(out.stderr).toContain(`permaily-verify built from commit ${v010}`)
     expect(lines('gh-runs').find((r) => r.startsWith('attestation verify '))).toEndWith(
@@ -1365,6 +1400,64 @@ exec '${curl}' "$@"
     )
     expect(out.exit).toBe(0)
     expect(lines('go-builds')).toEqual([])
+    // An explicit verifier with PERMAILY_RELEASE alone is given the authenticated pcrs.json too.
+    env = flow()
+    rmSync(join(dir, 'verify-runs'), { force: true })
+    out = await runHow(
+      { scripts: join(repo, 'scripts') },
+      {
+        ...env,
+        PERMAILY_RELEASE: 'v0.1.0',
+        PERMAILY_PCRS: '',
+        PERMAILY_VERIFY: join(dir, 'permaily-verify'),
+      },
+      'invite.sh',
+      'list',
+    )
+    expect(out.exit).toBe(0)
+    expect(lines('go-builds')).toEqual([])
+    expect(lines('gh-runs').filter((r) => r.startsWith('attestation verify '))).toHaveLength(1)
+    expect(readFileSync(join(dir, 'verify-runs'), 'utf8')).toMatch(
+      /^-pcrs \S+\/release\/pcrs\.json /,
+    )
+  })
+
+  test('the pcrs.json whose provenance was verified is the one the verifier checks: it is not downloaded again', async () => {
+    // Between the download that was authenticated and a second one, the release's
+    // pcrs.json is replaced by the measurements of an image whose key is the impostor's.
+    const impostorKey = createHash('sha256')
+      .update(
+        createPublicKey(readFileSync(join(dir, 'b.key'))).export({ type: 'spki', format: 'der' }),
+      )
+      .digest('hex')
+    const secret = join(dir, 'pcrs-secret')
+    writeFileSync(secret, 'provider-secret-of-the-pcrs-test')
+    seen = []
+    const out = await runHow(
+      { scripts: join(repo, 'scripts') },
+      {
+        ...flow(),
+        PERMAILY_RELEASE: 'v0.1.0',
+        PERMAILY_PCRS: '',
+        PERMAILY_API: `https://127.0.0.1:${impostor.port}`,
+        STUB_SIGSTORE: '12',
+        STUB_SWAPPED_KEY: impostorKey,
+      },
+      'provider.sh',
+      'set',
+      'google',
+      'id-1',
+      secret,
+    )
+    expect(out.exit).not.toBe(0)
+    expect(seen).toEqual([])
+    expect(lines('downloads')).toEqual([])
+    expect(lines('gh-runs').filter((r) => r.startsWith('release download '))).toHaveLength(1)
+    expect(lines('verifications').find((r) => r.includes(' -json '))).toMatch(
+      /^12 -pcrs \S+\/release\/pcrs\.json /,
+    )
+    expect(lines('pcrs-read')).toEqual(['{"PCR0":"v0.1.0"}'])
+    expect(out.stderr).toContain('TLS key other than the one attested')
   })
 
   test('PERMAILY_PCRS alone builds from the checkout, and says it must be the running release', async () => {
@@ -1445,7 +1538,7 @@ exec '${curl}' "$@"
       git('push', '-q', '-f', fork, `${tag}:refs/tags/v0.3.0`)
       git('remote', 'add', 'origin', fork)
     }
-    const send = async () => {
+    const send = async (extra: Record<string, string> = {}) => {
       seen = []
       const secret = join(dir, 'tag-secret')
       writeFileSync(secret, 'provider-secret-of-the-tag-tests')
@@ -1456,6 +1549,7 @@ exec '${curl}' "$@"
           PERMAILY_RELEASE: 'v0.3.0',
           PERMAILY_API: `https://127.0.0.1:${impostor.port}`,
           STUB_SIGSTORE: '12',
+          ...extra,
         },
         'provider.sh',
         'set',
@@ -1526,11 +1620,105 @@ exec '${curl}' "$@"
         nothingOfIt(out)
         expect(lines('go-builds').map((b) => b.split(' ')[1])).toEqual(['12'])
         expect(out.stderr).toContain(`permaily-verify built from commit ${released}`)
-        expect(git('cat-file', '-t', released).trim()).toBe('commit')
+        // Fetched into a private repository: nothing is written to this one.
+        expect(() => git('cat-file', '-e', `${released}^{commit}`)).toThrow()
         // No tag is written here: the next run reads the provenance again.
         expect(() => git('rev-parse', '-q', '--verify', 'refs/tags/v0.3.0')).toThrow()
       } finally {
         rmSync(clone, { recursive: true, force: true })
+        cleanup()
+      }
+    })
+
+    test("a replacement ref here for the attested commit does not change the source that is built", async () => {
+      try {
+        const bad = hostile()
+        attest('v0.3.0', v010)
+        git('push', '-q', '-f', canon, `${v010}:refs/tags/v0.3.0`)
+        // git replace: here, the attested commit's id now reads as the hostile commit's tree.
+        git('replace', v010, bad)
+        expect(git('rev-parse', `${v010}^{tree}`).trim()).toBe(
+          git('rev-parse', `${bad}^{tree}`).trim(),
+        )
+        const out = await send()
+        nothingOfIt(out)
+        expect(lines('go-builds').map((b) => b.split(' ')[1])).toEqual(['12'])
+        expect(out.stderr).toContain(`permaily-verify built from commit ${v010}`)
+        expect(out.stderr).toContain('TLS key other than the one attested')
+      } finally {
+        try {
+          git('replace', '-d', v010)
+        } catch {}
+        cleanup()
+      }
+    })
+
+    test('no GIT_* variable reaches the git that fetches and checks out the source', async () => {
+      // The release's commit is only at the repository; the environment points git at
+      // this repository's object store and at an index file of its own.
+      const clone = join(repo, '..', `${repo.split('/').pop()}-clone`)
+      const index = join(dir, 'foreign-index')
+      try {
+        execFileSync('git', ['clone', '-q', canon, clone])
+        gitIn(clone, 'checkout', '-q', 'v0.1.0')
+        writeFileSync(join(clone, 'released'), 'v0.3.0\n')
+        gitIn(clone, 'add', '.')
+        gitIn(clone, 'commit', '-q', '-m', 'v0.3.0')
+        const released = gitIn(clone, 'rev-parse', 'HEAD').trim()
+        gitIn(clone, 'push', '-q', 'origin', 'HEAD:refs/tags/v0.3.0')
+        attest('v0.3.0', released)
+        const out = await send({
+          GIT_OBJECT_DIRECTORY: join(repo, '.git', 'objects'),
+          GIT_ALTERNATE_OBJECT_DIRECTORIES: join(repo, '.git', 'objects'),
+          GIT_INDEX_FILE: index,
+          GIT_NO_REPLACE_OBJECTS: '',
+        })
+        nothingOfIt(out)
+        expect(lines('go-builds').map((b) => b.split(' ')[1])).toEqual(['12'])
+        expect(out.stderr).toContain(`permaily-verify built from commit ${released}`)
+        expect(existsSync(index)).toBe(false)
+        expect(() => git('cat-file', '-e', `${released}^{commit}`)).toThrow()
+      } finally {
+        rmSync(clone, { recursive: true, force: true })
+        rmSync(index, { force: true })
+        cleanup()
+      }
+    })
+
+    test('GOFLAGS, GOWORK, GOENV and the rest of the Go environment do not change what is built', async () => {
+      // An overlay maps a file of the build to the impostor's verifier, from GOFLAGS and from a go.env file.
+      const key = join(dir, 'overlay-key')
+      const overlay = join(dir, 'overlay.json')
+      const goenv = join(dir, 'go.env')
+      writeFileSync(key, impostorKey)
+      writeFileSync(overlay, JSON.stringify({ Replace: { 'cmd/permaily-verify/hostile': key } }))
+      writeFileSync(goenv, `GOFLAGS=-overlay=${overlay}\n`)
+      try {
+        attest('v0.3.0', v010)
+        git('push', '-q', '-f', canon, `${v010}:refs/tags/v0.3.0`)
+        const out = await send({
+          GOFLAGS: `-overlay=${overlay} -modfile=${join(dir, 'go.mod')} -toolexec=/bin/false`,
+          GOWORK: join(dir, 'go.work'),
+          GOENV: goenv,
+          GOTOOLCHAIN: 'local',
+          CGO_ENABLED: '1',
+          GOEXPERIMENT: 'nocoverageredesign',
+          GOOS: 'plan9',
+          GOPROXY: 'https://proxy.example',
+        })
+        nothingOfIt(out)
+        expect(lines('go-builds').map((b) => b.split(' ')[1])).toEqual(['12'])
+        const env = lines('go-env')
+        expect(env.length).toBe(1)
+        // The module's toolchain policy (auto: at least go.mod's toolchain line), no cgo
+        // (as the release builds it), no workspace, no go.env file, no GOFLAGS; GOPROXY
+        // stays the operator's, as go.sum checks every module.
+        expect(env[0]).toStartWith(
+          'GOFLAGS=unset GOWORK=off GOENV=off GOTOOLCHAIN=auto CGO_ENABLED=0 GOEXPERIMENT=unset GOOS=unset GOPROXY=https://proxy.example ARGS=build ',
+        )
+        expect(env[0]).toContain(' -trimpath ')
+        expect(env[0]).not.toMatch(/overlay|modfile|toolexec/)
+      } finally {
         cleanup()
       }
     })
