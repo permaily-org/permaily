@@ -520,6 +520,12 @@ func TestA24DeleteWritesTheMarkFirst(t *testing.T) {
 	if again.Version <= first.Version || !again.UpdatedAt.Equal(clock) {
 		t.Fatalf("the mark was not written again: %+v then %+v", first, again)
 	}
+	// Each writing of a mark is its own (the review of pull request 116, its
+	// second finding): a sweep that read an earlier one, deleting the mark
+	// as it read it, cannot take this one, even at the same version.
+	if bytes.Equal(again.Value, first.Value) {
+		t.Fatalf("the mark written again holds what the first held: %s", again.Value)
+	}
 }
 
 // A24: a deletion fails as its mark's write or read fails, before anything
@@ -665,13 +671,16 @@ func TestA23WhatCannotBeSealedIsNotKept(t *testing.T) {
 	}
 }
 
-// A24: the mark of a deletion tried again, when the sweep deleted it in
-// between, is written anew; and a mark that cannot be written again fails
-// the deletion before anything of the message is deleted.
+// A24: the mark of a deletion tried again, when the sweep deleted it before
+// the deletion read it, or after (the review of pull request 116, its first
+// finding: the write at the version read then fails), is written anew; a
+// mark that cannot be written again, or that changes every time it is
+// written again, fails the deletion before anything of the message is
+// deleted, after a bounded number of tries.
 func TestA24TheMarkWrittenAgain(t *testing.T) {
 	ctx := context.Background()
 	b := qBox(t)
-	for _, c := range []string{"deleted in between", "write fails"} {
+	for _, c := range []string{"deleted in between", "deleted after its reread", "write fails", "always changed"} {
 		st := newKStore()
 		id := seedOne(t, st, b, 1, false)
 		r := inbox.NewReader(st)
@@ -693,10 +702,26 @@ func TestA24TheMarkWrittenAgain(t *testing.T) {
 				if err := st.DeleteEntry(ctx, inbox.GonePartition, mark); err != nil {
 					t.Error(err)
 				}
+			case c == "deleted after its reread" && step == store.StepEntry && partition == inbox.GonePartition:
+				if writes++; writes == 2 { // the write at the version read
+					if err := st.DeleteEntry(ctx, inbox.GonePartition, mark); err != nil {
+						t.Error(err)
+					}
+				}
 			case c == "write fails" && step == store.StepEntry && partition == inbox.GonePartition:
 				if writes++; writes == 2 {
 					return errQ
 				}
+			case c == "always changed" && step == store.StepEntry && partition == inbox.GonePartition:
+				// Another writer changes the mark before each write.
+				writes++
+				cur, err := st.GetEntry(ctx, inbox.GonePartition, mark)
+				if err != nil {
+					t.Error(err)
+					return nil
+				}
+				cur.Version++
+				st.SetEntry(*cur)
 			}
 			return nil
 		}
@@ -710,9 +735,23 @@ func TestA24TheMarkWrittenAgain(t *testing.T) {
 			if _, err := st.GetEntry(ctx, inbox.GonePartition, mark); err != nil {
 				t.Fatalf("%s: no mark: %v", c, err)
 			}
-		case "write fails":
-			if !errors.Is(err, errQ) {
-				t.Fatalf("%s: %v", c, err)
+		case "deleted after its reread":
+			if n != 1 || err != nil {
+				t.Fatalf("%s: %d, %v", c, n, err)
+			}
+			if _, err := st.GetEntry(ctx, inbox.GonePartition, mark); err != nil {
+				t.Fatalf("%s: the message was deleted with no mark: %v", c, err)
+			}
+		case "write fails", "always changed":
+			want := errQ
+			if c == "always changed" {
+				want = store.ErrConflict
+				if writes > 16 {
+					t.Fatalf("%s: %d writes, not a bounded number", c, writes)
+				}
+			}
+			if !errors.Is(err, want) || n != 0 {
+				t.Fatalf("%s: %d, %v", c, n, err)
 			}
 			if _, err := st.Item(ctx, b.MailboxID, id); err != nil {
 				t.Fatalf("%s: the message went: %v", c, err)

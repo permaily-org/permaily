@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"math/rand/v2"
 	"slices"
@@ -474,19 +475,20 @@ func TestA26TheBoundsOfAPageWithAModel(t *testing.T) {
 		if _, err := mt.Match(asking(failing), b, fs, "", 100); !errors.Is(err, errQ) {
 			t.Fatalf("a failed ask: %v", err)
 		}
-		// The message's own deadline is not the request's: unknown, and the
-		// page goes on.
+		// The message's own deadline running out, not the request's: unknown,
+		// and the page goes on (the review of pull request 116, its third
+		// finding: a real deadline of the message, never one made up).
 		late := &playedAsker{onAsk: func(ctx context.Context, q *inbox.Question) error {
-			if dl, ok := ctx.Deadline(); !ok || time.Until(dl) > decide.MessageDeadline {
-				t.Errorf("no message deadline: %v", dl)
-			}
 			if q.MessageID == qMsgID(0) {
-				return context.DeadlineExceeded
+				<-ctx.Done()
+				return fmt.Errorf("the model: %w", ctx.Err())
 			}
 			return nil
 		}}
-		page, err := mt.Match(asking(late), b, fs, "", 100)
-		if err != nil || slices.Compare(page.Unknown, []string{qMsgID(0)}) != 0 || len(page.Messages) != 1 {
+		parent := asking(late)
+		quick := inbox.NewMatcherAskWithin(st, query.Eval, inbox.MatchBounds{}, 20*time.Millisecond)
+		page, err := quick.Match(parent, b, fs, "", 100)
+		if err != nil || slices.Compare(page.Unknown, []string{qMsgID(0)}) != 0 || len(page.Messages) != 1 || parent.Err() != nil {
 			t.Fatalf("%+v, %v", page, err)
 		}
 		// An Asker that stops the first message of a page would stop every
@@ -504,6 +506,67 @@ func TestA26TheBoundsOfAPageWithAModel(t *testing.T) {
 }
 
 func qMsgID(n int) string { q := qMsg{at: qAt(n), n: n}; return q.id() }
+
+// A26 (the review of pull request 116, its third finding): only the asked
+// message's own deadline, run out while the request's is not, makes it
+// unknown. A storage call that fails with its own context.DeadlineExceeded
+// while the message's deadline has not run out fails the page, whether the
+// Asker's Question.Text met it or the Asker's own storage did.
+func TestA26AStorageTimeoutIsNotTheMessagesDeadline(t *testing.T) {
+	storageTimeout := fmt.Errorf("store: read entry: %w", context.DeadlineExceeded)
+	fs := []*query.Canonical{formula(group(messageAbout("invoices")))}
+	t.Run("reading the text", func(t *testing.T) {
+		st := newQStore()
+		b := qBox(t)
+		seedQ(t, st, b, &qMsg{at: qAt(0), n: 0, subject: "s", body: "short"})
+		seedQ(t, st, b, &qMsg{at: qAt(1), n: 1, subject: "s", body: "short"})
+		st.onEntry = func(string) error { return storageTimeout }
+		a := &playedAsker{onAsk: func(ctx context.Context, _ *inbox.Question) error {
+			if dl, ok := ctx.Deadline(); !ok || time.Until(dl) > decide.MessageDeadline {
+				t.Errorf("no message deadline: %v", dl)
+			}
+			if ctx.Err() != nil {
+				t.Errorf("the message's deadline ran out: %v", ctx.Err())
+			}
+			return nil
+		}}
+		page, err := inbox.NewMatcher(st, query.Eval).Match(asking(a), b, fs, "", 100)
+		if !errors.Is(err, context.DeadlineExceeded) || page != nil {
+			t.Fatalf("a storage timeout listed the message instead of failing the page: page=%+v err=%v", page, err)
+		}
+	})
+	t.Run("the Asker's own storage", func(t *testing.T) {
+		st := newQStore()
+		b := qBox(t)
+		seedQ(t, st, b, &qMsg{at: qAt(0), n: 0, subject: "s"})
+		seedQ(t, st, b, &qMsg{at: qAt(1), n: 1, subject: "s"})
+		a := askerFunc(func(ctx context.Context, _ *inbox.Question) (*inbox.Asked, error) {
+			if ctx.Err() != nil {
+				t.Errorf("the message's deadline ran out: %v", ctx.Err())
+			}
+			return nil, storageTimeout
+		})
+		page, err := inbox.NewMatcher(st, query.Eval).Match(asking(a), b, []*query.Canonical{formula(group(subjectAbout("invoices")))}, "", 100)
+		if !errors.Is(err, context.DeadlineExceeded) || page != nil {
+			t.Fatalf("a storage timeout listed the message instead of failing the page: page=%+v err=%v", page, err)
+		}
+	})
+	t.Run("the request's deadline", func(t *testing.T) {
+		st := newQStore()
+		b := qBox(t)
+		seedQ(t, st, b, &qMsg{at: qAt(0), n: 0, subject: "s"})
+		a := askerFunc(func(ctx context.Context, _ *inbox.Question) (*inbox.Asked, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+		parent, cancel := context.WithTimeout(asking(a), 30*time.Millisecond)
+		defer cancel()
+		page, err := inbox.NewMatcher(st, query.Eval).Match(parent, b, []*query.Canonical{formula(group(subjectAbout("invoices")))}, "", 100)
+		if page != nil || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("page=%+v err=%v", page, err)
+		}
+	})
+}
 
 // A26: what the page says: needs_model for held atoms, off before limit
 // before asked, and a failure listed as unknown.

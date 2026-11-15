@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -322,4 +323,163 @@ func TestA41AMarkTakesNothingButKeptAnswers(t *testing.T) {
 	if err := e.Sweep(ctx); !errors.Is(err, errSweepTest) {
 		t.Fatalf("Sweep = %v", err)
 	}
+}
+
+// interruptedDelete is a deletion whose raw deletion failed after its mark:
+// the message's item and the mark are both still there, and SweepGrace has
+// passed since the mark was written.
+func (w *world) interruptedDelete(b inbox.Box, id string) inbox.Reader {
+	w.t.Helper()
+	r := inbox.NewReaderAt(w.mem, w.clock.now)
+	w.setInterrupt(func(_ context.Context, step store.Step, _, _ string) error {
+		if step == store.StepDeleteRaw {
+			return errStopped
+		}
+		return nil
+	})
+	if _, err := r.Delete(ctx, b, []string{id}); !errors.Is(err, errStopped) {
+		w.t.Fatal(err)
+	}
+	w.setInterrupt(nil)
+	w.clock.add(mailboxes.SweepGrace)
+	if _, err := w.mem.Item(ctx, b.MailboxID, id); err != nil {
+		w.t.Fatal(err)
+	}
+	return r
+}
+
+// keptAfterTheDeletion is the Keep of a request that read the message
+// before the deletion that just ended and waited on the model: it must find
+// a mark, and leave no decision.
+func (w *world) keptAfterTheDeletion(b inbox.Box, id string) {
+	w.t.Helper()
+	d, err := inbox.NewKeptStore(w.mem).Keep(ctx, b, id, start.AddDate(0, 0, 30), decisionsFor("invoices"))
+	if !errors.Is(err, inbox.ErrGone) || d != nil || w.decisions(b.MailboxID) != 0 {
+		w.t.Fatalf("a late Keep kept answers of a deleted message: err=%v returned=%v decisions=%d marks=%d", err, d != nil, w.decisions(b.MailboxID), len(w.marks()))
+	}
+}
+
+// A24 and A41 (the review of pull request 116, its first finding): a
+// deletion tried again reads the mark of the first, the sweep then deletes
+// that mark (its grace passed) before the deletion writes it again at the
+// version read: the deletion writes it anew before it deletes the message,
+// and a Keep that read the message before finds it.
+func TestA41AMarkSweptAfterTheRetrysReadIsWrittenAnew(t *testing.T) {
+	w := newWorld(t)
+	e := w.enclave()
+	b := boxOf(t, "mbx_"+strings.Repeat("a", 26))
+	id := w.seed(b, 1)
+	r := w.interruptedDelete(b, id)
+	writes := 0
+	w.setInterrupt(func(_ context.Context, step store.Step, part, _ string) error {
+		if step == store.StepEntry && part == inbox.GonePartition {
+			if writes++; writes == 2 { // the write at the version read
+				w.setInterrupt(nil)
+				if err := e.Sweep(ctx); err != nil {
+					t.Error(err)
+				}
+				if n := len(w.marks()); n != 0 {
+					t.Errorf("the sweep left %d marks", n)
+				}
+			}
+		}
+		return nil
+	})
+	n, err := r.Delete(ctx, b, []string{id})
+	w.setInterrupt(nil)
+	if err != nil || n != 1 {
+		t.Fatalf("the deletion tried again = %d, %v", n, err)
+	}
+	w.keptAfterTheDeletion(b, id)
+	mark, ok := w.marks()[inbox.GoneKey(b.MailboxID, id)]
+	if !ok || !mark.UpdatedAt.Equal(w.clock.now()) {
+		t.Fatalf("no mark of the deletion: %+v", mark)
+	}
+}
+
+// A41 (the review of pull request 116, its second finding): two sweeps and
+// a deletion tried again. Sweep A reads the old mark and deletes its dec#;
+// before A deletes the mark, sweep B deletes it, and the deletion tried
+// again writes a new one, with the same version, and deletes the message.
+// A's deletion of the mark as it read it leaves the new one, whose grace has
+// not passed; a Keep that read the message before finds it, and a sweep
+// after its grace deletes it.
+func TestA41AnOldSweepLeavesANewMark(t *testing.T) {
+	w := newWorld(t)
+	a, other := w.enclave(), w.enclave()
+	b := boxOf(t, "mbx_"+strings.Repeat("b", 26))
+	id := w.seed(b, 1)
+	r := w.interruptedDelete(b, id)
+	key := inbox.GoneKey(b.MailboxID, id)
+	old := w.marks()[key]
+	w.setInterrupt(func(_ context.Context, step store.Step, part, _ string) error {
+		if step == store.StepDeleteEntry && part == inbox.GonePartition {
+			w.setInterrupt(nil)
+			if err := other.Sweep(ctx); err != nil {
+				t.Error(err)
+			}
+			if n, err := r.Delete(ctx, b, []string{id}); err != nil || n != 1 {
+				t.Errorf("the deletion tried again = %d, %v", n, err)
+			}
+			if mark := w.marks()[key]; mark.Version != old.Version || !mark.UpdatedAt.Equal(w.clock.now()) {
+				t.Errorf("the schedule needs a new mark at the old version: %+v, old %+v", mark, old)
+			}
+		}
+		return nil
+	})
+	if err := a.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	w.setInterrupt(nil)
+	w.keptAfterTheDeletion(b, id)
+	if mark, ok := w.marks()[key]; !ok || !mark.UpdatedAt.Equal(w.clock.now()) {
+		t.Fatalf("an old sweep deleted the new mark: %+v", mark)
+	}
+	w.clock.add(mailboxes.SweepGrace)
+	sweepUntil(t, a, 1, func() bool { return len(w.marks()) == 0 })
+}
+
+// A41 (the review of pull request 116's control): the cursor over the marks
+// lives as long as its Service, through a collection, and a new Service
+// starts again from the first mark and still reaches every one.
+func TestA41TheCursorSurvivesACollectionAndARestart(t *testing.T) {
+	w := newWorld(t)
+	e := w.enclave()
+	young, old := boxOf(t, "mbx_"+strings.Repeat("a", 26)), boxOf(t, "mbx_"+strings.Repeat("z", 26))
+	w.keepFor(young, 0, 100)
+	w.keepFor(old, 0, 150)
+	for _, b := range []inbox.Box{young, old} {
+		n, at := 100, start
+		if b.MailboxID == old.MailboxID {
+			n, at = 150, start.Add(-mailboxes.SweepGrace)
+		}
+		for i := range n {
+			w.mem.SetEntry(store.Entry{Partition: inbox.GonePartition, Key: inbox.GoneKey(b.MailboxID, msgID(i)), Value: []byte(`{"gone":true}`), Version: 1, ExpiresAt: start.AddDate(0, 0, 30), UpdatedAt: at})
+		}
+	}
+	if err := e.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	runtime.GC()
+	if err := e.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.decisions(old.MailboxID); got != 50 {
+		t.Fatalf("a collection lost the cursor: %d old decisions left", got)
+	}
+	e = w.enclave()
+	runtime.GC()
+	if err := e.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.decisions(old.MailboxID); got != 50 {
+		t.Fatalf("a new Service did not start from the first mark: %d old decisions left", got)
+	}
+	if err := e.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.decisions(old.MailboxID); got != 0 {
+		t.Fatalf("a new Service left marks: %d old decisions left", got)
+	}
+	runtime.KeepAlive(e)
 }
