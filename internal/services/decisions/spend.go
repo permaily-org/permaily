@@ -82,17 +82,23 @@ type guard struct {
 	checkedMonth string
 	// forkedMonth is a month whose record is forked: nothing new is asked in
 	// it. unreadableMonth is one whose record was last found lost or not
-	// opening. limitMonth is one a grant did not fit in.
-	forkedMonth, unreadableMonth, limitMonth string
-	// provider and refused are the provider's answers: its limit reached,
-	// the key refused (refusedFP is that key's fingerprint, so a new key is
-	// tried at once). probeAt is when the last probe was let through. gen
-	// counts the stops: only the probe admitted under the current one
-	// clears it, never an answer to an attempt reserved before it.
-	provider, refused bool
-	refusedFP         string
-	probeAt           time.Time
-	gen               uint64
+	// opening. limitStop is one a grant did not fit in, and limitMonth the
+	// same once its alarm is in the record.
+	forkedMonth, unreadableMonth, limitStop, limitMonth string
+	// providerStop and refusedStop are the provider's answers, which stop
+	// attempts at once: its limit reached, the key refused (refusedFP is
+	// that key's fingerprint, so a new key is tried at once). provider and
+	// refused are the same answers as /status says them: only once their
+	// alarm is in the record (ADR 0028, "The alarm"), so no observation is
+	// published without its alarm. probeAt is when the last probe was let
+	// through. gen counts the stops: only the probe admitted under the
+	// current one clears it, never an answer to an attempt reserved before
+	// it.
+	providerStop, refusedStop bool
+	provider, refused         bool
+	refusedFP                 string
+	probeAt                   time.Time
+	gen                       uint64
 	// shares is what each account reserved by day, in this enclave.
 	shares map[string]map[string]int64
 }
@@ -151,14 +157,14 @@ func (s *Service) held(fp string) hold {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := s.now()
-	if g.refused && fp != g.refusedFP {
-		g.refused = false // a new key: try it
+	if g.refusedStop && fp != g.refusedFP {
+		g.refusedStop, g.refused = false, false // a new key: try it
 	}
 	probeDue := now.Sub(g.probeAt) >= probeEvery || now.Before(g.probeAt)
 	switch {
-	case g.refused && !probeDue:
+	case g.refusedStop && !probeDue:
 		return holdOff
-	case g.provider && !probeDue:
+	case g.providerStop && !probeDue:
 		return holdLimit
 	case g.forkedMonth == monthOf(now):
 		return holdLimit
@@ -175,13 +181,13 @@ func (s *Service) reserve(ctx context.Context, est int64, account, fp string) (*
 	defer g.mu.Unlock()
 	now := s.now()
 	day, month := dayOf(now), monthOf(now)
-	if g.refused && fp != g.refusedFP {
-		g.refused = false
+	if g.refusedStop && fp != g.refusedFP {
+		g.refusedStop, g.refused = false, false
 	}
 	probe := false
-	if g.refused || g.provider {
+	if g.refusedStop || g.providerStop {
 		if now.Sub(g.probeAt) < probeEvery && !now.Before(g.probeAt) {
-			if g.refused {
+			if g.refusedStop {
 				return nil, holdOff
 			}
 			return nil, holdLimit
@@ -299,14 +305,14 @@ func (s *Service) makeGrant(ctx context.Context, month, day string, blocks int64
 			doc = spendDoc{V: 1, Month: month}
 		}
 		if (doc.total()+blocks)*block > s.cfg.Limits.Month {
-			// The month's limit: its alarm first, then the guard's state.
+			// The month's limit stops the grant at once; its alarm first,
+			// then the guard's state as /status says it.
+			g.limitStop = month
 			if err := s.addAlarm(ctx, AlarmMonthLimit, day, ""); err != nil {
 				s.logKind(slog.LevelWarn, "decisions: an alarm could not be added; it is kept to add again", string(AlarmMonthLimit))
+				return nil, holdLimit
 			}
-			if g.limitMonth != month {
-				s.logKind(slog.LevelWarn, "decisions: the month's limit is reached", "month_limit")
-			}
-			g.limitMonth = month
+			s.publishLimit(month)
 			return nil, holdLimit
 		}
 		if (doc.onDay(day)+blocks)*block > s.cfg.Limits.DayAlarm {
@@ -343,8 +349,8 @@ func (s *Service) makeGrant(ctx context.Context, month, day string, blocks int64
 		gr := &grant{id: id, month: month, day: day, size: blocks * block}
 		g.grants = append(g.grants, gr)
 		g.checkedAt, g.checkedMonth = s.now(), month
-		if g.limitMonth == month {
-			g.limitMonth = ""
+		if g.limitStop == month {
+			g.limitStop, g.limitMonth = "", ""
 		}
 		return gr, holdNone
 	}
@@ -360,7 +366,7 @@ func (s *Service) answered(r *reservation) {
 	g := &s.guard
 	g.mu.Lock()
 	if r.probe && r.gen == g.gen {
-		g.provider, g.refused = false, false
+		g.providerStop, g.refusedStop, g.provider, g.refused = false, false, false, false
 	}
 	g.mu.Unlock()
 }
@@ -375,31 +381,66 @@ func (s *Service) keyRefused(ctx context.Context, fp string) {
 	}
 	g := &s.guard
 	g.mu.Lock()
-	was := g.refused && g.refusedFP == fp
-	g.refused, g.refusedFP, g.probeAt = true, fp, s.now()
+	if g.refusedFP != fp {
+		g.refused = false
+	}
+	g.refusedStop, g.refusedFP, g.probeAt = true, fp, s.now()
 	g.gen++
 	g.mu.Unlock()
-	if !was {
-		s.logKind(slog.LevelError, "decisions: the provider refused the model's key", "key_refused")
-	}
 	if err := s.addAlarm(ctx, AlarmKeyRefused, dayOf(s.now()), ""); err != nil {
 		s.logKind(slog.LevelWarn, "decisions: an alarm could not be added; it is kept to add again", string(AlarmKeyRefused))
+		return
 	}
+	s.publish(AlarmKeyRefused, dayOf(s.now()))
 }
 
 // providerLimit notes that the provider said its own limit was reached.
 func (s *Service) providerLimit(ctx context.Context) {
 	g := &s.guard
 	g.mu.Lock()
-	was := g.provider
-	g.provider, g.probeAt = true, s.now()
+	g.providerStop, g.probeAt = true, s.now()
 	g.gen++
 	g.mu.Unlock()
-	if !was {
-		s.logKind(slog.LevelError, "decisions: the provider's limit was reached", "provider_limit")
-	}
 	if err := s.addAlarm(ctx, AlarmProviderLimit, dayOf(s.now()), ""); err != nil {
 		s.logKind(slog.LevelWarn, "decisions: an alarm could not be added; it is kept to add again", string(AlarmProviderLimit))
+		return
+	}
+	s.publish(AlarmProviderLimit, dayOf(s.now()))
+}
+
+// publish makes the guard's state that an alarm is about public, once the
+// alarm is in the record, while the guard still holds it: by keyRefused
+// and providerLimit after they added it, and by RunAlarms after it added
+// one they could not. g.mu is not held.
+func (s *Service) publish(kind AlarmKind, day string) {
+	g := &s.guard
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	switch kind {
+	case AlarmKeyRefused:
+		if g.refusedStop && !g.refused {
+			g.refused = true
+			s.logKind(slog.LevelError, "decisions: the provider refused the model's key", "key_refused")
+		}
+	case AlarmProviderLimit:
+		if g.providerStop && !g.provider {
+			g.provider = true
+			s.logKind(slog.LevelError, "decisions: the provider's limit was reached", "provider_limit")
+		}
+	case AlarmMonthLimit:
+		if len(day) >= len("2006-01") {
+			s.publishLimit(day[:len("2006-01")])
+		}
+	}
+}
+
+// publishLimit says on /status that a month's limit is reached, once its
+// alarm is in the record, when no grant fitted in it since. g.mu is held.
+func (s *Service) publishLimit(month string) {
+	g := &s.guard
+	if g.limitStop == month && g.limitMonth != month {
+		g.limitMonth = month
+		s.logKind(slog.LevelWarn, "decisions: the month's limit is reached", "month_limit")
 	}
 }
 

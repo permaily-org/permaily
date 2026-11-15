@@ -121,14 +121,21 @@ var errAlarms = errors.New("decisions: some alarms of the model were not sent")
 func (s *Service) RunAlarms(ctx context.Context) error {
 	s.alarmMu.Lock()
 	failed := false
+	var added []alarmEntry
 	for k, e := range s.alarmsPending {
 		if err := s.putAlarm(ctx, e); err != nil {
 			failed = true
 			continue
 		}
 		delete(s.alarmsPending, k)
+		added = append(added, e)
 	}
 	s.alarmMu.Unlock()
+	// What their causes observed is public now that the alarms are in.
+	for _, e := range added {
+		s.publish(e.Kind, e.Day)
+		s.publishStale(e)
+	}
 	doc, err := changeRecord(ctx, s, RecordAlarms, purposeAlarms, func(d *alarmsDoc, found bool) bool {
 		if found {
 			return false

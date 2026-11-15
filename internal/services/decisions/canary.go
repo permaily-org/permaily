@@ -109,6 +109,9 @@ type canaryRun struct {
 	// failedDay is the day this enclave's latest run did not complete, ""
 	// when it did.
 	failedDay string
+	// staleSeen says canary_failed is in the record for the stale state
+	// this enclave read: /status says stale only then.
+	staleSeen bool
 	// lease is the lease entry this enclave holds, and until when.
 	lease      *store.Entry
 	leaseUntil time.Time
@@ -200,9 +203,16 @@ func (s *Service) RunCanary(ctx context.Context) error {
 		return err
 	}
 	if doc.stale(now) {
+		// The alarm first, then the state as /status says it.
 		if err := s.addAlarm(ctx, AlarmCanaryFailed, today, s.canary.Baseline); err != nil {
 			s.logKind(slog.LevelWarn, "decisions: an alarm could not be added; it is kept to add again", string(AlarmCanaryFailed))
+		} else {
+			s.publishStale(alarmEntry{Kind: AlarmCanaryFailed, Baseline: s.canary.Baseline})
 		}
+	} else {
+		s.canaryMu.Lock()
+		s.staleSeen = false
+		s.canaryMu.Unlock()
 	}
 	if doc.checkedOn(today) {
 		return nil
@@ -294,9 +304,21 @@ func (s *Service) check(ctx context.Context, today string) error {
 		return errCanaryFailed
 	}
 	s.canaryMu.Lock()
-	s.doc, s.readAt, s.canaryUnreadable = doc, now, false
+	s.doc, s.readAt, s.canaryUnreadable, s.staleSeen = doc, now, false, false
 	s.canaryMu.Unlock()
 	return nil
+}
+
+// publishStale says on /status that the canary is stale once its
+// canary_failed alarm, of this baseline, is in the record. s.canaryMu is
+// not held.
+func (s *Service) publishStale(e alarmEntry) {
+	if e.Kind != AlarmCanaryFailed || s.canary == nil || e.Baseline != s.canary.Baseline {
+		return
+	}
+	s.canaryMu.Lock()
+	s.staleSeen = true
+	s.canaryMu.Unlock()
 }
 
 // leaseDoc is a lease, sealed.
@@ -414,7 +436,7 @@ func (s *Service) canaryStatus(ctx context.Context) *attestation.CanaryStatus {
 		st.State = attestation.CanaryUnreadable
 	case doc == nil:
 		st.State = attestation.CanaryNone
-	case doc.stale(now):
+	case doc.stale(now) && s.staleSeen:
 		st.State = attestation.CanaryStale
 	case doc.Changed:
 		st.State = attestation.CanaryChanged
