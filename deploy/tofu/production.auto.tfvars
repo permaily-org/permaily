@@ -11,6 +11,7 @@ release_keys = {
   "v0.11.0" = "d8572f3a6bfb12162e89aac19d2609cb53992da8d898b28c7a5dbd5519f8d55a29f9eb03abe3e92cabbe619e777f304d"
   "v0.12.0" = "cdf58b7769634d74cad6c69e9535ccf6fbb2644db9863eafccdf6c030d0dcbc998985336cdea6eb188090b43560302c7"
   "v0.13.0" = "27d07c817a8cba7ade24624fac94077c5574ec7a3fa1f9bb09ce0ae2857f8d8c683c31afcf1b750d7cc8772dab2e483e"
+  "v0.14.0" = "1bf650c9ad46c00be881ec1066f7cdee150fc9ad6ce846cc95409cf009b39e2d496ae2b4053b5ec0cf859232f4b961e2"
 }
 
 # Where senders send SMTP TLS reports: the "TLS reports" mailbox the super admin
