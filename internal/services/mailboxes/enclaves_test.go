@@ -23,9 +23,23 @@ func isMailbox(name string) bool { return strings.HasPrefix(name, "mailbox-") }
 
 func listed(t *testing.T, e *enclave, c mailboxes.Caller) []contracts.Mailbox {
 	t.Helper()
+	// The catalogue, read first, before List settles the list (it settles
+	// nothing itself), names what List shows (ADR 0027, "The routes").
+	named, err := e.Catalogue(ctx, c, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 	l, err := e.List(ctx, c)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(named) != len(l.Mailboxes) {
+		t.Fatalf("the catalogue names %+v, the list shows %d", named, len(l.Mailboxes))
+	}
+	for i, m := range l.Mailboxes {
+		if want := (mailboxes.Named{ID: m.ID, Label: m.Label, Address: m.Address}); named[i] != want {
+			t.Fatalf("the catalogue's %d: %+v, the list's %+v", i, named[i], want)
+		}
 	}
 	return l.Mailboxes
 }
@@ -140,8 +154,14 @@ func TestM3TheRecordLandsBeforeTheTombstone(t *testing.T) {
 		}
 		return nil
 	})
-	if l := listed(t, b, me); len(l) != 1 || l[0].State != contracts.MailboxWaiting {
-		t.Fatalf("listed %+v", l)
+	// The record lands during List's fence, so the catalogue is read after
+	// it: before, it was a reservation, which no catalogue names.
+	l, err := b.List(ctx, me)
+	if err != nil || len(l.Mailboxes) != 1 || l.Mailboxes[0].State != contracts.MailboxWaiting {
+		t.Fatalf("listed %+v %v", l, err)
+	}
+	if named := listed(t, b, me); len(named) != 1 || named[0].ID != l.Mailboxes[0].ID {
+		t.Fatalf("%+v", named)
 	}
 }
 

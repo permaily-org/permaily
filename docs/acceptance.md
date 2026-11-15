@@ -146,7 +146,7 @@ Designed in ADR 0027; built by its pull requests 1 to 4. Step 3 is done when it 
 
 | Criterion | Evidence | Status |
 |---|---|---|
-| The check and the matches answer as ADR 0027's routes say, in ADR 0026's order of failures, every refusal with its path and reason and no value; a page of matches shares the search's slots and pages a minute and reads each raw message under its own grant | Q30's part in `httpapi`, Q34, Q35, Q44, Q45 (`internal/httpapi/queries_test.go`); `TestMailEndToEnd` (Q36: a list, an attachment and a text past 16 KiB through both routes and two dev enclaves, the log holding nothing of the formula) | covered (pull request 4) |
+| The check and the matches answer as ADR 0027's routes say, in ADR 0026's order of failures, every refusal with its path and reason and no value; a page of matches shares the search's slots and pages a minute and reads each raw message under its own grant | Q30's part in `httpapi`, Q34, Q35, Q44 (`internal/httpapi/queries_test.go`); Q45 (`cmd/permaily-enclave/matches_dev_test.go`); `TestMailEndToEnd` (Q36: a list, an attachment and a text past 16 KiB through both routes and two dev enclaves, the log holding nothing of the formula) | covered (pull request 4) |
 | Staging check of pull request 4: a mailbox receives mail with a `List-Id`, an attachment and a text past 16 KiB, and `queries/check` and `matches` are answered through the app with a session | | pending: after pull request 4 merges |
 
 ## F2 step 2: showing a message's HTML (release gate)

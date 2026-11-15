@@ -25,8 +25,13 @@ func TestGrantsGoBackOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := h.Grant(ctx, 500) // the whole budget at most: what is free now is 60
+	second, err := h.Grant(ctx, 70) // what is free now is 60: it waits, then is refused
 	if !errors.Is(err, contracts.ErrTooManyRequests) || second != nil {
+		t.Fatalf("%v", err)
+	}
+	// Past the whole budget: refused at once, nothing taken, nothing waited.
+	start := time.Now()
+	if past, err := h.Grant(ctx, 101); !errors.Is(err, contracts.ErrTooManyRequests) || past != nil || time.Since(start) >= h.wait || b.waiting != 0 {
 		t.Fatalf("%v", err)
 	}
 	if b.free != 60 {

@@ -328,6 +328,25 @@ func (f *Fake) List(ctx context.Context, c mailboxes.Caller) (*contracts.Mailbox
 	return out, nil
 }
 
+// Catalogue implements httpapi.MailboxesService: the identifiers List
+// shows, in its order, with their labels and addresses when names is set.
+func (f *Fake) Catalogue(ctx context.Context, c mailboxes.Caller, names bool) ([]mailboxes.Named, error) {
+	if _, err := f.Accounts.Standing(ctx, c.Account); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := []mailboxes.Named{}
+	for _, b := range f.mine(c.Account) {
+		n := mailboxes.Named{ID: b.mailbox.ID}
+		if names && !b.unreadable() {
+			n.Label, n.Address = b.mailbox.Label, b.mailbox.Address
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
 // Create implements httpapi.MailboxesService.
 func (f *Fake) Create(ctx context.Context, c mailboxes.Caller, in contracts.MailboxCreate) (*contracts.Mailbox, error) {
 	s, err := f.Accounts.Standing(ctx, c.Account)

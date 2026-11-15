@@ -3,14 +3,11 @@ package httpapi_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	gotoken "go/token"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -322,15 +319,20 @@ func TestQ34TheChecksOrderAndBody(t *testing.T) {
 	}
 }
 
-// listFails is a mailboxes service whose list cannot be read.
+// listFails is a mailboxes service whose list cannot be read: neither List
+// nor the catalogue.
 type listFails struct{ httpapi.MailboxesService }
 
 func (listFails) List(context.Context, mailboxes.Caller) (*contracts.MailboxList, error) {
 	return nil, fmt.Errorf("the table is away for %s", alice)
 }
 
-// A list that cannot be read is the service's failure: logged without the
-// account, and answered with nothing of its own.
+func (listFails) Catalogue(context.Context, mailboxes.Caller, bool) ([]mailboxes.Named, error) {
+	return nil, fmt.Errorf("the table is away for %s", alice)
+}
+
+// A catalogue that cannot be read is the service's failure: logged without
+// the account, and answered with nothing of its own.
 func TestQueriesTheListFails(t *testing.T) {
 	a := newQueryApp(t, func(c *httpapi.MailboxesConfig) {})
 	box := a.fake.Add(alice, "Mine")
@@ -342,6 +344,40 @@ func TestQueriesTheListFails(t *testing.T) {
 	want(t, serve(matches, "alice", "POST", "/api/v1/mailboxes/"+box.ID+"/matches", `{"formula":{"v":1,"all":[]}}`), 500, "internal")
 	if out := a.logs.String(); !strings.Contains(out, "internal error") || strings.Contains(out, alice) {
 		t.Fatalf("%s", out)
+	}
+}
+
+// On the real service: the formula's mailboxes come from the account's
+// catalogue, which reads no mailbox's confirmations. Mailbox B's cannot be
+// read (the list, which shows them, fails), yet A's matches and a check
+// naming A answer, as A's search does.
+func TestTheQueryRoutesDoNotReadAnotherMailboxsConfirmations(t *testing.T) {
+	w := newRealWorld(t)
+	i := w.instance()
+	boxA, boxB := i.make("alice", "Alpha"), i.make("alice", "Beta")
+	log := slog.New(slog.NewJSONHandler(w.logs, nil))
+	until := w.clock().Add(time.Hour)
+	who := sessions{"alice": {AccountID: alice, Session: contracts.Session{ID: "ses_a", ConfirmedUntil: until}}}
+	routes := httpapi.MailboxesAPI(httpapi.MailboxesConfig{Service: i.svc, Reader: inbox.NewReader(w.mem), Matcher: inbox.NewMatcher(w.mem, query.Eval), Log: log, Now: w.clock, Sessions: who})
+	check := httpapi.QueriesAPI(httpapi.QueriesConfig{Sessions: who, Mailboxes: i.svc, Log: log})
+	w.mem.Interrupt = func(_ context.Context, step store.Step, partition, key string) error {
+		if step == store.StepRead && partition == inbox.Partition(boxB.ID) && key == inbox.KeyConfirm {
+			return errors.New("the table is away")
+		}
+		return nil
+	}
+	want(t, serve(routes, "alice", "GET", "/api/v1/mailboxes", ""), 500, "internal")
+	read(t, serve(routes, "alice", "GET", "/api/v1/mailboxes/"+boxA.ID+"/messages?q=x", ""), 200, nil)
+	read(t, serve(routes, "alice", "POST", "/api/v1/mailboxes/"+boxA.ID+"/matches", `{"formula":{"v":1,"all":[]}}`), 200, nil)
+	var got contracts.FormulaCheck
+	read(t, serve(check, "alice", "POST", "/api/v1/queries/check", `{"formula":`+formulaOf(cond("mailbox", "is", boxA.ID), cond("mailbox", "is", boxB.ID))+`}`), 200, &got)
+	if !strings.Contains(got.Sentence.Text, "your mailbox “Alpha”") || !strings.Contains(got.Sentence.Text, "your mailbox “Beta”") {
+		t.Fatalf("%+v", got.Sentence)
+	}
+	// Another account's mailbox is still unknown to her.
+	bobs := i.make("bob", "Bob's")
+	if p := problemOf(t, serve(check, "alice", "POST", "/api/v1/queries/check", `{"formula":`+formulaOf(cond("mailbox", "is", bobs.ID))+`}`)); p.Reason != contracts.FormulaUnknownMailbox {
+		t.Fatalf("%+v", p)
 	}
 }
 
@@ -669,80 +705,36 @@ func TestQ44TwoPagesOfLargeMessagesAtOnce(t *testing.T) {
 	}
 }
 
-// Q45: MatchPage is answered by POST /api/v1/mailboxes/{id}/matches alone,
-// in a session. In this package only the matches handler asks the matcher,
-// and nothing but its registration and its configuration names it; no
-// other package of the service but inbox's own names MatchPage or a
-// Matcher, except the enclave's composition, which hands it to
-// MailboxesConfig.
-func TestQ45OnlyMatchesAnswersAMatchPage(t *testing.T) {
-	a := newQueryApp(t, nil)
+// A raw read whose bound is past the whole read budget is refused (429)
+// before anything is taken or read: a grant never holds fewer bytes than the
+// read it admits (ReadGrants promises n).
+func TestAGrantPastTheWholeBudgetIsRefused(t *testing.T) {
+	a := newQueryApp(t, func(c *httpapi.MailboxesConfig) { c.ReadBudget = 1024; c.Wait = 20 * time.Millisecond })
 	box := a.fake.Add(alice, "Mine")
-	want(t, a.matches("", box.ID, `{"formula":{"v":1,"all":[]}}`), 401, "unauthorized")
-
-	fset := gotoken.NewFileSet()
-	allowedHere := map[string]bool{"MailboxesConfig": true, "newMailboxesAPI": true, "matches": true}
-	root := filepath.Join("..", "..")
-	seen := map[string]int{}
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() && (d.Name() == "node_modules" || d.Name() == "web" || d.Name() == "site" || strings.HasPrefix(d.Name(), ".")) && path != root {
-			return filepath.SkipDir
-		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		rel, _ := filepath.Rel(root, path)
-		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(rel, "internal/inbox/") || strings.HasPrefix(rel, "internal/contracts/") || strings.HasPrefix(rel, "tests/") {
-			return nil
-		}
-		file, err := parser.ParseFile(fset, path, nil, 0)
-		if err != nil {
-			return err
-		}
-		for _, decl := range file.Decls {
-			name := declName(decl)
-			ast.Inspect(decl, func(n ast.Node) bool {
-				id, ok := n.(*ast.Ident)
-				if !ok || (id.Name != "MatchPage" && id.Name != "Matcher" && id.Name != "NewMatcher" && id.Name != "Match" && id.Name != "matcher") {
-					return true
-				}
-				seen[filepath.Dir(rel)]++
-				switch {
-				case rel == "internal/httpapi/mailboxes.go" && allowedHere[name] && id.Name != "MatchPage":
-				case strings.HasPrefix(rel, "cmd/permaily-enclave/") && id.Name != "MatchPage" && id.Name != "Match":
-				default:
-					t.Errorf("%s: %s names %s", rel, name, id.Name)
-				}
-				return true
-			})
+	raw := longRaw(t)
+	if len(raw) != 32_842 {
+		t.Fatalf("a message of %d bytes", len(raw))
+	}
+	a.seedFrom(box.ID, raw)
+	reads := 0
+	a.mem.Interrupt = func(_ context.Context, step store.Step, _, key string) error {
+		if step == store.StepRead && strings.HasPrefix(key, "msg#") && key != "msg#" {
+			reads++
 		}
 		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
-	if seen["internal/httpapi"] < 3 || seen["cmd/permaily-enclave"] < 3 {
-		t.Fatalf("the walk did not find the composition: %v", seen)
+	want(t, a.matches("alice", box.ID, `{"formula":`+formulaOf(cond("body", "contains", "needle"))+`}`), 429, "too_many_requests")
+	if reads != 0 {
+		t.Fatalf("%d raw reads", reads)
+	}
+	if held, waiting := a.state.Held(); held != 0 || waiting != 0 {
+		t.Fatalf("held %d, %d waiting", held, waiting)
 	}
 }
 
-func declName(d ast.Decl) string {
-	switch d := d.(type) {
-	case *ast.FuncDecl:
-		return d.Name.Name
-	case *ast.GenDecl:
-		for _, s := range d.Specs {
-			if ts, ok := s.(*ast.TypeSpec); ok {
-				return ts.Name.Name
-			}
-		}
-	}
-	return ""
-}
+// Q45, that no other route answers a MatchPage, is
+// TestQ45OnlyTheMatchesRouteAsksTheMatcher in cmd/permaily-enclave: every
+// route of every host the enclave serves, with a matcher that counts.
 
 // A page whose request's deadline ends while it waits for a search slot
 // answers the deadline's failure, and logs it without anything of the page.

@@ -654,7 +654,7 @@ Six. Pull request 0 first, alone. Then 1, 2, 3 and 4 are written at the same tim
 | `mailboxes.Accounts` (`Standing`) | same | `*accounts.Service` (1, in `accounts/standing.go`) | 1 | `mailboxestest.Accounts` |
 | `mailboxes.Notifier` | same | `*accounts.Service` (4, in `accounts/notices.go`) | 1 | `mailboxestest.Notices` |
 | `mailboxes.Caller`, `Standing`, `Access`, `NoticeKind`, limits and deadlines, `ErrNoSuchMailbox`, `ErrSlowDown`, `ErrNotAllStored` | same | (types) | all | |
-| `httpapi.MailboxesService`, with the order of its errors (`CheckChange` added after PR #90's code review) | `internal/httpapi/mailboxes.go` | `*mailboxes.Service` (1) | 2 | `mailboxestest.Fake` |
+| `httpapi.MailboxesService`, with the order of its errors (`CheckChange` added after PR #90's code review, `Catalogue` by ADR 0027's pull request 4) | `internal/httpapi/mailboxes.go` | `*mailboxes.Service` (1) | 2 | `mailboxestest.Fake` |
 | `accounts.Mailboxes` (`Pause` and `Resume` answer `changed` since PR #89's review) | `internal/services/accounts/mailboxes.go` | `*mailboxes.Service` (1) | accounts (1: `RemoveAccount`; 4: the rest) | `mailboxestest.Fake` |
 | `mailboxestest.Contract` (C1 to C18) | `internal/services/mailboxes/mailboxestest/contract.go` | runs against `Fake` now, against `*mailboxes.Service` from 1 | 1, 2, 4 | |
 | `inbox.Box`, `inbox.Reader`, the stored format (`StoredMeta`, `SearchEntry`, `ConfirmEntry`, `SeenEntry`, purposes, keys, parse limits) | `internal/inbox/box.go` | `Reader` by 2; the format written by 1 | 1, 2, 5 | `inboxtest.Seed` writes the format, in delivery's order, with its mark |

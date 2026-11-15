@@ -24,11 +24,11 @@ import (
 // of matches; a refusal is answered with a path and a fixed reason, and
 // nothing of it is logged.
 
-// MailboxLister is the account's mailboxes, which a formula may name and
-// its sentence names; MailboxesService implements it (List, allowed in every
-// standing).
-type MailboxLister interface {
-	List(ctx context.Context, c mailboxes.Caller) (*contracts.MailboxList, error)
+// MailboxCatalogue is the account's mailboxes, which a formula may name and
+// its sentence names; MailboxesService implements it (Catalogue, allowed in
+// every standing, reading no mailbox's confirmations).
+type MailboxCatalogue interface {
+	Catalogue(ctx context.Context, c mailboxes.Caller, names bool) ([]mailboxes.Named, error)
 }
 
 // AccountLanguage is the account a sentence is written for, for its language;
@@ -40,7 +40,7 @@ type AccountLanguage interface {
 // QueriesConfig is what the check route is made of.
 type QueriesConfig struct {
 	Sessions  Sessions
-	Mailboxes MailboxLister
+	Mailboxes MailboxCatalogue
 	// Accounts gives the account's language; without one, every sentence is
 	// in English, as it is today for every account (ADR 0027, "A second
 	// language").
@@ -89,7 +89,7 @@ type queriesAPI struct{ cfg QueriesConfig }
 func (q *queriesAPI) check(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
 	ctx := r.Context()
 	c := mailboxes.Caller{Account: who.AccountID, ConfirmedUntil: who.Session.ConfirmedUntil}
-	list, err := q.cfg.Mailboxes.List(ctx, c)
+	mine, err := q.cfg.Mailboxes.Catalogue(ctx, c, true)
 	if err != nil {
 		failed(w, r, q.cfg.Log, err)
 		return
@@ -112,22 +112,23 @@ func (q *queriesAPI) check(w http.ResponseWriter, r *http.Request, who *accounts
 		writeInvalidBody(w)
 		return
 	}
-	f, err := query.Parse(raw, mailboxIDs(list))
+	f, err := query.Parse(raw, mailboxIDs(mine))
 	if err != nil {
 		failed(w, r, q.cfg.Log, err)
 		return
 	}
 	writeJSON(w, contracts.FormulaCheck{
-		Formula: f.Formula, ID: f.ID, Sentence: query.Render(f, sentenceContext(list, lang)), Model: decidedByAModel(f),
+		Formula: f.Formula, ID: f.ID, Sentence: query.Render(f, sentenceContext(mine, lang)), Model: decidedByAModel(f),
 	})
 }
 
 // mailboxIDs are the identifiers a formula of the account may name: every
-// mailbox of its list, an unreadable one included. Never nil, so an account
-// without mailboxes refuses every mailbox (query.Parse takes nil for "any").
-func mailboxIDs(list *contracts.MailboxList) []string {
-	ids := make([]string, 0, len(list.Mailboxes))
-	for _, m := range list.Mailboxes {
+// mailbox of its catalogue, an unreadable one included. Never nil, so an
+// account without mailboxes refuses every mailbox (query.Parse takes nil for
+// "any").
+func mailboxIDs(mine []mailboxes.Named) []string {
+	ids := make([]string, 0, len(mine))
+	for _, m := range mine {
 		ids = append(ids, m.ID)
 	}
 	return ids
@@ -136,9 +137,9 @@ func mailboxIDs(list *contracts.MailboxList) []string {
 // sentenceContext is what a sentence knows of the account: its language and
 // what each of its mailboxes is called (an unreadable one has neither label
 // nor address, and reads by its identifier).
-func sentenceContext(list *contracts.MailboxList, lang string) query.Context {
-	names := make(map[string]query.MailboxName, len(list.Mailboxes))
-	for _, m := range list.Mailboxes {
+func sentenceContext(mine []mailboxes.Named, lang string) query.Context {
+	names := make(map[string]query.MailboxName, len(mine))
+	for _, m := range mine {
 		names[m.ID] = query.MailboxName{Label: m.Label, Address: m.Address}
 	}
 	return query.Context{Lang: lang, Mailboxes: names}

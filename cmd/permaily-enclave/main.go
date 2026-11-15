@@ -164,6 +164,53 @@ func run(cfg config, log *slog.Logger) error {
 	}
 	log.Info("starting", "commit", buildinfo.Commit, "mode", p.mode, "hosts", hosts.All(), "acme", cfg.acmeDirectory, "smtp", p.smtpListener != nil, "mailboxes", p.mailboxes != nil)
 
+	h := handler(cfg, hosts, p, log)
+
+	if p.mailboxes != nil {
+		// Every enclave sweeps what disconnected mailboxes left.
+		go p.mailboxes.Run(ctx)
+	}
+	if p.smtpListener != nil {
+		var recipients smtpd.Recipients = nobody{}
+		if p.mailboxes != nil {
+			recipients = p.mailboxes
+		}
+		smtpSrv := smtpd.New(recipients, smtpd.Config{Domain: hosts.Inbox, TLS: p.certs.TLSConfig()}, log)
+		go func() {
+			if err := smtpSrv.Serve(p.smtpListener); err != nil && ctx.Err() == nil {
+				log.Error("smtpd: stopped", "err", err)
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			_ = smtpSrv.Close()
+		}()
+	}
+
+	srv := &http.Server{
+		Handler:           h,
+		TLSConfig:         p.certs.TLSConfig("h2", "http/1.1"),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelDebug),
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
+	if err := srv.ServeTLS(p.listener, "", ""); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// handler is every route the enclave serves, on every host: what run
+// serves, and what a test drives with a platform of its own.
+func handler(cfg config, hosts router.Hosts, p *platform, log *slog.Logger) http.Handler {
 	api := http.NewServeMux()
 	api.Handle("/", router.Hello("api"))
 	byHost := map[string]http.Handler{
@@ -224,27 +271,6 @@ func run(cfg config, log *slog.Logger) error {
 
 	keyRoutes(api, cfg, p, log)
 
-	if p.mailboxes != nil {
-		// Every enclave sweeps what disconnected mailboxes left.
-		go p.mailboxes.Run(ctx)
-	}
-	if p.smtpListener != nil {
-		var recipients smtpd.Recipients = nobody{}
-		if p.mailboxes != nil {
-			recipients = p.mailboxes
-		}
-		smtpSrv := smtpd.New(recipients, smtpd.Config{Domain: hosts.Inbox, TLS: p.certs.TLSConfig()}, log)
-		go func() {
-			if err := smtpSrv.Serve(p.smtpListener); err != nil && ctx.Err() == nil {
-				log.Error("smtpd: stopped", "err", err)
-			}
-		}()
-		go func() {
-			<-ctx.Done()
-			_ = smtpSrv.Close()
-		}()
-	}
-
 	status := httpapi.StatusSources{Root: p.rootStatus, TLS: p.certs.Status, Sigstore: p.sigstore, Anchors: p.anchors, Mail: p.mail}
 	if p.accounts != nil {
 		// What the operator did to accounts through this enclave: kinds and
@@ -259,25 +285,7 @@ func run(cfg config, log *slog.Logger) error {
 		"/status":      httpapi.Status(status),
 		"/version":     httpapi.Version(),
 	}
-	srv := &http.Server{
-		Handler:           router.New(common, byHost),
-		TLSConfig:         p.certs.TLSConfig("h2", "http/1.1"),
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelDebug),
-	}
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-	}()
-	if err := srv.ServeTLS(p.listener, "", ""); !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-	return nil
+	return router.New(common, byHost)
 }
 
 // appOrigin is the app's origin, the only one that may frame a message's

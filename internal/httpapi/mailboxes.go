@@ -55,6 +55,14 @@ type MailboxesService interface {
 	// Reading the list finishes what a disconnect or a creation left undone
 	// (ADR 0026, "State machines").
 	List(ctx context.Context, c mailboxes.Caller) (*contracts.MailboxList, error)
+	// Catalogue is the identifiers of the mailboxes List shows, in its
+	// order, and with names the label and address of each readable one,
+	// which a formula may name and its sentence calls them (ADR 0027, "The
+	// routes"). It reads only the account's list and each mailbox's record
+	// (and, with names, its key and settings): no confirmations, and it
+	// changes nothing, so one mailbox's confirmations that cannot be read
+	// fail no formula of another. Allowed in every standing.
+	Catalogue(ctx context.Context, c mailboxes.Caller, names bool) ([]mailboxes.Named, error)
 	// Create makes a mailbox. contracts.ErrAccountClosing while the account
 	// is closing, contracts.ErrTermsChanged while the terms in force are not
 	// agreed, contracts.ErrTooManyMailboxes at mailboxes.MaxMailboxes,
@@ -458,7 +466,7 @@ func (a *mailboxesAPI) matches(w http.ResponseWriter, r *http.Request, c mailbox
 		return
 	}
 	defer release()
-	list, err := a.cfg.Service.List(ctx, c)
+	mine, err := a.cfg.Service.Catalogue(ctx, c, false)
 	if err != nil {
 		a.fail(w, r, err)
 		return
@@ -472,7 +480,7 @@ func (a *mailboxesAPI) matches(w http.ResponseWriter, r *http.Request, c mailbox
 		writeInvalidBody(w)
 		return
 	}
-	f, err := query.Parse(raw, mailboxIDs(list))
+	f, err := query.Parse(raw, mailboxIDs(mine))
 	if err != nil {
 		a.fail(w, r, err)
 		return
@@ -739,12 +747,17 @@ type heldBudget struct {
 	done    bool  // release ran: a grant released after it gives nothing back
 }
 
-// Grant implements inbox.ReadGrants: n bytes (the whole budget at most),
-// waiting at most the request's wait for room, then
-// contracts.ErrTooManyRequests. Its release gives exactly those bytes back,
-// once; a second call does nothing, and one after the response's release
-// does nothing either, since that gave them back.
+// Grant implements inbox.ReadGrants: n bytes, waiting at most the request's
+// wait for room, then contracts.ErrTooManyRequests. More than the whole
+// budget is contracts.ErrTooManyRequests at once, before anything is taken:
+// a grant holds exactly what it admits, never less (Take's clamp is for
+// the other readers). Its release gives exactly those bytes back, once; a
+// second call does nothing, and one after the response's release does
+// nothing either, since that gave them back.
 func (h *heldBudget) Grant(ctx context.Context, n int64) (func(), error) {
+	if n > h.budget.total {
+		return nil, contracts.ErrTooManyRequests
+	}
 	got, err := h.budget.take(ctx, n, h.wait)
 	if err != nil {
 		return nil, err
