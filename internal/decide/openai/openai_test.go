@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
@@ -769,6 +770,14 @@ func TestA4NoWordsOfTheProvider(t *testing.T) {
 // then the key is never asked, and nothing is logged. The review's
 // TestReview115TransportDoesNotLogProviderText, turned around.
 func TestA4TheTransportLogsNoProviderText(t *testing.T) {
+	t.Run("a provider that offers HTTP/1.1", func(t *testing.T) { logsNoProviderText(t, false) })
+	// A TLS server may answer with no protocol at all (no ALPN): Go's
+	// transport then speaks HTTP/1.1, whatever the client offered. The
+	// second review's TestReview115SecondNoALPN, turned around.
+	t.Run("a provider that offers no protocol", func(t *testing.T) { logsNoProviderText(t, true) })
+}
+
+func logsNoProviderText(t *testing.T, noALPN bool) {
 	const secret = "provider-echo-sk-proj-secret-and-private-mail"
 	var logged syncBuffer
 	saved, savedSlog := log.Writer(), slog.Default()
@@ -796,6 +805,13 @@ func TestA4TheTransportLogsNoProviderText(t *testing.T) {
 		done <- struct{}{}
 	}))
 	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	if noALPN {
+		// StartTLS fills srv.TLS (its certificate, and http/1.1 as the one
+		// protocol); the config each handshake gets instead names none.
+		srv.TLS = &tls.Config{GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+			return &tls.Config{Certificates: srv.TLS.Certificates, MinVersion: tls.VersionTLS12}, nil
+		}}
+	}
 	srv.StartTLS() // HTTP/1.1 only
 	defer srv.Close()
 	pool := x509.NewCertPool()
@@ -1024,5 +1040,45 @@ func TestA7TheFakeAndTheClientAgree(t *testing.T) {
 				t.Errorf("the valid sibling: %+v", fake.Answers[1])
 			}
 		})
+	}
+}
+
+// A4: the refusal of a handshake without h2 keeps the check the given
+// transport already made, and leaves that transport's own as it was.
+func TestA4OnlyH2KeepsTheGivenCheck(t *testing.T) {
+	refused := errors.New("refused by the given check")
+	var seen int
+	given := &http.Transport{TLSClientConfig: &tls.Config{VerifyConnection: func(cs tls.ConnectionState) error {
+		seen++
+		if cs.ServerName == "refuse" {
+			return refused
+		}
+		return nil
+	}}}
+	own := given.TLSClientConfig.VerifyConnection
+	verify := http2Only(given).(*http.Transport).TLSClientConfig.VerifyConnection
+	for _, c := range []struct {
+		cs   tls.ConnectionState
+		want error
+	}{
+		{tls.ConnectionState{ServerName: "refuse", NegotiatedProtocol: "h2"}, refused},
+		{tls.ConnectionState{NegotiatedProtocol: "h2"}, nil},
+		{tls.ConnectionState{NegotiatedProtocol: "http/1.1"}, errNotHTTP2},
+		{tls.ConnectionState{}, errNotHTTP2},
+	} {
+		if err := verify(c.cs); !errors.Is(err, c.want) {
+			t.Errorf("%+v: %v, want %v", c.cs, err, c.want)
+		}
+	}
+	if seen != 4 {
+		t.Errorf("the given check ran %d times, want 4", seen)
+	}
+	// A transport with no TLS config of its own: Clone makes one, which
+	// gets the check.
+	if tr := http2Only(&http.Transport{}).(*http.Transport); tr.TLSClientConfig.VerifyConnection(tls.ConnectionState{}) == nil {
+		t.Error("a transport with no TLS config is not refused a handshake without h2")
+	}
+	if err := given.TLSClientConfig.VerifyConnection(tls.ConnectionState{}); err != nil || reflect.ValueOf(given.TLSClientConfig.VerifyConnection).Pointer() != reflect.ValueOf(own).Pointer() {
+		t.Error("http2Only changed the given transport's check")
 	}
 }
