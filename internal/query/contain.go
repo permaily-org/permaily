@@ -20,19 +20,24 @@ func contains(outer, inner *Canonical) (bool, int) {
 	if outer == nil || inner == nil {
 		return false, 0
 	}
-	switch {
-	case inner.Never:
-		return true, 0
-	case outer.Never:
-		return false, 0
-	case len(outer.Formula.All) == 0:
-		return true, 0
-	case len(inner.Formula.All) == 0:
-		return false, 0
-	}
 	a, okA := compileFormula(outer.Formula)
 	b, okB := compileFormula(inner.Formula)
 	if !okA || !okB {
+		return false, 0
+	}
+	return containsGroups(outer.Never, a, inner.Never, b)
+}
+
+// containsGroups is the proof, on compiled canonical forms.
+func containsGroups(outerNever bool, a [][]cond, innerNever bool, b [][]cond) (bool, int) {
+	switch {
+	case innerNever:
+		return true, 0
+	case outerNever:
+		return false, 0
+	case len(a) == 0:
+		return true, 0
+	case len(b) == 0:
 		return false, 0
 	}
 	n := 0

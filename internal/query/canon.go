@@ -236,7 +236,14 @@ func compareGroups(a, b []cond) int {
 // rule's, read back from storage): values normalised, the rewrites applied,
 // sorted. It does not refuse "never"; it returns it. A refusal is a
 // *Problem, with the path of the first problem in the formula's order.
+//
+// The canonical form of "never" is one group with no condition (an OR of
+// nothing is False); it is the one formula with an empty group Canonicalise
+// reads, so that the canonical form of every canonical form is itself.
 func Canonicalise(f contracts.Formula) (*Canonical, error) {
+	if f.V == contracts.FormulaVersion && len(f.All) == 1 && len(f.All[0].Any) == 0 {
+		return canonical([][]cond{{}}, nil), nil
+	}
 	groups, p := checkFormula(f)
 	if p != nil {
 		return nil, p
