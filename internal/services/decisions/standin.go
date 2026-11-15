@@ -7,9 +7,12 @@ import (
 
 // Stand-ins for decide.Plan, decide.Cost and decide.Estimate, which ADR
 // 0028's pull request 1 writes in internal/decide (plan.go, cost.go). They
-// follow that record's definitions exactly ("The request", "Spend") so this
-// pull request builds and is tested before pull request 1 merges; once it
-// does, each becomes a call to its decide function and this file goes.
+// are copies of that pull request's definitions, edges included (Cost
+// bounds each count to [0, 1<<40]; Plan's rule answers are nil when there
+// are none; TestStandInsMatchPullRequest1), so this pull request builds and
+// is tested before pull request 1 merges; once it does, plan, cost and
+// estimate become decide.Plan, decide.Cost and decide.Estimate, with the
+// same arguments, and this file goes.
 
 // plan is decide.Plan: a message's subject atoms in one call with the
 // subject alone, its message atoms in one call with the subject and the
@@ -18,7 +21,13 @@ import (
 // from a text that was read. Message atoms are in neither when hasText is
 // false: they stay unknown.
 func plan(atoms []query.Atom, subject, text string, hasText bool) ([]decide.Call, query.Answers) {
-	byRule := query.Answers{}
+	var byRule query.Answers
+	rule := func(a query.Atom) {
+		if byRule == nil {
+			byRule = query.Answers{}
+		}
+		byRule[a] = 0
+	}
 	seen := map[query.Atom]bool{}
 	var subjectAtoms, messageAtoms []query.Atom
 	for _, a := range atoms {
@@ -29,7 +38,7 @@ func plan(atoms []query.Atom, subject, text string, hasText bool) ([]decide.Call
 		switch decide.KindOf(a) {
 		case decide.ContentSubject:
 			if subject == "" {
-				byRule[a] = 0
+				rule(a)
 				continue
 			}
 			subjectAtoms = append(subjectAtoms, a)
@@ -38,7 +47,7 @@ func plan(atoms []query.Atom, subject, text string, hasText bool) ([]decide.Call
 				continue
 			}
 			if subject == "" && text == "" {
-				byRule[a] = 0
+				rule(a)
 				continue
 			}
 			messageAtoms = append(messageAtoms, a)
@@ -66,23 +75,28 @@ func estimateTokens(c decide.Call) int64 {
 }
 
 // estimate is decide.Estimate: what a call not sent yet may cost at most,
-// in billionths of a US dollar, twice past decide.LongRequestTokens.
+// in billionths of a US dollar: the cost of its estimated input tokens.
 func estimate(c decide.Call) int64 {
-	t := estimateTokens(c)
-	nano := t * decide.NanoUSDPerInputToken
-	if t > decide.LongRequestTokens {
+	return cost(decide.Usage{InputTokens: estimateTokens(c)})
+}
+
+// maxTokens bounds a count of tokens, so that no usage reported overflows
+// what it costs (decide's maxTokens).
+const maxTokens = 1 << 40
+
+// cost is decide.Cost: what a call's reported usage cost at the compiled
+// prices, twice past decide.LongRequestTokens. Each count is first bounded
+// to [0, maxTokens], so a count below zero is zero and none overflows.
+func cost(u decide.Usage) int64 {
+	in := tokens(u.InputTokens)
+	cached := tokens(u.CachedTokens)
+	written := tokens(u.CacheWriteTokens)
+	plain := max(in-cached-written, 0)
+	nano := plain*decide.NanoUSDPerInputToken + cached*decide.NanoUSDPerCachedToken + written*decide.NanoUSDPerCacheWriteToken
+	if in > decide.LongRequestTokens {
 		nano *= 2
 	}
 	return nano
 }
 
-// cost is decide.Cost: what a call's reported usage cost at the compiled
-// prices, twice past decide.LongRequestTokens.
-func cost(u decide.Usage) int64 {
-	plain := max(u.InputTokens-u.CachedTokens-u.CacheWriteTokens, 0)
-	nano := plain*decide.NanoUSDPerInputToken + u.CachedTokens*decide.NanoUSDPerCachedToken + u.CacheWriteTokens*decide.NanoUSDPerCacheWriteToken
-	if u.InputTokens > decide.LongRequestTokens {
-		nano *= 2
-	}
-	return nano
-}
+func tokens(n int64) int64 { return min(max(n, 0), maxTokens) }
