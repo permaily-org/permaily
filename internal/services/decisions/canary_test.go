@@ -353,6 +353,7 @@ func TestA20TheCanary(t *testing.T) {
 			t.Fatalf("%+v", w.alarms().Entries)
 		}
 		answersAsMeasured(e, nil)
+		w.advance(CanaryLease) // the failed run's lease ends first
 		_ = e.RunCanary(ctx)
 		if e.canaryStateNow(ctx) != attestation.CanarySame {
 			t.Fatal("not same after a check")

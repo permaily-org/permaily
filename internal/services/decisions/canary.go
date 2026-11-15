@@ -115,6 +115,10 @@ type canaryRun struct {
 	// lease is the lease entry this enclave holds, and until when.
 	lease      *store.Entry
 	leaseUntil time.Time
+	// retryAt is when the lease of this enclave's latest run that did not
+	// complete ends: no run starts here before it, so a run that keeps
+	// failing costs one run a lease, not one a tick (CanaryLease).
+	retryAt time.Time
 }
 
 // canaryName is the state's record name for the compiled model, prompt
@@ -217,6 +221,12 @@ func (s *Service) RunCanary(ctx context.Context) error {
 	if doc.checkedOn(today) {
 		return nil
 	}
+	s.canaryMu.Lock()
+	wait := now.Before(s.retryAt)
+	s.canaryMu.Unlock()
+	if wait {
+		return nil
+	}
 	if ok, err := s.takeLease(ctx); !ok {
 		return err
 	}
@@ -227,7 +237,7 @@ func (s *Service) RunCanary(ctx context.Context) error {
 	}
 	if err := s.check(ctx, today); err != nil {
 		s.canaryMu.Lock()
-		s.failedDay = today
+		s.failedDay, s.retryAt = today, s.leaseUntil
 		s.canaryMu.Unlock()
 		s.logKind(slog.LevelWarn, "decisions: the canary's check did not complete", "canary_failed")
 		return err
