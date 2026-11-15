@@ -168,6 +168,9 @@ func (s *Service) Ask(ctx context.Context, q *inbox.Question) (*inbox.Asked, err
 			return a.out, nil
 		}
 	}
+	// A new message atom the entry has no room for stays unknown before
+	// the text is read, so it spends no read and stops no page.
+	missing = s.withinRoom(missing, kept, a.model, q.Subject != "")
 	// The text, before anything is asked, when a message atom needs it.
 	text, hasText := "", false
 	if containsKind(missing, decide.ContentMessage) {
@@ -305,6 +308,59 @@ func (s *Service) fit(calls []decide.Call, missing []query.Atom, kept *inbox.Kep
 		}
 	}
 	return out
+}
+
+// withinRoom leaves out, before the text is read, the message atoms that
+// fit would leave out after it: an atom with no kept answer under any
+// content (definitely new) once the atoms before it in the question's
+// order that are definitely new took the entry's room. An atom kept for
+// another content may find its answer under the text's hash, so it is
+// kept and takes no room here; subject atoms are never left out here, so a
+// text that cannot be read leaves them their room. With an empty subject
+// nothing is left out: an empty text decides message atoms by rule, which
+// takes no room.
+func (s *Service) withinRoom(missing []query.Atom, kept *inbox.KeptDecisions, model string, subject bool) []query.Atom {
+	if !subject {
+		return missing
+	}
+	room := inbox.KeptMaxAnswers
+	if kept != nil {
+		room -= len(kept.Answers)
+	}
+	dropped := false
+	out := filterAtoms(missing, func(atom query.Atom) bool {
+		message := decide.KindOf(atom) == decide.ContentMessage
+		if message && keptAnyContent(kept, atom, model) {
+			return true
+		}
+		if room > 0 {
+			room--
+			return true
+		}
+		if !message {
+			return true
+		}
+		dropped = true
+		return false
+	})
+	if dropped {
+		s.logKind(slog.LevelWarn, "decisions: a message's entry is full; new atoms are not asked", "entry_full")
+	}
+	return out
+}
+
+// keptAnyContent reports whether k keeps an answer for atom, model and
+// prompt version under any content.
+func keptAnyContent(k *inbox.KeptDecisions, atom query.Atom, model string) bool {
+	if k == nil || model == "" {
+		return false
+	}
+	for _, ka := range k.Answers {
+		if ka.Var == string(atom.Var) && ka.Op == string(atom.Op) && ka.Topic == atom.Topic && ka.Model == model && ka.Prompt == decide.PromptVersion {
+			return true
+		}
+	}
+	return false
 }
 
 func filterAtoms(list []query.Atom, keep func(query.Atom) bool) []query.Atom {
