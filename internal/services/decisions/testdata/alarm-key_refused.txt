@@ -1,0 +1,9 @@
+Subject: Permaily: OpenAI refused the model's key
+
+OpenAI refused the key the enclave holds for the model. Nothing new is asked of the model.
+
+    Day (UTC): 2026-11-16
+
+Set a key of the enclave's OpenAI project with scripts/model-key.sh. The enclave tries one call every ten minutes, and a new key at once.
+
+This message is sent by the enclave. It holds no amount tied to an account and nothing of anyone's mail.
