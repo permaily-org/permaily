@@ -283,8 +283,11 @@ verifier_checkout() {
 
 # verifier_build <source> <out> compiles permaily-verify in a fixed Go
 # environment, so nothing outside <source> changes what is compiled: no GO* or
-# CGO_* variable is kept but where go keeps its caches and modules (GOPATH,
-# GOMODCACHE, GOCACHE, GOTMPDIR) and GOPROXY (go.sum checks every module); no
+# CGO_* variable is kept but GOTMPDIR and GOPROXY; the module and build caches
+# are new and empty, next to <out> (go checks a module it downloads against
+# go.sum, but compiles an extracted module, and reuses a build result, without
+# hashing it again, so the operator's caches would be trusted as they are;
+# -modcacherw lets the run's cleanup delete them); no
 # go.env file (GOENV=off), so no GOFLAGS: no -overlay, -modfile or -toolexec;
 # no workspace (GOWORK=off); GOTOOLCHAIN=auto, so go.mod's toolchain line
 # applies (an older go downloads that one, checked against the checksum
@@ -294,12 +297,16 @@ verifier_build() {
   (
     for name in $(compgen -e); do
       case $name in
-        GOPATH | GOMODCACHE | GOCACHE | GOTMPDIR | GOPROXY) ;;
+        GOTMPDIR | GOPROXY) ;;
         GO* | CGO_*) unset "$name" ;;
       esac
     done
+    local caches
+    caches=$(dirname "$2")/go
+    mkdir -p "$caches/mod" "$caches/build" || exit 1
     export GOENV=off GOWORK=off GOTOOLCHAIN=auto CGO_ENABLED=0
-    exec go build -C "$1" -trimpath -buildvcs=false -o "$2" ./cmd/permaily-verify
+    export GOPATH=$caches GOMODCACHE=$caches/mod GOCACHE=$caches/build
+    exec go build -C "$1" -modcacherw -trimpath -buildvcs=false -o "$2" ./cmd/permaily-verify
   )
 }
 

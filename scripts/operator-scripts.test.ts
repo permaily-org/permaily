@@ -1145,6 +1145,8 @@ describe('the verifier is the running release', () => {
 printf 'GOFLAGS=%s GOWORK=%s GOENV=%s GOTOOLCHAIN=%s CGO_ENABLED=%s GOEXPERIMENT=%s GOOS=%s GOPROXY=%s ARGS=%s\\n' \\
   "\${GOFLAGS-unset}" "\${GOWORK-unset}" "\${GOENV-unset}" "\${GOTOOLCHAIN-unset}" "\${CGO_ENABLED-unset}" \\
   "\${GOEXPERIMENT-unset}" "\${GOOS-unset}" "\${GOPROXY-unset}" "$*" >> '${bin}/go-env'
+# Where go would take modules and build results from: the run's own directories, or the operator's.
+printf '%s %s\\n' "\${GOMODCACHE:-\${GOPATH:-$HOME/go}/pkg/mod}" "\${GOCACHE:-$HOME/.cache/go-build}" >> '${bin}/go-caches'
 src=. out=
 while [[ $# -gt 0 ]]; do
   case $1 in -C) src=$2; shift ;; -o) out=$2; shift ;; esac
@@ -1155,6 +1157,10 @@ if [[ -n \${STUB_GO_INTERRUPT:-} ]]; then kill -TERM $PPID; exit 0; fi
 # Source that is not a release's: a verifier that says yes, with the key it names, and leaves a mark.
 key=
 [[ ! -f $src/cmd/permaily-verify/hostile ]] || key=$(cat "$src/cmd/permaily-verify/hostile")
+# A module or build cache whose extracted files were changed: go compiles them without hashing them again.
+mc=\${GOMODCACHE:-\${GOPATH:-$HOME/go}/pkg/mod}
+[[ ! -f $mc/hostile ]] || key=$(cat "$mc/hostile")
+[[ ! -f \${GOCACHE:-$HOME/.cache/go-build}/hostile ]] || key=$(cat "\${GOCACHE:-$HOME/.cache/go-build}/hostile")
 # GOFLAGS=-overlay=<file>, as go reads it: the file it maps cmd/permaily-verify/hostile to is compiled in.
 for flag in \${GOFLAGS:-}; do
   case $flag in
@@ -1630,7 +1636,7 @@ exec '${curl}' "$@"
       }
     })
 
-    test("a replacement ref here for the attested commit does not change the source that is built", async () => {
+    test('a replacement ref here for the attested commit does not change the source that is built', async () => {
       try {
         const bad = hostile()
         attest('v0.3.0', v010)
@@ -1718,6 +1724,39 @@ exec '${curl}' "$@"
         )
         expect(env[0]).toContain(' -trimpath ')
         expect(env[0]).not.toMatch(/overlay|modfile|toolexec/)
+      } finally {
+        cleanup()
+      }
+    })
+
+    test('a module or build cache of the operator is not used, so changed extracted files are not compiled', async () => {
+      // go checks a module's download against go.sum, but compiles an extracted module directory, and
+      // reuses a build result, without hashing it again: an altered cache would build the impostor's verifier.
+      const modcache = join(dir, 'gomodcache')
+      const gopath = join(dir, 'gopath')
+      const gocache = join(dir, 'gocache')
+      for (const d of [modcache, join(gopath, 'pkg', 'mod'), gocache]) {
+        mkdirSync(d, { recursive: true })
+        writeFileSync(join(d, 'hostile'), impostorKey)
+      }
+      try {
+        attest('v0.3.0', v010)
+        git('push', '-q', '-f', canon, `${v010}:refs/tags/v0.3.0`)
+        for (const env of [
+          { GOMODCACHE: modcache, GOCACHE: gocache },
+          { GOPATH: gopath, GOCACHE: gocache },
+        ]) {
+          for (const f of ['go-caches', 'go-builds']) rmSync(join(bin, f), { force: true })
+          const out = await send(env)
+          nothingOfIt(out)
+          const caches = lines('go-caches')
+          expect(caches.length).toBe(1)
+          for (const c of caches[0].split(' ')) {
+            expect(c.startsWith(dir)).toBe(false)
+            expect(c.startsWith(gopath)).toBe(false)
+          }
+          expect(lines('go-builds').map((b) => b.split(' ')[1])).toEqual(['12'])
+        }
       } finally {
         cleanup()
       }
