@@ -98,13 +98,14 @@ func NewMatcher(st ReadStore, eval Evaluate) Matcher {
 	return &storeMatcher{r: &storeReader{st: st, now: time.Now}, eval: eval, bounds: defaultMatchBounds, now: time.Now}
 }
 
-// matchBounds are a page's bounds; tests set them low.
+// matchBounds are a page's bounds; tests set them low. ask is each asked
+// message's own deadline (decide.MessageDeadline).
 type matchBounds struct {
 	read, textReads, undecided, asked int
-	soft                              time.Duration
+	soft, ask                         time.Duration
 }
 
-var defaultMatchBounds = matchBounds{read: MatchMaxRead, textReads: MatchMaxTextReads, undecided: MatchMaxUndecided, asked: MatchMaxModelMessages, soft: MatchSoftDeadline}
+var defaultMatchBounds = matchBounds{read: MatchMaxRead, textReads: MatchMaxTextReads, undecided: MatchMaxUndecided, asked: MatchMaxModelMessages, soft: MatchSoftDeadline, ask: decide.MessageDeadline}
 
 type storeMatcher struct {
 	r      *storeReader
@@ -395,7 +396,7 @@ func (p *matchRun) ask(ctx context.Context, m *store.Message, meta *StoredMeta, 
 		Box: p.b, MessageID: m.ID, ExpiresAt: m.ExpiresAt, Account: p.asking.Account,
 		Atoms: slices.Clone(atoms), Subject: meta.Subject, View: ViewOriginal, Text: src.text,
 	}
-	actx, cancel := context.WithTimeout(ctx, decide.MessageDeadline)
+	actx, cancel := context.WithTimeout(ctx, p.mt.bounds.ask)
 	asked, err := p.asking.Asker.Ask(actx, q)
 	src.close()
 	cancel()
