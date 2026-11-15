@@ -58,14 +58,16 @@ type Config struct {
 	// 0026), read and written at the version read (PutRecordAt fails with
 	// store.ErrChanged when another enclave wrote since; the service reads
 	// again, at most RecordTries times): the model's key (RecordKey), each
-	// month's spend (RecordSpend), and the canary's state for each baseline
-	// (RecordCanary), each sealed with a key derived from the root secret.
+	// month's spend (RecordSpend), the canary's state for each baseline
+	// (RecordCanary), and the alarms of every image and month
+	// (RecordAlarms), each sealed with a key derived from the root secret.
 	// Each is made only with CreateNew, and the composition reads and
 	// writes these names through no other Anchored. A record that is lost
 	// (store.ErrLost) or forked (store.ErrForked), or does not open, is not
 	// read as zero: for the spend nothing new is asked
 	// (attestation.ModelGuardUnreadable); for the key there is none; for the
-	// canary its state is unreadable.
+	// canary its state is unreadable; for the alarms nothing is sent, and no
+	// cause whose alarm cannot be added is recorded.
 	Records Records
 	// Entries keeps the canary's lease for each baseline (pk=model-canary,
 	// sk=lease#<the state's name>): made at version 0 (store.ErrExists when
@@ -76,9 +78,9 @@ type Config struct {
 	// second enclave run the day's check beside the first (CanaryLease).
 	Entries store.Entries
 	// Keys derives the keys that seal the model's key ("permaily model key
-	// v1"), the month's spend ("permaily model spend v1") and the canary's
-	// state and lease ("permaily model canary v1") from the root secret
-	// (keys.Root).
+	// v1"), the month's spend ("permaily model spend v1"), the canary's
+	// state and lease ("permaily model canary v1") and the alarms
+	// ("permaily model alarms v1") from the root secret (keys.Root).
 	Keys Keys
 	// Alarm tells the operator by mail (ADR 0028, "The alarm").
 	Alarm Alarm
@@ -150,20 +152,37 @@ const (
 	// RecordKey is the model's key.
 	RecordKey = "model-key"
 	// RecordSpend + "YYYY-MM" (UTC) is a month's spend: every grant of the
-	// month (its identity, its blocks and its day), what they reserved in
-	// all and by day, and the alarms due and sent, by kind and day. Every
-	// version carries every grant before it, so a grant once confirmed is
-	// in every later version.
+	// month (its identity, its blocks and its day) and what they reserved in
+	// all and by day; observations only, never an alarm (RecordAlarms).
+	// Every version carries every grant before it, so a grant once
+	// confirmed is in every later version.
 	RecordSpend = "model-spend-"
 	// RecordCanary + the first 16 hexadecimal digits of the SHA-256 of the
 	// compiled model, prompt version and canary.Baseline is the canary's
 	// state for them: when the first enclave of that baseline started
-	// (written by CreateNew before any check), every completed check, the
-	// last day a check observed a change, and the alarms due and sent. Two
-	// images of different baselines, as during a release, each keep their
-	// own record, and neither reads the other's. A completion only adds to
-	// it: no write removes an observed change or an alarm.
+	// (written by CreateNew before any check), every completed check, and
+	// the last day a check observed a change; observations only, never an
+	// alarm (RecordAlarms). Two images of different baselines, as during a
+	// release, each keep their own record, and neither reads the other's. A
+	// completion only adds to it: no write removes an observed change.
 	RecordCanary = "model-canary-"
+	// RecordAlarms is the only place an alarm is due and sent, for every
+	// image, baseline and month: made with CreateNew by the first enclave of
+	// any image, and read by every image's RunAlarms, so an alarm left due
+	// when the last enclave of its baseline stopped, or when its month
+	// ended, is still sent. An entry is keyed by its kind, its day (UTC)
+	// and, for the canary's kinds, the baseline, which makes each kind due
+	// at most once a day (per baseline for the canary's), and holds whether
+	// it was sent: synthetic, no account, no amount, nothing of a message.
+	// Entries are added at the version read, read again on store.ErrChanged
+	// at most RecordTries times; adding one that is there changes nothing;
+	// one sent stays sent in every later version, and sent ones older than
+	// 30 days may be dropped, a due one never. The enclave that sees a cause
+	// adds its alarm here first, and only then records the cause (the grant
+	// in RecordSpend, the completion in RecordCanary, the guard's or the
+	// canary's state): a crash between the two sends an alarm for a cause
+	// observed again later, never records a cause without its alarm.
+	RecordAlarms = "model-alarms"
 )
 
 // The bounds of the service's own writes and waits.
@@ -184,10 +203,11 @@ const (
 	CanaryLease = 10 * time.Minute
 	// AlarmTimeout bounds one alarm's sending.
 	AlarmTimeout = 10 * time.Second
-	// AlarmRetry is how often RunAlarms sends the alarms that are due and
-	// not marked sent: on its own ticker, so an alarm whose sending failed
-	// is sent again whether or not anything is reserved again, after the
-	// day changed too.
+	// AlarmRetry is how often RunAlarms sends the alarms that RecordAlarms
+	// holds due and not marked sent: on its own ticker, so an alarm whose
+	// sending failed is sent again whether or not anything is reserved
+	// again, after the day or the month changed, and by another image than
+	// the one that saw its cause.
 	AlarmRetry = time.Minute
 )
 
@@ -203,11 +223,12 @@ type Keys interface {
 // mail was handed to SES, within AlarmTimeout; an error is the mail
 // system's or the copy watch's refusal, and the service logs it by kind
 // alone and marks nothing. An alarm is first due: the enclave that sees
-// its cause writes it as due (in the month's spend record, or in the
-// canary's state), and keeps it in memory until that write succeeds; then
-// RunAlarms, every AlarmRetry, raises every alarm due and not sent, and
-// marks it sent only after Raise returned nil. A crash between the two
-// sends it twice, which is accepted.
+// its cause adds it to RecordAlarms before it records the cause, and while
+// it cannot, records no cause (the grant is not made, the canary's run does
+// not complete) and keeps the alarm in memory; then RunAlarms, every
+// AlarmRetry, raises every alarm RecordAlarms holds due and not sent, with
+// its own kind and day, and marks it sent only after Raise returned nil. A
+// crash between sending and marking sends it twice, which is accepted.
 type Alarm interface {
 	Raise(ctx context.Context, kind AlarmKind, day string) error
 }
