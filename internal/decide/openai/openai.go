@@ -16,7 +16,9 @@ package openai
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"net/http"
@@ -82,8 +84,8 @@ func New(hc *http.Client, key decide.Credential, org, project string) *Client {
 // there ("Unsolicited response received on idle HTTP channel"), so a
 // provider's bytes, its echo of the key or of a message included, would
 // reach the log; its HTTP/2 transport logs no byte of the peer's. A
-// provider that offers only HTTP/1.1 is not asked (ErrUnavailable, not
-// Sent). The copy keeps its connections for the next call; closing them
+// provider that offers only HTTP/1.1, or no protocol at all, is not asked
+// (ErrUnavailable, not Sent). The copy keeps its connections for the next call; closing them
 // instead (Request.Close, DisableKeepAlives) costs a TLS handshake a call
 // and, with a body that cannot be rewound, fails some attempts made at
 // once before they are sent.
@@ -98,8 +100,28 @@ func http2Only(rt http.RoundTripper) http.RoundTripper {
 	tr = tr.Clone()
 	tr.Protocols = new(http.Protocols)
 	tr.Protocols.SetHTTP2(true)
+	// The client offers only h2, but a TLS server may answer with no
+	// protocol at all, and the transport then speaks HTTP/1.1: a handshake
+	// that did not settle on h2 is refused before a byte of HTTP is written.
+	// Clone gave the copy a TLSClientConfig of its own (it makes one when
+	// the transport given has none), so the transport given keeps its own.
+	verify := tr.TLSClientConfig.VerifyConnection
+	tr.TLSClientConfig.VerifyConnection = func(cs tls.ConnectionState) error {
+		if verify != nil {
+			if err := verify(cs); err != nil {
+				return err
+			}
+		}
+		if cs.NegotiatedProtocol != "h2" {
+			return errNotHTTP2
+		}
+		return nil
+	}
 	return tr
 }
+
+// errNotHTTP2 refuses a connection that did not negotiate HTTP/2.
+var errNotHTTP2 = errors.New("openai: the provider did not negotiate HTTP/2")
 
 // Name is the model as receipts and kept decisions name it.
 func (c *Client) Name() string { return Model }
