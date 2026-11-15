@@ -192,10 +192,20 @@ func (mt *storeMatcher) Match(ctx context.Context, b Box, fs []*query.Canonical,
 		if stopped {
 			break
 		}
+		if !crossed && scan.Last != "" {
+			// The batch went through whole, expired items included.
+			last = scan.Last
+		}
 		if crossed || !scan.More || scan.Read == 0 {
 			break // nothing older can match
 		}
-		before, last = scan.Last, scan.Last
+		before = scan.Last
+		if mt.now().Sub(start) >= mt.bounds.soft {
+			// Past the soft deadline between batches, as within one: runs
+			// of expired items are bounded by it too.
+			page.Next = last
+			break
+		}
 	}
 	if last != "" {
 		page.SearchedTo = timeOfMessageID(last)
@@ -260,11 +270,12 @@ func (p *matchRun) classify(ctx context.Context, m *store.Message) (verdict, *St
 	if meta.Confirmation {
 		return verdictNone, meta, nil // Gmail's forwarding confirmation is Permaily's, and never leaves
 	}
-	res := p.mt.eval(p.fs, QueryMessage(m, meta, nil, nil), nil, query.ForQuery)
+	qm := QueryMessage(m, meta, nil, nil)
+	res := p.mt.eval(p.fs, qm, nil, query.ForQuery)
 	if meta.Unparsed {
 		// Nothing but the item is known of it, and no other source changes
 		// that.
-		return verdictOf(res), meta, nil
+		return p.verdictOf(res, qm), meta, nil
 	}
 	var entry *SearchEntry
 	if res.Value == query.Unknown && res.Needs&query.FromEntry != 0 {
@@ -286,7 +297,8 @@ func (p *matchRun) classify(ctx context.Context, m *store.Message) (verdict, *St
 			// message, as a cut text's is.
 			entry = &SearchEntry{Cut: true}
 		}
-		res = p.mt.eval(p.fs, QueryMessage(m, meta, entry, nil), nil, query.ForQuery)
+		qm = QueryMessage(m, meta, entry, nil)
+		res = p.mt.eval(p.fs, qm, nil, query.ForQuery)
 	}
 	if res.Value == query.Unknown && res.Needs&query.FromText != 0 {
 		if p.textReads >= p.mt.bounds.textReads {
@@ -307,22 +319,42 @@ func (p *matchRun) classify(ctx context.Context, m *store.Message) (verdict, *St
 		if err := ctx.Err(); err != nil {
 			return verdictNone, meta, err // the text may have been cut by the deadline
 		}
-		res = p.mt.eval(p.fs, QueryMessage(m, meta, entry, text), nil, query.ForQuery)
+		qm = QueryMessage(m, meta, entry, text)
+		res = p.mt.eval(p.fs, qm, nil, query.ForQuery)
 	}
-	return verdictOf(res), meta, nil
+	return p.verdictOf(res, qm), meta, nil
 }
 
-// verdictOf lists a value: True a match, False nothing, Unknown that only a
-// model can settle (no source left to read, atoms to ask) needing a model,
-// and any other Unknown unknown.
-func verdictOf(res query.Result) verdict {
+// maxModelAtoms is how many unanswered atoms verdictOf tries every answer
+// of: a formula has at most eight (ADR 0027), so 256 evaluations.
+const maxModelAtoms = 8
+
+// verdictOf lists a value of formulas on what is known of m: True a match,
+// False nothing, Unknown that a model can make true (no source left to read,
+// and some answers of 1 or 0 to the atoms of res.Model make the formulas
+// True) needing a model, and any other Unknown unknown: an exact condition
+// that could not be read holds it whatever a model says. Past maxModelAtoms
+// atoms (formulas together may have more) it is listed as needing a model
+// without trying them.
+func (p *matchRun) verdictOf(res query.Result, m *query.Message) verdict {
 	switch {
 	case res.Value == query.True:
 		return verdictMatch
 	case res.Value == query.False:
 		return verdictNone
-	case res.Needs == 0 && len(res.Model) > 0:
+	case res.Needs != 0 || len(res.Model) == 0:
+		return verdictUnknown
+	case len(res.Model) > maxModelAtoms:
 		return verdictNeedsModel
+	}
+	answers := make(query.Answers, len(res.Model))
+	for bits := range 1 << len(res.Model) {
+		for i, a := range res.Model {
+			answers[a] = float64(bits >> i & 1)
+		}
+		if p.mt.eval(p.fs, m, answers, query.ForQuery).Value == query.True {
+			return verdictNeedsModel
+		}
 	}
 	return verdictUnknown
 }

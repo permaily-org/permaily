@@ -143,8 +143,11 @@ type StoredMeta struct {
 	Format int `json:"format,omitempty"`
 	// List is the identifier of the message's first List-Id header (RFC
 	// 2919): what is inside its angle brackets, in lower case; "" when it has
-	// none.
-	List string `json:"list,omitempty"`
+	// none. ListUnknown says the message has a List-Id that is not one RFC
+	// 2919 reads (listID): whether it is on a list, and which, is unknown,
+	// never a known absence.
+	List        string `json:"list,omitempty"`
+	ListUnknown bool   `json:"list_unknown,omitempty"`
 	// Size is the size of the message as delivered, in bytes: the length of
 	// the raw message sealed with it. The size stored beside the item is
 	// whoever writes the table's to set, and is never read for a condition.

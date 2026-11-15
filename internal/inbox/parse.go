@@ -18,7 +18,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/emersion/go-message"
@@ -221,7 +220,8 @@ func Parse(ctx context.Context, raw []byte) Parsed {
 	m.Cc = addressList(h, "Cc", &partial)
 	m.ReplyTo = addressList(h, "Reply-To", &partial)
 	m.Auth = []contracts.AuthCheck{}
-	m.List = listID(h, &partial)
+	list, listOK := listID(h)
+	m.List, m.ListUnknown = list, !listOK
 	m.Size = int64(len(raw))
 	m.Format = MetaFormat
 
@@ -371,21 +371,122 @@ func cut(s string, n int, partial *bool) string {
 	return s
 }
 
-// listID is the identifier of the first List-Id header (RFC 2919), in lower
-// case: what is inside its last angle brackets, or, from a header written
-// without them, its value when that is one word; "" when there is none.
-func listID(h mail.Header, partial *bool) string {
-	v := strings.TrimSpace(h.Get("List-Id"))
-	if i := strings.LastIndexByte(v, '<'); i >= 0 {
-		j := strings.IndexByte(v[i:], '>')
-		if j < 0 {
-			return ""
-		}
-		v = strings.TrimSpace(v[i+1 : i+j])
-	} else if strings.ContainsFunc(v, unicode.IsSpace) {
-		return ""
+// listIDMax is the longest list identifier kept (ADR 0027, "List
+// identifiers"): a longer one is not read.
+const listIDMax = 255
+
+// listID reads the first List-Id header as RFC 2919 writes it (§3): an
+// optional phrase, then the identifier in angle brackets, the first "<"
+// outside quoted strings and comments, without the whitespace that folding
+// left inside them, in lower case. A header written without brackets is read
+// when it is one word, comments aside. ok is false when there is a List-Id
+// that is not that (no brackets and more than one word, a bracket, a quoted
+// string or a comment that does not end, an identifier empty, past
+// listIDMax or of characters RFC 2919 does not allow): whether the message is
+// on a list is then unknown. No List-Id at all is "", true.
+func listID(h mail.Header) (id string, ok bool) {
+	if !h.Has("List-Id") {
+		return "", true
 	}
-	return strings.ToLower(cut(v, MaxHeaderFieldBytes, partial))
+	v := h.Get("List-Id")
+	var word strings.Builder // what is outside quotes, comments and brackets
+	words, inWord, quoted := 0, false, false
+	for i := 0; i < len(v); i++ {
+		switch c := v[i]; c {
+		case '"':
+			if i, ok = skipQuoted(v, i); !ok {
+				return "", false
+			}
+			quoted, inWord = true, false
+		case '(':
+			if i, ok = skipComment(v, i); !ok {
+				return "", false
+			}
+			inWord = false
+		case '<':
+			j := strings.IndexByte(v[i+1:], '>')
+			if j < 0 {
+				return "", false
+			}
+			return listIdentifier(v[i+1 : i+1+j])
+		case ')', '>':
+			return "", false
+		case ' ', '\t', '\r', '\n':
+			inWord = false
+		default:
+			if !inWord {
+				words, inWord = words+1, true
+			}
+			word.WriteByte(c)
+		}
+	}
+	if words != 1 || quoted {
+		return "", false
+	}
+	return listIdentifier(word.String())
+}
+
+// skipQuoted is the index of the quote that ends the quoted string starting
+// at v[i], past its escaped characters; false when it does not end.
+func skipQuoted(v string, i int) (int, bool) {
+	for i++; i < len(v); i++ {
+		switch v[i] {
+		case '\\':
+			i++
+		case '"':
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// skipComment is the index of the parenthesis that ends the comment starting
+// at v[i], comments nest and escaped characters aside; false when it does not
+// end.
+func skipComment(v string, i int) (int, bool) {
+	depth := 0
+	for ; i < len(v); i++ {
+		switch v[i] {
+		case '\\':
+			i++
+		case '(':
+			depth++
+		case ')':
+			if depth--; depth == 0 {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// listIdentifier is s without whitespace, in lower case, when it is 1 to
+// listIDMax bytes of RFC 2919's dot-atom text; false otherwise.
+func listIdentifier(s string) (string, bool) {
+	id := strings.Map(func(r rune) rune {
+		if r == ' ' || r == '\t' || r == '\r' || r == '\n' {
+			return -1
+		}
+		return r
+	}, s)
+	if id == "" || len(id) > listIDMax {
+		return "", false
+	}
+	for i := range len(id) {
+		if !listIDByte(id[i]) {
+			return "", false
+		}
+	}
+	return strings.ToLower(id), true
+}
+
+// listIDByte reports whether c is one of RFC 5322's atext, or a dot.
+func listIDByte(c byte) bool {
+	switch {
+	case 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z', '0' <= c && c <= '9':
+		return true
+	}
+	return strings.IndexByte(".!#$%&'*+-/=?^_`{|}~", c) >= 0
 }
 
 func addressList(h mail.Header, key string, partial *bool) []contracts.MailAddress {

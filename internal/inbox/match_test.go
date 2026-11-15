@@ -139,6 +139,11 @@ func TestQ27StagedEqualsWhole(t *testing.T) {
 				continue
 			}
 			if readRaw && q.old && l == withoutRawSize {
+				// The exception holds only where the staged read did not read
+				// that raw message: it settled the value without it.
+				if slices.Contains(st.raws, q.id()) {
+					t.Fatalf("trial %d, message %d: the exception taken, but the staged read read its raw message", trial, q.n)
+				}
 				exceptions++
 				continue
 			}

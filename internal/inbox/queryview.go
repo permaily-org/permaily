@@ -36,7 +36,9 @@ func entryCut(e *SearchEntry) bool {
 // from the time in its identifier, never the item's plain fields), its
 // opened meta (FromMeta: senders, recipients, the domains of the DKIM
 // signatures that passed, the subject, the attachments, the flags; the list
-// and the size only from a meta of MetaFormat or later), its opened search
+// and the size only from a meta of MetaFormat or later, and the list not
+// when the meta says its List-Id could not be read, or is Partial and holds
+// none: the header may have been cut before it), its opened search
 // entry (FromEntry: the first SearchTextMax bytes of the text, and whether
 // they were cut), and its raw message read and opened (FromText: the whole
 // text, which supersedes the entry's, and the raw length, which is the size
@@ -76,8 +78,10 @@ func QueryMessage(item *store.Message, meta *StoredMeta, entry *SearchEntry, tex
 			m.Attachments = append(m.Attachments, query.Attachment{Name: a.Name, Type: a.Type})
 		}
 		if meta.Format >= MetaFormat {
-			m.ListRecorded = true
-			if meta.List != "" {
+			// No List-Id is a known absence only when the header was read
+			// whole (not Partial) and any List-Id in it was read.
+			m.ListRecorded = !meta.ListUnknown && (meta.List != "" || !meta.Partial)
+			if m.ListRecorded && meta.List != "" {
 				m.List = []string{meta.List}
 			}
 			m.Size, m.SizeKnown = meta.Size, true

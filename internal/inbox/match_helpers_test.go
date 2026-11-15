@@ -421,14 +421,32 @@ func (l listing) String() string {
 	return [...]string{"none", "match", "needs a model", "unknown"}[l]
 }
 
-func listingOf(res query.Result) listing {
+// listingOf is where the whole read lists m: needing a model only when no
+// source is left to read and some answers to its atoms (each 1 or 0, every
+// one tried, up to eight) make fs true (the code review of #103, M3).
+func listingOf(fs []*query.Canonical, m *query.Message) listing {
+	res := standIn(fs, m, nil, query.ForQuery)
 	switch {
 	case res.Value == query.True:
 		return listedMatch
 	case res.Value == query.False:
 		return listedNone
-	case res.Needs == 0 && len(res.Model) > 0:
+	case res.Needs != 0 || len(res.Model) == 0:
+		return listedUnknown
+	case len(res.Model) > 8:
 		return listedNeedsModel
+	}
+	for bits := range 1 << len(res.Model) {
+		answers := query.Answers{}
+		for i, a := range res.Model {
+			answers[a] = 0
+			if bits&(1<<i) != 0 {
+				answers[a] = 1
+			}
+		}
+		if standIn(fs, m, answers, query.ForQuery).Value == query.True {
+			return listedNeedsModel
+		}
 	}
 	return listedUnknown
 }
@@ -489,11 +507,11 @@ func reference(b inbox.Box, fs []*query.Canonical, q *qMsg) (want, withoutRawSiz
 		}
 	}
 	m := inbox.QueryMessage(item, &meta, entry, text)
-	want = listingOf(standIn(fs, m, nil, query.ForQuery))
+	want = listingOf(fs, m)
 	if m.SizeKnown && meta.Format < inbox.MetaFormat {
 		m.SizeKnown, m.Size = false, 0
 	}
-	return want, listingOf(standIn(fs, m, nil, query.ForQuery)), readRaw
+	return want, listingOf(fs, m), readRaw
 }
 
 // pages runs the matcher from the newest message until a page has no next,
