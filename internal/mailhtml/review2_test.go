@@ -6,9 +6,11 @@ import (
 	"errors"
 	"io"
 	"os"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"golang.org/x/net/html"
@@ -321,9 +323,24 @@ func TestAdversarialFamiliesStayWithinTheRenderMemory(t *testing.T) {
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	for _, name := range names {
+	// The search for each family's largest size measures nothing and is most
+	// of the test's work, so it runs on every processor first; the renders
+	// whose memory is measured then run one at a time, with nothing else
+	// allocating.
+	largest := make([]int, len(names))
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, runtime.GOMAXPROCS(0))
+	for i, name := range names {
+		wg.Go(func() {
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			largest[i] = largestShown(families[name])
+		})
+	}
+	wg.Wait()
+	for i, name := range names {
 		t.Run(strings.ReplaceAll(name, " ", "_"), func(t *testing.T) {
-			n := largestShown(families[name])
+			n := largest[i]
 			if n < 0 {
 				t.Skip("refused at its smallest")
 			}
