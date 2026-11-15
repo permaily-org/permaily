@@ -579,3 +579,77 @@ func itoa(i int) string {
 	}
 	return string(b)
 }
+
+// A39. A message atom the entry has no room for, and no kept answer under
+// any content, is left unknown before the text is read: it spends no read
+// and stops no page. One that may have an answer under another content is
+// still read for (the review of pull request 2, finding 9).
+func TestA39AFullEntryReadsNoTextForAnAtomItCannotAsk(t *testing.T) {
+	h := decide.ContentHash(decide.Content{Kind: decide.ContentSubject, Subject: "Hi"})
+	entry := func(n int) *inbox.KeptDecisions {
+		d := &inbox.KeptDecisions{V: 1}
+		for i := range n {
+			d.Answers = append(d.Answers, inbox.KeptAnswer{Content: h, Var: "subject", Op: "about", Topic: "topic " + itoa(i), Model: "gpt-6-luna", Prompt: decide.PromptVersion, P: 0.5})
+		}
+		return d
+	}
+	unaffordable := func(q *question) {
+		q.Text = func(context.Context) (string, inbox.TextState, error) {
+			q.mu.Lock()
+			q.reads++
+			q.mu.Unlock()
+			return "", inbox.TextUnaffordable, nil
+		}
+	}
+	t.Run("full: a new message atom reads nothing and stops nothing", func(t *testing.T) {
+		w := newWorld(t)
+		e := w.keyed()
+		w.kept.put("m1", entry(inbox.KeptMaxAnswers))
+		q := newQuestion("m1", "Hi", "text", subj("topic 0"), about("new"))
+		unaffordable(q)
+		out := e.ask(q)
+		if q.textReads() != 0 || out.Outcome == inbox.AskStop || out.Called != 0 || out.Answers[subj("topic 0")] != 0.5 {
+			t.Fatalf("%d reads: %+v", q.textReads(), out)
+		}
+		if _, ok := out.Answers[about("new")]; ok {
+			t.Fatal("the new atom has an answer")
+		}
+	})
+	t.Run("room for one: the subject atom first takes it, no text is read", func(t *testing.T) {
+		w := newWorld(t)
+		e := w.keyed()
+		w.kept.put("m1", entry(inbox.KeptMaxAnswers-1))
+		q := newQuestion("m1", "Hi", "text", subj("new"), about("new"))
+		out := e.ask(q)
+		_, sok := out.Answers[subj("new")]
+		_, mok := out.Answers[about("new")]
+		if q.textReads() != 0 || !sok || mok || out.Called != 1 {
+			t.Fatalf("%d reads: %+v", q.textReads(), out)
+		}
+	})
+	t.Run("room for one: the message atom first takes it and reads the text", func(t *testing.T) {
+		w := newWorld(t)
+		e := w.keyed()
+		w.kept.put("m1", entry(inbox.KeptMaxAnswers-1))
+		q := newQuestion("m1", "Hi", "text", about("new"), subj("new"))
+		out := e.ask(q)
+		_, sok := out.Answers[subj("new")]
+		_, mok := out.Answers[about("new")]
+		if q.textReads() != 1 || sok || !mok || out.Called != 1 {
+			t.Fatalf("%d reads: %+v", q.textReads(), out)
+		}
+	})
+	t.Run("full: an atom kept for a content not known before the read is still read for", func(t *testing.T) {
+		w := newWorld(t)
+		e := w.keyed()
+		d := entry(inbox.KeptMaxAnswers - 1)
+		text := decide.ContentHash(decide.Content{Kind: decide.ContentMessage, Subject: "Hi", Body: "text"})
+		d.Answers = append(d.Answers, inbox.KeptAnswer{Content: text, Var: "message", Op: "about", Topic: "kept", Model: "gpt-6-luna", Prompt: decide.PromptVersion, P: 0.9})
+		w.kept.put("m1", d) // no view: the text must be read to find its hash
+		q := newQuestion("m1", "Hi", "text", about("kept"))
+		out := e.ask(q)
+		if q.textReads() != 1 || out.Answers[about("kept")] != 0.9 || out.Called != 0 {
+			t.Fatalf("%d reads: %+v", q.textReads(), out)
+		}
+	})
+}

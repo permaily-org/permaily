@@ -246,7 +246,7 @@ func TestA20TheCanary(t *testing.T) {
 			t.Fatalf("calls %d %d", a.model.count(), b.model.count())
 		}
 	})
-	t.Run("changed then same, in both orders, and after ErrChanged, stays changed", func(t *testing.T) {
+	t.Run("changed then same, in both orders, stays changed", func(t *testing.T) {
 		for _, changedFirst := range []bool{true, false} {
 			w := newWorld(t)
 			a, b := w.keyed(), w.keyed()
@@ -258,8 +258,10 @@ func TestA20TheCanary(t *testing.T) {
 				answersAsMeasured(a, nil)
 				answersAsMeasured(b, moved)
 			}
-			// Both run the day's check, as under a replayed lease; B's
-			// completion meets A's write (ErrChanged) and adds its own.
+			// Both run the day's check, as under a replayed lease; B reads
+			// the state after A's completion and adds its own to it. The
+			// write that meets ErrChanged is
+			// TestA20ACompletionRetriedAfterErrChanged.
 			paused, resume := make(chan struct{}), make(chan struct{})
 			prev := b.model.fail
 			b.model.onCall(func(ctx context.Context, n int, c decide.Call) (*decide.Result, error) {
@@ -529,3 +531,159 @@ func canaryCalls(e *enclave) (decide.Call, decide.Call) {
 }
 
 func ftoa(f float64) string { return strconv.FormatFloat(f, 'f', 2, 64) }
+
+// A20. A run that did not complete is not run again by its enclave inside
+// the lease it took (the review of pull request 2, finding 5).
+func TestA20AFailedRunIsNotRunAgainInsideItsLease(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	e := w.keyed()
+	e.model.onCall(func(context.Context, int, decide.Call) (*decide.Result, error) {
+		return nil, &decide.AttemptError{Err: decide.ErrRequest, Sent: true}
+	})
+	_ = e.RunCanary(ctx)
+	_ = e.RunCanary(ctx)
+	w.advance(CanaryLease - time.Second)
+	_ = e.RunCanary(ctx)
+	if e.model.count() != 1 {
+		t.Fatalf("%d runs inside one lease", e.model.count())
+	}
+	if got := e.Status(ctx).Canary.State; got != attestation.CanaryFailed {
+		t.Fatalf("state %s", got)
+	}
+	w.advance(time.Second)
+	answersAsMeasured(e, nil)
+	if err := e.RunCanary(ctx); err != nil || e.model.count() != 9 {
+		t.Fatalf("not run once the lease ended: %v, %d calls", err, e.model.count())
+	}
+}
+
+// failingPurpose derives every key but one purpose's, while fail is set.
+type failingPurpose struct {
+	testKeys
+	purpose string
+	fail    *bool
+}
+
+func (f failingPurpose) Derive(ctx context.Context, purpose string) ([]byte, error) {
+	if *f.fail && purpose == f.purpose {
+		return nil, errors.New("no root secret")
+	}
+	return f.testKeys.Derive(ctx, purpose)
+}
+
+// A20. A state whose read fails is unreadable on /status, whatever this
+// enclave last read; a read that succeeds again clears it (the review of
+// pull request 2, finding 6).
+func TestA20AStateWhoseReadFailsIsUnreadable(t *testing.T) {
+	ctx := context.Background()
+	timedOut := func(e *enclave) func(string, int) (bool, *store.Record, store.Mark, error) {
+		return func(name string, _ int) (bool, *store.Record, store.Mark, error) {
+			if name == e.canaryName() {
+				return true, nil, store.Mark{}, errors.New("storage timed out")
+			}
+			return false, nil, store.Mark{}, nil
+		}
+	}
+	t.Run("a storage timeout after a check, then recovery", func(t *testing.T) {
+		w := newWorld(t)
+		e := w.keyed()
+		answersAsMeasured(e, nil)
+		if err := e.RunCanary(ctx); err != nil {
+			t.Fatal(err)
+		}
+		w.advance(canaryFresh)
+		e.records.onGet(timedOut(e))
+		if got := e.Status(ctx).Canary; got.State != attestation.CanaryUnreadable || !got.CheckedAt.Equal(t0) {
+			t.Fatalf("a failed refresh still reports %+v", got)
+		}
+		e.records.onGet(nil)
+		w.advance(canaryFresh)
+		if got := e.Status(ctx).Canary.State; got != attestation.CanarySame {
+			t.Fatalf("not cleared by a read that succeeds: %s", got)
+		}
+	})
+	t.Run("a storage timeout with nothing read before", func(t *testing.T) {
+		w := newWorld(t)
+		e := w.keyed()
+		answersAsMeasured(e, nil)
+		if err := e.RunCanary(ctx); err != nil {
+			t.Fatal(err)
+		}
+		other := w.keyed()
+		other.records.onGet(timedOut(other))
+		if got := other.Status(ctx).Canary.State; got != attestation.CanaryUnreadable {
+			t.Fatalf("a failed first read reports %s", got)
+		}
+	})
+	t.Run("a key that cannot be derived", func(t *testing.T) {
+		w := newWorld(t)
+		fail := false
+		e := w.keyed(withKeys(failingPurpose{purpose: purposeCanary, fail: &fail}))
+		answersAsMeasured(e, nil)
+		if err := e.RunCanary(ctx); err != nil {
+			t.Fatal(err)
+		}
+		w.advance(canaryFresh)
+		fail = true
+		if got := e.Status(ctx).Canary.State; got != attestation.CanaryUnreadable {
+			t.Fatalf("a failed derivation reports %s", got)
+		}
+		fail = false
+		w.advance(canaryFresh)
+		if got := e.Status(ctx).Canary.State; got != attestation.CanarySame {
+			t.Fatalf("not cleared: %s", got)
+		}
+	})
+}
+
+// A20. A completion whose write meets another enclave's completion
+// (store.ErrChanged) reads again and adds its check to what it finds, in
+// both orders of changed and same (the review of pull request 2, finding
+// 7: the earlier schedule never made the conflict).
+func TestA20ACompletionRetriedAfterErrChanged(t *testing.T) {
+	ctx := context.Background()
+	today := "2026-11-16"
+	for _, changedFirst := range []bool{true, false} {
+		t.Run("changed first "+strconv.FormatBool(changedFirst), func(t *testing.T) {
+			w := newWorld(t)
+			a, b := w.keyed(), w.keyed()
+			moved := func(string, query.Atom, float64) float64 { return 0.5 }
+			if changedFirst {
+				answersAsMeasured(a, moved)
+				answersAsMeasured(b, nil)
+			} else {
+				answersAsMeasured(a, nil)
+				answersAsMeasured(b, moved)
+			}
+			if _, err := b.readCanary(ctx, true); err != nil {
+				t.Fatal(err)
+			}
+			// B has read the state for its completion; before its write, A's
+			// completion lands, so B's write at the version it read fails.
+			writes := 0
+			b.records.onPut(func(name string) error {
+				if name != b.canaryName() {
+					return nil
+				}
+				writes++
+				if writes == 1 {
+					if err := a.check(ctx, today); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return nil
+			})
+			if err := b.check(ctx, today); err != nil {
+				t.Fatalf("the completion was not retried: %v", err)
+			}
+			if writes != 2 {
+				t.Fatalf("%d writes: no conflict was made, or it was not retried", writes)
+			}
+			d := a.canaryState(t)
+			if len(d.Checks) != 2 || !d.Changed || d.ChangeSeen != today || w.alarms().count(AlarmCanaryChanged) != 1 {
+				t.Fatalf("%+v, alarms %+v", d, w.alarms().Entries)
+			}
+		})
+	}
+}

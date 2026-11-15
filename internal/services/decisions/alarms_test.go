@@ -12,8 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/permaily-org/permaily/internal/decide"
+	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/store"
+	"github.com/permaily-org/permaily/pkg/attestation"
 )
 
 var update = flag.Bool("update", false, "write the alarms' golden text")
@@ -379,6 +382,160 @@ func TestA22TheAlarmsWords(t *testing.T) {
 		logs := w.logs.String()
 		if !strings.Contains(logs, "kind=month_limit") || strings.Contains(logs, "hello@") || strings.Contains(logs, "ses:") {
 			t.Fatalf("logged %q", logs)
+		}
+	})
+}
+
+// A15. An alarm authorises its cause only once a fresh strict read finds it
+// in the record of alarms, every time (the review of pull request 2,
+// finding 3).
+func TestA15AnAlarmIsAcceptedOnlyFromTheRecord(t *testing.T) {
+	ctx := context.Background()
+	t.Run("an append forked before its return authorises no grant", func(t *testing.T) {
+		w := newWorld(t)
+		e := w.keyed(withLimits(smallDay))
+		e.reserveOnce(2*block, "")
+		if err := e.RunAlarms(ctx); err != nil { // the record of alarms is made
+			t.Fatal(err)
+		}
+		e.commits.onAppend(func(c store.Commit, inner func(store.Commit) (*store.Commit, error)) (*store.Commit, error) {
+			stored, err := inner(c)
+			if err != nil {
+				return stored, err
+			}
+			if c.Name != RecordAlarms {
+				t.Fatalf("the first append is %s", c.Name)
+			}
+			// Another enclave's append at the same version, over a delete
+			// marker: this one returned nil and is not the record's line.
+			w.commits.Fork(c.Name, c.Version, sha256.Sum256([]byte("the other append")))
+			return stored, nil
+		})
+		out := e.ask(newQuestion("m1", "Hi", "", subj("x")))
+		if out.Called != 0 || len(w.spend(month).Grants) != 1 {
+			t.Fatalf("%d attempts and %d grants for an alarm no RunAlarms can send", out.Called, len(w.spend(month).Grants))
+		}
+		if err := e.RunAlarms(ctx); err == nil {
+			t.Fatal("the fork was not found")
+		}
+	})
+	t.Run("an alarm added before its record was lost authorises nothing after", func(t *testing.T) {
+		w := newWorld(t)
+		e := w.keyed(withLimits(smallDay))
+		e.reserveOnce(3*block, "") // one grant that crosses the alarm, nothing left of it
+		for _, name := range w.versions(RecordAlarms) {
+			_ = w.records.DeleteRecord(ctx, name)
+		}
+		if err := e.RunAlarms(ctx); err == nil {
+			t.Fatal("the record of alarms is lost")
+		}
+		out := e.ask(newQuestion("m1", "Hi", "", subj("x")))
+		if out.Called != 0 || len(w.spend(month).Grants) != 1 {
+			t.Fatalf("%d attempts and %d grants after the alarm was lost", out.Called, len(w.spend(month).Grants))
+		}
+	})
+}
+
+// A15. The guard's and the canary's observations are published only once
+// their alarm is in the record; until then the guard still stops, and
+// RunAlarms publishes them once it adds the alarm (the review of pull
+// request 2, finding 4).
+func TestA15AnObservationIsPublishedOnlyAfterItsAlarm(t *testing.T) {
+	ctx := context.Background()
+	failAlarms := func(e *enclave, failing *bool, check func()) {
+		e.records.onPut(func(name string) error {
+			if name != RecordAlarms {
+				return nil
+			}
+			if !*failing {
+				return nil
+			}
+			if check != nil {
+				check()
+			}
+			return errors.New("storage")
+		})
+	}
+	for _, tc := range []struct {
+		err     error
+		guard   string
+		outcome inbox.AskOutcome
+	}{
+		{decide.ErrKeyRefused, attestation.ModelGuardKeyRefused, inbox.AskOff},
+		{decide.ErrProviderLimit, attestation.ModelGuardProviderLimit, inbox.AskLimit},
+	} {
+		t.Run(tc.err.Error(), func(t *testing.T) {
+			w := newWorld(t)
+			e := w.keyed()
+			e.model.onCall(func(context.Context, int, decide.Call) (*decide.Result, error) {
+				return nil, &decide.AttemptError{Err: tc.err, Sent: true}
+			})
+			failing, seen := true, false
+			failAlarms(e, &failing, func() {
+				seen = true
+				if got := e.guardState(ctx); got == tc.guard {
+					t.Errorf("%s published before its alarm's write", got)
+				}
+			})
+			e.ask(newQuestion("m1", "Hi", "", subj("x")))
+			if !seen {
+				t.Fatal("no alarm was tried")
+			}
+			if got := e.Status(ctx).Guard; got == tc.guard {
+				t.Fatalf("%s published although its alarm was not added", got)
+			}
+			if out := e.ask(newQuestion("m2", "Hi", "", subj("x"))); out.Called != 0 || out.Outcome != tc.outcome {
+				t.Fatalf("the guard does not stop while its alarm is pending: %+v", out)
+			}
+			failing = false
+			if err := e.RunAlarms(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if got := e.Status(ctx).Guard; got != tc.guard {
+				t.Fatalf("not published once its alarm was added: %s", got)
+			}
+		})
+	}
+	t.Run("the month's limit", func(t *testing.T) {
+		w := newWorld(t)
+		w.seedSpend(month, "2026-11-01", 500)
+		e := w.keyed()
+		failing := true
+		failAlarms(e, &failing, nil)
+		if out := e.ask(newQuestion("m1", "Hi", "", subj("x"))); out.Called != 0 || out.Outcome != inbox.AskLimit {
+			t.Fatalf("%+v", out)
+		}
+		if got := e.Status(ctx).Guard; got == attestation.ModelGuardMonthLimit {
+			t.Fatalf("%s published although its alarm was not added", got)
+		}
+		failing = false
+		if err := e.RunAlarms(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if got := e.Status(ctx).Guard; got != attestation.ModelGuardMonthLimit {
+			t.Fatalf("not published once its alarm was added: %s", got)
+		}
+	})
+	t.Run("a stale canary", func(t *testing.T) {
+		w := newWorld(t)
+		e := w.keyed()
+		e.model.onCall(func(context.Context, int, decide.Call) (*decide.Result, error) {
+			return nil, &decide.AttemptError{Err: decide.ErrRequest, Sent: true}
+		})
+		_ = e.RunCanary(ctx)
+		w.advance(48 * time.Hour)
+		failing := true
+		failAlarms(e, &failing, nil)
+		_ = e.RunCanary(ctx)
+		if got := e.canaryStateNow(ctx); got == attestation.CanaryStale {
+			t.Fatalf("%s published although its alarm was not added", got)
+		}
+		failing = false
+		if err := e.RunAlarms(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if got := e.canaryStateNow(ctx); got != attestation.CanaryStale {
+			t.Fatalf("not published once its alarm was added: %s", got)
 		}
 	})
 }

@@ -3,6 +3,7 @@ package decisions
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -235,4 +236,40 @@ func (f *failingEntries) PutEntry(ctx context.Context, e *store.Entry) error {
 		return f.put
 	}
 	return f.Memory.PutEntry(ctx, e)
+}
+
+// The stand-ins are pull request 1's functions exactly, at the edges too:
+// Cost bounds every count to [0, 1<<40] before it multiplies, Estimate is
+// Cost of its tokens, and Plan's rule answers are nil when there are none
+// (the review of pull request 2, finding 8; decide.Cost, decide.Estimate
+// and decide.Plan in pull request 1).
+func TestStandInsMatchPullRequest1(t *testing.T) {
+	for _, tc := range []struct {
+		u    decide.Usage
+		want int64
+	}{
+		{decide.Usage{InputTokens: 1000, CachedTokens: -1}, 100_000},
+		{decide.Usage{InputTokens: -5}, 0},
+		{decide.Usage{InputTokens: math.MaxInt64}, 219_902_325_555_200},
+		{decide.Usage{InputTokens: 1000, CacheWriteTokens: math.MaxInt64}, 137_438_953_472_000},
+		{decide.Usage{InputTokens: 1000, CachedTokens: math.MaxInt64}, 10_995_116_277_760},
+		{decide.Usage{InputTokens: decide.LongRequestTokens}, decide.LongRequestTokens * 100},
+		{decide.Usage{InputTokens: decide.LongRequestTokens + 1}, (decide.LongRequestTokens + 1) * 200},
+	} {
+		if got := cost(tc.u); got != tc.want {
+			t.Errorf("cost(%+v) = %d, pull request 1's Cost is %d", tc.u, got, tc.want)
+		}
+	}
+	for _, n := range []int{0, 1, decide.MaxStatementsPerCall} {
+		c := decide.Call{Content: decide.Content{Kind: decide.ContentSubject, Subject: "Hi"}, Statements: atomsN(n)}
+		if got, want := estimate(c), cost(decide.Usage{InputTokens: estimateTokens(c)}); got != want {
+			t.Errorf("estimate %d, Cost of its tokens %d", got, want)
+		}
+	}
+	if _, rule := plan([]query.Atom{subj("s"), about("a")}, "Hi", "text", true); rule != nil {
+		t.Errorf("rule answers %v where pull request 1's Plan gives nil", rule)
+	}
+	if _, rule := plan([]query.Atom{subj("s")}, "", "", true); len(rule) != 1 {
+		t.Errorf("rule answers %v", rule)
+	}
 }

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/store"
 )
 
@@ -232,3 +233,64 @@ func mustJSON(v any) string {
 }
 
 var _ = contracts.ModelKey{}
+
+// A19. A change of the key that returns after a later one never brings
+// its key back: the credential and the next Ask use the record as it is
+// (the review of pull request 2, finding 1).
+func TestA19AChangeThatReturnsLateNeverBringsBackAnOlderKey(t *testing.T) {
+	ctx := context.Background()
+	t.Run("a set that returns after a removal", func(t *testing.T) {
+		w := newWorld(t)
+		e := w.keyed()
+		e.commits.onAppend(func(c store.Commit, inner func(store.Commit) (*store.Commit, error)) (*store.Commit, error) {
+			stored, err := inner(c)
+			if err != nil {
+				return stored, err
+			}
+			// The set landed; a removal lands and returns before it does.
+			if err := e.RemoveKey(ctx); err != nil {
+				t.Fatal(err)
+			}
+			return stored, nil
+		})
+		if _, err := e.SetKey(ctx, keySetOf("sk-set-before-the-removal")); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := e.Key(ctx); err != nil || got.Set {
+			t.Fatalf("the record is not removed: %+v, %v", got, err)
+		}
+		if _, ok := e.model.key(ctx); ok {
+			t.Fatal("the credential gives a removed key")
+		}
+		if out := e.ask(newQuestion("m1", "Hi", "", subj("x"))); out.Outcome != inbox.AskOff || e.model.count() != 0 {
+			t.Fatalf("asked with a removed key: %+v", out)
+		}
+	})
+	t.Run("a set that returns after a newer set", func(t *testing.T) {
+		w := newWorld(t)
+		e := w.keyed()
+		e.commits.onAppend(func(c store.Commit, inner func(store.Commit) (*store.Commit, error)) (*store.Commit, error) {
+			stored, err := inner(c)
+			if err != nil {
+				return stored, err
+			}
+			if _, err := e.SetKey(ctx, keySetOf("sk-the-newer-key")); err != nil {
+				t.Fatal(err)
+			}
+			return stored, nil
+		})
+		if _, err := e.SetKey(ctx, keySetOf("sk-the-older-key")); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := e.Key(ctx); got.Fingerprint != fingerprint("sk-the-newer-key") {
+			t.Fatalf("the record: %+v", got)
+		}
+		if k, ok := e.model.key(ctx); !ok || k != "sk-the-newer-key" {
+			t.Fatal("the credential gives the older key")
+		}
+		e.ask(newQuestion("m1", "Hi", "", subj("x")))
+		if e.model.count() != 1 || e.model.keys[0] != "sk-the-newer-key" {
+			t.Fatal("asked with the older key")
+		}
+	})
+}

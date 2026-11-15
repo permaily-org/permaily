@@ -845,3 +845,80 @@ func atomsN(n int) []query.Atom {
 	}
 	return out
 }
+
+// A17. An answer to an attempt sent before a stop never clears it: only the
+// probe admitted under that stop, or a new key, does; and a refusal of a
+// key already replaced does not stand for the new one (the review of pull
+// request 2, finding 2).
+func TestA17AnOlderAnswerNeverClearsANewerStop(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		err   error
+		guard string
+	}{
+		{decide.ErrKeyRefused, attestation.ModelGuardKeyRefused},
+		{decide.ErrProviderLimit, attestation.ModelGuardProviderLimit},
+	} {
+		t.Run(tc.err.Error(), func(t *testing.T) {
+			w := newWorld(t)
+			e := w.keyed()
+			entered, release := make(chan struct{}), make(chan struct{})
+			e.model.onCall(func(_ context.Context, n int, _ decide.Call) (*decide.Result, error) {
+				switch n {
+				case 1: // sent before the stop, answered after it
+					close(entered)
+					<-release
+				case 2:
+					return nil, &decide.AttemptError{Err: tc.err, Sent: true}
+				}
+				return nil, nil
+			})
+			done := make(chan *inbox.Asked, 1)
+			go func() { done <- e.ask(newQuestion("older", "Hi", "", subj("x"))) }()
+			<-entered
+			if stop := e.ask(newQuestion("stop", "Hi", "", subj("x"))); stop.Called != 1 {
+				t.Fatalf("the stop was not reached: %+v", stop)
+			}
+			close(release)
+			if older := <-done; len(older.Answers) != 1 {
+				t.Fatalf("the older answer is still its own: %+v", older)
+			}
+			if next := e.ask(newQuestion("next", "Hi", "", subj("x"))); next.Called != 0 {
+				t.Fatalf("the older answer cleared the stop: %+v", next)
+			}
+			if got := e.Status(ctx).Guard; got != tc.guard {
+				t.Fatalf("guard %s", got)
+			}
+			w.advance(probeEvery)
+			if probe := e.ask(newQuestion("probe", "Hi", "", subj("x"))); probe.Called != 1 || e.Status(ctx).Guard != attestation.ModelGuardOK {
+				t.Fatalf("the probe that succeeds: %+v", probe)
+			}
+		})
+	}
+	t.Run("a refusal of a key already replaced does not stand for the new one", func(t *testing.T) {
+		w := newWorld(t)
+		e := w.keyed()
+		entered, release := make(chan struct{}), make(chan struct{})
+		e.model.onCall(func(_ context.Context, n int, _ decide.Call) (*decide.Result, error) {
+			if n == 1 {
+				close(entered)
+				<-release
+			}
+			return nil, &decide.AttemptError{Err: decide.ErrKeyRefused, Sent: true}
+		})
+		done := make(chan *inbox.Asked, 1)
+		go func() { done <- e.ask(newQuestion("old key", "Hi", "", subj("x"))) }()
+		<-entered
+		if _, err := e.SetKey(ctx, keySetOf("sk-the-new-key")); err != nil {
+			t.Fatal(err)
+		}
+		if out := e.ask(newQuestion("new key", "Hi", "", subj("x"))); out.Called != 1 || out.Outcome != inbox.AskOff {
+			t.Fatalf("the new key's refusal: %+v", out)
+		}
+		close(release) // the old key's refusal arrives after the new key's
+		<-done
+		if out := e.ask(newQuestion("next", "Hi", "", subj("x"))); out.Called != 0 || out.Outcome != inbox.AskOff {
+			t.Fatalf("the new key, refused, sent again before its probe: %+v", out)
+		}
+	})
+}
