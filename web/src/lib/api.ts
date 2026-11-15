@@ -34,6 +34,11 @@ export type Account = {
    * to none, as an account made before there were terms.
    */
   terms?: string
+  /**
+   * The version of the model's notice the person agreed to (ADR 0028): what is sent to OpenAI to decide the
+   * conditions a model decides, and what OpenAI may keep. Absent when they agreed to none.
+   */
+  model_notice?: string
 }
 
 export type Session = {
@@ -362,7 +367,15 @@ export type MatchPage = {
   unknown: string[]
   next?: string
   searched_to?: string
+  /**
+   * Only when the request asked the model (ADR 0028): `asked` when every message that needed it was asked,
+   * `limit` when the spend guard held some back (they stay in `needs_model`), `off` when the model has no key.
+   */
+  model?: MatchModel
 }
+
+/** What became of asking the model on a page of matches (ADR 0028). */
+export type MatchModel = 'asked' | 'limit' | 'off'
 
 /** The codes the server answers with, plus `network` for a request that got no answer. */
 export type ApiErrorCode =

@@ -11,7 +11,7 @@ That the service answering on the Permaily hosts runs an enclave image built fro
 - **The source code and its pinned dependencies**: Go modules (`go.sum`, `vendorHash`), npm packages (`bun.lock` and the `node_modules` hash), nixpkgs (`flake.lock`).
 - **Let's Encrypt** for issuing certificates to the enclave's key, and the public WebPKI for the verifier's TLS checks and for the enclave's connections to KMS.
 - **Sigstore's public instance** (Fulcio, the Rekor transparency logs and, for entries of Rekor v2, the timestamp authority that says when a signature existed; all pinned in `pkg/provenance`; three of the five keyholders of Sigstore's TUF root can give a running enclave other logs and timestamp authorities, never another issuer of certificates, ADR 0013) and **GitHub Actions** (its token issuer, its hosted runners, and the rule that `main` only changes through reviewed merges): together they say which images are public releases, and a running enclave hands the root secret only to those.
-- In later phases: the LLM provider used for classification (model and prompts are in the image).
+- **OpenAI**, for what it is sent to decide the conditions a model decides (ADR 0020, how in ADR 0028; designed, not built): the subject, and for conditions on the whole message its text (up to 256 KiB), of the messages whose exact conditions did not settle the matter, and the topics. The provider, the address, the model, the prompt, the organisation and the project are compiled into the image; that OpenAI keeps nothing beyond its stated retention, and that the organisation's data controls are as the trust page says, is OpenAI's and the operator's word, not something the enclave proves.
 
 ## Not trusted
 
@@ -55,6 +55,7 @@ The host proxy only tunnels to:
 | `github.com:443`, `api.github.com:443` | Signing in with GitHub: the code for an access token, who holds it and their verified address |
 | `graph.facebook.com:443` | Signing in with Meta: the code for an access token, and who holds it |
 | `login.microsoftonline.com:443` | Signing in with Microsoft: the code for an ID token, and the keys it is signed with |
+| `api.openai.com:443` | The model (ADR 0028, designed, not built): OpenAI's Decisions API, for the conditions a model decides |
 
 ## Mail (F1)
 
@@ -154,6 +155,20 @@ A formula is input from a vendor or the person, and a sentence is what the perso
 - **What writing to the storage can do to a match.** Withhold, as it always can: the scan is bounded by the time in message identifiers before any meta is opened, so a message moved outside the bound is not considered; nothing is classified before its sealed meta is open, so a message cannot be added or made to match. `size` is read from the sealed meta, never from the item's plain size.
 - **What a page costs the enclave.** One of the four search slots and one of the account's thirty search pages a minute, shared with the inbox's search; at most 500 stored items, ten raw messages read one at a time, each under its own grant of the 128 MiB read budget given back before the next (two pages of six 25 MiB messages run at once under the default budget: Q44), and 20 seconds of considering messages inside the request's minute.
 - **Logs.** Nothing of a formula: not a value, a sentence, the canonical identifier, a mailbox it names or a number of matches. A refusal is answered and not logged; a failure of the service is logged as its category through `domain.Redacted`. `TestMailEndToEnd` sends a formula with hostile values through both routes and fails if the log holds any of them, the sentence, the identifier or the message matched.
+
+## The model (F2 step 4, ADR 0028, designed; not built)
+
+What asking the model promises, and what it does not:
+
+- **What leaves, and to whom.** Only to `api.openai.com`, over TLS from the enclave, checked against the roots in the image: the subject for a subject condition, the subject and the text (up to 256 KiB, read from the raw message when the stored entry cut it) for a condition on the message, and the statements with their topics. Never a sender, a recipient, an attachment, the date, an identifier of the message, the mailbox or the account, and nothing of the person added to a topic. Only for messages whose exact conditions did not settle the matter, only with a consent recorded for it (the model's notice for the owner's previews; a connection's or a rule's own later), and with the provider's prompt cache off on every request, so no copy is kept as cache state. Until OpenAI approves zero data retention, OpenAI may keep what it is sent for up to 30 days, and flagged requests and a sample of others for a time it does not state; the notice says so.
+- **The host.** Sees that the enclave called OpenAI, when, and how many bytes, which says when a message needed the model and roughly how long its text was. Can delay or drop a call: its conditions are then unknown, so a query delivers nothing that needs them and a rule that protects applies. Cannot read or change a call, its answer or the key.
+- **The key.** Given by the operator over the attested TLS connection (`scripts/model-key.sh`), kept sealed under the root secret in an anchored record, never answered back or logged. The image pins the OpenAI organisation and project in its request headers, so a key of another one is refused (to be verified against the API, ADR 0028). Whoever makes the key knows it and can use it elsewhere, within the project's spend limit; whoever owns the OpenAI organisation sets its data controls. Neither is visible to the enclave; both are said on the trust page.
+- **Kept answers.** Sealed per message under the mailbox's key and bound to it; whoever writes the table can delete them or put back an earlier copy, which only makes them be asked again, and cannot write one.
+- **The sender writes the text.** A message can be written to push the model's answer; the damage is bounded to that message (ADR 0020). On the spike's 30 adversarial and 11 adaptive messages, no attack moved the chosen wording across a threshold; a message written to look like an invoice is still about invoices.
+- **The vendor or the person writes the topic.** It is normalised, shown in the sentence the person consents to, and sent as a JSON string inside a fixed statement, so it cannot add words outside it; what it asks is what was consented to.
+- **Spend.** The OpenAI project's hard limit (50 USD a month) stops every call with the key; the enclave's own guard (50 USD a month for every enclave together, counted in a signed counter, and 0.50 USD a day for one account in one enclave) stops new calls first and sends an alarm by mail at 10 USD a day. Reaching a limit asks nothing new: what needs the model does not leave. Whoever writes the table can reset the enclave's counter: that spends the operator's money, up to the project's limit.
+- **A silent change of the model.** No version can be pinned. A daily canary of fixed synthetic statements, compared with what was measured, says when answers move; kept answers do not change, and receipts name the model and since when it behaved so.
+- **Logs.** Kinds only: never a subject, a text, a topic, a probability, a content hash, an identifier, the key, or the words of an error of the provider.
 
 ## Invariants
 

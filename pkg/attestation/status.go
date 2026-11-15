@@ -47,6 +47,96 @@ type Status struct {
 	// Admin counts what the operator did to accounts through the enclave; nil
 	// in images older than this field or without accounts.
 	Admin *AdminStatus `json:"admin,omitempty"`
+	// Model describes the model the enclave asks about what depends on
+	// meaning (ADR 0028); nil in images older than this field or that ask
+	// none.
+	Model *ModelStatus `json:"model,omitempty"`
+}
+
+// ModelStatus is what the enclave reports of the model it asks (ADR 0028,
+// "What /status and permaily-verify show"). Provider, Endpoint, Model,
+// PromptVersion, the pinned organization and project, the limits and the
+// retention the notice states are compiled into the image, so they are what
+// the measured code does; the rest is this enclave's state since it started.
+// It never holds a key, an amount of money spent, an account, a topic or
+// anything of a message.
+type ModelStatus struct {
+	Provider      string `json:"provider"`       // "openai"
+	Endpoint      string `json:"endpoint"`       // "https://api.openai.com/v1/decisions"
+	Model         string `json:"model"`          // "gpt-6-luna"
+	PromptVersion string `json:"prompt_version"` // "p1-2026-11-15"
+	// PromptCache is "off": every request turns the provider's prompt cache
+	// off, so no copy of the input is kept as cache state.
+	PromptCache  string `json:"prompt_cache"`
+	Organization string `json:"organization,omitempty"`
+	Project      string `json:"project,omitempty"`
+	// ZeroDataRetention is what the image says of the provider's retention,
+	// and so what the notice a person agrees to says: false until the
+	// provider approves zero data retention and a release says so.
+	ZeroDataRetention bool `json:"zero_data_retention"`
+	// The spend guard's limits, in US dollars: the month's stop, the day's
+	// alarm, and one account's share of a day in one enclave.
+	MonthLimitUSD float64 `json:"month_limit_usd"`
+	DayAlarmUSD   float64 `json:"day_alarm_usd"`
+	AccountDayUSD float64 `json:"account_day_usd"`
+	// KeySet says whether the operator gave the enclave a key, and when.
+	KeySet   bool      `json:"key_set"`
+	KeySetAt time.Time `json:"key_set_at,omitzero"`
+	// Guard is ModelGuardOK, or why nothing new is asked.
+	Guard  string         `json:"guard"`
+	Canary *CanaryStatus  `json:"canary,omitempty"`
+	Since  time.Time      `json:"since"`
+	Calls  map[string]int `json:"calls"` // by ModelCall kind, since Since; every kind is there, also at zero
+}
+
+// What the spend guard says (ModelStatus.Guard).
+const (
+	ModelGuardOK            = "ok"
+	ModelGuardMonthLimit    = "month_limit"    // the month's limit is reached: nothing new is asked until the next month (UTC)
+	ModelGuardProviderLimit = "provider_limit" // the provider said its own spend or credit limit is reached
+	ModelGuardKeyRefused    = "key_refused"    // no key is set, or the provider refused it
+	ModelGuardUnreadable    = "unreadable"     // the month's counter cannot be read: nothing new is asked
+)
+
+// CanaryStatus is what the daily canary last found.
+type CanaryStatus struct {
+	CheckedAt time.Time `json:"checked_at,omitzero"`
+	// State is CanarySame, CanaryChanged or CanaryFailed; CanaryNone
+	// before it first ran.
+	State string `json:"state"`
+	// ChangedAt is the first day an answer was seen to move, until a
+	// release takes the new answers as expected.
+	ChangedAt time.Time `json:"changed_at,omitzero"`
+}
+
+// What the canary found (CanaryStatus.State).
+const (
+	CanaryNone    = "none"
+	CanarySame    = "same"
+	CanaryChanged = "changed"
+	CanaryFailed  = "failed"
+)
+
+// The kinds of calls the enclave counts (ModelStatus.Calls). A later image
+// may count kinds that are not here.
+const (
+	ModelCallAnswered    = "answered"    // a 200 that checked
+	ModelCallKept        = "kept"        // an atom answered from what was kept, with no call
+	ModelCallRefusal     = "refusal"     // a statement the model refused
+	ModelCallTimeout     = "timeout"     // no answer within the deadline, retries included
+	ModelCallUnavailable = "unavailable" // 5xx or 429 slow_down after the retries
+	ModelCallKeyRefused  = "key_refused" // 401 or 403
+	ModelCallLimit       = "limit"       // the provider's spend or credit limit
+	ModelCallRequest     = "request"     // 400, 404 or 422: the enclave's own mistake
+	ModelCallInvalid     = "invalid"     // a 200 that did not read as an answer to the call
+	ModelCallHeld        = "held"        // not asked: the guard or the account's share held it
+	ModelCallCanary      = "canary"      // a call of the canary
+)
+
+// ModelCalls lists the kinds this package knows, in the order they are shown.
+var ModelCalls = []string{
+	ModelCallAnswered, ModelCallKept, ModelCallRefusal, ModelCallTimeout, ModelCallUnavailable,
+	ModelCallKeyRefused, ModelCallLimit, ModelCallRequest, ModelCallInvalid, ModelCallHeld, ModelCallCanary,
 }
 
 // AdminStatus is what the enclave reports of what its operator did to

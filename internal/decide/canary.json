@@ -1,0 +1,974 @@
+{
+  "v": 1,
+  "prompt_version": "p1-2026-11-15",
+  "model": "gpt-6-luna",
+  "measured": "2026-11-15",
+  "measured_by": "the spike of ADR 0028 (v2 wording, prompt cache at its default; the spike found the same answers with it off)",
+  "tolerance": 0.02,
+  "messages": [
+    {
+      "id": "inv01",
+      "subject": "Invoice INV-2026-0412 from Northwind Hosting",
+      "body": "Hello,\n\nPlease find attached invoice INV-2026-0412 for October hosting services. Amount due: $149.00. Due date: November 30, 2026.\n\nPay online at billing.northwind.example or by bank transfer.\n\nNorthwind Hosting Ltd, 500 Market Street, Suite 300, San Francisco, CA 94105",
+      "atoms": [
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "invoices",
+          "p": 1.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "facturas",
+          "p": 0.94
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "package delivery",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "password reset",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "sign-in code",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "marketing promotions",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "bank account activity",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "job offers",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "medical appointments",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "travel bookings",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "a home address",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "a phone number",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "a personal message from family or friends",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "invoices",
+          "p": 1.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "facturas",
+          "p": 0.82
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "package delivery",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "password reset",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "sign-in code",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "marketing promotions",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "bank account activity",
+          "p": 0.05
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "job offers",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "medical appointments",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "travel bookings",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a home address",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a phone number",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a personal message from family or friends",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "invoices",
+          "p": 1.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "facturas",
+          "p": 0.59
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "package delivery",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "password reset",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "sign-in code",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "marketing promotions",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "bank account activity",
+          "p": 0.28
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "job offers",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "medical appointments",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "travel bookings",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "a home address",
+          "p": 0.1
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "a phone number",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "a personal message from family or friends",
+          "p": 0.0
+        }
+      ]
+    },
+    {
+      "id": "inv08",
+      "subject": "This week: The Invoice, by Jonas Karlsson",
+      "body": "Welcome to the Tuesday Fiction Club.\n\nThis week we read 'The Invoice', a novel about a man who one day receives a bill for every moment of happiness he has enjoyed. Discussion questions are below.\n\n1. What does the narrator owe, really?\n2. Would you pay?\n\nSee you Thursday at the library.",
+      "atoms": [
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "invoices",
+          "p": 0.96
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "facturas",
+          "p": 0.76
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "package delivery",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "password reset",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "sign-in code",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "marketing promotions",
+          "p": 0.53
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "bank account activity",
+          "p": 0.04
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "job offers",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "medical appointments",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "travel bookings",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "a home address",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "a phone number",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "a personal message from family or friends",
+          "p": 0.01
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "invoices",
+          "p": 0.87
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "facturas",
+          "p": 0.54
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "package delivery",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "password reset",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "sign-in code",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "marketing promotions",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "bank account activity",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "job offers",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "medical appointments",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "travel bookings",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a home address",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a phone number",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a personal message from family or friends",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "invoices",
+          "p": 1.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "facturas",
+          "p": 1.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "package delivery",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "password reset",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "sign-in code",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "marketing promotions",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "bank account activity",
+          "p": 0.02
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "job offers",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "medical appointments",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "travel bookings",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "a home address",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "a phone number",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "a personal message from family or friends",
+          "p": 0.01
+        }
+      ]
+    },
+    {
+      "id": "mkt11",
+      "subject": "Our mailing list: holiday gift guide",
+      "body": "Holiday gift guide: 25 ideas under $50. Shop now.\n\nOur mailing address: Example Corp, 1600 Amphitheatre Pkwy, Mountain View, CA 94043.",
+      "atoms": [
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "invoices",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "facturas",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "package delivery",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "password reset",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "sign-in code",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "marketing promotions",
+          "p": 0.95
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "bank account activity",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "job offers",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "medical appointments",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "travel bookings",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "a home address",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "a phone number",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "a personal message from family or friends",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "invoices",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "facturas",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "package delivery",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "password reset",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "sign-in code",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "marketing promotions",
+          "p": 0.97
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "bank account activity",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "job offers",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "medical appointments",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "travel bookings",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a home address",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a phone number",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a personal message from family or friends",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "invoices",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "facturas",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "package delivery",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "password reset",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "sign-in code",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "marketing promotions",
+          "p": 0.99
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "bank account activity",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "job offers",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "medical appointments",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "travel bookings",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "a home address",
+          "p": 0.95
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "a phone number",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "a personal message from family or friends",
+          "p": 0.0
+        }
+      ]
+    },
+    {
+      "id": "pwd13",
+      "subject": "Nuevo inicio de sesión detectado",
+      "body": "Se ha iniciado sesión en tu cuenta desde un iPhone en Sevilla. Si no reconoces esta actividad, cambia tu contraseña.",
+      "atoms": [
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "invoices",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "facturas",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "package delivery",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "password reset",
+          "p": 0.05
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "sign-in code",
+          "p": 0.23
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "marketing promotions",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "bank account activity",
+          "p": 0.13
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "job offers",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "medical appointments",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "travel bookings",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "a home address",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "a phone number",
+          "p": 0.0
+        },
+        {
+          "var": "subject",
+          "op": "about",
+          "topic": "a personal message from family or friends",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "invoices",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "facturas",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "package delivery",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "password reset",
+          "p": 0.24
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "sign-in code",
+          "p": 0.02
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "marketing promotions",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "bank account activity",
+          "p": 0.85
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "job offers",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "medical appointments",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "travel bookings",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a home address",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a phone number",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a personal message from family or friends",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "invoices",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "facturas",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "package delivery",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "password reset",
+          "p": 0.93
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "sign-in code",
+          "p": 0.02
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "marketing promotions",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "bank account activity",
+          "p": 0.58
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "job offers",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "medical appointments",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "travel bookings",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "a home address",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "a phone number",
+          "p": 0.0
+        },
+        {
+          "var": "message",
+          "op": "mentions",
+          "topic": "a personal message from family or friends",
+          "p": 0.0
+        }
+      ]
+    }
+  ]
+}
