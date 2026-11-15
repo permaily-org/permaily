@@ -42,6 +42,7 @@ var defaultEgress = []string{
 	"api.github.com:443",            // GitHub: who holds the token, and their addresses
 	"graph.facebook.com:443",        // Meta: the code for an access token, and who holds it
 	"login.microsoftonline.com:443", // Microsoft: the code for an ID token, and the keys it is signed with
+	"api.openai.com:443",            // the model (ADR 0028): internal/decide/openai's Hosts()
 }
 
 func uint32Flag(dst *uint32) func(string) error {
