@@ -1,4 +1,4 @@
-# 0028 The operator's scripts send the token and secrets only to the attested key
+# 0029 The operator's scripts send the token and secrets only to the attested key
 
 Status: Accepted.
 Date: 2026-11-15

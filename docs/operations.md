@@ -221,7 +221,7 @@ Takes effect with v0.12.0, the release that builds ADR 0026, in production since
 
 ## The operator's scripts verify first
 
-`scripts/invite.sh`, `scripts/accounts.sh`, `scripts/provider.sh`, `scripts/handoff.sh` and `scripts/sigstore-trust-root.sh --send` send the admin token, and `provider.sh set` a provider's secret. Before they send anything, each runs `permaily-verify` against the enclave, and then sends only on connections with the TLS key it attested (`curl --pinnedpubkey`, the CA and hostname checked too, no redirects; ADR 0028). A server with another valid certificate for `api.permaily.com` gets nothing. They need to know what the enclave must measure:
+`scripts/invite.sh`, `scripts/accounts.sh`, `scripts/provider.sh`, `scripts/handoff.sh` and `scripts/sigstore-trust-root.sh --send` send the admin token, and `provider.sh set` a provider's secret. Before they send anything, each runs `permaily-verify` against the enclave, and then sends only on connections with the TLS key it attested (`curl --pinnedpubkey`, the CA and hostname checked too, no redirects; ADR 0029). A server with another valid certificate for `api.permaily.com` gets nothing. They need to know what the enclave must measure:
 
 ```sh
 export PERMAILY_PCRS=/tmp/permaily-v0.14.0/pcrs.json   # the running release's, from scripts/release-image.sh <tag> <dir>
