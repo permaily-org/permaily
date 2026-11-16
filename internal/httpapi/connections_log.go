@@ -18,7 +18,7 @@ const (
 	outcomeNotReleased = "not_released" // the lease refused to start: nothing of the answer went
 	outcomeClientLeft  = "client_left"  // the client went away before the answer
 	outcomeAborted     = "aborted"      // the response was aborted for another reason
-	outcomeNoAbort     = "no_abort"     // over HTTP/2 without ConnContext: a cut could not be honoured, nothing went
+	outcomeNoAbort     = "no_abort"     // mail asked over HTTP/2, where the last byte cannot be confirmed: refused before the token is checked
 	outcomeNotRecorded = "not_recorded" // a refusal of the API's own could not be recorded (Refuse): 503
 )
 

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
@@ -56,19 +57,20 @@ const (
 // 503 model_unavailable with Retry-After. A search, a read and an
 // attachment are sent only under the lease the service answered with
 // (connections.Release): Start immediately before the first byte (503 and
-// nothing of the answer when it refuses), every byte under its context, and
-// the response aborted, a write blocked in the connection included, when
-// that context ends while it is sent. Over HTTP/2 that needs the server's
-// ConnContext to be this package's (ConnContext): without it a leased answer
-// is 503 before its lease starts.
+// nothing of the answer when it refuses), every chunk admitted only while
+// its context lasts, the response aborted, a write blocked in the connection
+// included, when that context ends while it is sent, and Finish(true) only
+// once the transport handed the last byte to the socket. Only HTTP/1.1
+// confirms that: over HTTP/2 those three routes are 503 with Retry-After
+// before the token is checked (sendsMail).
 func VendorAPI(cfg ConnectionsConfig) http.Handler {
 	cfg = cfg.withDefaults()
 	v := &vendorAPI{cfg: cfg}
 	mux := http.NewServeMux()
-	mux.HandleFunc(oauth.PathAPI+"/connection", v.route("connection", http.MethodGet, v.info))
-	mux.HandleFunc(oauth.PathAPI+"/messages/search", v.route("search", http.MethodPost, v.search))
-	mux.HandleFunc(oauth.PathAPI+"/messages/{id}", v.route("read", http.MethodGet, v.read))
-	mux.HandleFunc(oauth.PathAPI+"/messages/{id}/attachments/{index}", v.route("attachment", http.MethodGet, v.attachment))
+	mux.HandleFunc(oauth.PathAPI+"/connection", v.route("connection", http.MethodGet, false, v.info))
+	mux.HandleFunc(oauth.PathAPI+"/messages/search", v.route("search", http.MethodPost, sendsMail, v.search))
+	mux.HandleFunc(oauth.PathAPI+"/messages/{id}", v.route("read", http.MethodGet, sendsMail, v.read))
+	mux.HandleFunc(oauth.PathAPI+"/messages/{id}/attachments/{index}", v.route("attachment", http.MethodGet, sendsMail, v.attachment))
 	mux.HandleFunc("/", noSuchEndpoint)
 	return logRequests(cfg.Log, "api: request", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -93,9 +95,14 @@ func VendorAPI(cfg ConnectionsConfig) http.Handler {
 
 type vendorAPI struct{ cfg ConnectionsConfig }
 
+// sendsMail marks a route whose answer is sent under a lease.
+const sendsMail = true
+
 // route answers method alone, and runs next with the grant of the request's
-// bearer token; name is the route in the request's line.
-func (v *vendorAPI) route(name, method string, next func(http.ResponseWriter, *http.Request, *oauth.Grant)) http.HandlerFunc {
+// bearer token; name is the route in the request's line. A route that sends
+// mail (leased) is refused over HTTP/2 before the token is checked, so
+// nothing is prepared, recorded or sent (refusedOverHTTP2).
+func (v *vendorAPI) route(name, method string, leased bool, next func(http.ResponseWriter, *http.Request, *oauth.Grant)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		setRoute(r, name)
 		if r.Method != method {
@@ -105,6 +112,9 @@ func (v *vendorAPI) route(name, method string, next func(http.ResponseWriter, *h
 		token, sent := bearer(r)
 		if !sent {
 			v.challenge(w, http.StatusUnauthorized, "", nil, "unauthorized", "a bearer token for this API is required")
+			return
+		}
+		if leased && refusedOverHTTP2(w, r) {
 			return
 		}
 		g, err := v.cfg.Service.Check(r.Context(), contracts.ResourceAPI, token)
@@ -255,13 +265,30 @@ func (v *vendorAPI) sendJSON(w http.ResponseWriter, r *http.Request, rel connect
 	v.send(w, r, rel, "application/json", append(b, '\n'), nil)
 }
 
+// refusedOverHTTP2 answers a request for mail over HTTP/2: 503 with
+// Retry-After, logged no_abort, and true. Go's HTTP/2 server writes a
+// response's last bytes (its END_STREAM) after the handler returned, into a
+// buffer another goroutine flushes, so nothing in the handler can learn when
+// they reached the socket, and a lease could end while they wait there (ADR
+// 0030, "Changed after the second review of pull request 6"). Over HTTP/1.1
+// the last Flush returns once the socket took every byte.
+func refusedOverHTTP2(w http.ResponseWriter, r *http.Request) bool {
+	if r.ProtoMajor < 2 {
+		return false
+	}
+	setOutcome(r, outcomeNoAbort)
+	w.Header().Set("Retry-After", retryAfterStorage)
+	writeError(w, http.StatusServiceUnavailable, "unavailable", "this answer can't be given now; try again later")
+	return true
+}
+
 // send writes a prepared answer under its lease (ADR 0030, "Release"): Start
 // immediately before the first byte, refused by 503 with nothing of the
-// answer; then the answer written by transfer, every chunk only while
-// Start's context lasts. Over HTTP/2 a cut must close the connection
-// (ConnContext): without it, the answer is refused before its lease starts.
-// Finish is called once, sent only for the whole answer; a transfer that
-// did not end whole aborts the response, logged by why.
+// answer; then the answer written by transfer, every chunk admitted only
+// while Start's context lasts. Finish is called once, after the transfer,
+// sent only for an answer whose last byte the transport handed to the
+// socket while the lease was held; a transfer that did not end so aborts the
+// response, logged by why. Over HTTP/2 the route refused it before (route).
 func (v *vendorAPI) send(w http.ResponseWriter, r *http.Request, rel connections.Release, contentType string, body []byte, header func(http.Header)) {
 	if r.Context().Err() != nil {
 		rel.Finish(false) // the client left: nothing is started
@@ -269,14 +296,6 @@ func (v *vendorAPI) send(w http.ResponseWriter, r *http.Request, rel connections
 		return
 	}
 	conn, _ := r.Context().Value(connKey{}).(net.Conn)
-	if r.ProtoMajor >= 2 && conn == nil {
-		// A cut could not stop a frame already handed to the connection.
-		rel.Finish(false)
-		setOutcome(r, outcomeNoAbort)
-		w.Header().Set("Retry-After", retryAfterStorage)
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "this answer can't be given now; try again later")
-		return
-	}
 	ctx, err := rel.Start(r.Context())
 	if err != nil {
 		rel.Finish(false)
@@ -301,60 +320,114 @@ func (v *vendorAPI) send(w http.ResponseWriter, r *http.Request, rel connections
 	}
 }
 
-// transfer writes body under ctx (the lease's; req is the request's), and
-// the lease is read before the header, before every write and again before
-// every flush: each chunk is written, and flushed, only while ctx lasts.
-// When ctx ends during the transfer, the connection (conn, ConnContext's) is
-// closed, the socket's write deadline set to now first, and the response's
-// write deadline set to now: a write blocked on a client that reads nothing
-// returns, over HTTP/1.1 as over HTTP/2, where the stream's deadline alone
-// leaves a frame already handed to the connection to leave when the client
-// reads again. That abort runs before transfer returns, never on a writer
-// its handler no longer has. sent says every byte was written and flushed;
-// ended, when not "", why the transfer ended otherwise: outcomeCut (ctx
-// ended), outcomeClientLeft (ctx ended with req) or outcomeAborted (a write
-// failed).
+// transfer writes body under ctx (the lease's; req is the request's) over
+// HTTP/1.1, in chunks of sendChunk, and returns once the transport handed
+// its last byte, the header included, to the socket: the last Flush of
+// HTTP/1.1 returns only then, an empty answer's included. Every chunk, and
+// every flush, enters the transport only through its admission (admission),
+// which the abort shares: once the lease is seen to have ended, by the
+// transfer or by the context's callback, the abort (the socket's write
+// deadline, the connection's close, the response's deadline) has completed
+// and no write enters after it. A cut that lands between a chunk's admission
+// and its write lets that one chunk go (at most sendChunk bytes of the
+// answer, with the header when it is the first), and nothing more. sent says
+// every byte was handed to the socket; ended, when not "", why the transfer
+// ended otherwise: outcomeCut (ctx ended), outcomeClientLeft (ctx ended with
+// req) or outcomeAborted (a write failed). The abort never runs once
+// transfer returned, on a writer its handler no longer has.
 func transfer(ctx, req context.Context, w http.ResponseWriter, conn net.Conn, body []byte) (sent bool, ended string) {
-	rc := http.NewResponseController(w)
-	aborted := make(chan struct{})
-	why := outcomeCut
-	stop := context.AfterFunc(ctx, func() {
-		defer close(aborted)
-		if req.Err() != nil {
-			why = outcomeClientLeft
-		}
-		if conn != nil {
-			// The socket's write first: a TLS Close waits for TLS's output
-			// lock, which a KeyUpdate's reply blocked on the socket holds,
-			// and would hold the cut as long as the peer reads nothing.
-			_ = conn.SetWriteDeadline(time.Now())
-			_ = conn.Close()
-		}
-		_ = rc.SetWriteDeadline(time.Now())
-	})
+	a := &admission{ctx: ctx, req: req, conn: conn, rc: http.NewResponseController(w), done: make(chan struct{})}
+	stop := context.AfterFunc(ctx, a.abort)
 	defer func() {
 		if !stop() {
-			<-aborted // the abort ran: what it did is done
+			<-a.done // the callback's abort: what it did is done
+		}
+		if why, cut := a.aborted(); cut {
 			sent, ended = false, why
 		}
 	}()
-	// Ended already: not even the header goes.
-	if ctx.Err() != nil {
-		return false, ""
+	if !a.admit() {
+		return false, "" // not even the header goes
 	}
-	w.WriteHeader(http.StatusOK)
-	for off := 0; off < len(body); off += sendChunk {
-		if ctx.Err() != nil {
-			return false, ""
+	w.WriteHeader(http.StatusOK) // HTTP/1.1 holds it for the first write
+	for off := 0; ; off += sendChunk {
+		chunk := body[off:min(off+sendChunk, len(body))]
+		if len(chunk) > 0 {
+			if !a.admit() {
+				return false, ""
+			}
+			if _, err := w.Write(chunk); err != nil {
+				return false, outcomeAborted
+			}
 		}
-		if _, err := w.Write(body[off:min(off+sendChunk, len(body))]); err != nil || ctx.Err() != nil {
+		if !a.admit() {
+			return false, "" // what the write left buffered is never flushed
+		}
+		if a.rc.Flush() != nil {
 			return false, outcomeAborted
 		}
-		if rc.Flush() != nil {
-			return false, outcomeAborted
+		if off+len(chunk) == len(body) {
+			return true, ""
 		}
 	}
-	return true, ""
+}
+
+// admission is one transfer's state, shared by its writer and its abort:
+// open until the lease's context is seen to have ended, then aborted, and
+// never open again.
+type admission struct {
+	ctx, req context.Context
+	conn     net.Conn
+	rc       *http.ResponseController
+
+	once sync.Once
+	done chan struct{} // closed when the abort completed
+
+	mu  sync.Mutex
+	cut bool
+	why string
+}
+
+// admit says a write may enter the transport: the lease's context has not
+// ended and the transfer was not aborted. Otherwise it aborts the transfer,
+// returning once the abort completed, and false.
+func (a *admission) admit() bool {
+	a.mu.Lock()
+	open := !a.cut && a.ctx.Err() == nil
+	a.mu.Unlock()
+	if !open {
+		a.abort()
+	}
+	return open
+}
+
+// abort closes the admission and the connection, once; a second call
+// returns when the first completed. The socket's write deadline goes first:
+// a TLS Close waits for TLS's output lock, which a write blocked on the
+// socket (a KeyUpdate's reply among them) holds, and would hold the cut as
+// long as the peer reads nothing.
+func (a *admission) abort() {
+	a.once.Do(func() {
+		defer close(a.done)
+		a.mu.Lock()
+		a.cut, a.why = true, outcomeCut
+		if a.req.Err() != nil {
+			a.why = outcomeClientLeft
+		}
+		a.mu.Unlock()
+		if a.conn != nil {
+			_ = a.conn.SetWriteDeadline(time.Now())
+			_ = a.conn.Close()
+		}
+		_ = a.rc.SetWriteDeadline(time.Now())
+	})
+}
+
+// aborted says whether the transfer was aborted, and why.
+func (a *admission) aborted() (why string, cut bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.why, a.cut
 }
 
 type connKey struct{}
@@ -362,10 +435,9 @@ type connKey struct{}
 // ConnContext is the enclosing http.Server's ConnContext (the composition
 // sets it, with internal/mcpapi's when one server serves both): it keeps
 // each connection in its requests' context, so that a lease that ends while
-// its answer is sent closes the connection itself. Over HTTP/2 that is the
-// only way to stop a frame already handed to the connection; it ends the
-// connection's other streams too, which their clients send again. Without
-// it, a leased answer over HTTP/2 is 503.
+// its answer is sent closes the connection itself, the socket's deadline
+// set first, and nothing the server still holds of the response leaves when
+// it closes it. Without it the response's write deadline alone aborts it.
 func ConnContext(ctx context.Context, c net.Conn) context.Context {
 	return context.WithValue(ctx, connKey{}, c)
 }

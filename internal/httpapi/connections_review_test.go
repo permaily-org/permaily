@@ -113,10 +113,11 @@ func (c *wireConn) Write(b []byte) (int, error) {
 
 // V45 (review 1): a chunk the server buffered while the lease lasted is not
 // flushed after the lease was cut: none of it reaches the connection, over
-// HTTP/1.1 and over HTTP/2 (without TLS, so the wire can be read), by a
-// real server to a real client. The answer uncut reaches it whole. One P
-// makes the schedule deterministic: the deadline's AfterFunc is runnable,
-// and the handler goes on to flush unless it reads the lease first.
+// HTTP/1.1, by a real server to a real client. The answer uncut reaches it
+// whole. One P makes the schedule deterministic: the deadline's AfterFunc
+// is runnable, and the handler goes on to flush unless it reads the lease
+// first. Over HTTP/2 (without TLS, so the wire can be read) the answer is
+// refused before its lease is used (second review): none of it, cut or not.
 func TestV45ALeaseCutAfterABufferedWriteIsNotFlushed(t *testing.T) {
 	const secret = "mail buffered before the cut, flushed after it"
 	for _, h2 := range []bool{false, true} {
@@ -162,6 +163,12 @@ func TestV45ALeaseCutAfterABufferedWriteIsNotFlushed(t *testing.T) {
 				}
 				<-done
 				srv.Close()
+				if h2 {
+					if started, finished, _, _ := lease.State(); started || finished || strings.Contains(l.sent(), secret) {
+						t.Fatalf("over HTTP/2: started %v, finished %v, on the wire %v", started, finished, strings.Contains(l.sent(), secret))
+					}
+					return
+				}
 				lease.finished(t, !cut)
 				if on := strings.Contains(l.sent(), secret); on == cut {
 					t.Fatalf("the answer on the wire: %v, the lease cut before the flush: %v", on, cut)
