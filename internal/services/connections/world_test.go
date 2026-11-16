@@ -388,9 +388,16 @@ type writer struct {
 	n     int
 	// onWrite runs before a receipt is kept, for a test's barrier.
 	onWrite func(r *receipts.Receipt)
+	// bounds are, by receipt, what its context's deadline left when its
+	// write began.
+	bounds map[string]time.Duration
 }
 
 func (w *writer) Write(ctx context.Context, account string, r *receipts.Receipt) error {
+	var bound time.Duration
+	if dl, ok := ctx.Deadline(); ok {
+		bound = time.Until(dl)
+	}
 	// As the real writer, it honours its context.
 	if err := ctx.Err(); err != nil {
 		return err
@@ -423,6 +430,10 @@ func (w *writer) Write(ctx context.Context, account string, r *receipts.Receipt)
 	defer w.mu.Unlock()
 	w.n++
 	r.ID = fmt.Sprintf("rcp_%06d", w.n)
+	if w.bounds == nil {
+		w.bounds = map[string]time.Duration{}
+	}
+	w.bounds[r.ID] = bound
 	_ = account
 	w.all = append(w.all, *r)
 	return nil
