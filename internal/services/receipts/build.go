@@ -24,7 +24,7 @@ import (
 func FormulaOf(role FormulaRole, c *query.Canonical, full bool) Formula {
 	f := Formula{Role: role, ID: c.ID}
 	if full {
-		form := c.Formula
+		form := copyFormula(c.Formula)
 		f.Formula = &form
 	}
 	return f
@@ -123,8 +123,7 @@ func NewPage(head *Receipt) (*Page, error) {
 	if n > MaxDocumentBytes {
 		return nil, ErrTooLarge
 	}
-	p := &Page{r: *head, size: n}
-	p.r.Delivered, p.r.Held = slices.Clone(head.Delivered), slices.Clone(head.Held)
+	p := &Page{r: copyReceipt(*head), size: n}
 	return p, nil
 }
 
@@ -175,7 +174,72 @@ func (p *Page) Size() int { return p.size }
 
 // Receipt is the page's receipt, for Write.
 func (p *Page) Receipt() *Receipt {
-	r := p.r
-	r.Delivered, r.Held = slices.Clone(p.r.Delivered), slices.Clone(p.r.Held)
+	r := copyReceipt(p.r)
 	return &r
+}
+
+// copyFormula is f with its groups and conditions of its own, so a receipt's
+// formula and the canonical one it came from never change each other.
+func copyFormula(f contracts.Formula) contracts.Formula {
+	f.All = slices.Clone(f.All)
+	for i := range f.All {
+		f.All[i].Any = slices.Clone(f.All[i].Any)
+	}
+	return f
+}
+
+// copyPtr is a pointer to a copy of *p, or nil.
+func copyPtr[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+// copyHeld is h with its model answers of its own.
+func copyHeld(h Held) Held { h.Model = slices.Clone(h.Model); return h }
+
+// copyReceipt is r with every slice and pointer it holds copied, so a page,
+// the head it began from and every receipt it returns share nothing: editing
+// one never changes another's evidence or the page's count of bytes.
+func copyReceipt(r Receipt) Receipt {
+	r.Formulas = slices.Clone(r.Formulas)
+	for i := range r.Formulas {
+		if r.Formulas[i].Formula != nil {
+			f := copyFormula(*r.Formulas[i].Formula)
+			r.Formulas[i].Formula = &f
+		}
+	}
+	r.Rules = slices.Clone(r.Rules)
+	r.Delivered = slices.Clone(r.Delivered)
+	for i := range r.Delivered {
+		d := &r.Delivered[i]
+		d.Parts = slices.Clone(d.Parts)
+		d.From = slices.Clone(d.From)
+		d.Subject = copyPtr(d.Subject)
+		d.Attachment = copyPtr(d.Attachment)
+		d.Model = slices.Clone(d.Model)
+		d.Cleared = slices.Clone(d.Cleared)
+		for j := range d.Cleared {
+			d.Cleared[j].Model = slices.Clone(d.Cleared[j].Model)
+		}
+	}
+	r.Held = slices.Clone(r.Held)
+	for i := range r.Held {
+		r.Held[i] = copyHeld(r.Held[i])
+	}
+	r.Refused = copyPtr(r.Refused)
+	if r.Refused != nil && r.Refused.Held != nil {
+		h := copyHeld(*r.Refused.Held)
+		r.Refused.Held = &h
+	}
+	r.Consent = copyPtr(r.Consent)
+	if r.Consent != nil {
+		r.Consent.Sentences = slices.Clone(r.Consent.Sentences)
+		r.Consent.Parts = slices.Clone(r.Consent.Parts)
+		r.Consent.Mailboxes = slices.Clone(r.Consent.Mailboxes)
+	}
+	r.Ended = copyPtr(r.Ended)
+	return r
 }

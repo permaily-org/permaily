@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/query"
+	"github.com/permaily-org/permaily/internal/rules"
 )
 
 func TestH15APageAndItsReceiptsShareNothing(t *testing.T) {
@@ -154,5 +156,47 @@ func TestH24APagesSizeIsItsReceiptsWithItemsAlreadyIn(t *testing.T) {
 		if !reflect.DeepEqual(got.Delivered, p.Receipt().Delivered) || !reflect.DeepEqual(got.Held, p.Receipt().Held) {
 			t.Fatal("contents changed through Write/List")
 		}
+	}
+}
+
+// H15: a copy of a receipt with every field filled shares no slice or pointer
+// with it: editing everything the copy holds leaves the original as it was.
+func TestH15ACopyOfAReceiptSharesNothing(t *testing.T) {
+	subject, attachment := "s", 1
+	model := []Model{{Var: contracts.Variable("message"), Op: contracts.Operator("about"), Topic: "t", P: 0.5}}
+	form := contracts.Formula{V: 1, All: []contracts.Group{{Any: []contracts.Condition{{Var: contracts.Variable("subject"), Op: contracts.Operator("contains"), Value: "x"}}}}}
+	held := Held{Mailbox: "m", Message: "1", Rule: rules.Ref{ID: "r", Version: 1}, Why: "w", Model: slices.Clone(model)}
+	orig := Receipt{
+		Formulas:  []Formula{{Role: RoleSearch, ID: "q", Formula: &form}, {Role: RoleSince, ID: "s"}},
+		Rules:     []rules.Ref{{ID: "r", Version: 1}},
+		Delivered: []Delivered{{Parts: []contracts.Part{contracts.Part("subject")}, From: []contracts.MailAddress{{Address: "a@example.com"}}, Subject: &subject, Attachment: &attachment, Model: slices.Clone(model), Cleared: []Cleared{{Rule: rules.Ref{ID: "r"}, Model: slices.Clone(model)}}}},
+		Held:      []Held{held},
+		Refused:   &Refused{Reason: RefusedHeld, Held: &held},
+		Consent:   &Consent{Sentences: []string{"x"}, Parts: []contracts.Part{contracts.Part("subject")}, Mailboxes: []string{"m"}},
+		Ended:     &Ended{Reason: contracts.EndReason("revoked")},
+	}
+	before, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := copyReceipt(orig)
+	c.Formulas[0].ID, c.Formulas[0].Formula.All[0].Any[0].Value = "q2", "y"
+	c.Rules[0].ID = "r2"
+	d := &c.Delivered[0]
+	d.Parts[0], d.From[0].Address, *d.Subject, *d.Attachment = contracts.Part("body"), "b@example.com", "s2", 2
+	d.Model[0].P, d.Cleared[0].Model[0].P, d.Cleared[0].Rule.ID = 0.9, 0.9, "r2"
+	c.Held[0].Model[0].P, c.Held[0].Why = 0.9, "w2"
+	c.Refused.Reason, c.Refused.Held.Model[0].P = RefusedTooLate, 0.9
+	c.Consent.Sentences[0], c.Consent.Parts[0], c.Consent.Mailboxes[0] = "y", contracts.Part("body"), "m2"
+	c.Ended.Reason = contracts.EndReason("expired")
+	after, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("editing the copy changed the original:\n%s\n%s", before, after)
+	}
+	if empty := copyReceipt(Receipt{}); !reflect.DeepEqual(empty, Receipt{}) {
+		t.Fatalf("a copy of an empty receipt is %+v", empty)
 	}
 }
