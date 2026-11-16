@@ -811,6 +811,14 @@ The review of pull request 6 (#131) found four things no row could settle alone,
 
 What each row changes to consume them: 1, nothing required (an error it wants told apart in a log is a fixed kind; any other is logged as `domain.Unclassified`, so none needs scrubbing); 3, `Service.Refuse` checking `Refusal.ValidOn(g.Resource)` (and `var _ API` then holds), `Check` filling `ConnectionScopes`, `Start` and `Push` answering `contracts.InvalidClient(reason)`, errors wrapped with `%w`, and a fixed kind for any error the operator must tell apart; 5, `invalid_body` among the refused reasons it writes; 6, `writeErrorWith(…, ce.Details())` for a `*contracts.ClientError`, `g.StepUp(oauth.ScopeAttachments)` in the challenge, `Refuse` before every refusal it makes after `Check` (503 when it fails), the API's attachment without its part passed to `Attachment`; 7, `Refuse` before its step-up and before refusing arguments it cannot read, `g.StepUp`; 8, `clientProblemOf(details)` for `invalid_client`; 9, nothing.
 
+## Changed while building pull request 3 (2026-11-16)
+
+The review of pull request 3 (#136) and the orchestrator's rulings on its fixes changed three things this record says; nothing else of it changes.
+
+- **Two approvals for one client at once** (finding 7, V22). An approval commits only over the connection and version its screen showed (N5), an empty one included. Of two approvals for one client through two enclaves at once, the one that commits second finds a connection its screen did not show and is `consent_changed`, with only what it made itself ended; it never replaces the connection the other approval made. V22 says so; before, it said the other ended `replaced`, which would have ended a connection nobody was shown.
+- **A refusal whose receipt cannot be written is 503** (finding 8). Every refusal of a request a valid token attributed is recorded (ADR 0031, choice 7); when its receipt cannot be written, the vendor is answered `ErrUnavailable` (503 with `Retry-After`), never the refusal itself.
+- **The reasons of the service's own refusals are in the receipts' seam** (finding 8). Besides ADR 0031's, a refused receipt names `invalid_limit`, `invalid_cursor`, `rate_limited` and `unavailable` (`receipts.RefusedInvalidLimit`, `RefusedInvalidCursor`, `RefusedRateLimited`, `RefusedUnavailable`), fixed values, never what the vendor sent.
+
 ## Deferred
 
 The device flow and a `permaily` CLI (to the SDKs); delivery on new mail and on a schedule, with webhooks (step 6); the person's own rules, removing details, turning the default rule off, and the agent's kinds of mail on the screen (step 7); chaining receipts, the activity screen and exporting them (step 8); the notices about connections (step 9); a global merge of mailboxes in a search; OpenAPI; operator or admin actions on connections.
