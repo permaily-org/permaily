@@ -138,6 +138,11 @@ func Harden(rt http.RoundTripper) http.RoundTripper {
 	tr.Protocols.SetHTTP2(true)
 	tr.DisableCompression = true
 	tr.MaxResponseHeaderBytes = HeaderMaxBytes
+	if tr.TLSClientConfig == nil {
+		// Clone fills one in only where it sets HTTP/2 up itself, which it
+		// does not for a transport with its own dialer.
+		tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
 	if tr.TLSClientConfig.MinVersion < tls.VersionTLS12 {
 		tr.TLSClientConfig.MinVersion = tls.VersionTLS12
 	}
