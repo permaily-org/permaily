@@ -35,3 +35,4 @@ github.com/permaily-org/permaily/internal/decide/openai 100
 github.com/permaily-org/permaily/internal/services/decisions 95
 github.com/permaily-org/permaily/internal/vendors/cimd 96
 github.com/permaily-org/permaily/internal/services/receipts 100
+github.com/permaily-org/permaily/internal/mcpapi 100

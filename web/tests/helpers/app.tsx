@@ -13,12 +13,14 @@ export async function open(address = '/') {
   cleanup()
   vi.resetModules()
   if (address !== current()) window.history.pushState(null, '', address)
-  const [{ App }, { SessionProvider }, arrival] = await Promise.all([
+  const [{ App }, { SessionProvider }, arrival, oauth] = await Promise.all([
     import('../../src/App.tsx'),
     import('../../src/lib/session.tsx'),
     import('../../src/lib/arrival.ts'),
+    import('../../src/lib/oauth.ts'),
   ])
   arrival.takeArrival()
+  oauth.takeAuthorization()
   const view = render(
     <BrowserRouter>
       <SessionProvider>
