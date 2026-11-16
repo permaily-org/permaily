@@ -372,10 +372,100 @@ export type MatchPage = {
    * otherwise `limit` when a spend limit held some back, otherwise `asked`. Held messages stay in `needs_model`.
    */
   model?: MatchModel
+  /** Only on the consent screen's preview with the model (ADR 0030): what a rule holds back. Not in `messages`. */
+  held?: string[]
 }
 
 /** What became of asking the model on a page of matches (ADR 0028). */
 export type MatchModel = 'asked' | 'limit' | 'off'
+
+/*
+  Connections (ADR 0030). The shapes of internal/contracts/connections.go; the calls come with the routes (pull
+  request 6) and the screens (pull request 8).
+*/
+
+/** A part of a message a connection reads. Every connection reads `sender`; `attachments` only when asked for. */
+export type ConnectionPart = 'sender' | 'subject' | 'body' | 'attachments'
+
+/** What a connection's tokens are for: the API for apps, or MCP for agents. */
+export type ConnectionResource = 'api' | 'mcp'
+
+/**
+ * Who asks: the host of its document's URL, and the owner the image's list names for it. Nothing else of a vendor is
+ * believed; `client_name` is its own claim.
+ */
+export type ConnectionVendor = { domain: string; verified?: string }
+
+/** New mail only (from the approval, `at` then set in a connection), mail since `at`, or with neither all the mail kept. */
+export type MailSince = { new: boolean; at?: string }
+
+/** A rule every connection's reads apply first, and its sentence. */
+export type RuleSummary = { id: string; version: number; sentence: QuerySentence[] }
+
+/** What the consent screen shows of a vendor's request. Without `query`, the person chooses the mailboxes. */
+export type AuthorizationRequest = {
+  id: string
+  vendor: ConnectionVendor
+  client_name: string
+  redirect_host: string
+  /** The browser goes back to this computer: any program on it can use this vendor's name. */
+  loopback: boolean
+  resource: ConnectionResource
+  parts: ConnectionPart[]
+  query?: FormulaCheck
+  since: MailSince
+  ends_in_days: number
+  mailboxes: string[]
+  rules: RuleSummary[]
+  /** The connection this client has now, which approving ends; `narrower` when the request asks for no more. */
+  replaces?: Connection
+  narrower?: boolean
+  model_notice: string
+  expires_at: string
+}
+
+/** A request to show, or where to send the browser back with the vendor's error. Exactly one is set. */
+export type AuthorizationStarted = { request?: AuthorizationRequest; redirect?: string }
+
+/** A page of what a request would read in one mailbox, for the consent screen's preview. */
+export type ConsentPreview = {
+  mailbox: string
+  after?: string
+  limit?: number
+  ask_model?: boolean
+}
+
+/** The person's decision. With a query, `since` may only narrow what was asked; without one, the person sets `since` and `mailboxes`. */
+export type AuthorizationDecision = { allow: boolean; since?: MailSince; mailboxes?: string[] }
+
+/** Where the browser goes back to the vendor, and nowhere else. */
+export type AuthorizationAnswer = { redirect: string }
+
+export type ConnectionState = 'active' | 'ended'
+
+export type EndReason = 'person' | 'vendor' | 'reuse' | 'replaced' | 'account' | 'expired'
+
+/** A connection as the person's app shows it. */
+export type Connection = {
+  id: string
+  vendor: ConnectionVendor
+  client_id: string
+  client_name: string
+  resource: ConnectionResource
+  state: ConnectionState
+  parts: ConnectionPart[]
+  query?: FormulaCheck
+  mailboxes: string[]
+  since: MailSince
+  made_at: string
+  ends_at: string
+  ended_at?: string
+  end_reason?: EndReason
+  replaced_by?: string
+}
+
+/** The account's connections: the active ones and the ones that ended in the last 30 days. */
+export type ConnectionList = { connections: Connection[] }
 
 /** The codes the server answers with, plus `network` for a request that got no answer. */
 export type ApiErrorCode =

@@ -51,6 +51,76 @@ type Status struct {
 	// meaning (ADR 0028); nil in images older than this field or that ask
 	// none.
 	Model *ModelStatus `json:"model,omitempty"`
+	// Connections describes the authorization server of the API and MCP,
+	// the vendors it marks verified, the rule every connection's reads apply
+	// first and the record of what left (ADR 0030, ADR 0031); nil in images
+	// older than this field or without connections.
+	Connections *ConnectionsStatus `json:"connections,omitempty"`
+}
+
+// ConnectionsStatus is what the enclave reports of connections (ADR 0030,
+// "What /status and permaily-verify show"). Everything but Refused and Since
+// is compiled into the image, so it is what the measured code does. It never
+// holds a token, a code, a client's identifier other than the verified
+// vendors' domains, an account, a connection or a count of either.
+type ConnectionsStatus struct {
+	Issuer                string   `json:"issuer"`
+	AuthorizationEndpoint string   `json:"authorization_endpoint"`
+	TokenEndpoint         string   `json:"token_endpoint"`
+	RevocationEndpoint    string   `json:"revocation_endpoint"`
+	PushedEndpoint        string   `json:"pushed_endpoint"`
+	Resources             []string `json:"resources"`
+	// Grants are the grant types the token endpoint takes; ClientAuth the
+	// ways a client proves itself there ("none", "private_key_jwt").
+	Grants     []string `json:"grants"`
+	ClientAuth []string `json:"client_auth"`
+	// ClientDocuments is true: clients are identified by their metadata
+	// document's URL. DynamicRegistration is false: there is no
+	// registration endpoint. permaily-verify fails on any other value.
+	ClientDocuments     bool `json:"client_documents"`
+	DynamicRegistration bool `json:"dynamic_registration"`
+	// The lifetimes, in seconds, and the connection's default and longest
+	// life, in days; RevocationSeconds is how long another enclave may take
+	// a revoked connection's tokens.
+	AccessTokenSeconds    int `json:"access_token_seconds"`
+	RefreshTokenSeconds   int `json:"refresh_token_seconds"`
+	CodeSeconds           int `json:"code_seconds"`
+	RevocationSeconds     int `json:"revocation_seconds"`
+	ConnectionDefaultDays int `json:"connection_default_days"`
+	ConnectionMaxDays     int `json:"connection_max_days"`
+	// Verified is the image's list of verified vendors.
+	Verified []VerifiedVendor `json:"verified"`
+	// Rules are the rules every connection's reads apply first: in step 5
+	// the default rule, with the canonical identifiers of its formulas.
+	Rules []RuleStatus `json:"rules"`
+	// Receipts says how the record of what left is kept: sealed, and, from
+	// step 8, chained with its head anchored.
+	Receipts ReceiptsStatus `json:"receipts"`
+	// Since is when this enclave started counting; Refused counts, by fixed
+	// reason, the requests it refused since then (every reason, also at
+	// zero).
+	Since   time.Time        `json:"since"`
+	Refused map[string]int64 `json:"refused"`
+}
+
+// VerifiedVendor is a domain of the image's list and whose it is.
+type VerifiedVendor struct {
+	Domain string `json:"domain"`
+	Owner  string `json:"owner"`
+}
+
+// RuleStatus is a rule compiled into the image.
+type RuleStatus struct {
+	ID       string   `json:"id"`
+	Version  int      `json:"version"`
+	Formulas []string `json:"formulas"`
+	On       bool     `json:"on"`
+}
+
+// ReceiptsStatus is how receipts are kept.
+type ReceiptsStatus struct {
+	Sealed  bool `json:"sealed"`
+	Chained bool `json:"chained"`
 }
 
 // ModelStatus is what the enclave reports of the model it asks (ADR 0028,

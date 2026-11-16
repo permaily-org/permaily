@@ -218,10 +218,15 @@ type MatchRequest struct {
 // asked, MatchModelLimit when the spend guard or the account's share held
 // some back, MatchModelOff when no key is set or the provider refused it.
 // Model is absent without AskModel.
+//
+// Held (ADR 0030, the consent screen's preview with AskModel) lists the
+// messages the formulas match that a rule holds back, the default rule
+// included: they are not in Messages. Absent on every other page.
 type MatchPage struct {
 	Messages   []MessageSummary `json:"messages"`
 	NeedsModel []string         `json:"needs_model"`
 	Unknown    []string         `json:"unknown"`
+	Held       []string         `json:"held,omitempty"`
 	Next       string           `json:"next,omitempty"`
 	SearchedTo time.Time        `json:"searched_to,omitzero"`
 	Model      MatchModel       `json:"model,omitempty"`
