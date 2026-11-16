@@ -94,6 +94,90 @@ func (s *Service) Reopen(ctx context.Context, account string) error {
 	return err
 }
 
+// RemoveAll implements Lifecycle: everything stored of the account's
+// connections goes with the account (ADR 0030, "Changed while releasing
+// step 5"). The list is fenced and ended first, as EndAll does, while it is
+// whole; then every connection its newest epoch names is removed with its
+// families' records, the account's entry in Sweep's index is deleted, and
+// every epoch of the list is removed, the newest first and epoch 0 last
+// (removed also when the account never had a list). What stays is the
+// commit of each removal (store.Anchored.RemoveRecord), which names the
+// record and holds nothing of it: no record removed can be read again,
+// whatever of it is put back, and none can be made again (CreateNew refuses
+// a name with any commit), so the fence outlives the list without its
+// history. A removal stopped anywhere is finished by the next call: epoch 0
+// goes last, so the epochs left are always the oldest ones, found from it.
+func (s *Service) RemoveAll(ctx context.Context, account string) error {
+	n, whole, err := s.listEpochs(ctx, account)
+	if err != nil {
+		return err
+	}
+	if whole {
+		if err := s.EndAll(ctx, account); err != nil {
+			return err
+		}
+		if n, _, err = s.listEpochs(ctx, account); err != nil {
+			return err
+		}
+	}
+	if n > 0 {
+		var l ListState
+		if _, _, err := s.readSigned(ctx, ListName(account, n-1), &l); err != nil {
+			return err
+		}
+		for _, m := range l.Members {
+			if err := s.removeConn(ctx, m.ID); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.cfg.Entries.DeleteEntry(ctx, partitionAccounts, account); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	if err := s.removeEpochs(ctx, n, func(e uint64) string { return ListName(account, e) }); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	delete(s.epochs, "list "+account)
+	delete(s.lists, account)
+	s.mu.Unlock()
+	return nil
+}
+
+// listEpochs walks an account's list from epoch 0: n is how many epochs are
+// there (0 to n-1), whole that the last of them is not moved, so it is the
+// list as written (not one a removal or a crash stopped after).
+func (s *Service) listEpochs(ctx context.Context, account string) (n uint64, whole bool, err error) {
+	for e := uint64(0); ; e++ {
+		var l ListState
+		_, found, err := s.readSigned(ctx, ListName(account, e), &l)
+		if err != nil {
+			return 0, false, err
+		}
+		if !found {
+			return e, false, nil
+		}
+		if l.Account != account || l.Epoch != e || l.V != 1 {
+			return 0, false, errDocument
+		}
+		if !l.Moved {
+			return e + 1, true, nil
+		}
+	}
+}
+
+// removeEpochs removes epochs n-1 down to 0 of a record in epochs (epoch 0
+// alone when n is 0): the newest first, so a removal stopped halfway leaves
+// the oldest, which the next walk from epoch 0 finds.
+func (s *Service) removeEpochs(ctx context.Context, n uint64, name func(uint64) string) error {
+	for e := max(n, 1); e > 0; e-- {
+		if err := s.cfg.Records.RemoveRecord(ctx, name(e-1)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // pendingFenceAfter is how old a pending member must be before the sweep
 // fences it: its maker is then long done, or crashed.
 const pendingFenceAfter = oauth.RequestTTL

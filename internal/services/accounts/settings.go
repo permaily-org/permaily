@@ -394,11 +394,19 @@ func (s *Service) unpoint(ctx context.Context, key []byte, partition, accountID 
 	return nil
 }
 
-// clear removes what is stored under an account's identifier: its sessions
-// and its record, and then the entry of the list of closing accounts that
-// led here. It is also what is left to do for an account whose record is
+// clear removes what is stored under an account's identifier: its
+// connections, its receipts, its sessions and its record, and then the
+// entry of the list of closing accounts that led here. It is also what is left to do for an account whose record is
 // gone already, when an earlier removal failed after the commit.
 func (s *Service) clear(ctx context.Context, id, closing string) error {
+	// Everything stored of its connections goes with it, their fence kept
+	// by the commits of their removal (ADR 0030, "Changed while releasing
+	// step 5").
+	if c := s.connectionsOf(); c != nil {
+		if err := c.RemoveAll(ctx, id); err != nil {
+			return err
+		}
+	}
 	if err := s.removeReceipts(ctx, id); err != nil {
 		return err
 	}

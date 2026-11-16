@@ -135,8 +135,9 @@ type Config struct {
 	// account's connections are fenced and ended when its deletion is asked
 	// and on every pass while it is closing (EndAll), and a cancelled
 	// deletion is done only once what of them was still active has ended
-	// (Reopen). Nil when there are none; the composition may give it later,
-	// once, with SetConnections, as it does the mailboxes.
+	// (Reopen); when the account is removed, everything stored of them goes
+	// with it (RemoveAll). Nil when there are none; the composition may give
+	// it later, once, with SetConnections, as it does the mailboxes.
 	Connections connections.Lifecycle
 }
 

@@ -3,6 +3,7 @@ package accounts
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -16,10 +17,11 @@ import (
 // lifecycle is the connections service as accounts calls it (ADR 0030's
 // pull request 3): it records each call, and fails when a test says so.
 type lifecycle struct {
-	mu        sync.Mutex
-	calls     []string
-	endAllErr error
-	reopenErr error
+	mu           sync.Mutex
+	calls        []string
+	endAllErr    error
+	reopenErr    error
+	removeAllErr error
 }
 
 func (l *lifecycle) EndAll(_ context.Context, account string) error {
@@ -34,6 +36,13 @@ func (l *lifecycle) Reopen(_ context.Context, account string) error {
 	defer l.mu.Unlock()
 	l.calls = append(l.calls, "Reopen "+account)
 	return l.reopenErr
+}
+
+func (l *lifecycle) RemoveAll(_ context.Context, account string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.calls = append(l.calls, "RemoveAll "+account)
+	return l.removeAllErr
 }
 
 func (l *lifecycle) set(endAll, reopen error) {
@@ -150,6 +159,71 @@ func TestCancellingADeletionReopensTheConnectionsFirst(t *testing.T) {
 	}
 	if _, err := w.svc.KeepAccount(ctx, other.Account.ID); err != nil || l.count("Reopen "+other.Account.ID) != 1 {
 		t.Fatal(err, l.calls)
+	}
+}
+
+// Removing an account removes what is stored of its connections, after
+// their fence and before the account's record: a removal that fails leaves
+// the account to the next pass, and one that stopped after the record went
+// removes them again (ADR 0030, "Changed while releasing step 5").
+func TestTheRemovalRemovesTheConnections(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	l := &lifecycle{}
+	w.svc.SetConnections(l)
+	me, cookie := w.signUp("ana@example.org")
+	id := me.Account.ID
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(w.who(cookie))); err != nil {
+		t.Fatal(err)
+	}
+	if l.count("RemoveAll "+id) != 0 {
+		t.Fatal("removed before the account was due", l.calls)
+	}
+	w.now = w.now.Add(domain.AccountClosing)
+	down := errors.New("down")
+	l.mu.Lock()
+	l.removeAllErr = down
+	l.mu.Unlock()
+	if err := w.svc.RemoveDue(ctx); !errors.Is(err, down) {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.AccountRecord(ctx, id); err != nil {
+		t.Fatal("the account went with its connections still stored:", err)
+	}
+	l.mu.Lock()
+	l.removeAllErr = nil
+	l.mu.Unlock()
+	// The entry of the list of closing accounts failing to go, after the
+	// record went: the next pass removes the connections again.
+	w.mem.Interrupt = func(_ context.Context, step store.Step, partition, _ string) error {
+		if partition == closingPartition && step == store.StepDeleteEntry {
+			return down
+		}
+		return nil
+	}
+	if err := w.svc.RemoveDue(ctx); !errors.Is(err, down) {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.AccountRecord(ctx, id); !errors.Is(err, contracts.ErrNotFound) {
+		t.Fatal(err)
+	}
+	w.mem.Interrupt = nil
+	if err := w.svc.RemoveDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	l.mu.Lock()
+	calls := slices.Clone(l.calls)
+	l.mu.Unlock()
+	var mine []string
+	for _, c := range calls {
+		if strings.HasSuffix(c, " "+id) {
+			mine = append(mine, c)
+		}
+	}
+	// Each removal fences them before it removes them.
+	want := []string{"EndAll " + id, "EndAll " + id, "RemoveAll " + id, "EndAll " + id, "RemoveAll " + id, "RemoveAll " + id}
+	if !slices.Equal(mine, want) {
+		t.Fatal(mine)
 	}
 }
 
