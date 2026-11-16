@@ -361,6 +361,9 @@ func (p *discloseRun) consider(ctx context.Context, m *store.Message) (*candidat
 	if !isMessageIDShape(m.ID) {
 		return nil, verdictNone, nil // names no message: nothing of it opens
 	}
+	if !p.s.now().Before(lifetimeOf(m.ID)) {
+		return nil, verdictNone, nil // past the longest it may be kept: gone
+	}
 	meta, err := openMeta(p.b, m)
 	if err != nil || meta.Confirmation {
 		return nil, verdictNone, nil // nothing of it is known, or it is Permaily's
@@ -660,7 +663,7 @@ func (p *discloseRun) begin(ctx context.Context, cands []*candidate) {
 			if _, ok := byDay[day]; !ok {
 				order = append(order, day)
 			}
-			byDay[day] = append(byDay[day], DecisionKey{ID: c.m.ID, ExpiresAt: c.m.ExpiresAt})
+			byDay[day] = append(byDay[day], DecisionKey{ID: c.m.ID, ExpiresAt: lifetimeOf(c.m.ID)})
 		}
 		for _, day := range order {
 			got, err := p.s.decisions.Begin(ctx, p.b, rule.Ref(), byDay[day])
@@ -677,6 +680,16 @@ func (p *discloseRun) begin(ctx context.Context, cands []*candidate) {
 			}
 		}
 	}
+}
+
+// lifetimeOf is the latest a message can expire, from what is authenticated
+// of it: its identifier (bound to its sealed meta) says when it arrived, and
+// no mailbox keeps mail longer than the longest retention. A decision is
+// kept for that lifetime, and no message is disclosed past it. The item's
+// ExpiresAt is whoever writes the table's to set: it can end the message
+// sooner (an item gone is not read), never a decision about it.
+func lifetimeOf(id string) time.Time {
+	return timeOfMessageID(id).AddDate(0, 0, slices.Max(contracts.MailboxRetentionDays))
 }
 
 // heldBefore says a rule before ri already holds c, or leaves it undecided.

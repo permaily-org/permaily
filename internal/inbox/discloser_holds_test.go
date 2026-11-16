@@ -318,7 +318,7 @@ func fullDay(t *testing.T, s inbox.DecisionStore, b inbox.Box, of string) {
 // whose 64 blocks are spent holds its next model-dependent message,
 // undecided, on its first read and every later one, and counts it in
 // decisions_full once per request (DecisionsFullCounter); a message past
-// its expiry is not counted, nor given; a message of another day is
+// its lifetime is not counted, nor given; a message of another day is
 // decided as before.
 func TestH11AFullDayHoldsAndCounts(t *testing.T) {
 	w := newDWorld(t)
@@ -338,10 +338,12 @@ func TestH11AFullDayHoldsAndCounts(t *testing.T) {
 	if o, err := w.discA.Message(on(w.askA), w.b, disclosure(allParts), m); err != nil || o.Withheld == nil || counter.DecisionsFull() != 3 {
 		t.Fatalf("a read: %+v %v (%d)", o, err, counter.DecisionsFull())
 	}
-	// A message that has expired by the decisions' clock: expired, not full.
+	// A message past its lifetime by the decisions' clock (its arrival plus
+	// the longest retention, whatever its item's expiry says): neither
+	// given nor counted.
 	w2 := newDWorld(t)
-	at := qNow.Add(-24*time.Hour + time.Minute)
-	if err := seedRetention(w2, at, 1); err != nil {
+	at := qNow.AddDate(0, 0, -slices.Max(contracts.MailboxRetentionDays)).Add(time.Minute)
+	if err := seedRetention(w2, at, 400); err != nil {
 		t.Fatal(err)
 	}
 	gone := (&qMsg{at: at, n: 1}).id()
