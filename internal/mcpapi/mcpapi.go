@@ -20,8 +20,15 @@
 //     AnswerMax) and sent only under the lease the service returned with the
 //     mail (connections.Release, N2 and the owner's decision 14): Start
 //     immediately before the first byte (refused: 503 and nothing of it),
-//     every byte under its context, the response aborted when it ends during
-//     the transfer, and Finish once.
+//     every byte under its context, read before each write and each flush,
+//     the response aborted, its connection closed, when it ends during the
+//     transfer, and Finish once. The connection comes from ConnContext,
+//     which the enclosing server must set: over HTTP/2 the stream's own
+//     deadline does not stop a frame already handed to the connection, so
+//     without it a leased answer over HTTP/2 is refused (503).
+//
+// Every tool's work with the service keeps the HTTP request's deadline and
+// ends when the request does (call.bind), for both protocols.
 //
 // The tools only read (tools.go). Nothing here logs a token, a formula, an
 // identifier or anything of the mail: a request is logged by its method and
@@ -144,6 +151,9 @@ func resourceMetadataURL(resource string) string {
 type call struct {
 	grant    *oauth.Grant
 	buffered bool
+	// ctx is the HTTP request's context: the SDK hands a tool a context of
+	// its own, without the request's deadline or its end.
+	ctx context.Context
 
 	mu      sync.Mutex
 	release connections.Release
@@ -171,6 +181,25 @@ func (c *call) taken() (connections.Release, []contracts.Part, int, string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.release, c.stepUp, c.status, c.outcome
+}
+
+// bind is the context of a tool's work with the service: the SDK's ctx,
+// with the HTTP request's deadline, ended when either ends.
+func (c *call) bind(ctx context.Context) (context.Context, context.CancelFunc) {
+	if c.ctx == nil {
+		return context.WithCancel(ctx)
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	stop := context.AfterFunc(c.ctx, func() { cancel(context.Cause(c.ctx)) })
+	end := func() {}
+	if d, ok := c.ctx.Deadline(); ok {
+		ctx, end = context.WithDeadline(ctx, d)
+	}
+	return ctx, func() {
+		end()
+		stop()
+		cancel(context.Canceled)
+	}
 }
 
 // errNotBuffered refuses mail for an answer that would not be sent under
@@ -237,7 +266,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c := &call{grant: g}
+	c := &call{grant: g, ctx: r.Context()}
 	if r.Method == http.MethodPost {
 		body, err := io.ReadAll(io.LimitReader(r.Body, BodyMax+1))
 		switch {
@@ -277,7 +306,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	rec := newRecorder(AnswerMax)
 	h.sdk.ServeHTTP(rec, r)
-	outcome = h.answer(w, r, c, rec)
+	var abort bool
+	if outcome, abort = h.answer(w, r, c, rec); abort {
+		panic(http.ErrAbortHandler) // after outcome is set: logged as it was
+	}
 }
 
 // noStore is the SDK's writer for an answer that holds no mail (anything

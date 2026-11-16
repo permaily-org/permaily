@@ -1,13 +1,16 @@
 package mcpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
+	"slices"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -93,12 +96,13 @@ func (h *handler) newServer() *mcp.Server {
 		Description: descConnectionInfo,
 		Annotations: annotations("What this connection reads"),
 	}, h.connectionInfo)
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        ToolSearchMail,
-		Description: descSearchMail + dataNote,
-		Annotations: annotations("Search mail"),
-		InputSchema: searchSchema(),
-	}, h.searchMail)
+	s.AddTool(&mcp.Tool{
+		Name:         ToolSearchMail,
+		Description:  descSearchMail + dataNote,
+		Annotations:  annotations("Search mail"),
+		InputSchema:  searchSchema(),
+		OutputSchema: schemaOf[contracts.VendorPage](),
+	}, rawTool(h.searchMail))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        ToolReadMessage,
 		Description: descReadMessage + dataNote,
@@ -112,16 +116,40 @@ func (h *handler) newServer() *mcp.Server {
 	return s
 }
 
+// rawTool is a tool given its arguments as the client sent them, with no
+// validation by the SDK, answering as mcp.AddTool's tools do: a refusal is
+// the tool's error, an answer its text part and out as structuredContent.
+func rawTool[Out any](f func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, *Out, error)) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		res, out, err := f(ctx, req)
+		if err != nil {
+			var r mcp.CallToolResult
+			r.SetError(err)
+			return &r, nil
+		}
+		b, _ := json.Marshal(out) // the contract's structs always encode
+		res.StructuredContent = json.RawMessage(b)
+		return res, nil
+	}
+}
+
+// schemaOf is the schema mcp.AddTool infers for T.
+func schemaOf[T any]() *jsonschema.Schema {
+	s, err := jsonschema.For[T](&jsonschema.ForOptions{})
+	if err != nil {
+		panic(fmt.Sprintf("mcpapi: the schema of %T: %v", *new(T), err))
+	}
+	return s
+}
+
 // searchSchema is search_mail's input schema: the contract's struct
 // (contracts.VendorSearch), with the words an agent needs on each member.
-// The variables and operators are listed, not enumerated: the formula's
-// parser decides, so a refusal is invalid_formula with where and why, the
-// same through the API.
+// It is published, never checked against: search_mail reads its arguments
+// itself (searchArgs), so the formula's parser decides, and a refusal is
+// invalid_formula with where and why, the same through the API. The
+// variables and operators are listed, not enumerated.
 func searchSchema() *jsonschema.Schema {
-	s, err := jsonschema.For[contracts.VendorSearch](nil)
-	if err != nil {
-		panic(fmt.Sprintf("mcpapi: search_mail's schema: %v", err))
-	}
+	s := schemaOf[contracts.VendorSearch]()
 	describe(s, "query", "optional: a formula, {\"v\":1,\"all\":[{\"any\":[{\"var\":…,\"op\":…,\"value\":…}]}]}, evaluated together with the connection's own and never widening it. "+formulaVariables)
 	describe(s, "limit", "optional: how many messages, 1 to 50; 20 when absent")
 	describe(s, "cursor", "optional: the cursor of the page before; absent for the newest page")
@@ -177,6 +205,8 @@ func (h *handler) connectionInfo(ctx context.Context, req *mcp.CallToolRequest, 
 	if err != nil {
 		return nil, nil, toolFailure(contracts.ErrUnauthorized)
 	}
+	ctx, cancel := c.bind(ctx)
+	defer cancel()
 	info, err := h.svc.Info(ctx, c.grant)
 	if err == nil && info == nil {
 		err = errNoAnswer
@@ -187,13 +217,88 @@ func (h *handler) connectionInfo(ctx context.Context, req *mcp.CallToolRequest, 
 	return textResult(info), info, nil
 }
 
-func (h *handler) searchMail(ctx context.Context, req *mcp.CallToolRequest, in contracts.VendorSearch) (*mcp.CallToolResult, *contracts.VendorPage, error) {
+// searchMail reads its arguments as the API reads its body, from the bytes
+// the client sent (searchArgs): the SDK neither validates nor normalises
+// them first, so a formula is read by the formula's parser alone, and every
+// refusal of one is invalid_formula with where and why.
+func (h *handler) searchMail(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, *contracts.VendorPage, error) {
 	c, err := grantedCall(req)
 	if err != nil {
 		return nil, nil, toolFailure(contracts.ErrUnauthorized)
 	}
+	in, err := searchArgs(req.Params.Arguments)
+	if err != nil {
+		return nil, nil, h.failed(c, ToolSearchMail, err)
+	}
+	ctx, cancel := c.bind(ctx)
+	defer cancel()
 	page, rel, err := h.svc.Search(ctx, c.grant, in)
 	return mailResult(h, c, ToolSearchMail, page, rel, err)
+}
+
+// errInvalidArguments refuses arguments that are not search_mail's: the
+// API's invalid_body, in its words.
+var errInvalidArguments = &contracts.Error{Code: "invalid_body", Message: "the request is not the JSON this endpoint takes"}
+
+// searchArgs reads search_mail's arguments as the API reads POST
+// /v1/messages/search: one JSON object whose members are query, limit and
+// cursor, each at most once, with nothing after it (else
+// errInvalidArguments); the query, unless absent or null, read strictly by
+// query.Parse from its own bytes (a refusal is its *query.Problem), then
+// decoded as the formula it is.
+func searchArgs(raw json.RawMessage) (contracts.VendorSearch, error) {
+	var in contracts.VendorSearch
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return in, nil
+	}
+	members, ok := members(raw, "query", "limit", "cursor")
+	if !ok {
+		return in, errInvalidArguments
+	}
+	if q, ok := members["query"]; ok && string(q) != "null" {
+		if _, err := query.Parse(q, nil); err != nil {
+			return in, err
+		}
+		in.Query = new(contracts.Formula)
+		_ = json.Unmarshal(q, in.Query) // what Parse takes is a Formula's JSON
+	}
+	if l, ok := members["limit"]; ok && json.Unmarshal(l, &in.Limit) != nil {
+		return in, errInvalidArguments
+	}
+	if cur, ok := members["cursor"]; ok && json.Unmarshal(cur, &in.Cursor) != nil {
+		return in, errInvalidArguments
+	}
+	return in, nil
+}
+
+// members is raw as one JSON object whose members are among names, each at
+// most once, with nothing after it: each member's value as it was sent.
+func members(raw []byte, names ...string) (map[string]json.RawMessage, bool) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	out := map[string]json.RawMessage{}
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil, false
+	}
+	for dec.More() {
+		t, err := dec.Token()
+		name, isName := t.(string)
+		if err != nil || !isName || !slices.Contains(names, name) {
+			return nil, false
+		}
+		if _, twice := out[name]; twice {
+			return nil, false
+		}
+		var v json.RawMessage
+		if dec.Decode(&v) != nil {
+			return nil, false
+		}
+		out[name] = v
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
+		return nil, false
+	}
+	_, err := dec.Token()
+	return out, errors.Is(err, io.EOF)
 }
 
 func (h *handler) readMessage(ctx context.Context, req *mcp.CallToolRequest, in MessageID) (*mcp.CallToolResult, *contracts.VendorMessage, error) {
@@ -201,6 +306,8 @@ func (h *handler) readMessage(ctx context.Context, req *mcp.CallToolRequest, in 
 	if err != nil {
 		return nil, nil, toolFailure(contracts.ErrUnauthorized)
 	}
+	ctx, cancel := c.bind(ctx)
+	defer cancel()
 	msg, rel, err := h.svc.Read(ctx, c.grant, in.ID)
 	return mailResult(h, c, ToolReadMessage, msg, rel, err)
 }
@@ -238,6 +345,8 @@ func (h *handler) getAttachment(ctx context.Context, req *mcp.CallToolRequest, i
 		c.mu.Unlock()
 		return nil, nil, toolFailure(contracts.ErrPartNotApproved)
 	}
+	ctx, cancel := c.bind(ctx)
+	defer cancel()
 	a, rel, err := h.svc.Attachment(ctx, c.grant, in.ID, in.Index)
 	if err == nil && (a == nil || rel == nil) {
 		err = errNoAnswer

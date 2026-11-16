@@ -175,8 +175,10 @@ func TestV50TheCutNeverActsOnTheWriterAfterTheHandlerReturned(t *testing.T) {
 	lw := &lateWriter{ResponseRecorder: httptest.NewRecorder(), w: w}
 	func() {
 		defer func() {
-			if v := recover(); v != nil && v != http.ErrAbortHandler {
-				panic(v)
+			if v := recover(); v != nil {
+				if err, _ := v.(error); !errors.Is(err, http.ErrAbortHandler) {
+					panic(v)
+				}
 			}
 		}()
 		h.ServeHTTP(lw, toolCall(1, "search_mail", `{}`).http())

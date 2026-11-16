@@ -2,6 +2,7 @@ package mcpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -46,7 +47,7 @@ func TestAToolWithoutTheMiddlewaresGrantAnswersNothing(t *testing.T) {
 		requestWith(&call{}),
 	} {
 		_, _, e1 := h.connectionInfo(ctx, req, NoInput{})
-		_, _, e2 := h.searchMail(ctx, req, contracts.VendorSearch{})
+		_, _, e2 := h.searchMail(ctx, req)
 		_, _, e3 := h.readMessage(ctx, req, MessageID{})
 		_, _, e4 := h.getAttachment(ctx, req, AttachmentID{})
 		for _, err := range []error{e1, e2, e3, e4} {
@@ -125,14 +126,9 @@ func TestAnAnswerThatCannotBeSentIsNotSent(t *testing.T) {
 		cancel()
 		r := httptest.NewRequest(http.MethodPost, "/mcp", nil).WithContext(ctx)
 		w := httptest.NewRecorder()
-		func() {
-			defer func() {
-				if p, _ := recover().(error); !errors.Is(p, http.ErrAbortHandler) {
-					t.Fatalf("not aborted: %v", p)
-				}
-			}()
-			h.answer(w, r, c, rec)
-		}()
+		if outcome, abort := h.answer(w, r, c, rec); !abort || outcome != "client_left" {
+			t.Fatalf("not aborted: %s %v", outcome, abort)
+		}
 		if strings.Contains(w.Body.String(), "secret") {
 			t.Fatal("sent")
 		}
@@ -154,7 +150,7 @@ func TestAnAnswerThatCannotBeSentIsNotSent(t *testing.T) {
 			l := &connectionstest.Lease{}
 			c := &call{grant: testGrant(), buffered: true, release: l}
 			w := httptest.NewRecorder()
-			if got := h.answer(w, httptest.NewRequest(http.MethodPost, "/mcp", nil), c, rec); got != "internal" || w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "secret") {
+			if got, abort := h.answer(w, httptest.NewRequest(http.MethodPost, "/mcp", nil), c, rec); got != "internal" || abort || w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "secret") {
 				t.Fatalf("%s %d %s", got, w.Code, w.Body.String())
 			}
 			if started, finished, _, _ := l.State(); started || !finished {
@@ -170,23 +166,24 @@ func TestAnAnswerThatCannotBeSentIsNotSent(t *testing.T) {
 func TestAFailedWriteEndsTheTransfer(t *testing.T) {
 	rec := newRecorder(AnswerMax)
 	_, _ = rec.Write(make([]byte, 3*sendChunk))
+	bg := context.Background()
 	w := &failingWriter{ResponseRecorder: httptest.NewRecorder(), failAfter: 1}
-	if sent, cut := send(context.Background(), w, rec); sent || cut {
-		t.Fatalf("sent %v cut %v", sent, cut)
+	if sent, ended := send(bg, bg, w, nil, rec); sent || ended != "write_failed" {
+		t.Fatalf("sent %v ended %q", sent, ended)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(bg)
 	w = &failingWriter{ResponseRecorder: httptest.NewRecorder(), failAfter: 2, onWrite: cancel}
-	if sent, cut := send(ctx, w, rec); sent || !cut {
-		t.Fatalf("sent %v cut %v", sent, cut)
+	if sent, ended := send(ctx, bg, w, nil, rec); sent || ended != "cut" {
+		t.Fatalf("sent %v ended %q", sent, ended)
 	}
-	ctx, cancel = context.WithCancel(context.Background())
+	ctx, cancel = context.WithCancel(bg)
 	w = &failingWriter{ResponseRecorder: httptest.NewRecorder(), failAfter: 100, onWrite: cancel}
-	if sent, cut := send(ctx, w, rec); sent || !cut || w.writes != 1 {
-		t.Fatalf("sent %v cut %v after %d writes", sent, cut, w.writes)
+	if sent, ended := send(ctx, ctx, w, nil, rec); sent || ended != "client_left" || w.writes != 1 {
+		t.Fatalf("sent %v ended %q after %d writes", sent, ended, w.writes)
 	}
 	w = &failingWriter{ResponseRecorder: httptest.NewRecorder(), failAfter: 100, failFlush: true}
-	if sent, _ := send(context.Background(), w, rec); sent {
-		t.Fatal("sent without a flush")
+	if sent, ended := send(bg, bg, w, nil, rec); sent || ended != "write_failed" {
+		t.Fatalf("sent %v ended %q without a flush", sent, ended)
 	}
 }
 
@@ -195,6 +192,7 @@ type failingWriter struct {
 	failAfter int
 	writes    int
 	onWrite   func()
+	onFlush   func()
 	failFlush bool
 }
 
@@ -210,6 +208,9 @@ func (f *failingWriter) Write(p []byte) (int, error) {
 }
 
 func (f *failingWriter) FlushError() error {
+	if f.onFlush != nil {
+		f.onFlush()
+	}
 	if f.failFlush {
 		return errors.New("broken pipe")
 	}
@@ -243,4 +244,42 @@ func TestThePassThroughWriterFlushes(t *testing.T) {
 	if !w.Flushed || w.Header().Get("Cache-Control") != "no-store" || n.Unwrap() != w {
 		t.Fatal(w.Header())
 	}
+}
+
+// search_mail's arguments are one JSON object of query, limit and cursor,
+// each at most once, with nothing after it; anything else is invalid_body,
+// whatever the SDK would have let through.
+func TestSearchArgsReadOnlySearchMailsArguments(t *testing.T) {
+	for _, raw := range []string{`[]`, `"x"`, `{"limit":}`, `{"limit":1`, `{"limit":1} {}`, `{"limit":1,}`, `{1:2}`} {
+		if _, err := searchArgs(json.RawMessage(raw)); !errors.Is(err, errInvalidArguments) {
+			t.Fatalf("%s: %v", raw, err)
+		}
+	}
+	for _, raw := range []string{``, ` `, `{}`, `{"query":null}`} {
+		if in, err := searchArgs(json.RawMessage(raw)); err != nil || in.Query != nil {
+			t.Fatalf("%q: %+v %v", raw, in, err)
+		}
+	}
+}
+
+// A lease that ends between two chunks, as one is flushed, stops the
+// transfer before the next is written.
+func TestACutBetweenChunksWritesNoMore(t *testing.T) {
+	rec := newRecorder(AnswerMax)
+	_, _ = rec.Write(make([]byte, 3*sendChunk))
+	ctx, cancel := context.WithCancel(context.Background())
+	w := &failingWriter{ResponseRecorder: httptest.NewRecorder(), failAfter: 100, onFlush: cancel}
+	if sent, ended := send(ctx, context.Background(), w, nil, rec); sent || ended != "cut" || w.writes != 1 {
+		t.Fatalf("sent %v ended %q after %d writes", sent, ended, w.writes)
+	}
+}
+
+// A type the schema's inference cannot take is a programming error.
+func TestSchemaOfPanicsOnATypeWithoutASchema(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("no panic")
+		}
+	}()
+	schemaOf[chan int]()
 }
