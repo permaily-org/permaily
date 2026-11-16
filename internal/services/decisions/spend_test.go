@@ -492,12 +492,13 @@ func TestA17TheProvidersLimitAndARefusedKey(t *testing.T) {
 	})
 }
 
-// A37. Attempts and their spend, against this package's fake model, whose
-// failures return at once: the attempts share the message's deadline and
-// are reserved and settled as the record says. The cases in real time
-// (two timeouts of 8 s, a request processed and its answer dropped, an
-// answer after the client's timeout) need pull request 1's played
-// provider, and are added once it merges.
+// A37. Attempts and their spend, against the fake model, whose failures
+// return at once: the attempts share the message's deadline and are
+// reserved and settled as the record says. The same schedules through the
+// real client against a played provider, in real time (two timeouts of
+// 8 s, a request processed and its answer dropped, an answer after the
+// client's timeout, refused and reset streams), are
+// TestA37AttemptsThroughTheRealClient (played_test.go).
 func TestA37AttemptsAndTheirSpend(t *testing.T) {
 	ctx := context.Background()
 	timeout := &decide.AttemptError{Err: decide.ErrUnavailable, Sent: true, Retry: true}
