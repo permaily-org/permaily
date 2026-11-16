@@ -231,6 +231,9 @@ func TestV49SearchMailInputIsReadByTheFormulasParser(t *testing.T) {
 	for _, c := range []struct{ name, args string }{
 		{"an unknown argument", `{"sender-supplied-field":1}`},
 		{"an argument twice", `{"limit":5,"limit":6}`},
+		// encoding/json reads a name in any case, and the long s as an s.
+		{"an argument twice in another case", `{"limit":5,"LIMIT":6}`},
+		{"an argument twice in other letters", `{"cursor":"pmk_a","cur\u017for":"pmk_b"}`},
 		{"a limit as text", `{"limit":"sender-supplied"}`},
 		{"a cursor as a number", `{"cursor":42}`},
 	} {

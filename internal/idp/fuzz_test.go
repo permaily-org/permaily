@@ -303,6 +303,11 @@ func FuzzKeys(f *testing.F) {
 	}
 	f.Add([]byte(`{"keys":[]}`))
 	f.Add([]byte(`{"keys":[{"kty":"RSA","kid":"a","n":"AQAB","e":"AQAB"},{"kty":"EC","kid":"a"}]}`))
+	// Members twice in another case, which encoding/json reads as one (the
+	// Kelvin sign as a k, the long s as an s): vendors/cimd reads its vendors'
+	// key sets with jws.Keys too.
+	f.Add([]byte(`{"\u212aeys":[],"keys":[{"kty":"RSA","kid":"a","n":"AQAB","e":"AQAB"}]}`))
+	f.Add([]byte(`{"keys":[{"kty":"RSA","kid":"a","KID":"b","u\u017fe":"enc","use":"sig","n":"AQAB","e":"AQAB"}]}`))
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, body []byte) {
