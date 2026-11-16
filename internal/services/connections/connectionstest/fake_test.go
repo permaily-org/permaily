@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/oauth"
@@ -100,4 +101,18 @@ func TestTheFakesGrantCarriesTheConnectionsScopes(t *testing.T) {
 	if err != nil || !slices.Equal(g.StepUp(oauth.ScopeAttachments), []string{oauth.ScopeSender, oauth.ScopeSubject, oauth.ScopeBody, oauth.ScopeAttachments}) {
 		t.Fatalf("%+v %v", g, err)
 	}
+}
+
+// Ruling 3 of the fourth rulings on PR #136: the fake keeps the contract
+// the service's Refuse keeps (ruling 6 on its second review), so the
+// routes' and MCP's tests built on it see a refusal recorded as the
+// service records it.
+func TestTheFakesRefuseKeepsTheContract(t *testing.T) {
+	RefuseContract(t, func(t *testing.T) RefuseSubject {
+		g := &oauth.Grant{Connection: "con_a", Family: "fam_a", Account: "acc_a", Resource: contracts.ResourceMCP}
+		f := &Fake{Mailboxes: []string{"mbx_a"}, RefuseFunc: func(ctx context.Context, _ *oauth.Grant, _ connections.Refusal) error {
+			return ctx.Err() // as a writer that honours its context
+		}}
+		return RefuseSubject{API: f, Grant: g, Mailbox: "mbx_a", PassHardEnd: func() { g.TokenExpiresAt = time.Now().Add(-time.Second) }, Written: f.Receipts}
+	})
 }

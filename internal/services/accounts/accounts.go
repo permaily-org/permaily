@@ -45,6 +45,7 @@ import (
 	"github.com/permaily-org/permaily/internal/domain/mail"
 	"github.com/permaily-org/permaily/internal/envelope"
 	"github.com/permaily-org/permaily/internal/idp"
+	"github.com/permaily-org/permaily/internal/services/connections"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/webauthn"
 )
@@ -130,6 +131,13 @@ type Config struct {
 	// give it later, once, with SetMailboxes, since the mailboxes service is
 	// made with this one as its accounts.
 	Mailboxes Mailboxes
+	// Connections is the connections service (ADR 0030, finding 6): an
+	// account's connections are fenced and ended when its deletion is asked
+	// and on every pass while it is closing (EndAll), and a cancelled
+	// deletion is done only once what of them was still active has ended
+	// (Reopen). Nil when there are none; the composition may give it later,
+	// once, with SetConnections, as it does the mailboxes.
+	Connections connections.Lifecycle
 }
 
 // Limits on what one enclave keeps in memory and starts at once.
@@ -196,6 +204,8 @@ type Service struct {
 
 	// mailboxes is Config.Mailboxes, or what SetMailboxes gave.
 	mailboxes atomic.Pointer[mailboxesHolder]
+	// connections is Config.Connections, or what SetConnections gave.
+	connections atomic.Pointer[connectionsHolder]
 
 	sending chan struct{}
 	// noticing bounds the notices being sent, and noticeWait is how long one

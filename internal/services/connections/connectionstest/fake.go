@@ -11,7 +11,10 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"slices"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/inbox"
@@ -43,9 +46,15 @@ type Fake struct {
 	RefuseFunc       func(ctx context.Context, g *oauth.Grant, r connections.Refusal) error
 	RefusedFunc      func() map[string]int64
 
+	// Mailboxes are the connection's mailboxes as the service reads them:
+	// a refusal's receipt names its message only when the message is of
+	// one of them (Receipts).
+	Mailboxes []string
+
 	mu       sync.Mutex
 	calls    []string
 	refusals []connections.Refusal
+	receipts []RefusedReceipt
 }
 
 var _ connections.API = (*Fake)(nil)
@@ -194,9 +203,12 @@ func (f *Fake) Attachment(ctx context.Context, g *oauth.Grant, id string, index 
 // Refuse refuses what the service will refuse (ErrInvalidRefusal: no
 // grant, or a refusal that is not ValidOn the grant's resource), records
 // the rest and hands RefuseFunc the grant it was given, unchanged, and
-// answers its error; ErrNotSet when the test did not set it. It records
-// attempts, not receipts: whether one was stored, for whom, is the
-// service's to show.
+// answers its error; ErrNotSet when the test did not set it. RefuseFunc
+// stands for the receipt's write and is given what the service gives its
+// writer (ruling 6 on PR #136's second review): a fresh ReceiptWriteMax,
+// detached from ctx's cancellation and deadline, whatever the grant's hard
+// end. When it answers nil, the receipt is kept (Receipts), its message
+// only when Mailboxes holds the message's mailbox.
 func (f *Fake) Refuse(ctx context.Context, g *oauth.Grant, r connections.Refusal) error {
 	f.called("Refuse")
 	if g == nil || !r.ValidOn(g.Resource) {
@@ -208,7 +220,30 @@ func (f *Fake) Refuse(ctx context.Context, g *oauth.Grant, r connections.Refusal
 	if f.RefuseFunc == nil {
 		return ErrNotSet
 	}
-	return f.RefuseFunc(ctx, g, r)
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), connections.ReceiptWriteMax)
+	defer cancel()
+	rc := RefusedReceipt{Reason: r.Reason, Cancelled: wctx.Err() != nil}
+	if dl, ok := wctx.Deadline(); ok {
+		rc.Bound = time.Until(dl)
+	}
+	if mbx, msg, ok := strings.Cut(r.Message, "."); ok && msg != "" && slices.Contains(f.Mailboxes, mbx) {
+		rc.Mailbox, rc.Message = mbx, msg
+	}
+	if err := f.RefuseFunc(wctx, g, r); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	f.receipts = append(f.receipts, rc)
+	f.mu.Unlock()
+	return nil
+}
+
+// Receipts are the refused receipts Refuse kept, in order: those
+// RefuseFunc stored.
+func (f *Fake) Receipts() []RefusedReceipt {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]RefusedReceipt(nil), f.receipts...)
 }
 
 // Refusals are the refusals Refuse took, in order, whatever it answered.

@@ -2,7 +2,6 @@ package connections
 
 import (
 	"context"
-	"errors"
 	"net/url"
 	"time"
 
@@ -30,7 +29,12 @@ type API interface {
 	RevokeDevice(ctx context.Context, p Person, id, device string) (*contracts.Connection, error)
 	Renew(ctx context.Context, p Person, id string, in contracts.ConnectionRenewal) (*contracts.Connection, error)
 	// The endpoints: form values in, an OAuth answer out (*OAuthError for a
-	// refusal).
+	// refusal). Push's refusals are OAuth codes alone, invalid_client
+	// included (the issuer's endpoint, never a contracts.ClientError, which
+	// is Start's and the person's consent operations'); an operational
+	// failure (the storage, the endpoints' admission) stays its own error,
+	// which the route maps as it maps every endpoint's, never an OAuth
+	// refusal.
 	Push(ctx context.Context, form url.Values) (requestURI string, err error)
 	Token(ctx context.Context, form url.Values) (*TokenAnswer, error)
 	RevokeToken(ctx context.Context, form url.Values) error
@@ -51,12 +55,15 @@ type API interface {
 	// request whose token Check accepted, before calling Search, Read or
 	// Attachment (PR #131's review, finding 2; ADR 0031: once a grant is
 	// attributed, every refusal of a request that asked for mail is
-	// recorded): the refused receipt, written as Release's order writes one
-	// (under ReceiptWriteMax and the grant's hard end), and its count in
-	// Refused, before the adapter answers. Nil once stored; then the
-	// adapter answers its refusal. Any error (the receipt not written,
-	// ErrInvalidRefusal): the adapter answers 503 with Retry-After and
-	// nothing else. Only what the adapter alone can see is refused here
+	// recorded): the refused receipt, written as the service writes its own
+	// refusals' (under a fresh ReceiptWriteMax, detached from ctx's
+	// cancellation, and not bound by the grant's hard end, which bounds only
+	// a receipt of mail released: a refusal after it keeps its attribution;
+	// ruling 6 on PR #136's second review), and its count in Refused,
+	// before the adapter answers. Nil once stored; then the adapter answers
+	// its refusal. Any error (the receipt not written within
+	// ReceiptWriteMax, ErrInvalidRefusal): the adapter answers 503 with
+	// Retry-After and nothing else. Only what the adapter alone can see is refused here
 	// (Refusal.Valid); everything the service can decide (a held message,
 	// the model's gate, a search on a part not given, the API's attachment
 	// without its part, a size, a cursor, a limit) is passed to the
@@ -111,7 +118,7 @@ const RefusalMessageMax = 128
 
 // ErrInvalidRefusal is Refuse's answer to a Refusal that is not ValidOn
 // its grant's resource, or to one without a grant.
-var ErrInvalidRefusal = errors.New("connections: not a refusal an adapter makes")
+var ErrInvalidRefusal error = &kind{"connections: not a refusal an adapter makes"}
 
 // Valid says whether r is one an adapter may make: a known operation and a
 // reason only the adapter sees. A body or tool arguments it cannot read
@@ -222,11 +229,16 @@ type Release interface {
 // read again. The adapter answers 503 with Retry-After (never 401, so a
 // client keeps its tokens when the storage failed; a revoked one is told
 // invalid_token on its next request).
-var ErrTooLate = errors.New("connections: the answer can no longer be released")
+var ErrTooLate error = &kind{"connections: the answer can no longer be released"}
 
 // ReceiptWriteMax bounds writing one receipt (receipts.Writer), on its own
 // deadline, not the grant's freshness (N3): a preparation that outlasts the
 // freshness is checked again by Release.Start, after the receipt, never
-// skipped to meet a deadline. The receipt's context also ends at the
-// grant's hard end (oauth.Grant.Expires).
+// skipped to meet a deadline. The receipt of mail to be released also ends
+// at the grant's hard end (oauth.Grant.Expires): nothing is released past
+// it. A refused receipt (Refuse's, and the service's own refusals) is
+// written under a fresh ReceiptWriteMax alone, detached from the request's
+// cancellation: it releases nothing, so it is recorded after the hard end
+// too, with the grant's attribution and no message identifier the service
+// did not check (ruling 6 on PR #136's second review).
 const ReceiptWriteMax = 5 * time.Second
