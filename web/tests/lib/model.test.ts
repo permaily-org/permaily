@@ -55,7 +55,11 @@ describe("the model's notice", () => {
     for (const said of [
       'OpenAI',
       'subject',
-      'never sends the sender, the recipients or the attachments',
+      'We do not add sender or recipient header fields, account identifiers or attachment files',
+      'not anonymised or redacted',
+      'even if the decision is to hold the message back',
+      '365 days and one hour',
+      'copied into its receipt',
       'up to 30 days',
       'zero data retention',
       'sealed',

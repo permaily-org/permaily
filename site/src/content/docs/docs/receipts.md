@@ -1,13 +1,13 @@
 ---
 title: Receipts
-description: The record written each time mail is released to a connection.
+description: The record of mail prepared for a connection's request, or of why the request was refused.
 ---
 
-A receipt is a record of one release of mail to one connection. A person can open any receipt to see exactly what left.
+A receipt records mail prepared and made available for a connection's authenticated mail request, or why that request was refused. Receipts are stored now; a screen for viewing them and an export are not built yet.
 
 ## What a receipt records
 
-Who received which message, which parts, when, for which query, which messages a rule held back, and whether a model decided. Only the person sees what was held back.
+Which messages were prepared for which connection, which parts, when, for which query, which messages a rule held back, and whether a model decided. Only the person will see what was held back, once the Activity screen is built.
 
 ## Where you meet them
 
@@ -23,4 +23,4 @@ Sender and subject are sensitive even without a body, so receipts are sealed so 
 
 ## What a receipt can't do
 
-A receipt shows what left. It can't recall it, and it can't show what a connection did next. That's covered by the connection's own policies.
+A receipt does not prove that the app received all or any of the prepared bytes. It cannot recall information or show what the app did with it.

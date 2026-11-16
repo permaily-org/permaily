@@ -205,7 +205,7 @@ const TermsVersion = "2026-11-16"
 // words (zero data retention approved, another provider) changes it. The web
 // app's, in web/src/lib/model-notice.ts, must be the same, which
 // TestModelNoticeVersionMatchesTheWebApp checks.
-const ModelNoticeVersion = "2026-11-15"
+const ModelNoticeVersion = "2026-11-16"
 
 // AccountClosing is how long an account that its person asked to delete can
 // still be kept, by cancelling (ADR 0017).

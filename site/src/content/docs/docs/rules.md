@@ -1,9 +1,9 @@
 ---
 title: Rules
-description: The filters a person writes, which run on the whole mailbox before any query, and what that means for your app.
+description: The filters that constrain what a connection may receive, and what that means for your app.
 ---
 
-A rule is a filter the person writes, such as "Sign-in and security" or "Home address". Rules run first, on the whole mailbox, before any connection's [query](/docs/queries/). Your app never sees them.
+Rules constrain what a connection may receive; they do not hide mail from its owner. Today the built-in rule is evaluated when a connection or its consent preview considers candidate mail. Your app never sees the rules, nor the mail they hold back from its [query](/docs/queries/).
 
 Today every account has one rule, [Sign-in and security](#on-every-account), on from the start. Rules a person writes, everything this page says about choosing, removing details and rules written in words, are planned, not built yet.
 
@@ -45,7 +45,7 @@ Every account has one rule from the start, called **Sign-in and security**. It h
 
 The reason is account takeover. Any connection that can read a password reset can take over the account it belongs to. A broad query or a compromised connection shouldn't be able to reach those messages.
 
-Exact phrases, in English and Spanish, in the subject or the text catch most of this mail. For every other message a connection would read, a model at OpenAI decides whether it's about a sign-in code or a password reset, and the message is held unless the answer is clearly no. While the model can't be asked, no mail leaves for any connection. Turning the rule off, and changing it, come with the rules a person writes.
+Exact phrases, in English and Spanish, in the subject or the text hold matching messages. For every other message a connection would read, a model at OpenAI decides whether it's about a sign-in code or a password reset, and the message is held unless the answer is clearly no. If the model is disabled, its key is missing or refused, or a provider, spending or account limit closes the model gate, the affected connections receive no mail, including mail previously cleared. If a particular message needs a new model answer and no reliable answer is available, that message is held. Previously cleared messages can still be delivered during a temporary request failure while the gate remains open. Turning the rule off, and changing it, come with the rules a person writes.
 
 ## What your app sees
 

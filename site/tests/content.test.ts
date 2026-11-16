@@ -206,6 +206,106 @@ describe('legal pages', () => {
     expect(page('subprocessors').text).toContain('it hasn’t approved it yet');
   });
 
+  describe('say what the code keeps, sends and removes', () => {
+    // The adversarial review of pull request 148 (docs/legal.md, "Decided (2026-11-16)"): each fact below is read
+    // from the code it describes, so a change there fails here until the pages change with it.
+    const go = (path: string) => readFileSync(join(import.meta.dirname, '../..', path), 'utf8');
+    const text = (path: string) => page(path).text.replace(/\s+/g, ' ');
+
+    // deploy/tofu/mail.tf sets the mail table's point-in-time recovery to one day (pull request 149); without
+    // `recovery_period_in_days` DynamoDB keeps its default 35, which the pages would no longer say.
+    const recovery = go('deploy/tofu/mail.tf').match(/recovery_period_in_days\s*=\s*(\d+)/);
+    it.skipIf(!recovery)('the backups’ one day, as deploy/tofu/mail.tf sets it', () => {
+      expect(Number(recovery?.[1])).toBe(1);
+      for (const path of ['privacy', 'data-deletion']) {
+        expect(text(path), path).toContain('Our database keeps a rolling one-day backup');
+        expect(text(path), path).not.toMatch(/35 days|35-day/);
+      }
+    });
+
+    it('what the model is sent, in the words of the model’s notice', () => {
+      // web/src/lib/model-notice.ts is the notice the service records (ModelNoticeVersion); the pages say the same.
+      const notice = go('web/src/lib/model-notice.ts');
+      const said =
+        'We do not add sender or recipient header fields, account identifiers or attachment files to the model request.';
+      expect(notice).toContain(said);
+      expect(notice).toContain(
+        'even if the decision is to hold the message back from the app or agent',
+      );
+      for (const path of ['privacy', 'subprocessors']) {
+        expect(text(path), path).toContain(said);
+        expect(text(path), path).toContain('are not anonymised or redacted');
+        expect(text(path), path).not.toMatch(/Never the sender/);
+      }
+      expect(text('terms')).toContain('even when the connection’s own query uses no model');
+    });
+
+    it('a new mailbox’s retention and its choices, as internal/contracts sets them', () => {
+      const contracts = go('internal/contracts/mailboxes.go');
+      expect(contracts).toMatch(/MailboxRetentionDays = \[\]int\{7, 30, 90, 180, 365\}/);
+      expect(contracts).toMatch(/MailboxRetentionDefault = 90\b/);
+      expect(text('privacy')).toContain(
+        'New mail expires after 90 days unless you choose 7, 30, 180 or 365 days for that mailbox',
+      );
+    });
+
+    it('how long connection records stay, and that their lists are not removed', () => {
+      // services/connections: an ended connection's records go EndedKept after it ends; nothing removes an
+      // account's lists (ListName) or their index, also when the account is removed (docs/legal.md, item 15).
+      // The pull request that removes them changes this test and the pages together.
+      expect(go('internal/services/connections/connections.go')).toMatch(
+        /EndedKept = 30 \* 24 \* time\.Hour/,
+      );
+      const dir = join(import.meta.dirname, '../../internal/services/connections');
+      const source = readdirSync(dir)
+        .filter((f) => f.endsWith('.go') && !f.endsWith('_test.go'))
+        .map((f) => readFileSync(join(dir, f), 'utf8'))
+        .join('\n');
+      expect(source).not.toMatch(/RemoveRecord\([^)]*ListName\(/);
+      for (const path of ['privacy', 'data-deletion']) {
+        expect(text(path), path).toContain(
+          'records are scheduled for removal 30 days after the connection ends, including when the account itself has already been removed',
+        );
+        expect(text(path), path).toContain(
+          'Our connection-list records and their account index currently have no automatic removal',
+        );
+      }
+      expect(text('data-deletion')).not.toMatch(/the devices that signed in, your connections,/);
+    });
+
+    it('the vendor documents’ cache, as internal/vendors bounds it', () => {
+      const vendors = go('internal/vendors/vendors.go');
+      expect(vendors).toMatch(/CacheMaxAge\s+= 24 \* time\.Hour/);
+      expect(vendors).toMatch(/StaleMax\s+= time\.Hour/);
+      expect(text('privacy')).toContain('freshness capped at 24 hours');
+      expect(text('privacy')).toContain(
+        'up to one further hour of stale use after a fetch failure',
+      );
+    });
+
+    it('pending sign-ins as stored, not as memory only', () => {
+      // services/accounts keeps them sealed in DynamoDB (pending.go).
+      expect(go('internal/services/accounts/pending.go')).toMatch(/pending#/);
+      const rows = page('privacy').querySelectorAll('tbody tr');
+      const pending = rows.filter((tr) =>
+        tr.querySelector('th')?.text.startsWith('Something you started'),
+      );
+      expect(pending).toHaveLength(1);
+      const cells = pending[0]?.querySelectorAll('td').map((td) => td.text) ?? [];
+      expect(cells.join(' ')).not.toMatch(/memory only|never stored/i);
+      expect(cells.join(' ')).toContain('Our database, sealed');
+    });
+
+    it('no release that was not published, and no country limit that does not exist', () => {
+      const changelog = page('changelog');
+      expect(changelog.querySelector('h1')?.text.trim()).toBe('Release history');
+      expect(changelog.text).not.toMatch(/v1\.\d+\.\d+/);
+      expect(changelog.querySelector('a[href*="/releases"]')).toBeTruthy();
+      expect(text('about')).not.toContain('for people in the United States');
+      expect(text('about')).toContain('Invitations are not limited to one country');
+    });
+  });
+
   it('exist for each legal link', () => {
     for (const path of ['privacy', 'terms', 'data-processing', 'subprocessors', 'data-deletion']) {
       expect(page(path).querySelector('h1')?.text.trim(), path).toBeTruthy();
