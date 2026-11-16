@@ -118,7 +118,9 @@ func (s *Service) readConn(ctx context.Context, id string) (*connDoc, store.Mark
 	} else {
 		d.private = &connPrivate{}
 	}
-	s.cacheConn(id, &d, at, nil)
+	// The cache keeps a copy of its own: what a caller changes before its
+	// write commits is never what another reader sees (finding 3).
+	s.cacheConn(id, d.clone(), at, nil)
 	return &d, at, nil
 }
 
@@ -129,7 +131,7 @@ func (s *Service) connFresh(ctx context.Context, id string) (*connDoc, time.Time
 	c, ok := s.conns[id]
 	s.mu.Unlock()
 	if ok && s.now().Sub(c.read) < oauthFresh && c.err == nil {
-		return c.doc, c.read, nil
+		return c.doc.clone(), c.read, nil
 	}
 	read := s.now()
 	d, _, err := s.readConn(ctx, id)
@@ -143,6 +145,40 @@ func (s *Service) cacheConn(id string, d *connDoc, at store.Mark, err error) {
 		clear(s.conns)
 	}
 	s.conns[id] = cachedConn{doc: d, at: at, read: s.now(), err: err}
+}
+
+// clone is a copy of d that shares nothing with it: the cache's documents
+// are never changed, and a caller may change its own copy.
+func (d *connDoc) clone() *connDoc {
+	if d == nil {
+		return nil
+	}
+	c := *d
+	c.Parts, c.Scopes, c.Mailboxes = slices.Clone(d.Parts), slices.Clone(d.Scopes), slices.Clone(d.Mailboxes)
+	c.Sealed = slices.Clone(d.Sealed)
+	c.Devices = slices.Clone(d.Devices)
+	for i := range c.Devices {
+		c.Devices[i].Parts, c.Devices[i].Scopes = slices.Clone(c.Devices[i].Parts), slices.Clone(c.Devices[i].Scopes)
+	}
+	if d.private != nil {
+		p := *d.private
+		if p.Query != nil {
+			q := copyFormula(*p.Query)
+			p.Query = &q
+		}
+		p.Shown.Sentences, p.Shown.Rules = slices.Clone(p.Shown.Sentences), slices.Clone(p.Shown.Rules)
+		c.private = &p
+	}
+	return &c
+}
+
+// copyFormula is f with groups and conditions of its own.
+func copyFormula(f contracts.Formula) contracts.Formula {
+	f.All = slices.Clone(f.All)
+	for i := range f.All {
+		f.All[i].Any = slices.Clone(f.All[i].Any)
+	}
+	return f
 }
 
 // writeConn writes a connection's record, its private part sealed, checked
