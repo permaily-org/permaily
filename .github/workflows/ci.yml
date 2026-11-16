@@ -225,6 +225,26 @@ jobs:
       - run: test -z "$(gofmt -l .)" && go vet ./...
       - run: go test -count=1 ./...
 
+  # internal/oauth is the authorization server's core, written here, inside
+  # the enclave. Here x/oauth2 and the MCP SDK's client drive a minimal server
+  # made of its functions, and internal/jws must give go-jose's answers; the
+  # libraries live in their own module so they never reach the image.
+  oauth-differential:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: tests/oauth-differential
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tests/oauth-differential/go.mod
+          cache-dependency-path: tests/oauth-differential/go.sum
+      - run: test -z "$(gofmt -l .)" && go vet ./...
+      - run: go test -count=1 ./...
+
   repo:
     runs-on: ubuntu-24.04
     steps:

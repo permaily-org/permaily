@@ -1,0 +1,67 @@
+{
+  "v": 1,
+  "id": "rcp_18e87e30edfd0a0000000000000000000004",
+  "at": "2026-11-16T10:00:00.123456Z",
+  "kind": "refused",
+  "connection": "con_cccccccccccccccccccccccccc",
+  "device": "fam_dddddddddddddddddddddddddd",
+  "client_id": "https://claude.ai/oauth/claude-code-client-metadata",
+  "vendor": "claude.ai",
+  "resource": "mcp",
+  "formulas": [
+    {
+      "role": "consented",
+      "id": "qry_5lv6p6m7doyxgzx4d4lrv236by"
+    },
+    {
+      "role": "mailboxes",
+      "id": "qry_f7vo6neizayota4c2foqhdjltu"
+    },
+    {
+      "role": "since",
+      "id": "qry_vxiyl7b5q4wypijlah3crpblse"
+    }
+  ],
+  "rules": [
+    {
+      "id": "default-sign-in-and-security",
+      "version": 1
+    }
+  ],
+  "refused": {
+    "reason": "held",
+    "mailbox": "mbx_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "message": "0000018a0b0c0d0f2122232425262728",
+    "held": {
+      "mailbox": "mbx_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "message": "0000018a0b0c0d0f2122232425262728",
+      "rule": {
+        "id": "default-sign-in-and-security",
+        "version": 1
+      },
+      "why": "decided",
+      "model": [
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "a sign-in, login or verification code, or a one-time password",
+          "p": 0.97,
+          "model": "gpt-6-luna",
+          "prompt": "p2c",
+          "canary_checked": "2026-11-15",
+          "canary_change": "2026-11-01"
+        },
+        {
+          "var": "message",
+          "op": "about",
+          "topic": "resetting a password or recovering an account",
+          "p": 0.03,
+          "model": "gpt-6-luna",
+          "prompt": "p2c",
+          "canary_checked": "2026-11-15",
+          "canary_change": "2026-11-01"
+        }
+      ]
+    }
+  }
+}
