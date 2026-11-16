@@ -33,6 +33,7 @@ describe('the consent screen’s calls', () => {
     expect(started.request?.id).toBe(requestOf().id)
     expect(started.redirect).toBeUndefined()
 
+    // Never answered so (exactly one is set, AuthorizationStarted): a client that gets both goes back to the vendor.
     server.on(
       'POST /api/v1/oauth/requests',
       ok({ redirect: allowedRedirect, request: requestOf() }),
@@ -143,6 +144,14 @@ describe('the consent screen’s calls', () => {
   })
 
   it('knows every refusal of a connection, each with its own words', async () => {
+    // Each at the status the server answers it with (internal/httpapi, pull request 6 of ADR 0030).
+    const statuses: Record<string, number> = {
+      confirmation_needed: 403,
+      invalid_client: 400,
+      vendor_unreachable: 502,
+      request_too_large: 400,
+      invalid_cursor: 400,
+    }
     for (const code of [
       ...refusals,
       'invalid_client',
@@ -150,7 +159,7 @@ describe('the consent screen’s calls', () => {
       'request_too_large',
       'invalid_cursor',
     ] as const) {
-      server.on('POST /api/v1/oauth/requests', refused(409, code))
+      server.on('POST /api/v1/oauth/requests', refused(statuses[code] ?? 409, code))
       expect(await failure(api.startAuthorization('a=1'))).toBe(code)
       expect(messageFor(code)).not.toBe(messageFor('other'))
     }
@@ -159,6 +168,7 @@ describe('the consent screen’s calls', () => {
 
 describe('the person’s connections', () => {
   it('reads the list and one connection, filling in what an answer leaves out', async () => {
+    // Not an answer the server gives (it fills in every field of Connection): what the client makes of one that is not.
     const bare = { id: 'con_x', vendor: { domain: 'x.example' }, devices: [{ id: 'd' }] }
     server.on('GET /api/v1/connections', ok({ connections: [connectionOf(), bare] }))
     const { connections } = await api.connections()

@@ -121,7 +121,7 @@ describe('V62: the connections under unagreed terms', () => {
   it('reaches a vendor’s overview and a connection in every spelling the router reads', async () => {
     asNotAgreed()
     await open('/connections/claude.ai/overview')
-    await screen.findByRole('heading', { level: 1, name: '2 connections.' })
+    await screen.findByRole('heading', { level: 1, name: '1 connection.' })
     expect(screen.getByRole('region', { name: 'The terms changed' })).toBeTruthy()
     await open('/Connections/claude.ai/con_claudecode/')
     await screen.findByRole('heading', { level: 1, name: 'Claude Code reads your mail.' })

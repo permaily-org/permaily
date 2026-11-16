@@ -188,7 +188,7 @@ describe('V54: the hand-off', () => {
   })
 
   it('says a request that ended is over, and forgets it', async () => {
-    signedInWithMailboxes().on(startRoute, refused(410, 'request_ended'))
+    signedInWithMailboxes().on(startRoute, refused(409, 'request_ended'))
     await open(authorize)
     await screen.findByText('That request ended. Start again from the app.')
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
@@ -591,7 +591,7 @@ describe('V54: deciding', () => {
 
   it('says a request that ended while it was shown is over', async () => {
     const { user } = await consent()
-    server.on(decisionRoute, refused(410, 'request_ended'))
+    server.on(decisionRoute, refused(409, 'request_ended'))
     await user.click(denyButton())
     await screen.findByRole('heading', { name: 'That request ended' })
   })

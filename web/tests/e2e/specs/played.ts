@@ -210,8 +210,9 @@ export class PlayedApi {
           page: { messages: [], needs_model: [], unknown: [] },
         })
       case 'POST /api/v1/oauth/requests/pmq_played/decision': {
-        if (this.decisionRefusal) return no(410, this.decisionRefusal)
-        if (this.decided) return no(410, 'request_ended')
+        // Every refusal played here is a conflict, 409, as the server answers it (internal/httpapi).
+        if (this.decisionRefusal) return no(409, this.decisionRefusal)
+        if (this.decided) return no(409, 'request_ended')
         const { allow } = body as { allow: boolean }
         const back = `${this.vendor.origin}/callback`
         const iss = 'iss=https%3A%2F%2Fapi.permaily.com'
