@@ -8,6 +8,7 @@ import { AccountClosing } from '../pages/auth/AccountClosing.tsx'
 import { AuthLayout } from '../pages/auth/AuthLayout.tsx'
 import { LinkConfirmation, LinkEnded } from '../pages/auth/LinkConfirmation.tsx'
 import { TermsChanged } from '../pages/auth/Terms.tsx'
+import { isConnectionsPath } from '../pages/connections/ConnectionsLayout.tsx'
 import { ConfirmProvider } from './Confirm.tsx'
 import { Button, Headline } from './ui/index.ts'
 
@@ -43,7 +44,8 @@ function Waiting() {
  * an account that is being deleted every route shows that, and nothing else of the app, until the person
  * cancels. And once the terms in force are not the ones the person agreed to, every route shows the screen
  * that asks for the agreement, until they agree. The address stays where it was, so the app goes back to the
- * page they were on. The mailbox routes are the exception: they show in a limited form (`MailboxLayout`).
+ * page they were on. The mailbox routes are the exception: they show in a limited form (`MailboxLayout`); and so,
+ * while the terms are not agreed, are the connections routes (`ConnectionsLayout`).
  */
 export function RequireSession() {
   const { state } = useSession()
@@ -52,11 +54,14 @@ export function RequireSession() {
   const terms = state.status === 'signedIn' ? termsToAgree(state.me) : null
   const closing = state.status === 'signedIn' && isClosing(state.me.account)
   // A closing account, and one that has not agreed, still reach their mailboxes in a limited form (ADR 0026):
-  // reading, downloading and disconnecting are theirs to do. Every other route shows the screen that blocks it.
+  // reading, downloading and disconnecting are theirs to do. One that has not agreed also reaches its connections,
+  // which keep reading, to see and revoke them (ADR 0030, finding 17); approving and renewing stay blocked. Every
+  // other route shows the screen that blocks it.
   const showing: Showing =
     state.status !== 'signedIn'
       ? 'waiting'
-      : (closing || terms !== null) && isMailboxPath(pathname)
+      : ((closing || terms !== null) && isMailboxPath(pathname)) ||
+          (!closing && terms !== null && isConnectionsPath(pathname))
         ? 'limited'
         : closing
           ? 'closing'

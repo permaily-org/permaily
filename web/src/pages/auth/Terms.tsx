@@ -184,9 +184,13 @@ export function TermsChanged({
           Sign out
         </Button>
       </div>
-      {/* Without agreeing, the person can still download their mail and disconnect mailboxes (ADR 0026). */}
-      <p className="mt-8 text-small text-ink-2">
+      {/*
+        Without agreeing, the person can still download their mail and disconnect mailboxes (ADR 0026), and see and
+        revoke their connections, which keep reading (ADR 0030, finding 17).
+      */}
+      <p className="mt-8 flex flex-wrap gap-x-5 gap-y-2 text-small text-ink-2">
         <TextLink to="/accounts">Your mailboxes</TextLink>
+        <TextLink to="/connections">Your connections</TextLink>
       </p>
       <p className="mt-8 text-small text-ink-2">
         If you don't agree, you can sign out, or delete your account.

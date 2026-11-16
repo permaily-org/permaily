@@ -31,6 +31,16 @@ export default defineConfig({
         'src/pages/admin/**',
         'src/pages/accounts/**',
         'src/pages/inbox/**',
+        // The consent screen and the connections pages on the server (ADR 0030); the sample screens beside them are
+        // left out.
+        'src/pages/consent/ConsentPage.tsx',
+        'src/pages/consent/ConsentTerms.tsx',
+        'src/pages/consent/PreviewPane.tsx',
+        'src/pages/consent/preview.ts',
+        'src/pages/connections/ConnectionsLayout.tsx',
+        'src/pages/connections/ConnectionsPage.tsx',
+        'src/pages/connections/ConnectionDetailPage.tsx',
+        'src/pages/connections/words.tsx',
       ],
       // The measured values, rounded down. They only go up (docs/testing.md).
       thresholds: {
@@ -54,6 +64,8 @@ export default defineConfig({
         'src/pages/admin/**': { statements: 97, branches: 92, functions: 100, lines: 100 },
         'src/pages/accounts/**': { statements: 97, branches: 88, functions: 100, lines: 100 },
         'src/pages/inbox/**': { statements: 98, branches: 92, functions: 100, lines: 100 },
+        'src/pages/consent/**': { statements: 94, branches: 88, functions: 98, lines: 98 },
+        'src/pages/connections/**': { statements: 97, branches: 87, functions: 96, lines: 98 },
       },
     },
   },

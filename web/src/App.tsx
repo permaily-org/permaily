@@ -16,9 +16,11 @@ import { ProvidersPage } from './pages/admin/ProvidersPage.tsx'
 import { SignInPage } from './pages/auth/SignInPage.tsx'
 import { ConnectAgentPage } from './pages/connections/ConnectAgentPage.tsx'
 import { ConnectionDetailPage } from './pages/connections/ConnectionDetailPage.tsx'
+import { ConnectionsLayout } from './pages/connections/ConnectionsLayout.tsx'
 import { ConnectionsPage } from './pages/connections/ConnectionsPage.tsx'
 import { ConsentAgentPage } from './pages/consent/ConsentAgentPage.tsx'
 import { ConsentAppPage } from './pages/consent/ConsentAppPage.tsx'
+import { ConsentPage } from './pages/consent/ConsentPage.tsx'
 import { WideningPage } from './pages/consent/WideningPage.tsx'
 import { InboxIndexPage } from './pages/inbox/InboxIndexPage.tsx'
 import { InboxPage } from './pages/inbox/InboxPage.tsx'
@@ -54,11 +56,18 @@ export function App() {
           <Route path="accounts/:mailboxId/forwarding" element={<ForwardingSetupPage />} />
         </Route>
 
-        <Route element={<AppShell />}>
-          <Route index element={<OverviewPage />} />
+        {/*
+          Connections: in the app's shell, or, for an account that has not agreed to the terms, in a limited one
+          that lists, shows and revokes them, and never renews (ADR 0030, finding 17).
+        */}
+        <Route element={<ConnectionsLayout />}>
           <Route path="connections" element={<ConnectionsPage />} />
           <Route path="connections/:vendorId" element={<ConnectionDetailPage />} />
           <Route path="connections/:vendorId/:connectionId" element={<ConnectionDetailPage />} />
+        </Route>
+
+        <Route element={<AppShell />}>
+          <Route index element={<OverviewPage />} />
           <Route path="rules" element={<RulesPage />} />
           <Route path="rules/:id" element={<RuleEditorPage />} />
           <Route path="activity" element={<ActivityPage />} />
@@ -82,7 +91,13 @@ export function App() {
         <Route path="accounts/new" element={<ConnectMailboxPage />} />
         <Route path="accounts/new/forwarding" element={<Navigate to="/accounts/new" replace />} />
 
-        {/* Consent screens that apps and agents send people to */}
+        {/*
+          The consent screen a vendor sends the browser to (ADR 0030): the request was taken out of the address
+          before the router ran (src/lib/oauth.ts), so signing in first comes back to it.
+        */}
+        <Route path="oauth/authorize" element={<ConsentPage />} />
+
+        {/* The sample consent screens, kept as the design of what a connection may ask for later (step 7) */}
         <Route path="consent/trip-app" element={<ConsentAppPage />} />
         <Route path="consent/claude" element={<ConsentAgentPage />} />
         <Route path="consent/ledgerly" element={<WideningPage />} />
