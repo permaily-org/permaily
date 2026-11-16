@@ -355,8 +355,7 @@ func TestV65ALateIndexWriteIsSweptAway(t *testing.T) {
 	if !reached {
 		t.Fatal("the index's write was not reached")
 	}
-	index, err := w.mem.GetEntry(ctx, partitionAccounts, accountA)
-	if err != nil {
+	if _, err := w.mem.GetEntry(ctx, partitionAccounts, accountA); err != nil {
 		t.Fatal("the late write did not land:", err)
 	}
 	if err := w.enclave().Sweep(ctx); err != nil {
@@ -367,7 +366,8 @@ func TestV65ALateIndexWriteIsSweptAway(t *testing.T) {
 	}
 
 	r := newRemovalWorld(t)
-	if index, err = r.mem.GetEntry(ctx, partitionAccounts, accountA); err != nil {
+	index, err := r.mem.GetEntry(ctx, partitionAccounts, accountA)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := r.remove(r.a); err != nil {
