@@ -217,10 +217,11 @@ type Decisions interface {
 	// Begin reads the blocks of ids' days and, for every id with no
 	// decision of rule, commits one Pending (one write per block changed);
 	// what it answers is each id's decision as it is after the write:
-	// Begun for those this call began, which the caller may ask the model
-	// for and must settle; Pending for one begun by another request (At
-	// says when); Held or Cleared when final, with their Evidence (or
-	// Recovered); Full when its day has no room; Expired when its message
+	// Begun for those this call began, with their Attempt, which the caller
+	// may ask the model for and must settle; Pending for one begun by
+	// another request (At says when); Held or Cleared when final, with their
+	// Evidence (or Recovered); Full when its day has no room, or none for
+	// now (its tail waits for its Pending to settle); Expired when its message
 	// has expired by this enclave's clock (nothing stored). An error is a
 	// block that cannot be read or written: every id of its day is held,
 	// undecided.
@@ -230,7 +231,9 @@ type Decisions interface {
 	// Held too on Unknown with any answer received, or Abandoned only on
 	// positive evidence that the model answered no part of it, which drops
 	// the pending decision so a later request may decide; a decision
-	// SettleAfterAsk leaves Pending is not given),
+	// SettleAfterAsk leaves Pending is not given), each with the Attempt
+	// Begin answered: Abandoned and Cleared change only that attempt's
+	// Pending, and are answered Pending on another's,
 	// and settles Held, Recovered, every pending decision older than
 	// PendingGrace it is given with no evidence; it answers each id's final
 	// state as it is after the write, which may be Held where Cleared was

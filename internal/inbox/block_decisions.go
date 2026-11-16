@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -150,25 +151,29 @@ func (d *BlockDecisions) Begin(ctx context.Context, b Box, rule rules.Ref, ids [
 
 // beginDay is Begin on one day. A try whose later block was refused after
 // an earlier one was written began what that one holds: the next try
-// answers them Begun still, so its caller asks for them and settles them.
+// answers them Begun still, with the attempt that began them, so its caller
+// asks for them and settles them.
 func (d *BlockDecisions) beginDay(ctx context.Context, mailbox, day string, rule rules.Ref, keys []DecisionKey) (map[string]Decision, error) {
-	mine := map[string]time.Time{}
+	mine := map[string]Attempt{}
 	for range DecisionTries {
 		blocks, marks, err := d.read(ctx, mailbox, day)
 		if err != nil {
 			return nil, err
 		}
 		got, changed := blocks.Begin(rule, keys, d.now())
-		for id, at := range mine {
-			if g := got[id]; g.State == DecisionPending && g.At.Equal(at) {
-				got[id] = Decision{State: DecisionBegun, At: at}
+		if len(mine) > 0 {
+			found := blocks.lookup(rule, slices.Collect(maps.Keys(mine)))
+			for id, a := range mine {
+				if g := got[id]; g.State == DecisionPending && found[id].attempt == a {
+					got[id] = Decision{State: DecisionBegun, At: g.At, Attempt: a}
+				}
 			}
 		}
 		done, err := d.write(ctx, blocks, marks, changed)
 		for _, i := range done {
 			for id, g := range got {
-				if g.State == DecisionBegun && blocks.Blocks[i].find(rule, id) >= 0 {
-					mine[id] = g.At
+				if g.State == DecisionBegun && g.Attempt.Block == i {
+					mine[id] = g.Attempt
 				}
 			}
 		}
@@ -211,23 +216,41 @@ func (d *BlockDecisions) Settle(ctx context.Context, b Box, rule rules.Ref, sett
 	return out, nil
 }
 
-// settleDay is Settle on one day; a try again finds what an earlier one
-// wrote final, and answers it as it is.
+// settleDay is Settle on one day. What a try's blocks committed before one
+// was refused is kept as it was answered, and only the rest is settled
+// again, read afresh (ADR 0031, "Changed after the fourth design review",
+// F1): an abandonment once committed is never given again, where another
+// request may have begun the message since; and a destructive settlement
+// changes only the attempt it names, so neither a retry nor a caller's
+// settlement given again can drop or clear another request's Pending.
 func (d *BlockDecisions) settleDay(ctx context.Context, mailbox, day string, rule rules.Ref, settle map[string]Settlement) (map[string]Decision, error) {
+	out := make(map[string]Decision, len(settle))
+	left := maps.Clone(settle)
 	for range DecisionTries {
 		blocks, marks, err := d.read(ctx, mailbox, day)
 		if err != nil {
 			return nil, err
 		}
-		got, changed := blocks.Settle(rule, settle, d.now())
-		_, err = d.write(ctx, blocks, marks, changed)
+		got, changed, where := blocks.settle(rule, left, d.now())
+		done, err := d.write(ctx, blocks, marks, changed)
+		for _, i := range done {
+			for id, b := range where {
+				if b == i {
+					out[id] = got[id]
+					delete(left, id)
+				}
+			}
+		}
 		if errors.Is(err, store.ErrChanged) {
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
-		return got, nil
+		for id := range left {
+			out[id] = got[id]
+		}
+		return out, nil
 	}
 	return nil, ErrDecisionsChanged
 }
