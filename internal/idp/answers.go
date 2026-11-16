@@ -11,43 +11,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/permaily-org/permaily/internal/domain"
+	"github.com/permaily-org/permaily/internal/jws"
 )
 
-// object reads the members of one JSON object. encoding/json alone would take
-// the last of two members with one name, and names in any case; here a name
-// twice is refused and names are matched exactly by the caller.
-func object(raw []byte) (map[string]json.RawMessage, bool) {
-	if !utf8.Valid(raw) {
-		return nil, false
-	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	if open, err := dec.Token(); err != nil || open != json.Delim('{') {
-		return nil, false
-	}
-	members := map[string]json.RawMessage{}
-	for dec.More() {
-		token, err := dec.Token()
-		if err != nil {
-			return nil, false
-		}
-		name, _ := token.(string) // inside an object the decoder gives only names here
-		if _, twice := members[name]; twice {
-			return nil, false
-		}
-		var value json.RawMessage
-		if err := dec.Decode(&value); err != nil {
-			return nil, false
-		}
-		members[name] = value
-	}
-	if _, err := dec.Token(); err != nil { // the closing brace
-		return nil, false
-	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) { // and nothing after it
-		return nil, false
-	}
-	return members, true
-}
+// object reads the members of one JSON object: a name twice, in any case, is
+// refused, and the caller matches names exactly (jws.Object).
+var object = jws.Object
 
 // list reads the items of one JSON array, at most limit of them.
 func list(raw []byte, limit int) ([]json.RawMessage, bool) {
