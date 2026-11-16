@@ -33,17 +33,17 @@ import (
 // the storage any more, or is not what was committed. It is an ErrNotFound: a
 // record that may be made again (a TLS identity) is. One whose loss must not
 // be forgiven checks for ErrLost first.
-var ErrLost = fmt.Errorf("%w: the committed version of the record is gone", ErrNotFound)
+var ErrLost error = &kind{msg: "store: not found: the committed version of the record is gone", wraps: ErrNotFound}
 
 // ErrChanged is returned by PutRecordAt when something was committed for the
 // record since it was read: another enclave stored it or removed it. Nothing
 // was made the newest version; the caller reads again and decides again.
-var ErrChanged = errors.New("store: the record changed since it was read")
+var ErrChanged error = &kind{msg: "store: the record changed since it was read"}
 
 // ErrRolledBack means the store of commits itself went back: a commit this
 // enclave saw or made is not there any more. Nobody can remove one, so this is
 // either a failure of that guarantee or another store put in its place.
-var ErrRolledBack = errors.New("store: the commits of a record went back")
+var ErrRolledBack error = &kind{msg: "store: the commits of a record went back"}
 
 // Commit says that a record was stored at a version, and what was stored.
 type Commit struct {

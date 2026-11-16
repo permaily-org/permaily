@@ -123,7 +123,7 @@ func problemOf(t *testing.T, rec *httptest.ResponseRecorder) contracts.FormulaPr
 	if rec.Code != 400 || json.Unmarshal(rec.Body.Bytes(), &e) != nil || e.Error.Code != "invalid_formula" || e.Error.Message != contracts.ErrInvalidFormula.Message {
 		t.Fatalf("%d %s is not invalid_formula", rec.Code, rec.Body)
 	}
-	return e.Error.Details
+	return e.Error.Details.FormulaProblem
 }
 
 // Q34: the check answers the canonical form, its identifier and its

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/httpapi"
 	"github.com/permaily-org/permaily/internal/keys"
 	"github.com/permaily-org/permaily/pkg/attestation"
@@ -91,8 +92,10 @@ func TestHandoff(t *testing.T) {
 		if rec.Code != c.code || strings.Contains(string(body), c.err.Error()) != c.show {
 			t.Fatalf("%v: status %d: %s", c.err, rec.Code, body)
 		}
-		if c.code == http.StatusBadGateway && !strings.Contains(logs.String(), "secret detail") {
-			t.Fatalf("the cause is not in the log: %s", logs.String())
+		// The failure is logged by its kind, never by its text (PR #137's
+		// review, finding 2).
+		if c.code == http.StatusBadGateway && (!strings.Contains(logs.String(), `msg="handoff failed" err="`+domain.Unclassified+`"`) || strings.Contains(logs.String(), "secret detail")) {
+			t.Fatalf("the failure is not logged as its kind: %s", logs.String())
 		}
 	}
 }

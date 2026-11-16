@@ -772,7 +772,7 @@ func TestDeviceFailures(t *testing.T) {
 		if enter(t, w, doc, device(0)) != 1 {
 			t.Fatal("a device that could not be read was taken for a known one")
 		}
-		if !strings.Contains(w.logs.String(), `msg="accounts: a device could not be kept" err="store: entries of account#acc_…: down"`) {
+		if !strings.Contains(w.logs.String(), `msg="accounts: a device could not be kept" err="`+domain.Unclassified+`"`) {
 			t.Fatalf("logs:\n%s", w.logs)
 		}
 		w.quiet("ana@", doc.ID, device(0))
