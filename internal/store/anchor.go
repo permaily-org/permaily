@@ -168,18 +168,55 @@ func (a *Anchored) now() time.Time {
 }
 
 // head reads the newest commit of name and checks that the store of commits
-// did not go back from what this enclave knows.
+// did not go back from what this enclave knew when it asked. An answer older
+// than what the enclave learnt while it was on its way (another read or write
+// of the same record, at once) is not the store going back: it is asked again,
+// and the enclave never goes on from less than it knows.
 func (a *Anchored) head(ctx context.Context, name string) (*Commit, uint64, error) {
-	if a.Strict {
-		return a.strictHead(ctx, name)
+	for range maxChanges {
+		had, known := a.known(name)
+		var (
+			head *Commit
+			next uint64
+			err  error
+		)
+		if a.Strict {
+			head, next, err = a.strictHead(ctx, name, had, known)
+		} else {
+			head, next, err = a.plainHead(ctx, name, had, known)
+		}
+		if !errors.Is(err, errOvertaken) {
+			return head, next, err
+		}
 	}
-	head, next, err := a.Commits.Head(ctx, name)
-	if err != nil {
-		return nil, 0, fmt.Errorf("store: commits of %s: %w", name, err)
-	}
+	return nil, 0, a.changing(name)
+}
+
+// errOvertaken is head's answer that arrived after a newer commit of the
+// record was seen: not wrong, only late.
+var errOvertaken = errors.New("store: an answer older than what was seen meanwhile")
+
+// known returns the newest commit of name this enclave saw, if any.
+func (a *Anchored) known(name string) (Commit, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if had, ok := a.seen[name]; ok && (head == nil || head.Version < had.Version || (head.Version == had.Version && head.Digest != had.Digest)) {
+	had, ok := a.seen[name]
+	return had, ok
+}
+
+// behind reports whether head is less than had: none, an earlier version, or
+// another commit at the same one.
+func behind(head *Commit, had Commit) bool {
+	return head == nil || head.Version < had.Version || (head.Version == had.Version && head.Digest != had.Digest)
+}
+
+// settle decides an answer head of the store of commits, given had (known),
+// what this enclave knew of name when it asked: ErrRolledBack if head is
+// behind that, errOvertaken if it is behind only what the enclave saw since,
+// and otherwise head is remembered. Its error says the record was what (its
+// name, or not, for a strict record). The caller holds a.mu.
+func (a *Anchored) settle(name, what string, head *Commit, had Commit, known bool) error {
+	if known && behind(head, had) {
 		found := uint64(0)
 		if head != nil {
 			found = head.Version
@@ -187,10 +224,27 @@ func (a *Anchored) head(ctx context.Context, name string) (*Commit, uint64, erro
 		if len(a.regressions) < maxRegressions {
 			a.regressions = append(a.regressions, Regression{Name: name, Had: had.Version, Found: found, At: a.now().UTC()})
 		}
-		return nil, 0, fmt.Errorf("%w: %s was at version %d, and the store answers %d", ErrRolledBack, name, had.Version, found)
+		return fmt.Errorf("%w: %s was at version %d, and the store answers %d", ErrRolledBack, what, had.Version, found)
+	}
+	if now, ok := a.seen[name]; ok && behind(head, now) {
+		return errOvertaken
 	}
 	if head != nil {
 		a.remember(*head)
+	}
+	return nil
+}
+
+// plainHead is head for a record that is not strict: its newest commit only.
+func (a *Anchored) plainHead(ctx context.Context, name string, had Commit, known bool) (*Commit, uint64, error) {
+	head, next, err := a.Commits.Head(ctx, name)
+	if err != nil {
+		return nil, 0, fmt.Errorf("store: commits of %s: %w", name, err)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err := a.settle(name, name, head, had, known); err != nil {
+		return nil, 0, err
 	}
 	return head, next, nil
 }
@@ -198,9 +252,9 @@ func (a *Anchored) head(ctx context.Context, name string) (*Commit, uint64, erro
 // strictHead is head for a strict record: the whole history is read, a fork
 // at any version refuses the record before anything else, a commit without
 // its lock is reported, and then the store of commits must not have gone back
-// from what this enclave knows, as for every record. Its errors do not hold
+// from what this enclave knew, as for every record. Its errors do not hold
 // the record's name, which holds identifiers, and errors reach logs.
-func (a *Anchored) strictHead(ctx context.Context, name string) (*Commit, uint64, error) {
+func (a *Anchored) strictHead(ctx context.Context, name string, had Commit, known bool) (*Commit, uint64, error) {
 	reader, ok := a.Commits.(HistoryReader)
 	if !ok {
 		return nil, 0, errors.New("store: a strict record needs a store of commits that reads its history")
@@ -211,29 +265,17 @@ func (a *Anchored) strictHead(ctx context.Context, name string) (*Commit, uint64
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	had := a.seen[name]
 	if len(h.Forks) > 0 {
-		a.alarm(Regression{Name: name, Had: had.Version, Found: h.Forks[0].Version, Fork: true})
+		a.alarm(Regression{Name: name, Had: a.seen[name].Version, Found: h.Forks[0].Version, Fork: true})
 		return nil, 0, fmt.Errorf("%w: at version %d", ErrForked, h.Forks[0].Version)
 	}
 	if len(h.Unlocked) > 0 {
-		a.alarm(Regression{Name: name, Had: had.Version, Found: h.Unlocked[0], Unlocked: true})
+		a.alarm(Regression{Name: name, Had: a.seen[name].Version, Found: h.Unlocked[0], Unlocked: true})
 	}
-	head := h.Head
-	if _, ok := a.seen[name]; ok && (head == nil || head.Version < had.Version || (head.Version == had.Version && head.Digest != had.Digest)) {
-		found := uint64(0)
-		if head != nil {
-			found = head.Version
-		}
-		if len(a.regressions) < maxRegressions {
-			a.regressions = append(a.regressions, Regression{Name: name, Had: had.Version, Found: found, At: a.now().UTC()})
-		}
-		return nil, 0, fmt.Errorf("%w: a strict record was at version %d, and the store answers %d", ErrRolledBack, had.Version, found)
+	if err := a.settle(name, "a strict record", h.Head, had, known); err != nil {
+		return nil, 0, err
 	}
-	if head != nil {
-		a.remember(*head)
-	}
-	return head, h.Next, nil
+	return h.Head, h.Next, nil
 }
 
 // alarm records a fork, an unlocked commit or a lost value of a strict
@@ -259,9 +301,16 @@ func (a *Anchored) alarm(r Regression) {
 	}
 }
 
+// remember keeps c as what the store of commits must still answer with, at
+// least, unless a later commit of the record was seen already: a write that
+// remembers its own commit after a read saw the next one does not take the
+// enclave back. The caller holds a.mu.
 func (a *Anchored) remember(c Commit) {
 	if a.seen == nil {
 		a.seen = map[string]Commit{}
+	}
+	if had, ok := a.seen[c.Name]; ok && had.Version > c.Version {
+		return
 	}
 	a.seen[c.Name] = c
 }
