@@ -160,12 +160,12 @@ var errNotHTTP2 = errors.New("cimd: the vendor did not negotiate HTTP/2")
 
 // Client resolves a client_id URL to its checked document.
 func (r *Resolver) Client(ctx context.Context, clientID string) (*vendors.Client, error) {
-	host, err := checkClientID(clientID, r.deployment)
+	host, err := oauth.ClientID(clientID, r.deployment)
 	if err != nil {
 		return nil, fail(vendors.ErrClientID, ReasonRules)
 	}
 	parse := func(body []byte) (any, error) {
-		doc, err := checkDocument(clientID, body)
+		doc, err := oauth.Document(clientID, body)
 		if err != nil {
 			return nil, fail(vendors.ErrDocument, ReasonRules)
 		}
@@ -187,7 +187,7 @@ func (r *Resolver) Keys(ctx context.Context, c *vendors.Client, refresh bool) ([
 		return nil, fail(vendors.ErrDocument, ReasonNoKeys)
 	}
 	uri := c.Document.JWKSURI
-	if _, err := checkClientID(uri, r.deployment); err != nil {
+	if _, err := oauth.ClientID(uri, r.deployment); err != nil {
 		return nil, fail(vendors.ErrDocument, ReasonRules)
 	}
 	parse := func(body []byte) (any, error) { return parseKeys(body) }
