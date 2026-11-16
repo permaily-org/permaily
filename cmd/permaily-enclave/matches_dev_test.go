@@ -46,8 +46,10 @@ func (s *spyMatcher) count() int {
 	return s.asked
 }
 
-// Q45 (ADR 0027, "The routes"): a page of matches is answered by POST
-// /api/v1/mailboxes/{id}/matches alone, in a session. Every route the
+// Q45 (ADR 0027, "The routes"), extended by V46 (ADR 0030): a page of
+// matches is answered by POST /api/v1/mailboxes/{id}/matches alone, in a
+// session, and no route of a vendor (the authorization server, the API,
+// MCP) answers a MatchPage. Every route the
 // enclave registers, sent to every host it serves (the app's, api., mcp.,
 // inbox. and mta-sts.), by GET and by POST, with a session of the mailbox's
 // owner (its cookie from the app's own page, and the operator's token) and
@@ -164,7 +166,12 @@ func TestQ45OnlyTheMatchesRouteAsksTheMatcher(t *testing.T) {
 	paths = append(paths, "/", "/attestation", "/status", "/version", "/dev/outbox",
 		"/v1/admin/handoff", "/v1/admin/trust-root", "/v1/admin/invitations", "/v1/admin/invitations/x",
 		"/v1/admin/accounts", "/v1/admin/accounts/"+account, "/v1/admin/accounts/"+account+"/mailboxes",
-		"/v1/admin/providers", "/v1/admin/providers/google", "/v1/admin/mailboxes", "/v1/admin/mailboxes/"+box.ID+"/pause", "/v1/admin/mailboxes/"+box.ID+"/resume")
+		"/v1/admin/providers", "/v1/admin/providers/google", "/v1/admin/mailboxes", "/v1/admin/mailboxes/"+box.ID+"/pause", "/v1/admin/mailboxes/"+box.ID+"/resume",
+		// The vendors' routes (V46): the authorization server, the API and
+		// MCP, on whatever host they are asked.
+		"/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/v1",
+		"/.well-known/oauth-protected-resource/mcp", "/oauth/token", "/oauth/revoke", "/oauth/par", "/v1/connection", "/v1/messages/search",
+		"/v1/messages/"+box.ID+".18e7000000000000aaaaaaaaaaaaaaaa", "/v1/messages/"+box.ID+".18e7000000000000aaaaaaaaaaaaaaaa/attachments/0", "/mcp")
 	slices.Sort(paths)
 	paths = slices.Compact(paths)
 
@@ -180,10 +187,15 @@ func TestQ45OnlyTheMatchesRouteAsksTheMatcher(t *testing.T) {
 			for _, method := range []string{"GET", "POST"} {
 				for _, signed := range []bool{false, true} {
 					before := spy.count()
-					call(host, method, path, body, signed)
+					rec := call(host, method, path, body, signed)
 					asks++
 					if spy.count() != before {
 						reached = append(reached, ask{host, method, path, signed})
+					}
+					// A MatchPage's own members, in any answer but the
+					// person's page of matches.
+					if path != matchesPath && (strings.Contains(rec.Body.String(), `"needs_model"`) || strings.Contains(rec.Body.String(), `"searched_to"`)) {
+						t.Errorf("%s %s%s answered a MatchPage", method, host, path)
 					}
 				}
 			}

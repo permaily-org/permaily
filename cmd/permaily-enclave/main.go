@@ -6,7 +6,10 @@
 // user_data is the SHA-256 of the TLS certificate's SPKI, reports the key that
 // holds its root secret on GET /status, and receives mail for the mailboxes of
 // accounts over SMTP (ADR 0026), encrypting it under a root secret that only
-// an enclave running a public release can obtain (ADR 0013).
+// an enclave running a public release can obtain (ADR 0013). With them it
+// serves connections (ADR 0030 and 0031): the authorization server and the
+// API for apps on api., MCP for agents on mcp., the consent screen on app.,
+// vendors' documents fetched through the host's vendor egress.
 //
 // Build with -tags dev to run locally over TCP with a self-signed certificate,
 // a fake attester, local keys and an in-memory store.
@@ -42,6 +45,10 @@ type config struct {
 	acmeDirectory string
 	port          uint32
 	egressPort    uint32
+	// vendorEgressPort is the host's proxy that reaches any public name on
+	// 443 for vendors' documents (vendorEgressPort, ADR 0030): the
+	// connections' vendor client uses it and nothing else does.
+	vendorEgressPort uint32
 
 	// Storage and mail. All of it is compiled into the image (entry point
 	// flags): storage and SMTP are on whenever a table is named, and the
@@ -77,6 +84,17 @@ type config struct {
 	// modelTicks is never a flag: the image's model runs on tickers, and
 	// only a test gives ticks of its own.
 	modelTicks modelTicks
+	// sweepTick, never a flag either, ticks the connections' hourly pass in
+	// place of its ticker: a test's.
+	sweepTick <-chan time.Time
+	// clientPort, never a flag, is the port clients name in the
+	// authorization server's addresses when it is not port: a test's two
+	// dev enclaves behind one address, as the deployment's two are behind
+	// 443 (oauthPort).
+	clientPort uint32
+	// dev is what only dev mode reads (the played vendors); empty in the
+	// enclave build, which has no such flag.
+	dev devConfig
 }
 
 func main() {
@@ -84,9 +102,11 @@ func main() {
 	flag.StringVar(&cfg.domain, "domain", "permaily.com", "parent domain; serves app., api., mcp., inbox. and mta-sts.inbox. under it")
 	flag.StringVar(&cfg.acmeDirectory, "acme-directory", "https://acme-v02.api.letsencrypt.org/directory", "ACME directory URL")
 	cfg.port, cfg.egressPort, cfg.smtpPort, cfg.credentialsPort, cfg.logPort = 443, 8000, 25, 8002, 8003
+	cfg.vendorEgressPort = vendorEgressPort
 	flag.Func("log-port", "vsock port of the host that receives the log lines; 0 disables (default 8003)", uint32Flag(&cfg.logPort))
 	flag.Func("port", "HTTPS listen port (vsock in the enclave, TCP in dev mode) (default 443)", uint32Flag(&cfg.port))
 	flag.Func("egress-port", "vsock port of the host's CONNECT proxy (default 8000)", uint32Flag(&cfg.egressPort))
+	flag.Func("vendor-egress-port", "vsock port of the host's proxy to vendors' documents, any public name on 443 (default 8004)", uint32Flag(&cfg.vendorEgressPort))
 	flag.Func("smtp-port", "SMTP listen port (vsock in the enclave, TCP in dev mode) (default 25)", uint32Flag(&cfg.smtpPort))
 	flag.Func("credentials-port", "vsock port of the host's credentials endpoint (default 8002)", uint32Flag(&cfg.credentialsPort))
 	flag.StringVar(&cfg.mtaSTSMode, "mta-sts-mode", "testing", "MTA-STS policy mode: testing or enforce")
@@ -107,6 +127,7 @@ func main() {
 	flag.StringVar(&cfg.superAdmin, "super-admin", defaultSuperAdmin, "contact address of the super admin's account; empty leaves the admin panel to nobody")
 	flag.StringVar(&cfg.dohEndpoint, "doh-endpoint", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS endpoint for DKIM lookups")
 	modelFlags(flag.CommandLine, &cfg.model)
+	devFlags(flag.CommandLine, &cfg.dev)
 	flag.Parse()
 
 	// Logs go to the console (visible only in debug mode) and to the parent
@@ -151,6 +172,14 @@ func (nobody) Deliver(context.Context, string, []string, []byte) error {
 	return mailboxes.ErrNotAllStored
 }
 
+// oauthPort is the port the authorization server's addresses carry.
+func (c config) oauthPort() uint32 {
+	if c.clientPort != 0 {
+		return c.clientPort
+	}
+	return c.port
+}
+
 func uint32Flag(dst *uint32) func(string) error {
 	return func(s string) error {
 		v, err := strconv.ParseUint(s, 10, 32)
@@ -184,6 +213,11 @@ func run(cfg config, log *slog.Logger) error {
 		// alarms any image left due (ADR 0028).
 		runModel(ctx, p.model, log, cfg.modelTicks)
 	}
+	if p.connections != nil {
+		// Every enclave runs the connections' hourly pass (ADR 0030,
+		// "Revocation and two enclaves").
+		runConnections(ctx, p.connections.svc, log, cfg.sweepTick)
+	}
 	if p.smtpListener != nil {
 		var recipients smtpd.Recipients = nobody{}
 		if p.mailboxes != nil {
@@ -202,8 +236,12 @@ func run(cfg config, log *slog.Logger) error {
 	}
 
 	srv := &http.Server{
-		Handler:           h,
-		TLSConfig:         p.certs.TLSConfig("h2", "http/1.1"),
+		Handler: h,
+		// The api and mcp hosts offer http/1.1 alone, the app's h2 too
+		// (serverTLS); every connection is kept in its requests' context so
+		// a lease that ends while mail is sent closes it (connContext).
+		TLSConfig:         serverTLS(p.certs.TLSConfig("h2", "http/1.1"), hosts),
+		ConnContext:       connContext,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -227,10 +265,15 @@ func run(cfg config, log *slog.Logger) error {
 func handler(cfg config, hosts router.Hosts, p *platform, log *slog.Logger) http.Handler {
 	api := http.NewServeMux()
 	api.Handle("/", router.Hello("api"))
+	mcp := http.NewServeMux()
+	mcp.Handle("/", router.Hello("mcp"))
+	// The api and mcp hosts' paths are answered only in canonical form,
+	// before any ServeMux would redirect one with its query string (a code,
+	// a token) to its cleaned path (httpapi.ResourceHost).
 	byHost := map[string]http.Handler{
 		hosts.App:    webui.Handler(),
-		hosts.API:    api,
-		hosts.MCP:    router.Hello("mcp"),
+		hosts.API:    httpapi.ResourceHost(api),
+		hosts.MCP:    httpapi.ResourceHost(mcp),
 		hosts.Inbox:  router.Hello("inbox"),
 		hosts.MTASTS: router.MTASTSPolicy(hosts.Inbox, cfg.mtaSTSMode, 604800),
 	}
@@ -259,6 +302,12 @@ func handler(cfg config, hosts router.Hosts, p *platform, log *slog.Logger) http
 			queries := httpapi.QueriesAPI(httpapi.QueriesConfig{Sessions: p.accounts, Mailboxes: p.mailboxes, Accounts: p.accounts, Log: log})
 			app.Handle("/api/v1/queries", queries)
 			app.Handle("/api/v1/queries/", queries)
+		}
+		if p.connections != nil {
+			// Connections (ADR 0030): the authorization page and the
+			// person's routes on the app's host, the authorization server
+			// and the API on the api host, MCP on the mcp host.
+			mountConnections(p.connections, app, api, mcp, webui.Handler(), p.accounts, log)
 		}
 		for path, h := range p.devRoutes {
 			app.Handle(path, h)
@@ -307,6 +356,9 @@ func handler(cfg config, hosts router.Hosts, p *platform, log *slog.Logger) http
 	}
 	if p.model != nil {
 		status.Model = modelStatus(p.model, cfg.model)
+	}
+	if p.connections != nil {
+		status.Connections = connectionsStatus(p.connections)
 	}
 	common := map[string]http.Handler{
 		"/attestation": httpapi.Attestation(p.attester, p.certs.UserData),

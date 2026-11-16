@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"io"
 	"log/slog"
 	"net"
@@ -28,6 +29,7 @@ import (
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/services/accounts"
+	"github.com/permaily-org/permaily/internal/services/connections"
 	"github.com/permaily-org/permaily/internal/services/decisions"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
 	"github.com/permaily-org/permaily/internal/sesmail"
@@ -69,7 +71,18 @@ type platform struct {
 	// model asks the model what depends on meaning (ADR 0028), and holds
 	// its key, its spend, its canary and its alarms; nil without mailboxes.
 	model *decisions.Service
+	// connections is the authorization server's state and the connections
+	// it makes (ADR 0030); nil without the model. connectionRecords is the
+	// one strict Anchored of its records.
+	connections       *composedConnections
+	connectionRecords *store.Anchored
 }
+
+// devConfig is empty in the enclave: the image reaches vendors through the
+// host's vendor egress alone, and has no flag that names another.
+type devConfig struct{}
+
+func devFlags(*flag.FlagSet, *devConfig) {}
 
 // defaultSuperAdmin is empty in the enclave: the super admin's address is
 // compiled into the image (-super-admin, from deploy/enclave.json).
@@ -161,7 +174,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			// Only the newest version of one is kept, so a name or a passkey
 			// that was removed does not stay in the table (ADR 0017); the TLS
 			// identity above keeps every version (ADR 0016).
-			var accountRecords, mailboxRecords, modelRecords *store.Anchored
+			var accountRecords, mailboxRecords, modelRecords, connectionRecords *store.Anchored
 			if cfg.mailFrom != "" {
 				accountRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true}
 				sender, err := p.signIn(ctx, cfg, hosts, awsCfg, egress, accountRecords, awsStore, root, log)
@@ -194,9 +207,19 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 				}); err != nil {
 					return nil, err
 				}
+				// Connections (ADR 0030): a connection, an account's list of
+				// them, a token family and a record of assertions are strict
+				// records, read and written through this Anchored alone,
+				// which reads no other name; vendors' documents come through
+				// the host's vendor egress (port 8004) and nothing else.
+				connectionRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true, Strict: true}
+				p.connectionRecords = connectionRecords
+				if p.connections, err = enclaveConnections(cfg, hosts, connectionRecords, awsStore, root, p); err != nil {
+					return nil, err
+				}
 			}
 			p.anchors = func() *attestation.AnchorStatus {
-				return anchorStatus(anchored, accountRecords, mailboxRecords, modelRecords, cfg.anchorBucket, cfg.anchorRetentionDays)
+				return anchorStatus(anchored, accountRecords, mailboxRecords, modelRecords, connectionRecords, cfg.anchorBucket, cfg.anchorRetentionDays)
 			}
 		} else if cfg.mailFrom != "" {
 			// An account's ways to sign in must not come back (ADR 0017).
@@ -260,12 +283,35 @@ const mailboxRecord = "mailbox"
 // how much was spent, which /status never says.
 const modelRecord = "model"
 
+// connectionRecord stands for the connections' records (ADR 0030) in
+// /status: their names hold a connection's, an account's or a family's
+// identifier, and their versions say how often a connection was used.
+const connectionRecord = "connection"
+
+// vendorEgress is the client vendors' documents and key sets are fetched
+// with: the host's vendor egress on port, HTTP/2 only. A test replaces it
+// to see which port the image uses.
+var vendorEgress = enclave.VendorEgressClient
+
+// enclaveConnections composes the image's connections over records (the
+// one strict Anchored of their names), the table and the root secret's
+// keys, with the platform's accounts, mailboxes and model; vendors'
+// documents are fetched through the host's vendor egress on
+// cfg.vendorEgressPort (8004) and nothing else.
+func enclaveConnections(cfg config, hosts router.Hosts, records *store.Anchored, table connectionsStore, root connections.Keys, p *platform) (*composedConnections, error) {
+	return composeConnections(connectionsParts{
+		oauth: oauthConfig(hosts, cfg.oauthPort()), domain: cfg.domain, records: records, entries: table, keys: root,
+		vendorHTTP: vendorEgress(cfg.vendorEgressPort), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model,
+	})
+}
+
 // anchorStatus reports the records an enclave refuses an earlier copy of, as
 // far as it read or wrote them since it started. Of the records of accounts
 // and of mailboxes (nil when there are none) it reports only that one went
 // back, was forked or has a commit S3 did not keep locked, never which; of
-// the model's records the same, without their versions.
-func anchorStatus(a, ofAccounts, ofMailboxes, ofModel *store.Anchored, bucket string, retentionDays int) *attestation.AnchorStatus {
+// the model's records and the connections' the same, without their
+// versions.
+func anchorStatus(a, ofAccounts, ofMailboxes, ofModel, ofConnections *store.Anchored, bucket string, retentionDays int) *attestation.AnchorStatus {
 	st := &attestation.AnchorStatus{Bucket: bucket, RetentionDays: retentionDays, Records: []attestation.AnchoredRecord{}}
 	for _, c := range a.Seen() {
 		st.Records = append(st.Records, attestation.AnchoredRecord{Name: c.Name, Version: c.Version, CommittedAt: c.At, LockedUntil: c.LockedUntil})
@@ -286,6 +332,11 @@ func anchorStatus(a, ofAccounts, ofMailboxes, ofModel *store.Anchored, bucket st
 	if ofModel != nil {
 		for _, r := range ofModel.Regressions() {
 			st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: modelRecord, At: r.At, Fork: r.Fork, Unlocked: r.Unlocked, Lost: r.Lost})
+		}
+	}
+	if ofConnections != nil {
+		for _, r := range ofConnections.Regressions() {
+			st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: connectionRecord, At: r.At, Fork: r.Fork, Unlocked: r.Unlocked, Lost: r.Lost})
 		}
 	}
 	return st
