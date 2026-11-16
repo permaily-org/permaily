@@ -29,7 +29,12 @@ type API interface {
 	RevokeDevice(ctx context.Context, p Person, id, device string) (*contracts.Connection, error)
 	Renew(ctx context.Context, p Person, id string, in contracts.ConnectionRenewal) (*contracts.Connection, error)
 	// The endpoints: form values in, an OAuth answer out (*OAuthError for a
-	// refusal).
+	// refusal). Push's refusals are OAuth codes alone, invalid_client
+	// included (the issuer's endpoint, never a contracts.ClientError, which
+	// is Start's and the person's consent operations'); an operational
+	// failure (the storage, the endpoints' admission) stays its own error,
+	// which the route maps as it maps every endpoint's, never an OAuth
+	// refusal.
 	Push(ctx context.Context, form url.Values) (requestURI string, err error)
 	Token(ctx context.Context, form url.Values) (*TokenAnswer, error)
 	RevokeToken(ctx context.Context, form url.Values) error
