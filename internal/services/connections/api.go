@@ -9,6 +9,7 @@ import (
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/oauth"
+	"github.com/permaily-org/permaily/internal/services/receipts"
 )
 
 // API is what the routes (internal/httpapi, ADR 0030's pull request 6) and
@@ -46,8 +47,82 @@ type API interface {
 	Search(ctx context.Context, g *oauth.Grant, in contracts.VendorSearch) (*contracts.VendorPage, Release, error)
 	Read(ctx context.Context, g *oauth.Grant, id string) (*contracts.VendorMessage, Release, error)
 	Attachment(ctx context.Context, g *oauth.Grant, id string, index int) (*inbox.Attachment, Release, error)
+	// Refuse records a refusal the route or the MCP adapter made itself of a
+	// request whose token Check accepted, before calling Search, Read or
+	// Attachment (PR #131's review, finding 2; ADR 0031: once a grant is
+	// attributed, every refusal of a request that asked for mail is
+	// recorded): the refused receipt, written as Release's order writes one
+	// (under ReceiptWriteMax and the grant's hard end), and its count in
+	// Refused, before the adapter answers. Nil once stored; then the
+	// adapter answers its refusal. Any error (the receipt not written,
+	// ErrInvalidRefusal): the adapter answers 503 with Retry-After and
+	// nothing else. Only what the adapter alone can see is refused here
+	// (Refusal.Valid); everything the service can decide (a held message,
+	// the model's gate, a search on a part not given, the API's attachment
+	// without its part, a size, a cursor, a limit) is passed to the
+	// service, which records it.
+	// Requests refused before a grant (no token, Check refusing it) and
+	// the endpoints' refusals are Check's, Token's, RevokeToken's and
+	// Push's to count, never pre-empted by the route.
+	Refuse(ctx context.Context, g *oauth.Grant, r Refusal) error
 	// Refused is the refusals' part of /status, by fixed reason.
 	Refused() map[string]int64
+}
+
+// Operation is what an attributed vendor request asked for.
+type Operation string
+
+const (
+	OperationSearch     Operation = "search"     // POST /v1/messages/search, search_mail
+	OperationRead       Operation = "read"       // GET /v1/messages/{id}, read_message
+	OperationAttachment Operation = "attachment" // GET /v1/messages/{id}/attachments/{index}, get_attachment
+)
+
+// Refusal is what an adapter refused of an attributed request, in fixed
+// values only (API.Refuse). Message is the message identifier as the
+// request named it ("<mailbox>.<message>", from the path or the tool's
+// arguments) for a read or an attachment, "" when it named none or one
+// past RefusalMessageMax; the service records it only when it is a
+// message identifier of one of the connection's mailboxes, and otherwise
+// records none, so nothing a vendor writes reaches a receipt.
+type Refusal struct {
+	Operation Operation
+	Reason    receipts.RefusedReason
+	Message   string
+}
+
+// RefusalMessageMax bounds Refusal.Message: a mailbox's identifier, a dot
+// and a message's (32 hexadecimal characters), with room to spare.
+const RefusalMessageMax = 128
+
+// ErrInvalidRefusal is Refuse's answer to a Refusal that is not Valid, or
+// to one without a grant.
+var ErrInvalidRefusal = errors.New("connections: not a refusal an adapter makes")
+
+// Valid says whether r is one an adapter may make: a known operation and a
+// reason only the adapter sees. A body or tool arguments it cannot read
+// (receipts.RefusedInvalidBody), for any operation; a search's formula it
+// cannot parse (RefusedFormula; whether a parsed formula looks at a part
+// the grant does not give is the service's to decide); a message
+// identifier or an attachment's index it cannot read (RefusedOutsideScope,
+// answered not_found, as one the connection does not read); and, for an
+// attachment, MCP's step-up before the call reaches the SDK
+// (RefusedPartNotGiven; the API passes the request to Attachment, which
+// refuses it). Message only for a read or an attachment, within
+// RefusalMessageMax.
+func (r Refusal) Valid() bool {
+	if len(r.Message) > RefusalMessageMax {
+		return false
+	}
+	switch r.Operation {
+	case OperationSearch:
+		return r.Message == "" && (r.Reason == receipts.RefusedInvalidBody || r.Reason == receipts.RefusedFormula)
+	case OperationRead:
+		return r.Reason == receipts.RefusedInvalidBody || r.Reason == receipts.RefusedOutsideScope
+	case OperationAttachment:
+		return r.Reason == receipts.RefusedInvalidBody || r.Reason == receipts.RefusedOutsideScope || r.Reason == receipts.RefusedPartNotGiven
+	}
+	return false
 }
 
 // Lifecycle is what accounts calls of the service (pull request 3 wires

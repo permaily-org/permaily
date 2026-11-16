@@ -264,3 +264,8 @@ type OAuthError struct {
 }
 
 func (e *OAuthError) Error() string { return "connections: " + string(e.Code) }
+
+// LogKind is what a log says of it (domain.FixedKind): its code alone, so a
+// refusal wrapped in text that carries a verifier, a state, an assertion or
+// a jti is still logged as its code.
+func (e *OAuthError) LogKind() string { return e.Error() }

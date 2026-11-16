@@ -186,6 +186,11 @@ const (
 	RefusedFormulaPart      RefusedReason = "formula_part_not_approved" // a search on what the request's parts do not give
 	RefusedModelUnavailable RefusedReason = "model_unavailable"         // nothing left: the model could not be asked (the owner's decision 9)
 	RefusedTooLarge         RefusedReason = "attachment_too_large"
+	// RefusedInvalidBody: the adapter could not read the request of a
+	// valid token (a body that is not one JSON object of the operation, a
+	// JSON-RPC call it cannot read), so it never reached the service
+	// (connections.API.Refuse; PR #131's review, finding 2).
+	RefusedInvalidBody RefusedReason = "invalid_body"
 	// RefusedTooLate: the answer of Receipt was prepared and recorded, and
 	// then not released (the grant's deadline passed or this enclave
 	// revoked it, finding 5). The earlier receipt stays: a receipt may

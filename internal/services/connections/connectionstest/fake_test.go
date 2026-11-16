@@ -9,6 +9,7 @@ import (
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/services/connections"
+	"github.com/permaily-org/permaily/internal/services/receipts"
 )
 
 // A method the test did not set answers ErrNotSet; one it set answers what
@@ -43,5 +44,60 @@ func TestTheLeaseKeepsTheContract(t *testing.T) {
 	l.Finish(false)
 	if started, finished, sent, tooLate := l.State(); started || !finished || sent || tooLate != 1 {
 		t.Fatal(started, finished, sent, tooLate)
+	}
+}
+
+// PR #131's review, finding 2: the fake takes an adapter's refusal of an
+// attributed request as the service will (a fixed refusal, recorded with
+// its grant before the adapter answers), refuses one outside the fixed set
+// as the service will, and answers a failure the test sets (the adapter's
+// 503).
+func TestTheFakeRecordsAttributedRefusals(t *testing.T) {
+	ctx := context.Background()
+	g := &oauth.Grant{Connection: "con_a", Family: "fam_a"}
+	f := &Fake{}
+	if err := f.Refuse(ctx, g, connections.Refusal{Operation: connections.OperationSearch, Reason: receipts.RefusedInvalidBody}); !errors.Is(err, ErrNotSet) {
+		t.Fatal(err)
+	}
+	stored := errors.New("the receipt could not be written")
+	var seen []*oauth.Grant
+	f.RefuseFunc = func(_ context.Context, g *oauth.Grant, r connections.Refusal) error {
+		seen = append(seen, g)
+		if r.Operation == connections.OperationRead {
+			return stored
+		}
+		return nil
+	}
+	part := connections.Refusal{Operation: connections.OperationAttachment, Reason: receipts.RefusedPartNotGiven, Message: "mbx_a.m1"}
+	if err := f.Refuse(ctx, g, part); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Refuse(ctx, g, connections.Refusal{Operation: connections.OperationRead, Reason: receipts.RefusedOutsideScope}); !errors.Is(err, stored) {
+		t.Fatal(err)
+	}
+	if err := f.Refuse(ctx, g, connections.Refusal{Operation: connections.OperationRead, Reason: receipts.RefusedHeld}); !errors.Is(err, connections.ErrInvalidRefusal) {
+		t.Fatal(err)
+	}
+	if err := f.Refuse(ctx, nil, part); !errors.Is(err, connections.ErrInvalidRefusal) {
+		t.Fatal("a refusal without a grant is never recorded:", err)
+	}
+	if got := f.Refusals(); len(got) != 3 || got[1] != part || len(seen) != 2 || seen[0] != g || seen[1] != g {
+		t.Fatalf("%+v %v", got, seen)
+	}
+	if got := f.Calls(); !slices.Equal(got, []string{"Refuse", "Refuse", "Refuse", "Refuse", "Refuse"}) {
+		t.Fatal(got)
+	}
+}
+
+// PR #131's review, finding 3: the grant a test's Check answers reaches the
+// adapter whole, the connection's scopes with it, so a step-up built on the
+// fake names what the service will.
+func TestTheFakesGrantCarriesTheConnectionsScopes(t *testing.T) {
+	f := &Fake{CheckFunc: func(context.Context, contracts.Resource, string) (*oauth.Grant, error) {
+		return &oauth.Grant{Scopes: []string{oauth.ScopeSender, oauth.ScopeBody}, ConnectionScopes: []string{oauth.ScopeSender, oauth.ScopeSubject, oauth.ScopeBody}}, nil
+	}}
+	g, err := f.Check(context.Background(), contracts.ResourceAPI, "pma_x")
+	if err != nil || !slices.Equal(g.StepUp(oauth.ScopeAttachments), []string{oauth.ScopeSender, oauth.ScopeSubject, oauth.ScopeBody, oauth.ScopeAttachments}) {
+		t.Fatalf("%+v %v", g, err)
 	}
 }

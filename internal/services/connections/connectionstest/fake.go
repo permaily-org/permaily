@@ -40,10 +40,12 @@ type Fake struct {
 	SearchFunc       func(ctx context.Context, g *oauth.Grant, in contracts.VendorSearch) (*contracts.VendorPage, connections.Release, error)
 	ReadFunc         func(ctx context.Context, g *oauth.Grant, id string) (*contracts.VendorMessage, connections.Release, error)
 	AttachmentFunc   func(ctx context.Context, g *oauth.Grant, id string, index int) (*inbox.Attachment, connections.Release, error)
+	RefuseFunc       func(ctx context.Context, g *oauth.Grant, r connections.Refusal) error
 	RefusedFunc      func() map[string]int64
 
-	mu    sync.Mutex
-	calls []string
+	mu       sync.Mutex
+	calls    []string
+	refusals []connections.Refusal
 }
 
 var _ connections.API = (*Fake)(nil)
@@ -187,6 +189,30 @@ func (f *Fake) Attachment(ctx context.Context, g *oauth.Grant, id string, index 
 		return nil, nil, ErrNotSet
 	}
 	return f.AttachmentFunc(ctx, g, id, index)
+}
+
+// Refuse refuses what the service will refuse (ErrInvalidRefusal: no
+// grant, or a refusal that is not Valid), records the rest and answers
+// RefuseFunc's error; ErrNotSet when the test did not set it.
+func (f *Fake) Refuse(ctx context.Context, g *oauth.Grant, r connections.Refusal) error {
+	f.called("Refuse")
+	if g == nil || !r.Valid() {
+		return connections.ErrInvalidRefusal
+	}
+	f.mu.Lock()
+	f.refusals = append(f.refusals, r)
+	f.mu.Unlock()
+	if f.RefuseFunc == nil {
+		return ErrNotSet
+	}
+	return f.RefuseFunc(ctx, g, r)
+}
+
+// Refusals are the refusals Refuse took, in order, whatever it answered.
+func (f *Fake) Refusals() []connections.Refusal {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]connections.Refusal(nil), f.refusals...)
 }
 
 func (f *Fake) Refused() map[string]int64 {
