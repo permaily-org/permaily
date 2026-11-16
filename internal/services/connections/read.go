@@ -2,6 +2,7 @@ package connections
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -173,6 +174,9 @@ type cursorDoc struct {
 }
 
 var cursorAAD = envelope.AAD("vendor cursor")
+
+// b64 is unpadded base64url, a cursor's encoding.
+var b64 = base64.RawURLEncoding
 
 func (r *reading) formulaIDs() []string {
 	out := make([]string, len(r.d.Formulas))

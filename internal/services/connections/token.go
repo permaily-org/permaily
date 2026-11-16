@@ -168,6 +168,7 @@ func (s *Service) Push(ctx context.Context, form url.Values) (string, error) {
 	}
 	p, err := pushedParams(form, &c.Document, s.cfg.OAuth)
 	if err != nil {
+		err = endpointError(err)
 		var oe *OAuthError
 		if errors.As(err, &oe) {
 			s.count(string(oe.Code))

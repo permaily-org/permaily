@@ -59,10 +59,11 @@ func TestV20Start(t *testing.T) {
 		if _, err := s.Start(ctx, p, url.Values{"client_id": {otherApp}, "request_uri": {uri}}.Encode()); !errors.Is(err, contracts.ErrRequestEnded) {
 			t.Fatal(err)
 		}
-		// Taken only there: query on the address bar is refused, redirected.
+		// Taken only there: a query on the address bar is never taken
+		// (oauth.Authorize ignores it, with mail_since and ends_in_days).
 		a2 := w.ask(otherApp)
-		a2.extra = url.Values{"query": {"{}"}}
-		if got, err := s.Start(ctx, p, a2.query()); err != nil || !strings.Contains(got.Redirect, "error=invalid_request") {
+		a2.extra = url.Values{"query": {`{"v":1,"all":[{"any":[{"var":"subject","op":"contains","value":"x"}]}]}`}, "mail_since": {"2020-01-01T00:00:00Z"}, "ends_in_days": {"1"}}
+		if got, err := s.Start(ctx, p, a2.query()); err != nil || got.Request == nil || got.Request.Query != nil || !got.Request.Since.New || got.Request.EndsInDays != oauth.ConnectionDefaultDays {
 			t.Fatal(got, err)
 		}
 	})

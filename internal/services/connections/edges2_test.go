@@ -118,8 +118,10 @@ func TestPushedRequests(t *testing.T) {
 	if got, err := s.Start(ctx, p, url.Values{"client_id": {otherApp}, "request_uri": {uri}}.Encode()); err != nil || !strings.Contains(got.Redirect, "invalid_request") {
 		t.Fatal(got, err)
 	}
+	// A redirect URI the document does not list is the client's problem
+	// (oauth.Pushed: invalid_client).
 	bad.Set("redirect_uri", "https://evil.example/x")
-	if _, err := s.Push(ctx, bad); oauthCode(err) != oauth.ErrInvalidRequest {
+	if _, err := s.Push(ctx, bad); oauthCode(err) != oauth.ErrInvalidClient {
 		t.Fatal(err)
 	}
 	// An unknown client.

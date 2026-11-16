@@ -86,7 +86,8 @@ func TestTheStandIns(t *testing.T) {
 		if !verifyPKCE(c, v) || verifyPKCE(c, v+"x") || verifyPKCE(c, "short") || verifyPKCE("bad", v) {
 			t.Error("pkce")
 		}
-		for s, ok := range map[string]bool{"": true, "mail.sender": true, "mail.body mail.body": false, "mail.x": false, "mail.sender mail.sender": true} {
+		for s, ok := range map[string]bool{"": false, "mail.sender": true, "mail.body mail.body": false, "mail.x": false, "mail.sender mail.sender": false,
+			"mail.sender\tmail.subject": false, " mail.subject": false, "mail.subject  mail.body": false, "mail.subject mail.body": true} {
 			if _, err := parseScopes(s, true); (err == nil) != ok {
 				t.Error(s)
 			}
@@ -99,7 +100,7 @@ func TestTheStandIns(t *testing.T) {
 		doc := &oauth.ClientDocument{ClientID: otherApp, RedirectURIs: []string{"https://tools.example.org/back"}}
 		_, c := pkce(t)
 		base := func() url.Values {
-			return url.Values{"redirect_uri": {"https://tools.example.org/back"}, "response_type": {"code"}, "code_challenge": {c},
+			return url.Values{"client_id": {otherApp}, "redirect_uri": {"https://tools.example.org/back"}, "response_type": {"code"}, "code_challenge": {c},
 				"code_challenge_method": {"S256"}, "resource": {apiResource}}
 		}
 		for name, change := range map[string]func(url.Values){
@@ -180,8 +181,11 @@ func TestTheStandIns(t *testing.T) {
 		if _, _, err := verifyAssertion(doc, weird, sign(map[string]any{"alg": "RS256", "kid": "k1"}, claims()), []string{issuer}, now); err == nil {
 			t.Error("an unknown key type")
 		}
-		if !duplicateMembers([]byte(`not json`)) || duplicateMembers([]byte(`{"a":1,"b":{"a":2}}`)) {
-			t.Error("duplicate members")
+		if _, ok := jsonObject([]byte(`not json`)); ok {
+			t.Error("not JSON read")
+		}
+		if _, ok := jsonObject([]byte(`{"a":1,"b":{"a":2}}`)); !ok {
+			t.Error("a nested name taken for a duplicate")
 		}
 		// An unknown kid: the key set fetched once more.
 		if _, _, err := verifyAssertion(doc, keys, sign(map[string]any{"alg": "RS256", "kid": "k9"}, claims()), []string{issuer}, now); !errors.Is(err, errUnknownKey) {

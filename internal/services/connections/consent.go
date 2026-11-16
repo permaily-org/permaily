@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"net"
 	"net/url"
 	"slices"
 	"strings"
@@ -139,13 +140,14 @@ func (s *Service) Start(ctx context.Context, p Person, raw string) (*contracts.A
 	} else {
 		var proven bool
 		params, proven, err = authorizeParams(q, &client.Document, s.cfg.OAuth)
-		if !proven {
-			s.count(string(contracts.RedirectURIInvalid))
-			return nil, err
-		}
-		var oe *OAuthError
-		if errors.As(err, &oe) {
-			return s.refusedRedirect(params, oe.Code), nil
+		switch {
+		case !proven:
+			// Never redirected: the person is shown the client's problem.
+			r := shownClient(err)
+			s.count(string(r.Problem))
+			return nil, r
+		case err != nil:
+			return s.refusedRedirect(params, redirectCode(err)), nil
 		}
 	}
 	if err := s.openForApproval(ctx, p.Account); err != nil {
@@ -196,6 +198,36 @@ func (s *Service) Start(ctx context.Context, p Person, raw string) (*contracts.A
 		return nil, err
 	}
 	return &contracts.AuthorizationStarted{Request: out}, nil
+}
+
+// resourceOf maps a resource identifier to the resource.
+func resourceOf(c oauth.Config, uri string) (contracts.Resource, bool) {
+	switch uri {
+	case c.APIResource:
+		return contracts.ResourceAPI, true
+	case c.MCPResource:
+		return contracts.ResourceMCP, true
+	}
+	return "", false
+}
+
+// loopbackHost says a redirect's host is the person's own computer.
+func loopbackHost(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "[::1]" || host == "::1"
+}
+
+// redirectHost is what the screen shows of a redirect URI: its host without
+// a port, and whether it is the person's own computer.
+func redirectHost(redirectURI string) (string, bool) {
+	u, err := url.Parse(redirectURI)
+	if err != nil {
+		return "", false
+	}
+	host := u.Hostname()
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		host = "[" + host + "]"
+	}
+	return host, u.Scheme == "http" && loopbackHost(u.Hostname())
 }
 
 // clientName is what the document calls the client, cut, or its domain.

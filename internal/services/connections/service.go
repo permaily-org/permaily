@@ -26,6 +26,9 @@ var (
 	_ Lifecycle = (*Service)(nil)
 )
 
+// purposeFamilies derives the key of a family's tokens (oauth.FamilySecret).
+const purposeFamilies = "permaily oauth families v1"
+
 // Service is the connections service.
 type Service struct {
 	cfg Config
