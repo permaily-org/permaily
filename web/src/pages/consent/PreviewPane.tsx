@@ -200,12 +200,20 @@ export function PreviewPane({
 
 /**
  * For a draft that replaces the client's connection (ADR 0030, "Asking again"): what the new scope reaches that the
- * old did not. The rows of mail the connection does not read are marked new, and pale the ones it reads; the parts
- * and the resource it does not have are said, since they reach every message.
+ * old did not, against the connection the snapshot names (`Count.against`). The rows of mail it does not read are
+ * marked new, and pale the ones it reads; the parts and the resource it does not have are said, since they reach every
+ * message.
  */
 function Widening({ request, count }: { request: api.AuthorizationRequest; count: Count }) {
-  const connection = request.connection
-  if (!count.reached || !connection) return null
+  const connection = count.against
+  if (!count.reached || connection === undefined) return null
+  if (connection === null) {
+    return count.messages.length > 0 ? (
+      <div className="mt-3 flex flex-col gap-1.5 text-small text-ink-2">
+        <p>Your connection changed while this screen was open, so every one is marked new.</p>
+      </div>
+    ) : null
+  }
   const fresh = count.messages.filter((m) => !count.reached?.has(m.id)).length
   const added = request.parts.filter((p) => p !== 'sender' && !connection.parts.includes(p))
   const through = (resource: api.ConnectionResource) => (resource === 'mcp' ? 'MCP' : 'the API')

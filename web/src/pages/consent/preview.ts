@@ -31,6 +31,11 @@ export type Count = {
    * identifier. Every other one is mail the new scope reaches that the old did not (ADR 0030, "Asking again").
    */
   reached?: ReadonlySet<string>
+  /**
+   * For a draft that replaces the client's connection: the connection the marks compare with, the one the snapshot
+   * names at its version (what Allow sends back), or null when that one could not be had and every message is new.
+   */
+  against?: api.Connection | null
   /** How many of the messages counted could be new only because a model decides the connection's query. */
   unsure: number
   /** Asking now. */
@@ -83,11 +88,21 @@ export function useDraftCount(request: api.AuthorizationRequest, draft: api.Cons
             : last
               ? undefined
               : { index: place.index + 1 }
+          // The snapshot Allow sends back: the first page's.
+          const snapshot = now.snapshot ?? answer.snapshot
           // What the connection being replaced reads of this page, worked out before the page is shown, so a row is
-          // never shown unmarked first.
-          const reach =
-            answer.change === 'replace' && request.connection
-              ? await reachedBefore(request, request.connection, mailbox, page.messages)
+          // never shown unmarked first. The connection is the one the snapshot names, which another tab may have
+          // replaced since the request began; the request's is used only when it is that one, at that version.
+          const replacing = snapshot.change === 'replace'
+          const against = replacing
+            ? now.against !== undefined
+              ? now.against
+              : await replacedConnection(request, snapshot)
+            : undefined
+          const reach = against
+            ? await reachedBefore(request, against, mailbox, page.messages)
+            : replacing
+              ? { reached: [], unsure: 0 }
               : null
           if (mine !== turn.current || showing.current !== from.key) return
           now = {
@@ -97,12 +112,13 @@ export function useDraftCount(request: api.AuthorizationRequest, draft: api.Cons
               ? {
                   reached: new Set([...(now.reached ?? []), ...reach.reached]),
                   unsure: now.unsure + reach.unsure,
+                  against: against ?? null,
                 }
               : {}),
             held: now.held + (page.held?.length ?? 0),
             undecided: now.undecided + page.needs_model.length,
             ...(page.model ? { model: page.model } : {}),
-            snapshot: now.snapshot ?? answer.snapshot,
+            snapshot,
             next,
           }
           setCount(now)
@@ -160,6 +176,32 @@ function empty(key: string, askModel: boolean): Count {
   return { key, messages: [], held: 0, undecided: 0, unsure: 0, pending: false, askModel }
 }
 
+/**
+ * The connection a replacing snapshot names, at the snapshot's version: the request's when it is that one, otherwise
+ * asked for. Null when the snapshot names none, or the one there is not that version any more or cannot be had: the
+ * marks then compare with nothing, and every message is new.
+ */
+export async function replacedConnection(
+  request: api.AuthorizationRequest,
+  snapshot: api.ConsentSnapshot,
+): Promise<api.Connection | null> {
+  const { connection: id, version } = snapshot
+  if (!id || version === undefined) return null
+  const known = request.connection
+  if (known && known.id === id && known.version === version) return known
+  try {
+    const now = await api.connection(id)
+    return now.id === id && now.version === version && now.state === 'active' ? now : null
+  } catch {
+    return null
+  }
+}
+
+/** A time as a formula takes it (ADR 0027, "Times"; internal/query's checkTime): RFC 3339 in UTC, no fraction. */
+export function formulaTime(ms: number): string {
+  return `${new Date(ms).toISOString().slice(0, 19)}Z`
+}
+
 /** The most pages of the connection's own query asked for one page of the preview; past them, a message is new. */
 const reachPages = 4
 
@@ -188,8 +230,8 @@ export async function reachedBefore(
   }
   const times = inTime.map((m) => Date.parse(m.received_at))
   // A second either side: the server's times may be finer than the formula's, and a message more matters not.
-  const from = new Date(Math.floor(Math.min(...times) / 1000) * 1000 - 1000).toISOString()
-  const to = new Date(Math.ceil(Math.max(...times) / 1000) * 1000 + 1000).toISOString()
+  const from = formulaTime(Math.floor(Math.min(...times) / 1000) * 1000 - 1000)
+  const to = formulaTime(Math.ceil(Math.max(...times) / 1000) * 1000 + 1000)
   const formula: api.QueryFormula = {
     v: 1,
     all: [
