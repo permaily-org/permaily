@@ -70,3 +70,36 @@ func TestH12ALostMailboxRemovesEveryOldDecisionDay(t *testing.T) {
 		})
 	}
 }
+
+// H12, an entry an earlier image wrote, without the bound: the walk starts
+// at the mailbox's creation while its record reads, and at the first day
+// any block can be of once it is gone.
+func TestH12AnEntryWithoutItsBound(t *testing.T) {
+	for _, lost := range []bool{false, true} {
+		t.Run(map[bool]string{false: "its record readable", true: "its record lost"}[lost], func(t *testing.T) {
+			w := newWorld(t)
+			e := w.enclave()
+			me := caller("acc_me", w.clock)
+			m := e.mustCreate(t, me)
+			old := inbox.NewMessageID(w.clock.now())
+			settleOne(t, e.Decisions(), inbox.Box{MailboxID: m.ID}, old, inbox.DecisionHeld, w.clock.now())
+			w.clock.add(400 * 24 * time.Hour)
+			me = caller(me.Account, w.clock)
+			if lost {
+				w.lose(m.ID)
+			}
+			if err := e.Disconnect(ctx, me, m.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := mailboxes.WithoutBounds(ctx, e.Service); err != nil {
+				t.Fatal(err)
+			}
+			sweepAll(t, e)
+			w.clock.add(mailboxes.SweepGrace)
+			sweepAll(t, e)
+			if names := w.blockNames(m.ID); len(names) != 0 {
+				t.Fatalf("the removal left %d old sealed block(s)", len(names))
+			}
+		})
+	}
+}

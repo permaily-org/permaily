@@ -29,6 +29,16 @@ func TestTheGateSaysWhetherTheModelMayBeAsked(t *testing.T) {
 	if got := e.Gate(ctx, "acc_a"); got != inbox.AskOff {
 		t.Fatalf("a refused key: %v", got)
 	}
+	if _, err := e.SetKey(ctx, keySetOf("sk-another-key")); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.Gate(ctx, "acc_a"); got != inbox.AskAnswered || e.model.count() != 0 {
+		t.Fatalf("a new key: %v, %d calls", got, e.model.count())
+	}
+	if _, err := e.SetKey(ctx, keySetOf(testKey)); err != nil {
+		t.Fatal(err)
+	}
+	e.keyRefused(ctx, e.keyState(ctx).fp)
 	w.advance(probeEvery)
 	if got := e.Gate(ctx, "acc_a"); got != inbox.AskAnswered {
 		t.Fatalf("a probe due, answered: %v", got)

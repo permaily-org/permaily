@@ -45,7 +45,7 @@ func sealedStores(t *testing.T) func(now func() time.Time) (inbox.DecisionStore,
 // other enclave still finds it held and asks nothing.
 func TestH28AnUntrustedExpiryCannotEraseACommittedHold(t *testing.T) {
 	w := newStrictDWorld(t, sealedStores(t))
-	w.st.Memory.Now = w.clock.now
+	w.st.Now = w.clock.now
 	ctx := context.Background()
 	id := w.seed(qNow.Add(-time.Hour), 1, "Hello", "Here is your number: 482913.")
 	original, err := w.st.Item(ctx, w.b.MailboxID, id)
