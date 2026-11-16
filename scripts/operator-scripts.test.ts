@@ -153,6 +153,12 @@ if [[ -n \${STUB_VERIFY_FAILS:-} ]]; then
   jq -n --arg url "$url" '{ok: false, hosts: [{url: $url, ok: false, error: "PCR0 does not match"}]}'
   exit 1
 fi
+# STUB_SWAP: the verifier reaches the enclave at the URL, as the real one does, and then
+# the server behind the URL is replaced (the test's switch reads this file).
+if [[ -n \${STUB_SWAP:-} ]]; then
+  curl -q -sS --cacert "$PERMAILY_CA_FILE" -o /dev/null "$url/attestation"
+  touch "$STUB_SWAP"
+fi
 jq -n --arg url "$url" --arg spki "\${STUB_ATTESTED}" '{ok: true, hosts: [{url: $url, ok: true, tls_spki_sha256: $spki}]}'
 `,
   )
@@ -735,6 +741,251 @@ describe('the token and secrets go only to the attested key', () => {
   })
 })
 
+describe('model-key.sh', () => {
+  // A30 (ADR 0028): the model's key goes only to the attested key, never from an argument, and nothing of it
+  // or of the answer is printed but fixed fields.
+  const key = 'sk-proj-Mk7q2Zr9Wd4Lp1Xn8Tv3'
+  const fingerprint = createHash('sha256').update(key).digest('hex').slice(0, 16)
+  const set = {
+    'PUT /v1/admin/model-key': {
+      status: 200,
+      body: { set: true, set_at: '2026-11-15T10:00:00Z', fingerprint },
+    },
+  }
+  const keyFile = (mode = 0o600) => {
+    const file = join(dir, `model-key-${mode.toString(8)}`)
+    writeFileSync(file, `${key}\n`)
+    chmodSync(file, mode)
+    return file
+  }
+  const sent = (s: Seen) => JSON.parse(s.request.split('\n').slice(2).join('\n'))
+
+  test('the key reaches the enclave whose key was attested, from a private file or standard input', async () => {
+    answers = set
+    for (const [how, args] of [
+      [{}, ['model-key.sh', 'set', keyFile()]],
+      [{ input: `${key}\r\n` }, ['model-key.sh', 'set']],
+    ] as const) {
+      seen = []
+      const out = await runHow(how, {}, ...(args as unknown as [string, ...string[]]))
+      expect({ args, exit: out.exit }).toEqual({ args, exit: 0 })
+      expect(seen.map((s) => s.server)).toEqual(['enclave'])
+      expect(seen[0].request.startsWith('PUT /v1/admin/model-key\n')).toBe(true)
+      expect(sent(seen[0])).toEqual({ key })
+      expect(out.stdout + out.stderr).not.toContain(key)
+      expect(out.stderr).toContain(
+        `a key is set at https://127.0.0.1:${enclave.port}, since 2026-11-15 10:00 UTC, fingerprint ${fingerprint}`,
+      )
+    }
+  })
+
+  test('the key is never an argument, nor in a file others can read: nothing runs', async () => {
+    for (const [args, says] of [
+      [['model-key.sh', 'set', key], 'the key is never an argument'],
+      [['model-key.sh', 'set', keyFile(0o644)], 'can be read by others'],
+      [['model-key.sh', 'set', keyFile(0o640)], 'can be read by others'],
+      [['model-key.sh', 'set', keyFile(), 'more'], 'scripts/model-key.sh'],
+      [['model-key.sh', 'status', key], 'scripts/model-key.sh'],
+      [['model-key.sh', 'remove', key], 'scripts/model-key.sh'],
+      [['model-key.sh', key], 'scripts/model-key.sh'],
+    ] as const) {
+      seen = []
+      rmSync(join(dir, 'verify-runs'), { force: true })
+      const out = await run(...(args as unknown as [string, ...string[]]))
+      expect({ args, exit: out.exit }).toEqual({ args, exit: 2 })
+      expect(out.stdout + out.stderr).toContain(says)
+      expect(out.stdout + out.stderr).not.toContain(key)
+      expect(seen).toEqual([])
+      expect(existsSync(join(dir, 'verify-runs'))).toBe(false)
+    }
+  })
+
+  test('a server that takes the name between verification and upload gets neither the key nor the token', async () => {
+    answers = set
+    const swap = join(dir, 'swapped')
+    // The switch sends each connection to the enclave until the verifier has run, and then to the impostor:
+    // another valid certificate for the name, with another key.
+    const switcher = createTCPServer((socket) => {
+      sockets.add(socket)
+      const upstream = connect((existsSync(swap) ? impostor.port : enclave.port) ?? 0, '127.0.0.1')
+      // Piped at once, not when the upstream connects: what the client sends first is buffered until then,
+      // where some Bun releases (1.3.13, the pinned one) would lose it.
+      socket.pipe(upstream).pipe(socket)
+      sockets.add(upstream)
+      socket.on('error', () => upstream.destroy())
+      upstream.on('error', () => socket.destroy())
+      socket.on('close', () => upstream.destroy())
+    })
+    const port = await listen(switcher)
+    try {
+      for (const args of [
+        ['model-key.sh', 'set', keyFile()],
+        ['model-key.sh'],
+        ['model-key.sh', 'remove'],
+      ]) {
+        rmSync(swap, { force: true })
+        seen = []
+        const out = await runWith(
+          { PERMAILY_API: `https://127.0.0.1:${port}`, STUB_SWAP: swap },
+          ...(args as [string, ...string[]]),
+        )
+        // The verifier reached the enclave; the upload reached no one: curl stopped at the impostor's key.
+        expect({ args, seen: seen.map((s) => `${s.server} ${s.request.split('\n')[0]}`) }).toEqual({
+          args,
+          seen: ['enclave GET /attestation'],
+        })
+        expect({ args, exit: out.exit !== 0 }).toEqual({ args, exit: true })
+        expect(existsSync(swap)).toBe(true)
+        expect(out.stdout + out.stderr).not.toContain(key)
+        expect(out.stdout + out.stderr).not.toContain('test-token')
+      }
+    } finally {
+      await new Promise((resolve) => switcher.close(resolve))
+    }
+  })
+
+  test('an impostor gets nothing, and when verification fails nothing is sent', async () => {
+    answers = set
+    for (const env of [
+      { PERMAILY_API: `https://127.0.0.1:${impostor.port}` },
+      { STUB_VERIFY_FAILS: '1' },
+    ]) {
+      for (const args of [
+        ['model-key.sh', 'set', keyFile()],
+        ['model-key.sh'],
+        ['model-key.sh', 'remove'],
+      ]) {
+        seen = []
+        const out = await runWith(env, ...(args as [string, ...string[]]))
+        expect({ env, args, seen }).toEqual({ env, args, seen: [] })
+        expect({ env, args, exit: out.exit !== 0 }).toEqual({ env, args, exit: true })
+        expect(out.stderr.toLowerCase()).toContain('nothing was sent')
+        expect(out.stdout + out.stderr).not.toContain(key)
+      }
+    }
+  })
+
+  test('a redirect is not followed', async () => {
+    answers = { 'PUT /v1/admin/model-key': { status: 307, body: { error: { message: 'moved' } } } }
+    seen = []
+    const out = await run('model-key.sh', 'set', keyFile())
+    expect(out.exit).toBe(1)
+    expect(seen.map((s) => s.server)).toEqual(['enclave'])
+  })
+
+  test("the answer's body is never printed: only its reason, and fixed fields in their own form", async () => {
+    // A refusal that echoes the key and the token, with and without error.message, and one that is not JSON.
+    for (const body of [
+      { echo: key, token: 'test-token' },
+      {
+        error: { code: 'invalid_model_key', message: 'the key is 1 to 1024 characters\u001b[2J' },
+        key,
+      },
+      `${key} test-token`,
+    ]) {
+      answers = { 'PUT /v1/admin/model-key': { status: 400, body } }
+      const out = await run('model-key.sh', 'set', keyFile())
+      expect(out.exit).toBe(1)
+      expect(out.stderr).toContain('did not take the key (HTTP 400)')
+      expect(out.stdout + out.stderr).not.toContain(key)
+      expect(out.stdout + out.stderr).not.toContain('test-token')
+      expect(out.stderr).not.toContain('\u001b')
+    }
+    // A 200 whose fields are not what they say: neither is printed.
+    answers = {
+      'PUT /v1/admin/model-key': {
+        status: 200,
+        body: { set: true, set_at: `${key}\u001b[2J`, fingerprint: `${fingerprint}${key}`, key },
+      },
+    }
+    const out = await run('model-key.sh', 'set', keyFile())
+    expect(out.exit).toBe(0)
+    expect(out.stdout + out.stderr).not.toContain(key)
+    expect(out.stderr).toContain('since (a time not given), fingerprint (none given)')
+    expect(out.stderr).not.toContain('\u001b')
+  })
+
+  test('status and remove say what the enclave holds, in fixed words', async () => {
+    answers = {
+      'GET /v1/admin/model-key': { status: 200, body: { set: false } },
+      'DELETE /v1/admin/model-key': { status: 204, body: null },
+    }
+    let out = await run('model-key.sh')
+    expect(out.exit).toBe(0)
+    expect(out.stderr).toContain('no key is set')
+    out = await run('model-key.sh', 'remove')
+    expect(out.exit).toBe(0)
+    expect(out.stderr).toContain('the key is removed')
+    answers = {
+      'GET /v1/admin/model-key': {
+        status: 200,
+        body: { set: true, set_at: '2026-11-15T10:00:00Z', fingerprint },
+      },
+    }
+    out = await run('model-key.sh', 'status')
+    expect(out.stderr).toContain(`fingerprint ${fingerprint}`)
+    answers = {
+      'DELETE /v1/admin/model-key': { status: 500, body: { error: { message: 'internal error' } } },
+    }
+    out = await run('model-key.sh', 'remove')
+    expect(out.exit).toBe(1)
+    expect(out.stderr).toContain('did not remove the key (HTTP 500)')
+  })
+
+  test('under bash -x, neither the token nor the key is printed', async () => {
+    answers = {
+      ...set,
+      'GET /v1/admin/model-key': { status: 200, body: { set: false } },
+      'DELETE /v1/admin/model-key': { status: 204, body: null },
+    }
+    for (const [how, args] of [
+      [{ trace: true }, ['model-key.sh', 'set', keyFile()]],
+      [{ trace: true, input: `${key}\n` }, ['model-key.sh', 'set']],
+      [{ trace: true }, ['model-key.sh']],
+      [{ trace: true }, ['model-key.sh', 'remove']],
+    ] as const) {
+      seen = []
+      const out = await runHow(how, {}, ...(args as unknown as [string, ...string[]]))
+      const printed = out.stdout + out.stderr
+      expect(out.stderr).toContain('+ ')
+      expect({ args, token: printed.includes('test-token'), key: printed.includes(key) }).toEqual({
+        args,
+        token: false,
+        key: false,
+      })
+      expect(seen.length).toBe(1)
+    }
+  })
+
+  test('under bash -x, a key refused as an argument and a refused PERMAILY_API are not printed', async () => {
+    // Refused before anything runs, and the trace is off from the script's first line: the mistaken key,
+    // given as the file or as the action, and a password in an origin that is refused, are never echoed.
+    const password = 'origin-password-Qx81'
+    for (const [env, args, secret] of [
+      [{}, ['model-key.sh', 'set', key], key],
+      [{}, ['model-key.sh', key], key],
+      [{}, ['model-key.sh', 'status', key], key],
+      [{}, ['model-key.sh', 'remove', key], key],
+      [
+        { PERMAILY_API: `https://operator:${password}@127.0.0.1:${enclave.port}` },
+        ['model-key.sh'],
+        password,
+      ],
+    ] as const) {
+      seen = []
+      const out = await runHow({ trace: true }, env, ...(args as unknown as [string, ...string[]]))
+      const printed = out.stdout + out.stderr
+      expect(out.stderr).toContain('+ ')
+      expect({ args, exit: out.exit, secret: printed.includes(secret) }).toEqual({
+        args,
+        exit: 2,
+        secret: false,
+      })
+      expect(seen).toEqual([])
+    }
+  })
+})
+
 test('the admin token goes only through attested.sh: enclave_curl --token or with_token, after attest', () => {
   const scripts = readdirSync(import.meta.dir).filter(
     (f) => f.endsWith('.sh') && f !== 'attested.sh',
@@ -773,6 +1024,7 @@ test('the admin token goes only through attested.sh: enclave_curl --token or wit
     'accounts.sh',
     'handoff.sh',
     'invite.sh',
+    'model-key.sh',
     'provider.sh',
     'sigstore-trust-root.sh',
   ])

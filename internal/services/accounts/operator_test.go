@@ -917,8 +917,9 @@ func TestTheOperatorsActionsAreCounted(t *testing.T) {
 		}
 	}
 	check("at the start")
-	// The eleven of accounts, and pausing and resuming a mailbox (ADR 0026).
-	if len(want) != 13 {
+	// The eleven of accounts, pausing and resuming a mailbox (ADR 0026), and
+	// setting and removing the model's key (ADR 0028).
+	if len(want) != 15 {
 		t.Fatalf("%d kinds", len(want))
 	}
 
@@ -980,6 +981,13 @@ func TestTheOperatorsActionsAreCounted(t *testing.T) {
 	}
 	want[ActionProviderAppRemove] = 1
 	check("the providers' applications")
+	// A30: the model's key, set twice and removed once through the
+	// operator's routes (httpapi.ModelKey, which counts each that succeeded).
+	w.svc.ModelKeyChanged(true)
+	w.svc.ModelKeyChanged(true)
+	w.svc.ModelKeyChanged(false)
+	want[ActionModelKeySet], want[ActionModelKeyRemoved] = 2, 1
+	check("the model's key")
 	// What a person does to their own account is not counted here.
 	w.signIn("ana@example.org")
 	check("a sign-in")

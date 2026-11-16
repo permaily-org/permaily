@@ -26,6 +26,8 @@ var adminWords = map[string]string{
 	attestation.AdminRemoved:            "made an admin stop being one",
 	attestation.AdminMailboxPaused:      "paused a mailbox",
 	attestation.AdminMailboxResumed:     "resumed a mailbox",
+	attestation.AdminModelKeySet:        "set the model's key",
+	attestation.AdminModelKeyRemoved:    "removed the model's key",
 }
 
 // printAdmin prints what the enclave counts of what its operator did to

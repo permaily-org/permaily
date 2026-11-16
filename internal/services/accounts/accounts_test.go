@@ -33,9 +33,12 @@ type world struct {
 	// terms is the version of the terms in force for the world's enclaves:
 	// a test changes it as a new release would.
 	terms string
-	logs  *bytes.Buffer
-	svc   *Service
-	now   time.Time
+	// notice is the version of the model's notice in force, changed the
+	// same way (model_notice_test.go).
+	notice string
+	logs   *bytes.Buffer
+	svc    *Service
+	now    time.Time
 }
 
 func newWorld(t *testing.T) *world {
@@ -43,6 +46,7 @@ func newWorld(t *testing.T) *world {
 	w := &world{
 		t: t, mem: store.NewMemory(), commits: store.NewMemoryCommits(), out: &Outbox{}, idp: newFakeProviders(), logs: &bytes.Buffer{},
 		now: time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC), terms: domain.TermsVersion,
+		notice: domain.ModelNoticeVersion,
 	}
 	w.mem.Now = func() time.Time { return w.now }
 	local, err := keys.NewLocal()
@@ -59,6 +63,7 @@ func (w *world) service(k Keys) *Service {
 		Records: w.anchored,
 		Entries: w.mem, Keys: k, Mailer: w.out, Providers: w.idp, AppURL: "https://app.permaily.test", SuperAdmin: superAdmin,
 		Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: func() time.Time { return w.now }, Terms: func() string { return w.terms },
+		ModelNotice: func() string { return w.notice },
 	})
 	if err != nil {
 		w.t.Fatal(err)

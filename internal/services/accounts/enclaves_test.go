@@ -133,7 +133,7 @@ func (w *world) enclaveAt(ahead time.Duration) *enclave {
 	e.svc, err = New(Config{
 		Records: e.records, Entries: e.entries, Keys: w.svc.cfg.Keys, Mailer: w.out, Providers: w.idp,
 		AppURL: "https://app.permaily.test", SuperAdmin: superAdmin, Log: slog.New(slog.NewTextHandler(w.logs, nil)), Now: now,
-		Terms: func() string { return w.terms },
+		Terms: func() string { return w.terms }, ModelNotice: func() string { return w.notice },
 	})
 	if err != nil {
 		w.t.Fatal(err)

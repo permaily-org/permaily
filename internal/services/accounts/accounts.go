@@ -121,6 +121,10 @@ type Config struct {
 	// nil, which is what the enclave runs with. Dev mode and the tests change
 	// it, as a new release would.
 	Terms func() string
+	// ModelNotice says the version of the model's notice in force
+	// (model_notice.go): domain.ModelNoticeVersion when nil. The tests change
+	// it, as a new release would.
+	ModelNotice func() string
 	// Mailboxes is the mailboxes of accounts (ADR 0026): an account's are
 	// ended when it is removed. Nil when there are none; the composition may
 	// give it later, once, with SetMailboxes, since the mailboxes service is
@@ -240,6 +244,9 @@ func New(cfg Config) (*Service, error) {
 	}
 	if cfg.Terms == nil {
 		cfg.Terms = func() string { return domain.TermsVersion }
+	}
+	if cfg.ModelNotice == nil {
+		cfg.ModelNotice = func() string { return domain.ModelNoticeVersion }
 	}
 	if cfg.SuperAdmin != "" {
 		address, err := domain.NormalizeAddress(cfg.SuperAdmin)
@@ -362,6 +369,9 @@ type accountDoc struct {
 	// Terms is the version of the terms its person agreed to, and when
 	// (terms.go); nil for the accounts made before there were terms.
 	Terms *termsDoc `json:"terms,omitempty"`
+	// ModelNotice is the version of the model's notice its person agreed to,
+	// and when (model_notice.go, ADR 0028); nil when they agreed to none.
+	ModelNotice *termsDoc `json:"model_notice,omitempty"`
 	// Linking is a provider account being linked, until the record lists it
 	// (providers.go). It signs nobody in.
 	Linking *linkingDoc `json:"linking,omitempty"`
@@ -382,7 +392,7 @@ func (d *accountDoc) view() contracts.Account {
 	return contracts.Account{
 		ID: d.ID, State: d.State, Address: d.Address, Name: d.Name, Language: d.Language,
 		CreatedAt: d.CreatedAt, ClosesAt: d.ClosesAt, ClosingBy: d.closingBy(), PasskeyOnly: d.PasskeyOnly,
-		Terms: d.agreedVersion(),
+		Terms: d.agreedVersion(), ModelNotice: d.noticeVersion(),
 	}
 }
 

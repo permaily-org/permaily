@@ -31,3 +31,17 @@ condition = "AND"
 paths = ['''^internal/decide/openai/openai_test\.go$''']
 regexTarget = "match"
 regexes = ['''^testKey = "sk-proj-test[A-Za-z0-9_-]*"$''']
+
+[[allowlists]]
+description = "the model key route's tests (ADR 0028, pull request 4) send a made-up key to played enclaves on the test machine; it was never a key of any OpenAI project"
+condition = "AND"
+paths = ['''^internal/httpapi/model_test\.go$''']
+regexTarget = "match"
+regexes = ['''^key = "sk-proj-Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z"$''']
+
+[[allowlists]]
+description = "model-key.sh's tests (ADR 0028, pull request 4) send a made-up key to a played enclave on the test machine; it was never a key of any OpenAI project"
+condition = "AND"
+paths = ['''^scripts/operator-scripts\.test\.ts$''']
+regexTarget = "match"
+regexes = ['''^key = 'sk-proj-Mk7q2Zr9Wd4Lp1Xn8Tv3'$''']

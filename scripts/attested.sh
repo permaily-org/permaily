@@ -1,6 +1,6 @@
 # shellcheck shell=bash disable=SC2154 # $api and $work are set by the script that sources this
 # Sourced by every operator script that sends the admin token or a secret to
-# the enclave (scripts/provider.sh, accounts.sh, invite.sh, handoff.sh and
+# the enclave (scripts/provider.sh, model-key.sh, accounts.sh, invite.sh, handoff.sh and
 # sigstore-trust-root.sh --send). It is not run on its own.
 #
 # A certificate that a CA checks only proves the name: someone who got another
