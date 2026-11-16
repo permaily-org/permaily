@@ -176,6 +176,16 @@ func readObject(w http.ResponseWriter, r *http.Request, names ...string) (map[st
 
 // readObjectUpTo is readObject with a body of at most limit bytes.
 func readObjectUpTo(w http.ResponseWriter, r *http.Request, limit int64, names ...string) (map[string]json.RawMessage, bool) {
+	out, ok := parseObjectUpTo(w, r, limit, names...)
+	if !ok {
+		writeInvalidBody(w)
+	}
+	return out, ok
+}
+
+// parseObjectUpTo is readObjectUpTo answering nothing: false for a body it
+// does not take, which its caller answers.
+func parseObjectUpTo(w http.ResponseWriter, r *http.Request, limit int64, names ...string) (map[string]json.RawMessage, bool) {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	out := map[string]json.RawMessage{}
 	ok := func() bool {
@@ -204,7 +214,6 @@ func readObjectUpTo(w http.ResponseWriter, r *http.Request, limit int64, names .
 		return errors.Is(err, io.EOF)
 	}()
 	if !ok {
-		writeInvalidBody(w)
 		return nil, false
 	}
 	return out, true

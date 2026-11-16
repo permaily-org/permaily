@@ -200,7 +200,7 @@ func TestV50TheLeaseIsHonouredBeforeTheFirstByte(t *testing.T) {
 				m := message
 				return &m, l, nil
 			}
-			srv := httptest.NewServer(w.handler())
+			srv := hooked(w.handler())
 			resp := post(t, srv.URL, toolCall(1, "read_message", `{"id":"mbx_A.msg_1"}`))
 			body := readAll(t, resp.Body)
 			srv.Close() // waits for the handler
@@ -221,7 +221,7 @@ func TestV50TheLeaseIsHonouredBeforeTheFirstByte(t *testing.T) {
 	}
 	t.Run("a whole answer", func(t *testing.T) {
 		w := newWorld()
-		srv := httptest.NewServer(w.handler())
+		srv := hooked(w.handler())
 		resp := post(t, srv.URL, toolCall(1, "search_mail", `{}`))
 		body := readAll(t, resp.Body)
 		srv.Close() // waits for the handler
@@ -234,6 +234,15 @@ func TestV50TheLeaseIsHonouredBeforeTheFirstByte(t *testing.T) {
 			t.Fatalf("started %v finished %v sent %v, %d finishes", started, finished, sent, n)
 		}
 	})
+}
+
+// hooked is a started server with the connection's hook, as the
+// composition sets it.
+func hooked(h http.Handler) *httptest.Server {
+	srv := httptest.NewUnstartedServer(h)
+	srv.Config.ConnContext = mcpapi.ConnContext
+	srv.Start()
+	return srv
 }
 
 func post(t *testing.T, base string, q request) *http.Response {
@@ -264,6 +273,7 @@ func TestV50ACutDuringABlockedTransferAbortsIt(t *testing.T) {
 		return &inbox.Attachment{Name: "a.bin", Type: "application/octet-stream", Data: data}, w.lease(), nil
 	}
 	srv := httptest.NewUnstartedServer(w.handler())
+	srv.Config.ConnContext = mcpapi.ConnContext
 	ln := &stallListener{Listener: srv.Listener, allow: 256 << 10, stalled: make(chan struct{})}
 	srv.Listener = ln
 	srv.Start()

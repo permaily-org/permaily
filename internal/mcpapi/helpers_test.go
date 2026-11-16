@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -241,8 +242,17 @@ func (q request) http() *http.Request {
 	if q.name != "" {
 		r.Header.Set("Mcp-Name", q.name)
 	}
-	return r
+	// As if the server kept the connection (mcpapi.ConnContext): a tool
+	// call is answered only then.
+	return r.WithContext(mcpapi.ConnContext(r.Context(), hookConn{}))
 }
+
+// hookConn is the connection of a request made in memory: the abort's
+// deadline and close act on nothing.
+type hookConn struct{ net.Conn }
+
+func (hookConn) SetWriteDeadline(time.Time) error { return nil }
+func (hookConn) Close() error                     { return nil }
 
 func do(h http.Handler, q request) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
