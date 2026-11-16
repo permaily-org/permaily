@@ -146,3 +146,20 @@ func TestTheCanaryIsReadAtTheAttestedCommit(t *testing.T) {
 		t.Fatalf("commit %q, %+v, model %+v", commit, r, r.Model)
 	}
 }
+
+// Asking for help prints it and exits 0, as flag.ExitOnError did; a flag
+// that does not exist still exits 2.
+func TestHelpExitsZero(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want int
+	}{{[]string{"-h"}, 0}, {[]string{"--help"}, 0}, {[]string{"-no-such-flag"}, 2}} {
+		var stdout, stderr bytes.Buffer
+		if got := run(c.args, &stdout, &stderr, nil); got != c.want {
+			t.Errorf("%v exits %d, want %d", c.args, got, c.want)
+		}
+		if c.want == 0 && !strings.Contains(stderr.String()+stdout.String(), "usage: permaily-verify") {
+			t.Errorf("%v printed no usage", c.args)
+		}
+	}
+}

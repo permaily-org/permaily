@@ -239,6 +239,9 @@ func run(args []string, stdout, stderr io.Writer, nsmRoot *x509.Certificate) int
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0 // -h and --help, as flag.ExitOnError did
+		}
 		return 2
 	}
 
