@@ -86,7 +86,7 @@ test('signed out, signs in by code in the same tab, and allows with a fresh proo
   )
   const decisions = api.asked.filter((a) => a.route.endsWith('/decision'))
   expect(decisions).toHaveLength(2)
-  expect(decisions[1].body).toMatchObject({ allow: true, model_notice: '2026-11-15' })
+  expect(decisions[1].body).toMatchObject({ allow: true, model_notice: '2026-11-16' })
 
   // Back to the app: the request is not there any more.
   await page.goBack()

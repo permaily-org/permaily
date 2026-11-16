@@ -21,6 +21,10 @@ import (
 // force when the tests' accounts were made.
 const newNotice = "2027-02-01"
 
+// oldNotice is the version of the model's notice before the one in force
+// (2026-11-16, after the legal review of pull request 148).
+const oldNotice = "2026-11-15"
+
 func agreeNotice(version string) contracts.TermsAgree { return contracts.TermsAgree{Version: version} }
 
 // A29: agreeing records the version and when in the account's record, the
@@ -71,7 +75,7 @@ func TestA29AnAgreementToAnotherNoticeIsRefused(t *testing.T) {
 	w, ctx := newWorld(t), context.Background()
 	me, cookie := w.signUp("ana@example.org")
 	version := w.version(me.Account.ID)
-	for _, shown := range []string{"", newNotice, domain.ModelNoticeVersion + " ", domain.TermsVersion} {
+	for _, shown := range []string{"", newNotice, oldNotice, domain.ModelNoticeVersion + " "} {
 		if _, err := w.svc.AgreeModelNotice(ctx, w.who(cookie), agreeNotice(shown)); !errors.Is(err, contracts.ErrModelNoticeNeeded) {
 			t.Fatalf("agreeing to %q: %v", shown, err)
 		}
