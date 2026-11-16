@@ -58,8 +58,8 @@ var errAnswerTooLarge = errors.New("mcpapi: the answer is larger than AnswerMax"
 // lease (connections.Release): Start immediately before the first byte,
 // every chunk admitted under its context, the response aborted if that
 // context ends before the last one left, and Finish(true) only once it did.
-// Only HTTP/1.1 gets here with a lease: ServeHTTP refuses a tool call over
-// HTTP/2.
+// Only HTTP/1.1 on a connection ConnContext keeps gets here with a lease:
+// ServeHTTP, and each mail tool, refuse a tool call otherwise.
 func (h *handler) answer(w http.ResponseWriter, r *http.Request, c *call, rec *recorder) (outcome string, abort bool) {
 	rel, stepUp, status, outcome := c.taken()
 	finish := func() {
@@ -233,8 +233,8 @@ type connKey struct{}
 // sets it): it keeps each connection in its requests' context, so that a
 // lease that ends while its answer is sent closes the connection itself,
 // the socket's deadline set first, and nothing the server still holds of
-// the response leaves when it closes it. Without it the response's write
-// deadline alone aborts it.
+// the response leaves when it closes it. Without it a tool call is refused
+// (503 no_abort) before the SDK runs.
 func ConnContext(ctx context.Context, c net.Conn) context.Context {
 	return context.WithValue(ctx, connKey{}, c)
 }

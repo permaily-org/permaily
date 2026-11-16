@@ -311,7 +311,7 @@ func TestV48ToolsKeepTheRequestsCancellationAndDeadline(t *testing.T) {
 				q.token = tokenMCPAttached
 			}
 			deadline := time.Now().Add(time.Minute).Truncate(time.Second)
-			ctx, cancel := context.WithDeadline(context.Background(), deadline)
+			ctx, cancel := context.WithDeadline(mcpapi.ConnContext(context.Background(), hookConn{}), deadline) // the request keeps its hook
 			defer cancel()
 			done := make(chan struct{})
 			go func() {

@@ -13,7 +13,11 @@
 //     a tool that needs a part the grant does not have (get_attachment
 //     without mail.attachments) is answered HTTP 403 insufficient_scope,
 //     naming every scope the client then needs, before the SDK runs. A batch
-//     is refused: one HTTP answer carries at most one tool's mail.
+//     is refused: one HTTP answer carries at most one tool's mail. So is,
+//     400 invalid_body, a body the SDK could read otherwise than the
+//     middleware (classify: one object, no member twice in any case, names
+//     matched exactly as the SDK matches them, method and params of their
+//     types, nothing after it).
 //  3. The SDK, given only what was verified: auth.RequireBearerToken hands
 //     the tool the grant (req.Extra.TokenInfo), never the token.
 //  4. The answer of a tool call, made by the SDK into memory (at most
@@ -28,7 +32,9 @@
 //     stream's last bytes after the handler returned, from a buffer another
 //     goroutine flushes), so a tool call over HTTP/2 is 503 once the token is
 //     checked and before the SDK runs (ADR 0030, "Changed after the second
-//     review of pull request 6").
+//     review of pull request 6"), and so is one on a connection the server
+//     did not keep (ConnContext), which a cut could not close. Each mail tool
+//     checks both again before it asks the service (call.admitMail).
 //
 // Every tool's work with the service keeps the HTTP request's deadline and
 // ends when the request does (call.bind), for both protocols.
@@ -47,6 +53,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -58,6 +65,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/jws"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/services/connections"
 )
@@ -154,6 +162,10 @@ func resourceMetadataURL(resource string) string {
 type call struct {
 	grant    *oauth.Grant
 	buffered bool
+	// abortable says the request came over HTTP/1.1 on a connection
+	// ConnContext keeps, which a cut can close: the mail tools run only then
+	// (call.admitMail), a boundary after the middleware's.
+	abortable bool
 	// ctx is the HTTP request's context: the SDK hands a tool a context of
 	// its own, without the request's deadline or its end.
 	ctx context.Context
@@ -227,13 +239,40 @@ func verified(ctx context.Context, _ string, _ *http.Request) (*auth.TokenInfo, 
 
 const extraCall = "permaily.call"
 
-// rpc is what the middleware reads of a JSON-RPC message.
-type rpc struct {
-	Method string `json:"method"`
-	Params struct {
-		Name string `json:"name"`
-	} `json:"params"`
+// classify reads a request's body as the SDK will (the third review of #131
+// and #144, finding 1): one JSON object of
+// valid UTF-8 with nothing after it, no member twice, in any case either
+// (jws.Object), and names matched exactly, as the SDK's decoder matches
+// them; method, when present, a string, and params, when present and not
+// null, an object. A tool call's params name it as a string. Anything else
+// is not classified (ok false) and never reaches the SDK: what encoding/json
+// read of it might not be what the SDK runs.
+func classify(body []byte) (method, tool string, ok bool) {
+	members, ok := jws.Object(body)
+	if !ok {
+		return "", "", false
+	}
+	if raw, present := members["method"]; present {
+		if method, ok = jws.Text(raw); !ok {
+			return "", "", false
+		}
+	}
+	raw, present := members["params"]
+	if !present || string(raw) == "null" {
+		return method, "", method != toolsCall
+	}
+	params, ok := jws.Object(raw)
+	if !ok {
+		return "", "", false
+	}
+	if method != toolsCall {
+		return method, "", true
+	}
+	tool, ok = jws.Text(params["name"])
+	return method, tool, ok
 }
+
+const toolsCall = "tools/call"
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -288,23 +327,29 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_body", "send one JSON-RPC message per request")
 			return
 		}
-		var m rpc
-		if json.Unmarshal(body, &m) == nil {
-			method = kindOf(m.Method, methods)
-			if m.Method == "tools/call" {
-				tool = kindOf(m.Params.Name, toolNames)
-				c.buffered = true
-				if r.ProtoMajor >= 2 {
-					// Nothing would say when the answer's last byte left.
-					outcome = "no_abort"
-					unavailable(w)
-					return
-				}
-				if missing := missingParts(g, m.Params.Name); len(missing) > 0 {
-					outcome = "step_up"
-					h.stepUp(w, g, missing)
-					return
-				}
+		m, name, ok := classify(body)
+		if !ok {
+			outcome = "invalid_body"
+			writeError(w, http.StatusBadRequest, "invalid_body", "the request is not one JSON-RPC message")
+			return
+		}
+		method = kindOf(m, methods)
+		if m == toolsCall {
+			tool = kindOf(name, toolNames)
+			c.buffered = true
+			if conn, _ := r.Context().Value(connKey{}).(net.Conn); r.ProtoMajor != 1 || conn == nil {
+				// Over HTTP/2 nothing would say when the answer's last
+				// byte left; without the connection's hook (ConnContext)
+				// nothing could close it on a cut.
+				outcome = "no_abort"
+				unavailable(w)
+				return
+			}
+			c.abortable = true
+			if missing := missingParts(g, name); len(missing) > 0 {
+				outcome = "step_up"
+				h.stepUp(w, g, missing)
+				return
 			}
 		}
 	}
