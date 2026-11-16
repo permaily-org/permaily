@@ -50,12 +50,15 @@ type API interface {
 	// request whose token Check accepted, before calling Search, Read or
 	// Attachment (PR #131's review, finding 2; ADR 0031: once a grant is
 	// attributed, every refusal of a request that asked for mail is
-	// recorded): the refused receipt, written as Release's order writes one
-	// (under ReceiptWriteMax and the grant's hard end), and its count in
-	// Refused, before the adapter answers. Nil once stored; then the
-	// adapter answers its refusal. Any error (the receipt not written,
-	// ErrInvalidRefusal): the adapter answers 503 with Retry-After and
-	// nothing else. Only what the adapter alone can see is refused here
+	// recorded): the refused receipt, written as the service writes its own
+	// refusals' (under a fresh ReceiptWriteMax, detached from ctx's
+	// cancellation, and not bound by the grant's hard end, which bounds only
+	// a receipt of mail released: a refusal after it keeps its attribution;
+	// ruling 6 on PR #136's second review), and its count in Refused,
+	// before the adapter answers. Nil once stored; then the adapter answers
+	// its refusal. Any error (the receipt not written within
+	// ReceiptWriteMax, ErrInvalidRefusal): the adapter answers 503 with
+	// Retry-After and nothing else. Only what the adapter alone can see is refused here
 	// (Refusal.Valid); everything the service can decide (a held message,
 	// the model's gate, a search on a part not given, the API's attachment
 	// without its part, a size, a cursor, a limit) is passed to the
@@ -226,6 +229,11 @@ var ErrTooLate error = &kind{"connections: the answer can no longer be released"
 // ReceiptWriteMax bounds writing one receipt (receipts.Writer), on its own
 // deadline, not the grant's freshness (N3): a preparation that outlasts the
 // freshness is checked again by Release.Start, after the receipt, never
-// skipped to meet a deadline. The receipt's context also ends at the
-// grant's hard end (oauth.Grant.Expires).
+// skipped to meet a deadline. The receipt of mail to be released also ends
+// at the grant's hard end (oauth.Grant.Expires): nothing is released past
+// it. A refused receipt (Refuse's, and the service's own refusals) is
+// written under a fresh ReceiptWriteMax alone, detached from the request's
+// cancellation: it releases nothing, so it is recorded after the hard end
+// too, with the grant's attribution and no message identifier the service
+// did not check (ruling 6 on PR #136's second review).
 const ReceiptWriteMax = 5 * time.Second

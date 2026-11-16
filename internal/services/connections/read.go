@@ -111,9 +111,10 @@ func (s *Service) refuse(ctx context.Context, r *reading, why *receipts.Refused,
 
 // refuseWith records rc, a refusal with what it already holds (a page's
 // held messages and their evidence), as refuse does. A refusal releases
-// nothing, so it is written under ReceiptWriteMax alone, not the grant's
-// hard end nor the request's context: a too_late after the hard end is
-// still recorded.
+// nothing, so it is written under a fresh ReceiptWriteMax alone, not the
+// grant's hard end nor the request's context: a refusal after the hard end
+// or of a request whose client went away is still recorded, with the
+// grant's attribution (ruling 6 on PR #136's second review).
 func (s *Service) refuseWith(ctx context.Context, r *reading, rc *receipts.Receipt, err error) error {
 	if werr := s.writeReceipt(context.WithoutCancel(ctx), r.g.Account, rc, time.Time{}); werr != nil {
 		s.count("receipt_failed")
@@ -486,8 +487,10 @@ func (s *Service) Attachment(ctx context.Context, g *oauth.Grant, id string, ind
 }
 
 // Refuse implements API: the refusal an adapter made of the attributed
-// request of g, recorded as the service records its own (refuse) before
-// the adapter answers, under ReceiptWriteMax and the grant's hard end. Its
+// request of g, recorded as the service records its own (refuseWith)
+// before the adapter answers: under a fresh ReceiptWriteMax, detached from
+// the request's cancellation, and not bound by the grant's hard end, which
+// bounds only what releases mail (ruling 6 on PR #136's second review). Its
 // message is recorded only when it names one of the connection's
 // mailboxes, as Read and Attachment check it (message); anything else of
 // what the vendor sent is not. ErrInvalidRefusal for no grant or a refusal
@@ -497,9 +500,12 @@ func (s *Service) Refuse(ctx context.Context, g *oauth.Grant, rf Refusal) error 
 	if g == nil || !rf.ValidOn(g.Resource) {
 		return ErrInvalidRefusal
 	}
+	ctx = context.WithoutCancel(ctx)
 	r := &reading{g: g, conn: &connDoc{}}
 	if rf.Message != "" {
-		d, _, err := s.connFresh(ctx, g.Connection)
+		rctx, cancel := context.WithTimeout(ctx, ReceiptWriteMax)
+		d, _, err := s.connFresh(rctx, g.Connection)
+		cancel()
 		switch {
 		case err == nil && d != nil && d.Account == g.Account:
 			r.conn = d
@@ -513,9 +519,8 @@ func (s *Service) Refuse(ctx context.Context, g *oauth.Grant, rf Refusal) error 
 	}
 	rc := s.receipt(r, receipts.KindRefused)
 	rc.Refused = why
-	if err := s.writeReceipt(ctx, g.Account, rc, g.Expires()); err != nil {
-		s.count("receipt_failed")
-		return ErrUnavailable
+	if err := s.refuseWith(ctx, r, rc, nil); err != nil {
+		return err
 	}
 	s.count(string(rf.Reason))
 	return nil
