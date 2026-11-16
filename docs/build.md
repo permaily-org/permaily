@@ -40,7 +40,7 @@ TODO: build the kernel, `nsm.ko` and `init` from source in the flake (ADR 0023, 
 - Go: `go get ...`, `go mod tidy`, then update `vendorHash` in `nix/go.nix` (Nix prints the expected hash).
 - SPA: `cd web && bun add --exact ...`, then update both hashes in `nix/web.nix`. The x86_64 hash comes from a local build; the aarch64 one from the CI failure message.
 - Mail tooling: `cd packages/mail && bun add --exact ...` (versions at least two weeks old), then `bun run build` and `bun run check`. Nothing in Nix depends on it; if the templates change, so does PCR0.
-- nixpkgs: `nix flake update`. If the bun version changes, update the `web` job in `.github/workflows/ci.yml` and regenerate `bun.lock` with that version.
+- nixpkgs: `nix flake update`. If the bun version changes, update the `web-unit` and `web-e2e` jobs in `.github/workflows/ci.yml` and regenerate `bun.lock` with that version.
 
 ## Local development
 

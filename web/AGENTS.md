@@ -40,7 +40,7 @@ bun run build
 bun run test            # type check the tests, run them (Vitest, jsdom, axe) and hold the coverage thresholds
 bun run --cwd .. lint   # Biome for the whole repo
 bun run typecheck
-cd tests/e2e && bun install && bunx playwright install chromium && bun run test   # the consent screen in a real browser (V63)
+cd tests/e2e && bun install && bunx playwright install chromium && bun run test   # the consent screen in a real browser (V63), on the dev server and as the enclave serves it (needs go)
 ```
 
 ## Tests
@@ -51,5 +51,5 @@ Tests live in `tests/`, outside `src/`, with their own `vitest.config.ts` and `t
 - A bug fix starts with a test that fails. A new screen that talks to the server gets a test file that runs `expectAccessible()` and, where it handles a secret, `expectNotKept(...)`.
 - Find controls by role and label. A control whose last words are for screen readers only is found with `named('Edit name')`.
 - After a `findBy`, React may still be moving focus: wrap what you say of focus in `waitFor`, and call `settle()` before saying something did not happen.
-- The real-browser test of the consent screen is `tests/e2e`, a package of its own (Playwright), excluded from `tsconfig.test.json` and from Vitest (its files are `*.spec.ts`): it starts `bun run dev`, plays the vendor on another site and plays the API in the browser (`tests/e2e/specs/played.ts`).
+- The real-browser test of the consent screen is `tests/e2e`, a package of its own (Playwright), excluded from `tsconfig.test.json` and from Vitest (its files are `*.spec.ts`): it plays the vendor on another site and the API in the browser (`tests/e2e/specs/played.ts`), against `bun run dev` (project `dev`) and against the built app behind the enclave's router, app host and SPA handler (project `production`, `tests/e2e/serve.sh` and the test-only Go package `tests/e2e/server`). CI runs both (`web-e2e`, in the required `web` check). A page's address never ends in something with a dot (a vendor's domain): the server answers that as a missing file (`internal/webui`).
 - Coverage thresholds in `vitest.config.ts` only go up. `src/pages/rules`, `src/pages/activity` and the other screens on sample data have none yet.
