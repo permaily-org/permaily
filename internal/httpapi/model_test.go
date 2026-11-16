@@ -477,6 +477,11 @@ func TestA30TheModelKeyRoutes(t *testing.T) {
 	if got.Set {
 		t.Fatalf("after removing: %+v", got)
 	}
+	// A removal counts the operator's request that succeeded, not a change
+	// from a key to none: removing again, with no key set, counts again.
+	if rec := do(h, "DELETE", path, token, ""); rec.Code != http.StatusNoContent || count.removed != 2 {
+		t.Fatalf("remove again: %d %+v", rec.Code, count)
+	}
 	// Other methods and paths.
 	rec = do(h, "POST", path, token, body)
 	want(t, rec, 405, "method_not_allowed")
@@ -499,7 +504,7 @@ func TestA30TheModelKeyRoutes(t *testing.T) {
 		want(t, rec, 500, "internal")
 		answers += rec.Body.String()
 	}
-	if count.set != 1 || count.removed != 1 {
+	if count.set != 1 || count.removed != 2 {
 		t.Fatalf("a failure was counted: %+v", count)
 	}
 	k.fail = contracts.ErrTooManyRequests

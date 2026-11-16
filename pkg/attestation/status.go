@@ -209,7 +209,9 @@ const (
 	AdminMailboxPaused  = "mailbox_paused"
 	AdminMailboxResumed = "mailbox_resumed"
 	// AdminModelKeySet and AdminModelKeyRemoved: the model's API key was
-	// given to the enclave, or taken away (ADR 0028). Never the key.
+	// given to the enclave, or taken away (ADR 0028). Each counts the
+	// operator's requests that succeeded, not changes of the key: a removal
+	// when none was set counts, as a key set again does. Never the key.
 	AdminModelKeySet     = "model_key_set"
 	AdminModelKeyRemoved = "model_key_removed"
 )

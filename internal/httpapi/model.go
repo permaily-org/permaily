@@ -75,7 +75,9 @@ type ModelKeyService interface {
 
 // ModelKeyCounter counts what the operator did to the key, by kind, for
 // /status (*accounts.Service, ModelKeyChanged: model_key_set and
-// model_key_removed in attestation.AdminActions).
+// model_key_removed in attestation.AdminActions): once for each PUT or
+// DELETE that succeeded, so a DELETE when no key is set counts too. They
+// count the operator's requests, not changes from a key to none.
 type ModelKeyCounter interface {
 	ModelKeyChanged(set bool)
 }

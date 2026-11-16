@@ -50,7 +50,9 @@ const (
 	ActionMailboxResumed = "mailbox_resumed"
 	// ActionModelKeySet and ActionModelKeyRemoved: the model's key was given
 	// to the enclave, or taken away (ADR 0028, "The key"); counted through
-	// ModelKeyChanged by the operator's key routes.
+	// ModelKeyChanged by the operator's key routes, once for each request
+	// that succeeded: a removal when no key was set counts, as a key set
+	// again does. They count requests, not changes from one key to none.
 	ActionModelKeySet     = "model_key_set"
 	ActionModelKeyRemoved = "model_key_removed"
 )
