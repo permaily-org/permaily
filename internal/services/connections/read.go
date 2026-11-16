@@ -90,6 +90,19 @@ func (s *Service) prepare(ctx context.Context, g *oauth.Grant, search *query.Can
 	return r, nil
 }
 
+// asking is ctx carrying the service's Asker for d's account whenever d
+// may ask the model (inbox.WithAsker): the Discloser asks only through the
+// Asker its context carries, so without it every message the default rule
+// or the formulas need the model for is held. The model's gate and the
+// notice were checked before d.Model was set. A context that carries an
+// Asker already keeps it.
+func (s *Service) asking(ctx context.Context, d inbox.Disclosure) context.Context {
+	if _, ok := inbox.AskerFrom(ctx); ok || !d.Model || s.cfg.Asker == nil {
+		return ctx
+	}
+	return inbox.WithAsker(ctx, inbox.Asking{Asker: s.cfg.Asker, Account: d.Account})
+}
+
 // receipt is a receipt of r's request.
 func (s *Service) receipt(r *reading, kind receipts.Kind) *receipts.Receipt {
 	return &receipts.Receipt{
@@ -319,7 +332,7 @@ pages:
 		if err != nil {
 			return refuse(receipts.RefusedUnavailable, err)
 		}
-		page, err := s.cfg.Discloser.Page(ctx, box, r.d, before, limit-considered)
+		page, err := s.cfg.Discloser.Page(s.asking(ctx, r.d), box, r.d, before, limit-considered)
 		if err != nil {
 			return refuse(receipts.RefusedUnavailable, err)
 		}
@@ -429,7 +442,7 @@ func (s *Service) Read(ctx context.Context, g *oauth.Grant, id string) (*contrac
 	if err != nil {
 		return nil, nil, err
 	}
-	o, err := s.cfg.Discloser.Message(ctx, box, r.d, msg)
+	o, err := s.cfg.Discloser.Message(s.asking(ctx, r.d), box, r.d, msg)
 	if err != nil || o.Disclosed == nil {
 		return nil, nil, s.refuseRead(ctx, r, mbx, msg, o, err)
 	}
@@ -464,7 +477,7 @@ func (s *Service) Attachment(ctx context.Context, g *oauth.Grant, id string, ind
 	if err != nil {
 		return nil, nil, err
 	}
-	o, att, err := s.cfg.Discloser.Attachment(ctx, box, r.d, msg, index)
+	o, att, err := s.cfg.Discloser.Attachment(s.asking(ctx, r.d), box, r.d, msg, index)
 	if err != nil || o.Disclosed == nil || att == nil {
 		return nil, nil, s.refuseRead(ctx, r, mbx, msg, o, err)
 	}
