@@ -47,6 +47,11 @@ func allows(st Standing, a Access) error {
 		return nil
 	case AccessDeleteMessages:
 		return refuse(st)
+	case AccessConnection:
+		if st.Closing {
+			return contracts.ErrAccountClosing
+		}
+		return nil
 	}
 	return contracts.ErrNotFound
 }
@@ -394,6 +399,18 @@ func (s *Service) Open(ctx context.Context, c Caller, id string, a Access) (inbo
 		return inbox.Box{}, err
 	}
 	return inbox.Box{MailboxID: id, Key: key}, nil
+}
+
+// OpenForConnection opens one of an account's mailboxes for a read of one
+// of its connections (connections.Mailboxes, ADR 0030, "What a read
+// gives"): Open with AccessConnection. A mailbox that is not the account's,
+// was disconnected, or was deleted and made again under its address (a new
+// identifier) is contracts.ErrNotFound; a paused one is read (pausing stops
+// mail coming in, not reading it); a closing account is
+// contracts.ErrAccountClosing; a blocked or gone one
+// contracts.ErrUnauthorized.
+func (s *Service) OpenForConnection(ctx context.Context, account, mailbox string) (inbox.Box, error) {
+	return s.Open(ctx, Caller{Account: account}, mailbox, AccessConnection)
 }
 
 // CheckChange implements httpapi.MailboxesService: the checks Create and

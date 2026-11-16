@@ -203,6 +203,17 @@ func (s *Service) sweepOne(ctx context.Context, e *store.Entry) error {
 	if err := s.clean(ctx, id); err != nil {
 		return quiet(err)
 	}
+	// The rules' decisions about its messages (ADR 0031, "How long"),
+	// before its record: a cancelled reservation never had any.
+	if l.state != stCancelled {
+		var created time.Time
+		if l.doc != nil {
+			created = l.doc.CreatedAt
+		}
+		if err := s.removeDecisions(ctx, id, created); err != nil {
+			return err
+		}
+	}
 	if l.state == stDisconnecting || l.state == stCancelled {
 		if err := s.cfg.Records.RemoveRecord(ctx, recordName(id)); err != nil {
 			return err

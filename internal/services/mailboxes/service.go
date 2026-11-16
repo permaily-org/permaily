@@ -44,10 +44,11 @@ type Storage interface {
 
 // Config is what a Service needs.
 type Config struct {
-	// Records is the strict anchored records of mailboxes and accounts'
-	// lists (store.Anchored with Strict and OnlyNewest), used for those two
-	// kinds of record and nothing else: a strict name is never read or
-	// written through an Anchored that is not strict.
+	// Records is the strict anchored records of mailboxes, accounts' lists
+	// and the blocks of the rules' decisions about a mailbox's messages
+	// (store.Anchored with Strict and OnlyNewest, decisions.go), used for
+	// those three kinds of record and nothing else: a strict name is never
+	// read or written through an Anchored that is not strict.
 	Records  Records
 	Storage  Storage
 	Keys     Keys
