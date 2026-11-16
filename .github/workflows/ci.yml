@@ -319,7 +319,10 @@ jobs:
           gh release download "v${v}" --repo gitleaks/gitleaks --pattern "gitleaks_${v}_linux_x64.tar.gz" --output gitleaks.tgz
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tgz" | sha256sum -c -
           tar -xzf gitleaks.tgz gitleaks
-          ./gitleaks git --redact --no-banner --exit-code 1 .
+          # The history being checked (a pull request's merge with its base, or the branch
+          # pushed), every commit of it: not every branch fetched, so a pull request is
+          # judged on its own commits; each branch is scanned in its own pull request.
+          ./gitleaks git --redact --no-banner --exit-code 1 --log-opts=HEAD .
 
   # Build the enclave image natively on arm64 and cross-compiled on x86_64.
   # Both must produce the same bytes; the reproducible job compares them.
