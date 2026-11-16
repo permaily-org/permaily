@@ -249,28 +249,66 @@ describe('legal pages', () => {
       );
     });
 
-    it('how long connection records stay, and that their lists are not removed', () => {
-      // services/connections: an ended connection's records go EndedKept after it ends; nothing removes an
-      // account's lists (ListName) or their index, also when the account is removed (docs/legal.md, item 15).
-      // The pull request that removes them changes this test and the pages together.
+    it('connections removed with the account, as services/accounts and services/connections do it', () => {
+      // docs/legal.md, item 15 (pull request 152): removing an account (`clear` in services/accounts) calls
+      // connections.Lifecycle.RemoveAll before the account's record goes, and RemoveAll removes every connection the
+      // list names, the account's index entry and every epoch of its list (ListName). A change there fails here until
+      // the pages change with it.
+      const body = (source: string, signature: RegExp) => {
+        const at = source.search(signature);
+        expect(at, String(signature)).toBeGreaterThanOrEqual(0);
+        return source.slice(at, source.indexOf('\n}\n', at));
+      };
+      const clear = body(
+        go('internal/services/accounts/settings.go'),
+        /func \(s \*Service\) clear\(/,
+      );
+      const removeAll = clear.search(/\.RemoveAll\(ctx, id\)/);
+      expect(removeAll, 'clear calls RemoveAll').toBeGreaterThanOrEqual(0);
+      expect(removeAll, 'before the account’s record goes').toBeLessThan(
+        clear.search(/RemoveRecord\(ctx, recordName\(id\)\)/),
+      );
+      const lifecycle = go('internal/services/connections/lifecycle.go');
+      const remove = body(lifecycle, /func \(s \*Service\) RemoveAll\(/);
+      expect(remove).toMatch(/s\.removeConn\(ctx, m\.ID\)/);
+      expect(remove).toMatch(/DeleteEntry\(ctx, partitionAccounts, account\)/);
+      expect(remove).toMatch(
+        /s\.removeEpochs\(ctx, n, func\(e uint64\) string \{ return ListName\(account, e\) \}\)/,
+      );
+      expect(body(lifecycle, /func \(s \*Service\) removeEpochs\(/)).toMatch(
+        /Records\.RemoveRecord\(/,
+      );
+      const removeConn = body(
+        go('internal/services/connections/person.go'),
+        /func \(s \*Service\) removeConn\(/,
+      );
+      expect(removeConn).toMatch(/s\.removeFamily\(/);
+      expect(removeConn).toMatch(/Records\.RemoveRecord\(ctx, connName\(id\)\)/);
+      // While the account lives, an ended connection's records go EndedKept after it ends.
       expect(go('internal/services/connections/connections.go')).toMatch(
         /EndedKept = 30 \* 24 \* time\.Hour/,
       );
-      const dir = join(import.meta.dirname, '../../internal/services/connections');
-      const source = readdirSync(dir)
-        .filter((f) => f.endsWith('.go') && !f.endsWith('_test.go'))
-        .map((f) => readFileSync(join(dir, f), 'utf8'))
-        .join('\n');
-      expect(source).not.toMatch(/RemoveRecord\([^)]*ListName\(/);
+      // The tokens' lookup entries are found only by their hash and expire on their own: a refresh token in 30 days.
+      expect(go('internal/oauth/oauth.go')).toMatch(/RefreshTokenTTL = 30 \* 24 \* time\.Hour/);
       for (const path of ['privacy', 'data-deletion']) {
-        expect(text(path), path).toContain(
-          'records are scheduled for removal 30 days after the connection ends, including when the account itself has already been removed',
+        const said = text(path);
+        expect(said, path).toContain(
+          'When the account is removed, after the seven-day cancellation window, we remove your connections with it: the list of your connections, each connection’s record and its devices’ token records.',
         );
-        expect(text(path), path).toContain(
-          'Our connection-list records and their account index currently have no automatic removal',
+        expect(said, path).toContain(
+          'The tokens’ lookup entries expire within 30 days and are refused from the removal on.',
         );
+        expect(said, path).toContain(
+          'Until the account is removed, an earlier closed part of the list can still hold the connections it held then',
+        );
+        expect(said, path).toContain(
+          'Database backups can keep removed records for a further day.',
+        );
+        expect(said, path).not.toMatch(/no automatic removal/i);
       }
-      expect(text('data-deletion')).not.toMatch(/the devices that signed in, your connections,/);
+      expect(text('data-deletion')).toContain(
+        'the devices that signed in, your connections, your receipts',
+      );
     });
 
     it('the vendor documents’ cache, as internal/vendors bounds it', () => {
