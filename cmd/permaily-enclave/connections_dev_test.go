@@ -687,15 +687,32 @@ func TestV57TheImageRunsTheConnectionsPassOnItsOwn(t *testing.T) {
 		t.Fatal("/status has no connections")
 	}
 	// No pass but the first runs until a tick: the pass is on the ticker
-	// it is given, not on another.
-	time.Sleep(100 * time.Millisecond)
-	if n := passes.Load(); n != 1 {
-		t.Fatalf("%d passes before any tick", n)
-	}
-	for want := int64(2); want <= 3; want++ {
+	// it is given, not on another. A pass may read the index more than
+	// once (a strict read that looks again), so what counts is that the
+	// reads stop until a tick, and start again after each.
+	settled := settle(t, &passes)
+	for i := 1; i <= 2; i++ {
 		tick(t, "the connections' pass", sweep)
-		waitUntil(t, fmt.Sprintf("no pass %d after a tick", want), func() bool { return passes.Load() >= want })
+		waitUntil(t, fmt.Sprintf("no pass after tick %d", i), func() bool { return passes.Load() > settled })
+		settled = settle(t, &passes)
 	}
+}
+
+// settle waits until n has not moved for 200 ms and returns it; it fails
+// when n keeps moving for ten seconds, as it would on a ticker the test did
+// not give.
+func settle(t *testing.T, n *atomic.Int64) int64 {
+	t.Helper()
+	last, since := n.Load(), time.Now()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if v := n.Load(); v != last {
+			last, since = v, time.Now()
+		} else if time.Since(since) >= 200*time.Millisecond {
+			return last
+		}
+	}
+	t.Fatal("the connections' pass kept running without a tick")
+	return 0
 }
 
 // writePEM writes the played vendors' authority to file, as -dev-vendors-ca
