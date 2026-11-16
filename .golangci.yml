@@ -110,6 +110,66 @@ linters:
               desc: the model's client knows no service
             - pkg: github.com/aws/aws-sdk-go-v2
               desc: the model's client reaches only the model
+        oauth-is-pure:
+          # What the authorization server decides from its arguments alone (ADR 0030): metadata, the rules of a
+          # client_id and its document, PKCE, redirects, resources, scopes, token shapes, client assertions.
+          # No net/http, no io, no os, no storage: fetching is internal/vendors/cimd's, keeping is the service's.
+          files: ["**/internal/oauth/*.go", "!$test"]
+          list-mode: strict
+          allow:
+            - bytes
+            - crypto
+            - encoding
+            - errors
+            - fmt
+            - math
+            - net/netip
+            - net/url
+            - slices
+            - sort
+            - strconv
+            - strings
+            - time
+            - unicode
+            - github.com/permaily-org/permaily/internal/contracts
+            - github.com/permaily-org/permaily/internal/oauth
+            - github.com/permaily-org/permaily/internal/jws
+            - golang.org/x/net/idna
+        rules-are-pure:
+          # The rules every connection's reads apply first (ADR 0031): formulas of the query language, compiled.
+          files: ["**/internal/rules/**", "!$test"]
+          list-mode: strict
+          allow:
+            - embed
+            - encoding/json
+            - errors
+            - fmt
+            - sync
+            - github.com/permaily-org/permaily/internal/contracts
+            - github.com/permaily-org/permaily/internal/query
+            - github.com/permaily-org/permaily/internal/rules
+        vendors-list-is-pure:
+          # The verified vendors and the seam that resolves a client (ADR 0030); the fetching adapter is
+          # internal/vendors/cimd, outside this rule.
+          files: ["**/internal/vendors/*.go", "!$test"]
+          list-mode: strict
+          allow:
+            - context
+            - errors
+            - strconv
+            - strings
+            - time
+            - github.com/permaily-org/permaily/internal/contracts
+            - github.com/permaily-org/permaily/internal/oauth
+            - github.com/permaily-org/permaily/internal/vendors
+        mcp-sdk-only-in-mcpapi:
+          # The MCP Go SDK speaks the protocol and nothing else (ADR 0030): only the MCP adapter links it, behind
+          # the service's own token and step-up checks.
+          files: ["$all", "!$test", "!**/internal/mcpapi/**"]
+          list-mode: lax
+          deny:
+            - pkg: github.com/modelcontextprotocol/go-sdk
+              desc: only internal/mcpapi speaks MCP
         services-know-no-adapter:
           # A service is used by the API, MCP and the command line alike: it knows none of them, and no cloud.
           files: ["**/internal/services/**", "!$test"]
@@ -138,6 +198,8 @@ linters:
               "!**/internal/webauthn/webauthntest/**",
               "!**/internal/idp/idptest/**",
               "!**/internal/inbox/inboxtest/**",
+              "!**/internal/inbox/disclosetest/**",
+              "!**/internal/services/connections/connectionstest/**",
               "!**/internal/services/mailboxes/mailboxestest/**",
               "!**/internal/decide/decidetest/**",
             ]
@@ -155,6 +217,10 @@ linters:
               desc: the fake providers are only for dev mode and tests
             - pkg: github.com/permaily-org/permaily/internal/inbox/inboxtest
               desc: the stand-in for delivery is only for tests
+            - pkg: github.com/permaily-org/permaily/internal/inbox/disclosetest
+              desc: the stand-in for disclosure's decisions is only for tests
+            - pkg: github.com/permaily-org/permaily/internal/services/connections/connectionstest
+              desc: the fake connections service is only for tests
             - pkg: github.com/permaily-org/permaily/internal/services/mailboxes/mailboxestest
               desc: the fake mailboxes are only for tests
             - pkg: github.com/permaily-org/permaily/internal/query/querytest

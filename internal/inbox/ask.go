@@ -23,7 +23,13 @@ import (
 // never fails for the model's sake: an atom it could not get a kept answer
 // for is simply not in Asked.Answers, and is unknown; Asked.Outcome says
 // why when it is not the model's own failure. An error is the storage's or
-// the request's.
+// the request's, and only ever before the model was asked anything for the
+// question (ADR 0031, "Changed after the second design review", N1): a
+// failure after that (an answer received and not kept, or kept and not
+// confirmed) is answered in Asked.Unsettled, so a decision begun for the
+// question is never dropped as if nothing had been asked. A kept answer an
+// erroring Ask had read is not new: whoever writes the table could have
+// removed it before the decision was begun as well.
 type Asker interface {
 	Ask(ctx context.Context, q *Question) (*Asked, error)
 }
@@ -117,6 +123,40 @@ type Asked struct {
 	// Called is how many attempts to the model it made (0 when every atom
 	// was kept).
 	Called int
+	// Evidence is what each answer in Answers came from, and each kept
+	// refusal (which is in neither Answers nor Held): the very kept answer
+	// used, as this Ask read or wrote it, never read again later (ADR 0030,
+	// "Changed after the design review", 14). An atom decided by rule (an
+	// empty subject or text) has an Evidence with ByRule set. The discloser
+	// tells a persisted refusal (Refused) from a failure (no Evidence), and
+	// receipts name the model, the prompt and the canary's days of the
+	// answer a decision rested on.
+	Evidence map[query.Atom]Evidence
+	// Unsettled are the atoms whose answer (or refusal) this Ask received
+	// from the model and could not confirm kept: Keep failed, wrote and
+	// then failed, or kept another answer first. They are in neither
+	// Answers nor Evidence, and no one can say what the kept entry now
+	// holds: a decision resting on one stays Pending (SettleAfterAsk), and
+	// is recovered Held, never Abandoned (N1).
+	Unsettled []query.Atom
+}
+
+// Evidence is one answer Ask used, as it was kept.
+type Evidence struct {
+	// ByRule: decided without the model (an empty subject or text); the
+	// other fields are empty.
+	ByRule bool
+	// Refused: the model's kept refusal; the atom is unknown.
+	Refused bool
+	// P is the kept probability (0 for a refusal or by rule).
+	P      float64
+	Model  string
+	Prompt string
+	// At is when the answer was kept; CanaryChecked and CanaryChange are
+	// KeptAnswer's.
+	At            time.Time
+	CanaryChecked string
+	CanaryChange  string
 }
 
 // AskOutcome says why Ask did not ask the model of every atom it had no

@@ -305,6 +305,15 @@ type Mark struct {
 	head *Commit
 }
 
+// Version is the version of the commit the record was read by: how many
+// versions it has, 0 for a record read when it had none.
+func (m Mark) Version() uint64 {
+	if m.head == nil {
+		return 0
+	}
+	return m.head.Version
+}
+
 // GetRecord implements Records: the value of the newest commit, ErrLost when
 // that value is gone, ErrNotFound when the record was never stored or was
 // removed.

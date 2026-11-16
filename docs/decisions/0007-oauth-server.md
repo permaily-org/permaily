@@ -1,6 +1,6 @@
 # 0007 OAuth authorization server for apps and MCP clients
 
-Status: Proposed. Needs a spike (`spikes/oauth-server/`) before acceptance.
+Status: Superseded by [ADR 0030](0030-connections-and-the-authorization-server-how.md) (2026-11-16), which records the spike and settles the decision: our own implementation, CIMD with PKCE and resource indicators, no dynamic registration, the device flow deferred to the SDKs.
 Date: 2026-11-09
 
 ## Context

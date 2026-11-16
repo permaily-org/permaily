@@ -7,6 +7,7 @@ import (
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain"
+	"github.com/permaily-org/permaily/internal/services/connections"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
 	"github.com/permaily-org/permaily/internal/services/mailboxes/mailboxestest"
 )
@@ -51,6 +52,43 @@ func TestStanding(t *testing.T) {
 	}
 	if _, err := w.svc.Standing(ctx, bea.Account.ID); !errors.Is(err, contracts.ErrUnauthorized) {
 		t.Fatal("a blocked account", err)
+	}
+}
+
+// What connections read of an account (ADR 0030, "Changed after the design
+// review", 16): the same record, its own answer.
+func TestConnectionStanding(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	me, cookie := w.signUp("ana@example.org")
+	id := me.Account.ID
+	want := func(what string, st connections.Standing) {
+		t.Helper()
+		if got, err := w.svc.ConnectionStanding(ctx, id); err != nil || got != st {
+			t.Fatalf("%s: %v %v, want %v", what, got, err, st)
+		}
+	}
+	want("open", connections.StandingOpen)
+	w.terms = "2099-01-01"
+	want("terms changed", connections.StandingNotAgreed)
+	w.terms = domain.TermsVersion
+	who, err := w.svc.Authenticate(ctx, cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(who)); err != nil {
+		t.Fatal(err)
+	}
+	want("closing", connections.StandingClosing)
+	if _, err := w.svc.BlockAccount(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	want("blocked while closing", connections.StandingBlocked)
+	w.now = w.now.Add(domain.AccountClosing)
+	want("due", connections.StandingGone)
+	for _, other := range []string{"", "acc_x", "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa"} {
+		if got, err := w.svc.ConnectionStanding(ctx, other); err != nil || got != connections.StandingGone {
+			t.Errorf("%q: %v %v", other, got, err)
+		}
 	}
 }
 

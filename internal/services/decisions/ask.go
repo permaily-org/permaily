@@ -54,11 +54,22 @@ type asking struct {
 }
 
 // use puts a kept answer in out: its probability, or nothing for a
-// refusal, which stays unknown.
+// refusal, which stays unknown; and, for both, the kept answer itself as
+// its evidence.
 func (a *asking) use(atom query.Atom, ka inbox.KeptAnswer) {
 	if !ka.Refused {
 		a.out.Answers[atom] = ka.P
 	}
+	a.out.Evidence[atom] = inbox.Evidence{
+		Refused: ka.Refused, P: ka.P, Model: ka.Model, Prompt: ka.Prompt, At: ka.At,
+		CanaryChecked: ka.CanaryChecked, CanaryChange: ka.CanaryChange,
+	}
+}
+
+// byRule puts an answer decided without the model in out.
+func (a *asking) byRule(atom query.Atom, p float64) {
+	a.out.Answers[atom] = p
+	a.out.Evidence[atom] = inbox.Evidence{ByRule: true, P: p}
 }
 
 // hashOf is the content hash an atom's kept answer is for, "" when it is
@@ -89,7 +100,7 @@ func (s *Service) Ask(ctx context.Context, q *inbox.Question) (*inbox.Asked, err
 	if q == nil {
 		return nil, errNoQuestion
 	}
-	a := &asking{out: &inbox.Asked{Answers: query.Answers{}, Outcome: inbox.AskAnswered}}
+	a := &asking{out: &inbox.Asked{Answers: query.Answers{}, Outcome: inbox.AskAnswered, Evidence: map[query.Atom]inbox.Evidence{}}}
 	var atoms []query.Atom
 	seen := map[query.Atom]bool{}
 	for _, atom := range q.Atoms {
@@ -147,7 +158,7 @@ func (s *Service) Ask(ctx context.Context, q *inbox.Question) (*inbox.Asked, err
 	})
 	setRule := func() {
 		for _, atom := range byRule {
-			a.out.Answers[atom] = 0
+			a.byRule(atom, 0)
 		}
 	}
 	if len(missing) == 0 {
@@ -206,7 +217,7 @@ func (s *Service) Ask(ctx context.Context, q *inbox.Question) (*inbox.Asked, err
 	setRule()
 	calls, rule := decide.Plan(missing, q.Subject, text, hasText)
 	for atom, p := range rule {
-		a.out.Answers[atom] = p
+		a.byRule(atom, p)
 	}
 	calls = s.fit(calls, missing, kept)
 	if len(calls) == 0 {
@@ -259,16 +270,23 @@ func (s *Service) Ask(ctx context.Context, q *inbox.Question) (*inbox.Asked, err
 	switch {
 	case errors.Is(err, inbox.ErrGone):
 		s.logKind(slog.LevelInfo, "decisions: a message was deleted while it was asked about; nothing new is used", "message_gone")
+		a.out.Unsettled = append(a.out.Unsettled, asked...)
 		return a.out, nil
 	case err != nil:
+		// Keep may have written before it failed (ADR 0031, N1): what the
+		// entry holds now is unknown, so the answers are Unsettled, not
+		// merely unused.
 		s.logKind(slog.LevelWarn, "decisions: a message's answers could not be kept; none of them is used", "keep_failed")
+		a.out.Unsettled = append(a.out.Unsettled, asked...)
 		return a.out, nil
 	}
 	for i, ka := range add.Answers {
 		atom := asked[i]
 		if w, ok := keptFor(written, ka.Content, atom, a.model); ok {
 			a.use(atom, w)
+			continue
 		}
+		a.out.Unsettled = append(a.out.Unsettled, atom)
 	}
 	return a.out, nil
 }

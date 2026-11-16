@@ -372,10 +372,185 @@ export type MatchPage = {
    * otherwise `limit` when a spend limit held some back, otherwise `asked`. Held messages stay in `needs_model`.
    */
   model?: MatchModel
+  /** Only on the consent screen's preview with the model (ADR 0030): what a rule holds back. Not in `messages`. */
+  held?: string[]
 }
 
 /** What became of asking the model on a page of matches (ADR 0028). */
 export type MatchModel = 'asked' | 'limit' | 'off'
+
+/*
+  Connections (ADR 0030). The shapes of internal/contracts/connections.go; the calls come with the routes (pull
+  request 6) and the screens (pull request 8).
+*/
+
+/** A part of a message a connection reads. Every connection reads `sender`; `attachments` only when asked for. */
+export type ConnectionPart = 'sender' | 'subject' | 'body' | 'attachments'
+
+/** What a connection's tokens are for: the API for apps, or MCP for agents. */
+export type ConnectionResource = 'api' | 'mcp'
+
+/**
+ * Who asks: the host of its document's URL, and the owner the image's list names for it. Nothing else of a vendor is
+ * believed; `client_name` is its own claim.
+ */
+export type ConnectionVendor = { domain: string; verified?: string }
+
+/** New mail only (from the approval, `at` then set in a connection), mail since `at`, or with neither all the mail kept. */
+export type MailSince = { new: boolean; at?: string }
+
+/** A rule every connection's reads apply first, and its sentence. */
+export type RuleSummary = { id: string; version: number; sentence: QuerySentence[] }
+
+/**
+ * The scope the person is about to approve: sent whole with every preview and with the decision. `mailboxes` is never
+ * empty and never means all. New mail only is mail received from the approval on, so its preview is empty.
+ */
+export type ConsentDraft = { mailboxes: string[]; since: MailSince }
+
+/**
+ * What approving does to the client's connection: makes one, adds this request as another device of it (the same scope
+ * or a narrower one; its other devices keep working), or replaces it (any other scope; its tokens stop).
+ */
+export type ConnectionChange = 'new' | 'add_device' | 'replace'
+
+/** What the consent screen shows of a vendor's request. Without `query`, the person chooses the mailboxes. */
+export type AuthorizationRequest = {
+  id: string
+  vendor: ConnectionVendor
+  client_name: string
+  redirect_host: string
+  /** The browser goes back to this computer: any program on it can use this vendor's name. */
+  loopback: boolean
+  resource: ConnectionResource
+  parts: ConnectionPart[]
+  query?: FormulaCheck
+  since: MailSince
+  ends_in_days: number
+  /** What the picker offers. */
+  mailboxes: string[]
+  /** Where the screen starts: every mailbox and new mail only, or the client's connection's. */
+  draft: ConsentDraft
+  rules: RuleSummary[]
+  /** The client's active connection, and what approving the starting draft does to it. */
+  connection?: Connection
+  change: ConnectionChange
+  /** What approving the starting draft does, as shown: sent back with the approval. */
+  snapshot: ConsentSnapshot
+  /** Sent back with an approval; refused (`model_notice_changed`) when another is in force. */
+  model_notice: string
+  expires_at: string
+}
+
+/** A request to show, or where to send the browser back with the vendor's error. Exactly one is set. */
+export type AuthorizationStarted = { request?: AuthorizationRequest; redirect?: string }
+
+/** A page of what a request would read under `draft` in one of its mailboxes; `after` needs the page before's `draft_id`. */
+export type ConsentPreview = {
+  draft: ConsentDraft
+  draft_id?: string
+  mailbox: string
+  after?: string
+  limit?: number
+  ask_model?: boolean
+}
+
+/** A preview's answer: the draft's identifier, what approving it does (and its snapshot), and the page. */
+export type ConsentPreviewPage = {
+  draft_id: string
+  change: ConnectionChange
+  snapshot: ConsentSnapshot
+  page: MatchPage
+}
+
+/**
+ * What the screen showed approving would do (ADR 0030, N5): the client's connection and its record's version, the change
+ * and the end. An approval sends it back; when what approving does has changed since, the server answers
+ * `consent_changed` and commits nothing, and the screen loads the request again for a new confirmation.
+ */
+export type ConsentSnapshot = {
+  connection?: string
+  version?: number
+  change: ConnectionChange
+  ends_at: string
+  draft_id: string
+}
+
+/** The person's decision: an approval sends the draft, the notice and the snapshot the screen showed. */
+export type AuthorizationDecision = {
+  allow: boolean
+  draft?: ConsentDraft
+  model_notice?: string
+  snapshot?: ConsentSnapshot
+}
+
+/** A renewal: the notice and the connection's version the screen showed (`consent_changed` when it changed since). */
+export type ConnectionRenewal = { model_notice: string; version: number }
+
+/**
+ * The refusals an approval or a renewal may answer that the consent screen and the connections page handle (pull
+ * request 8 adds them to `ApiErrorCode` with their words): a fresh proof needed, the notice or what approving does
+ * changed since the screen was shown (both reload it), the connection's 16 devices (the person removes one on its page;
+ * none is removed for them), the account's connections, a request that ended.
+ */
+export const CONSENT_REFUSALS = [
+  'confirmation_needed',
+  'model_notice_changed',
+  'consent_changed',
+  'too_many_devices',
+  'too_many_connections',
+  'request_ended',
+  'connection_ended',
+] as const
+export type ConsentRefusal = (typeof CONSENT_REFUSALS)[number]
+
+/** Where the browser goes back to the vendor, and nowhere else. */
+export type AuthorizationAnswer = { redirect: string }
+
+export type ConnectionState = 'active' | 'ended'
+
+export type EndReason = 'person' | 'vendor' | 'reuse' | 'replaced' | 'account' | 'expired'
+
+/** Whether a connection gets mail now: nothing leaves while the model cannot be asked or a new notice waits for the person. */
+export type ConnectionDelivery = 'delivering' | 'model_unavailable' | 'model_notice_changed'
+
+/** One device of a connection: the tokens one approval started, with the scope confirmed for it. */
+export type ConnectionDevice = {
+  id: string
+  made_at: string
+  state: ConnectionState
+  parts: ConnectionPart[]
+  narrower?: boolean
+  ended_at?: string
+  end_reason?: EndReason
+}
+
+/** A connection as the person's app shows it. */
+export type Connection = {
+  id: string
+  vendor: ConnectionVendor
+  client_id: string
+  client_name: string
+  resource: ConnectionResource
+  state: ConnectionState
+  parts: ConnectionPart[]
+  query?: FormulaCheck
+  mailboxes: string[]
+  since: MailSince
+  made_at: string
+  ends_at: string
+  ended_at?: string
+  end_reason?: EndReason
+  replaced_by?: string
+  devices: ConnectionDevice[]
+  model_notice: string
+  delivery: ConnectionDelivery
+  /** Its record's version, which a renewal sends back. */
+  version: number
+}
+
+/** The account's connections: the active ones and the ones that ended in the last 30 days. */
+export type ConnectionList = { connections: Connection[] }
 
 /** The codes the server answers with, plus `network` for a request that got no answer. */
 export type ApiErrorCode =
