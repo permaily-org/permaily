@@ -119,8 +119,10 @@ func TestV23AskingAgain(t *testing.T) {
 				req = w.pushed(a, p, again, tr.query, nil)
 			} else {
 				req = w.start(a, p, again)
-				// Without a query, the screen starts from what was approved.
-				if !slices.Equal(req.Draft.Mailboxes, all) || !req.Draft.Since.New {
+				// Without a query, the screen starts from what was approved: new
+				// mail only from when it was (finding 11 of the review of pull
+				// request 136).
+				if !slices.Equal(req.Draft.Mailboxes, all) || req.Draft.Since.New || !req.Draft.Since.At.Equal(start) {
 					t.Fatalf("%+v", req.Draft)
 				}
 			}

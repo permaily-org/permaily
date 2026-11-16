@@ -881,3 +881,73 @@ func TestV21ProofOrRequestEndsAtEachWriteOfTheCommit(t *testing.T) {
 		})
 	}
 }
+
+// V23: asking again some time after the first approval, with the starting
+// draft or a deliberate change: the same permission adds a device reading
+// what the first reads; choosing new mail only again narrows the device
+// to this approval; a replacement keeps the first approval's cutoff
+// (finding 11).
+func TestV23AskingAgainLaterKeepsOrMovesTheSinceAsChosen(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name     string
+		resource string
+		since    *contracts.MailSince
+		change   contracts.ConnectionChange
+		reads    bool
+	}{
+		{name: "the same permission", change: contracts.ChangeAddDevice, reads: true},
+		{name: "new mail only chosen again", since: &contracts.MailSince{New: true}, change: contracts.ChangeAddDevice, reads: false},
+		{name: "a replacement", resource: apiResource, change: contracts.ChangeReplace, reads: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t)
+			a, b := w.enclave(), w.enclave()
+			x := w.ask(claudeCode)
+			first, _ := w.connect(a, w.person(accountA), x)
+			w.clock.add(10 * time.Minute)
+			w.mbx.add(mail{ID: "zmid", Mailbox: mailboxID(1), Received: w.clock.now(), From: "sender@example.com", Subject: "between approvals"})
+			w.clock.add(10 * time.Minute)
+			y := w.ask(claudeCode)
+			if c.resource != "" {
+				y.resource = c.resource
+			}
+			p := w.person(accountA)
+			req := w.start(b, p, y)
+			d := req.Draft
+			if d.Since.New || !d.Since.At.Equal(start) {
+				t.Fatalf("the starting draft's since is not the first approval's: %+v", d.Since)
+			}
+			snap := req.Snapshot
+			if c.since != nil {
+				d.Since = *c.since
+				pv, err := b.Preview(ctx, p, req.ID, contracts.ConsentPreview{Draft: d, Mailbox: mailboxID(1)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				snap = pv.Snapshot
+			}
+			if snap.Change != c.change {
+				t.Fatal(snap.Change)
+			}
+			second, err := w.exchange(b, y, w.allowDraft(b, p, req, d, snap))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.change == contracts.ChangeAddDevice {
+				_, r, err := a.Read(ctx, w.grant(a, x, first.AccessToken), mailboxID(1)+".zmid")
+				if err != nil {
+					t.Fatal(err)
+				}
+				r.Finish(false)
+			}
+			_, r, err := b.Read(ctx, w.grant(b, y, second.AccessToken), mailboxID(1)+".zmid")
+			if err == nil {
+				r.Finish(false)
+			}
+			if c.reads != (err == nil) {
+				t.Fatalf("the second device reads mail received between the approvals: %v, want %v", err, c.reads)
+			}
+		})
+	}
+}

@@ -355,7 +355,13 @@ func (s *Service) screen(ctx context.Context, id string, req *requestEntry) (*co
 		if len(mbx) > 0 {
 			out.Draft.Mailboxes = mbx
 		}
+		// "New mail only" was resolved when that connection was approved: the
+		// draft starts from that instant, not from this approval's, which
+		// the person may still choose (finding 11).
 		out.Draft.Since = cur.private.Since
+		if out.Draft.Since.New {
+			out.Draft.Since = contracts.MailSince{At: cur.MadeAt.UTC()}
+		}
 	}
 	if len(out.Draft.Mailboxes) == 0 {
 		return out, nil // nothing to approve until the account has a mailbox
