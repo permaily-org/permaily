@@ -283,3 +283,15 @@ func TestSchemaOfPanicsOnATypeWithoutASchema(t *testing.T) {
 	}()
 	schemaOf[chan int]()
 }
+
+// An empty answer's header is flushed under its lease, before send says it
+// was sent (#131's second review, finding 1), never left for the server to
+// write once the handler returned.
+func TestAnEmptyAnswerIsFlushedUnderItsLease(t *testing.T) {
+	rec := newRecorder(AnswerMax)
+	rec.WriteHeader(http.StatusOK)
+	w := httptest.NewRecorder()
+	if sent, ended := send(context.Background(), context.Background(), w, nil, rec); !sent || ended != "" || !w.Flushed {
+		t.Fatalf("sent %v ended %q flushed %v", sent, ended, w.Flushed)
+	}
+}
