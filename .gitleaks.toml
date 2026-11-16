@@ -54,3 +54,7 @@ regexes = ['''^key = "pm-a34-canary-key-7d8e"$''']
 description = "from pull request 5 of ADR 0028 on, a test's made-up key is written sk-proj-test- and then letters, digits, - or _: only assigned with = to a name holding key or Key, the whole value between quotes; no OpenAI key starts with sk-proj-test-; no path is named, because gitleaks dir skips a named path's whole file whatever its regexes"
 regexTarget = "match"
 regexes = ['''^[A-Za-z_]*[Kk]ey[A-Za-z_]* = ["']sk-proj-test-[A-Za-z0-9_-]+["']$''']
+
+[[allowlists]]
+description = "internal/domain's redaction test (ADR 0030, the seams of step 5) puts a made-up client assertion, whose signature decodes to the word signature, inside an error to show it is never logged; it signs nothing and was never a credential"
+regexes = ['''^eyJhbGciOiJSUzI1NiJ9\.eyJqdGkiOiJ1bmlxdWUifQ\.c2lnbmF0dXJl$''']
