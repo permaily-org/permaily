@@ -339,8 +339,10 @@ func (v *vendorAPI) send(w http.ResponseWriter, r *http.Request, rel connections
 // answer, with the header when it is the first), and nothing more. sent says
 // every byte was handed to the socket; ended, when not "", why the transfer
 // ended otherwise: outcomeCut (ctx ended), outcomeClientLeft (ctx ended with
-// req) or outcomeAborted (a write failed). The abort never runs once
-// transfer returned, on a writer its handler no longer has.
+// req) or outcomeAborted (a write failed). Once the last flush returned the
+// transfer is complete (admission.complete): a cut seen before then leaves
+// it unsent, the client leaving or a cut after it does not. The abort never
+// runs once transfer returned, on a writer its handler no longer has.
 func transfer(ctx, req context.Context, w http.ResponseWriter, conn net.Conn, body []byte) (sent bool, ended string) {
 	a := &admission{ctx: ctx, req: req, conn: conn, rc: http.NewResponseController(w), done: make(chan struct{})}
 	stop := context.AfterFunc(ctx, a.abort)
@@ -373,7 +375,8 @@ func transfer(ctx, req context.Context, w http.ResponseWriter, conn net.Conn, bo
 			return false, outcomeAborted
 		}
 		if off+len(chunk) == len(body) {
-			return true, ""
+			a.complete()
+			return true, "" // unless a cut came first (aborted)
 		}
 	}
 }
@@ -389,9 +392,10 @@ type admission struct {
 	once sync.Once
 	done chan struct{} // closed when the abort completed
 
-	mu  sync.Mutex
-	cut bool
-	why string
+	mu        sync.Mutex
+	cut       bool
+	why       string
+	completed bool // the last flush returned before a cut of the lease
 }
 
 // admit says a write may enter the transport: the lease's context has not
@@ -432,11 +436,24 @@ func (a *admission) abort() {
 	})
 }
 
-// aborted says whether the transfer was aborted, and why.
+// complete records that the last flush returned: every byte, the header
+// included, was handed to the socket. The transfer is then complete unless
+// the lease was cut before it was recorded; the client leaving (the
+// request's context ending, which ends the lease's) unsends nothing the
+// socket already took, whenever its abort ran. Once complete, a later abort
+// may still close the connection but no longer changes what was sent.
+func (a *admission) complete() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.completed = !a.cut || a.why == outcomeClientLeft
+}
+
+// aborted says whether the transfer was aborted before it was complete, and
+// why.
 func (a *admission) aborted() (why string, cut bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.why, a.cut
+	return a.why, a.cut && !a.completed
 }
 
 type connKey struct{}
