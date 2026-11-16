@@ -331,6 +331,33 @@ export type QueryFormula = { v: 1; all: { any: QueryCondition[] }[] }
 export type FormulaProblem = { at: string; reason: string }
 
 /**
+ * Why the person's `invalid_client` refused a vendor's request (ADR 0030, `contracts.ClientProblem`): one of three fixed
+ * reasons, never the vendor's words or address. Pull request 8 gives each its words.
+ */
+export const CLIENT_PROBLEMS = [
+  'client_id_invalid',
+  'client_document_invalid',
+  'redirect_uri_invalid',
+] as const
+export type ClientProblem = (typeof CLIENT_PROBLEMS)[number]
+
+/** The `details` of an `invalid_client` error: its reason alone, with no `at`. */
+export type ClientProblemDetails = { reason: ClientProblem }
+
+/**
+ * The `details` of an API error (`contracts.ErrorDetails`): with `invalid_formula` a `FormulaProblem`, which always has
+ * `at`; with `invalid_client` a `ClientProblemDetails`, which never has it.
+ */
+export type ErrorDetails = FormulaProblem | ClientProblemDetails
+
+/** The reason in an `invalid_client` answer's `details`, when it is one of the three and there is no `at`. */
+export function clientProblemOf(details: unknown): ClientProblem | undefined {
+  if (typeof details !== 'object' || details === null || 'at' in details) return undefined
+  const { reason } = details as { reason?: unknown }
+  return CLIENT_PROBLEMS.find((p) => p === reason)
+}
+
+/**
  * Fixed words of a template, or a value of the formula (`value`), shown set apart and isolated. `model` marks the
  * parts of a condition a model decides. A mailbox is a value part: its label, its address, or, once disconnected,
  * its identifier between the fixed parts "a mailbox you disconnected (" and ")".

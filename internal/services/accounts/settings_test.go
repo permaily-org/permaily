@@ -1387,7 +1387,7 @@ func TestRun(t *testing.T) {
 	wait()
 	stop()
 	<-done
-	if logs := c.logs.String(); !strings.Contains(logs, "accounts: removing the accounts that are due") || !strings.Contains(logs, "account#acc_…: down") {
+	if logs := c.logs.String(); !strings.Contains(logs, "accounts: removing the accounts that are due") || !strings.Contains(logs, domain.Unclassified) {
 		t.Fatalf("logs:\n%s", logs)
 	}
 	c.quiet(id, "example.org", "Ana Closing")
@@ -1425,7 +1425,7 @@ func TestLookupFailuresNameNoAccount(t *testing.T) {
 	if _, mail := w.start("ana@example.org", ""); mail != nil {
 		t.Fatal("a message was sent")
 	}
-	if !strings.Contains(w.logs.String(), "commits of account-acc_…: down") {
+	if !strings.Contains(w.logs.String(), `msg="accounts: looking an address up" err="`+domain.Unclassified+`"`) || strings.Contains(w.logs.String(), me.Account.ID) {
 		t.Fatalf("logs:\n%s", w.logs)
 	}
 	w.quiet(me.Account.ID, "example.org")

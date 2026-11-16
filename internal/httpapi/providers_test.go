@@ -592,7 +592,7 @@ func TestProvidersAPIInternalErrors(t *testing.T) {
 	if _, to := a.back("state=x&code=y"); to != "/sign-in#provider_error=provider_unavailable" || strings.Count(a.logs.String(), "api: internal error") != failures {
 		t.Fatalf("a refusal: %q\n%s", to, a.logs)
 	}
-	if logs := a.logs.String(); !strings.Contains(logs, "commits of account-acc_…: down") || strings.Contains(logs, id) || strings.Contains(logs, "some-state") || strings.Contains(logs, "some-code") || strings.Contains(logs, "a-cookie-of-a-trip") || strings.Contains(logs, "Secret") {
+	if logs := a.logs.String(); !strings.Contains(logs, domain.Unclassified) || strings.Contains(logs, id) || strings.Contains(logs, "some-state") || strings.Contains(logs, "some-code") || strings.Contains(logs, "a-cookie-of-a-trip") || strings.Contains(logs, "Secret") {
 		t.Fatalf("logs:\n%s", logs)
 	}
 }
