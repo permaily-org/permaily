@@ -9,6 +9,7 @@
 //     the challenge, one not valid or for the API is 401 invalid_token, and
 //     a check that could not read the storage is 503 with Retry-After, never
 //     401 (Codex drops its tools on a 401).
+//
 //  2. The JSON-RPC body, at most BodyMax, read to know which tool is called:
 //     a tool that needs a part the grant does not have (get_attachment
 //     without mail.attachments) is answered HTTP 403 insufficient_scope,
@@ -18,8 +19,18 @@
 //     middleware (classify: one object, no member twice in any case, names
 //     matched exactly as the SDK matches them, method and params of their
 //     types, nothing after it).
+//
+//     Every refusal this package makes of a mail tool's call once Check
+//     returned its grant is recorded first (connections.API.Refuse, ADR 0030,
+//     "Seams added while building"; ADR 0031): the step-up, arguments the
+//     SDK's schema refused before the tool ran, and arguments the tool's own
+//     reading refused, each with that grant, a fixed reason and no message
+//     identifier. A refusal that cannot be recorded is 503 with Retry-After
+//     in its place. What the service refuses it records itself.
+//
 //  3. The SDK, given only what was verified: auth.RequireBearerToken hands
 //     the tool the grant (req.Extra.TokenInfo), never the token.
+//
 //  4. The answer of a tool call, made by the SDK into memory (at most
 //     AnswerMax) and sent only under the lease the service returned with the
 //     mail (connections.Release, N2 and the owner's decision 14): Start
@@ -68,6 +79,7 @@ import (
 	"github.com/permaily-org/permaily/internal/jws"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/services/connections"
+	"github.com/permaily-org/permaily/internal/services/receipts"
 )
 
 const (
@@ -170,7 +182,10 @@ type call struct {
 	// its own, without the request's deadline or its end.
 	ctx context.Context
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// entered says a tool ran with this call's grant: a mail tool's call
+	// the SDK answered without it was refused by the SDK (its schema).
+	entered bool
 	release connections.Release
 	stepUp  []contracts.Part
 	status  int
@@ -309,6 +324,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	c := &call{grant: g, ctx: r.Context()}
+	name := ""
 	if r.Method == http.MethodPost {
 		body, err := io.ReadAll(io.LimitReader(r.Body, BodyMax+1))
 		switch {
@@ -327,7 +343,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_body", "send one JSON-RPC message per request")
 			return
 		}
-		m, name, ok := classify(body)
+		var m string
+		m, name, ok = classify(body)
 		if !ok {
 			outcome = "invalid_body"
 			writeError(w, http.StatusBadRequest, "invalid_body", "the request is not one JSON-RPC message")
@@ -347,6 +364,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			c.abortable = true
 			if missing := missingParts(g, name); len(missing) > 0 {
+				if h.record(r.Context(), c, name, receipts.RefusedPartNotGiven) != nil {
+					outcome = "unavailable"
+					unavailable(w)
+					return
+				}
 				outcome = "step_up"
 				h.stepUp(w, g, missing)
 				return
@@ -360,6 +382,15 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	rec := newRecorder(AnswerMax)
 	h.sdk.ServeHTTP(rec, r)
+	if _, mail := mailOperations[name]; mail && !c.ran() {
+		// The SDK refused the call before the tool ran (arguments its
+		// schema does not take): recorded, then its answer sent; or 503.
+		if h.record(r.Context(), c, name, receipts.RefusedInvalidBody) != nil {
+			c.setStatus(http.StatusServiceUnavailable, "unavailable")
+		} else {
+			c.setOutcome("invalid_arguments")
+		}
+	}
 	var abort bool
 	if outcome, abort = h.answer(w, r, c, rec); abort {
 		panic(http.ErrAbortHandler) // after outcome is set: logged as it was
