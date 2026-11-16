@@ -333,11 +333,14 @@ func TestV21Decide(t *testing.T) {
 	})
 }
 
-// failing is the records of one enclave with a test's hook before a write.
+// failing is the records of one enclave with a test's hook before a write,
+// and one after a record was put (landed: what it answers is the answer
+// the enclave gets, a write whose answer was lost).
 type failing struct {
 	Records
 	mu     sync.Mutex
 	before func(op, name string) error
+	after  func(ctx context.Context, name string) error
 }
 
 func (f *failing) hook(op, name string) error {
@@ -356,11 +359,26 @@ func (f *failing) set(h func(op, name string) error) {
 	f.mu.Unlock()
 }
 
+func (f *failing) setAfter(h func(ctx context.Context, name string) error) {
+	f.mu.Lock()
+	f.after = h
+	f.mu.Unlock()
+}
+
 func (f *failing) PutRecordAt(ctx context.Context, r *store.Record, at store.Mark) error {
 	if err := f.hook("put", r.Name); err != nil {
 		return err
 	}
-	return f.Records.PutRecordAt(ctx, r, at)
+	if err := f.Records.PutRecordAt(ctx, r, at); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	h := f.after
+	f.mu.Unlock()
+	if h != nil {
+		return h(ctx, r.Name)
+	}
+	return nil
 }
 
 func (f *failing) CreateNew(ctx context.Context, r *store.Record) error {

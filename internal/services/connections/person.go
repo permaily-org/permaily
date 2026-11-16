@@ -105,9 +105,30 @@ func (s *Service) RevokeDevice(ctx context.Context, p Person, id, device string)
 	return s.Get(ctx, p, id)
 }
 
-// Renew implements API: the end set to now plus the connection's days,
-// with a fresh proof, under the notice in force, while it is active and
-// before its end, at the version the page showed.
+// RenewWriteMax bounds a renewal's writes after its decision: its consent
+// receipt and its one version-checked write of the connection's record. A
+// renewal is decided only while its proof and the connection's existing end
+// each have at least RenewWriteMax left (ADR 0030, "Changed while building
+// pull request 3", renewal): so its writes, bounded by it, end before
+// either passes, and a write that lands later anyway (the table's writer
+// held it) applies only that decision.
+const RenewWriteMax = 5 * time.Second
+
+// Renew implements API: the end set to the decision's time plus the
+// connection's days, with a fresh proof, under the notice in force, while
+// it is active and before its end, at the version the page showed.
+//
+// Its decision is its last check, made with RenewWriteMax to spare on the
+// proof and on the connection's existing end; the end it writes is
+// absolute, worked out from that decision's time. Then come the consent
+// receipt and one write of the record at the version the decision read,
+// both under RenewWriteMax, and nothing after it is checked or undone
+// (PR #136's third review, findings 1 and 2): whenever that write lands, it
+// can apply only this decision, made with a fresh proof before the old end;
+// a revocation or another renewal since moved the version, so it loses;
+// and it never extends past the end the person approved. An uncertain
+// outcome (a timeout) leaves the record as it was or as decided, never a
+// third state.
 func (s *Service) Renew(ctx context.Context, p Person, id string, in contracts.ConnectionRenewal) (*contracts.Connection, error) {
 	if !s.now().Before(p.ConfirmedUntil) {
 		return nil, contracts.ErrConfirmationNeeded
@@ -122,40 +143,25 @@ func (s *Service) Renew(ctx context.Context, p Person, id string, in contracts.C
 	if err != nil {
 		return nil, err
 	}
-	now := s.now()
-	if !d.live(now) {
+	if !d.live(s.now()) {
 		return nil, contracts.ErrConnectionEnded
 	}
 	if at.Version() != in.Version {
 		return nil, contracts.ErrConsentChanged
 	}
-	// The renewal's authority is its proof and the connection's existing
-	// end, whichever passes first: every write it makes runs under it, and
-	// it is checked again after each (PR #136's second review, finding 2),
-	// so however slow the storage, nothing is renewed past either.
-	oldEnd, oldNotice := d.EndsAt, d.ModelNotice
-	inTime := func() error {
-		now := s.now()
-		switch {
-		case !now.Before(p.ConfirmedUntil):
-			return contracts.ErrConfirmationNeeded
-		case !now.Before(oldEnd):
-			return contracts.ErrConnectionEnded
-		}
-		return nil
+	// The decision.
+	now := s.now()
+	switch {
+	case p.ConfirmedUntil.Sub(now) < RenewWriteMax:
+		return nil, contracts.ErrConfirmationNeeded
+	case d.EndsAt.Sub(now) < RenewWriteMax:
+		return nil, contracts.ErrConnectionEnded
 	}
-	if err := inTime(); err != nil {
-		return nil, err
-	}
-	until := p.ConfirmedUntil
-	if oldEnd.Before(until) {
-		until = oldEnd
-	}
-	ctx, cancel := context.WithDeadline(ctx, time.Now().Add(until.Sub(now)))
+	wctx, cancel := context.WithTimeout(ctx, RenewWriteMax)
 	defer cancel()
 	d.EndsAt, d.ModelNotice = endsAt(now, d.Days), s.cfg.ModelNotice
 	// A renewal is consent: it is recorded before it is made, and made only
-	// at the version the page showed (finding 6). A write that loses then
+	// at the version the decision read (finding 6). A write that loses then
 	// leaves a receipt of a renewal that did not happen, which says more
 	// than happened; never one made and not recorded.
 	sc, _ := d.scope()
@@ -165,55 +171,16 @@ func (s *Service) Renew(ctx context.Context, p Person, id string, in contracts.C
 		Consent: &receipts.Consent{Allowed: true, Renewal: true, Sentences: d.private.Shown.Sentences, Parts: d.Parts, Since: d.private.Since,
 			EndsAt: d.EndsAt, Mailboxes: d.Mailboxes, ModelNotice: d.ModelNotice},
 	}
-	if err := s.writeReceipt(ctx, d.Account, r, time.Time{}); err != nil {
+	if err := s.writeReceipt(wctx, d.Account, r, time.Time{}); err != nil {
 		return nil, err
 	}
-	if err := inTime(); err != nil {
-		return nil, err
-	}
-	if err := s.writeConn(ctx, d, at, false); err != nil {
+	if err := s.writeConn(wctx, d, at, false); err != nil {
 		if retry(err) {
 			return nil, contracts.ErrConsentChanged
 		}
 		return nil, err
 	}
-	if err := inTime(); err != nil {
-		// Written after its authority passed: set back, so it renews nothing.
-		s.unrenew(ctx, id, d.EndsAt, oldEnd, oldNotice)
-		return nil, err
-	}
 	return s.Get(ctx, p, id)
-}
-
-// unrenew sets a connection's end and notice back to what they were before
-// a renewal whose record was written after its proof or the connection's
-// existing end passed, at the version it reads, while the record still
-// holds that renewal's end (renewed): whatever was written since (a
-// revocation, an end) is kept, and nothing ended comes back. Shortening an
-// end is never a grant, so it is retried on a lost race, under its own
-// bound.
-func (s *Service) unrenew(ctx context.Context, id string, renewed, end time.Time, notice string) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ReceiptWriteMax)
-	defer cancel()
-	for range RecordTries {
-		d, at, err := s.readConn(ctx, id)
-		if err != nil || d == nil || !d.EndsAt.Equal(renewed) {
-			if err != nil {
-				s.count("unrenew_failed")
-			}
-			return
-		}
-		d.EndsAt, d.ModelNotice = end, notice
-		err = s.writeConn(ctx, d, at, false)
-		if retry(err) {
-			continue
-		}
-		if err != nil {
-			s.count("unrenew_failed")
-		}
-		return
-	}
-	s.count("unrenew_failed")
 }
 
 // ---- ending ----
