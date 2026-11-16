@@ -2,18 +2,15 @@ package idp
 
 import (
 	"context"
-	"crypto"
-	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"math/big"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/permaily-org/permaily/internal/jws"
 )
 
 // Limits of an ID token and of the keys it is checked with. Each is well
@@ -23,11 +20,8 @@ import (
 const (
 	maxIDToken = 16 << 10
 	maxKeySet  = 256 << 10
-	maxKeys    = 64
-	maxKeyID   = 256
+	maxKeys    = jws.MaxKeys
 	maxSubject = 255 // OpenID Connect Core, section 2
-	minKeyBits = 2048
-	maxKeyBits = 4096
 
 	// keysLife is how long a set of keys is believed without asking again, and
 	// keysWait the least time between two askings, read or not: a token with a
@@ -47,9 +41,10 @@ const (
 
 // signingKey is one key a provider publishes.
 type signingKey struct {
-	// public is nil for a key that is not one for RS256 signatures: it is
-	// remembered so a token that names it is refused for that.
-	public *rsa.PublicKey
+	// public is the key, with no Public for a key that is not one for RS256
+	// signatures: it is remembered so a token that names it is refused for
+	// that.
+	public jws.Key
 	// issuer is who Microsoft says signs with the key: every tenant, or one.
 	// Empty when the set does not say.
 	issuer string
@@ -136,94 +131,53 @@ func (c *Client) fetchKeys(ctx context.Context, address string) (map[string]*sig
 	return parseKeys(body)
 }
 
-// parseKeys reads a JSON Web Key Set (RFC 7517). A key of another kind is
-// kept as one that cannot be used, since a provider may publish some; two
-// keys with one identifier are refused, since which one signs would be a
-// matter of their order.
+// parseKeys reads a JSON Web Key Set (RFC 7517) with internal/jws. A key of
+// another kind is kept as one that cannot be used, since a provider may
+// publish some; two keys with one identifier are refused, since which one
+// signs would be a matter of their order.
 func parseKeys(body []byte) (map[string]*signingKey, error) {
-	members, ok := object(body)
-	if !ok {
-		return nil, refuse("keys are not one JSON object")
-	}
-	items, ok := list(members["keys"], maxKeys)
-	if !ok {
-		return nil, refuse("keys without a list, or with one too long")
+	set, err := jws.Keys(body)
+	if err != nil {
+		return nil, refuse(said(err))
 	}
 	keys := map[string]*signingKey{}
-	for _, item := range items {
-		key, ok := object(item)
-		if !ok {
-			return nil, refuse("a key is not one JSON object")
+	for _, k := range set {
+		key := &signingKey{}
+		// Usable only as what the token's header must say too: RS256.
+		if k.Algorithm == jws.RS256 {
+			key.public, key.issuer = k, k.Issuer
 		}
-		kid, ok := text(key["kid"])
-		if !ok || !visible(kid, maxKeyID) {
-			continue // no token can name it
-		}
-		if _, twice := keys[kid]; twice {
-			return nil, refuse("two keys with one identifier")
-		}
-		keys[kid] = parseKey(key)
+		keys[k.ID] = key
 	}
 	return keys, nil
 }
 
-// parseKey reads one key. It is usable only as what the token's header must
-// say too: an RSA key, for signatures, and for RS256 when it names an algorithm.
-func parseKey(key map[string]json.RawMessage) *signingKey {
-	unusable := &signingKey{}
-	if kty, ok := text(key["kty"]); !ok || kty != "RSA" {
-		return unusable
-	}
-	if value, has := key["use"]; has {
-		if use, ok := text(value); !ok || use != "sig" {
-			return unusable
-		}
-	}
-	if value, has := key["alg"]; has {
-		if alg, ok := text(value); !ok || alg != "RS256" {
-			return unusable
-		}
-	}
-	issuer, ok := optional(key["issuer"])
-	if !ok {
-		return unusable
-	}
-	n, ok := number(key["n"], maxKeyBits/8)
-	if !ok || n.BitLen() < minKeyBits || n.BitLen() > maxKeyBits {
-		return unusable
-	}
-	// crypto/rsa takes an exponent that fits an int; an even one is no exponent.
-	e, ok := number(key["e"], 4)
-	if !ok || e.BitLen() > 31 || e.Int64() < 3 || e.Bit(0) == 0 {
-		return unusable
-	}
-	return &signingKey{public: &rsa.PublicKey{N: n, E: int(e.Int64())}, issuer: issuer}
+// words is what internal/jws's refusals are called here: the words this
+// package has always said, which its tests and logs keep. Every refusal
+// jws returns is one of these (TestEveryRefusalOfJWSHasItsWords).
+var words = map[error]string{
+	jws.ErrTooLong:           "ID token too long",
+	jws.ErrNotThreeParts:     "ID token is not three parts",
+	jws.ErrHeaderEncoding:    "ID token header is not base64url",
+	jws.ErrClaimsEncoding:    "ID token claims are not base64url",
+	jws.ErrSignatureEncoding: "ID token signature is not base64url",
+	jws.ErrHeader:            "ID token header is not one JSON object",
+	jws.ErrAlgorithm:         "ID token signed with another algorithm",
+	jws.ErrType:              "a token of another type",
+	jws.ErrCritical:          "ID token with a header that must be understood",
+	jws.ErrKeyID:             "ID token without a key identifier",
+	jws.ErrUnknownKey:        "ID token signed with a key the provider does not publish",
+	jws.ErrUnusableKey:       "ID token signed with a key that is not for RS256 signatures",
+	jws.ErrSignature:         "wrong signature",
+	jws.ErrKeySet:            "keys are not one JSON object",
+	jws.ErrKeyList:           "keys without a list, or with one too long",
+	jws.ErrKeyNotObject:      "a key is not one JSON object",
+	jws.ErrKeyIDTwice:        "two keys with one identifier",
 }
 
-// number is a member that is a positive number of at most size bytes, as a
-// key writes it: base64url of its big-endian bytes.
-func number(value json.RawMessage, size int) (*big.Int, bool) {
-	s, ok := text(value)
-	if !ok {
-		return nil, false
-	}
-	b, ok := decode(s)
-	if !ok || len(b) == 0 || len(b) > size+1 { // some writers put a zero byte in front
-		return nil, false
-	}
-	return new(big.Int).SetBytes(b), true
-}
-
-// decode reads base64url without padding (RFC 7515, section 2), one way only:
-// encoding/base64 alone skips line breaks, and Strict refuses the spare bits
-// of the last character when they are not zero.
-func decode(s string) ([]byte, bool) {
-	if strings.ContainsAny(s, "\r\n") {
-		return nil, false
-	}
-	b, err := base64.RawURLEncoding.Strict().DecodeString(s)
-	return b, err == nil
-}
+// said is the words for one of internal/jws's refusals, which it returns
+// as they are.
+func said(err error) string { return words[err] }
 
 // verify checks an ID token (OpenID Connect Core, section 3.1.3.7): that the
 // provider signed it, for this application, for this sign-in, and not long
@@ -236,67 +190,29 @@ func verify(p Provider, issuer, clientID, nonce, token string, now time.Time, fi
 	if len(token) > maxIDToken {
 		return nil, refuse("ID token too long")
 	}
-	// Five parts would be an encrypted token, two an unsigned one cut short.
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return nil, refuse("ID token is not three parts")
-	}
-	header, ok := decode(parts[0])
-	if !ok {
-		return nil, refuse("ID token header is not base64url")
-	}
-	payload, ok := decode(parts[1])
-	if !ok {
-		return nil, refuse("ID token claims are not base64url")
-	}
-	signature, ok := decode(parts[2])
-	if !ok {
-		return nil, refuse("ID token signature is not base64url")
-	}
-	kid, err := parseHeader(header)
+	t, err := jws.Parse(token)
 	if err != nil {
-		return nil, err
+		return nil, refuse(said(err))
 	}
-	key, err := find(kid)
-	if err != nil {
-		return nil, err
-	}
-	if key.public == nil {
-		return nil, refuse("ID token signed with a key that is not for RS256 signatures")
-	}
-	hash := sha256.Sum256([]byte(token[:len(parts[0])+1+len(parts[1])]))
-	if rsa.VerifyPKCS1v15(key.public, crypto.SHA256, hash[:], signature) != nil {
-		return nil, refuse("wrong signature")
-	}
-	return claims(p, issuer, key.issuer, clientID, nonce, payload, now)
-}
-
-// parseHeader checks how a token says it is signed, and returns which key with.
-func parseHeader(raw []byte) (kid string, err error) {
-	members, ok := object(raw)
-	if !ok {
-		return "", refuse("ID token header is not one JSON object")
-	}
-	// One algorithm, and it is not the token that chooses: "none" would be no
-	// signature, and HS256 one made with the provider's public key as its secret.
-	if alg, ok := text(members["alg"]); !ok || alg != "RS256" {
-		return "", refuse("ID token signed with another algorithm")
+	// One algorithm, and it is not the token that chooses.
+	if t.Algorithm != jws.RS256 {
+		return nil, refuse("ID token signed with another algorithm")
 	}
 	// An access token of the same provider is a JWT with another type.
-	if value, has := members["typ"]; has {
-		if typ, ok := text(value); !ok || !strings.EqualFold(typ, "JWT") {
-			return "", refuse("a token of another type")
-		}
+	if t.Typed && !strings.EqualFold(t.Type, "JWT") {
+		return nil, refuse("a token of another type")
 	}
-	// What a header says must be understood is not: nothing is (RFC 7515, section 4.1.11).
-	if _, has := members["crit"]; has {
-		return "", refuse("ID token with a header that must be understood")
+	key, err := find(t.KeyID)
+	if err != nil {
+		return nil, err
 	}
-	kid, ok = text(members["kid"])
-	if !ok || !visible(kid, maxKeyID) {
-		return "", refuse("ID token without a key identifier")
+	if key.public.Public == nil {
+		return nil, refuse("ID token signed with a key that is not for RS256 signatures")
 	}
-	return kid, nil
+	if err := jws.Verify(t, []jws.Key{key.public}); err != nil {
+		return nil, refuse(said(err))
+	}
+	return claims(p, issuer, key.issuer, clientID, nonce, t.Claims, now)
 }
 
 // claims checks what a signed token says, and returns who it is about.

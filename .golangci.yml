@@ -134,6 +134,8 @@ linters:
             - github.com/permaily-org/permaily/internal/contracts
             - github.com/permaily-org/permaily/internal/oauth
             - github.com/permaily-org/permaily/internal/jws
+            # A pushed request's formula is checked by the language's own parser (ADR 0030, V5); query is pure.
+            - github.com/permaily-org/permaily/internal/query
             - golang.org/x/net/idna
         rules-are-pure:
           # The rules every connection's reads apply first (ADR 0031): formulas of the query language, compiled.
