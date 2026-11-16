@@ -250,38 +250,51 @@ describe('legal pages', () => {
     });
 
     it('connections removed with the account, as services/accounts and services/connections do it', () => {
-      // docs/legal.md, item 15 (pull request 152): removing an account (`clear` in services/accounts) calls
-      // connections.Lifecycle.RemoveAll before the account's record goes, and RemoveAll removes every connection the
-      // list names, the account's index entry and every epoch of its list (ListName). A change there fails here until
-      // the pages change with it.
+      // docs/legal.md, item 15 (pull request 152): removing an account calls connections.Lifecycle.RemoveAll first of
+      // all (removeConnections, in removeLocked, and again in settle once the account's record is gone), and RemoveAll
+      // removes every connection the list names, the account's index entry and every epoch of its list (ListName);
+      // the hourly pass deletes the index entry of a removed list. A change there fails here until the pages change
+      // with it.
       const body = (source: string, signature: RegExp) => {
         const at = source.search(signature);
         expect(at, String(signature)).toBeGreaterThanOrEqual(0);
         return source.slice(at, source.indexOf('\n}\n', at));
       };
-      const clear = body(
-        go('internal/services/accounts/settings.go'),
-        /func \(s \*Service\) clear\(/,
+      const settings = go('internal/services/accounts/settings.go');
+      expect(body(settings, /func \(s \*Service\) removeConnections\(/)).toMatch(
+        /\.RemoveAll\(ctx, id\)/,
       );
-      const removeAll = clear.search(/\.RemoveAll\(ctx, id\)/);
-      expect(removeAll, 'clear calls RemoveAll').toBeGreaterThanOrEqual(0);
-      expect(removeAll, 'before the account’s record goes').toBeLessThan(
-        clear.search(/RemoveRecord\(ctx, recordName\(id\)\)/),
+      const removeLocked = body(settings, /func \(s \*Service\) removeLocked\(/);
+      const first = removeLocked.search(/s\.removeConnections\(ctx, doc\.ID\)/);
+      expect(first, 'the removal removes the connections').toBeGreaterThanOrEqual(0);
+      expect(first, 'before anything else').toBeLessThan(removeLocked.search(/mailboxesOf\(\)/));
+      expect(first, 'before the account’s record goes').toBeLessThan(
+        removeLocked.search(/s\.clear\(/),
       );
+      const settle = body(settings, /func \(s \*Service\) settle\(/);
+      expect(settle.search(/s\.removeConnections\(ctx, id\)/), 'again once the record is gone').toBeLessThan(
+        settle.search(/s\.clear\(ctx, id, entry\)/),
+      );
+      expect(settle).toMatch(/s\.removeConnections\(ctx, id\)/);
       const lifecycle = go('internal/services/connections/lifecycle.go');
       const remove = body(lifecycle, /func \(s \*Service\) RemoveAll\(/);
-      expect(remove).toMatch(/s\.removeConn\(ctx, m\.ID\)/);
+      expect(remove).toMatch(/list := func\(e uint64\) string \{ return ListName\(account, e\) \}/);
+      expect(remove).toMatch(/s\.removeConnStrict\(ctx, m\.ID\)/);
       expect(remove).toMatch(/DeleteEntry\(ctx, partitionAccounts, account\)/);
-      expect(remove).toMatch(
-        /s\.removeEpochs\(ctx, n, func\(e uint64\) string \{ return ListName\(account, e\) \}\)/,
-      );
+      expect(remove).toMatch(/s\.removeEpochs\(ctx, list\)/);
       expect(body(lifecycle, /func \(s \*Service\) removeEpochs\(/)).toMatch(
         /Records\.RemoveRecord\(/,
       );
-      const removeConn = body(
-        go('internal/services/connections/person.go'),
-        /func \(s \*Service\) removeConn\(/,
+      // The hourly pass deletes an index entry written again, or put back, after the list was removed.
+      const sweep = body(lifecycle, /func \(s \*Service\) sweepAccount\(/);
+      expect(sweep).toMatch(/s\.listRemoved\(ctx, account\)/);
+      expect(sweep).toMatch(/DeleteEntry\(ctx, partitionAccounts, account\)/);
+      expect(go('cmd/permaily-enclave/connections.go')).toMatch(/sweepEvery = time\.Hour/);
+      const person = go('internal/services/connections/person.go');
+      expect(body(person, /func \(s \*Service\) removeConnStrict\(/)).toMatch(
+        /s\.removeConnOf\(ctx, id, d\)/,
       );
+      const removeConn = body(person, /func \(s \*Service\) removeConnOf\(/);
       expect(removeConn).toMatch(/s\.removeFamily\(/);
       expect(removeConn).toMatch(/Records\.RemoveRecord\(ctx, connName\(id\)\)/);
       // While the account lives, an ended connection's records go EndedKept after it ends.
@@ -303,6 +316,9 @@ describe('legal pages', () => {
         );
         expect(said, path).toContain(
           'Database backups can keep removed records for a further day.',
+        );
+        expect(said, path).toContain(
+          'it can write your account’s identifier into our index of accounts with connections again; we remove that entry within an hour.',
         );
         expect(said, path).not.toMatch(/no automatic removal/i);
       }
