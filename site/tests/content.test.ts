@@ -272,9 +272,10 @@ describe('legal pages', () => {
         removeLocked.search(/s\.clear\(/),
       );
       const settle = body(settings, /func \(s \*Service\) settle\(/);
-      expect(settle.search(/s\.removeConnections\(ctx, id\)/), 'again once the record is gone').toBeLessThan(
-        settle.search(/s\.clear\(ctx, id, entry\)/),
-      );
+      expect(
+        settle.search(/s\.removeConnections\(ctx, id\)/),
+        'again once the record is gone',
+      ).toBeLessThan(settle.search(/s\.clear\(ctx, id, entry\)/));
       expect(settle).toMatch(/s\.removeConnections\(ctx, id\)/);
       const lifecycle = go('internal/services/connections/lifecycle.go');
       const remove = body(lifecycle, /func \(s \*Service\) RemoveAll\(/);
