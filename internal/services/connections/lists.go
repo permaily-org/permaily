@@ -16,9 +16,11 @@ import (
 // next epoch at ListEpochVersions.
 
 // partitionAccounts is the service's index of the accounts that have a
-// list, for Sweep to find them. It decides nothing: a connection past its
-// end is refused whether or not the sweep wrote it so, and EndAll is called
-// with the account by accounts; deleting it only delays the cleanup.
+// list, for Sweep to find them, written again by every write of the list.
+// It decides nothing: a connection past its end is refused whether or not
+// the sweep wrote it so, and EndAll is called with the account by
+// accounts; deleting it only delays the cleanup until the list's next
+// write.
 const partitionAccounts = "connections#accounts"
 
 func (s *Service) listEpoch(account string) uint64 {
@@ -91,8 +93,19 @@ func (s *Service) remakeEpoch(ctx context.Context, account string, e uint64) err
 
 // writeList writes l at the mark it was read at (made with CreateNew when
 // there was none), checked against its bounds, and rolls it to its next
-// epoch when this write reaches ListEpochVersions.
+// epoch when this write reaches ListEpochVersions. Every write it makes
+// writes the account in Sweep's index again (ruling 8 on PR #136's second
+// review): an entry lost, by a failed first write or by whoever writes the
+// table, comes back with the list's next write.
 func (s *Service) writeList(ctx context.Context, l *ListState, at store.Mark, create bool) error {
+	if err := s.writeListOnce(ctx, l, at, create); err != nil {
+		return err
+	}
+	s.indexAccount(ctx, l.Account)
+	return nil
+}
+
+func (s *Service) writeListOnce(ctx context.Context, l *ListState, at store.Mark, create bool) error {
 	if !l.Fits() {
 		return errListFull
 	}
@@ -101,9 +114,6 @@ func (s *Service) writeList(ctx context.Context, l *ListState, at store.Mark, cr
 	if create {
 		if err := s.writeSigned(ctx, name, l, at, true); err != nil {
 			return err
-		}
-		if l.Epoch == 0 {
-			s.indexAccount(ctx, l.Account)
 		}
 		s.cacheList(l.Account, l.Closing, began)
 		return nil
@@ -199,7 +209,7 @@ func (s *Service) indexAccount(ctx context.Context, account string) {
 	if err != nil {
 		return
 	}
-	// One that is there already is the same; a failure only delays the
-	// sweep of this account.
+	// One that is there already is the same, written again; a failure only
+	// delays the sweep of this account until the list's next write.
 	_ = s.cfg.Entries.PutEntry(ctx, &store.Entry{Partition: partitionAccounts, Key: account, Value: value, UpdatedAt: s.now()})
 }
