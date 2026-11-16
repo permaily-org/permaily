@@ -192,11 +192,14 @@ func (f *Fake) Attachment(ctx context.Context, g *oauth.Grant, id string, index 
 }
 
 // Refuse refuses what the service will refuse (ErrInvalidRefusal: no
-// grant, or a refusal that is not Valid), records the rest and answers
-// RefuseFunc's error; ErrNotSet when the test did not set it.
+// grant, or a refusal that is not ValidOn the grant's resource), records
+// the rest and hands RefuseFunc the grant it was given, unchanged, and
+// answers its error; ErrNotSet when the test did not set it. It records
+// attempts, not receipts: whether one was stored, for whom, is the
+// service's to show.
 func (f *Fake) Refuse(ctx context.Context, g *oauth.Grant, r connections.Refusal) error {
 	f.called("Refuse")
-	if g == nil || !r.Valid() {
+	if g == nil || !r.ValidOn(g.Resource) {
 		return connections.ErrInvalidRefusal
 	}
 	f.mu.Lock()

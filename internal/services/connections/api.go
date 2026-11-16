@@ -64,6 +64,20 @@ type API interface {
 	// Requests refused before a grant (no token, Check refusing it) and
 	// the endpoints' refusals are Check's, Token's, RevokeToken's and
 	// Push's to count, never pre-empted by the route.
+	//
+	// The grant is trusted service output, not a capability Refuse can
+	// verify (PR #137's review, "Refuse"): the adapter passes exactly the
+	// grant Check returned for this request, unchanged, never one of
+	// another request nor one built from what the request says (its
+	// account, connection or family). An adapter never turns an error the
+	// service returned into a Refuse: a service decision stays the
+	// service's, recorded by it with its evidence. MCP refuses a known
+	// mail tool whose arguments the SDK rejected before the tool ran here
+	// too; a JSON-RPC call naming no known mail operation has no operation
+	// to record and is not invented one. The service checks what it can
+	// (Refusal.ValidOn the grant's resource; Message against the
+	// connection's mailboxes); the rest is the adapter's contract, shown
+	// by its own tests.
 	Refuse(ctx context.Context, g *oauth.Grant, r Refusal) error
 	// Refused is the refusals' part of /status, by fixed reason.
 	Refused() map[string]int64
@@ -95,8 +109,8 @@ type Refusal struct {
 // and a message's (32 hexadecimal characters), with room to spare.
 const RefusalMessageMax = 128
 
-// ErrInvalidRefusal is Refuse's answer to a Refusal that is not Valid, or
-// to one without a grant.
+// ErrInvalidRefusal is Refuse's answer to a Refusal that is not ValidOn
+// its grant's resource, or to one without a grant.
 var ErrInvalidRefusal = errors.New("connections: not a refusal an adapter makes")
 
 // Valid says whether r is one an adapter may make: a known operation and a
@@ -123,6 +137,13 @@ func (r Refusal) Valid() bool {
 		return r.Reason == receipts.RefusedInvalidBody || r.Reason == receipts.RefusedOutsideScope || r.Reason == receipts.RefusedPartNotGiven
 	}
 	return false
+}
+
+// ValidOn says whether r is Valid and one the adapter of resource res
+// makes: MCP's step-up for an attachment is MCP's alone (the API passes
+// that request to Attachment, which refuses it with its evidence).
+func (r Refusal) ValidOn(res contracts.Resource) bool {
+	return r.Valid() && (r.Reason != receipts.RefusedPartNotGiven || res == contracts.ResourceMCP)
 }
 
 // Lifecycle is what accounts calls of the service (pull request 3 wires

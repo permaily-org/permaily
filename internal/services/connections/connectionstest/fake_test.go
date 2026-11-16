@@ -54,7 +54,7 @@ func TestTheLeaseKeepsTheContract(t *testing.T) {
 // 503).
 func TestTheFakeRecordsAttributedRefusals(t *testing.T) {
 	ctx := context.Background()
-	g := &oauth.Grant{Connection: "con_a", Family: "fam_a"}
+	g := &oauth.Grant{Connection: "con_a", Family: "fam_a", Resource: contracts.ResourceMCP}
 	f := &Fake{}
 	if err := f.Refuse(ctx, g, connections.Refusal{Operation: connections.OperationSearch, Reason: receipts.RefusedInvalidBody}); !errors.Is(err, ErrNotSet) {
 		t.Fatal(err)
