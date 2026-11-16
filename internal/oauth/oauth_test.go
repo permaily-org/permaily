@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/permaily-org/permaily/internal/contracts"
@@ -92,4 +93,40 @@ func contains(xs []string, x string) bool {
 		}
 	}
 	return false
+}
+
+// PR #131's review, finding 3: a step-up names the connection's scopes and
+// the one needed, even when a refresh narrowed the token; never the token's
+// scopes alone, and never every scope there is.
+func TestStepUpNamesTheConnectionsScopes(t *testing.T) {
+	g := &Grant{
+		Scopes:           []string{ScopeSender, ScopeBody},
+		ConnectionScopes: []string{ScopeBody, ScopeSubject, ScopeSender},
+	}
+	if got := strings.Join(g.StepUp(ScopeAttachments), " "); got != "mail.sender mail.subject mail.body mail.attachments" {
+		t.Fatalf("%q", got)
+	}
+	if got := strings.Join(g.StepUp(ScopeBody), " "); got != "mail.sender mail.subject mail.body" {
+		t.Fatalf("already there: %q", got)
+	}
+	// mail.sender is part of every connection, named even by a grant that
+	// does not list it; a scope that is not one of the four is never named.
+	if got := strings.Join((&Grant{ConnectionScopes: []string{ScopeBody}}).StepUp(ScopeAttachments, "openid"), " "); got != "mail.sender mail.body mail.attachments" {
+		t.Fatalf("%q", got)
+	}
+}
+
+// PR #137's review, finding 2: only the OAuth codes are codes a log names.
+func TestOnlyTheOAuthCodesAreValid(t *testing.T) {
+	for _, c := range []ErrorCode{ErrInvalidRequest, ErrInvalidClient, ErrInvalidGrant, ErrUnauthorizedClient, ErrUnsupportedGrantType,
+		ErrUnsupportedResponse, ErrInvalidScope, ErrInvalidTarget, ErrAccessDenied, ErrServerError, ErrTemporarily, ErrInvalidToken, ErrInsufficientScope} {
+		if !c.Valid() {
+			t.Errorf("%q", c)
+		}
+	}
+	for _, c := range []ErrorCode{"", "INVALID_GRANT", "invalid_grant ", "pma_PrivateMark"} {
+		if c.Valid() {
+			t.Errorf("%q", c)
+		}
+	}
 }

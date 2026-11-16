@@ -84,21 +84,24 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 // APIError is the error body of every API response that fails. Details is
-// there only for invalid_formula (ADR 0027, "Errors"): where in the formula
-// and why, a path and a fixed reason, never a value of it.
+// there only for invalid_formula (ADR 0027, "Errors": where in the formula
+// and why, a path and a fixed reason, never a value of it) and for the
+// person's invalid_client (ADR 0030: one of three fixed reasons,
+// contracts.ClientError); contracts.ErrorDetails writes the first exactly as
+// before and the second as its reason alone.
 type APIError struct {
 	Error struct {
-		Code    string                   `json:"code"`
-		Message string                   `json:"message"`
-		Details contracts.FormulaProblem `json:"details,omitzero"`
+		Code    string                 `json:"code"`
+		Message string                 `json:"message"`
+		Details contracts.ErrorDetails `json:"details,omitzero"`
 	} `json:"error"`
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeErrorWith(w, status, code, message, contracts.FormulaProblem{})
+	writeErrorWith(w, status, code, message, contracts.ErrorDetails{})
 }
 
-func writeErrorWith(w http.ResponseWriter, status int, code, message string, details contracts.FormulaProblem) {
+func writeErrorWith(w http.ResponseWriter, status int, code, message string, details contracts.ErrorDetails) {
 	var e APIError
 	e.Error.Code, e.Error.Message, e.Error.Details = code, message, details
 	w.Header().Set("Content-Type", "application/json")
@@ -111,7 +114,7 @@ func writeErrorWith(w http.ResponseWriter, status int, code, message string, det
 // fixed words, and where and why as its details. The path is the one Parse
 // gave, into the formula as sent; nothing of what the formula holds is in it.
 func writeFormulaProblem(w http.ResponseWriter, p contracts.FormulaProblem) {
-	writeErrorWith(w, http.StatusBadRequest, contracts.ErrInvalidFormula.Code, contracts.ErrInvalidFormula.Message, p)
+	writeErrorWith(w, http.StatusBadRequest, contracts.ErrInvalidFormula.Code, contracts.ErrInvalidFormula.Message, contracts.ErrorDetails{FormulaProblem: p})
 }
 
 // TokenAuth accepts requests whose bearer token hashes (SHA-256, hex) to

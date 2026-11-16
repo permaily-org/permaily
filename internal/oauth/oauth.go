@@ -294,6 +294,18 @@ const (
 	ErrInsufficientScope    ErrorCode = "insufficient_scope"
 )
 
+// Valid says whether c is one of the codes above, the only ones a refusal
+// may name in a log (connections.OAuthError's LogKind).
+func (c ErrorCode) Valid() bool {
+	switch c {
+	case ErrInvalidRequest, ErrInvalidClient, ErrInvalidGrant, ErrUnauthorizedClient, ErrUnsupportedGrantType,
+		ErrUnsupportedResponse, ErrInvalidScope, ErrInvalidTarget, ErrAccessDenied, ErrServerError, ErrTemporarily,
+		ErrInvalidToken, ErrInsufficientScope:
+		return true
+	}
+	return false
+}
+
 // AuthorizeParams is an authorization request as the server reads it, from
 // the query string or a pushed request. Query and Since come only from a
 // pushed request (ADR 0030, "Pushed requests").
@@ -336,6 +348,12 @@ type Grant struct {
 	// token's own.
 	Parts  []contracts.Part
 	Scopes []string
+	// ConnectionScopes are the scopes of the connection as its record
+	// lists them, whatever a refresh narrowed the token to or the device
+	// was confirmed for: what a step-up challenge names besides the scope
+	// needed (StepUp; ADR 0030, "Errors and challenges"; PR #131's review,
+	// finding 3). They authorize nothing: what a request reads is Parts.
+	ConnectionScopes []string
 	// TokenExpiresAt is the access token's expiry, ConnectionEndsAt the
 	// connection's end, and CheckedAt when the connection's record and the
 	// account's standing used for the check were read.
@@ -372,3 +390,26 @@ func (g *Grant) Expires() time.Time {
 // (strictly) before a receipt is written and before a first byte, and
 // every ConnectionFresh while an answer is sent (connections.Release).
 func (g *Grant) FreshUntil() time.Time { return g.CheckedAt.Add(ConnectionFresh) }
+
+// StepUp is the scope of a 403 insufficient_scope challenge for g: the
+// connection's scopes and the ones needed, each of the four at most once, in
+// ScopeParts' order, ScopeSender always (it is part of every connection), and
+// nothing that is not one of the four. Never the token's scopes alone (a
+// client that follows the challenge would ask to replace the connection with
+// less than it had), and never every scope there is.
+func (g *Grant) StepUp(needed ...string) []string {
+	want := map[string]bool{ScopeSender: true}
+	for _, s := range g.ConnectionScopes {
+		want[s] = true
+	}
+	for _, s := range needed {
+		want[s] = true
+	}
+	out := make([]string, 0, len(ScopeParts))
+	for _, sp := range ScopeParts {
+		if want[sp.Scope] {
+			out = append(out, sp.Scope)
+		}
+	}
+	return out
+}

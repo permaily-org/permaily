@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "id": "rcp_18e87e30edfd0a0000000000000000000006",
+  "at": "2026-11-16T10:00:00.123456Z",
+  "kind": "ended",
+  "connection": "con_cccccccccccccccccccccccccc",
+  "device": "fam_dddddddddddddddddddddddddd",
+  "client_id": "https://claude.ai/oauth/claude-code-client-metadata",
+  "vendor": "claude.ai",
+  "resource": "mcp",
+  "ended": {
+    "reason": "replaced",
+    "replaced_by": "con_eeeeeeeeeeeeeeeeeeeeeeeeee"
+  }
+}

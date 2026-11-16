@@ -125,6 +125,7 @@ type Accounts interface {
 //	AccessReadMessage     yes             yes                terms_needed
 //	AccessDownload        yes             yes                yes
 //	AccessDeleteMessages  yes             account_closing    terms_needed
+//	AccessConnection      yes             account_closing    yes
 //
 // An account both closing and not agreed may do what both columns allow; a
 // refusal is account_closing when the closing column refuses, otherwise
@@ -143,6 +144,12 @@ const (
 	AccessDownload
 	// AccessDeleteMessages deletes one message or up to a hundred.
 	AccessDeleteMessages
+	// AccessConnection is a connection's read of the mailbox, through
+	// inbox.Discloser (ADR 0030, "What a read gives"; OpenForConnection):
+	// refused while the account is closing (its connections are being
+	// ended), allowed while it has not agreed to the terms in force (the
+	// connections the person approved still read; nothing new is approved).
+	AccessConnection
 )
 
 // NoticeKind is a notice by mail about a mailbox (ADR 0026, "Notices by mail").

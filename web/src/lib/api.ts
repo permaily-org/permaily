@@ -331,6 +331,33 @@ export type QueryFormula = { v: 1; all: { any: QueryCondition[] }[] }
 export type FormulaProblem = { at: string; reason: string }
 
 /**
+ * Why the person's `invalid_client` refused a vendor's request (ADR 0030, `contracts.ClientProblem`): one of three fixed
+ * reasons, never the vendor's words or address. Pull request 8 gives each its words.
+ */
+export const CLIENT_PROBLEMS = [
+  'client_id_invalid',
+  'client_document_invalid',
+  'redirect_uri_invalid',
+] as const
+export type ClientProblem = (typeof CLIENT_PROBLEMS)[number]
+
+/** The `details` of an `invalid_client` error: its reason alone, with no `at`. */
+export type ClientProblemDetails = { reason: ClientProblem }
+
+/**
+ * The `details` of an API error (`contracts.ErrorDetails`): with `invalid_formula` a `FormulaProblem`, which always has
+ * `at`; with `invalid_client` a `ClientProblemDetails`, which never has it.
+ */
+export type ErrorDetails = FormulaProblem | ClientProblemDetails
+
+/** The reason in an `invalid_client` answer's `details`, when it is one of the three and there is no `at`. */
+export function clientProblemOf(details: unknown): ClientProblem | undefined {
+  if (typeof details !== 'object' || details === null || 'at' in details) return undefined
+  const { reason } = details as { reason?: unknown }
+  return CLIENT_PROBLEMS.find((p) => p === reason)
+}
+
+/**
  * Fixed words of a template, or a value of the formula (`value`), shown set apart and isolated. `model` marks the
  * parts of a condition a model decides. A mailbox is a value part: its label, its address, or, once disconnected,
  * its identifier between the fixed parts "a mailbox you disconnected (" and ")".
@@ -380,8 +407,8 @@ export type MatchPage = {
 export type MatchModel = 'asked' | 'limit' | 'off'
 
 /*
-  Connections (ADR 0030). The shapes of internal/contracts/connections.go; the calls come with the routes (pull
-  request 6) and the screens (pull request 8).
+  Connections (ADR 0030). The shapes of internal/contracts/connections.go; the calls are below the mailboxes' ("Connections
+  (ADR 0030)"), and each refusal is an `ApiErrorCode` with its words in src/pages/auth/messages.ts.
 */
 
 /** A part of a message a connection reads. Every connection reads `sender`; `attachments` only when asked for. */
@@ -488,8 +515,8 @@ export type AuthorizationDecision = {
 export type ConnectionRenewal = { model_notice: string; version: number }
 
 /**
- * The refusals an approval or a renewal may answer that the consent screen and the connections page handle (pull
- * request 8 adds them to `ApiErrorCode` with their words): a fresh proof needed, the notice or what approving does
+ * The refusals an approval or a renewal may answer that the consent screen and the connections page handle (each an
+ * `ApiErrorCode`, with its words): a fresh proof needed, the notice or what approving does
  * changed since the screen was shown (both reload it), the connection's 16 devices (the person removes one on its page;
  * none is removed for them), the account's connections, a request that ended.
  */
@@ -593,6 +620,16 @@ export type ApiErrorCode =
   | 'mailbox_unreadable'
   | 'link_changed'
   | 'busy'
+  | 'invalid_client'
+  | 'vendor_unreachable'
+  | 'request_ended'
+  | 'request_too_large'
+  | 'connection_ended'
+  | 'model_notice_changed'
+  | 'consent_changed'
+  | 'too_many_devices'
+  | 'too_many_connections'
+  | 'invalid_cursor'
   | 'network'
   | 'other'
 
@@ -636,6 +673,16 @@ const known: ReadonlySet<string> = new Set([
   'mailbox_unreadable',
   'link_changed',
   'busy',
+  'invalid_client',
+  'vendor_unreachable',
+  'request_ended',
+  'request_too_large',
+  'connection_ended',
+  'model_notice_changed',
+  'consent_changed',
+  'too_many_devices',
+  'too_many_connections',
+  'invalid_cursor',
 ])
 
 export class ApiError extends Error {
@@ -1274,6 +1321,16 @@ export async function matches(
       ...(page.askModel ? { ask_model: true } : {}),
     },
   )
+  return matchPageOf(answer)
+}
+
+/** Whether a page's `model` is one of the three the server says; anything else is dropped. */
+function isMatchModel(value: unknown): value is MatchModel {
+  return value === 'asked' || value === 'limit' || value === 'off'
+}
+
+/** A page of matches as the server answered it, with every list there. */
+function matchPageOf(answer: Partial<MatchPage> | null | undefined): MatchPage {
   if (!Array.isArray(answer?.messages)) throw new ApiError('other')
   const list = (value: unknown): string[] => (Array.isArray(value) ? value : [])
   return {
@@ -1283,12 +1340,130 @@ export async function matches(
     ...(typeof answer.next === 'string' && answer.next !== '' ? { next: answer.next } : {}),
     ...(typeof answer.searched_to === 'string' ? { searched_to: answer.searched_to } : {}),
     ...(isMatchModel(answer.model) ? { model: answer.model } : {}),
+    ...(Array.isArray(answer.held) ? { held: answer.held } : {}),
   }
 }
 
-/** Whether a page's `model` is one of the three the server says; anything else is dropped. */
-function isMatchModel(value: unknown): value is MatchModel {
-  return value === 'asked' || value === 'limit' || value === 'off'
+// ---------------------------------------------------------------------------------------------------------------
+// Connections (ADR 0030): the consent screen and the person's connections, in the person's session.
+// ---------------------------------------------------------------------------------------------------------------
+
+function requestPath(id: string): string {
+  return `/api/v1/oauth/requests/${encodeURIComponent(id)}`
+}
+
+function connectionPath(id: string): string {
+  return `/api/v1/connections/${encodeURIComponent(id)}`
+}
+
+/**
+ * Hands the server the query string a vendor sent the browser to /oauth/authorize with, exactly as the address bar
+ * had it after "?" (`src/lib/oauth.ts`). The answer is the request to show, or where to send the browser back to the
+ * vendor with its error. A request refused before its redirect URI is proven is `invalid_client`,
+ * `vendor_unreachable` or `request_too_large`: shown, never redirected.
+ */
+export async function startAuthorization(query: string): Promise<AuthorizationStarted> {
+  const answer = await request<AuthorizationStarted | null>('POST', '/api/v1/oauth/requests', {
+    query,
+  })
+  if (typeof answer?.redirect === 'string' && answer.redirect !== '') {
+    return { redirect: answer.redirect }
+  }
+  const shown = answer?.request
+  if (typeof shown?.id !== 'string' || typeof shown.vendor?.domain !== 'string') {
+    throw new ApiError('other')
+  }
+  return { request: shown }
+}
+
+/**
+ * A page of what a request would read under the whole draft, in one of the draft's mailboxes, newest first, and what
+ * approving that draft does. A next page carries the `draft_id` the page before answered (`invalid_cursor` when the
+ * draft changed since: start again from the newest).
+ */
+export async function previewConsent(
+  id: string,
+  preview: ConsentPreview,
+): Promise<ConsentPreviewPage> {
+  const answer = await request<Partial<ConsentPreviewPage> | null>(
+    'POST',
+    `${requestPath(id)}/matches`,
+    preview,
+  )
+  if (typeof answer?.draft_id !== 'string' || typeof answer.snapshot?.change !== 'string') {
+    throw new ApiError('other')
+  }
+  return {
+    draft_id: answer.draft_id,
+    change: answer.change ?? answer.snapshot.change,
+    snapshot: answer.snapshot,
+    page: matchPageOf(answer.page),
+  }
+}
+
+/**
+ * Allows or denies a request. Allowing sends the draft, the model's notice and the snapshot the screen showed, and
+ * needs a fresh proof (`confirmation_needed`, then `useConfirmed()`); it is refused `model_notice_changed` or
+ * `consent_changed` when what the screen showed is no longer so. The answer is where the browser goes back to the
+ * vendor, and nowhere else.
+ */
+export async function decideAuthorization(
+  id: string,
+  decision: AuthorizationDecision,
+): Promise<AuthorizationAnswer> {
+  const answer = await request<Partial<AuthorizationAnswer> | null>(
+    'POST',
+    `${requestPath(id)}/decision`,
+    decision,
+  )
+  if (typeof answer?.redirect !== 'string' || answer.redirect === '') throw new ApiError('other')
+  return { redirect: answer.redirect }
+}
+
+/** A connection as the server answered it, with every list there. */
+function connectionOf(answer: Partial<Connection> | null | undefined): Connection {
+  if (typeof answer?.id !== 'string' || typeof answer.vendor?.domain !== 'string') {
+    throw new ApiError('other')
+  }
+  const list = <T>(value: T[] | undefined): T[] => (Array.isArray(value) ? value : [])
+  return {
+    ...(answer as Connection),
+    parts: list(answer.parts),
+    mailboxes: list(answer.mailboxes),
+    devices: list(answer.devices).map((device) => ({ ...device, parts: list(device.parts) })),
+    delivery: answer.delivery ?? 'delivering',
+  }
+}
+
+/** The account's connections: the active ones, and the ones that ended in the last 30 days. */
+export async function connections(): Promise<ConnectionList> {
+  const answer = await request<Partial<ConnectionList> | null>('GET', '/api/v1/connections')
+  if (!Array.isArray(answer?.connections)) throw new ApiError('other')
+  return { connections: answer.connections.map(connectionOf) }
+}
+
+export async function connection(id: string): Promise<Connection> {
+  return connectionOf(await request('GET', connectionPath(id)))
+}
+
+/** Revokes a whole connection: every device of it stops at once. Needs no fresh proof: it only protects. */
+export async function revokeConnection(id: string): Promise<Connection> {
+  return connectionOf(await request('POST', `${connectionPath(id)}/revoke`))
+}
+
+/** Revokes one device of a connection; the others keep working. */
+export async function revokeDevice(id: string, device: string): Promise<Connection> {
+  return connectionOf(
+    await request('POST', `${connectionPath(id)}/devices/${encodeURIComponent(device)}/revoke`),
+  )
+}
+
+/**
+ * Renews a connection for as many days again, from now, under the model's notice in force. Needs a fresh proof; is
+ * refused `consent_changed` when the connection changed since the page showed it, and `connection_ended` past its end.
+ */
+export async function renewConnection(id: string, renewal: ConnectionRenewal): Promise<Connection> {
+  return connectionOf(await request('POST', `${connectionPath(id)}/renew`, renewal))
 }
 
 // ---------------------------------------------------------------------------------------------------------------

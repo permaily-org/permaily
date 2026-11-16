@@ -1,6 +1,10 @@
 package contracts
 
-import "time"
+import (
+	"encoding/json"
+	"errors"
+	"time"
+)
 
 // Connections (ADR 0019, how in ADR 0030): what a vendor asks for, what the
 // person sees and decides on the consent screen, the connection that results,
@@ -510,3 +514,95 @@ const (
 	ClientDocumentInvalid ClientProblem = "client_document_invalid" // not a document those rules accept
 	RedirectURIInvalid    ClientProblem = "redirect_uri_invalid"    // not one of the document's
 )
+
+// Valid says whether p is one of the three reasons, the only values a
+// ClientProblem may hold anywhere it is shown, sent or logged.
+func (p ClientProblem) Valid() bool {
+	switch p {
+	case ClientIDInvalid, ClientDocumentInvalid, RedirectURIInvalid:
+		return true
+	}
+	return false
+}
+
+// ClientError is ErrInvalidClient with its fixed reason (PR #131's review,
+// finding 5; ADR 0030, "Seams added while building"): what the connections
+// service answers Start (or Push) with for a client_id, a document or a
+// redirect URI it cannot use. errors.Is(err, ErrInvalidClient) holds, and
+// errors.As to *Error finds ErrInvalidClient's code and words; the routes
+// write Details() as the error's details, and the web app reads the reason.
+// Problem is one of the three constants and never the vendor's text, URL
+// or anything of its request: an unknown one is neither in the text nor
+// written as details. The issuer's own refusals (token, revocation, pushed
+// requests) stay OAuth codes alone (connections.OAuthError).
+type ClientError struct {
+	Problem ClientProblem
+}
+
+// InvalidClient is ErrInvalidClient for reason p.
+func InvalidClient(p ClientProblem) *ClientError { return &ClientError{Problem: p} }
+
+func (e *ClientError) Error() string {
+	if !e.Problem.Valid() {
+		return ErrInvalidClient.Error()
+	}
+	return ErrInvalidClient.Error() + " (" + string(e.Problem) + ")"
+}
+
+// Unwrap makes it ErrInvalidClient to errors.Is and errors.As.
+func (e *ClientError) Unwrap() error { return ErrInvalidClient }
+
+// LogKind is what a log says of it (domain.FixedKind): its code and reason,
+// fixed words alone.
+func (e *ClientError) LogKind() string { return e.Error() }
+
+// Details is the error's details in an API answer.
+func (e *ClientError) Details() ErrorDetails { return ErrorDetails{Client: e.Problem} }
+
+// ErrorDetails is the details of an API error (internal/httpapi's
+// APIError; web/src/lib/api.ts's ErrorDetails), one of two shapes, or none:
+// with invalid_formula, a FormulaProblem, written exactly as it always was
+// ({"at","reason"}, "at" always present); with invalid_client, its
+// ClientProblem alone ({"reason"}, no "at"). The two never go together, and
+// reading tells them apart by "at".
+type ErrorDetails struct {
+	FormulaProblem
+	Client ClientProblem
+}
+
+// IsZero says there are no details (omitzero).
+func (d ErrorDetails) IsZero() bool { return d == ErrorDetails{} }
+
+func (d ErrorDetails) MarshalJSON() ([]byte, error) {
+	switch {
+	case d.Client != "" && d.FormulaProblem != (FormulaProblem{}):
+		return nil, errors.New("contracts: details of a formula and a client at once")
+	case d.Client != "":
+		if !d.Client.Valid() {
+			return nil, errors.New("contracts: an invalid client's details hold one of three reasons")
+		}
+		return json.Marshal(struct {
+			Reason ClientProblem `json:"reason"`
+		}{d.Client})
+	}
+	return json.Marshal(d.FormulaProblem)
+}
+
+func (d *ErrorDetails) UnmarshalJSON(b []byte) error {
+	var v struct {
+		At     *string `json:"at"`
+		Reason string  `json:"reason"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	if v.At != nil {
+		*d = ErrorDetails{FormulaProblem: FormulaProblem{At: *v.At, Reason: FormulaReason(v.Reason)}}
+		return nil
+	}
+	if !ClientProblem(v.Reason).Valid() {
+		return errors.New("contracts: details that are neither a formula's nor an invalid client's")
+	}
+	*d = ErrorDetails{Client: ClientProblem(v.Reason)}
+	return nil
+}

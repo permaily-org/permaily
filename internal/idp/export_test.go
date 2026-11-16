@@ -52,7 +52,7 @@ func UsableKeys(body []byte) (usable []string, kept int, err error) {
 		return nil, 0, err
 	}
 	for kid, key := range keys {
-		if key.public != nil {
+		if key.public.Public != nil {
 			usable = append(usable, kid)
 		}
 	}
@@ -80,3 +80,6 @@ func Verify(p Provider, issuer, clientID, nonce, token string, now time.Time, ke
 func Claims(p Provider, issuer, clientID, nonce string, payload []byte, now time.Time) (*Identity, error) {
 	return claims(p, issuer, "", clientID, nonce, payload, now)
 }
+
+// Words is what this package calls each of internal/jws's refusals.
+var Words = words

@@ -3,6 +3,8 @@ package contracts
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,6 +104,99 @@ func TestWhatASearchConditionLooksAt(t *testing.T) {
 			if got[i] != w[i] {
 				t.Errorf("%s: %v, want %v", v, got, w)
 			}
+		}
+	}
+}
+
+// PR #131's review, finding 5: the person's invalid_client carries one of
+// the three fixed reasons, typed, and is still ErrInvalidClient; its text
+// and its details never hold anything of the vendor's request.
+func TestInvalidClientCarriesItsFixedReason(t *testing.T) {
+	for _, p := range []ClientProblem{ClientIDInvalid, ClientDocumentInvalid, RedirectURIInvalid} {
+		err := fmt.Errorf("start: %w", InvalidClient(p))
+		if !errors.Is(err, ErrInvalidClient) {
+			t.Errorf("%s: not ErrInvalidClient", p)
+		}
+		var e *Error
+		if !errors.As(err, &e) || e != ErrInvalidClient {
+			t.Errorf("%s: its code and words are not ErrInvalidClient's", p)
+		}
+		var ce *ClientError
+		if !errors.As(err, &ce) || ce.Problem != p || !p.Valid() {
+			t.Errorf("%s: the reason is lost", p)
+		}
+		if got, want := ce.Error(), "invalid_client: that app's request can't be used ("+string(p)+")"; got != want {
+			t.Errorf("%q, want %q", got, want)
+		}
+		if ce.LogKind() != ce.Error() {
+			t.Errorf("%s: logged as %q", p, ce.LogKind())
+		}
+		if ce.Details() != (ErrorDetails{Client: p}) {
+			t.Errorf("%s: %+v", p, ce.Details())
+		}
+	}
+	// Anything but the three constants is not a reason: never shown, never
+	// in the text, refused as details.
+	odd := InvalidClient("https://private-marker.invalid/c")
+	if ClientProblem("https://private-marker.invalid/c").Valid() || ClientProblem("").Valid() {
+		t.Fatal("a value that is not one of the three is valid")
+	}
+	if strings.Contains(odd.Error(), "private-marker") || odd.Error() != ErrInvalidClient.Error() {
+		t.Fatalf("%q", odd.Error())
+	}
+	if _, err := json.Marshal(odd.Details()); err == nil {
+		t.Fatal("details with an unknown reason were written")
+	}
+}
+
+// PR #131's review, finding 5: the details of an API error are typed; a
+// formula's are exactly what they were, and an invalid client's are its
+// reason alone. Both read back as what was written.
+func TestErrorDetailsShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		v    ErrorDetails
+		want string
+	}{
+		{"a formula's problem", ErrorDetails{FormulaProblem: FormulaProblem{At: "all[0].any[0].var", Reason: FormulaPartNotApproved}}, `{"at":"all[0].any[0].var","reason":"part_not_approved"}`},
+		{"a whole formula's", ErrorDetails{FormulaProblem: FormulaProblem{Reason: FormulaNotJSON}}, `{"at":"","reason":"not_json"}`},
+		{"an invalid client's", ErrorDetails{Client: RedirectURIInvalid}, `{"reason":"redirect_uri_invalid"}`},
+	}
+	for _, c := range cases {
+		got, err := json.Marshal(c.v)
+		if err != nil || string(got) != c.want {
+			t.Errorf("%s: %s %v, want %s", c.name, got, err, c.want)
+		}
+		// The same as the formula's shape before details were typed.
+		if c.v.Client == "" {
+			before, _ := json.Marshal(c.v.FormulaProblem)
+			if string(before) != string(got) {
+				t.Errorf("%s: %s, was %s", c.name, got, before)
+			}
+		}
+		var back ErrorDetails
+		if err := json.Unmarshal(got, &back); err != nil || back != c.v {
+			t.Errorf("%s: read back %+v %v", c.name, back, err)
+		}
+	}
+	type body struct {
+		Details ErrorDetails `json:"details,omitzero"`
+	}
+	if got, _ := json.Marshal(body{}); string(got) != `{}` || !(ErrorDetails{}).IsZero() {
+		t.Fatalf("no details: %s", got)
+	}
+	for _, bad := range []ErrorDetails{
+		{Client: ClientIDInvalid, FormulaProblem: FormulaProblem{Reason: FormulaNotJSON}},
+		{Client: "something the vendor wrote"},
+	} {
+		if got, err := json.Marshal(bad); err == nil {
+			t.Errorf("%+v written as %s", bad, got)
+		}
+	}
+	for _, bad := range []string{`{"reason":"https://private-marker.invalid/c"}`, `{"reason":""}`, `[]`, `{"at":1,"reason":"not_json"}`} {
+		var d ErrorDetails
+		if err := json.Unmarshal([]byte(bad), &d); err == nil {
+			t.Errorf("%s read as %+v", bad, d)
 		}
 	}
 }

@@ -44,10 +44,11 @@ type Storage interface {
 
 // Config is what a Service needs.
 type Config struct {
-	// Records is the strict anchored records of mailboxes and accounts'
-	// lists (store.Anchored with Strict and OnlyNewest), used for those two
-	// kinds of record and nothing else: a strict name is never read or
-	// written through an Anchored that is not strict.
+	// Records is the strict anchored records of mailboxes, accounts' lists
+	// and the blocks of the rules' decisions about a mailbox's messages
+	// (store.Anchored with Strict and OnlyNewest, decisions.go), used for
+	// those three kinds of record and nothing else: a strict name is never
+	// read or written through an Anchored that is not strict.
 	Records  Records
 	Storage  Storage
 	Keys     Keys
@@ -588,18 +589,25 @@ func (s *Service) unindex(ctx context.Context, id string) error {
 }
 
 // leavingDoc is a mailbox being disconnected: the sweep goes through these.
-// It proves nothing: the record does.
+// It proves nothing of the mailbox's state: the record does. Since is the
+// trusted lower bound of its days of decisions, from its record's creation
+// or its account's list, written before the record's terminal commit so a
+// removal that outlives the record (one lost, or a last pass stopped after
+// the record went) still walks every day; zero in an entry an earlier
+// image wrote (decisionsFirst is then the bound).
 type leavingDoc struct {
-	Mailbox string `json:"mailbox"`
+	Mailbox string    `json:"mailbox"`
+	Since   time.Time `json:"since,omitzero"`
 }
 
 func leavingKey(at time.Time, id string) string {
 	return at.UTC().Format(time.RFC3339) + "#" + id
 }
 
-// queue writes the disconnect entry of a mailbox, create-only.
-func (s *Service) queue(ctx context.Context, at time.Time, id string) error {
-	err := s.putSigned(ctx, leavingPartition, leavingKey(at, id), leavingDoc{Mailbox: id})
+// queue writes the disconnect entry of a mailbox, create-only, with since,
+// the trusted lower bound of its days (leavingDoc).
+func (s *Service) queue(ctx context.Context, at time.Time, id string, since time.Time) error {
+	err := s.putSigned(ctx, leavingPartition, leavingKey(at, id), leavingDoc{Mailbox: id, Since: since})
 	if err != nil && !errors.Is(err, store.ErrExists) {
 		return err
 	}
