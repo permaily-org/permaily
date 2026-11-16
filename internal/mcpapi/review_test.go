@@ -226,7 +226,7 @@ func TestV49SearchMailInputIsReadByTheFormulasParser(t *testing.T) {
 			if e.Error.Code != "invalid_formula" || e.Error.Message != contracts.ErrInvalidFormula.Message || e.Error.Details == nil || *e.Error.Details != want.FormulaProblem {
 				t.Fatalf("want %+v, got %s", want.FormulaProblem, res.Content[0].Text)
 			}
-			if calls := w.fake.Calls(); len(calls) != 1 {
+			if calls := w.fake.Calls(); len(calls) != 2 || calls[1] != "Refuse" {
 				t.Fatalf("the service was asked %v", calls)
 			}
 		})
@@ -247,7 +247,7 @@ func TestV49SearchMailInputIsReadByTheFormulasParser(t *testing.T) {
 			if e.Error.Code != "invalid_body" || e.Error.Details != nil || strings.Contains(res.Content[0].Text, "sender-supplied") || strings.Contains(res.Content[0].Text, "42") {
 				t.Fatalf("got %s", res.Content[0].Text)
 			}
-			if calls := w.fake.Calls(); len(calls) != 1 {
+			if calls := w.fake.Calls(); len(calls) != 2 || calls[1] != "Refuse" {
 				t.Fatalf("the service was asked %v", calls)
 			}
 		})

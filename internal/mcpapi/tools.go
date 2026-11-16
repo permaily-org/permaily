@@ -19,6 +19,7 @@ import (
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/services/connections"
+	"github.com/permaily-org/permaily/internal/services/receipts"
 )
 
 // Instructions are the server's instructions (ServerOptions.Instructions),
@@ -39,6 +40,14 @@ const (
 )
 
 var toolNames = []string{ToolConnectionInfo, ToolSearchMail, ToolReadMessage, ToolGetAttachment}
+
+// mailOperations are the tools that ask for mail, by the operation a refusal
+// of theirs records (connections.Refusal); connection_info asks for none.
+var mailOperations = map[string]connections.Operation{
+	ToolSearchMail:    connections.OperationSearch,
+	ToolReadMessage:   connections.OperationRead,
+	ToolGetAttachment: connections.OperationAttachment,
+}
 
 // toolParts is what each tool needs beyond the connection itself: a call
 // whose grant lacks one is answered with a step-up before the SDK runs.
@@ -187,7 +196,26 @@ func grantedCall(req *mcp.CallToolRequest) (*call, error) {
 	if c == nil || c.grant == nil {
 		return nil, errNoGrant
 	}
+	c.mu.Lock()
+	c.entered = true
+	c.mu.Unlock()
 	return c, nil
+}
+
+// ran says a tool ran with the call's grant.
+func (c *call) ran() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.entered
+}
+
+// record records a refusal this package made of tool's call (API.Refuse),
+// before it is answered: with the grant Check returned for the request,
+// unchanged, a fixed reason and no message identifier, so nothing the
+// request named reaches a receipt unverified. An error: the refusal is not
+// answered, the call is 503 (the caller answers it).
+func (h *handler) record(ctx context.Context, c *call, tool string, reason receipts.RefusedReason) error {
+	return h.svc.Refuse(ctx, c.grant, connections.Refusal{Operation: mailOperations[tool], Reason: reason})
 }
 
 var errNoGrant = errors.New("mcpapi: the call carries no verified grant")
@@ -229,12 +257,19 @@ func (h *handler) searchMail(ctx context.Context, req *mcp.CallToolRequest) (*mc
 	if err := c.admitMail(); err != nil {
 		return nil, nil, err
 	}
-	in, err := searchArgs(req.Params.Arguments)
-	if err != nil {
-		return nil, nil, h.failed(c, ToolSearchMail, err)
-	}
 	ctx, cancel := c.bind(ctx)
 	defer cancel()
+	in, err := searchArgs(req.Params.Arguments)
+	if err != nil {
+		reason := receipts.RefusedInvalidBody
+		if _, ok := errors.AsType[*query.Problem](err); ok {
+			reason = receipts.RefusedFormula
+		}
+		if h.record(ctx, c, ToolSearchMail, reason) != nil {
+			return nil, nil, h.failed(c, ToolSearchMail, connections.ErrUnavailable)
+		}
+		return nil, nil, h.failed(c, ToolSearchMail, err)
+	}
 	page, rel, err := h.svc.Search(ctx, c.grant, in)
 	return mailResult(h, c, ToolSearchMail, page, rel, err)
 }
@@ -348,16 +383,20 @@ func (h *handler) getAttachment(ctx context.Context, req *mcp.CallToolRequest, i
 	if err := c.admitMail(); err != nil {
 		return nil, nil, err
 	}
+	ctx, cancel := c.bind(ctx)
+	defer cancel()
 	// Checked again here, whatever the middleware read of the body: the
-	// tool runs only with the part (ADR 0030, step-up).
+	// tool runs only with the part (ADR 0030, step-up), and the step-up is
+	// recorded as the middleware's is.
 	if missing := missingParts(c.grant, ToolGetAttachment); len(missing) > 0 {
+		if h.record(ctx, c, ToolGetAttachment, receipts.RefusedPartNotGiven) != nil {
+			return nil, nil, h.failed(c, ToolGetAttachment, connections.ErrUnavailable)
+		}
 		c.mu.Lock()
 		c.stepUp = missing
 		c.mu.Unlock()
 		return nil, nil, toolFailure(contracts.ErrPartNotApproved)
 	}
-	ctx, cancel := c.bind(ctx)
-	defer cancel()
 	a, rel, err := h.svc.Attachment(ctx, c.grant, in.ID, in.Index)
 	if err == nil && (a == nil || rel == nil) {
 		err = errNoAnswer

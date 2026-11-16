@@ -185,6 +185,8 @@ func newWorld() *world {
 		}
 		return nil, connections.ErrInvalidToken
 	}
+	// A refusal the adapter makes is recorded (Refusals has it).
+	f.RefuseFunc = func(context.Context, *oauth.Grant, connections.Refusal) error { return nil }
 	f.InfoFunc = func(context.Context, *oauth.Grant) (*contracts.VendorConnection, error) {
 		v := info
 		return &v, nil

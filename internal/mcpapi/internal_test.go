@@ -19,6 +19,7 @@ import (
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/services/connections"
 	"github.com/permaily-org/permaily/internal/services/connections/connectionstest"
+	"github.com/permaily-org/permaily/internal/services/receipts"
 )
 
 func testGrant(parts ...contracts.Part) *oauth.Grant {
@@ -105,15 +106,30 @@ func TestMailForAnAnswerNotHeldIsNeverSent(t *testing.T) {
 }
 
 // The tool checks the part itself, whatever the middleware read of the
-// body: without it the service is not asked and the answer is the step-up.
+// body: without it the service is asked for nothing but to record the
+// refusal, with the call's grant, and the answer is the step-up; when the
+// refusal cannot be recorded, the call is 503 and not the step-up.
 func TestTheToolChecksThePartItself(t *testing.T) {
-	f := &connectionstest.Fake{}
-	c := &call{grant: testGrant(contracts.PartSender, contracts.PartSubject), buffered: true, abortable: true}
+	f := &connectionstest.Fake{RefuseFunc: func(context.Context, *oauth.Grant, connections.Refusal) error { return nil }}
+	g := testGrant(contracts.PartSender, contracts.PartSubject)
+	g.Resource = contracts.ResourceMCP
+	c := &call{grant: g, buffered: true, abortable: true}
 	if _, _, err := testHandler(f).getAttachment(context.Background(), requestWith(c), AttachmentID{ID: "x"}); err == nil {
 		t.Fatal("answered")
 	}
-	if _, stepUp, _, _ := c.taken(); !slices.Equal(stepUp, []contracts.Part{contracts.PartAttachments}) || len(f.Calls()) != 0 {
-		t.Fatalf("%v %v", stepUp, f.Calls())
+	want := []connections.Refusal{{Operation: connections.OperationAttachment, Reason: receipts.RefusedPartNotGiven}}
+	if _, stepUp, _, _ := c.taken(); !slices.Equal(stepUp, []contracts.Part{contracts.PartAttachments}) ||
+		!slices.Equal(f.Calls(), []string{"Refuse"}) || !slices.Equal(f.Refusals(), want) {
+		t.Fatalf("%v %v %v", stepUp, f.Calls(), f.Refusals())
+	}
+
+	f = &connectionstest.Fake{} // its Refuse answers ErrNotSet
+	c = &call{grant: g, buffered: true, abortable: true}
+	if _, _, err := testHandler(f).getAttachment(context.Background(), requestWith(c), AttachmentID{ID: "x"}); err == nil {
+		t.Fatal("answered")
+	}
+	if _, stepUp, status, _ := c.taken(); len(stepUp) != 0 || status != http.StatusServiceUnavailable || !slices.Equal(f.Calls(), []string{"Refuse"}) {
+		t.Fatalf("%v %d %v", stepUp, status, f.Calls())
 	}
 }
 
