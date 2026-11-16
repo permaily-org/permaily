@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router'
 import { useProviderArrival } from '../lib/arrival.ts'
 import { destination } from '../lib/destination.ts'
+import { authorizePath, isAuthorizePath } from '../lib/oauth.ts'
 import { isClosing, termsToAgree, useSession } from '../lib/session.tsx'
 import { isMailboxPath } from '../pages/accounts/standing.ts'
 import { AccountClosing } from '../pages/auth/AccountClosing.tsx'
@@ -104,8 +105,12 @@ export function RequireSession() {
     )
   }
   if (state.status === 'signedOut') {
-    // After signing in the person lands where they were going, unless they just chose to leave.
-    const from = state.byChoice ? null : { from: pathname + search + hash }
+    // After signing in the person lands where they were going, unless they just chose to leave. The history keeps
+    // this, so on the consent screen it is the path alone: a vendor's request never goes there, even if one were left
+    // in the address (src/lib/oauth.ts takes it out before the router runs).
+    const from = state.byChoice
+      ? null
+      : { from: isAuthorizePath(pathname) ? authorizePath : pathname + search + hash }
     return <Navigate to="/sign-in" replace state={from} />
   }
   return <Waiting />

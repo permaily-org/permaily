@@ -20,6 +20,7 @@ import {
 } from '../../lib/oauth.ts'
 import { useSession } from '../../lib/session.tsx'
 import { messageFor } from '../auth/messages.ts'
+import { vendorPath } from '../connections/ConnectionsPage.tsx'
 import { VendorLine } from '../connections/words.tsx'
 import { ConsentTerms } from './ConsentTerms.tsx'
 import { PreviewPane } from './PreviewPane.tsx'
@@ -415,11 +416,22 @@ function DecisionError({
   code: api.ApiErrorCode
   request: api.AuthorizationRequest
 }) {
+  // Going to another page of the app forgets the request (src/lib/oauth.ts): the vendor has to ask again.
+  const restart = (
+    <span>
+      {' '}
+      Going there forgets this request: start again from{' '}
+      <bdi>{request.client_name || request.vendor.domain}</bdi> afterwards.
+    </span>
+  )
   if (code === 'too_many_devices' && request.connection) {
-    const to = `/connections/${encodeURIComponent(request.vendor.domain)}/${encodeURIComponent(request.connection.id)}`
     return (
       <>
-        {messageFor(code)} <TextLink to={to}>Open the connection</TextLink>
+        {messageFor(code)}{' '}
+        <TextLink to={vendorPath(request.vendor.domain, request.connection.id)}>
+          Open the connection
+        </TextLink>
+        {restart}
       </>
     )
   }
@@ -427,6 +439,7 @@ function DecisionError({
     return (
       <>
         {messageFor(code)} <TextLink to="/connections">Your connections</TextLink>
+        {restart}
       </>
     )
   }

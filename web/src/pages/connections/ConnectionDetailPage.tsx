@@ -34,8 +34,8 @@ import {
 } from './words.tsx'
 
 /**
- * A vendor's page, by its domain. /connections/:vendorId opens on its overview: its connections, active and ended.
- * Each connection opens in its own tab, /connections/:vendorId/:connectionId, read from the server.
+ * A vendor's page, by its domain. /connections/:vendorId/overview is its overview: its connections, active and
+ * ended. Each connection opens in its own tab, /connections/:vendorId/:connectionId, read from the server.
  */
 export function ConnectionDetailPage() {
   const { vendorId = '', connectionId } = useParams()

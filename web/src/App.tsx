@@ -1,6 +1,8 @@
-import { Navigate, Route, Routes } from 'react-router'
+import { useEffect } from 'react'
+import { Navigate, Route, Routes, useLocation } from 'react-router'
 import { AppShell } from './components/AppShell.tsx'
 import { GuestOnly, RequireSession } from './components/SessionGate.tsx'
+import { authorizeRoute, keepAuthorizationOn } from './lib/oauth.ts'
 import { AccountsPage } from './pages/accounts/AccountsPage.tsx'
 import { ConnectMailboxPage } from './pages/accounts/ConnectMailboxPage.tsx'
 import { ForwardingSetupPage } from './pages/accounts/ForwardingSetupPage.tsx'
@@ -16,7 +18,7 @@ import { ProvidersPage } from './pages/admin/ProvidersPage.tsx'
 import { SignInPage } from './pages/auth/SignInPage.tsx'
 import { ConnectAgentPage } from './pages/connections/ConnectAgentPage.tsx'
 import { ConnectionDetailPage } from './pages/connections/ConnectionDetailPage.tsx'
-import { ConnectionsLayout } from './pages/connections/ConnectionsLayout.tsx'
+import { ConnectionsLayout, connectionsRoutes } from './pages/connections/ConnectionsLayout.tsx'
 import { ConnectionsPage } from './pages/connections/ConnectionsPage.tsx'
 import { ConsentAgentPage } from './pages/consent/ConsentAgentPage.tsx'
 import { ConsentAppPage } from './pages/consent/ConsentAppPage.tsx'
@@ -32,6 +34,9 @@ import { RulesPage } from './pages/rules/RulesPage.tsx'
 import { SettingsPage } from './pages/settings/SettingsPage.tsx'
 
 export function App() {
+  // A vendor's request is held only while the app shows its screen or signs in on the way to it (src/lib/oauth.ts).
+  const { pathname } = useLocation()
+  useEffect(() => keepAuthorizationOn(pathname), [pathname])
   return (
     <Routes>
       {/* Signing in and signing up: the only screens without a session */}
@@ -58,12 +63,14 @@ export function App() {
 
         {/*
           Connections: in the app's shell, or, for an account that has not agreed to the terms, in a limited one
-          that lists, shows and revokes them, and never renews (ADR 0030, finding 17).
+          that lists, shows and revokes them, and never renews (ADR 0030, finding 17). The session gate decides which
+          with these same paths and the router's own matching (`isConnectionsPath`). A vendor's overview does not end
+          in its domain, which the app's server would take for a file (internal/webui).
         */}
         <Route element={<ConnectionsLayout />}>
-          <Route path="connections" element={<ConnectionsPage />} />
-          <Route path="connections/:vendorId" element={<ConnectionDetailPage />} />
-          <Route path="connections/:vendorId/:connectionId" element={<ConnectionDetailPage />} />
+          <Route path={connectionsRoutes.list} element={<ConnectionsPage />} />
+          <Route path={connectionsRoutes.overview} element={<ConnectionDetailPage />} />
+          <Route path={connectionsRoutes.connection} element={<ConnectionDetailPage />} />
         </Route>
 
         <Route element={<AppShell />}>
@@ -95,7 +102,7 @@ export function App() {
           The consent screen a vendor sends the browser to (ADR 0030): the request was taken out of the address
           before the router ran (src/lib/oauth.ts), so signing in first comes back to it.
         */}
-        <Route path="oauth/authorize" element={<ConsentPage />} />
+        <Route path={authorizeRoute} element={<ConsentPage />} />
 
         {/* The sample consent screens, kept as the design of what a connection may ask for later (step 7) */}
         <Route path="consent/trip-app" element={<ConsentAppPage />} />

@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from 'react-router'
+import { matchRoutes, NavLink, Outlet } from 'react-router'
 import { AppShell } from '../../components/AppShell.tsx'
 import { Logo } from '../../components/Logo.tsx'
 import { ButtonLink } from '../../components/ui/index.ts'
@@ -6,12 +6,26 @@ import { cx, focusRing } from '../../lib/styles.ts'
 import { useStanding } from '../accounts/standing.ts'
 
 /**
- * The connections routes that an account that has not agreed to the terms in force still reaches (ADR 0030,
- * finding 17): its connections keep reading, so the person can always see them and revoke one or a device of one.
- * `/connections/new` is not one of them.
+ * The connections routes, as src/App.tsx declares them inside `ConnectionsLayout`: the list, a vendor's overview and
+ * one connection. They are the routes that an account that has not agreed to the terms in force still reaches (ADR
+ * 0030, finding 17): its connections keep reading, so the person can always see them and revoke one or a device of
+ * one. `/connections/new`, the sample flow of connecting an agent, is not one of them.
+ */
+export const connectionsRoutes = {
+  list: 'connections',
+  overview: 'connections/:vendorId/overview',
+  connection: 'connections/:vendorId/:connectionId',
+} as const
+
+const limitedRoutes = Object.values(connectionsRoutes).map((path) => ({ path }))
+
+/**
+ * Whether the router shows one of the connections routes at this path: decided by its own matching of the same
+ * paths (case, a trailing slash and encoded letters as it reads them), so the session gate and the router never
+ * disagree about which page is shown.
  */
 export function isConnectionsPath(pathname: string): boolean {
-  return /^\/connections(\/(?!new\/?$)[^/]+(\/[^/]+)?)?\/?$/.test(pathname)
+  return matchRoutes(limitedRoutes, pathname) !== null
 }
 
 /** True while the connections pages show in their limited form: listing, reading and revoking, never renewing. */

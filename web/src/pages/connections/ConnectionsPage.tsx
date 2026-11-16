@@ -35,10 +35,14 @@ export function useConnections() {
   return { list, failure, load, replace }
 }
 
-/** The address of a vendor's page, by its domain, and of one of its connections. */
+/**
+ * The address of a vendor's overview, by its domain, and of one of its connections. The overview's ends in
+ * `/overview`, never in the domain: the app's server answers an address whose last part looks like a file's name
+ * (`claude.ai`) as a missing file, so opening it in another tab or reloading it would fail (internal/webui).
+ */
 export function vendorPath(domain: string, connection?: string): string {
   const base = `/connections/${encodeURIComponent(domain)}`
-  return connection ? `${base}/${encodeURIComponent(connection)}` : base
+  return `${base}/${connection ? encodeURIComponent(connection) : 'overview'}`
 }
 
 /** The connections grouped by vendor domain, in the order each vendor first appears. */

@@ -7,8 +7,10 @@ import {
   TextAction,
 } from '../../components/ui/index.ts'
 import * as api from '../../lib/api.ts'
+import { MODEL_NOTICE_VERSION } from '../../lib/model-notice.ts'
 import { useSession } from '../../lib/session.tsx'
 import { messageFor } from '../auth/messages.ts'
+import { partNamesOf } from '../connections/words.tsx'
 import { formatDay } from '../settings/signin/shared.ts'
 import { PreviewEyebrow } from './InboxPreview.tsx'
 import type { Count } from './preview.ts'
@@ -47,14 +49,17 @@ export function PreviewPane({
   const found = count.messages.length
   const subject = request.parts.includes('subject')
   const complete = !count.next && !count.pending
+  // The notice this page shows is the app's own (ConsentTerms): the model is asked, and its notice agreed to, only
+  // when that is the one the request says is in force, as Allow is. Agreeing sends the version shown, nothing else.
+  const noticeShown = request.model_notice === MODEL_NOTICE_VERSION
 
   // The model's notice is agreed to here only to ask the model for this preview: the approval records its own.
   async function agreeAndAsk() {
-    if (agreeing) return
+    if (agreeing || !noticeShown) return
     setAgreeing(true)
     setAgreeError(null)
     try {
-      accountChanged(await api.agreeModelNotice(request.model_notice))
+      accountChanged(await api.agreeModelNotice(MODEL_NOTICE_VERSION))
       onModel()
     } catch (error) {
       const code = failed(error)
@@ -86,6 +91,7 @@ export function PreviewPane({
         <p className="mt-2.5 text-ink-2">
           New mail only: it reads mail that arrives from when you allow.
         </p>
+        <Widening request={request} count={count} />
         <Failure count={count} onRetry={onRetry} />
       </>
     )
@@ -135,14 +141,22 @@ export function PreviewPane({
 
       <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
         {count.next && !count.pending && <TextAction onClick={onMore}>Count more</TextAction>}
-        {!count.askModel && !count.pending && (
+        {noticeShown && !count.askModel && !count.pending && (
           <TextAction aria-disabled={agreeing} onClick={onModel}>
             Preview with the model
           </TextAction>
         )}
       </div>
+      {!noticeShown && (
+        <p className="mt-2 max-w-[560px] text-small text-ink-2">
+          The preview with the model isn't offered: this page is older than Permaily. Reload it from
+          the app to read what applies now.
+        </p>
+      )}
 
-      {count.failure === 'model_notice_needed' ? (
+      <Widening request={request} count={count} />
+
+      {count.failure === 'model_notice_needed' && noticeShown ? (
         <div role="alert" className="mt-4 max-w-[560px] text-small">
           <p className="text-ink-2">
             Asking the model needs your agreement to what it is sent, above. Agreeing doesn't allow
@@ -171,7 +185,7 @@ export function PreviewPane({
           {count.messages.slice(0, rowsShown).map((message) => (
             <li key={message.id}>
               <MailRow
-                kind="shared"
+                kind={count.reached ? (count.reached.has(message.id) ? 'soft' : 'new') : 'shared'}
                 date={formatDay(message.received_at)}
                 sender={senderOf(message)}
                 subject={subject ? message.subject : ''}
@@ -181,6 +195,41 @@ export function PreviewPane({
         </ul>
       )}
     </>
+  )
+}
+
+/**
+ * For a draft that replaces the client's connection (ADR 0030, "Asking again"): what the new scope reaches that the
+ * old did not. The rows of mail the connection does not read are marked new, and pale the ones it reads; the parts
+ * and the resource it does not have are said, since they reach every message.
+ */
+function Widening({ request, count }: { request: api.AuthorizationRequest; count: Count }) {
+  const connection = request.connection
+  if (!count.reached || !connection) return null
+  const fresh = count.messages.filter((m) => !count.reached?.has(m.id)).length
+  const added = request.parts.filter((p) => p !== 'sender' && !connection.parts.includes(p))
+  const through = (resource: api.ConnectionResource) => (resource === 'mcp' ? 'MCP' : 'the API')
+  return (
+    <div className="mt-3 flex max-w-[560px] flex-col gap-1.5 text-small text-ink-2">
+      {count.messages.length > 0 &&
+        (fresh === 0 ? (
+          <p>Your connection already reads every one of them.</p>
+        ) : (
+          <p>
+            {fresh.toLocaleString('en-GB')} of them your connection doesn't read
+            {count.unsure > 0 ? ', or may not: a model decides its query' : ''}. They're marked new.
+          </p>
+        ))}
+      {added.length > 0 && (
+        <p>It would also get {partNamesOf(added)} of every one, which your connection doesn't.</p>
+      )}
+      {request.resource !== connection.resource && (
+        <p>
+          It reads through {through(request.resource)}, where your connection reads through{' '}
+          {through(connection.resource)}.
+        </p>
+      )}
+    </div>
   )
 }
 

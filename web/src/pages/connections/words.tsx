@@ -18,6 +18,14 @@ const partNames: Record<api.ConnectionPart, string> = {
   attachments: 'the attachments',
 }
 
+/** Parts in words, as they are listed: "the subject and the text". */
+export function partNamesOf(parts: readonly api.ConnectionPart[]): string {
+  const names = parts.map((p) => partNames[p])
+  return names.length <= 1
+    ? (names[0] ?? '')
+    : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+}
+
 /** The parts a connection reads, in words: "who sent it and when, the subject and the text". */
 export function partsWords(parts: readonly api.ConnectionPart[]): string {
   // Every connection reads the sender, asked or not (ADR 0030, "Scopes are the parts").

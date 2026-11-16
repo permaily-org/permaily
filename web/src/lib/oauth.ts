@@ -4,12 +4,28 @@
  * before the router or the session gate runs (`takeAuthorization`, called by src/main.tsx right after
  * `takeArrival`) and is held here, in this module's memory: never in the router's state, which the browser's
  * history keeps across a reload and restores, and never in storage. A reload, Back or a restored tab therefore
- * finds nothing, and the screen says to start again from the app. Signing in by passkey or by the code of the
- * message happens in this tab and keeps it.
+ * finds nothing, and the screen says to start again from the app; so does going anywhere else in the app
+ * (`keepAuthorizationOn`). Signing in by passkey or by the code of the message happens in this tab and keeps it.
  */
+
+import { matchRoutes } from 'react-router'
 
 /** The page a vendor sends the browser to: the web app's, outside /api/. */
 export const authorizePath = '/oauth/authorize'
+
+/** The consent screen's route, as src/App.tsx declares it. */
+export const authorizeRoute = authorizePath.slice(1)
+
+/**
+ * Whether the router shows the consent screen at this address's path: its matching, not a comparison of strings, so
+ * that every spelling it reads as the page (another case, a trailing slash, an encoded letter) is cleaned too.
+ */
+export function isAuthorizePath(pathname: string): boolean {
+  return matchRoutes([{ path: authorizeRoute }], pathname) !== null
+}
+
+/** The screens that keep the request: the consent screen, and signing in or up on the way to it, in this tab. */
+const keeping = [{ path: authorizeRoute }, { path: 'sign-in' }, { path: 'sign-up' }]
 
 /** The vendor's query string as the address bar had it after "?", or null. */
 let held: string | null = null
@@ -23,16 +39,26 @@ function set(next: string | null) {
 }
 
 /**
- * Reads the address and cleans it: on /oauth/authorize the query string (and any fragment) leaves the address bar,
- * and a non-empty query string is held, the newest counting. Call it before the router starts.
+ * Reads the address and cleans it: on /oauth/authorize, in any spelling the router reads as it, the query string
+ * (and any fragment) leaves the address bar, which says /oauth/authorize, and a non-empty query string is held, the
+ * newest counting. Call it before the router starts.
  */
 export function takeAuthorization(): void {
   const { pathname, search, hash } = window.location
-  if (pathname !== authorizePath) return
+  if (!isAuthorizePath(pathname)) return
   if (search.length > 1) set(search.slice(1))
-  if (search !== '' || hash !== '') {
-    window.history.replaceState(window.history.state, '', pathname)
+  if (search !== '' || hash !== '' || pathname !== authorizePath) {
+    window.history.replaceState(window.history.state, '', authorizePath)
   }
+}
+
+/**
+ * Forgets the request when the app shows another page than the consent screen or signing in: a link the screen
+ * offers (to make room for a device or a connection) or anything else. Coming back to the screen, by Back within
+ * the page too, then finds nothing. Called by src/App.tsx on every change of the address.
+ */
+export function keepAuthorizationOn(pathname: string): void {
+  if (held !== null && matchRoutes(keeping, pathname) === null) set(null)
 }
 
 /** The vendor's request held for the consent screen, until it is decided or dropped. */
