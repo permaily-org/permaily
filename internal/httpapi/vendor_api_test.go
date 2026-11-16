@@ -701,9 +701,9 @@ func abortedBy(h http.Handler, w http.ResponseWriter, r *http.Request) (aborted 
 	return false
 }
 
-// V45 (N2): a lease whose context has ended by the first byte writes
-// nothing, not even the header; one cut while a chunk is sent writes no
-// chunk after it; both abort the response and finish the lease once,
+// V45 (N2, review 1): a lease whose context has ended by the first byte
+// writes nothing, not even the header; one cut while a chunk is sent writes
+// no chunk after it and does not flush that one; both abort the response and finish the lease once,
 // unsent.
 func TestV45ALeaseEndedWritesNothingMore(t *testing.T) {
 	fake := &connectionstest.Fake{}
@@ -728,8 +728,8 @@ func TestV45ALeaseEndedWritesNothingMore(t *testing.T) {
 	cut := newLease()
 	lease = cut
 	w := &cutOnWrite{ResponseRecorder: httptest.NewRecorder(), lease: cut}
-	if !abortedBy(api, w, request()) || w.writes != 1 || w.Body.Len() != 32<<10 {
-		t.Fatalf("%d writes, %d bytes", w.writes, w.Body.Len())
+	if !abortedBy(api, w, request()) || w.writes != 1 || w.Body.Len() != 32<<10 || w.Flushed {
+		t.Fatalf("%d writes, %d bytes, flushed %v", w.writes, w.Body.Len(), w.Flushed)
 	}
 	cut.finished(t, false)
 }
