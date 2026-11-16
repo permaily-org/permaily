@@ -157,7 +157,7 @@ func TestReview3R3AnEmptyVersionFullBlockOpensItsSuccessor(t *testing.T) {
 			t.Fatalf("attempt %d: %v", i, got)
 		}
 		commit(changed)
-		_, changed = d.Settle(decisionRule, map[string]inbox.Settlement{id: {State: inbox.DecisionAbandoned}}, at)
+		_, changed = d.Settle(decisionRule, map[string]inbox.Settlement{id: {State: inbox.DecisionAbandoned, Attempt: got[id].Attempt}}, at)
 		commit(changed)
 	}
 	if d.Versions[0] != inbox.DecisionsVersionsMax-2 || len(d.Blocks[0].Entries) != 0 {

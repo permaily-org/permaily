@@ -85,7 +85,7 @@ func TestADecisionsRecordIsBounded(t *testing.T) {
 		s := map[string]inbox.Settlement{}
 		for _, k := range page {
 			if got[k.ID].State == inbox.DecisionBegun {
-				s[k.ID] = inbox.Settlement{State: inbox.DecisionCleared, Evidence: defaultEvidence(at)}
+				s[k.ID] = inbox.Settlement{State: inbox.DecisionCleared, Evidence: defaultEvidence(at), Attempt: got[k.ID].Attempt}
 			}
 		}
 		settled.Settle(decisionRule, s, at, uint64(i/inbox.DiscloseMaxLimit*2+1))
@@ -162,13 +162,14 @@ func TestEveryTransition(t *testing.T) {
 	if got, changed := r.Begin(decisionRule, []inbox.DecisionKey{{ID: a}}, at, 1); changed || got[a].State != inbox.DecisionPending {
 		t.Fatalf("begun again: %v %+v", changed, got[a])
 	}
+	begunB := got[b].Attempt
 	got, changed = r.Settle(decisionRule, map[string]inbox.Settlement{
-		a: {State: inbox.DecisionCleared, Evidence: defaultEvidence(at)}, b: {State: inbox.DecisionBegun}, c: {State: inbox.DecisionAbandoned},
+		a: {State: inbox.DecisionCleared, Evidence: defaultEvidence(at), Attempt: got[a].Attempt}, b: {State: inbox.DecisionBegun, Attempt: got[b].Attempt}, c: {State: inbox.DecisionAbandoned},
 	}, at.Add(time.Second), 1)
 	if !changed || got[a].State != inbox.DecisionCleared || len(got[a].Evidence) != 2 || got[b].State != inbox.DecisionPending || got[c].State != inbox.DecisionAbandoned {
 		t.Fatalf("%+v", got)
 	}
-	if got, changed := r.Settle(decisionRule, map[string]inbox.Settlement{b: {State: inbox.DecisionAbandoned}}, at, 2); !changed || got[b].State != inbox.DecisionAbandoned || len(r.Entries) != 1 {
+	if got, changed := r.Settle(decisionRule, map[string]inbox.Settlement{b: {State: inbox.DecisionAbandoned, Attempt: begunB}}, at, 2); !changed || got[b].State != inbox.DecisionAbandoned || len(r.Entries) != 1 {
 		t.Fatalf("abandoned: %+v, %d entries", got, len(r.Entries))
 	}
 	if got, changed := r.Settle(decisionRule, map[string]inbox.Settlement{c: {State: inbox.DecisionHeld}}, at, inbox.DecisionsVersionsMax); changed || got[c].State != inbox.DecisionFull {

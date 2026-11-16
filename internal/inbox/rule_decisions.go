@@ -164,6 +164,21 @@ type Decision struct {
 	// says so instead of naming one.
 	Evidence  []Decided
 	Recovered bool
+	// Attempt is, for Begun, the attempt this call began: its caller gives
+	// it back in the Settlement, so that its settlement changes only its
+	// own Pending (ADR 0031, "Changed after the fourth design review", F1).
+	Attempt Attempt
+}
+
+// Attempt names one begun Pending: the block it was begun in and the
+// version of that block its Begin wrote. A block's committed writes are
+// each made at a version no other was read at, so no two attempts of a day
+// share one. A Settlement that drops or clears a Pending names the attempt
+// that began it, and changes nothing on another's (F1); the zero Attempt
+// names none.
+type Attempt struct {
+	Block   int
+	Version uint64
 }
 
 // Settlement is what Settle is asked to commit for one decision: its state
@@ -173,6 +188,10 @@ type Decision struct {
 type Settlement struct {
 	State    DecisionState
 	Evidence []Decided
+	// Attempt is the Begun decision's: Abandoned and Cleared change only
+	// the Pending it began. Held needs none (it settles whatever Pending it
+	// finds, as a recovery does).
+	Attempt Attempt
 }
 
 // DecisionRecord is one block's document, sealed in the store.

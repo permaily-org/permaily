@@ -42,9 +42,11 @@ func TestATryAgainKeepsWhatItBegan(t *testing.T) {
 	for i := range inbox.DecisionsMax {
 		ids = append(ids, inbox.DecisionKey{ID: inbox.NewMessageID(at.Add(time.Duration(i) * time.Millisecond)), ExpiresAt: at.Add(time.Hour)})
 	}
-	// Fill block 0 to within a page of its count, settled.
-	for start := 0; start < inbox.DecisionsMax-inbox.DiscloseMaxLimit; start += inbox.DiscloseMaxLimit {
-		page := ids[start : start+inbox.DiscloseMaxLimit]
+	// Fill block 0 to within ten of its count, settled, in pages of ten (ten
+	// pending fit beside them), so that the next page is split by the count.
+	const small = 10
+	for start := 0; start < inbox.DecisionsMax-small; start += small {
+		page := ids[start : start+small]
 		got, err := d.Begin(ctx, box, decisionRule, page)
 		if err != nil {
 			t.Fatal(err)
@@ -54,7 +56,7 @@ func TestATryAgainKeepsWhatItBegan(t *testing.T) {
 			if got[k.ID].State != inbox.DecisionBegun {
 				t.Fatalf("%+v", got[k.ID])
 			}
-			s[k.ID] = inbox.Settlement{State: inbox.DecisionCleared, Evidence: defaultEvidence(at)}
+			s[k.ID] = inbox.Settlement{State: inbox.DecisionCleared, Evidence: defaultEvidence(at), Attempt: got[k.ID].Attempt}
 		}
 		if _, err := d.Settle(ctx, box, decisionRule, s); err != nil {
 			t.Fatal(err)
@@ -157,10 +159,11 @@ func TestReview3R3SpentVersionsOpenTheSuccessorThroughTheFake(t *testing.T) {
 	id := inbox.NewMessageID(at)
 	keys := []inbox.DecisionKey{{ID: id, ExpiresAt: at.Add(time.Hour)}}
 	for i := range (inbox.DecisionsVersionsMax - 2) / 2 {
-		if got, err := d.Begin(ctx, box, rule, keys); err != nil || got[id].State != inbox.DecisionBegun {
-			t.Fatalf("attempt %d: %+v %v", i, got[id], err)
+		begun, err := d.Begin(ctx, box, rule, keys)
+		if err != nil || begun[id].State != inbox.DecisionBegun {
+			t.Fatalf("attempt %d: %+v %v", i, begun[id], err)
 		}
-		if got, err := d.Settle(ctx, box, rule, map[string]inbox.Settlement{id: {State: inbox.DecisionAbandoned}}); err != nil || got[id].State != inbox.DecisionAbandoned {
+		if got, err := d.Settle(ctx, box, rule, map[string]inbox.Settlement{id: {State: inbox.DecisionAbandoned, Attempt: begun[id].Attempt}}); err != nil || got[id].State != inbox.DecisionAbandoned {
 			t.Fatalf("attempt %d: %+v %v", i, got[id], err)
 		}
 	}
@@ -188,10 +191,11 @@ func TestReview3R3ASpentBlockBeforeAWritableOne(t *testing.T) {
 	keys := func(id string) []inbox.DecisionKey {
 		return []inbox.DecisionKey{{ID: id, ExpiresAt: at.Add(time.Hour)}}
 	}
-	if _, err := d.Begin(ctx, box, rule, keys(first)); err != nil {
+	begun, err := d.Begin(ctx, box, rule, keys(first))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Settle(ctx, box, rule, map[string]inbox.Settlement{first: {State: inbox.DecisionAbandoned}}); err != nil {
+	if _, err := d.Settle(ctx, box, rule, map[string]inbox.Settlement{first: {State: inbox.DecisionAbandoned, Attempt: begun[first].Attempt}}); err != nil {
 		t.Fatal(err)
 	}
 	name, _ := inbox.RuleDecisionsName(box.MailboxID, first, 0)

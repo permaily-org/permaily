@@ -2,6 +2,8 @@ package disclosetest
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/rules"
+	"github.com/permaily-org/permaily/internal/store"
 )
 
 // pause is a store of blocks that runs between, once, before its first
@@ -25,6 +28,29 @@ func (p *pause) WriteBlock(ctx context.Context, name string, r *inbox.DecisionRe
 		f()
 	}
 	return p.DecisionStore.WriteBlock(ctx, name, r, at)
+}
+
+// before is a store of blocks that runs between, once, just before it
+// writes the block named name, and counts the writes refused with
+// store.ErrChanged: what another enclave does after this one committed its
+// earlier blocks and before it writes that one.
+type before struct {
+	inbox.DecisionStore
+	name    string
+	between func()
+	refused int
+}
+
+func (b *before) WriteBlock(ctx context.Context, name string, r *inbox.DecisionRecord, at inbox.DecisionMark) error {
+	if f := b.between; f != nil && name == b.name {
+		b.between = nil
+		f()
+	}
+	err := b.DecisionStore.WriteBlock(ctx, name, r, at)
+	if errors.Is(err, store.ErrChanged) {
+		b.refused++
+	}
+	return err
 }
 
 // Contract is what inbox.BlockDecisions does over every store of blocks
@@ -57,6 +83,15 @@ func Contract(t *testing.T, make func(now func() time.Time) (inbox.DecisionStore
 	}
 	cleared := func(p float64) inbox.Settlement {
 		return inbox.Settlement{State: inbox.DecisionCleared, Evidence: evidence(p)}
+	}
+	// of gives each settlement the attempt Begin answered for its id, as a
+	// discloser settles what it began.
+	of := func(begun map[string]inbox.Decision, settle map[string]inbox.Settlement) map[string]inbox.Settlement {
+		for id, s := range settle {
+			s.Attempt = begun[id].Attempt
+			settle[id] = s
+		}
+		return settle
 	}
 	state := func(t *testing.T, got map[string]inbox.Decision, err error, id string, want inbox.DecisionState) {
 		t.Helper()
@@ -124,8 +159,8 @@ func Contract(t *testing.T, make func(now func() time.Time) (inbox.DecisionStore
 	t.Run("settled, final for ever, with its evidence", func(t *testing.T) {
 		now := at
 		d := one(func() time.Time { return now })
-		_, _ = d.Begin(ctx, box, rule, key(m1, m2))
-		got, err := d.Settle(ctx, box, rule, map[string]inbox.Settlement{m1: held(0.9), m2: cleared(0.05)})
+		begun, _ := d.Begin(ctx, box, rule, key(m1, m2))
+		got, err := d.Settle(ctx, box, rule, of(begun, map[string]inbox.Settlement{m1: held(0.9), m2: cleared(0.05)}))
 		state(t, got, err, m1, inbox.DecisionHeld)
 		state(t, got, err, m2, inbox.DecisionCleared)
 		got, err = d.Settle(ctx, box, rule, map[string]inbox.Settlement{m1: cleared(0.01), m2: held(0.99)})
@@ -151,8 +186,8 @@ func Contract(t *testing.T, make func(now func() time.Time) (inbox.DecisionStore
 	t.Run("abandoned, begun again", func(t *testing.T) {
 		now := at
 		d := one(func() time.Time { return now })
-		_, _ = d.Begin(ctx, box, rule, key(m1))
-		got, err := d.Settle(ctx, box, rule, map[string]inbox.Settlement{m1: {State: inbox.DecisionAbandoned}})
+		begun, _ := d.Begin(ctx, box, rule, key(m1))
+		got, err := d.Settle(ctx, box, rule, of(begun, map[string]inbox.Settlement{m1: {State: inbox.DecisionAbandoned}}))
 		state(t, got, err, m1, inbox.DecisionAbandoned)
 		got, err = d.Begin(ctx, box, rule, key(m1))
 		state(t, got, err, m1, inbox.DecisionBegun)
@@ -180,12 +215,12 @@ func Contract(t *testing.T, make func(now func() time.Time) (inbox.DecisionStore
 	t.Run("evidence past its bounds is refused: the decision stays pending", func(t *testing.T) {
 		now := at
 		d := one(func() time.Time { return now })
-		_, _ = d.Begin(ctx, box, rule, key(m1))
+		begun, _ := d.Begin(ctx, box, rule, key(m1))
 		var many []inbox.Decided
 		for i := range inbox.DecisionEvidenceMax + 1 {
 			many = append(many, inbox.Decided{Atom: query.Atom{Var: "message", Op: "about", Topic: string(rune('a' + i))}})
 		}
-		got, err := d.Settle(ctx, box, rule, map[string]inbox.Settlement{m1: {State: inbox.DecisionCleared, Evidence: many}, m2: {State: inbox.DecisionHeld, Evidence: many}})
+		got, err := d.Settle(ctx, box, rule, of(begun, map[string]inbox.Settlement{m1: {State: inbox.DecisionCleared, Evidence: many}, m2: {State: inbox.DecisionHeld, Evidence: many}}))
 		state(t, got, err, m1, inbox.DecisionPending)
 		state(t, got, err, m2, inbox.DecisionFull)
 		if got[m1].Leaves() {
@@ -235,7 +270,7 @@ func Contract(t *testing.T, make func(now func() time.Time) (inbox.DecisionStore
 				state(t, got, err, id, inbox.DecisionBegun)
 				settle[id] = cleared(0.05)
 			}
-			got, err = d.Settle(ctx, box, rule, settle)
+			got, err = d.Settle(ctx, box, rule, of(got, settle))
 			for _, id := range page {
 				state(t, got, err, id, inbox.DecisionCleared)
 			}
@@ -381,13 +416,122 @@ func Contract(t *testing.T, make func(now func() time.Time) (inbox.DecisionStore
 		_, _ = d.Begin(ctx, box, rule, k)
 		_, _ = d.Settle(ctx, box, rule, map[string]inbox.Settlement{m1: held(0.9)})
 		now = expires.Add(inbox.DecisionKeptAfter / 2)
-		_, _ = d.Begin(ctx, box, rule, key(m2)) // a write of the same block
-		now = expires.Add(-time.Second)         // a clock behind
+		second, _ := d.Begin(ctx, box, rule, key(m2)) // a write of the same block
+		now = expires.Add(-time.Second)               // a clock behind
 		got, err := d.Begin(ctx, box, rule, k)
 		state(t, got, err, m1, inbox.DecisionHeld)
 		now = expires.Add(inbox.DecisionKeptAfter)
-		_, _ = d.Settle(ctx, box, rule, map[string]inbox.Settlement{m2: cleared(0.05)})
+		_, _ = d.Settle(ctx, box, rule, of(second, map[string]inbox.Settlement{m2: cleared(0.05)}))
 		got, err = d.Begin(ctx, box, rule, k)
 		state(t, got, err, m1, inbox.DecisionExpired)
+	})
+
+	// H29, F1 of the fourth design review (ADR 0031, "Changed after the
+	// fourth design review"), its exact schedule: A begins a page split
+	// between blocks 0 and 1 (through Begin and Settle only), M pending in
+	// block 0 and N in block 1, and abandons both, the model having answered
+	// no part of either. A's write of block 0 commits and drops M; before A
+	// writes block 1, B begins M again in the tail, block 1, and receives a
+	// protecting 0.90. A's write of block 1 is refused, naturally, and A
+	// reads again. What A's block 0 committed is kept (M Abandoned), and
+	// only N is settled again; B's Pending, another attempt's, is never
+	// dropped, not by that retry, nor by A's whole settlement given again
+	// (a retry after a write whose outcome was unknown), nor by a Cleared
+	// of A's attempt. B settles M Held, and nothing clears it. At afcc460
+	// the retry dropped B's Pending, a later low answer committed Cleared
+	// and B's Held lost to it.
+	t.Run("H29: a retry keeps what it committed and never drops another attempt's pending", func(t *testing.T) {
+		now := at
+		clock := func() time.Time { return now }
+		sa, sb := make(clock)
+		a := &inbox.BlockDecisions{Store: sa, Now: clock}
+		b := &inbox.BlockDecisions{Store: sb, Now: clock}
+		var page []string
+		var begun map[string]inbox.Decision
+		for n, size := 0, 20; n < 4*inbox.DecisionsMax; n, size = n+size, inbox.DiscloseMaxLimit {
+			page = page[:0]
+			for i := range size {
+				page = append(page, inbox.NewMessageID(at.Add(time.Duration(n+i)*time.Millisecond)))
+			}
+			got, err := a.Begin(ctx, box, rule, key(page...))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var in []int
+			settle := map[string]inbox.Settlement{}
+			for _, id := range page {
+				if got[id].State == inbox.DecisionBegun {
+					in = append(in, holding(t, sa, id)...)
+					settle[id] = cleared(0.05)
+				}
+			}
+			if slices.Contains(in, 0) && slices.Contains(in, 1) {
+				begun = got
+				break
+			}
+			if _, err := a.Settle(ctx, box, rule, of(got, settle)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if begun == nil {
+			t.Fatal("no page was split between blocks 0 and 1")
+		}
+		var m, n string
+		for _, id := range page {
+			if begun[id].State != inbox.DecisionBegun {
+				continue
+			}
+			switch in := holding(t, sa, id); {
+			case m == "" && slices.Equal(in, []int{0}):
+				m = id
+			case n == "" && slices.Equal(in, []int{1}):
+				n = id
+			}
+		}
+		if m == "" || n == "" {
+			t.Fatal("no pending in each block")
+		}
+		var bBegun map[string]inbox.Decision
+		hook := &before{DecisionStore: sa, name: blockName(box.MailboxID, day, 1), between: func() {
+			if in := holding(t, sb, m); len(in) != 0 {
+				t.Fatalf("A's abandonment of M not committed before block 1: %v", in)
+			}
+			now = at.Add(time.Second)
+			var err error
+			bBegun, err = b.Begin(ctx, box, rule, key(m))
+			state(t, bBegun, err, m, inbox.DecisionBegun)
+		}}
+		abandon := of(begun, map[string]inbox.Settlement{m: {State: inbox.DecisionAbandoned}, n: {State: inbox.DecisionAbandoned}})
+		retrying := &inbox.BlockDecisions{Store: hook, Now: clock}
+		got, err := retrying.Settle(ctx, box, rule, abandon)
+		state(t, got, err, m, inbox.DecisionAbandoned)
+		state(t, got, err, n, inbox.DecisionAbandoned)
+		if hook.refused != 1 {
+			t.Fatalf("%d writes refused, want the one natural conflict", hook.refused)
+		}
+		if in := holding(t, sb, m); !slices.Equal(in, []int{1}) {
+			t.Fatalf("B's pending for M is in blocks %v", in)
+		}
+		// A's whole settlement given again, and a Cleared of A's attempt:
+		// neither changes B's Pending.
+		got, err = a.Settle(ctx, box, rule, abandon)
+		state(t, got, err, m, inbox.DecisionPending)
+		state(t, got, err, n, inbox.DecisionAbandoned)
+		got, err = a.Settle(ctx, box, rule, of(begun, map[string]inbox.Settlement{m: cleared(0.05)}))
+		state(t, got, err, m, inbox.DecisionPending)
+		// Another request through A finds B's Pending and begins nothing.
+		now = at.Add(2 * time.Second)
+		got, err = a.Begin(ctx, box, rule, key(m))
+		state(t, got, err, m, inbox.DecisionPending)
+		// B settles what it received; a low answer settled afterwards loses.
+		got, err = b.Settle(ctx, box, rule, of(bBegun, map[string]inbox.Settlement{m: held(0.9)}))
+		state(t, got, err, m, inbox.DecisionHeld)
+		got, err = a.Settle(ctx, box, rule, of(bBegun, map[string]inbox.Settlement{m: cleared(0.05)}))
+		state(t, got, err, m, inbox.DecisionHeld)
+		got, err = (&inbox.BlockDecisions{Store: sb, Now: clock}).Begin(ctx, box, rule, key(m))
+		state(t, got, err, m, inbox.DecisionHeld)
+		if got[m].Leaves() || len(got[m].Evidence) != 1 || got[m].Evidence[0].Evidence.P != 0.9 {
+			t.Fatalf("M: %+v", got[m])
+		}
 	})
 }
