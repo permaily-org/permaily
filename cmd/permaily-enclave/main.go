@@ -98,45 +98,54 @@ type config struct {
 }
 
 func main() {
-	var cfg config
-	flag.StringVar(&cfg.domain, "domain", "permaily.com", "parent domain; serves app., api., mcp., inbox. and mta-sts.inbox. under it")
-	flag.StringVar(&cfg.acmeDirectory, "acme-directory", "https://acme-v02.api.letsencrypt.org/directory", "ACME directory URL")
-	cfg.port, cfg.egressPort, cfg.smtpPort, cfg.credentialsPort, cfg.logPort = 443, 8000, 25, 8002, 8003
-	cfg.vendorEgressPort = vendorEgressPort
-	flag.Func("log-port", "vsock port of the host that receives the log lines; 0 disables (default 8003)", uint32Flag(&cfg.logPort))
-	flag.Func("port", "HTTPS listen port (vsock in the enclave, TCP in dev mode) (default 443)", uint32Flag(&cfg.port))
-	flag.Func("egress-port", "vsock port of the host's CONNECT proxy (default 8000)", uint32Flag(&cfg.egressPort))
-	flag.Func("vendor-egress-port", "vsock port of the host's proxy to vendors' documents, any public name on 443 (default 8004)", uint32Flag(&cfg.vendorEgressPort))
-	flag.Func("smtp-port", "SMTP listen port (vsock in the enclave, TCP in dev mode) (default 25)", uint32Flag(&cfg.smtpPort))
-	flag.Func("credentials-port", "vsock port of the host's credentials endpoint (default 8002)", uint32Flag(&cfg.credentialsPort))
-	flag.StringVar(&cfg.mtaSTSMode, "mta-sts-mode", "testing", "MTA-STS policy mode: testing or enforce")
-	flag.StringVar(&cfg.awsRegion, "aws-region", "us-east-2", "AWS region of KMS, DynamoDB and S3")
-	flag.StringVar(&cfg.awsAccount, "aws-account", "", "AWS account that holds the KMS key of each release (pinned)")
-	flag.StringVar(&cfg.adminTokenSHA256, "admin-token-sha256", "", "hex SHA-256 of the bearer token that may ask for a handoff")
-	flag.StringVar(&cfg.releases.Repository, "release-repository", "", "owner/name of the GitHub repository whose releases may receive the root secret")
-	flag.StringVar(&cfg.releases.RepositoryID, "release-repository-id", "", "GitHub's numeric id of that repository")
-	flag.StringVar(&cfg.releases.OwnerID, "release-owner-id", "", "GitHub's numeric id of the repository's owner")
-	flag.StringVar(&cfg.releases.Workflow, "release-workflow", "", "path of the workflow that publishes releases")
-	flag.StringVar(&cfg.releases.Ref, "release-ref", "", "the git ref whose runs of that workflow are releases")
-	flag.StringVar(&cfg.releases.RefPrefix, "release-ref-prefix", "", "instead of -release-ref: every ref that starts with this (test images)")
-	flag.StringVar(&cfg.dynamoTable, "dynamodb-table", "", "DynamoDB table for accounts, mailboxes and messages; empty leaves storage and SMTP off")
-	flag.StringVar(&cfg.s3Bucket, "s3-bucket", "", "S3 bucket for raw messages")
-	flag.StringVar(&cfg.anchorBucket, "anchor-bucket", "", "S3 bucket with Object Lock for the commits of the records that must not be put back to an earlier copy")
-	flag.IntVar(&cfg.anchorRetentionDays, "anchor-retention-days", 0, "days S3 keeps each commit, whatever anyone asks")
-	flag.StringVar(&cfg.mailFrom, "mail-from", "", "address the service's own mail is sent from, through SES; empty leaves accounts off")
-	flag.StringVar(&cfg.superAdmin, "super-admin", defaultSuperAdmin, "contact address of the super admin's account; empty leaves the admin panel to nobody")
-	flag.StringVar(&cfg.dohEndpoint, "doh-endpoint", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS endpoint for DKIM lookups")
-	modelFlags(flag.CommandLine, &cfg.model)
-	devFlags(flag.CommandLine, &cfg.dev)
+	cfg := newConfig(flag.CommandLine)
 	flag.Parse()
 
 	// Logs go to the console (visible only in debug mode) and to the parent
 	// instance. Both are outside the enclave: nothing sensitive may be logged.
-	log := slog.New(slog.NewJSONHandler(logOutput(cfg), nil))
-	if err := run(cfg, log); err != nil {
+	log := slog.New(slog.NewJSONHandler(logOutput(*cfg), nil))
+	if err := run(*cfg, log); err != nil {
 		log.Error("fatal", "err", err)
 		os.Exit(1)
 	}
+}
+
+// newConfig is the image's configuration: its defaults, and the flags that
+// fs parses into it. main parses the command line with it, and the tests
+// that check what the image composes (V57) read their configuration from it
+// too, so a default changed here is a default they see.
+func newConfig(fs *flag.FlagSet) *config {
+	cfg := new(config)
+	fs.StringVar(&cfg.domain, "domain", "permaily.com", "parent domain; serves app., api., mcp., inbox. and mta-sts.inbox. under it")
+	fs.StringVar(&cfg.acmeDirectory, "acme-directory", "https://acme-v02.api.letsencrypt.org/directory", "ACME directory URL")
+	cfg.port, cfg.egressPort, cfg.smtpPort, cfg.credentialsPort, cfg.logPort = 443, 8000, 25, 8002, 8003
+	cfg.vendorEgressPort = vendorEgressPort
+	fs.Func("log-port", "vsock port of the host that receives the log lines; 0 disables (default 8003)", uint32Flag(&cfg.logPort))
+	fs.Func("port", "HTTPS listen port (vsock in the enclave, TCP in dev mode) (default 443)", uint32Flag(&cfg.port))
+	fs.Func("egress-port", "vsock port of the host's CONNECT proxy (default 8000)", uint32Flag(&cfg.egressPort))
+	fs.Func("vendor-egress-port", "vsock port of the host's proxy to vendors' documents, any public name on 443 (default 8004)", uint32Flag(&cfg.vendorEgressPort))
+	fs.Func("smtp-port", "SMTP listen port (vsock in the enclave, TCP in dev mode) (default 25)", uint32Flag(&cfg.smtpPort))
+	fs.Func("credentials-port", "vsock port of the host's credentials endpoint (default 8002)", uint32Flag(&cfg.credentialsPort))
+	fs.StringVar(&cfg.mtaSTSMode, "mta-sts-mode", "testing", "MTA-STS policy mode: testing or enforce")
+	fs.StringVar(&cfg.awsRegion, "aws-region", "us-east-2", "AWS region of KMS, DynamoDB and S3")
+	fs.StringVar(&cfg.awsAccount, "aws-account", "", "AWS account that holds the KMS key of each release (pinned)")
+	fs.StringVar(&cfg.adminTokenSHA256, "admin-token-sha256", "", "hex SHA-256 of the bearer token that may ask for a handoff")
+	fs.StringVar(&cfg.releases.Repository, "release-repository", "", "owner/name of the GitHub repository whose releases may receive the root secret")
+	fs.StringVar(&cfg.releases.RepositoryID, "release-repository-id", "", "GitHub's numeric id of that repository")
+	fs.StringVar(&cfg.releases.OwnerID, "release-owner-id", "", "GitHub's numeric id of the repository's owner")
+	fs.StringVar(&cfg.releases.Workflow, "release-workflow", "", "path of the workflow that publishes releases")
+	fs.StringVar(&cfg.releases.Ref, "release-ref", "", "the git ref whose runs of that workflow are releases")
+	fs.StringVar(&cfg.releases.RefPrefix, "release-ref-prefix", "", "instead of -release-ref: every ref that starts with this (test images)")
+	fs.StringVar(&cfg.dynamoTable, "dynamodb-table", "", "DynamoDB table for accounts, mailboxes and messages; empty leaves storage and SMTP off")
+	fs.StringVar(&cfg.s3Bucket, "s3-bucket", "", "S3 bucket for raw messages")
+	fs.StringVar(&cfg.anchorBucket, "anchor-bucket", "", "S3 bucket with Object Lock for the commits of the records that must not be put back to an earlier copy")
+	fs.IntVar(&cfg.anchorRetentionDays, "anchor-retention-days", 0, "days S3 keeps each commit, whatever anyone asks")
+	fs.StringVar(&cfg.mailFrom, "mail-from", "", "address the service's own mail is sent from, through SES; empty leaves accounts off")
+	fs.StringVar(&cfg.superAdmin, "super-admin", defaultSuperAdmin, "contact address of the super admin's account; empty leaves the admin panel to nobody")
+	fs.StringVar(&cfg.dohEndpoint, "doh-endpoint", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS endpoint for DKIM lookups")
+	modelFlags(fs, &cfg.model)
+	devFlags(fs, &cfg.dev)
+	return cfg
 }
 
 // providerCallback is where a provider sends the browser back, on the app's
