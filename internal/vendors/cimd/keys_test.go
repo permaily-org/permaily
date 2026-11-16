@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -195,10 +196,14 @@ func TestV15WhatOfAKeySetIsKept(t *testing.T) {
 		`{"kty":"EC","kid":"offcurve","crv":"P-256","x":"`+b64(make([]byte, 32))+`","y":"`+b64(make([]byte, 32))+`"}`,
 		`{"kty":"EC","kid":"short","crv":"P-256","x":"AQ","y":"AQ"}`,
 		`{"kty":"RSA","kid":"evenE","n":"`+b64(big2048.N.Bytes())+`","e":"Ag"}`,
-		`{"kty":"RSA","kid":"zeroN","n":"`+b64(append([]byte{0}, big2048.N.Bytes()...))+`","e":"AQAB"}`,
 		`{"kty":"RSA","kid":"badN","n":"!!","e":"AQAB"}`,
+		`{"kty":"RSA","kid":"bigN","n":"`+b64(append([]byte{1}, make([]byte, 512)...))+`","e":"AQAB"}`,
+		`{"kty":"RSA","kid":"nullUse","use":null,"n":"`+b64(big2048.N.Bytes())+`","e":"AQAB"}`,
+		// jws.Keys reads a modulus with a zero byte in front, as some
+		// writers put one: the same number.
+		`{"kty":"RSA","kid":"zeroN","n":"`+b64(append([]byte{0}, big2048.N.Bytes()...))+`","e":"AQAB"}`,
 	))
-	if err != nil || len(keys) != 2 || keys[0].ID != "rsa" || keys[0].Algorithm != "RS256" || keys[1].ID != "ec" || keys[1].Algorithm != "ES256" {
+	if err != nil || len(keys) != 3 || keys[0].ID != "rsa" || keys[0].Algorithm != "RS256" || keys[1].ID != "ec" || keys[1].Algorithm != "ES256" || keys[2].ID != "zeroN" {
 		t.Fatalf("kept %v, %v", keys, err)
 	}
 	if _, ok := keys[1].Public.(*ecdsa.PublicKey); !ok {
@@ -222,6 +227,61 @@ func TestV15WhatOfAKeySetIsKept(t *testing.T) {
 	}
 	if keys, err := parseKeys(b); err != nil || len(keys) != 1 || keys[0].Public.(*rsa.PublicKey).N.BitLen() != 2048 {
 		t.Fatalf("chatgpt: %v %v", keys, err)
+	}
+}
+
+// V15: a key set and each of its keys are read as jws.Object reads every
+// other object a stranger sends: a member twice, also in another case
+// (which encoding/json reads as one, taking the last), is refused, and a
+// name is matched exactly, so no other reader of the same bytes can take
+// another key, kid or use.
+func TestV15AKeySetHasEachMemberOnce(t *testing.T) {
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	good := rsaJWKOf("good", &k.PublicKey, "")
+	key := func(extra string) string { return rsaJWKOf("k1", &k.PublicKey, extra) }
+	for name, set := range map[string][]byte{
+		"keys twice":                    []byte(`{"keys":[` + good + `],"keys":[` + good + `]}`),
+		"keys twice in another case":    []byte(`{"Keys":[],"keys":[` + good + `]}`),
+		"keys twice with a Kelvin sign": []byte(`{"keys":[` + good + `],"Keys":[]}`),
+		"keys twice with a long s":      []byte(`{"keys":[` + good + `],"keyſ":[]}`),
+		"a kid twice":                   keySet(good, key(`,"kid":"k2"`)),
+		"a kid twice in another case":   keySet(good, key(`,"KID":"k2"`)),
+		"a kty twice in another case":   keySet(good, key(`,"Kty":"oct"`)),
+		"a kid twice with a Kelvin":     keySet(good, key(`,"Kid":"k2"`)),
+		"a use twice with a long s":     keySet(good, key(`,"use":"sig","uſe":"enc"`)),
+		"an alg twice in another case":  keySet(good, key(`,"alg":"RS256","ALG":"none"`)),
+		"an n twice":                    keySet(good, key(`,"n":"AQAB"`)),
+		"a key that is not an object":   keySet(good, `null`),
+	} {
+		if _, err := parseKeys(set); !errors.Is(err, vendors.ErrDocument) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// A name in another case alone is not the member: no kid, no key.
+	for name, set := range map[string][]byte{
+		"KEYS": []byte(`{"KEYS":[` + good + `]}`),
+		"KID":  keySet(strings.Replace(good, `"kid"`, `"KID"`, 1)),
+		"Kid":  keySet(strings.Replace(good, `"kid"`, `"Kid"`, 1)),
+		"Kty":  keySet(strings.Replace(good, `"kty"`, `"Kty"`, 1)),
+	} {
+		if keys, err := parseKeys(set); !errors.Is(err, vendors.ErrDocument) {
+			t.Errorf("%s: %v %v", name, keys, err)
+		}
+	}
+	// A key whose use is not text checks nothing, and members the resolver
+	// does not read are ignored.
+	if keys, err := parseKeys(keySet(good, key(`,"use":1`))); err != nil || len(keys) != 1 || keys[0].ID != "good" {
+		t.Errorf("a use that is a number: %v %v", keys, err)
+	}
+	if _, err := parseKeys([]byte(`{"keys":{}}`)); !errors.Is(err, vendors.ErrDocument) {
+		t.Errorf("keys that are an object: %v", err)
+	}
+	keys, err := parseKeys([]byte(`{"keys":[` + strings.Replace(good, `"kty"`, `"x5c":["AQ"],"ext":true,"key_ops":["verify"],"kty"`, 1) + `],"extra":{"a":1}}`))
+	if err != nil || len(keys) != 1 || keys[0].ID != "good" {
+		t.Fatalf("unknown members: %v %v", keys, err)
 	}
 }
 
