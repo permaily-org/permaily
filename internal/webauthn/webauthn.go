@@ -25,11 +25,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
-	"unicode/utf8"
 
 	"github.com/fxamacker/cbor/v2"
+
+	"github.com/permaily-org/permaily/internal/jws"
 )
 
 // RelyingParty is who the passkeys are for.
@@ -254,41 +254,13 @@ func (rp RelyingParty) clientData(ask asked, raw, challenge []byte, call string)
 	return nil
 }
 
-// object reads the members of one JSON object. encoding/json alone would take
-// the last of two members with one name, and names in any case; here a name
-// twice is refused and names are matched exactly by the caller.
-func object(raw []byte) (map[string]json.RawMessage, bool) {
-	if !utf8.Valid(raw) {
-		return nil, false
-	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	if open, err := dec.Token(); err != nil || open != json.Delim('{') {
-		return nil, false
-	}
-	members := map[string]json.RawMessage{}
-	for dec.More() {
-		token, err := dec.Token()
-		if err != nil {
-			return nil, false
-		}
-		name, _ := token.(string) // inside an object the decoder gives only names here
-		if _, twice := members[name]; twice {
-			return nil, false
-		}
-		var value json.RawMessage
-		if err := dec.Decode(&value); err != nil {
-			return nil, false
-		}
-		members[name] = value
-	}
-	if _, err := dec.Token(); err != nil { // the closing brace
-		return nil, false
-	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) { // and nothing after it
-		return nil, false
-	}
-	return members, true
-}
+// object reads the members of one JSON object of valid UTF-8 with nothing
+// after it. encoding/json alone would take the last of two members with one
+// name, and names in any case (the Kelvin sign as a k, the long s as an s);
+// here a name twice is refused, in any case too, and names are matched
+// exactly by the caller (jws.Object). So a reader of the same client data
+// with encoding/json, such as a WebAuthn library, reads the same members.
+var object = jws.Object
 
 // text is a member that is a JSON string. A null would otherwise read as "".
 func text(value json.RawMessage) (string, bool) {
