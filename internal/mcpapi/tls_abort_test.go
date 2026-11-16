@@ -16,17 +16,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/hpack"
-
 	"github.com/permaily-org/permaily/internal/mcpapi"
+	"github.com/permaily-org/permaily/internal/services/connections/connectionstest"
 )
 
 // keyUpdateConn pauses a wire write, with the same unblock-on-close and
@@ -123,13 +120,47 @@ func reviewTLS13Expand(t *testing.T, secret []byte, label string, n int) []byte 
 	return out
 }
 
+// betweenWrites holds the handler before a write of the answer reaches the
+// connection, until the connection is interrupted (its socket's deadline
+// passed, or closed): a handler between two chunks, with no write of TLS's
+// in flight.
+type betweenWrites struct {
+	http.ResponseWriter
+	at          chan struct{}
+	once        sync.Once
+	interrupted <-chan struct{}
+}
+
+func (w *betweenWrites) Write(p []byte) (int, error) {
+	w.once.Do(func() { close(w.at) })
+	<-w.interrupted
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *betweenWrites) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// V50 (#135's 8d34b32, over HTTP/1.1 since #131's second review): a peer
+// that asks the server for a TLS KeyUpdate and reads nothing holds TLS's
+// output lock with the server's reply blocked on the socket. Between two
+// chunks no write of TLS is in flight, so tls.Conn.Close sends its
+// close_notify and waits for that lock: a cut that only closed the
+// connection would wait as long as the peer reads nothing. The cut sets the
+// socket's write deadline first: the lease is finished promptly.
 func TestV50ATLSKeyUpdateCannotHoldACut(t *testing.T) {
 	w := newWorld()
 	finished := make(chan struct{})
+	w.leaseFor = func() *countingLease {
+		return &countingLease{Lease: &connectionstest.Lease{}, onFinish: func() { close(finished) }}
+	}
 	handlerDone := make(chan struct{})
 	h := w.handler()
-	s := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { defer close(handlerDone); h.ServeHTTP(w, r) }))
-	s.EnableHTTP2 = true
+	conns := make(chan *keyUpdateConn, 1)
+	at := make(chan struct{})
+	s := httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		defer close(handlerDone)
+		c := <-conns
+		h.ServeHTTP(&betweenWrites{ResponseWriter: rw, at: at, interrupted: c.interrupted}, r)
+	}))
 	s.Config.ConnContext = mcpapi.ConnContext
 	s.Config.ErrorLog = log.New(io.Discard, "", 0)
 	ln := &keyUpdateListener{Listener: s.Listener, accepted: make(chan *keyUpdateConn, 1)}
@@ -143,7 +174,7 @@ func TestV50ATLSKeyUpdateCannotHoldACut(t *testing.T) {
 	defer raw.Close()
 	cr := &countTLSRecords{Conn: raw}
 	var keylog bytes.Buffer
-	tc := tls.Client(cr, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}, MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, KeyLogWriter: &keylog})
+	tc := tls.Client(cr, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"http/1.1"}, MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, KeyLogWriter: &keylog}) //nolint:gosec // a test's own server
 	if e := tc.HandshakeContext(context.Background()); e != nil {
 		t.Fatal(e)
 	}
@@ -152,58 +183,21 @@ func TestV50ATLSKeyUpdateCannotHoldACut(t *testing.T) {
 	}
 	cr.count = true
 	c := <-ln.accepted
+	conns <- c
 	var resume sync.Once
 	unpause := func() { resume.Do(func() { close(c.resume) }) }
 	t.Cleanup(unpause)
-	// A real HTTP/2 client can stop DATA with its stream receive window,
-	// leaving the TLS writer idle while the leased answer waits to flush.
-	if _, e := tc.Write([]byte(http2.ClientPreface)); e != nil {
-		t.Fatal(e)
-	}
-	f := http2.NewFramer(tc, tc)
-	if e := f.WriteSettings(http2.Setting{ID: http2.SettingInitialWindowSize, Val: 0}); e != nil {
-		t.Fatal(e)
-	}
-	var headers bytes.Buffer
-	enc := hpack.NewEncoder(&headers)
 	r := toolCall(1, "read_message", `{"id":"mbx_A.msg_1"}`).http()
-	body, _ := io.ReadAll(r.Body)
-	for _, h := range []hpack.HeaderField{{Name: ":method", Value: "POST"}, {Name: ":scheme", Value: "https"}, {Name: ":authority", Value: "mcp.permaily.test"}, {Name: ":path", Value: "/mcp"}} {
-		if e := enc.WriteField(h); e != nil {
-			t.Fatal(e)
-		}
-	}
-	for k, vs := range r.Header {
-		for _, v := range vs {
-			if e := enc.WriteField(hpack.HeaderField{Name: strings.ToLower(k), Value: v}); e != nil {
-				t.Fatal(e)
-			}
-		}
-	}
-	if e := f.WriteHeaders(http2.HeadersFrameParam{StreamID: 1, BlockFragment: headers.Bytes(), EndHeaders: true}); e != nil {
+	r.URL.Host = s.Listener.Addr().String()
+	r.RequestURI = ""
+	if e := r.Write(tc); e != nil {
 		t.Fatal(e)
 	}
-	if e := f.WriteData(1, true, body); e != nil {
-		t.Fatal(e)
+	select {
+	case <-at: // the lease started; the handler is between two writes
+	case <-time.After(5 * time.Second):
+		t.Fatal("the handler never wrote")
 	}
-	_ = raw.SetReadDeadline(time.Now().Add(5 * time.Second))
-	for {
-		frame, e := f.ReadFrame()
-		if e != nil {
-			t.Fatal(e)
-		}
-		if sf, ok := frame.(*http2.SettingsFrame); ok && !sf.IsAck() {
-			if e := f.WriteSettingsAck(); e != nil {
-				t.Fatal(e)
-			}
-		}
-		if hf, ok := frame.(*http2.HeadersFrame); ok && hf.StreamID == 1 {
-			break
-		}
-	}
-	_ = raw.SetReadDeadline(time.Time{})
-	l := w.Leases()[0]
-	l.onFinish = func() { close(finished) }
 	var secret []byte
 	for _, line := range strings.Split(keylog.String(), "\n") {
 		p := strings.Fields(line)
@@ -219,7 +213,7 @@ func TestV50ATLSKeyUpdateCannotHoldACut(t *testing.T) {
 	}
 	key := reviewTLS13Expand(t, secret, "key", 16)
 	iv := reviewTLS13Expand(t, secret, "iv", 12)
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		iv[len(iv)-1-i] ^= byte(cr.seq >> (8 * i))
 	}
 	block, e := aes.NewCipher(key)
@@ -233,6 +227,7 @@ func TestV50ATLSKeyUpdateCannotHoldACut(t *testing.T) {
 	// TLS 1.3 KeyUpdate(request_update=1), encrypted under the current client
 	// traffic secret and next record number. Only this test client's own key
 	// is used; neither side of the server nor any library source is altered.
+	// HTTP/1.1's background read takes it while the handler runs.
 	msg := []byte{24, 0, 0, 1, 1, 22}
 	hdr := []byte{23, 3, 3, 0, byte(len(msg) + aead.Overhead())}
 	record := append(hdr, aead.Seal(nil, iv, msg, hdr)...)
@@ -245,16 +240,12 @@ func TestV50ATLSKeyUpdateCannotHoldACut(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not reply to KeyUpdate")
 	}
-	start := time.Now()
+	l := w.Leases()[0]
 	l.Cut()
 	select {
 	case <-finished:
-		t.Log("lease finished promptly")
-	case <-time.After(6 * time.Second):
-		dump := make([]byte, 128<<10)
-		n := runtime.Stack(dump, true)
-		_ = os.WriteFile("/review/tls-abort-stacks.log", dump[:n], 0600)
-		t.Error("lease still held six seconds after cut: TLS KeyUpdate write prevents Conn.Close and the stream deadline is not reached")
+	case <-time.After(3 * time.Second):
+		t.Error("lease still held three seconds after cut: the KeyUpdate's write holds tls.Conn.Close")
 	}
 	unpause()
 	select {
@@ -267,5 +258,7 @@ func TestV50ATLSKeyUpdateCannotHoldACut(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("handler did not finish")
 	}
-	t.Logf("cut completed only after %v; Finish=%v", time.Since(start), func() int { n, _ := l.Finishes(); return n }())
+	if n, args := l.Finishes(); n != 1 || args[0] {
+		t.Fatalf("finished %d %v", n, args)
+	}
 }

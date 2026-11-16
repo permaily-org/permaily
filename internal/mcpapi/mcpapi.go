@@ -20,12 +20,15 @@
 //     AnswerMax) and sent only under the lease the service returned with the
 //     mail (connections.Release, N2 and the owner's decision 14): Start
 //     immediately before the first byte (refused: 503 and nothing of it),
-//     every byte under its context, read before each write and each flush,
-//     the response aborted, its connection closed, when it ends during the
-//     transfer, and Finish once. The connection comes from ConnContext,
-//     which the enclosing server must set: over HTTP/2 the stream's own
-//     deadline does not stop a frame already handed to the connection, so
-//     without it a leased answer over HTTP/2 is refused (503).
+//     every chunk and flush admitted only while its context lasts, through
+//     one state the abort shares, the response aborted, its connection
+//     closed (ConnContext), when it ends during the transfer, and Finish
+//     once, sent only once HTTP/1.1's last flush handed the last byte to the
+//     socket. Over HTTP/2 nothing confirms that (Go's server writes a
+//     stream's last bytes after the handler returned, from a buffer another
+//     goroutine flushes), so a tool call over HTTP/2 is 503 once the token is
+//     checked and before the SDK runs (ADR 0030, "Changed after the second
+//     review of pull request 6").
 //
 // Every tool's work with the service keeps the HTTP request's deadline and
 // ends when the request does (call.bind), for both protocols.
@@ -291,6 +294,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if m.Method == "tools/call" {
 				tool = kindOf(m.Params.Name, toolNames)
 				c.buffered = true
+				if r.ProtoMajor >= 2 {
+					// Nothing would say when the answer's last byte left.
+					outcome = "no_abort"
+					unavailable(w)
+					return
+				}
 				if missing := missingParts(g, m.Params.Name); len(missing) > 0 {
 					outcome = "step_up"
 					h.stepUp(w, g, missing)
