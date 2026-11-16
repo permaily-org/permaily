@@ -26,6 +26,8 @@ github.com/permaily-org/permaily/internal/services/mailboxes 95
 github.com/permaily-org/permaily/internal/sesmail 98
 github.com/permaily-org/permaily/internal/webauthn 99
 github.com/permaily-org/permaily/internal/idp 100
+github.com/permaily-org/permaily/internal/jws 100
+github.com/permaily-org/permaily/internal/oauth 100
 github.com/permaily-org/permaily/internal/mailhtml 95
 github.com/permaily-org/permaily/internal/query 99
 github.com/permaily-org/permaily/internal/decide 100
@@ -33,3 +35,4 @@ github.com/permaily-org/permaily/internal/decide/openai 100
 github.com/permaily-org/permaily/internal/services/decisions 95
 github.com/permaily-org/permaily/internal/services/connections 89
 github.com/permaily-org/permaily/internal/services/receipts 100
+github.com/permaily-org/permaily/internal/mcpapi 100
