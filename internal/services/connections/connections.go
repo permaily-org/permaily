@@ -7,21 +7,30 @@
 // receipt written before anything leaves.
 //
 // Everything a later request needs is in the storage, so any request may land
-// on either of two enclaves (ADR 0017, "Two enclaves at once"): a connection
-// and the account's list are strict anchored records, so a revocation cannot
-// be undone by putting back an earlier copy, and a fork refuses them; a
-// request, a code, a token, a pushed request and a used assertion are
-// entries sealed with a key from the root secret, bound to where they are
-// stored, named by the hash of their secret and ended once by a mark at
-// version 0 (the pattern of services/accounts' pending.go). Memory holds only
-// caches, read again after oauth.ConnectionFresh (a connection's record, an
-// account's standing), what this enclave revoked since it started, and
+// on either of two enclaves (ADR 0017, "Two enclaves at once"). What decides
+// anything is in strict anchored records, which cannot be put back or hidden
+// (ADR 0030, "Changed after the design review", 3 and 6): a connection (its
+// state, its devices and each one's code), the account's list of them (with
+// its closing fence), and each token family's record (its current
+// generation, oauth.FamilyState). A request, a pushed request, a code, an
+// access token and a refresh token are also entries sealed with a key from
+// the root secret, bound to where they are stored and named by the hash of
+// their secret, for the lookup only: deleting one refuses it, putting back
+// an older one is refused by the record that decides. A request, a pushed
+// request and an assertion's jti are ended once by a mark at version 0 and
+// in the enclave's memory: none of them is an authority (a request's
+// decision is the list's; anything an assertion authenticates is a code's
+// or a family's). Memory holds only caches, read again after
+// oauth.ConnectionFresh (a connection's record, an account's list and
+// standing), what this enclave revoked since it started, the requests it is
+// answering for each connection (cancelled by a revocation here), and
 // limits.
 //
-// This file is the seam, committed with the design: what the service is
-// given, the names of its records and entries, and its errors. ADR 0030's
-// pull request 3 writes the service; "The contract and the seams" there
-// gives its methods. It knows nothing of HTTP.
+// This file and api.go are the seam, committed with the design and revised
+// after its review: what the service is given, what it gives (API,
+// Lifecycle), the names of its records and entries, and its errors. ADR
+// 0030's pull request 3 writes the service; connectionstest is the fake the
+// routes and MCP are built against. It knows nothing of HTTP.
 package connections
 
 import (
@@ -64,6 +73,13 @@ type Config struct {
 	// asks the model for it (the default rule and the query's own atoms).
 	Discloser inbox.Discloser
 	Asker     inbox.Asker
+	// Model says whether the model may be asked now for an account; while it
+	// may not, nothing leaves (the owner's decision 9).
+	Model ModelGate
+	// ModelNotice is the version of the model's notice in force (ADR 0028):
+	// a connection approved under another asks nothing of the model and
+	// gives nothing until renewed (finding 18).
+	ModelNotice string
 	// Rules are the rules every connection's reads apply first: in step 5,
 	// rules.Default() alone.
 	Rules []rules.Rule
@@ -87,14 +103,26 @@ type Keys interface {
 	Derive(ctx context.Context, purpose string) ([]byte, error)
 }
 
-// Accounts is what the service reads of an account (services/accounts
-// implements it): whether its connections may read, whether it may approve,
-// and the proof of a session.
+// Accounts is what the service reads of an account; *accounts.Service
+// implements it (accounts/standing.go, committed with this seam, with its
+// compile-time check). Its method is not mailboxes.Accounts' Standing,
+// whose answer is another type: one service implements both.
 type Accounts interface {
-	// Standing is the account's, read from its record (cached at most
-	// oauth.ConnectionFresh by the caller): open, blocked, closing, or not
-	// agreed to the terms in force.
-	Standing(ctx context.Context, account string) (Standing, error)
+	// ConnectionStanding is the account's, read from its record now (the
+	// caller caches it at most oauth.ConnectionFresh, and reads it again,
+	// uncached, before it commits an approval): open, blocked, closing, gone,
+	// or not agreed to the terms in force. An account that cannot be read
+	// is an error, never a standing.
+	ConnectionStanding(ctx context.Context, account string) (Standing, error)
+}
+
+// ModelGate says whether the model may be asked now for an account
+// (services/decisions implements it, ADR 0030's pull request 4): the key set
+// and accepted, no spend limit reached, the account's share left. Anything
+// but inbox.AskAnswered means nothing leaves for that account's
+// connections: contracts.ErrModelUnavailable (the owner's decision 9).
+type ModelGate interface {
+	Gate(ctx context.Context, account string) inbox.AskOutcome
 }
 
 // Standing is what an account's state allows connections.
@@ -112,6 +140,9 @@ const (
 	// StandingClosing: the account is being deleted: its connections are
 	// ended (contracts.EndedByAccount) and nothing is approved.
 	StandingClosing
+	// StandingGone: there is no such account, or it is due to be removed:
+	// its tokens are refused and nothing is approved.
+	StandingGone
 )
 
 // Mailboxes is what the service needs of mailboxes (services/mailboxes
@@ -131,16 +162,27 @@ const (
 	// consent showed sealed inside it.
 	RecordConnection = "connection-"
 	// RecordList + the account's identifier is the account's connections:
-	// for each its identifier, client and state, and which one is each
-	// client's current one; readable and signed.
+	// for each its identifier, client and state, which one is each client's
+	// current one, the authorization requests decided in the last
+	// oauth.RequestTTL (a request is decided once), and its closing fence
+	// (Closing and the generation EndAll ended through); readable and
+	// signed. Every approval writes it at the version read before and after
+	// it makes a connection, so an approval racing a deletion is refused or
+	// ended (finding 6).
 	RecordList = "connections-"
+	// RecordFamily + the family's identifier + "-" + its epoch (decimal) is
+	// a token family's record (oauth.FamilyState), sealed: one device of a
+	// connection, the only authority of which refresh token is current.
+	RecordFamily = "oauth-family-"
 	// RecordTries bounds the reads again after store.ErrChanged.
 	RecordTries = 5
 )
 
 // Partitions of the sealed entries, each followed by the hash of its secret
-// (oauth.Kind's domain separation), with the entry at key "v" and its mark
-// at key "used".
+// (oauth.Kind's domain separation), with the entry at key "v". A request, a
+// pushed request and a jti have their mark at key "used"; a code's and a
+// refresh token's use is decided by their connection's and family's
+// records, never by an entry.
 const (
 	PartitionRequest = "oauth#request#"
 	PartitionPushed  = "oauth#pushed#"
@@ -157,15 +199,26 @@ const (
 	PurposeCursor = "permaily vendor cursors v1"
 )
 
-// Limits held in each enclave's memory (N times these with N enclaves).
+// Limits held in each enclave's memory (N times these with N enclaves; the
+// deployment runs two).
 const (
 	// SearchesPerMinute and ReadsPerMinute bound one connection's searches
 	// and reads (a read of a message or an attachment).
 	SearchesPerMinute = 20
 	ReadsPerMinute    = 120
-	// TokenRequestsPerMinute bounds one client's requests to the token
-	// endpoint.
-	TokenRequestsPerMinute = 60
+	// AttachmentBytesPerHour bounds the attachments' bytes one connection
+	// is given in an hour (before MCP's base64, which adds a third).
+	AttachmentBytesPerHour = 200 << 20
+	// TokenAdmissionPerMinute bounds the requests the token, revocation and
+	// pushed request endpoints take before anything is authenticated, all
+	// clients together: an abuse bound, never per client_id, which anyone
+	// may name (finding 21 of the choices). Once a refresh token or a code
+	// is found, RefreshesPerFamilyPerMinute bounds its family.
+	TokenAdmissionPerMinute     = 600
+	RefreshesPerFamilyPerMinute = 10
+	// TransferMax bounds how long one answer may take to send once its
+	// first byte is released (Release).
+	TransferMax = 30 * time.Second
 	// CursorTTL is how long a vendor's cursor is taken.
 	CursorTTL = time.Hour
 	// EndedKept is how long an ended connection's record stays, to be
@@ -193,10 +246,3 @@ type OAuthError struct {
 }
 
 func (e *OAuthError) Error() string { return "connections: " + string(e.Code) }
-
-// What the routes and the MCP tools are given by the service (ADR 0030's pull
-// request 3 writes the methods): Start, Preview and Decide for the consent
-// screen; List, Get, Revoke and Renew for the person; Push, Token and
-// RevokeToken for the endpoints; Check for every request of a vendor; and
-// Info, Search, Read and Attachment for what it reads. Their signatures are
-// in ADR 0030, "The functions each pull request writes".

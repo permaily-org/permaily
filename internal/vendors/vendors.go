@@ -69,13 +69,18 @@ type Key struct {
 }
 
 // Resolver fetches and caches vendors' documents and key sets (ADR 0030,
-// "Clients"). It keeps them in the enclave's memory only, for the time their
-// Cache-Control says (5 minutes to 24 hours), revalidates a stale one with
-// If-None-Match or If-Modified-Since and keeps it on 304 Not Modified, and
-// serves a stale one at most an hour more while revalidating fails. Every
-// fetch goes through the vendor egress (HTTPS on port 443 only, no redirect,
-// no cookie, no credential, a bounded body) and is refused before any
-// connection when the URL breaks oauth's rules.
+// "Clients", revised after its review, choice 18). It keeps them in the
+// enclave's memory only, at most CacheMax of them, for the time their
+// Cache-Control says and no longer (no-store, no-cache or max-age=0: used
+// for the request that fetched it and fetched again for the next; at most
+// CacheMaxAge), revalidates a stale one with If-None-Match or
+// If-Modified-Since, takes 304 Not Modified only for a document it holds
+// (with that 304's validators and Cache-Control), and serves a stale one at
+// most StaleMax after its last successful fetch or revalidation went stale,
+// never extended by failures. Every fetch goes through the vendor egress
+// (HTTPS on port 443 only, HTTP/2 only, no redirect, no cookie, no
+// credential, a bounded body), at most FetchesInFlight at once, and is
+// refused before any connection when the URL breaks oauth's rules.
 type Resolver interface {
 	// Client resolves a client_id URL: ErrClientID for a URL the rules
 	// refuse, ErrDocument for a document they refuse, ErrUnreachable when
@@ -86,6 +91,17 @@ type Resolver interface {
 	// have.
 	Keys(ctx context.Context, c *Client, refresh bool) ([]Key, error)
 }
+
+// Bounds of the resolver, each enclave.
+const (
+	CacheMax        = 1024
+	CacheMaxAge     = 24 * time.Hour
+	StaleMax        = time.Hour
+	FetchesInFlight = 8
+	// FetchesPerMinute bounds the fetches that are not revalidations of a
+	// cached document.
+	FetchesPerMinute = 60
+)
 
 // The ways resolving fails, by kind. None of them holds a URL, a host or a
 // word of the vendor's answer: the reason is all a log line or an answer

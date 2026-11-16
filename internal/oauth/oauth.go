@@ -12,9 +12,12 @@
 // internal/httpapi's and internal/mcpapi's. depguard's oauth-is-pure lists
 // what it may import.
 //
-// This file is the seam, committed with the design: the constants and types
-// the pull requests of ADR 0030 share. The functions are written by its pull
-// request 1; "The contract and the seams" there gives their signatures.
+// This file is the seam, committed with the design and revised after its
+// review: the constants and types the pull requests of ADR 0030 share.
+// family.go and code.go are the state machines of a token family and of an
+// authorization code, kept in strict anchored records by
+// services/connections. The other functions are written by its pull request
+// 1; "The contract and the seams" there gives their signatures.
 package oauth
 
 import (
@@ -34,10 +37,15 @@ const (
 	// RefreshTokenTTL is how long a refresh token is taken; each use
 	// rotates it.
 	RefreshTokenTTL = 30 * 24 * time.Hour
-	// RefreshGrace is how long a refresh token or a code used once more
-	// answers the same pair its first use made (two enclaves, a client's
-	// retry); after it, a second use ends the connection (EndedByReuse).
-	RefreshGrace = 30 * time.Second
+	// RefreshRetryGrace is how long a refresh token used once more, by the
+	// same client for the same resource and the same requested scope,
+	// answers the pair its first use made (two enclaves, a client's retry
+	// after a lost answer): Family.Refresh. Any other second use ends the
+	// token's family (EndedByReuse), and a retry with another scope is
+	// refused without ending it (ADR 0030, findings 3 and 7). A code has no
+	// grace: a second use is refused and ends what the first made (finding
+	// 8, RFC 6749 section 4.1.2).
+	RefreshRetryGrace = 30 * time.Second
 	// CodeTTL is how long an authorization code is taken.
 	CodeTTL = 60 * time.Second
 	// RequestTTL is how long an authorization request waits for the
@@ -55,7 +63,26 @@ const (
 	// exp may be; ClockSkew is what is allowed of an iat or exp past.
 	AssertionMaxLife = 10 * time.Minute
 	ClockSkew        = time.Minute
+	// FamilyEpochRotations is how many rotations one record of a token
+	// family holds before the next is made (FamilyState, finding 3): below
+	// store.MaxHistoryReads, so a cold strict read of one never fails.
+	FamilyEpochRotations = 400
+	// FamiliesMax bounds the token families (devices) of one connection
+	// that are active at once (the owner's decision 10): past it, adding a
+	// device is refused until the person revokes one.
+	FamiliesMax = 16
 )
+
+// AssertionAcceptedUntil is the first instant at which a client assertion
+// with this exp is no longer accepted: exp plus ClockSkew. Verification
+// accepts it only before that instant, and the mark of its jti is kept
+// until that instant (its entry's expiry), so no assertion is accepted
+// while its mark may be replaced (ADR 0030, finding 9). Both checks use
+// this one function.
+func AssertionAcceptedUntil(exp time.Time) time.Time { return exp.Add(ClockSkew) }
+
+// AssertionLive says an assertion with this exp is still accepted at now.
+func AssertionLive(exp, now time.Time) bool { return now.Before(AssertionAcceptedUntil(exp)) }
 
 // Connection lifetimes (ADR 0019, "Every connection ends").
 const (
@@ -274,14 +301,42 @@ type AuthorizeParams struct {
 }
 
 // Grant is what a valid access token stands for, once the token, its
-// connection and its account have been checked (internal/services/connections).
-// The routes and the MCP tools are given it and nothing of the token.
+// family, its connection and its account have been checked
+// (internal/services/connections). The routes and the MCP tools are given
+// it and nothing of the token; the service checks it again (Release)
+// immediately before anything prepared for it is released (ADR 0030,
+// finding 5).
 type Grant struct {
 	Connection string
-	Account    string
-	ClientID   string
-	Vendor     string
-	Resource   contracts.Resource
-	Parts      []contracts.Part
-	Scopes     []string
+	// Family is the token family (one device of the connection, the owner's
+	// decision 10) the token belongs to.
+	Family   string
+	Account  string
+	ClientID string
+	Vendor   string
+	Resource contracts.Resource
+	// Parts are the effective parts: the token's scopes, its family's and
+	// the connection's parts, intersected (finding 7). Scopes are the
+	// token's own.
+	Parts  []contracts.Part
+	Scopes []string
+	// TokenExpiresAt is the access token's expiry, ConnectionEndsAt the
+	// connection's end, and CheckedAt when the connection's record and the
+	// account's standing used for the check were read.
+	TokenExpiresAt   time.Time
+	ConnectionEndsAt time.Time
+	CheckedAt        time.Time
+}
+
+// Deadline is the last instant at which anything may be released for g
+// without checking again: the earliest of the token's expiry, the
+// connection's end and CheckedAt plus ConnectionFresh.
+func (g *Grant) Deadline() time.Time {
+	d := g.CheckedAt.Add(ConnectionFresh)
+	for _, t := range []time.Time{g.TokenExpiresAt, g.ConnectionEndsAt} {
+		if !t.IsZero() && t.Before(d) {
+			d = t
+		}
+	}
+	return d
 }

@@ -138,6 +138,7 @@ const (
 	FormulaConfusableValue    FormulaReason = "confusable_value"     // a word, an address's local part or a domain's label that mixes Latin, Greek and Cyrillic letters
 	FormulaUnknownMailbox     FormulaReason = "unknown_mailbox"      // a mailbox that is not the account's
 	FormulaNeverMatches       FormulaReason = "never_matches"        // a formula that no message can match
+	FormulaPartNotApproved    FormulaReason = "part_not_approved"    // a vendor's search condition on what the request's parts do not give (ADR 0030)
 )
 
 // FormulaCheck is what the system says of a formula it accepted: its

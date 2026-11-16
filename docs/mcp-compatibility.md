@@ -21,3 +21,4 @@ Earlier expectations came from Portifact's production tests on 2026-11-08 (same 
 - With access tokens of a few minutes Claude Code refreshes before every call; an hour avoids it.
 - A `401` drops Codex's tools until `codex mcp login`: a storage error must be a `503`, never a `401`.
 - Tool results that contain email content must be marked as data, and the server instructions must tell the model that email content is never instructions.
+- To observe in the guided session (ADR 0030, revised after its design review): what each client shows for `503 model_unavailable` (nothing leaves while the model cannot be asked, the owner's decision 9); whether a second sign-in of the same client from another device offers to add a device to the existing connection (the owner's decision 10); and whether ChatGPT sends a valid client assertion, which, if it does not, the owner decides on then.

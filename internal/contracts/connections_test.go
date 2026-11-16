@@ -25,16 +25,20 @@ func TestConnectionShapes(t *testing.T) {
 			ID: "pmq_x", Vendor: Vendor{Domain: "claude.ai", Verified: "Anthropic"}, ClientName: "Claude Code",
 			RedirectHost: "localhost", Loopback: true, Resource: ResourceMCP, Parts: []Part{PartSender, PartSubject, PartBody},
 			Since: MailSince{New: true}, EndsInDays: 90, Mailboxes: []string{"mbx_a"},
-			Rules:       []RuleSummary{{ID: "default-sign-in-and-security", Version: 1, Sentence: []Sentence{}}},
-			ModelNotice: "2026-11-15", ExpiresAt: at,
-		}}, `{"request":{"id":"pmq_x","vendor":{"domain":"claude.ai","verified":"Anthropic"},"client_name":"Claude Code","redirect_host":"localhost","loopback":true,"resource":"mcp","parts":["sender","subject","body"],"since":{"new":true},"ends_in_days":90,"mailboxes":["mbx_a"],"rules":[{"id":"default-sign-in-and-security","version":1,"sentence":[]}],"model_notice":"2026-11-15","expires_at":"2026-11-16T10:00:00Z"}}`},
+			Draft:  ConsentDraft{Mailboxes: []string{"mbx_a"}, Since: MailSince{New: true}},
+			Rules:  []RuleSummary{{ID: "default-sign-in-and-security", Version: 1, Sentence: []Sentence{}}},
+			Change: ChangeNew, ModelNotice: "2026-11-15", ExpiresAt: at,
+		}}, `{"request":{"id":"pmq_x","vendor":{"domain":"claude.ai","verified":"Anthropic"},"client_name":"Claude Code","redirect_host":"localhost","loopback":true,"resource":"mcp","parts":["sender","subject","body"],"since":{"new":true},"ends_in_days":90,"mailboxes":["mbx_a"],"draft":{"mailboxes":["mbx_a"],"since":{"new":true}},"rules":[{"id":"default-sign-in-and-security","version":1,"sentence":[]}],"change":"new","model_notice":"2026-11-15","expires_at":"2026-11-16T10:00:00Z"}}`},
 		{"an unknown vendor", Vendor{Domain: "trip-app.com"}, `{"domain":"trip-app.com"}`},
 		{"mail since a date", MailSince{At: at}, `{"new":false,"at":"2026-11-16T10:00:00Z"}`},
-		{"a preview", ConsentPreview{Mailbox: "mbx_a", Limit: 50, AskModel: true}, `{"mailbox":"mbx_a","limit":50,"ask_model":true}`},
+		{"a preview of the last year", ConsentPreview{Draft: ConsentDraft{Mailboxes: []string{"mbx_a", "mbx_b"}, Since: MailSince{At: at}}, DraftID: "qry_d", Mailbox: "mbx_a", After: "m1", Limit: 50, AskModel: true},
+			`{"draft":{"mailboxes":["mbx_a","mbx_b"],"since":{"new":false,"at":"2026-11-16T10:00:00Z"}},"draft_id":"qry_d","mailbox":"mbx_a","after":"m1","limit":50,"ask_model":true}`},
+		{"a preview's answer", ConsentPreviewPage{DraftID: "qry_d", Change: ChangeAddDevice, Page: MatchPage{Messages: []MessageSummary{}, NeedsModel: []string{}, Unknown: []string{}}},
+			`{"draft_id":"qry_d","change":"add_device","page":{"messages":[],"needs_model":[],"unknown":[]}}`},
 		{"a page with held mail", MatchPage{Messages: []MessageSummary{}, NeedsModel: []string{}, Unknown: []string{}, Held: []string{"m1"}, Model: MatchModelAsked},
 			`{"messages":[],"needs_model":[],"unknown":[],"held":["m1"],"model":"asked"}`},
-		{"an approval", AuthorizationDecision{Allow: true, Since: &MailSince{New: true}, Mailboxes: []string{"mbx_a"}},
-			`{"allow":true,"since":{"new":true},"mailboxes":["mbx_a"]}`},
+		{"an approval", AuthorizationDecision{Allow: true, Draft: &ConsentDraft{Mailboxes: []string{"mbx_a"}, Since: MailSince{New: true}}, ModelNotice: "2026-11-15"},
+			`{"allow":true,"draft":{"mailboxes":["mbx_a"],"since":{"new":true}},"model_notice":"2026-11-15"}`},
 		{"a refusal", AuthorizationDecision{}, `{"allow":false}`},
 		{"the way back", AuthorizationAnswer{Redirect: "http://localhost:58047/callback?code=c&state=s&iss=i"},
 			`{"redirect":"http://localhost:58047/callback?code=c\u0026state=s\u0026iss=i"}`},
@@ -43,10 +47,12 @@ func TestConnectionShapes(t *testing.T) {
 			ClientName: "Codex", Resource: ResourceMCP, State: ConnectionEnded, Parts: []Part{PartSender},
 			Mailboxes: []string{"mbx_a"}, Since: MailSince{New: true, At: at}, MadeAt: at, EndsAt: at,
 			EndedAt: at, EndReason: EndedByReplaced, ReplacedBy: "con_y",
-		}, `{"id":"con_x","vendor":{"domain":"chatgpt.com","verified":"OpenAI"},"client_id":"https://chatgpt.com/oauth/codex/client.json","client_name":"Codex","resource":"mcp","state":"ended","parts":["sender"],"mailboxes":["mbx_a"],"since":{"new":true,"at":"2026-11-16T10:00:00Z"},"made_at":"2026-11-16T10:00:00Z","ends_at":"2026-11-16T10:00:00Z","ended_at":"2026-11-16T10:00:00Z","end_reason":"replaced","replaced_by":"con_y"}`},
+			Devices:     []ConnectionDevice{{ID: "fam_a", MadeAt: at, State: ConnectionEnded, Parts: []Part{PartSender}, Narrower: true, EndedAt: at, EndReason: EndedByVendor}},
+			ModelNotice: "2026-11-15", Delivery: DeliveryNoticeChanged,
+		}, `{"id":"con_x","vendor":{"domain":"chatgpt.com","verified":"OpenAI"},"client_id":"https://chatgpt.com/oauth/codex/client.json","client_name":"Codex","resource":"mcp","state":"ended","parts":["sender"],"mailboxes":["mbx_a"],"since":{"new":true,"at":"2026-11-16T10:00:00Z"},"made_at":"2026-11-16T10:00:00Z","ends_at":"2026-11-16T10:00:00Z","ended_at":"2026-11-16T10:00:00Z","end_reason":"replaced","replaced_by":"con_y","devices":[{"id":"fam_a","made_at":"2026-11-16T10:00:00Z","state":"ended","parts":["sender"],"narrower":true,"ended_at":"2026-11-16T10:00:00Z","end_reason":"vendor"}],"model_notice":"2026-11-15","delivery":"model_notice_changed"}`},
 		{"no connection", ConnectionList{Connections: []Connection{}}, `{"connections":[]}`},
-		{"what the vendor is told", VendorConnection{Parts: []Part{PartSender, PartAttachments}, Since: MailSince{At: at}, EndsAt: at, Query: &all},
-			`{"parts":["sender","attachments"],"since":{"new":false,"at":"2026-11-16T10:00:00Z"},"ends_at":"2026-11-16T10:00:00Z","query":{"v":1,"all":[]}}`},
+		{"what the vendor is told", VendorConnection{Parts: []Part{PartSender, PartAttachments}, Since: MailSince{At: at}, EndsAt: at, Query: &all, Delivery: DeliveryModelUnavailable},
+			`{"parts":["sender","attachments"],"since":{"new":false,"at":"2026-11-16T10:00:00Z"},"ends_at":"2026-11-16T10:00:00Z","query":{"v":1,"all":[]},"delivery":"model_unavailable"}`},
 		{"a search", VendorSearch{Query: &all, Limit: 20, Cursor: "pmk_x"}, `{"query":{"v":1,"all":[]},"limit":20,"cursor":"pmk_x"}`},
 		{"everything, newest first", VendorSearch{}, `{}`},
 		{"a page that left", VendorPage{Messages: []VendorMessage{{
@@ -69,9 +75,32 @@ func TestConnectionShapes(t *testing.T) {
 }
 
 func TestConnectionErrorsAreTheirCodes(t *testing.T) {
-	for _, e := range []*Error{ErrInvalidClient, ErrVendorUnreachable, ErrRequestEnded, ErrConnectionEnded, ErrPartNotApproved, ErrAttachmentTooLarge} {
+	for _, e := range []*Error{ErrInvalidClient, ErrVendorUnreachable, ErrRequestEnded, ErrConnectionEnded, ErrPartNotApproved, ErrAttachmentTooLarge, ErrModelUnavailable, ErrModelNoticeChanged, ErrTooManyDevices} {
 		if !errors.Is(&Error{e.Code, "other words"}, e) {
 			t.Errorf("%s is not its code", e.Code)
+		}
+	}
+}
+
+// Finding 4: a vendor's search may look only at what its parts give; the
+// variables no part gives are never searchable by a vendor.
+func TestWhatASearchConditionLooksAt(t *testing.T) {
+	want := map[Variable][]Part{
+		VarFromAddress: {PartSender}, VarFromDomain: {PartSender}, VarReceived: {PartSender},
+		VarSubject: {PartSubject}, VarBody: {PartBody}, VarMessage: {PartSubject, PartBody},
+		VarAttachments: {PartAttachments}, VarAttachmentName: {PartAttachments}, VarAttachmentType: {PartAttachments},
+	}
+	for _, v := range []Variable{VarFromAddress, VarFromDomain, VarRecipientAddress, VarRecipientDomain, VarSignedBy, VarSubject, VarBody, VarMessage, VarAttachments, VarAttachmentName, VarAttachmentType, VarList, VarReceived, VarSize, VarMailbox} {
+		got, ok := ConditionParts(v, OpContains)
+		w, searchable := want[v]
+		if ok != searchable || len(got) != len(w) {
+			t.Errorf("%s: %v %v, want %v", v, got, ok, w)
+			continue
+		}
+		for i := range w {
+			if got[i] != w[i] {
+				t.Errorf("%s: %v, want %v", v, got, w)
+			}
 		}
 	}
 }

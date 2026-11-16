@@ -44,6 +44,16 @@ type Rule struct {
 	Formulas []*query.Canonical
 }
 
+// Ref names one version of a rule: what a committed decision, a receipt and
+// /status name it by.
+type Ref struct {
+	ID      string `json:"id"`
+	Version int    `json:"version"`
+}
+
+// Ref is the rule's name and version.
+func (r Rule) Ref() Ref { return Ref{ID: r.ID, Version: r.Version} }
+
 // DefaultID is the identifier of the rule every account has from the start
 // (ADR 0019, "A rule from the start"; ADR 0031).
 const DefaultID = "default-sign-in-and-security"

@@ -402,6 +402,18 @@ export type MailSince = { new: boolean; at?: string }
 /** A rule every connection's reads apply first, and its sentence. */
 export type RuleSummary = { id: string; version: number; sentence: QuerySentence[] }
 
+/**
+ * The scope the person is about to approve: sent whole with every preview and with the decision. `mailboxes` is never
+ * empty and never means all. New mail only is mail received from the approval on, so its preview is empty.
+ */
+export type ConsentDraft = { mailboxes: string[]; since: MailSince }
+
+/**
+ * What approving does to the client's connection: makes one, adds this request as another device of it (the same scope
+ * or a narrower one; its other devices keep working), or replaces it (any other scope; its tokens stop).
+ */
+export type ConnectionChange = 'new' | 'add_device' | 'replace'
+
 /** What the consent screen shows of a vendor's request. Without `query`, the person chooses the mailboxes. */
 export type AuthorizationRequest = {
   id: string
@@ -415,11 +427,15 @@ export type AuthorizationRequest = {
   query?: FormulaCheck
   since: MailSince
   ends_in_days: number
+  /** What the picker offers. */
   mailboxes: string[]
+  /** Where the screen starts: every mailbox and new mail only, or the client's connection's. */
+  draft: ConsentDraft
   rules: RuleSummary[]
-  /** The connection this client has now, which approving ends; `narrower` when the request asks for no more. */
-  replaces?: Connection
-  narrower?: boolean
+  /** The client's active connection, and what approving the starting draft does to it. */
+  connection?: Connection
+  change: ConnectionChange
+  /** Sent back with an approval; refused (`model_notice_changed`) when another is in force. */
   model_notice: string
   expires_at: string
 }
@@ -427,16 +443,24 @@ export type AuthorizationRequest = {
 /** A request to show, or where to send the browser back with the vendor's error. Exactly one is set. */
 export type AuthorizationStarted = { request?: AuthorizationRequest; redirect?: string }
 
-/** A page of what a request would read in one mailbox, for the consent screen's preview. */
+/** A page of what a request would read under `draft` in one of its mailboxes; `after` needs the page before's `draft_id`. */
 export type ConsentPreview = {
+  draft: ConsentDraft
+  draft_id?: string
   mailbox: string
   after?: string
   limit?: number
   ask_model?: boolean
 }
 
-/** The person's decision. With a query, `since` may only narrow what was asked; without one, the person sets `since` and `mailboxes`. */
-export type AuthorizationDecision = { allow: boolean; since?: MailSince; mailboxes?: string[] }
+/** A preview's answer: the draft's identifier, what approving it does, and the page. */
+export type ConsentPreviewPage = { draft_id: string; change: ConnectionChange; page: MatchPage }
+
+/** The person's decision: an approval sends the draft and the notice the screen showed. */
+export type AuthorizationDecision = { allow: boolean; draft?: ConsentDraft; model_notice?: string }
+
+/** A renewal: the notice the screen showed. */
+export type ConnectionRenewal = { model_notice: string }
 
 /** Where the browser goes back to the vendor, and nowhere else. */
 export type AuthorizationAnswer = { redirect: string }
@@ -444,6 +468,20 @@ export type AuthorizationAnswer = { redirect: string }
 export type ConnectionState = 'active' | 'ended'
 
 export type EndReason = 'person' | 'vendor' | 'reuse' | 'replaced' | 'account' | 'expired'
+
+/** Whether a connection gets mail now: nothing leaves while the model cannot be asked or a new notice waits for the person. */
+export type ConnectionDelivery = 'delivering' | 'model_unavailable' | 'model_notice_changed'
+
+/** One device of a connection: the tokens one approval started, with the scope confirmed for it. */
+export type ConnectionDevice = {
+  id: string
+  made_at: string
+  state: ConnectionState
+  parts: ConnectionPart[]
+  narrower?: boolean
+  ended_at?: string
+  end_reason?: EndReason
+}
 
 /** A connection as the person's app shows it. */
 export type Connection = {
@@ -462,6 +500,9 @@ export type Connection = {
   ended_at?: string
   end_reason?: EndReason
   replaced_by?: string
+  devices: ConnectionDevice[]
+  model_notice: string
+  delivery: ConnectionDelivery
 }
 
 /** The account's connections: the active ones and the ones that ended in the last 30 days. */
