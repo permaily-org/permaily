@@ -65,6 +65,7 @@ The proxy on the parent EC2 instance.
 | golang.org/x/net | BSD-3-Clause |
 | golang.org/x/sync | BSD-3-Clause |
 | golang.org/x/sys | BSD-3-Clause |
+| golang.org/x/text | BSD-3-Clause |
 
 ## permaily-verify
 

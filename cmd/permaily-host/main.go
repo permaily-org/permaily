@@ -1,7 +1,9 @@
 // Command permaily-host runs on the parent EC2 instance. It is untrusted by
 // design: it forwards public TCP ports to the enclave over vsock and exposes
-// an allowlisted CONNECT proxy on vsock for the enclave's outbound traffic. It
-// also prints the enclave's log lines, which is the only output a production
+// an allowlisted CONNECT proxy on vsock for the enclave's outbound traffic,
+// and a second one, the vendor egress, through which the enclave fetches
+// vendors' client documents from any public name on 443 (ADR 0030). It also
+// prints the enclave's log lines, which is the only output a production
 // enclave has.
 package main
 
@@ -65,11 +67,13 @@ func main() {
 		credsPort  = uint32(8002)
 		imds       = flag.String("imds", "http://169.254.169.254", "instance metadata endpoint")
 		logPort    = uint32(8003)
+		vendorPort = uint32(8004)
 	)
 	flag.Func("log-port", "vsock port that receives the enclave's log lines; 0 disables (default 8003)", uint32Flag(&logPort))
 	flag.Func("credentials-port", "vsock port serving the instance role credentials to the enclave (default 8002)", uint32Flag(&credsPort))
 	flag.Func("enclave-cid", "vsock context ID of the enclave (default 16)", uint32Flag(&cid))
 	flag.Func("egress-port", "vsock port for the enclave's CONNECT proxy (default 8000)", uint32Flag(&egressPort))
+	flag.Func("vendor-egress-port", "vsock port for the vendor egress, the CONNECT proxy to any public name on 443 for vendors' documents (default 8004)", uint32Flag(&vendorPort))
 	flag.Parse()
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
@@ -116,6 +120,20 @@ func main() {
 	}
 	go func() { errc <- srv.Serve(vl) }()
 
+	// The vendor egress (ADR 0030): any public name on 443, apart from the
+	// allowlist above, which it does not widen. It logs kinds only.
+	pl, err := vsock.Listen(vendorPort, nil)
+	if err != nil {
+		log.Error("vendor egress listen", "err", err)
+		os.Exit(1)
+	}
+	log.Info("vendor egress proxy", "vsock_port", vendorPort)
+	vendorSrv := &http.Server{
+		Handler:           &hostproxy.PublicProxy{Log: log},
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() { errc <- vendorSrv.Serve(pl) }()
+
 	cl, err := vsock.Listen(credsPort, nil)
 	if err != nil {
 		log.Error("credentials listen", "err", err)
@@ -138,6 +156,7 @@ func main() {
 	select {
 	case <-ctx.Done():
 		_ = srv.Close()
+		_ = vendorSrv.Close()
 		_ = credSrv.Close()
 	case err := <-errc:
 		log.Error("stopped", "err", err)
