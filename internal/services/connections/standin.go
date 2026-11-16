@@ -24,11 +24,12 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/net/idna"
+
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/vendors"
-	"golang.org/x/net/idna"
 )
 
 // Stand-ins for the functions of internal/oauth and internal/jws that ADR
@@ -234,7 +235,8 @@ func pkceValue(s string) bool {
 	}
 	for i := range len(s) {
 		c := s[i]
-		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.IndexByte("-._~", c) >= 0) {
+		unreserved := c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.IndexByte("-._~", c) >= 0
+		if !unreserved {
 			return false
 		}
 	}
