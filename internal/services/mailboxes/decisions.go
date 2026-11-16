@@ -119,22 +119,35 @@ func (d decisionStore) WriteBlock(ctx context.Context, name string, r *inbox.Dec
 	return d.s.cfg.Records.PutRecordAt(ctx, rec, at.Store)
 }
 
-// decisionsBefore is how far before its removal the days of a mailbox
-// whose creation is not known (its record lost) are walked: its longest
-// retention, a day, and the decisions' hour (inbox.DecisionKeptAfter).
-const decisionsBefore = (365 + 2) * 24 * time.Hour
+// decisionsFirst is the first day any block of decisions can be of: no
+// image before ADR 0031 (merged in November 2026) wrote one. It is the
+// lower bound of a removal whose disconnect entry carries none (one an
+// earlier image wrote) and whose record is gone. A block has no expiry and
+// a quiet day is never written again, so no lookback from the removal,
+// however long, is one: only a bound from before the mailbox's first day.
+var decisionsFirst = time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+
+// sinceMargin is taken off a trusted lower bound: a message's day comes
+// from the clock of the enclave that received it, which may be behind the
+// one that made the mailbox.
+const sinceMargin = 24 * time.Hour
 
 // removeDecisions removes every block of the mailbox's decisions, by
-// walking its days from its creation (from) to now, and each day's blocks
-// by their Next from block 0, never an index (ADR 0031, "How long"): the
-// last block of a day first, so a removal stopped half way leaves block 0,
-// from which the next sweep walks again. A block that is forked takes no
-// removal and stays (as a forked mailbox's record does); the walk goes on
-// past it, and past a lost one, to the block after. It runs in the sweep's
-// last pass of a mailbox that is leaving, once no request can write.
-func (s *Service) removeDecisions(ctx context.Context, id string, from time.Time) error {
+// walking its days from the trusted lower bound since (its creation, or
+// when its account's list added it; decisionsFirst when none is known) to
+// now, and each day's blocks by their Next from block 0, never an index
+// (ADR 0031, "How long"): the last block of a day first, so a removal
+// stopped half way leaves block 0, from which the next sweep walks again. A
+// block that is forked takes no removal and stays (as a forked mailbox's
+// record does); the walk goes on past it, and past a lost one, to the block
+// after. It runs in the sweep's last pass of a mailbox that is leaving,
+// once no request can write.
+func (s *Service) removeDecisions(ctx context.Context, id string, since time.Time) error {
+	from := since
 	if from.IsZero() {
-		from = s.now().Add(-decisionsBefore)
+		from = decisionsFirst
+	} else {
+		from = from.Add(-sinceMargin)
 	}
 	end := s.now().Add(24 * time.Hour)
 	for day := from.UTC().Truncate(24 * time.Hour); !day.After(end); day = day.AddDate(0, 0, 1) {
