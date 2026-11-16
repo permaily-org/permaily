@@ -425,13 +425,13 @@ func parseModel(t *testing.T, args []string) modelConfig {
 }
 
 // The image's model section: the owner's figures, zero data retention not
-// approved, and the organisation and project, which the owner fills before
-// the release (empty pins none). Staging lowers the day's alarm and the
-// month's limit, and changes nothing else.
+// approved, and the organisation and project pinned. Staging lowers the
+// day's alarm and the month's limit and pins the evaluations' project, whose
+// key it uses (A35), in the same organisation, and changes nothing else.
 func TestTheImageModelSection(t *testing.T) {
 	e := readEnclaveJSON(t)
 	prod := parseModel(t, modelArgs(t, e.Model))
-	if prod.limits != decisions.DefaultLimits || prod.zeroDataRetention {
+	if prod.limits != decisions.DefaultLimits || prod.zeroDataRetention || prod.organization == "" || prod.project == "" {
 		t.Fatalf("production: %+v", prod)
 	}
 	merged := map[string]any{}
@@ -439,14 +439,14 @@ func TestTheImageModelSection(t *testing.T) {
 		merged[k] = v
 	}
 	for k, v := range e.Staging.Model {
-		if k != "month_limit_usd" && k != "day_alarm_usd" {
+		if k != "month_limit_usd" && k != "day_alarm_usd" && k != "project" {
 			t.Errorf("staging changes model.%s", k)
 		}
 		merged[k] = v
 	}
 	staging := parseModel(t, modelArgs(t, merged))
 	if staging.limits.Month >= prod.limits.Month || staging.limits.DayAlarm >= prod.limits.DayAlarm || staging.limits.DayAlarm > staging.limits.Month ||
-		staging.limits.AccountDay != prod.limits.AccountDay || staging.limits.Block != prod.limits.Block || staging.organization != prod.organization || staging.project != prod.project {
+		staging.limits.AccountDay != prod.limits.AccountDay || staging.limits.Block != prod.limits.Block || staging.organization != prod.organization || staging.project == "" || staging.project == prod.project {
 		t.Fatalf("staging: %+v, production %+v", staging, prod)
 	}
 	// Every amount Nix may write reads back.

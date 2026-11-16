@@ -17,8 +17,8 @@
   "release_ref": "refs/heads/main",
   "release_ref_prefix": "",
   "model": {
-    "organization": "",
-    "project": "",
+    "organization": "org-dJ6k3s7hQJZTsHm7yNkGLKo8",
+    "project": "proj_l8Ey2wpgYkfImgcDAYhbpBi3",
     "zero_data_retention": false,
     "month_limit_usd": 50,
     "day_alarm_usd": 10,
@@ -33,6 +33,7 @@
     "release_ref": "",
     "release_ref_prefix": "refs/heads/staging/",
     "model": {
+      "project": "proj_4wrV7cJtQ9zVeaYmfppglzEE",
       "month_limit_usd": 1,
       "day_alarm_usd": 0.2
     }
