@@ -160,7 +160,8 @@ describe('W5: an account that has not agreed reaches the list, downloads and dis
     asNotAgreed()
     await open('/accounts/new')
     await screen.findByRole('heading', { name: 'The terms changed' })
-    await open('/connections')
+    // Connections are reached too, since ADR 0030's finding 17 (tests/components/connections-gate.test.tsx).
+    await open('/rules')
     await screen.findByRole('heading', { name: 'The terms changed' })
   })
 

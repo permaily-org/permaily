@@ -34,6 +34,18 @@ type called struct {
 // call makes the attempts of one call, account's ("" for the canary).
 // canary counts its attempts as the canary's.
 func (s *Service) call(ctx context.Context, c decide.Call, account string, canary bool) called {
+	return s.attempts(ctx, c, account, canary, nil)
+}
+
+// probeCall makes the attempt of the gate's probe of the stop gen
+// (reserveProbe): sent only if it claims that stop's probe.
+func (s *Service) probeCall(ctx context.Context, c decide.Call, gen uint64) called {
+	return s.attempts(ctx, c, "", false, &gen)
+}
+
+// attempts makes the attempts of one call; probe, when set, is the stop
+// whose probe it is, reserved as such alone.
+func (s *Service) attempts(ctx context.Context, c decide.Call, account string, canary bool, probe *uint64) called {
 	est := decide.Estimate(c)
 	var out called
 	var retryAfter time.Duration
@@ -64,7 +76,22 @@ func (s *Service) call(ctx context.Context, c decide.Call, account string, canar
 			s.countFailure(canary, attestation.ModelCallTimeout)
 			return out
 		}
-		r, h := s.reserve(ctx, est, account, k.fp)
+		var r *reservation
+		var h hold
+		if probe != nil {
+			r, h = s.reserveProbe(ctx, est, *probe)
+		} else {
+			r, h = s.reserve(ctx, est, account, k.fp)
+		}
+		if r == nil && h == holdNone {
+			// The probe's claim found nothing to claim: nothing is sent.
+			// A retry of a probe already sent is held, as reserve holds it.
+			<-s.slots
+			if out.attempts > 0 {
+				s.countFailure(canary, attestation.ModelCallHeld)
+			}
+			return out
+		}
 		if h != holdNone {
 			<-s.slots
 			out.hold = h

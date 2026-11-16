@@ -60,6 +60,19 @@ const messages: Record<ApiErrorCode, string> = {
   link_changed:
     'This link changed since the message was opened. Close this tab, open the message again, then the link.',
   busy: 'Permaily is busy right now. Try again in a moment.',
+  invalid_client: "That app's request can't be used. Start again from the app.",
+  vendor_unreachable: "That app's details couldn't be read. Try again in a few minutes.",
+  request_ended: 'That request ended. Start again from the app.',
+  request_too_large: 'That app asks for more than a connection can hold.',
+  connection_ended: 'That connection ended.',
+  model_notice_changed:
+    'What Permaily sends to its model changed since this page opened. Read it again, then decide.',
+  consent_changed: 'What allowing does changed since this page opened. Read it again, then decide.',
+  too_many_devices:
+    'That connection is on 16 devices, as many as it can be. Remove one you no longer use on its page, then allow again.',
+  too_many_connections:
+    'You have as many connections as an account can have. Revoke one you no longer use first.',
+  invalid_cursor: 'The preview changed since that page. Start it again from the newest.',
   other: 'Something went wrong on our side. Try again in a moment.',
 }
 

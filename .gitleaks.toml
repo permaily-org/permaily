@@ -58,3 +58,8 @@ regexes = ['''^[A-Za-z_]*[Kk]ey[A-Za-z_]* = ["']sk-proj-test-[A-Za-z0-9_-]+["']$
 [[allowlists]]
 description = "internal/domain's redaction test (ADR 0030, the seams of step 5) puts a made-up client assertion, whose signature decodes to the word signature, inside an error to show it is never logged; it signs nothing and was never a credential"
 regexes = ['''^eyJhbGciOiJSUzI1NiJ9\.eyJqdGkiOiJ1bmlxdWUifQ\.c2lnbmF0dXJl$''']
+
+[[allowlists]]
+description = "the consent screen's tests (ADR 0030, V54 and V63) list the pieces of a made-up vendor request that must never be kept; its PKCE code_challenge is base64 of the words CHALLENGE-challenge-challenge, nobody's secret, and the scan reads every commit of the branch"
+regexTarget = "secret"
+regexes = ['''^Q0hBTExFTkdFLWNoYWxsZW5nZS1jaGFsbGVuZ2''']
