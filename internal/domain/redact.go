@@ -41,10 +41,15 @@ var (
 // state, a client assertion, a jti, a client_id's host written alone. An
 // error that may carry one is never text that wraps it: it is a fixed kind
 // (FixedKind), which Redacted logs alone.
+//
+// The longer values go first: a connection's base64url secret may hold
+// "-acc_a" or any older prefix after a hyphen, and replacing that first
+// would cut the secret in two and leave its end (PR #137's review,
+// finding 1).
 func Redact(s string) string {
 	s = urls.ReplaceAllString(s, "${1}://…")
-	s = prefixedIDs.ReplaceAllString(s, "${1}_…")
 	s = connectionIDs.ReplaceAllString(s, "${1}_…")
+	s = prefixedIDs.ReplaceAllString(s, "${1}_…")
 	s = hexIDs.ReplaceAllString(s, "…")
 	return addresses.ReplaceAllString(s, "…@…")
 }
