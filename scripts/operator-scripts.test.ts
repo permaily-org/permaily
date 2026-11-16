@@ -807,13 +807,10 @@ describe('model-key.sh', () => {
     // another valid certificate for the name, with another key.
     const switcher = createTCPServer((socket) => {
       sockets.add(socket)
-      const upstream = connect(
-        (existsSync(swap) ? impostor.port : enclave.port) ?? 0,
-        '127.0.0.1',
-        () => {
-          socket.pipe(upstream).pipe(socket)
-        },
-      )
+      const upstream = connect((existsSync(swap) ? impostor.port : enclave.port) ?? 0, '127.0.0.1')
+      // Piped at once, not when the upstream connects: what the client sends first is buffered until then,
+      // where some Bun releases (1.3.13, the pinned one) would lose it.
+      socket.pipe(upstream).pipe(socket)
       sockets.add(upstream)
       socket.on('error', () => upstream.destroy())
       upstream.on('error', () => socket.destroy())
