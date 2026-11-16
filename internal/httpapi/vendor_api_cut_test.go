@@ -102,7 +102,12 @@ func TestV45ACutDuringABlockedWriteSendsNoByteAfterItOverHTTP2(t *testing.T) {
 			_, _ = rand.Read(data)
 			lease := newNotifiedLease()
 			var logs lockedBuffer
-			srv := httptest.NewUnstartedServer(attachmentAPI(data, lease, &logs))
+			api := attachmentAPI(data, lease, &logs)
+			handled := make(chan struct{})
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer close(handled)
+				api.ServeHTTP(w, r)
+			}))
 			srv.EnableHTTP2 = h2
 			srv.Config.ConnContext = httpapi.ConnContext
 			srv.Config.ErrorLog = log.New(io.Discard, "", 0)
@@ -147,7 +152,12 @@ func TestV45ACutDuringABlockedWriteSendsNoByteAfterItOverHTTP2(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("the response was not aborted")
 			}
-			srv.Close() // waits for the handler
+			srv.Close()
+			select { // an HTTP/2 handler may outlive Close
+			case <-handled:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the handler did not return")
+			}
 			if after := ln.afterCut(); after != 0 {
 				t.Errorf("%d bytes left on the wire after the cut", after)
 			}
@@ -176,7 +186,12 @@ func TestV45HTTP2WithoutTheConnectionsAbortReleasesNoMail(t *testing.T) {
 	const secret = "the bytes of an attachment"
 	lease := newNotifiedLease()
 	var logs lockedBuffer
-	srv := httptest.NewUnstartedServer(attachmentAPI([]byte(secret), lease, &logs))
+	api := attachmentAPI([]byte(secret), lease, &logs)
+	handled := make(chan struct{})
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(handled)
+		api.ServeHTTP(w, r)
+	}))
 	srv.EnableHTTP2 = true
 	srv.StartTLS()
 	t.Cleanup(srv.Close)
@@ -189,6 +204,7 @@ func TestV45HTTP2WithoutTheConnectionsAbortReleasesNoMail(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	srv.Close()
+	<-handled // its line is written when it returns
 	if resp.ProtoMajor != 2 || resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("Retry-After") != "5" || strings.Contains(string(body), secret) {
 		t.Fatalf("HTTP/%d %d %s", resp.ProtoMajor, resp.StatusCode, body)
 	}
