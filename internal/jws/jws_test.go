@@ -311,6 +311,10 @@ func TestObjectAndText(t *testing.T) {
 	if !ok || len(m) != 2 {
 		t.Fatal(m)
 	}
+	// Names encoding/json tells apart are two names.
+	if m, ok := jws.Object([]byte(`{"ss":1,"\u00df":2,"s_":3,"s-":4}`)); !ok || len(m) != 4 {
+		t.Fatal(m)
+	}
 	if s, ok := jws.Text(m["a"]); !ok || s != "x" {
 		t.Fatal(s)
 	}
@@ -319,7 +323,11 @@ func TestObjectAndText(t *testing.T) {
 			t.Errorf("%q is text", v)
 		}
 	}
-	for _, raw := range []string{"", "{", `{"a"}`, `{"a":1,}`, `{"a":1} 1`, `"x"`, `{"a":1,"a":1}`} {
+	for _, raw := range []string{"", "{", `{"a"}`, `{"a":1,}`, `{"a":1} 1`, `"x"`, `{"a":1,"a":1}`,
+		// encoding/json reads a name in any case, the Kelvin sign as a k and
+		// the long s as an s: these would be one member there.
+		`{"alg":1,"ALG":1}`, `{"Kid":1,"kid":2}`, `{"kid":1,"\u212aid":2}`, `{"s":1,"\u017f":2}`, `{"\u00e9":1,"\u00c9":2}`,
+		`{"i":1,"\u0131":2}`, `{"i":1,"\u0130":2}`, `{"\u00df":1,"\u1e9e":2}`} {
 		if _, ok := jws.Object([]byte(raw)); ok {
 			t.Errorf("%q is an object", raw)
 		}
