@@ -1,6 +1,11 @@
 package httpapi
 
-import "net/http"
+import (
+	"context"
+	"net"
+	"net/http"
+	"time"
+)
 
 // APIState is what the tests read of the API's own state: the render slots
 // running, the bytes of the read budget held and the takes of it waiting.
@@ -37,3 +42,27 @@ func (s APIState) Documents() int {
 	}
 	return n
 }
+
+// Transfer is the API's transfer of an answer under ctx, the lease's (req
+// is the request's), for the tests.
+func Transfer(ctx, req context.Context, w http.ResponseWriter, conn net.Conn, body []byte) (sent bool, ended string) {
+	return transfer(ctx, req, w, conn, body)
+}
+
+// Hooked is h whose requests carry a connection, as ConnContext keeps it,
+// when the server kept none: for the tests that serve in memory, where a
+// route that sends mail is otherwise refused. The abort's deadlines and
+// close act on nothing there.
+func Hooked(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, kept := r.Context().Value(connKey{}).(net.Conn); !kept {
+			r = r.WithContext(ConnContext(r.Context(), memoryConn{}))
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+type memoryConn struct{ net.Conn }
+
+func (memoryConn) SetDeadline(time.Time) error { return nil }
+func (memoryConn) Close() error                { return nil }
