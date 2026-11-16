@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -68,6 +69,20 @@ func TestV2AnHTTPSCallbackHostIsReadAsWritten(t *testing.T) {
 	} {
 		if RedirectAllowed([]string{pair[0]}, pair[1]) {
 			t.Errorf("exact matching widened: %q", pair)
+		}
+	}
+}
+
+// V2: the labels of an https callback host, one by one.
+func TestV2HostLabels(t *testing.T) {
+	for l, want := range map[string]bool{
+		"vendor": true, "a-b": true, "a1": true, "xn--bcher-kva": true,
+		strings.Repeat("a", 63): true, strings.Repeat("a", 64): false,
+		"-a": false, "a-": false, "a_b": false, "xn--a": false, "xn--localhost-": false,
+		"xn--": false, "xn--abc": false, "xn--zca": true, "xn--ss-": false,
+	} {
+		if got := hostLabel(l); got != want {
+			t.Errorf("hostLabel(%q) = %v, want %v", l, got, want)
 		}
 	}
 }

@@ -257,7 +257,12 @@ func redirectURI(r string) bool {
 	}
 	switch {
 	case strings.HasPrefix(r, "https://"):
-		return publicHost(u)
+		// No percent-encoding in the authority: net/url decodes it, and a
+		// browser then maps the decoded Unicode through IDNA (U+017F to "s",
+		// U+3002 to "."), so the host checked would not be the host reached.
+		authority, _, _ := strings.Cut(strings.TrimPrefix(r, "https://"), "/")
+		authority, _, _ = strings.Cut(authority, "?")
+		return !strings.Contains(authority, "%") && publicHost(u)
 	case strings.HasPrefix(r, "http://"):
 		host, _, ok := loopback(r)
 		return ok && host != ""
@@ -284,7 +289,7 @@ func publicHost(u *url.URL) bool {
 		return err == nil && a.Is6() && !a.Unmap().IsLoopback() && !a.Unmap().IsUnspecified()
 	}
 	labels := strings.Split(host, ".")
-	if slices.Contains(labels, "") {
+	if slices.Contains(labels, "") || !slices.EqualFunc(labels, labels, func(l, _ string) bool { return hostLabel(l) }) {
 		return false
 	}
 	if numeric(labels[len(labels)-1]) {
@@ -292,6 +297,30 @@ func publicHost(u *url.URL) bool {
 		return err == nil && a.Is4() && a.String() == host && !a.IsLoopback() && !a.IsUnspecified()
 	}
 	return host != "localhost" && !strings.HasSuffix(host, ".localhost")
+}
+
+// hostLabel says l is a label a browser reads as written: letters, digits
+// and inner hyphens, at most 63 bytes, and an A-label ("xn--") only when IDNA
+// decodes it and encodes it back to itself, so "xn--a" and "xn--localhost-"
+// are refused.
+func hostLabel(l string) bool {
+	if len(l) > 63 || strings.HasPrefix(l, "-") || strings.HasSuffix(l, "-") {
+		return false
+	}
+	for _, c := range l {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			return false
+		}
+	}
+	if !strings.HasPrefix(l, "xn--") {
+		return true
+	}
+	u, err := idna.Lookup.ToUnicode(l)
+	if err != nil || u == l {
+		return false
+	}
+	a, err := idna.Lookup.ToASCII(u)
+	return err == nil && a == l
 }
 
 // loopback splits an http loopback URL into its host as written, its port
