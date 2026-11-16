@@ -20,7 +20,8 @@ type Memory struct {
 	// what it is about to do; an error it returns fails that one, as a
 	// failure of a request to DynamoDB or S3 would, and leaves every earlier
 	// one done. It may block, as a slow request would: the store method
-	// returns ctx.Err() when ctx ends first. PutMessage is two steps (StepRaw,
+	// returns ctx.Err() when ctx ends before Interrupt returns, or by the
+	// time it returns nil, and then does nothing. PutMessage is two steps (StepRaw,
 	// then StepItem), as it is two requests on AWS; so are GetMessage (two
 	// StepRead) and DeleteMessage (StepDeleteRaw, then StepDeleteItem).
 	//
@@ -67,6 +68,12 @@ func (s *Memory) step(ctx context.Context, step Step, partition, key string) err
 	go func() { done <- interrupt(ctx, step, partition, key) }()
 	select {
 	case err := <-done:
+		if err == nil {
+			// A context that ended while Interrupt held the request stops it,
+			// as AWS never sends a request whose context has ended: when both
+			// are ready, select may have picked Interrupt's nil.
+			err = ctx.Err()
+		}
 		return err
 	case <-ctx.Done():
 		return ctx.Err()
