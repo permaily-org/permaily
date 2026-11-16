@@ -180,9 +180,12 @@ func Document(clientID string, body []byte) (*ClientDocument, error) {
 			return nil, bad
 		}
 	}
-	switch d.TokenEndpointAuthMethod {
-	case "", AuthNone:
+	// Absent is a public client; there and empty is no method, refused.
+	if _, has := members["token_endpoint_auth_method"]; !has {
 		d.TokenEndpointAuthMethod = AuthNone
+	}
+	switch d.TokenEndpointAuthMethod {
+	case AuthNone:
 	case AuthPrivateKeyJWT:
 		if _, err := ClientID(d.JWKSURI, ""); err != nil {
 			return nil, bad
@@ -241,8 +244,8 @@ func vendorPage(s string) bool {
 // The hosts of a loopback redirect (RFC 8252, sections 7.3 and 8.3).
 var loopbackHosts = []string{"localhost", "127.0.0.1", "[::1]"}
 
-// redirectURI checks one of a document's redirect_uris: an https URL whose
-// host is not loopback, or an http URL whose host is exactly localhost,
+// redirectURI checks one of a document's redirect_uris: an https URL with a
+// public host (publicHost), or an http URL whose host is exactly localhost,
 // 127.0.0.1 or [::1] with any port; visible ASCII, no user, no fragment.
 func redirectURI(r string) bool {
 	if len(r) > ClientIDMaxBytes || !visibleASCII(r) || strings.ContainsAny(r, `#\`) {
@@ -254,16 +257,41 @@ func redirectURI(r string) bool {
 	}
 	switch {
 	case strings.HasPrefix(r, "https://"):
-		h := strings.ToLower(u.Hostname())
-		if a, err := netip.ParseAddr(h); err == nil && a.Unmap().IsLoopback() {
-			return false
-		}
-		return h != "localhost" && !strings.HasSuffix(h, ".localhost")
+		return publicHost(u)
 	case strings.HasPrefix(r, "http://"):
 		host, _, ok := loopback(r)
 		return ok && host != ""
 	}
 	return false
+}
+
+// publicHost says an https redirect's authority names a host a browser
+// reaches as written and does not read as this computer: a port, when
+// written, of 1 to 65535 without a leading zero; a host with no empty label
+// (so no trailing dot, which would make "localhost." another spelling of
+// localhost); an IP address only in its one canonical spelling (the URL
+// standard reads "127.1", "2130706433", "0x7f000001" and "0177.0.0.1" as
+// 127.0.0.1) and neither loopback nor unspecified; and no name that is
+// localhost or under it. The URI itself is kept as written and compared
+// byte for byte (RedirectAllowed).
+func publicHost(u *url.URL) bool {
+	host := strings.ToLower(u.Hostname())
+	if i := strings.LastIndex(u.Host, ":"); i >= 0 && !strings.HasSuffix(u.Host, "]") && !validPort(u.Host[i+1:]) {
+		return false
+	}
+	if strings.HasPrefix(u.Host, "[") {
+		a, err := netip.ParseAddr(host)
+		return err == nil && a.Is6() && !a.Unmap().IsLoopback() && !a.Unmap().IsUnspecified()
+	}
+	labels := strings.Split(host, ".")
+	if slices.Contains(labels, "") {
+		return false
+	}
+	if numeric(labels[len(labels)-1]) {
+		a, err := netip.ParseAddr(host)
+		return err == nil && a.Is4() && a.String() == host && !a.IsLoopback() && !a.IsUnspecified()
+	}
+	return host != "localhost" && !strings.HasSuffix(host, ".localhost")
 }
 
 // loopback splits an http loopback URL into its host as written, its port
