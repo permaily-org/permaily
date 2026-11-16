@@ -214,35 +214,6 @@ func searchFormula(q *contracts.Formula, parts []contracts.Part) (*query.Canonic
 	return c, nil
 }
 
-// models are the model's answers a value rested on, as receipts keep them.
-func models(ds []inbox.Decided) []receipts.Model {
-	var out []receipts.Model
-	for _, d := range ds {
-		out = append(out, receipts.Model{
-			Var: d.Atom.Var, Op: d.Atom.Op, Topic: d.Atom.Topic, P: d.Evidence.P, Refused: d.Evidence.Refused, ByRule: d.Evidence.ByRule,
-			Name: d.Evidence.Model, Prompt: d.Evidence.Prompt, CanaryChecked: d.Evidence.CanaryChecked, CanaryChange: d.Evidence.CanaryChange,
-		})
-	}
-	return out
-}
-
-// delivered is what a receipt keeps of a message that left.
-func delivered(mailbox string, dis *inbox.Disclosed, parts []contracts.Part) receipts.Delivered {
-	m := dis.Message
-	out := receipts.Delivered{Mailbox: mailbox, Message: dis.ID, Received: m.ReceivedAt, Parts: slices.Clone(parts), From: m.From, Model: models(dis.Decided)}
-	if slices.Contains(parts, contracts.PartSubject) {
-		out.Subject = m.Subject
-	}
-	for _, rc := range dis.Rules {
-		out.Cleared = append(out.Cleared, receipts.Cleared{Rule: rc.Rule, At: rc.At, Model: models(rc.Decided)})
-	}
-	return out
-}
-
-func held(mailbox string, w *inbox.Withheld) receipts.Held {
-	return receipts.Held{Mailbox: mailbox, Message: w.ID, Rule: w.Rule, Why: string(w.Why), Model: models(w.Decided)}
-}
-
 // vendorMessage is a message as it leaves: its identifier for the vendor,
 // and only the effective parts.
 func vendorMessage(mailbox string, dis *inbox.Disclosed, parts []contracts.Part, text bool) contracts.VendorMessage {
@@ -294,8 +265,13 @@ func (s *Service) Search(ctx context.Context, g *oauth.Grant, in contracts.Vendo
 			return nil, nil, err
 		}
 	}
-	rc := s.receipt(r, receipts.KindSearch)
-	size, _ := jsonSize(rc)
+	// The receipt is built message by message as Write will store it, its
+	// lists' framing and the writer's own fields counted (receipts.Page,
+	// finding 9): the page ends before the message that would pass its bound.
+	rp, err := receipts.NewPage(s.receipt(r, receipts.KindSearch))
+	if err != nil {
+		return nil, nil, ErrUnavailable
+	}
 	out := &contracts.VendorPage{Messages: []contracts.VendorMessage{}}
 	considered, modelShort := 0, false
 	mailboxes := r.conn.Mailboxes
@@ -318,31 +294,24 @@ pages:
 			modelShort = true
 		}
 		for _, it := range page.Items {
-			var part any
-			switch {
-			case it.Disclosed != nil:
-				part = delivered(mbx, it.Disclosed, r.d.Parts)
-			case it.Withheld != nil:
-				part = held(mbx, it.Withheld)
-			default:
+			if (it.Disclosed == nil) == (it.Withheld == nil) {
 				continue
 			}
-			n, _ := jsonSize(part)
-			if size+n+1 > receipts.MaxDocumentBytes {
+			fit, err := rp.Add(mbx, r.d.Parts, it)
+			if err != nil {
+				return nil, nil, ErrUnavailable
+			}
+			if !fit {
 				// The page ends before the message that would take its
 				// receipt past its bound; the cursor continues from the last
-				// one recorded (finding 10).
+				// one recorded (ADR 0031, finding 10).
 				out.Cursor = s.sealCursor(r, index, before)
 				break pages
 			}
-			size += n + 1
 			considered++
 			before = it.ID()
 			if it.Disclosed != nil {
-				rc.Delivered = append(rc.Delivered, part.(receipts.Delivered))
 				out.Messages = append(out.Messages, vendorMessage(mbx, it.Disclosed, r.d.Parts, false))
-			} else {
-				rc.Held = append(rc.Held, part.(receipts.Held))
 			}
 		}
 		if page.Next == "" {
@@ -364,7 +333,7 @@ pages:
 		s.count("model_unavailable")
 		return nil, nil, contracts.ErrModelUnavailable
 	}
-	rel, err := s.release(ctx, r, rc)
+	rel, err := s.release(ctx, r, rp.Receipt())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -385,8 +354,7 @@ func message(r *reading, id string) (string, string, bool) {
 func (s *Service) refuseRead(ctx context.Context, r *reading, mbx, msg string, o inbox.Outcome, err error) error {
 	switch {
 	case o.Withheld != nil:
-		h := held(mbx, o.Withheld)
-		s.refusal(ctx, r, &receipts.Refused{Reason: receipts.RefusedHeld, Mailbox: mbx, Message: msg, Held: &h})
+		s.refusal(ctx, r, receipts.RefusedHeldOf(mbx, o.Withheld))
 		return contracts.ErrNotFound
 	case errors.Is(err, contracts.ErrNotFound) || err == nil:
 		s.refusal(ctx, r, &receipts.Refused{Reason: receipts.RefusedOutsideScope, Mailbox: mbx, Message: msg})
@@ -433,7 +401,7 @@ func (s *Service) Read(ctx context.Context, g *oauth.Grant, id string) (*contrac
 		return nil, nil, s.refuseRead(ctx, r, mbx, msg, o, err)
 	}
 	rc := s.receipt(r, receipts.KindRead)
-	rc.Delivered = []receipts.Delivered{delivered(mbx, o.Disclosed, r.d.Parts)}
+	rc.Delivered = []receipts.Delivered{receipts.DeliveredOf(mbx, o.Disclosed, r.d.Parts)}
 	rel, err := s.release(ctx, r, rc)
 	if err != nil {
 		return nil, nil, err
@@ -475,7 +443,7 @@ func (s *Service) Attachment(ctx context.Context, g *oauth.Grant, id string, ind
 		return nil, nil, contracts.ErrTooManyRequests
 	}
 	rc := s.receipt(r, receipts.KindAttachment)
-	dl := delivered(mbx, o.Disclosed, r.d.Parts)
+	dl := receipts.DeliveredOf(mbx, o.Disclosed, r.d.Parts)
 	dl.Attachment = &index
 	rc.Delivered = []receipts.Delivered{dl}
 	rel, err := s.release(ctx, r, rc)

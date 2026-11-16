@@ -469,7 +469,7 @@ func TestV32ReceiptBoundaryCutsThePage(t *testing.T) {
 	for i := range 32 {
 		m := mail{ID: fmt.Sprintf("z%03d", i), Mailbox: mailboxID(1), Received: start.Add(-time.Hour), From: "a@example.com"}
 		o, _ := w.disc.outcome(m, r.d)
-		n, _ := jsonSize(delivered(m.Mailbox, o.Disclosed, r.d.Parts))
+		n, _ := jsonSize(receipts.DeliveredOf(m.Mailbox, o.Disclosed, r.d.Parts))
 		add := (remaining / (32 - i)) - n - 1
 		if add < 0 {
 			t.Fatal(add)
@@ -1009,5 +1009,95 @@ func TestV25ColdEnclavesAcrossManyRealRollovers(t *testing.T) {
 	}
 	if _, err := w.check(w.enclave(), x, newest.AccessToken); err == nil {
 		t.Fatal("the device stays active after its old token was replayed")
+	}
+}
+
+// V32: a search's pages at its receipt's bound, delivered only and mixed
+// with held messages: one byte below and at the bound the last message is
+// on the page; one above, the page is cut before it and the next page
+// starts with it; across the pages every message is given or held once
+// (finding 9).
+func TestV32ReceiptBoundaryBelowAtAndAbove(t *testing.T) {
+	ctx := context.Background()
+	for _, mixed := range []bool{false, true} {
+		for _, delta := range []int{-1, 0, 1} {
+			t.Run(fmt.Sprintf("mixed=%t delta=%d", mixed, delta), func(t *testing.T) {
+				w := newWorld(t)
+				s := w.enclave()
+				x := w.ask(claudeCode)
+				tok := w.connectAll(s, w.person(accountA), x)
+				g := w.grant(s, x, tok.AccessToken)
+				r, err := s.prepare(ctx, g, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var msgs []mail
+				for i := range 31 {
+					msgs = append(msgs, mail{ID: fmt.Sprintf("z%03d", i), Mailbox: mailboxID(1), Received: start.Add(-time.Hour), From: "a@example.com",
+						Subject: strings.Repeat("s", 8000), Held: mixed && i%3 == 0})
+				}
+				last := mail{ID: "y000", Mailbox: mailboxID(1), Received: start.Add(-time.Hour), From: "a@example.com"}
+				// The receipt's size as the page builds it, newest first.
+				rp, err := receipts.NewPage(s.receipt(r, receipts.KindSearch))
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := len(msgs) - 1; i >= 0; i-- {
+					o, _ := w.disc.outcome(msgs[i], r.d)
+					if fit, err := rp.Add(mailboxID(1), r.d.Parts, o); !fit || err != nil {
+						t.Fatal("the fillers do not fit", err)
+					}
+				}
+				o, _ := w.disc.outcome(last, r.d)
+				probe, _ := receipts.NewPage(rp.Receipt())
+				if fit, _ := probe.Add(mailboxID(1), r.d.Parts, o); !fit {
+					t.Fatal("no room left for the last message")
+				}
+				last.Subject = strings.Repeat("s", receipts.MaxDocumentBytes+delta-probe.Size())
+				msgs = append([]mail{last}, msgs...) // oldest first, as the mailbox keeps them
+				w.mbx.mu.Lock()
+				w.mbx.msgs[mailboxID(1)] = msgs
+				w.mbx.msgs[mailboxID(2)] = nil
+				w.mbx.mu.Unlock()
+
+				seen := map[string]int{}
+				before := w.rcpt.count()
+				cursor, pages := "", 0
+				for {
+					page, rel, err := s.Search(ctx, g, contracts.VendorSearch{Limit: 50, Cursor: cursor})
+					if err != nil {
+						t.Fatalf("page %d: %v", pages, err)
+					}
+					rel.Finish(true)
+					pages++
+					cursor = page.Cursor
+					if cursor == "" {
+						break
+					}
+					if pages > 3 {
+						t.Fatal("the pages do not end")
+					}
+				}
+				for _, rc := range w.rcpt.all[before:] {
+					if n, err := receipts.Size(&rc); err != nil || n > receipts.MaxDocumentBytes {
+						t.Fatalf("a receipt past its bound: %d %v", n, err)
+					}
+					for _, d := range rc.Delivered {
+						seen[d.Message]++
+					}
+					for _, h := range rc.Held {
+						seen[h.Message]++
+					}
+				}
+				for _, m := range msgs {
+					if seen[m.ID] != 1 {
+						t.Fatalf("%s recorded %d times over %d pages", m.ID, seen[m.ID], pages)
+					}
+				}
+				if want := 1 + max(delta, 0); pages != want {
+					t.Fatalf("%d pages, want %d", pages, want)
+				}
+			})
+		}
 	}
 }

@@ -365,8 +365,9 @@ func (w *writer) Write(ctx context.Context, account string, r *receipts.Receipt)
 	if fail != nil {
 		return fail
 	}
-	b, _ := json.Marshal(r)
-	if len(b) > receipts.MaxDocumentBytes {
+	// The writer's own fields counted at their largest (receipts.Size), as
+	// the real one stores them.
+	if n, err := receipts.Size(r); err != nil || n > receipts.MaxDocumentBytes {
 		return receipts.ErrTooLarge
 	}
 	w.mu.Lock()
