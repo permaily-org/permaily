@@ -2,6 +2,7 @@ package receipts
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -35,7 +36,17 @@ var _ Writer = (*Service)(nil)
 
 // New is a Service over entries, sealing under keys, on the clock now, with
 // random filling each identifier's random bytes (crypto/rand.Read's shape).
+// A nil now is time.Now and a nil random is crypto/rand's.
 func New(entries store.Entries, keys Keys, now func() time.Time, random func([]byte) error) *Service {
+	if now == nil {
+		now = time.Now
+	}
+	if random == nil {
+		random = func(b []byte) error {
+			_, err := rand.Read(b)
+			return err
+		}
+	}
 	return &Service{entries: entries, keys: keys, now: now, random: random}
 }
 

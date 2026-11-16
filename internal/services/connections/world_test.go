@@ -227,11 +227,22 @@ type discloser struct {
 	// model.
 	fail  error
 	model contracts.MatchModel
+	// askings is the Asker each call's context carried (inbox.AskerFrom),
+	// beside seen.
+	askings []askingSeen
 }
 
-func (d *discloser) record(ds inbox.Disclosure) {
+// askingSeen is what a call's context carried of the model's Asker.
+type askingSeen struct {
+	inbox.Asking
+	ok bool
+}
+
+func (d *discloser) record(ctx context.Context, ds inbox.Disclosure) {
+	a, ok := inbox.AskerFrom(ctx)
 	d.mu.Lock()
 	d.seen = append(d.seen, ds)
+	d.askings = append(d.askings, askingSeen{Asking: a, ok: ok})
 	p := d.pause
 	d.mu.Unlock()
 	if p != nil {
@@ -271,8 +282,8 @@ func (d *discloser) outcome(ml mail, ds inbox.Disclosure) (inbox.Outcome, bool) 
 	return inbox.Outcome{Disclosed: &inbox.Disclosed{ID: ml.ID, Message: vm}}, true
 }
 
-func (d *discloser) Page(_ context.Context, b inbox.Box, ds inbox.Disclosure, before string, limit int) (*inbox.DisclosePage, error) {
-	d.record(ds)
+func (d *discloser) Page(ctx context.Context, b inbox.Box, ds inbox.Disclosure, before string, limit int) (*inbox.DisclosePage, error) {
+	d.record(ctx, ds)
 	d.mu.Lock()
 	fail, model := d.fail, d.model
 	d.mu.Unlock()
@@ -320,8 +331,8 @@ func (d *discloser) find(b inbox.Box, id string) (mail, bool) {
 	return mail{}, false
 }
 
-func (d *discloser) Message(_ context.Context, b inbox.Box, ds inbox.Disclosure, id string) (inbox.Outcome, error) {
-	d.record(ds)
+func (d *discloser) Message(ctx context.Context, b inbox.Box, ds inbox.Disclosure, id string) (inbox.Outcome, error) {
+	d.record(ctx, ds)
 	d.mu.Lock()
 	fail := d.fail
 	d.mu.Unlock()
@@ -339,8 +350,8 @@ func (d *discloser) Message(_ context.Context, b inbox.Box, ds inbox.Disclosure,
 	return o, nil
 }
 
-func (d *discloser) Attachment(_ context.Context, b inbox.Box, ds inbox.Disclosure, id string, index int) (inbox.Outcome, *inbox.Attachment, error) {
-	d.record(ds)
+func (d *discloser) Attachment(ctx context.Context, b inbox.Box, ds inbox.Disclosure, id string, index int) (inbox.Outcome, *inbox.Attachment, error) {
+	d.record(ctx, ds)
 	if !slices.Contains(ds.Parts, contracts.PartAttachments) {
 		return inbox.Outcome{}, nil, contracts.ErrPartNotApproved
 	}

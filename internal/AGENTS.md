@@ -43,6 +43,7 @@ Go packages behind `cmd/permaily-enclave` (trusted, runs in the enclave) and `cm
 
 - `cmd/permaily-enclave` with `-tags dev` runs locally over TCP with a self-signed certificate and `fakensm`; never import `fakensm` from non-dev enclave code.
 - No CGO, no files read at runtime inside the enclave; CA roots come from `x509roots/fallback`.
+- Connections are composed in `cmd/permaily-enclave/connections.go` (ADR 0030's pull request 9), wherever the mailboxes and the model are: vendors' documents only through `cimd.New` over `vendorEgress` (`enclave.VendorEgressClient` on vsock 8004), never the egress client; the connections' records through one strict `Anchored` with `OnlyNewest` that no other reads the names of; the model as the service's `Config.Asker`, which it hands to the Discloser for every read that may ask it; `accounts.SetConnections` so a deletion fences them; the hourly `Sweep` on its ticker. The api and mcp hosts are mounted behind `httpapi.ResourceHost`, offer only `http/1.1` by ALPN (`serverTLS`) and the server's `ConnContext` is `connContext` (both adapters' hooks): without them every answer of mail is refused, and over HTTP/2 no completion is honest. Dev mode reaches vendors only through what it is given (a test's `devVendors`, or `-dev-vendors` and `-dev-vendors-ca`), never a real one; the enclave build has no such flag. `TestV57…`, `TestV46…` and `TestMailEndToEnd`'s connections half (V47) keep this.
 - New outbound destinations must be added to the host allowlist (`cmd/permaily-host`) and documented in [../docs/threat-model.md](../docs/threat-model.md).
 - With two enclaves, only the enclave whose claim is in the stored identity asks the CA (`ensure`); a change of the identity is written with `Write` at the `Version` read, never with a plain write. A challenge goes to the storage before the CA is told to check (`publish`). Never adopt a stored identity with another key.
 - The TLS key is created once and reused across restarts and upgrades; `/attestation` binds `sha256(SPKI)` as user data. It leaves the enclave only sealed. When the sealed record cannot be loaded the enclave waits: never fall back to a fresh key, which would break the CAA records and the certificate history that verifiers check.
@@ -94,6 +95,8 @@ go test ./...
 go run -tags dev ./cmd/permaily-enclave -port 8443   # needs web/dist copied to internal/webui/dist for the SPA
 go run -tags dev ./cmd/permaily-enclave -port 8443   # SMTP on :2525 for mailboxes of accounts (ADR 0026); make them through the app
 go test -tags dev ./cmd/permaily-enclave             # whole service end to end
+go run -tags dev ./cmd/permaily-enclave -port 8443 -dev-vendors 127.0.0.1:9443 -dev-vendors-ca ca.pem  # vendors' documents from a played vendor only (none without it)
+cd tests/oauth-differential && go test ./...          # x/oauth2 and the MCP SDK's client against internal/oauth (V12) and the composed dev enclave, built from the checkout (V60)
 # Dev mode has accounts on: make an invitation with scripts/invite.sh (PERMAILY_API, PERMAILY_ADMIN_TOKEN, -admin-token-sha256,
 # and PERMAILY_DEV_UNVERIFIED=1: dev mode has no attestation, and that sends without verifying to localhost, a .localhost or a .test name only,
 # connected to 127.0.0.1 without DNS or a proxy),

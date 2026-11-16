@@ -112,6 +112,11 @@ type hostResult struct {
 	// after it passed checkModel, with what the verifier warns of; nil when
 	// the image is older or asks no model.
 	Model *modelResult `json:"model,omitempty"`
+	// Connections is what the enclave reports of the authorization server,
+	// the default rule and the record of what left (ADR 0030), after it
+	// passed checkConnections, with what the verifier warns of; nil when the
+	// image is older or has no connections.
+	Connections *connectionsResult `json:"connections,omitempty"`
 }
 
 // rootResult is what the verified enclave reported about the KMS key that
@@ -410,6 +415,15 @@ func checkStatus(st *attestation.Status, r hostResult, pcr0 string, kms kmsOptio
 		if r.Model, err = checkModel(st.Model, kms.expectedCanary, kms.canaryErr); err != nil {
 			r.Model = nil
 			r.Error = "model: " + err.Error()
+			return r
+		}
+	}
+	if st.Connections != nil {
+		// What connections may get is checked whatever is skipped, as the
+		// model's is.
+		if r.Connections, err = checkConnections(st.Connections, deploymentOf(r.URL)); err != nil {
+			r.Connections = nil
+			r.Error = "connections: " + err.Error()
 			return r
 		}
 	}
@@ -908,6 +922,7 @@ func printHuman(w io.Writer, source string, expected map[uint][]byte, results []
 		printSentMail(w, r.SentMail)
 		printAdmin(w, r.Admin)
 		printModel(w, r.Model)
+		printConnections(w, r.Connections)
 		if r.TLS != nil && r.TLS.Sealed {
 			fmt.Fprintf(w, "      TLS key created %s, kept sealed with KMS across restarts\n", r.TLS.KeyCreatedAt.UTC().Format(time.RFC3339))
 		}

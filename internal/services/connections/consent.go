@@ -525,7 +525,7 @@ func (s *Service) Preview(ctx context.Context, p Person, id string, in contracts
 		d.Rules = s.cfg.Rules
 		d.Model = s.cfg.Model != nil && s.cfg.Model.Gate(ctx, p.Account) == inbox.AskAnswered
 	}
-	page, err := s.cfg.Discloser.Page(ctx, box, d, in.After, limit)
+	page, err := s.cfg.Discloser.Page(s.asking(ctx, d), box, d, in.After, limit)
 	if err != nil {
 		return nil, err
 	}
