@@ -85,8 +85,8 @@ type ConnectionsStatus struct {
 	// RefreshRetrySeconds is how long a refresh token used again for the
 	// same scope answers the same pair; a code has no such time (CodeReuse
 	// is "denied"). RevocationSeconds bounds when another enclave stops
-	// releasing a revoked connection's mail: no answer's first byte leaves
-	// later (ADR 0030, finding 5).
+	// releasing a revoked connection's mail: no byte of any answer leaves
+	// later (ADR 0030, finding 5, the owner's decision 14).
 	AccessTokenSeconds    int    `json:"access_token_seconds"`
 	RefreshTokenSeconds   int    `json:"refresh_token_seconds"`
 	RefreshRetrySeconds   int    `json:"refresh_retry_seconds"`
@@ -95,8 +95,20 @@ type ConnectionsStatus struct {
 	RevocationSeconds     int    `json:"revocation_seconds"`
 	ConnectionDefaultDays int    `json:"connection_default_days"`
 	ConnectionMaxDays     int    `json:"connection_max_days"`
+	// RevocationCovers is RevocationEveryByte: the bound holds for every
+	// byte of an answer, an answer already being sent included, which is
+	// cut (the owner's decision 14); permaily-verify fails on any other
+	// value.
+	RevocationCovers string `json:"revocation_covers"`
+	// AssertionReplay is "strict": a client assertion's jti is decided by
+	// a strict anchored record, not a mark (ADR 0030, C1); permaily-verify
+	// fails on any other value.
+	AssertionReplay string `json:"assertion_replay"`
+	// VendorTransport is "h2": vendors' documents and key sets are fetched
+	// over HTTP/2 only (the owner's decision 11).
+	VendorTransport string `json:"vendor_transport"`
 	// DevicesPerConnection bounds a connection's active devices (token
-	// families, the owner's decision 10).
+	// families, the owner's decisions 10 and 13).
 	DevicesPerConnection int `json:"devices_per_connection"`
 	// ModelUnavailable is what connections get while the model cannot be
 	// asked: ModelUnavailableNothingLeaves (the owner's decision 9);
@@ -122,6 +134,10 @@ type ConnectionsStatus struct {
 // connection is given any mail.
 const ModelUnavailableNothingLeaves = "nothing_leaves"
 
+// RevocationEveryByte: a revocation's bound holds for every byte, not only
+// an answer's first.
+const RevocationEveryByte = "every_byte"
+
 // VerifiedVendor is a domain of the image's list and whose it is.
 type VerifiedVendor struct {
 	Domain string `json:"domain"`
@@ -138,11 +154,15 @@ type RuleStatus struct {
 
 // ReceiptsStatus is how receipts are kept, and how the decisions of the
 // rules that protect are (ADR 0031): Decisions is "strict" (strict anchored
-// records, begun before the model is asked).
+// records, begun before the model is asked, each final one with the
+// evidence it rests on); DecisionsPerDay is the least number of
+// model-decided messages a mailbox's day holds before the rest is held,
+// undecided (the owner's decision 12).
 type ReceiptsStatus struct {
-	Sealed    bool   `json:"sealed"`
-	Chained   bool   `json:"chained"`
-	Decisions string `json:"decisions"`
+	Sealed          bool   `json:"sealed"`
+	Chained         bool   `json:"chained"`
+	Decisions       string `json:"decisions"`
+	DecisionsPerDay int    `json:"decisions_per_day"`
 }
 
 // ModelStatus is what the enclave reports of the model it asks (ADR 0028,

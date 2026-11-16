@@ -270,16 +270,23 @@ func (s *Service) Ask(ctx context.Context, q *inbox.Question) (*inbox.Asked, err
 	switch {
 	case errors.Is(err, inbox.ErrGone):
 		s.logKind(slog.LevelInfo, "decisions: a message was deleted while it was asked about; nothing new is used", "message_gone")
+		a.out.Unsettled = append(a.out.Unsettled, asked...)
 		return a.out, nil
 	case err != nil:
+		// Keep may have written before it failed (ADR 0031, N1): what the
+		// entry holds now is unknown, so the answers are Unsettled, not
+		// merely unused.
 		s.logKind(slog.LevelWarn, "decisions: a message's answers could not be kept; none of them is used", "keep_failed")
+		a.out.Unsettled = append(a.out.Unsettled, asked...)
 		return a.out, nil
 	}
 	for i, ka := range add.Answers {
 		atom := asked[i]
 		if w, ok := keptFor(written, ka.Content, atom, a.model); ok {
 			a.use(atom, w)
+			continue
 		}
+		a.out.Unsettled = append(a.out.Unsettled, atom)
 	}
 	return a.out, nil
 }

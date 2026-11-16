@@ -25,8 +25,8 @@ func TestOneRecordADay(t *testing.T) {
 	if _, err := d.Begin(context.Background(), box, rule, []inbox.DecisionKey{{ID: late}, {ID: early}}); err != nil {
 		t.Fatal(err)
 	}
-	if d.Versions(box, late) != 1 || d.Versions(box, early) != 1 {
-		t.Fatalf("versions %d %d", d.Versions(box, late), d.Versions(box, early))
+	if d.Versions(box, late, 0) != 1 || d.Versions(box, early, 0) != 1 || d.Blocks(box, late) != 1 {
+		t.Fatalf("versions %d %d", d.Versions(box, late, 0), d.Versions(box, early, 0))
 	}
 	d.Fail = errors.New("lost")
 	if _, err := d.Begin(context.Background(), box, rule, []inbox.DecisionKey{{ID: late}}); err == nil {

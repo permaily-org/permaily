@@ -57,8 +57,10 @@ type Disclosed struct {
 	// Asker returned them (Asked.Evidence), never read again.
 	Decided []Decided
 	// Rules are the rules that were decided Cleared for this message on a
-	// model's answer, and when; a rule whose exact formulas were all False
-	// and which needed no model is not listed.
+	// model's answer, and when, with the evidence their record keeps (so a
+	// decision made by an earlier request or a consent preview is recorded
+	// with what it rested on, N4); a rule whose exact formulas were all
+	// False and which needed no model is not listed.
 	Rules []RuleCleared
 }
 
@@ -83,9 +85,11 @@ type Withheld struct {
 	Rule rules.Ref
 	// Why is how the rule held it.
 	Why HeldWhy
-	// Decided are the model's answers, or its kept refusal, the hold rested
-	// on, when it rested on one this request saw; empty for an exact hold
-	// and for a decision committed by an earlier request.
+	// Decided are the model's answers, or its kept refusals, the hold rests
+	// on: from this request's ask, or, for a decision committed by an
+	// earlier request, as its record keeps them (Decision.Evidence, ADR
+	// 0031, N4); empty for an exact hold, an undecided one and a recovered
+	// one.
 	Decided []Decided
 }
 
@@ -99,10 +103,16 @@ const (
 	// HeldDecided: the rule's decision for the message is committed Held,
 	// by this request or an earlier one; it never changes.
 	HeldDecided HeldWhy = "decided"
+	// HeldRecovered: the rule's decision was committed Held by whoever found
+	// it Pending past PendingGrace: its settlement was lost, and no answer
+	// of the model can be recovered for it, which the record says instead
+	// of naming one (ADR 0031, N4). It never changes either.
+	HeldRecovered HeldWhy = "recovered"
 	// HeldUndecided: no decision could be committed or used now (the model
-	// off or at a limit, an answer that could not be kept, a decision
-	// another request began and has not settled, a record that cannot be
-	// read or is full). Nothing was decided: a later request may decide it.
+	// off or at a limit, an answer that could not be kept and is left
+	// Pending, a decision another request began and has not settled, a
+	// record that cannot be read, a day with no room). Nothing final was
+	// decided: a later request may decide it, or recover it Held.
 	HeldUndecided HeldWhy = "undecided"
 )
 
@@ -155,8 +165,9 @@ type Attachment struct {
 // and its Asker (WithAsker), and also: every message's rules first, read for
 // a rule, through the same Asker (the kept answers shared with queries), a
 // rule's value that rests on a model decided once through Decisions (Begin
-// before anything is asked, Settle after, a message leaving only on a
-// decision Settle or Begin returned Cleared); and only the parts asked, read
+// before anything is asked, Settle after as SettleAfterAsk says, a message
+// leaving only on a decision Settle or Begin returned Cleared, with the
+// evidence it returned); and only the parts asked, read
 // at the cost Matcher would (the entry only for the text, the raw message
 // only for a text the entry cut or an attachment). It checks nothing of who
 // asks: the connections service did, and opened the mailbox. The consent
@@ -186,36 +197,41 @@ const DiscloseMaxLimit = 50
 // Decisions keeps each protecting rule's decision for a message, so that no
 // write to the table can undo one (ADR 0031, "Holds that cannot be
 // undone"; ADR 0028's prerequisite for step 7, met here). A decision is
-// begun, in a strict anchored record of the mailbox's day
-// (RecordRuleDecisions), before the model is asked anything for it or a
-// kept answer is used for it, and settled Held or Cleared after; the first
-// settlement is final. A begun decision whose settlement is lost (a crash, a
-// write refused at every try) is settled Held by the next request that finds
-// it older than PendingGrace: it can never be settled Cleared again. Every
-// read is strict and made now: an absence or a pending decision is never
-// answered from an earlier read (finding 2); a final decision may be.
+// begun, in a block of the strict anchored records of the mailbox's day
+// (RecordRuleDecisions, DecisionBlocks), before the model is asked anything
+// for it or a kept answer is used for it, and settled Held or Cleared after,
+// with the evidence it rests on, which every later Begin answers with it
+// (N4); the first settlement is final. A begun decision whose settlement is
+// lost (a crash, a write refused at every try, an answer received and not
+// kept, N1) is settled Held, Recovered, by the next request that finds it
+// older than PendingGrace: it can never be settled Cleared again. Every read
+// is strict and made now: an absence or a pending decision is never answered
+// from an earlier read (finding 2); a final decision may be.
 //
 // Implemented by services/mailboxes (pull request 4) over the record of
 // rule_decisions.go; inbox/disclosetest has the in-memory fake and the
 // contract test both pass.
 type Decisions interface {
-	// Begin reads the records of ids' days and, for every id with no
-	// decision of rule, commits one Pending (one write per day record);
+	// Begin reads the blocks of ids' days and, for every id with no
+	// decision of rule, commits one Pending (one write per block changed);
 	// what it answers is each id's decision as it is after the write:
 	// Begun for those this call began, which the caller may ask the model
 	// for and must settle; Pending for one begun by another request (At
-	// says when); Held or Cleared when final; Full when its record has no
-	// room. An error is a record that cannot be read or written: every id
-	// of it is held, undecided.
+	// says when); Held or Cleared when final, with their Evidence (or
+	// Recovered); Full when its day has no room. An error is a block that
+	// cannot be read or written: every id of its day is held, undecided.
 	Begin(ctx context.Context, b Box, rule rules.Ref, ids []DecisionKey) (map[string]Decision, error)
-	// Settle commits the outcome of what this call's caller began (Held,
-	// Cleared, or Abandoned when it used no answer of the model, which
-	// drops the pending decision so a later request may decide), and
-	// settles Held every pending decision older than PendingGrace it is
-	// given; it answers each id's final state as it is after the write,
-	// which may be Held where Cleared was asked (another request settled
-	// it first). Only an id answered Cleared may leave.
-	Settle(ctx context.Context, b Box, rule rules.Ref, settle map[string]DecisionState) (map[string]Decision, error)
+	// Settle commits the outcome of what this call's caller began, as
+	// SettleAfterAsk says (Held or Cleared with the evidence they rest on,
+	// or Abandoned only on positive evidence that no answer of the model
+	// was received, which drops the pending decision so a later request
+	// may decide; a decision SettleAfterAsk leaves Pending is not given),
+	// and settles Held, Recovered, every pending decision older than
+	// PendingGrace it is given with no evidence; it answers each id's final
+	// state as it is after the write, which may be Held where Cleared was
+	// asked (another request settled it first). Only an id answered
+	// Cleared may leave.
+	Settle(ctx context.Context, b Box, rule rules.Ref, settle map[string]Settlement) (map[string]Decision, error)
 }
 
 // DecisionKey is a message a decision is for, and when the message

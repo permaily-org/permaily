@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"encoding/json"
 	"slices"
 	"time"
 
@@ -42,9 +43,19 @@ type FamilyState struct {
 	// Scopes are what the family was granted, as the person confirmed them:
 	// every refresh may ask for these or fewer (RFC 6749 section 6), and the
 	// refresh tokens keep these, whatever an access token was narrowed to.
-	Scopes []string     `json:"scopes"`
-	Epoch  uint64       `json:"epoch"`
-	Status FamilyStatus `json:"status"`
+	Scopes []string `json:"scopes"`
+	// ScopeID is the canonical identifier of the device's own formulas
+	// when its scope is narrower than its connection's ("" when it is the
+	// same), as the connection's record lists it for the device; Scope is
+	// those formulas, canonical JSON, sealed with this record and copied
+	// into each access token's entry, whose reads check them against the
+	// identifier the connection's record holds (ADR 0030, N6): the
+	// connection's record stays bounded whatever sixteen narrower scopes
+	// weigh, and no entry can carry another scope.
+	ScopeID string          `json:"scope_id,omitempty"`
+	Scope   json.RawMessage `json:"scope,omitempty"`
+	Epoch   uint64          `json:"epoch"`
+	Status  FamilyStatus    `json:"status"`
 	// Generation is the current refresh token's, made at RotatedAt.
 	Generation uint64    `json:"generation"`
 	RotatedAt  time.Time `json:"rotated_at"`
@@ -162,6 +173,7 @@ func (f *FamilyState) Refresh(a RefreshAsk) (RefreshResult, Issued) {
 func (f *FamilyState) Next() FamilyState {
 	n := *f
 	n.Scopes, n.FromScope = slices.Clone(f.Scopes), slices.Clone(f.FromScope)
+	n.Scope = slices.Clone(f.Scope)
 	n.Epoch, n.Status = EpochOf(f.Generation), FamilyActive
 	return n
 }

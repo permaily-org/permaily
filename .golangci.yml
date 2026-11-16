@@ -156,6 +156,7 @@ linters:
           allow:
             - context
             - errors
+            - strconv
             - strings
             - time
             - github.com/permaily-org/permaily/internal/contracts

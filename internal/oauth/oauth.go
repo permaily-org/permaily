@@ -68,9 +68,25 @@ const (
 	// store.MaxHistoryReads, so a cold strict read of one never fails.
 	FamilyEpochRotations = 400
 	// FamiliesMax bounds the token families (devices) of one connection
-	// that are active at once (the owner's decision 10): past it, adding a
-	// device is refused until the person revokes one.
+	// that are active at once (the owner's decisions 10 and 13): the 17th
+	// is refused (contracts.ErrTooManyDevices) and the connection's page
+	// lets the person remove old ones; nothing is ever ended to make room
+	// without the person. A device whose code was never exchanged counts
+	// until its code expires (CodeTTL), when the next write of its
+	// connection's record ends it.
 	FamiliesMax = 16
+	// DevicesEndedKept bounds the ended devices a connection's record keeps
+	// to show (30 days at most, contracts.Connection.Devices): past it, the
+	// oldest ended one is dropped from the record by the write that ends
+	// another, its family's records removed first (ADR 0030, N6). Only an
+	// ended device is ever dropped.
+	DevicesEndedKept = 16
+	// DeviceEntryBytesMax bounds one device's entry in its connection's
+	// record (identifier, state, dates, parts, the canonical identifier of
+	// its own scope and its code's state); the scope itself is in the
+	// device's family record and in its tokens' entries, never in the
+	// connection's (N6).
+	DeviceEntryBytesMax = 1 << 10
 )
 
 // AssertionAcceptedUntil is the first instant at which a client assertion
@@ -329,14 +345,30 @@ type Grant struct {
 }
 
 // Deadline is the last instant at which anything may be released for g
-// without checking again: the earliest of the token's expiry, the
-// connection's end and CheckedAt plus ConnectionFresh.
+// without checking again: the earliest of Expires and FreshUntil.
 func (g *Grant) Deadline() time.Time {
-	d := g.CheckedAt.Add(ConnectionFresh)
+	d := g.FreshUntil()
+	if e := g.Expires(); !e.IsZero() && e.Before(d) {
+		d = e
+	}
+	return d
+}
+
+// Expires is the grant's hard end: the earliest of the token's expiry and
+// the connection's end, after which nothing is released for it whatever is
+// read again (ADR 0030, N3); zero when neither is set.
+func (g *Grant) Expires() time.Time {
+	var d time.Time
 	for _, t := range []time.Time{g.TokenExpiresAt, g.ConnectionEndsAt} {
-		if !t.IsZero() && t.Before(d) {
+		if !t.IsZero() && (d.IsZero() || t.Before(d)) {
 			d = t
 		}
 	}
 	return d
 }
+
+// FreshUntil is until when what the check read may be relied on:
+// CheckedAt plus ConnectionFresh. Past it, the authority is read again
+// (strictly) before a receipt is written and before a first byte, and
+// every ConnectionFresh while an answer is sent (connections.Release).
+func (g *Grant) FreshUntil() time.Time { return g.CheckedAt.Add(ConnectionFresh) }

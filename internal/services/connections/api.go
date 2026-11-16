@@ -2,6 +2,7 @@ package connections
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"time"
 
@@ -35,10 +36,12 @@ type API interface {
 	// Check is the check of every vendor request: ErrInvalidToken,
 	// ErrWrongResource or ErrUnavailable, or the grant.
 	Check(ctx context.Context, r contracts.Resource, bearer string) (*oauth.Grant, error)
-	// What a vendor reads. Each prepares its answer, writes its receipt,
-	// checks g's authority again (the local revocations, the deadline) and
-	// only then answers with the Release its first byte must go out by
-	// (finding 5); a vendor is answered nothing of it once that has passed.
+	// What a vendor reads, in "Release"'s order (finding 5, N3): the
+	// model's gate; the disclosure, prepared in memory; the authority again
+	// when the grant's freshness passed during the preparation (a strict
+	// read; revoked or ended: nothing is written but a refusal); the
+	// receipt, under ReceiptWriteMax and the grant's hard end; then the
+	// answer and its Release, through which alone it may be sent.
 	Info(ctx context.Context, g *oauth.Grant) (*contracts.VendorConnection, error)
 	Search(ctx context.Context, g *oauth.Grant, in contracts.VendorSearch) (*contracts.VendorPage, Release, error)
 	Read(ctx context.Context, g *oauth.Grant, id string) (*contracts.VendorMessage, Release, error)
@@ -80,11 +83,54 @@ type TokenAnswer struct {
 	Scope        string `json:"scope"`
 }
 
-// Release is when the answer of a vendor read may still start: its first
-// byte goes out before Deadline (oauth.Grant.Deadline, checked again after
-// the receipt was written), or the vendor is answered 503 and nothing of
-// it; once started it is sent within TransferMax, and a revocation in this
-// enclave cuts it.
-type Release struct {
-	Deadline time.Time
+// Release is the lease under which one prepared answer of a vendor read is
+// sent (ADR 0030, "Release"; revised after the second design review, N2 and
+// N3, and the owner's decision 14). The service makes it, registered under
+// the connection and the device before the answer is returned, and owns
+// it: its order with a revocation in this enclave is the lease's lock
+// (Revoke cuts every lease of the connection, or of the device, before it
+// writes the record, so no first byte follows a revocation here and a
+// started answer is cut). The routes and MCP call Start immediately before
+// the first byte and Finish when the transfer ended, and write every byte
+// only under Start's context: a write when it has ended is not made, and
+// when it ends during a write the adapter aborts the response (HTTP:
+// http.ResponseController.SetWriteDeadline to now, so a blocked write
+// returns, then panic(http.ErrAbortHandler); MCP: the same around the
+// SDK's writer). An adapter that cannot start (the context its own request
+// ended, a write that failed before the first byte) calls Finish(false)
+// without Start.
+type Release interface {
+	// Start checks the authority again, once: this enclave's revocations,
+	// the token's expiry and the connection's end (oauth.Grant.Expires,
+	// hard: never released after them), and, when the grant's freshness
+	// (oauth.Grant.FreshUntil) has passed, the connection's record, the
+	// account's list and standing read again, strictly. It answers the
+	// context every write of the answer runs under, which ends when this
+	// enclave revokes the connection or the device, when the authority,
+	// read again every oauth.ConnectionFresh while the answer is sent, is
+	// no longer active or cannot be read, when the token expires or the
+	// connection ends, or at TransferMax: so no byte leaves another enclave
+	// more than ConnectionFresh after a read that found the connection
+	// active (the owner's decision 14). ErrTooLate when the answer may not
+	// start: the adapter answers 503 with nothing of it, and the lease has
+	// written the too_late receipt naming the receipt of the answer.
+	Start(ctx context.Context) (context.Context, error)
+	// Finish ends the lease: sent says every byte was written. It is
+	// called once, after Start or instead of it; a lease never finished is
+	// ended at TransferMax.
+	Finish(sent bool)
 }
+
+// ErrTooLate is Release.Start's answer when the answer prepared may no
+// longer start: revoked, expired, ended, or its authority could not be
+// read again. The adapter answers 503 with Retry-After (never 401, so a
+// client keeps its tokens when the storage failed; a revoked one is told
+// invalid_token on its next request).
+var ErrTooLate = errors.New("connections: the answer can no longer be released")
+
+// ReceiptWriteMax bounds writing one receipt (receipts.Writer), on its own
+// deadline, not the grant's freshness (N3): a preparation that outlasts the
+// freshness is checked again by Release.Start, after the receipt, never
+// skipped to meet a deadline. The receipt's context also ends at the
+// grant's hard end (oauth.Grant.Expires).
+const ReceiptWriteMax = 5 * time.Second

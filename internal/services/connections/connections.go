@@ -9,22 +9,26 @@
 // Everything a later request needs is in the storage, so any request may land
 // on either of two enclaves (ADR 0017, "Two enclaves at once"). What decides
 // anything is in strict anchored records, which cannot be put back or hidden
-// (ADR 0030, "Changed after the design review", 3 and 6): a connection (its
-// state, its devices and each one's code), the account's list of them (with
-// its closing fence), and each token family's record (its current
-// generation, oauth.FamilyState). A request, a pushed request, a code, an
+// (ADR 0030, "Changed after the design review", 3 and 6, and after the
+// second, C1, C2 and N6): a connection (its state, its devices, each one's
+// code and the canonical identifier of its own scope), the account's list
+// of them in epochs (with its closing fence, list.go), each token family's
+// record (its current generation and the device's own scope,
+// oauth.FamilyState), and the records of the client assertions accepted
+// (oauth.AssertionRecord). A request, a pushed request, a code, an
 // access token and a refresh token are also entries sealed with a key from
 // the root secret, bound to where they are stored and named by the hash of
 // their secret, for the lookup only: deleting one refuses it, putting back
-// an older one is refused by the record that decides. A request, a pushed
-// request and an assertion's jti are ended once by a mark at version 0 and
-// in the enclave's memory: none of them is an authority (a request's
-// decision is the list's; anything an assertion authenticates is a code's
-// or a family's). Memory holds only caches, read again after
-// oauth.ConnectionFresh (a connection's record, an account's list and
-// standing), what this enclave revoked since it started, the requests it is
-// answering for each connection (cancelled by a revocation here), and
-// limits.
+// an older one is refused by the record that decides. A request and a
+// pushed request are ended once by a mark at version 0 and in the enclave's
+// memory: neither is an authority (a request's decision is the list's, and
+// a pushed request replayed only shows the person the same request again).
+// An assertion's jti is decided by its strict record, never a mark (C1).
+// Memory holds only caches, read again after oauth.ConnectionFresh (a
+// connection's record, an account's list and standing), what this enclave
+// revoked since it started, the leases of the answers it is sending for
+// each connection and device (Release, cut by a revocation here before its
+// record is written), and limits.
 //
 // This file and api.go are the seam, committed with the design and revised
 // after its review: what the service is given, what it gives (API,
@@ -161,28 +165,42 @@ const (
 	// resource, parts, mailboxes) with its query, mail since and what the
 	// consent showed sealed inside it.
 	RecordConnection = "connection-"
-	// RecordList + the account's identifier is the account's connections:
-	// for each its identifier, client and state, which one is each client's
-	// current one, the authorization requests decided in the last
-	// oauth.RequestTTL (a request is decided once), and its closing fence
-	// (Closing and the generation EndAll ended through); readable and
-	// signed. Every approval writes it at the version read before and after
-	// it makes a connection, so an approval racing a deletion is refused or
-	// ended (finding 6).
+	// RecordList + the account's identifier + "-" + its epoch (decimal,
+	// ListName) is the account's connections (ListState): for each its
+	// identifier, client and state, which one is each client's current
+	// one, the authorization requests decided in the last oauth.RequestTTL
+	// (a request is decided once), and its closing fence (Closing and the
+	// generation EndAll ended through); readable and signed, bounded
+	// (ListActiveMax, ListEndedMax, ListDecidedMax, ListBytesMax) and in
+	// epochs of ListEpochVersions (C2). Every approval writes it at the
+	// version read before and after it makes a connection, so an approval
+	// racing a deletion is refused or ended (finding 6).
 	RecordList = "connections-"
 	// RecordFamily + the family's identifier + "-" + its epoch (decimal) is
 	// a token family's record (oauth.FamilyState), sealed: one device of a
-	// connection, the only authority of which refresh token is current.
+	// connection, the only authority of which refresh token is current,
+	// and where its own narrower scope is kept (N6).
 	RecordFamily = "oauth-family-"
+	// ConnectionRecordBytesMax bounds a connection's record's JSON before it
+	// is signed and sealed, checked when a request is started with every
+	// device it may have at oauth.DeviceEntryBytesMax
+	// (contracts.ErrRequestTooLarge past it) and again by every write: the
+	// consented formulas (each at most oauth.FormMaxBytes as pushed), what
+	// the consent showed, and oauth.FamiliesMax active and
+	// oauth.DevicesEndedKept ended devices (N6).
+	ConnectionRecordBytesMax = 300 << 10
 	// RecordTries bounds the reads again after store.ErrChanged.
 	RecordTries = 5
 )
 
 // Partitions of the sealed entries, each followed by the hash of its secret
-// (oauth.Kind's domain separation), with the entry at key "v". A request, a
-// pushed request and a jti have their mark at key "used"; a code's and a
-// refresh token's use is decided by their connection's and family's
-// records, never by an entry.
+// (oauth.Kind's domain separation), with the entry at key "v". A request and
+// a pushed request have their mark at key "used"; a code's and a refresh
+// token's use is decided by their connection's and family's records, and a
+// jti's by its record of assertions, never by an entry. PartitionJTI keeps
+// the enclave's own list of the records of assertions it made, for the
+// sweep to remove them once dead (oauth.RecordAssertions): it decides
+// nothing.
 const (
 	PartitionRequest = "oauth#request#"
 	PartitionPushed  = "oauth#pushed#"

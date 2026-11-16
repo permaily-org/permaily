@@ -2,7 +2,8 @@
 // 0030's pull request 3) that the routes (pull request 6) and MCP (pull
 // request 7) are built against at the same time: a connections.API whose
 // every method is a function a test sets, recording what it was called
-// with. A method a test did not set answers errNotSet. Never imported
+// with, and Lease, the connections.Release a test drives (release.go). A
+// method a test did not set answers ErrNotSet. Never imported
 // outside tests (depguard).
 package connectionstest
 
@@ -167,7 +168,7 @@ func (f *Fake) Info(ctx context.Context, g *oauth.Grant) (*contracts.VendorConne
 func (f *Fake) Search(ctx context.Context, g *oauth.Grant, in contracts.VendorSearch) (*contracts.VendorPage, connections.Release, error) {
 	f.called("Search")
 	if f.SearchFunc == nil {
-		return nil, connections.Release{}, ErrNotSet
+		return nil, nil, ErrNotSet
 	}
 	return f.SearchFunc(ctx, g, in)
 }
@@ -175,7 +176,7 @@ func (f *Fake) Search(ctx context.Context, g *oauth.Grant, in contracts.VendorSe
 func (f *Fake) Read(ctx context.Context, g *oauth.Grant, id string) (*contracts.VendorMessage, connections.Release, error) {
 	f.called("Read")
 	if f.ReadFunc == nil {
-		return nil, connections.Release{}, ErrNotSet
+		return nil, nil, ErrNotSet
 	}
 	return f.ReadFunc(ctx, g, id)
 }
@@ -183,7 +184,7 @@ func (f *Fake) Read(ctx context.Context, g *oauth.Grant, id string) (*contracts.
 func (f *Fake) Attachment(ctx context.Context, g *oauth.Grant, id string, index int) (*inbox.Attachment, connections.Release, error) {
 	f.called("Attachment")
 	if f.AttachmentFunc == nil {
-		return nil, connections.Release{}, ErrNotSet
+		return nil, nil, ErrNotSet
 	}
 	return f.AttachmentFunc(ctx, g, id, index)
 }

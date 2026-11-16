@@ -129,7 +129,10 @@ type Delivered struct {
 	Attachment *int `json:"attachment,omitempty"`
 	// Model are the model's answers the formulas' value rested on, and
 	// Cleared the rules decided Cleared for it on the model's answers, as
-	// the discloser returned them (inbox.Disclosed).
+	// the discloser returned them (inbox.Disclosed): a rule's from the
+	// decision's own record, so a decision made by an earlier request or a
+	// consent preview is recorded with what it rested on, never with an
+	// answer asked again (ADR 0031, N4).
 	Model   []Model   `json:"model,omitempty"`
 	Cleared []Cleared `json:"cleared,omitempty"`
 }
@@ -147,7 +150,10 @@ type Held struct {
 	Mailbox string    `json:"mailbox"`
 	Message string    `json:"message"`
 	Rule    rules.Ref `json:"rule"`
-	// Why is inbox.HeldWhy: "exact", "decided" or "undecided".
+	// Why is inbox.HeldWhy: "exact", "decided", "recovered" (a decision
+	// whose settlement was lost, held with no answer to name) or
+	// "undecided". Model is the evidence of a decided hold, from this
+	// request's ask or from the decision's record (N4).
 	Why   string  `json:"why"`
 	Model []Model `json:"model,omitempty"`
 }

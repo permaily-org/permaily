@@ -90,6 +90,7 @@ func TestTheFamilyKeepsItsGrantedScope(t *testing.T) {
 // epoch goes on, a retry of the last generation of the old one included.
 func TestAFamilyMovesToItsNextEpoch(t *testing.T) {
 	f := newFamily()
+	f.ScopeID, f.Scope = "qry_device", []byte(`[{"v":1,"all":[]}]`)
 	f.Generation = FamilyEpochRotations - 1
 	if r, is := f.Refresh(ask(f, FamilyEpochRotations-1, 0)); r != RefreshRotated || f.Status != FamilyMoved || is.Generation != FamilyEpochRotations {
 		t.Fatalf("%v %v %+v", r, f.Status, is)
@@ -98,8 +99,12 @@ func TestAFamilyMovesToItsNextEpoch(t *testing.T) {
 		t.Fatalf("a moved record decided: %v", r)
 	}
 	n := f.Next()
-	if n.Epoch != 1 || n.Status != FamilyActive || EpochOf(n.Generation) != 1 {
+	if n.Epoch != 1 || n.Status != FamilyActive || EpochOf(n.Generation) != 1 || n.ScopeID != f.ScopeID || string(n.Scope) != string(f.Scope) {
 		t.Fatalf("%+v", n)
+	}
+	n.Scope[0] = 'x'
+	if f.Scope[0] == 'x' {
+		t.Fatal("the next epoch shares the device's scope")
 	}
 	if r, _ := n.Refresh(ask(&n, FamilyEpochRotations-1, time.Second)); r != RefreshRetry {
 		t.Fatalf("a retry across the epochs: %v", r)
@@ -163,5 +168,28 @@ func TestAGrantsDeadline(t *testing.T) {
 	g.ConnectionEndsAt = familyAt.Add(time.Millisecond)
 	if !g.Deadline().Equal(familyAt.Add(time.Millisecond)) {
 		t.Fatal(g.Deadline())
+	}
+}
+
+// N3 (the second design review): the hard end (the token's expiry, the
+// connection's end) is told from the freshness of what the check read,
+// which is renewed by reading again, so a preparation longer than
+// ConnectionFresh reads the authority again instead of failing.
+func TestReview2N3TheHardEndIsNotTheFreshness(t *testing.T) {
+	g := Grant{CheckedAt: familyAt, TokenExpiresAt: familyAt.Add(time.Hour), ConnectionEndsAt: familyAt.Add(48 * time.Hour)}
+	if !g.Expires().Equal(familyAt.Add(time.Hour)) || !g.FreshUntil().Equal(familyAt.Add(ConnectionFresh)) {
+		t.Fatal(g.Expires(), g.FreshUntil())
+	}
+	g.TokenExpiresAt = time.Time{}
+	if !g.Expires().Equal(familyAt.Add(48 * time.Hour)) {
+		t.Fatal(g.Expires())
+	}
+	if (&Grant{CheckedAt: familyAt}).Expires() != (time.Time{}) || !(&Grant{CheckedAt: familyAt}).Deadline().Equal(familyAt.Add(ConnectionFresh)) {
+		t.Fatal("a grant with no end")
+	}
+	// A six-second preparation: past the freshness, not past the hard end.
+	at := familyAt.Add(6 * time.Second)
+	if at.Before(g.FreshUntil()) || !at.Before(g.Expires()) {
+		t.Fatal("the review's six seconds")
 	}
 }

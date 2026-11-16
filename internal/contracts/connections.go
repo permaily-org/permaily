@@ -157,6 +157,10 @@ type AuthorizationRequest struct {
 	// preview answers it again for the draft it was given).
 	Connection *Connection      `json:"connection,omitempty"`
 	Change     ConnectionChange `json:"change"`
+	// Snapshot is what the starting draft's approval would do, as the
+	// screen shows it; each preview answers it again for its draft, and the
+	// approval sends back the one the person saw (N5).
+	Snapshot ConsentSnapshot `json:"snapshot"`
 	// ModelNotice is the version of the model's notice the screen shows: an
 	// approval sends it back, and is refused (ErrModelNoticeChanged) when
 	// another is in force by then (finding 18).
@@ -192,12 +196,38 @@ type ConsentPreview struct {
 
 // ConsentPreviewPage is a preview's answer: the draft's identifier (the
 // canonical identifier of its formulas together with the request's), what
-// approving that draft does to the client's connection, and the page, whose
-// Held lists what a rule holds back.
+// approving that draft does to the client's connection, as a snapshot the
+// approval sends back, and the page, whose Held lists what a rule holds
+// back.
 type ConsentPreviewPage struct {
-	DraftID string           `json:"draft_id"`
+	DraftID  string           `json:"draft_id"`
+	Change   ConnectionChange `json:"change"`
+	Snapshot ConsentSnapshot  `json:"snapshot"`
+	Page     MatchPage        `json:"page"`
+}
+
+// ConsentSnapshot is what the screen showed approving would do (ADR 0030,
+// "Asking again"; the second design review's N5): the client's connection
+// it would change, at which version of its record, the change and the end
+// shown, for the draft shown. An approval sends it back; the decision is
+// committed only when, worked out again at the commit, every field is still
+// the same, else ErrConsentChanged and nothing is committed: the screen
+// loads the request again and shows what approving now does, for a new
+// confirmation. So a stale screen never adds a device where it promised
+// one, replaces where it promised to add, or approves an end it did not
+// show.
+type ConsentSnapshot struct {
+	// Connection is the client's active connection when it was shown, ""
+	// for none (ChangeNew); Version is its record's version then.
+	Connection string `json:"connection,omitempty"`
+	Version    uint64 `json:"version,omitempty"`
+	// Change is what approving does, and EndsAt the end the connection
+	// would have: the connection's own for ChangeAddDevice, the new one's
+	// otherwise (from the approval's instant, at most a minute later than
+	// shown: a later end is a change).
 	Change  ConnectionChange `json:"change"`
-	Page    MatchPage        `json:"page"`
+	EndsAt  time.Time        `json:"ends_at"`
+	DraftID string           `json:"draft_id"`
 }
 
 // AuthorizationDecision is the body of POST
@@ -205,11 +235,15 @@ type ConsentPreviewPage struct {
 // checked again when the decision is committed, the Draft the person
 // approves and the ModelNotice the screen showed; Deny needs none of them.
 // What it does to the client's connection is Change for that draft, worked
-// out again as it is committed.
+// out again as it is committed and refused (ErrConsentChanged) when it is
+// not the Snapshot the screen showed.
 type AuthorizationDecision struct {
 	Allow       bool          `json:"allow"`
 	Draft       *ConsentDraft `json:"draft,omitempty"`
 	ModelNotice string        `json:"model_notice,omitempty"`
+	// Snapshot is the one the screen showed for Draft, required to allow
+	// (N5).
+	Snapshot *ConsentSnapshot `json:"snapshot,omitempty"`
 }
 
 // ConnectionRenewal is the body of POST /api/v1/connections/{id}/renew: the
@@ -218,8 +252,14 @@ type AuthorizationDecision struct {
 // and works only while the connection is active and before its end: past
 // it, the connection has ended, whether or not the hourly pass wrote it so
 // (ErrConnectionEnded).
+//
+// Version is the connection's record's version the screen showed: a
+// renewal of a connection changed since (replaced, a device added or
+// revoked, renewed by another tab) is refused (ErrConsentChanged), and the
+// page shows it again (N5).
 type ConnectionRenewal struct {
 	ModelNotice string `json:"model_notice"`
+	Version     uint64 `json:"version"`
 }
 
 // AuthorizationAnswer is where the app sends the browser back to the vendor:
@@ -305,6 +345,8 @@ type Connection struct {
 	// to for it; Delivery says whether it gets mail now.
 	ModelNotice string             `json:"model_notice"`
 	Delivery    ConnectionDelivery `json:"delivery"`
+	// Version is its record's version, which a renewal sends back.
+	Version uint64 `json:"version"`
 }
 
 // ConnectionList is the account's connections: the active ones, and the ones
@@ -415,8 +457,22 @@ var (
 	// again with the one in force (finding 18).
 	ErrModelNoticeChanged = &Error{"model_notice_changed", "what Permaily sends to its model changed; read it again before you allow"}
 	// ErrTooManyDevices refuses adding a device to a connection with
-	// oauth.FamiliesMax active ones: revoke one first.
-	ErrTooManyDevices = &Error{"too_many_devices", "that connection has as many devices as it can; remove one first"}
+	// oauth.FamiliesMax active ones (the owner's decision 13): the person
+	// removes one on the connection's page first; none is ever removed
+	// for them.
+	ErrTooManyDevices = &Error{"too_many_devices", "that connection is on 16 devices, as many as it can be; remove one you no longer use on its page, then allow again"}
+	// ErrTooManyConnections refuses approving a new connection for an
+	// account with as many active ones as it may have (ADR 0030, C2).
+	ErrTooManyConnections = &Error{"too_many_connections", "you have as many connections as an account can; revoke one you no longer use first"}
+	// ErrConsentChanged refuses an approval or a renewal whose screen no
+	// longer says what it would do (N5): the client's connection, its
+	// version, the change or the end changed since it was shown. The
+	// screen loads it again.
+	ErrConsentChanged = &Error{"consent_changed", "what allowing does changed since this screen was shown; read it again"}
+	// ErrRequestTooLarge refuses a request whose connection could not be
+	// kept within its record's bound with every device it may have (N6);
+	// shown before anything is approved, never redirected.
+	ErrRequestTooLarge = &Error{"request_too_large", "that app asks for more than a connection can hold"}
 )
 
 // ConditionParts is the parts a vendor's search condition looks at (finding

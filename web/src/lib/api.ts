@@ -435,6 +435,8 @@ export type AuthorizationRequest = {
   /** The client's active connection, and what approving the starting draft does to it. */
   connection?: Connection
   change: ConnectionChange
+  /** What approving the starting draft does, as shown: sent back with the approval. */
+  snapshot: ConsentSnapshot
   /** Sent back with an approval; refused (`model_notice_changed`) when another is in force. */
   model_notice: string
   expires_at: string
@@ -453,14 +455,54 @@ export type ConsentPreview = {
   ask_model?: boolean
 }
 
-/** A preview's answer: the draft's identifier, what approving it does, and the page. */
-export type ConsentPreviewPage = { draft_id: string; change: ConnectionChange; page: MatchPage }
+/** A preview's answer: the draft's identifier, what approving it does (and its snapshot), and the page. */
+export type ConsentPreviewPage = {
+  draft_id: string
+  change: ConnectionChange
+  snapshot: ConsentSnapshot
+  page: MatchPage
+}
 
-/** The person's decision: an approval sends the draft and the notice the screen showed. */
-export type AuthorizationDecision = { allow: boolean; draft?: ConsentDraft; model_notice?: string }
+/**
+ * What the screen showed approving would do (ADR 0030, N5): the client's connection and its record's version, the change
+ * and the end. An approval sends it back; when what approving does has changed since, the server answers
+ * `consent_changed` and commits nothing, and the screen loads the request again for a new confirmation.
+ */
+export type ConsentSnapshot = {
+  connection?: string
+  version?: number
+  change: ConnectionChange
+  ends_at: string
+  draft_id: string
+}
 
-/** A renewal: the notice the screen showed. */
-export type ConnectionRenewal = { model_notice: string }
+/** The person's decision: an approval sends the draft, the notice and the snapshot the screen showed. */
+export type AuthorizationDecision = {
+  allow: boolean
+  draft?: ConsentDraft
+  model_notice?: string
+  snapshot?: ConsentSnapshot
+}
+
+/** A renewal: the notice and the connection's version the screen showed (`consent_changed` when it changed since). */
+export type ConnectionRenewal = { model_notice: string; version: number }
+
+/**
+ * The refusals an approval or a renewal may answer that the consent screen and the connections page handle (pull
+ * request 8 adds them to `ApiErrorCode` with their words): a fresh proof needed, the notice or what approving does
+ * changed since the screen was shown (both reload it), the connection's 16 devices (the person removes one on its page;
+ * none is removed for them), the account's connections, a request that ended.
+ */
+export const CONSENT_REFUSALS = [
+  'confirmation_needed',
+  'model_notice_changed',
+  'consent_changed',
+  'too_many_devices',
+  'too_many_connections',
+  'request_ended',
+  'connection_ended',
+] as const
+export type ConsentRefusal = (typeof CONSENT_REFUSALS)[number]
 
 /** Where the browser goes back to the vendor, and nowhere else. */
 export type AuthorizationAnswer = { redirect: string }
@@ -503,6 +545,8 @@ export type Connection = {
   devices: ConnectionDevice[]
   model_notice: string
   delivery: ConnectionDelivery
+  /** Its record's version, which a renewal sends back. */
+  version: number
 }
 
 /** The account's connections: the active ones and the ones that ended in the last 30 days. */
