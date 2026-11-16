@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/jws"
 )
 
 // The cases pull request 133's review found (findings 1 to 3): each was
@@ -118,9 +119,11 @@ func TestV2AnEmptyAuthenticationMethodIsRefused(t *testing.T) {
 }
 
 // V8 (review finding 1). An assertion whose signed header says its claims
-// are not base64url (RFC 7797 forbids that for a JWT), or that carries or
-// points to a key, or with a member of the wrong kind that go-jose refuses,
-// is refused though its signature verifies over what was sent.
+// are not base64url (RFC 7797 forbids that for a JWT), carries a key that
+// is not a well-formed public key or a certificate chain, or has a nonce
+// that is not text, is refused though its signature verifies over what was
+// sent. A well-formed carried key and a key the header points to are taken
+// and never used.
 func TestV8AnAssertionsHeaderIsInTheProfile(t *testing.T) {
 	_, _, keys := signers(t)
 	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -136,20 +139,23 @@ func TestV8AnAssertionsHeaderIsInTheProfile(t *testing.T) {
 		`{"alg":"RS256","kid":"rs","b64":"false"}`,
 		`{"alg":"RS256","kid":"rs","b64":null}`,
 		`{"alg":"RS256","kid":"rs","jwk":{"kty":"RSA"}}`,
-		`{"alg":"ES256","kid":"es","jwk":` + jwk + `}`,
-		`{"alg":"RS256","kid":"rs","jku":"https://evil.example.com/keys"}`,
-		`{"alg":"RS256","kid":"rs","x5u":"https://evil.example.com/cert"}`,
 		`{"alg":"RS256","kid":"rs","x5c":["AAAA"]}`,
 		`{"alg":"RS256","kid":"rs","nonce":1}`,
 	} {
 		_, _, err := VerifyAssertion(vectorDocument(""), keys, assertion(t, header, nil), vectorAudiences, vectorNow)
 		var e *Error
-		if !errors.As(err, &e) || e.Code != ErrInvalidClient || e.Reason != ReasonAssertion {
+		if !errors.Is(err, jws.ErrHeaderMember) || !errors.As(err, &e) || e.Code != ErrInvalidClient || e.Reason != ReasonAssertion {
 			t.Errorf("%s: %v", header, err)
 		}
 	}
-	// b64 true is what a header without it means.
-	if _, _, err := VerifyAssertion(vectorDocument(""), keys, assertion(t, `{"alg":"RS256","kid":"rs","b64":true,"typ":"JWT"}`, nil), vectorAudiences, vectorNow); err != nil {
-		t.Fatal(err)
+	for _, header := range []string{
+		`{"alg":"RS256","kid":"rs","b64":true,"typ":"JWT"}`,
+		`{"alg":"ES256","kid":"es","jwk":` + jwk + `}`,
+		`{"alg":"RS256","kid":"rs","jku":"https://evil.example.com/keys"}`,
+		`{"alg":"RS256","kid":"rs","x5u":"https://evil.example.com/cert"}`,
+	} {
+		if _, _, err := VerifyAssertion(vectorDocument(""), keys, assertion(t, header, nil), vectorAudiences, vectorNow); err != nil {
+			t.Errorf("%s: %v", header, err)
+		}
 	}
 }

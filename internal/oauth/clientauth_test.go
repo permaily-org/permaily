@@ -138,7 +138,7 @@ func TestV8VerifyAssertionChecksItsClaims(t *testing.T) {
 		"an unknown kid":              {`{"alg":"RS256","kid":"other"}`, nil, jws.ErrUnknownKey},
 		"duplicate header members":    {`{"alg":"RS256","kid":"rs","kid":"rs"}`, nil, jws.ErrHeader},
 		"a key named for another alg": {`{"alg":"RS256","kid":"es"}`, nil, jws.ErrUnusableKey},
-		"a jwk in the header":         {`{"alg":"RS256","kid":"other","jwk":{"kty":"RSA"}}`, nil, jws.ErrUnknownKey},
+		"a jwk in the header":         {`{"alg":"RS256","kid":"other","jwk":{"kty":"RSA"}}`, nil, jws.ErrHeaderMember},
 		"crit":                        {`{"alg":"RS256","kid":"rs","crit":["b64"]}`, nil, jws.ErrCritical},
 	} {
 		_, _, err := verify(assertion(t, c.header, c.claims), vectorNow)

@@ -9,8 +9,13 @@
 // It is pure: no network, no clock, no storage. What a token says (its
 // claims) is the caller's to check, once its signature has been checked:
 // nothing is taken from a token before that. A key the token carries or
-// points to (jwk, jku, x5c, x5u) is never used, and what a header says must
-// be understood (crit) is refused, since nothing is.
+// points to (jwk, jku, x5c, x5u) is never used: a carried jwk must be a
+// well-formed public key all the same, and a carried x5c is refused, since
+// no certificate is read here. What a header says must be understood (crit)
+// is refused, since nothing is, and so is a b64 other than true, which would
+// say the claims are not base64url (RFC 7797, section 7, forbids it for a
+// JWT). Every header jws takes, go-jose takes too
+// (tests/oauth-differential).
 package jws
 
 import (
@@ -25,6 +30,7 @@ import (
 	"errors"
 	"io"
 	"math/big"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -63,6 +69,7 @@ var (
 	ErrType              = errors.New("jws: a type that is not text")
 	ErrCritical          = errors.New("jws: header with members that must be understood")
 	ErrKeyID             = errors.New("jws: no key identifier")
+	ErrHeaderMember      = errors.New("jws: header with a member it cannot have")
 	ErrUnknownKey        = errors.New("jws: signed with a key the set does not hold")
 	ErrUnusableKey       = errors.New("jws: signed with a key that is not for this algorithm")
 	ErrSignature         = errors.New("jws: wrong signature")
@@ -77,7 +84,7 @@ var (
 // (never wrapped), so a caller can name each in its own words.
 var Refusals = []error{
 	ErrTooLong, ErrNotThreeParts, ErrHeaderEncoding, ErrClaimsEncoding, ErrSignatureEncoding,
-	ErrHeader, ErrAlgorithm, ErrType, ErrCritical, ErrKeyID, ErrUnknownKey, ErrUnusableKey,
+	ErrHeader, ErrAlgorithm, ErrType, ErrCritical, ErrKeyID, ErrHeaderMember, ErrUnknownKey, ErrUnusableKey,
 	ErrSignature, ErrKeySet, ErrKeyList, ErrKeyNotObject, ErrKeyIDTwice,
 }
 
@@ -111,10 +118,26 @@ type Key struct {
 	Issuer string
 }
 
-// Parse reads a compact JWS: three parts of base64url without padding, a
-// header that is one JSON object with every member once, alg RS256 or
-// ES256, a kid of visible ASCII, no crit, and typ text when present.
+// Profile is what a caller takes of a token's header: the algorithms (RS256,
+// ES256 or both; nil is both) and the types (nil takes any text).
+type Profile struct {
+	Algorithms []string
+	Type       func(typ string) bool
+}
+
+// Parse reads a compact JWS with the profile that takes RS256 and ES256 and
+// any type: see Profile.Parse.
 func Parse(compact string) (*Token, error) {
+	return Profile{}.Parse(compact)
+}
+
+// Parse reads a compact JWS: three parts of base64url without padding, and
+// a header that is one JSON object with every member once, checked in this
+// order: alg one of p's algorithms, typ text and one of p's types when
+// present, no crit, a kid of visible ASCII; then b64 true when present, a
+// jwk that is a well-formed public key when present (never used), no x5c,
+// and a nonce that is text when present.
+func (p Profile) Parse(compact string) (*Token, error) {
 	if len(compact) > MaxCompactBytes {
 		return nil, ErrTooLong
 	}
@@ -140,11 +163,15 @@ func Parse(compact string) (*Token, error) {
 		return nil, ErrHeader
 	}
 	t := &Token{Claims: claims, signed: compact[:len(parts[0])+1+len(parts[1])], signature: signature}
-	if t.Algorithm, ok = Text(members["alg"]); !ok || (t.Algorithm != RS256 && t.Algorithm != ES256) {
+	algorithms := p.Algorithms
+	if algorithms == nil {
+		algorithms = []string{RS256, ES256}
+	}
+	if t.Algorithm, ok = Text(members["alg"]); !ok || (t.Algorithm != RS256 && t.Algorithm != ES256) || !slices.Contains(algorithms, t.Algorithm) {
 		return nil, ErrAlgorithm
 	}
 	if value, has := members["typ"]; has {
-		if t.Type, ok = Text(value); !ok {
+		if t.Type, ok = Text(value); !ok || (p.Type != nil && !p.Type(t.Type)) {
 			return nil, ErrType
 		}
 		t.Typed = true
@@ -156,7 +183,51 @@ func Parse(compact string) (*Token, error) {
 	if t.KeyID, ok = Text(members["kid"]); !ok || !visible(t.KeyID, MaxKeyID) {
 		return nil, ErrKeyID
 	}
+	// The signature covers the claims as base64url, and nothing else: a b64
+	// that is not true would say it covers them as they are (RFC 7797).
+	if value, has := members["b64"]; has && string(value) != "true" {
+		return nil, ErrHeaderMember
+	}
+	if value, has := members["jwk"]; has && !wellFormed(value) {
+		return nil, ErrHeaderMember
+	}
+	if _, has := members["x5c"]; has {
+		return nil, ErrHeaderMember
+	}
+	if value, has := members["nonce"]; has {
+		if _, ok := Text(value); !ok {
+			return nil, ErrHeaderMember
+		}
+	}
 	return t, nil
+}
+
+// wellFormed says a jwk a header carries is a public key this package could
+// verify with, and has nothing else: an RSA key (kty, n, e) or a P-256 key
+// (kty, crv, x, y), with kid, use and alg as text when present. It is never
+// used; it is checked so a header jws takes is one go-jose takes too.
+func wellFormed(raw json.RawMessage) bool {
+	key, ok := Object(raw)
+	if !ok {
+		return false
+	}
+	kty, _ := Text(key["kty"])
+	allowed := map[string][]string{"RSA": {"n", "e"}, "EC": {"crv", "x", "y"}}[kty]
+	for name, value := range key {
+		switch {
+		case name == "kty" || slices.Contains(allowed, name):
+		case name == "kid" || name == "use" || name == "alg":
+			if _, ok := Text(value); !ok {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	if kty == "RSA" {
+		return rsaKey(key) != nil
+	}
+	return kty == "EC" && ecKey(key) != nil
 }
 
 // Verify checks t's signature with the key of keys whose ID is t's kid (the

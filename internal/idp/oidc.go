@@ -166,6 +166,7 @@ var words = map[error]string{
 	jws.ErrType:              "a token of another type",
 	jws.ErrCritical:          "ID token with a header that must be understood",
 	jws.ErrKeyID:             "ID token without a key identifier",
+	jws.ErrHeaderMember:      "ID token with a header member it cannot have",
 	jws.ErrUnknownKey:        "ID token signed with a key the provider does not publish",
 	jws.ErrUnusableKey:       "ID token signed with a key that is not for RS256 signatures",
 	jws.ErrSignature:         "wrong signature",
@@ -179,6 +180,15 @@ var words = map[error]string{
 // as they are.
 func said(err error) string { return words[err] }
 
+// idToken is how an ID token's header is read, in the order this package
+// always checked it: one algorithm, RS256, and it is not the token that
+// chooses; a type, when there is one, of JWT, since an access token of the
+// same provider is a JWT with another type; then no crit and a kid.
+var idToken = jws.Profile{
+	Algorithms: []string{jws.RS256},
+	Type:       func(typ string) bool { return strings.EqualFold(typ, "JWT") },
+}
+
 // verify checks an ID token (OpenID Connect Core, section 3.1.3.7): that the
 // provider signed it, for this application, for this sign-in, and not long
 // ago. find gives the provider's key with an identifier.
@@ -190,17 +200,9 @@ func verify(p Provider, issuer, clientID, nonce, token string, now time.Time, fi
 	if len(token) > maxIDToken {
 		return nil, refuse("ID token too long")
 	}
-	t, err := jws.Parse(token)
+	t, err := idToken.Parse(token)
 	if err != nil {
 		return nil, refuse(said(err))
-	}
-	// One algorithm, and it is not the token that chooses.
-	if t.Algorithm != jws.RS256 {
-		return nil, refuse("ID token signed with another algorithm")
-	}
-	// An access token of the same provider is a JWT with another type.
-	if t.Typed && !strings.EqualFold(t.Type, "JWT") {
-		return nil, refuse("a token of another type")
 	}
 	key, err := find(t.KeyID)
 	if err != nil {

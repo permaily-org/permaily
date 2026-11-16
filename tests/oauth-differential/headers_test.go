@@ -20,13 +20,12 @@ import (
 // headerDiffers names each signed header internal/jws refuses and go-jose
 // takes, with why.
 var headerDiffers = map[string]string{
-	`"crit":[]`:                  "crit is refused whatever it lists: nothing here is understood (RFC 7515, section 4.1.11)",
-	`"b64":"false"`:              "b64, when present, must be true: go-jose reads a value that is not a boolean as true",
-	`"b64":null`:                 "b64, when present, must be true: go-jose reads null as absent",
-	`"jwk":<a valid public key>`: "a key the token carries is never used, so a header with one is refused",
-	`"jku":"http://127.0.0.1/"`:  "a key the token points to is never used, so a header with one is refused",
-	`"x5u":"http://127.0.0.1/"`:  "a key the token points to is never used, so a header with one is refused",
-	`"nonce":null`:               "nonce, when present, must be text: go-jose reads null as absent",
+	`"crit":[]`:     "crit is refused whatever it lists: nothing here is understood (RFC 7515, section 4.1.11)",
+	`"b64":"false"`: "b64, when present, must be true: go-jose reads a value that is not a boolean as true",
+	`"b64":null`:    "b64, when present, must be true: go-jose reads null as absent",
+	`"jwk":null`:    "jwk, when present, must be a well-formed public key: go-jose reads null as absent",
+	`"x5c":[]`:      "no certificate is read here, so a header that carries a chain is refused, even an empty one",
+	`"nonce":null`:  "nonce, when present, must be text: go-jose reads null as absent",
 }
 
 // V12, internal/jws and internal/oauth's VerifyAssertion against go-jose on
@@ -60,6 +59,9 @@ func TestV12SignedHeadersAgainstGoJose(t *testing.T) {
 		`"kid" twice`:                `,"kid":"k1"`,
 		`"jwk":{"kty":"RSA"}`:        `,"jwk":{"kty":"RSA"}`,
 		`"jwk":<a valid public key>`: `,"jwk":{"kty":"EC","crv":"P-256","x":"` + enc(p[1:33]) + `","y":"` + enc(p[33:]) + `"}`,
+		`"jwk":<a private key>`:      `,"jwk":{"kty":"EC","crv":"P-256","x":"` + enc(p[1:33]) + `","y":"` + enc(p[33:]) + `","d":"AA"}`,
+		`"jwk":null`:                 `,"jwk":null`,
+		`"x5c":[]`:                   `,"x5c":[]`,
 		`"jku":"http://127.0.0.1/"`:  `,"jku":"http://127.0.0.1/"`,
 		`"x5u":"http://127.0.0.1/"`:  `,"x5u":"http://127.0.0.1/"`,
 		`"x5c":["AAAA"]`:             `,"x5c":["AAAA"]`,

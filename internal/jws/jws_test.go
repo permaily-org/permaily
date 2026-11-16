@@ -177,6 +177,7 @@ func TestEveryRefusal(t *testing.T) {
 		"kid with a space":        {b64([]byte(`{"alg":"RS256","kid":"r s"}`)) + "." + parts[1] + "." + parts[2], jws.ErrKeyID},
 		"kid of 257":              {b64([]byte(`{"alg":"RS256","kid":"`+strings.Repeat("k", 257)+`"}`)) + "." + parts[1] + "." + parts[2], jws.ErrKeyID},
 		"kid not text":            {b64([]byte(`{"alg":"RS256","kid":null}`)) + "." + parts[1] + "." + parts[2], jws.ErrKeyID},
+		"b64 false":               {signRS(t, rk, `{"alg":"RS256","kid":"rs","b64":false}`, `{}`), jws.ErrHeaderMember},
 		"an unknown key":          {signRS(t, rk, `{"alg":"RS256","kid":"other"}`, `{}`), jws.ErrUnknownKey},
 		"an RSA key too short":    {signRS(t, rk, `{"alg":"RS256","kid":"short"}`, `{}`), jws.ErrUnusableKey},
 		"an RSA key with no N":    {signRS(t, rk, `{"alg":"RS256","kid":"nil"}`, `{}`), jws.ErrUnusableKey},
