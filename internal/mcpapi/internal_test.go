@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -316,6 +317,68 @@ func TestACutBetweenChunksWritesNoMore(t *testing.T) {
 	if sent, ended := send(ctx, context.Background(), w, nil, rec); sent || ended != "cut" || w.writes != 1 {
 		t.Fatalf("sent %v ended %q after %d writes", sent, ended, w.writes)
 	}
+}
+
+// The flaky "a whole answer" of TestV50TheLeaseIsHonouredBeforeTheFirstByte
+// (CI run 43936037917): a transfer whose last flush returned is complete.
+// The client leaving once every byte was handed to the socket (the
+// request's context ending, the lease's with it, before send's deferred
+// check) leaves it sent; a lease cut before the last flush returned does
+// not, so nothing sent after the lease ended is reported sent.
+func TestATransferWhoseLastFlushReturnedIsComplete(t *testing.T) {
+	rec := newRecorder(AnswerMax)
+	_, _ = rec.Write(make([]byte, 2*sendChunk+1)) // three chunks, three flushes
+	for _, c := range []struct {
+		name       string
+		clientLeft bool
+		sent       bool
+		ended      string
+	}{
+		{"the client left", true, true, ""},
+		{"the lease was cut", false, false, "cut"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			req, leave := context.WithCancel(context.Background())
+			defer leave()
+			ctx, cut := context.WithCancel(req)
+			defer cut()
+			end := cut
+			if c.clientLeft {
+				end = leave
+			}
+			w := &lastFlushWriter{ResponseRecorder: httptest.NewRecorder(), last: 3, end: end, aborted: make(chan struct{})}
+			sent, ended := send(ctx, req, w, nil, rec)
+			if sent != c.sent || ended != c.ended || w.Body.Len() != len(rec.body) {
+				t.Fatalf("sent %v ended %q with %d of %d bytes written", sent, ended, w.Body.Len(), len(rec.body))
+			}
+		})
+	}
+}
+
+// lastFlushWriter takes every byte and, as its last flush returns, ends the
+// transfer's context with end and waits until the abort that follows set
+// its write deadline: the abort lands after every byte was handed over and
+// before send's deferred check, whatever the scheduler does.
+type lastFlushWriter struct {
+	*httptest.ResponseRecorder
+	flushes, last int
+	end           func()
+	aborted       chan struct{}
+	once          sync.Once
+}
+
+func (w *lastFlushWriter) FlushError() error {
+	w.Flush()
+	if w.flushes++; w.flushes == w.last {
+		w.end()
+		<-w.aborted
+	}
+	return nil
+}
+
+func (w *lastFlushWriter) SetWriteDeadline(time.Time) error {
+	w.once.Do(func() { close(w.aborted) })
+	return nil
 }
 
 // A type the schema's inference cannot take is a programming error.
