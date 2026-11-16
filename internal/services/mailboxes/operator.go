@@ -98,7 +98,7 @@ func (s *Service) endAll(ctx context.Context, list *listDoc) ([]listEntry, error
 			_ = s.unpoint(ctx, e.Rcpt, e.ID)
 			continue
 		case stLost:
-			if err := s.queue(ctx, s.now().Truncate(time.Second), e.ID); err != nil {
+			if err := s.queue(ctx, s.now().Truncate(time.Second), e.ID, e.AddedAt); err != nil {
 				return nil, err
 			}
 			if err := s.cfg.Records.RemoveRecord(ctx, recordName(e.ID)); err != nil {
