@@ -20,6 +20,13 @@
 // TLS, the DNS must point senders at it, and the MX on port 25 must answer
 // STARTTLS with the attested key.
 //
+// When the enclave asks a model (ADR 0028), it prints which one, at which
+// address, for which OpenAI organisation and project, with which limits, and
+// what its canary found; it fails when the provider's prompt cache is not
+// off, and warns when the canary is not "same" or its baseline is not the
+// canary.json of the commit the enclave runs (-canary, or GitHub at that
+// commit), or when the organisation or the project is not pinned.
+//
 // And it looks for certificates the enclave does not hold: the CAA records
 // must let only the enclave's ACME account issue for its hosts and forbid
 // wildcards for the domain, and Certificate Transparency must show no
@@ -101,6 +108,10 @@ type hostResult struct {
 	// through it: reported as it is, and checked against nothing. Nil when
 	// the image is older or has no accounts.
 	Admin *attestation.AdminStatus `json:"admin,omitempty"`
+	// Model is what the enclave reports of the model it asks (ADR 0028),
+	// after it passed checkModel, with what the verifier warns of; nil when
+	// the image is older or asks no model.
+	Model *modelResult `json:"model,omitempty"`
 }
 
 // rootResult is what the verified enclave reported about the KMS key that
@@ -213,6 +224,7 @@ func main() {
 		skipCert = flag.Bool("skip-certificates", false, "do not check CAA records and Certificate Transparency (releases before v0.4.0 do not report their TLS key)")
 		resolver = flag.String("doh-resolver", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS resolver (JSON API) for CAA records")
 		ctAPI    = flag.String("ct-api", "https://api.certspotter.com/v1/issuances", "Certificate Transparency search API (Cert Spotter compatible)")
+		canary   = flag.String("canary", "", "internal/decide/canary.json of the commit the enclave runs, from your checkout (default: read from GitHub at that commit)")
 	)
 	prov := provenanceFlags(flag.CommandLine)
 	flag.Usage = func() {
@@ -263,7 +275,10 @@ func main() {
 	allOK := true
 	for _, u := range urls {
 		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-		r := verify(ctx, client, u, expected, kmsOptions{skip: *skipKMS, noStatus: *skipKMS && *skipCert, alsoAllow: splitList(*kmsAllow), now: time.Now(), trust: trust})
+		r := verify(ctx, client, u, expected, kmsOptions{
+			skip: *skipKMS, noStatus: *skipKMS && *skipCert, alsoAllow: splitList(*kmsAllow), now: time.Now(), trust: trust,
+			canary: canaryOf(&http.Client{Timeout: *timeout}, *canary),
+		})
 		cancel()
 		allOK = allOK && r.OK
 		results = append(results, r)
@@ -316,6 +331,13 @@ type kmsOptions struct {
 	// trust is Sigstore's trust root compiled into this binary, which the one
 	// the enclave reports is compared with; nil skips that.
 	trust *provenance.TrustRoot
+	// canary returns the SHA-256 of the canary.json of the commit the
+	// enclave runs (canaryOf), read only when the enclave reports a model;
+	// nil compares nothing. expectedCanary and canaryErr are what it
+	// returned for the host being checked.
+	canary         func(ctx context.Context, commit string) (string, error)
+	expectedCanary string
+	canaryErr      error
 }
 
 func verify(ctx context.Context, client *http.Client, url string, expected map[uint][]byte, kms kmsOptions) hostResult {
@@ -351,6 +373,9 @@ func verify(ctx context.Context, client *http.Client, url string, expected map[u
 		}
 		return r
 	}
+	if st.Model != nil && kms.canary != nil {
+		kms.expectedCanary, kms.canaryErr = kms.canary(ctx, r.Commit)
+	}
 	return checkStatus(st, r, hex.EncodeToString(expected[0]), kms)
 }
 
@@ -366,6 +391,13 @@ func checkStatus(st *attestation.Status, r hostResult, pcr0 string, kms kmsOptio
 			return r
 		}
 		r.TLS = st.TLS
+	}
+	if st.Model != nil {
+		if r.Model, err = checkModel(st.Model, kms.expectedCanary, kms.canaryErr); err != nil {
+			r.Model = nil
+			r.Error = "model: " + err.Error()
+			return r
+		}
 	}
 	if kms.skip {
 		r.OK = true
@@ -861,6 +893,7 @@ func printHuman(w io.Writer, source string, expected map[uint][]byte, results []
 		printAnchors(w, r.Anchors, time.Now())
 		printSentMail(w, r.SentMail)
 		printAdmin(w, r.Admin)
+		printModel(w, r.Model)
 		if r.TLS != nil && r.TLS.Sealed {
 			fmt.Fprintf(w, "      TLS key created %s, kept sealed with KMS across restarts\n", r.TLS.KeyCreatedAt.UTC().Format(time.RFC3339))
 		}

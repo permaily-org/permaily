@@ -24,13 +24,18 @@ type StatusSources struct {
 	// Admin counts what the operator did to accounts through this enclave;
 	// nil when the image has no accounts.
 	Admin func() *attestation.AdminStatus
+	// Model describes the model the enclave asks (ADR 0028, "What /status
+	// and permaily-verify show"): what is compiled into the image and this
+	// enclave's state, never a key, an amount spent or anything of a
+	// person; nil when the image asks no model.
+	Model func(context.Context) *attestation.ModelStatus
 }
 
 // Status returns a handler for GET /status. The response has no signature: a
 // verifier trusts it because it arrives over the TLS key bound in the
 // attestation document (attestation.FetchStatus).
 func Status(src StatusSources) http.Handler {
-	tls, root, sigstore, anchors, mail, admin := src.TLS, src.Root, src.Sigstore, src.Anchors, src.Mail, src.Admin
+	tls, root, sigstore, anchors, mail, admin, model := src.TLS, src.Root, src.Sigstore, src.Anchors, src.Mail, src.Admin, src.Model
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -60,6 +65,9 @@ func Status(src StatusSources) http.Handler {
 		}
 		if admin != nil {
 			st.Admin = admin()
+		}
+		if model != nil {
+			st.Model = model(r.Context())
 		}
 		writeJSON(w, st)
 	})
