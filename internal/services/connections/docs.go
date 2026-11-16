@@ -98,21 +98,29 @@ func privateAAD(id string) []byte { return envelope.AAD("connection private", id
 // readConn reads a connection's record strictly and now: nil when it was
 // never made or was removed.
 func (s *Service) readConn(ctx context.Context, id string) (*connDoc, store.Mark, error) {
+	d, at, _, err := s.readConnAt(ctx, id)
+	return d, at, err
+}
+
+// readConnAt is readConn with the instant its read began: what it read is
+// that old, however late the read returns (finding 2).
+func (s *Service) readConnAt(ctx context.Context, id string) (*connDoc, store.Mark, time.Time, error) {
+	began := s.now()
 	var d connDoc
 	at, found, err := s.readSigned(ctx, connName(id), &d)
 	if err != nil || !found {
-		s.cacheConn(id, nil, at, err)
-		return nil, at, err
+		s.cacheConn(id, nil, at, err, began)
+		return nil, at, began, err
 	}
 	if d.ID != id || d.V != 1 {
-		s.cacheConn(id, nil, at, errDocument)
-		return nil, at, errDocument
+		s.cacheConn(id, nil, at, errDocument, began)
+		return nil, at, began, errDocument
 	}
 	if len(d.Sealed) > 0 {
 		raw, err := envelope.Open(s.sealKey, d.Sealed, privateAAD(id))
 		var p connPrivate
 		if err != nil || json.Unmarshal(raw, &p) != nil {
-			return nil, at, errDocument
+			return nil, at, began, errDocument
 		}
 		d.private = &p
 	} else {
@@ -120,8 +128,8 @@ func (s *Service) readConn(ctx context.Context, id string) (*connDoc, store.Mark
 	}
 	// The cache keeps a copy of its own: what a caller changes before its
 	// write commits is never what another reader sees (finding 3).
-	s.cacheConn(id, d.clone(), at, nil)
-	return &d, at, nil
+	s.cacheConn(id, d.clone(), at, nil, began)
+	return &d, at, began, nil
 }
 
 // connFresh is a connection's record from this enclave's read of it if it
@@ -133,18 +141,22 @@ func (s *Service) connFresh(ctx context.Context, id string) (*connDoc, time.Time
 	if ok && s.now().Sub(c.read) < oauthFresh && c.err == nil {
 		return c.doc.clone(), c.read, nil
 	}
-	read := s.now()
-	d, _, err := s.readConn(ctx, id)
+	d, _, read, err := s.readConnAt(ctx, id)
 	return d, read, err
 }
 
-func (s *Service) cacheConn(id string, d *connDoc, at store.Mark, err error) {
+// cacheConn keeps a read of a connection's record dated when it began; a
+// read that began before the one kept never replaces it.
+func (s *Service) cacheConn(id string, d *connDoc, at store.Mark, err error, began time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if old, ok := s.conns[id]; ok && old.read.After(began) {
+		return
+	}
 	if len(s.conns) >= cacheMax {
 		clear(s.conns)
 	}
-	s.conns[id] = cachedConn{doc: d, at: at, read: s.now(), err: err}
+	s.conns[id] = cachedConn{doc: d, at: at, read: began, err: err}
 }
 
 // clone is a copy of d that shares nothing with it: the cache's documents

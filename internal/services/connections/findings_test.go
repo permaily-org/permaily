@@ -506,3 +506,56 @@ func TestV23AskingAgainKeepsTheOriginalSince(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// V27: a read that began before the one cached never replaces it, and a
+// fresh read that returns after the freshness it would give has passed
+// renews nothing (finding 2).
+func TestV27ReadsAreAsOldAsWhenTheyBegan(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	b := w.enclave()
+	x := w.ask(claudeCode)
+	tok := w.connectAll(b, w.person(accountA), x)
+	g := w.grant(b, x, tok.AccessToken)
+	records := &reviewAfterRead{Records: &store.Anchored{Records: w.mem, Commits: w.commits, Strict: true, Now: w.clock.now}}
+	a, err := New(w.config(records))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("a late read never replaces a newer one", func(t *testing.T) {
+		d, at, began, err := a.readConnAt(ctx, g.Connection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.cacheConn(g.Connection, nil, at, store.ErrRolledBack, began.Add(-time.Second))
+		cached, read, err := a.connFresh(ctx, g.Connection)
+		if err != nil || cached == nil || !read.Equal(began) || cached.EndsAt != d.EndsAt {
+			t.Fatalf("an older read replaced the newer: %v %v", read, err)
+		}
+	})
+
+	t.Run("a fresh read slower than the freshness renews nothing", func(t *testing.T) {
+		grant := *g
+		grant.CheckedAt = w.clock.now().Add(-oauth.ConnectionFresh)
+		records.mu.Lock()
+		records.after = func(name string) {
+			if name == connName(g.Connection) {
+				w.clock.add(oauth.ConnectionFresh + time.Second)
+			}
+		}
+		records.mu.Unlock()
+		defer func() {
+			records.mu.Lock()
+			records.after = nil
+			records.mu.Unlock()
+		}()
+		checked := grant.CheckedAt
+		if err := a.again(ctx, &grant); !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("a read older than its freshness when it returned was used: %v", err)
+		}
+		if !grant.CheckedAt.Equal(checked) {
+			t.Fatal("the grant's freshness was extended")
+		}
+	})
+}

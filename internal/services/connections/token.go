@@ -294,7 +294,7 @@ func (s *Service) usable(ctx context.Context, d *connDoc, fresh bool) error {
 	if st != StandingOpen && st != StandingNotAgreed {
 		return s.grantRefused("invalid_grant")
 	}
-	closing, err := s.listClosing(ctx, d.Account, fresh)
+	closing, _, err := s.listClosing(ctx, d.Account, fresh)
 	if err != nil {
 		return ErrUnavailable
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/permaily-org/permaily/internal/envelope"
 	"github.com/permaily-org/permaily/internal/store"
@@ -37,6 +38,7 @@ func (s *Service) sawListEpoch(account string, e uint64) {
 // readList is the newest epoch of an account's list, read strictly and
 // now, and its mark: nil when the account has none.
 func (s *Service) readList(ctx context.Context, account string) (*ListState, store.Mark, error) {
+	began := s.now()
 	e := s.listEpoch(account)
 	for range ListEpochVersions {
 		var l ListState
@@ -46,7 +48,7 @@ func (s *Service) readList(ctx context.Context, account string) (*ListState, sto
 		}
 		if !found {
 			if e == 0 {
-				s.cacheList(account, false)
+				s.cacheList(account, false, began)
 				return nil, at, nil
 			}
 			if err := s.remakeEpoch(ctx, account, e); err != nil && !retry(err) {
@@ -66,7 +68,7 @@ func (s *Service) readList(ctx context.Context, account string) (*ListState, sto
 			l.Current = map[string]string{}
 		}
 		s.sawListEpoch(account, e)
-		s.cacheList(account, l.Closing)
+		s.cacheList(account, l.Closing, began)
 		return &l, at, nil
 	}
 	return nil, store.Mark{}, errBusy
@@ -94,6 +96,7 @@ func (s *Service) writeList(ctx context.Context, l *ListState, at store.Mark, cr
 	if !l.Fits() {
 		return errListFull
 	}
+	began := s.now()
 	name := ListName(l.Account, l.Epoch)
 	if create {
 		if err := s.writeSigned(ctx, name, l, at, true); err != nil {
@@ -102,7 +105,7 @@ func (s *Service) writeList(ctx context.Context, l *ListState, at store.Mark, cr
 		if l.Epoch == 0 {
 			s.indexAccount(ctx, l.Account)
 		}
-		s.cacheList(l.Account, l.Closing)
+		s.cacheList(l.Account, l.Closing, began)
 		return nil
 	}
 	if l.Rotate(at.Version()) {
@@ -118,13 +121,13 @@ func (s *Service) writeList(ctx context.Context, l *ListState, at store.Mark, cr
 		if err := s.writeSigned(ctx, ListName(l.Account, next.Epoch), &next, store.Mark{}, true); err != nil && !errors.Is(err, store.ErrExists) {
 			return err
 		}
-		s.cacheList(l.Account, l.Closing)
+		s.cacheList(l.Account, l.Closing, began)
 		return nil
 	}
 	if err := s.writeSigned(ctx, name, l, at, false); err != nil {
 		return err
 	}
-	s.cacheList(l.Account, l.Closing)
+	s.cacheList(l.Account, l.Closing, began)
 	return nil
 }
 
@@ -156,31 +159,38 @@ func (s *Service) updateList(ctx context.Context, account string, change func(*L
 	return nil, errBusy
 }
 
-func (s *Service) cacheList(account string, closing bool) {
+// cacheList keeps whether an account's list is closing, as read or written
+// by an operation that began at began; one that began earlier never replaces
+// it.
+func (s *Service) cacheList(account string, closing bool, began time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if old, ok := s.lists[account]; ok && old.read.After(began) {
+		return
+	}
 	if len(s.lists) >= cacheMax {
 		clear(s.lists)
 	}
-	s.lists[account] = cachedList{closing: closing, read: s.now()}
+	s.lists[account] = cachedList{closing: closing, read: began}
 }
 
 // listClosing says the account's list is closing, from a read at most
-// ConnectionFresh old unless fresh.
-func (s *Service) listClosing(ctx context.Context, account string, fresh bool) (bool, error) {
+// ConnectionFresh old unless fresh, and when that read began.
+func (s *Service) listClosing(ctx context.Context, account string, fresh bool) (bool, time.Time, error) {
 	if !fresh {
 		s.mu.Lock()
 		c, ok := s.lists[account]
 		s.mu.Unlock()
 		if ok && s.now().Sub(c.read) < oauthFresh {
-			return c.closing, nil
+			return c.closing, c.read, nil
 		}
 	}
+	began := s.now()
 	l, _, err := s.readList(ctx, account)
 	if err != nil {
-		return false, err
+		return false, began, err
 	}
-	return l != nil && l.Closing, nil
+	return l != nil && l.Closing, began, nil
 }
 
 // indexAccount writes the account in the index Sweep walks.

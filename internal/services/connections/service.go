@@ -338,10 +338,12 @@ func (s *Service) standing(ctx context.Context, account string, fresh bool) (Sta
 		return 0, now, err
 	}
 	s.mu.Lock()
-	if len(s.stand) >= cacheMax {
-		clear(s.stand)
+	if old, ok := s.stand[account]; !ok || !old.read.After(now) {
+		if len(s.stand) >= cacheMax {
+			clear(s.stand)
+		}
+		s.stand[account] = cachedStanding{s: st, read: now}
 	}
-	s.stand[account] = cachedStanding{s: st, read: now}
 	s.mu.Unlock()
 	return st, now, nil
 }

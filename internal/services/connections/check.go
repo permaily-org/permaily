@@ -85,8 +85,7 @@ func (s *Service) authority(ctx context.Context, g *oauth.Grant, fresh bool) (*c
 	var read time.Time
 	var err error
 	if fresh {
-		read = s.now()
-		d, _, err = s.readConn(ctx, g.Connection)
+		d, _, read, err = s.readConnAt(ctx, g.Connection)
 	} else {
 		d, read, err = s.connFresh(ctx, g.Connection)
 	}
@@ -106,7 +105,7 @@ func (s *Service) authority(ctx context.Context, g *oauth.Grant, fresh bool) (*c
 		s.count("invalid_token")
 		return nil, time.Time{}, ErrInvalidToken
 	}
-	closing, err := s.listClosing(ctx, d.Account, fresh)
+	closing, listRead, err := s.listClosing(ctx, d.Account, fresh)
 	if err != nil {
 		if refusedRecord(err) {
 			s.count("invalid_token")
@@ -126,14 +125,13 @@ func (s *Service) authority(ctx context.Context, g *oauth.Grant, fresh bool) (*c
 		s.count("invalid_token")
 		return nil, time.Time{}, ErrInvalidToken
 	}
-	if stRead.Before(read) {
-		read = stRead
+	// What it used is as old as the oldest of its reads, each dated when it
+	// began (finding 2).
+	for _, t := range []time.Time{stRead, listRead} {
+		if t.Before(read) {
+			read = t
+		}
 	}
-	s.mu.Lock()
-	if c, ok := s.lists[d.Account]; ok && c.read.Before(read) {
-		read = c.read
-	}
-	s.mu.Unlock()
 	return d, read, nil
 }
 
@@ -157,6 +155,12 @@ func (s *Service) again(ctx context.Context, g *oauth.Grant) error {
 		return errRefusedAuthority
 	case err != nil:
 		return err
+	}
+	// A read that took longer than the freshness renews nothing: what it
+	// read is already too old to release by (finding 2).
+	if !s.now().Before(checked.Add(oauthFresh)) {
+		s.count("authority_stale")
+		return ErrUnavailable
 	}
 	g.CheckedAt = checked
 	return nil
