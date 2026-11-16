@@ -212,10 +212,10 @@ describe('legal pages', () => {
     const go = (path: string) => readFileSync(join(import.meta.dirname, '../..', path), 'utf8');
     const text = (path: string) => page(path).text.replace(/\s+/g, ' ');
 
-    // deploy/tofu/mail.tf sets the mail table's point-in-time recovery to one day (pull request 149); without
-    // `recovery_period_in_days` DynamoDB keeps its default 35, which the pages would no longer say.
-    const recovery = go('deploy/tofu/mail.tf').match(/recovery_period_in_days\s*=\s*(\d+)/);
-    it.skipIf(!recovery)('the backups’ one day, as deploy/tofu/mail.tf sets it', () => {
+    it('the backups’ one day, as deploy/tofu/mail.tf sets it', () => {
+      // The mail table's point-in-time recovery keeps one day (pull request 149); without
+      // `recovery_period_in_days` DynamoDB keeps its default 35, which the pages no longer say.
+      const recovery = go('deploy/tofu/mail.tf').match(/recovery_period_in_days\s*=\s*(\d+)/);
       expect(Number(recovery?.[1])).toBe(1);
       for (const path of ['privacy', 'data-deletion']) {
         expect(text(path), path).toContain('Our database keeps a rolling one-day backup');
