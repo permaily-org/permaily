@@ -26,7 +26,7 @@ Implemented in `internal/smtpd`, `internal/inbox`, `internal/msgauth`, `internal
 - [x] MTA-STS `enforce`, an MX that refuses clear text, and the mail transport checked by `permaily-verify` (ADR 0011).
 - [x] Verify the KMS flow against production (2026-11-10, [acceptance.md](acceptance.md)).
 - [x] Publish the MX, MTA-STS and TLS-RPT records (2026-11-10).
-- [ ] Forward a Gmail account to the test mailbox with the release image.
+- [x] ~~Forward a Gmail account to the test mailbox with the release image.~~ Superseded: v0.12.0 retired the test mailbox (ADR 0026). A real Gmail confirmation reached production on 2026-11-14 (step 2 below); forwarding through both steps of Gmail's set-up stays in step 2's staging rehearsal.
 
 ## F2: what it is
 
