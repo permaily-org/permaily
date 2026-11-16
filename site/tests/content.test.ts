@@ -162,6 +162,50 @@ describe('legal pages', () => {
     expect(answers[0]?.querySelectorAll('td').at(-1)?.text.trim()).toBe('As long as the message');
   });
 
+  it('say what is open as the image composes it', () => {
+    // The image composes mailboxes, the model, connections and the default rule (cmd/permaily-enclave, ADR 0026,
+    // 0028, 0030 and 0031), so the privacy page says them in the present tense and keeps "planned" for what is not
+    // built: the person's own rules (step 7) and the receipts' screen (step 8).
+    const go = (path: string) => readFileSync(join(import.meta.dirname, '../..', path), 'utf8');
+    const composition = go('cmd/permaily-enclave/connections.go');
+    expect(composition).toMatch(/Rules:\s+\[\]rules\.Rule\{rules\.Default\(\)\}/);
+    expect(go('cmd/permaily-enclave/main.go')).toMatch(/mountConnections\(p\.connections,/);
+    const privacy = page('privacy');
+    const headings = privacy.querySelectorAll('h2').map((h) => h.text);
+    expect(headings.filter((h) => /planned/i.test(h))).toEqual([]);
+    const text = privacy.text.replace(/\s+/g, ' ');
+    expect(text).not.toMatch(
+      /aren’t open yet|once (mailboxes|connections) open|none of this is running/i,
+    );
+    expect(text).toContain(
+      'Rules of your own, and a screen that shows you your receipts, aren’t built yet',
+    );
+    // A connection's end and its revocation, as internal/oauth sets them.
+    const oauth = go('internal/oauth/oauth.go');
+    expect(oauth).toMatch(/ConnectionDefaultDays = 90\b/);
+    expect(oauth).toMatch(/ConnectionMaxDays\s+= 365\b/);
+    expect(oauth).toMatch(/ConnectionFresh = 5 \* time\.Second/);
+    expect(text).toContain('after 90 days, or the time the app asked for, a year at most');
+    expect(text).toContain('anything being sent stops within five seconds');
+    expect(oauth).toMatch(/CodeTTL = 60 \* time\.Second/);
+    expect(oauth).toMatch(/AccessTokenTTL = time\.Hour/);
+    expect(oauth).toMatch(/RefreshTokenTTL = 30 \* 24 \* time\.Hour/);
+    expect(oauth).toMatch(/RequestTTL = 15 \* time\.Minute/);
+    expect(text).toContain(
+      'A request fifteen minutes, a code a minute, an access token an hour, a refresh token 30 days',
+    );
+    // What the model is sent: at most 256 KiB of the text (inbox.MessageTextMax).
+    expect(go('internal/inbox/box.go')).toMatch(/MessageTextMax = 256 << 10/);
+    expect(text).toContain('the subject and the text, up to 256 KiB');
+    // Zero data retention: asked of OpenAI, not approved, as the image says (deploy/enclave.json).
+    const model = JSON.parse(go('deploy/enclave.json')).model;
+    expect(model.zero_data_retention).toBe(false);
+    expect(text).toContain(
+      'We asked OpenAI for zero data retention on 15 November 2026; it hasn’t approved it yet',
+    );
+    expect(page('subprocessors').text).toContain('it hasn’t approved it yet');
+  });
+
   it('exist for each legal link', () => {
     for (const path of ['privacy', 'terms', 'data-processing', 'subprocessors', 'data-deletion']) {
       expect(page(path).querySelector('h1')?.text.trim(), path).toBeTruthy();
