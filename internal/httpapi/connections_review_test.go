@@ -140,6 +140,7 @@ func TestV45ALeaseCutAfterABufferedWriteIsNotFlushed(t *testing.T) {
 				l := &wire{Listener: srv.Listener}
 				srv.Listener = l
 				srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+				srv.Config.ConnContext = httpapi.ConnContext // over HTTP/2, a cut closes the connection
 				client := &http.Client{Transport: &http.Transport{}}
 				if h2 {
 					srv.Config.Protocols = new(http.Protocols)

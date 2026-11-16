@@ -276,7 +276,8 @@ func (s *oauthServer) push(w http.ResponseWriter, r *http.Request, form url.Valu
 }
 
 // failed answers a refusal of an endpoint of the issuer with its code alone:
-// invalid_client 401, temporarily_unavailable 503 (and a storage that could
+// invalid_client 401 (an OAuthError's, or contracts.ErrInvalidClient's with
+// its reason never said), temporarily_unavailable 503 (and a storage that could
 // not be read), too many requests 429, server_error 500 and any failure
 // that is not a refusal (logged without what it was about), every other
 // refusal 400.
@@ -296,6 +297,10 @@ func (s *oauthServer) failed(w http.ResponseWriter, r *http.Request, err error) 
 		return
 	}
 	switch {
+	case errors.Is(err, contracts.ErrInvalidClient):
+		// A pushed request's client refused for its reason
+		// (contracts.ClientError): the issuer says the code alone.
+		writeOAuthError(w, http.StatusUnauthorized, oauth.ErrInvalidClient)
 	case errors.Is(err, connections.ErrUnavailable):
 		w.Header().Set("Retry-After", retryAfterStorage)
 		writeOAuthError(w, http.StatusServiceUnavailable, oauth.ErrTemporarily)

@@ -235,9 +235,18 @@ var consentStatus = map[string]int{
 }
 
 // consentFailed answers a refusal of the person's routes: a contract error
-// with its code and fixed words (a formula's problem with its details), any
-// other failure as internalFailure answers it.
+// with its code and fixed words (a formula's problem with its details, an
+// invalid client with its reason, contracts.ClientError, when it is one of
+// the three), any other failure as internalFailure answers it.
 func consentFailed(w http.ResponseWriter, r *http.Request, log *slog.Logger, err error) {
+	if ce, ok := errors.AsType[*contracts.ClientError](err); ok {
+		var details contracts.ErrorDetails
+		if ce.Problem.Valid() {
+			details = ce.Details()
+		}
+		writeErrorWith(w, http.StatusBadRequest, contracts.ErrInvalidClient.Code, contracts.ErrInvalidClient.Message, details)
+		return
+	}
 	if known, ok := errors.AsType[*contracts.Error](err); ok {
 		if status, ok := consentStatus[known.Code]; ok {
 			writeError(w, status, known.Code, known.Message)

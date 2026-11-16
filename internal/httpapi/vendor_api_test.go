@@ -63,7 +63,8 @@ const (
 var apiGrant = &oauth.Grant{
 	Connection: "con_1", Family: "fam_1", Account: "acc_1", ClientID: "https://vendor.example/c", Resource: contracts.ResourceAPI,
 	Parts:  []contracts.Part{contracts.PartSender, contracts.PartSubject, contracts.PartBody, contracts.PartAttachments},
-	Scopes: []string{oauth.ScopeSender, oauth.ScopeSubject, oauth.ScopeBody, oauth.ScopeAttachments},
+	Scopes:           []string{oauth.ScopeSender, oauth.ScopeSubject, oauth.ScopeBody, oauth.ScopeAttachments},
+	ConnectionScopes: []string{oauth.ScopeSender, oauth.ScopeSubject, oauth.ScopeBody, oauth.ScopeAttachments},
 }
 
 // grants sets the fake's Check: the API's token is apiGrant (or g), the
@@ -381,17 +382,20 @@ func TestV45TheAPIsRefusals(t *testing.T) {
 	}
 }
 
-// V45: an attachment to a grant without mail.attachments is 403
-// part_not_approved, with the step-up challenge naming the token's scopes
-// and mail.attachments in one, before the service is asked; the service's
-// own part_not_approved is answered the same; an attachment past the bound
-// is 413 and its lease finished unsent.
+// V45: an attachment to a grant without mail.attachments is the service's
+// to refuse (it records it): 403 part_not_approved, with the step-up
+// challenge naming the connection's scopes and mail.attachments in one; an
+// attachment past the bound is 413 and its lease finished unsent.
 func TestV45AnAttachmentNeedsItsScope(t *testing.T) {
 	a := newConnApp(t)
 	narrow := *apiGrant
 	narrow.Parts = []contracts.Part{contracts.PartSender, contracts.PartBody}
 	narrow.Scopes = []string{oauth.ScopeSender, oauth.ScopeBody}
+	narrow.ConnectionScopes = narrow.Scopes
 	grants(a.fake, &narrow)
+	a.fake.AttachmentFunc = func(context.Context, *oauth.Grant, string, int) (*inbox.Attachment, connections.Release, error) {
+		return nil, nil, contracts.ErrPartNotApproved
+	}
 	const step = `Bearer error="insufficient_scope", resource_metadata="https://api.permaily.test/.well-known/oauth-protected-resource/v1", ` +
 		`scope="mail.sender mail.body mail.attachments"`
 	rec := a.vendor(apiToken, "GET", "/v1/messages/mbx_1.18e7/attachments/0", "")
@@ -399,13 +403,10 @@ func TestV45AnAttachmentNeedsItsScope(t *testing.T) {
 	if rec.Header().Get("WWW-Authenticate") != step {
 		t.Fatalf("%v", rec.Header())
 	}
-	if slices.Contains(a.fake.Calls(), "Attachment") {
-		t.Fatal("the service was asked")
+	if !slices.Contains(a.fake.Calls(), "Attachment") {
+		t.Fatal("the service was not asked")
 	}
 	grants(a.fake, apiGrant)
-	a.fake.AttachmentFunc = func(context.Context, *oauth.Grant, string, int) (*inbox.Attachment, connections.Release, error) {
-		return nil, nil, contracts.ErrPartNotApproved
-	}
 	rec = a.vendor(apiToken, "GET", "/v1/messages/mbx_1.18e7/attachments/0", "")
 	want(t, rec, 403, "part_not_approved")
 	if !strings.Contains(rec.Header().Get("WWW-Authenticate"), `scope="mail.sender mail.subject mail.body mail.attachments"`) {

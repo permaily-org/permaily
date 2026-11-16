@@ -103,6 +103,8 @@ func newConnApp(t *testing.T) *connApp {
 	fresh := &accounts.Authenticated{AccountID: "acc_fresh", Session: contracts.Session{ID: "ses_fresh", ConfirmedUntil: now.Add(5 * time.Minute)}}
 	stale := &accounts.Authenticated{AccountID: "acc_stale", Session: contracts.Session{ID: "ses_stale", ConfirmedUntil: now.Add(-time.Second)}}
 	a := &connApp{t: t, fake: &connectionstest.Fake{}, logs: &bytes.Buffer{}, now: now}
+	// A refusal the API makes itself is recorded (connections.API.Refuse).
+	a.fake.RefuseFunc = func(context.Context, *oauth.Grant, connections.Refusal) error { return nil }
 	cfg := httpapi.ConnectionsConfig{
 		Service: a.fake, Sessions: sessions{"fresh": fresh, "stale": stale}, OAuth: testOAuth,
 		Metadata: testMetadata, ResourceMetadata: testResourceMetadata, Challenge: testChallenge,
