@@ -249,3 +249,29 @@ func TestTheRefreshesRememberedAreBounded(t *testing.T) {
 		t.Fatalf("%d refreshes remembered", n)
 	}
 }
+
+// V15 (review of pull request 130, finding 4): a key-set refresh the
+// limit of new fetches refuses leaves nothing remembered, however many
+// URLs ask.
+func TestV15ARefusedRefreshRemembersNothing(t *testing.T) {
+	p := newPlayed(t, documents())
+	p.r.mu.Lock()
+	p.r.window = p.clk.now()
+	p.r.fetched = vendors.FetchesPerMinute
+	p.r.mu.Unlock()
+	for i := range 3 * vendors.CacheMax {
+		c := &vendors.Client{Document: oauth.ClientDocument{TokenEndpointAuthMethod: oauth.AuthPrivateKeyJWT, JWKSURI: fmt.Sprintf("https://app.vendor.dev/keys/%d", i)}}
+		if _, err := p.r.Keys(context.Background(), c, true); reason(err) != ReasonRateLimited {
+			t.Fatalf("%d: %v", i, err)
+		}
+	}
+	p.r.mu.Lock()
+	n := len(p.r.forced)
+	p.r.mu.Unlock()
+	if n != 0 {
+		t.Errorf("%d refreshes remembered of none fetched", n)
+	}
+	if p.v.count() != 0 {
+		t.Errorf("%d fetches", p.v.count())
+	}
+}

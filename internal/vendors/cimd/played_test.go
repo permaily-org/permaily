@@ -100,6 +100,9 @@ type vendor struct {
 	mu    sync.Mutex
 	serve func(w http.ResponseWriter, r *http.Request)
 	seen  []seen
+	// date, when set, is the played clock the answers' Date is read from,
+	// so that a response's age is the played one; serve may set another.
+	date func() time.Time
 }
 
 func newVendor(t testing.TB, ca *pki, serve func(w http.ResponseWriter, r *http.Request), names ...string) *vendor {
@@ -108,8 +111,11 @@ func newVendor(t testing.TB, ca *pki, serve func(w http.ResponseWriter, r *http.
 	v.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		v.mu.Lock()
 		v.seen = append(v.seen, seen{Method: r.Method, Path: r.URL.Path, Proto: r.Proto, Header: r.Header.Clone(), ContentLength: r.ContentLength})
-		serve := v.serve
+		serve, date := v.serve, v.date
 		v.mu.Unlock()
+		if date != nil {
+			w.Header().Set("Date", date().UTC().Format(http.TimeFormat))
+		}
 		serve(w, r)
 	}))
 	v.srv.EnableHTTP2 = true
@@ -206,6 +212,9 @@ func newPlayed(t testing.TB, serve func(http.ResponseWriter, *http.Request), nam
 	ca := newPKI(t)
 	v := newVendor(t, ca, serve, names...)
 	clk := newClock()
+	v.mu.Lock()
+	v.date = clk.now
+	v.mu.Unlock()
 	return &played{ca: ca, v: v, clk: clk, r: New(clientTo(v.srv.Listener.Addr().String(), ca), deployment, clk.now)}
 }
 

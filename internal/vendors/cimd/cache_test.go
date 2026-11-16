@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/vendors"
 )
 
@@ -353,4 +355,161 @@ func TestV14TheCacheKeeps1024(t *testing.T) {
 	if n := p.v.count() - before; n != 1 {
 		t.Errorf("%d fetched again, want only the least recently used", n)
 	}
+}
+
+// V14 (review of pull request 130, finding 3): a 304 that says no-store
+// answers the request that revalidated, and drops the stored copy and its
+// validators, for a document and for a key set.
+func TestV14ANotModifiedThatSaysNoStoreDropsTheCopy(t *testing.T) {
+	for _, keys := range []bool{false, true} {
+		t.Run(fmt.Sprintf("keys=%v", keys), func(t *testing.T) {
+			body := document(clientURL)
+			if keys {
+				body = keySet(rsaJWK(t, "old"))
+			}
+			p := newPlayed(t, answer(body, "Cache-Control", "max-age=0", "ETag", `"v1"`))
+			c := &vendors.Client{Document: oauth.ClientDocument{TokenEndpointAuthMethod: oauth.AuthPrivateKeyJWT, JWKSURI: jwksURL}}
+			fetch := func() error {
+				if keys {
+					_, err := p.r.Keys(context.Background(), c, false)
+					return err
+				}
+				_, err := p.r.Client(context.Background(), clientURL)
+				return err
+			}
+			if err := fetch(); err != nil {
+				t.Fatal(err)
+			}
+			p.v.set(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Cache-Control", "no-store")
+				w.WriteHeader(http.StatusNotModified)
+			})
+			if err := fetch(); err != nil {
+				t.Fatalf("the 304 that says no-store: %v", err)
+			}
+			p.r.mu.Lock()
+			n := p.r.docs.len()
+			if keys {
+				n = p.r.keys.len()
+			}
+			p.r.mu.Unlock()
+			if n != 0 {
+				t.Errorf("a 304 that says no-store left %d copies", n)
+			}
+			p.v.set(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotModified) })
+			if err := fetch(); !errors.Is(err, vendors.ErrUnreachable) {
+				t.Errorf("a 304 after it was answered from a copy kept against no-store: %v", err)
+			}
+			if got := p.v.requests()[2].Header.Get("If-None-Match"); got != "" {
+				t.Errorf("sent the validator %s of a copy that is not kept", got)
+			}
+		})
+	}
+}
+
+// V14 (review of pull request 130, finding 2): a response's age counts
+// toward its freshness and its stale hour as RFC 9111 section 4.2.3
+// computes it: the larger of the Age it came with plus the time it took to
+// come and the time since its Date, plus the time it has been kept. For a
+// document and a key set, a 200 and a 304 alike: an aged answer from a
+// CDN never starts its max-age again.
+func TestV14AResponsesAgeCountsTowardItsFreshness(t *testing.T) {
+	t.Run("near expiry", func(t *testing.T) {
+		p := newPlayed(t, documents("Cache-Control", "max-age=60", "Age", "30"))
+		if got := p.fetches(t, p.r, 0, 29*time.Second, time.Second); fmt.Sprint(got) != "[1 1 2]" {
+			t.Errorf("max-age=60 at Age 30: %v", got)
+		}
+	})
+	t.Run("restrictive", func(t *testing.T) {
+		p := newPlayed(t, documents("Cache-Control", "max-age=60, must-revalidate", "Age", "59"))
+		p.fetches(t, p.r, 0)
+		p.v.set(failing)
+		p.clk.add(2 * time.Second)
+		if _, err := p.r.Client(context.Background(), clientURL); !errors.Is(err, vendors.ErrUnreachable) || p.v.count() != 2 {
+			t.Errorf("61 seconds old with must-revalidate: %v, %d requests", err, p.v.count())
+		}
+	})
+	t.Run("stale cutoff", func(t *testing.T) {
+		p := newPlayed(t, documents("Cache-Control", "max-age=60", "Age", "30"))
+		p.fetches(t, p.r, 0)
+		fetchedAt := p.clk.now()
+		p.v.set(failing)
+		p.clk.add(30*time.Second + vendors.StaleMax - time.Second)
+		if c, err := p.r.Client(context.Background(), clientURL); err != nil || !c.FetchedAt.Equal(fetchedAt) {
+			t.Fatalf("within its stale hour: %v", err)
+		}
+		p.clk.add(time.Second)
+		if _, err := p.r.Client(context.Background(), clientURL); !errors.Is(err, vendors.ErrUnreachable) {
+			t.Errorf("an hour after it went stale, counting its Age: %v", err)
+		}
+	})
+	t.Run("date", func(t *testing.T) {
+		p := newPlayed(t, nil)
+		p.v.set(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Date", p.clk.now().Add(-50*time.Second).UTC().Format(http.TimeFormat))
+			documents("Cache-Control", "max-age=60")(w, r)
+		})
+		if got := p.fetches(t, p.r, 0, 9*time.Second, time.Second); fmt.Sprint(got) != "[1 1 2]" {
+			t.Errorf("max-age=60 dated 50 seconds ago: %v", got)
+		}
+	})
+	t.Run("delay", func(t *testing.T) {
+		p := newPlayed(t, nil)
+		p.v.set(func(w http.ResponseWriter, r *http.Request) {
+			p.clk.add(10 * time.Second) // ten seconds on the way
+			w.Header().Set("Date", p.clk.now().UTC().Format(http.TimeFormat))
+			documents("Cache-Control", "max-age=60", "Age", "0")(w, r)
+		})
+		if got := p.fetches(t, p.r, 0, 49*time.Second, time.Second); fmt.Sprint(got) != "[1 1 2]" {
+			t.Errorf("max-age=60 ten seconds on the way: %v", got)
+		}
+	})
+	t.Run("invalid age", func(t *testing.T) {
+		for _, age := range []string{"x", "-1", "1.5", "30, 31"} {
+			p := newPlayed(t, documents("Cache-Control", "max-age=60", "Age", age))
+			if got := p.fetches(t, p.r, 0, 0); fmt.Sprint(got) != "[1 2]" {
+				t.Errorf("Age %q: %v", age, got)
+			}
+		}
+	})
+	t.Run("not modified", func(t *testing.T) {
+		p := newPlayed(t, documents("Cache-Control", "max-age=60", "ETag", `"v1"`))
+		p.fetches(t, p.r, 0)
+		p.v.set(notModified(`"v1"`, "Age", "50", "Cache-Control", "max-age=60"))
+		if got := p.fetches(t, p.r, time.Minute, 9*time.Second, time.Second); fmt.Sprint(got) != "[2 2 3]" {
+			t.Errorf("a 304 of Age 50: %v", got)
+		}
+	})
+	t.Run("keys", func(t *testing.T) {
+		k1 := rsaJWK(t, "k1")
+		var down atomic.Bool
+		p := newPlayed(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/oauth/jwks.json" {
+				answer(jwtDocument("https://"+r.Host+r.URL.Path), "Cache-Control", "max-age=3600")(w, r)
+				return
+			}
+			if down.Load() {
+				failing(w, r)
+				return
+			}
+			answer(keySet(k1), "Cache-Control", "max-age=60, must-revalidate", "Age", "50")(w, r)
+		})
+		ctx := context.Background()
+		c, err := p.r.Client(ctx, clientURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.r.Keys(ctx, c, false); err != nil {
+			t.Fatal(err)
+		}
+		p.clk.add(9 * time.Second)
+		if _, err := p.r.Keys(ctx, c, false); err != nil || p.jwksFetches() != 1 {
+			t.Fatalf("at 59 seconds old: %v, %d fetches", err, p.jwksFetches())
+		}
+		down.Store(true)
+		p.clk.add(time.Second)
+		if _, err := p.r.Keys(ctx, c, false); !errors.Is(err, vendors.ErrUnreachable) || p.jwksFetches() != 2 {
+			t.Errorf("60 seconds old with must-revalidate: %v, %d fetches", err, p.jwksFetches())
+		}
+	})
 }

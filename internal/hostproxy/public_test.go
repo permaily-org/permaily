@@ -336,3 +336,50 @@ func TestV19PublicProxyLogsKindsAndVerifiedDomainsOnly(t *testing.T) {
 		}
 	}
 }
+
+// V16 (review of pull request 130, finding 1): an IPv6 address is public
+// only inside 2000::/3, the global unicast space, and outside every IANA
+// special-purpose range there. Every other form, the deprecated
+// IPv4-compatible and the IPv4-translated ones, NAT64 and the rest of the
+// reserved space included, is dropped when it comes first in an answer,
+// and the public address after it is dialed.
+func TestV16PublicProxyNeverDialsReservedIPv6(t *testing.T) {
+	reserved := []string{
+		// IPv4-compatible (::/96) and IPv4-translated (::ffff:0:0:0/96).
+		"::169.254.169.254", "::1.1.1.1", "::ffff:0:169.254.169.254", "::ffff:0:1.1.1.1", "::2",
+		// NAT64 (RFC 6052, RFC 8215), of a public address too.
+		"64:ff9b::1.1.1.1", "64:ff9b::a9fe:a9fe", "64:ff9b:1::1", "64:ff9b:1:ffff::1",
+		// Discard-only and the dummy prefix (RFC 6666, RFC 9780).
+		"100::1", "100:0:0:1::1",
+		// IETF protocol assignments (2001::/23): Teredo, PCP, TURN and
+		// DNS-SD anycast, benchmarking, AMT, AS112, ORCHID, ORCHIDv2,
+		// drone remote ID, and the rest of the /23.
+		"2001::1", "2001:0:4136:e378::1", "2001:1::1", "2001:1::2", "2001:1::3", "2001:2::1", "2001:3::1",
+		"2001:4:112::1", "2001:10::1", "2001:20::1", "2001:30::1", "2001:1ff:ffff::1",
+		// Documentation (RFC 3849, RFC 9637), 6to4, AS112 direct delegation.
+		"2001:db8::1", "3fff::1", "3fff:fff:ffff::1", "2002:101:101::1", "2620:4f:8000::1",
+		// Outside 2000::/3: SRv6 SIDs, reserved space, ULA, link-local,
+		// site-local, multicast.
+		"5f00::1", "4000::1", "8000::1", "e000::1", "fc00::1", "fe80::1", "fec0::1", "ff0e::1",
+	}
+	for _, s := range reserved {
+		t.Run(s, func(t *testing.T) {
+			a := netip.MustParseAddr(s)
+			if Public(a) {
+				t.Errorf("%s is public", s)
+			}
+			pp := newPlayedProxy(t, []netip.Addr{a, publicAddr})
+			if status, _ := pp.connect(t, http.MethodConnect, "vendor.example.net:443"); status != http.StatusOK {
+				t.Fatalf("status %d", status)
+			}
+			if d := pp.dials(); len(d) != 1 || d[0] != "93.184.216.34:443" {
+				t.Errorf("dialed %v, want the public address after it", d)
+			}
+		})
+	}
+	for _, s := range []string{"2001:200::1", "2001:4860:4860::8888", "2400:cb00:2048:1::c629:d7a2", "2606:4700:4700::1111", "2a00:1450:4001:80b::200e", "2c0f:fb50:4002::1"} {
+		if !Public(netip.MustParseAddr(s)) {
+			t.Errorf("%s is not public", s)
+		}
+	}
+}

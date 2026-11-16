@@ -428,3 +428,42 @@ func TestV13HeadersAreAtMost16KiB(t *testing.T) {
 		}
 	}
 }
+
+// V13 (review of pull request 130, finding 5): one fetch of a URL at once,
+// whether it is asked for as a document or as a key set: a jwks_uri may be
+// the document's own URL.
+func TestV13OneFetchOfAURLAtOnceForItsDocumentAndItsKeySet(t *testing.T) {
+	key := rsaJWK(t, "k1")
+	doc := []byte(strings.ReplaceAll(string(jwtDocument(clientURL)), jwksURL, clientURL))
+	body := append(append(doc[:len(doc)-1:len(doc)-1], ','), keySet(key)[1:]...)
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var requests atomic.Int32
+	p := newPlayed(t, func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) > 1 {
+			started <- struct{}{}
+			<-release
+		}
+		answer(body, "Cache-Control", "max-age=0")(w, r)
+	})
+	defer p.r.hc.CloseIdleConnections()
+	c, err := p.r.Client(context.Background(), clientURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, 2)
+	go func() { _, err := p.r.Client(context.Background(), clientURL); errs <- err }()
+	<-started
+	go func() { _, err := p.r.Keys(context.Background(), c, false); errs <- err }()
+	select {
+	case <-started:
+		t.Errorf("two fetches of the same URL at once, its document and its key set")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Error(err)
+		}
+	}
+}
