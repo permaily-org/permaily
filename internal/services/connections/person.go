@@ -129,9 +129,30 @@ func (s *Service) Renew(ctx context.Context, p Person, id string, in contracts.C
 	if at.Version() != in.Version {
 		return nil, contracts.ErrConsentChanged
 	}
-	if !now.Before(p.ConfirmedUntil) {
-		return nil, contracts.ErrConfirmationNeeded
+	// The renewal's authority is its proof and the connection's existing
+	// end, whichever passes first: every write it makes runs under it, and
+	// it is checked again after each (PR #136's second review, finding 2),
+	// so however slow the storage, nothing is renewed past either.
+	oldEnd, oldNotice := d.EndsAt, d.ModelNotice
+	inTime := func() error {
+		now := s.now()
+		switch {
+		case !now.Before(p.ConfirmedUntil):
+			return contracts.ErrConfirmationNeeded
+		case !now.Before(oldEnd):
+			return contracts.ErrConnectionEnded
+		}
+		return nil
 	}
+	if err := inTime(); err != nil {
+		return nil, err
+	}
+	until := p.ConfirmedUntil
+	if oldEnd.Before(until) {
+		until = oldEnd
+	}
+	ctx, cancel := context.WithDeadline(ctx, time.Now().Add(until.Sub(now)))
+	defer cancel()
 	d.EndsAt, d.ModelNotice = endsAt(now, d.Days), s.cfg.ModelNotice
 	// A renewal is consent: it is recorded before it is made, and made only
 	// at the version the page showed (finding 6). A write that loses then
@@ -147,13 +168,52 @@ func (s *Service) Renew(ctx context.Context, p Person, id string, in contracts.C
 	if err := s.writeReceipt(ctx, d.Account, r, time.Time{}); err != nil {
 		return nil, err
 	}
+	if err := inTime(); err != nil {
+		return nil, err
+	}
 	if err := s.writeConn(ctx, d, at, false); err != nil {
 		if retry(err) {
 			return nil, contracts.ErrConsentChanged
 		}
 		return nil, err
 	}
+	if err := inTime(); err != nil {
+		// Written after its authority passed: set back, so it renews nothing.
+		s.unrenew(ctx, id, d.EndsAt, oldEnd, oldNotice)
+		return nil, err
+	}
 	return s.Get(ctx, p, id)
+}
+
+// unrenew sets a connection's end and notice back to what they were before
+// a renewal whose record was written after its proof or the connection's
+// existing end passed, at the version it reads, while the record still
+// holds that renewal's end (renewed): whatever was written since (a
+// revocation, an end) is kept, and nothing ended comes back. Shortening an
+// end is never a grant, so it is retried on a lost race, under its own
+// bound.
+func (s *Service) unrenew(ctx context.Context, id string, renewed, end time.Time, notice string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ReceiptWriteMax)
+	defer cancel()
+	for range RecordTries {
+		d, at, err := s.readConn(ctx, id)
+		if err != nil || d == nil || !d.EndsAt.Equal(renewed) {
+			if err != nil {
+				s.count("unrenew_failed")
+			}
+			return
+		}
+		d.EndsAt, d.ModelNotice = end, notice
+		err = s.writeConn(ctx, d, at, false)
+		if retry(err) {
+			continue
+		}
+		if err != nil {
+			s.count("unrenew_failed")
+		}
+		return
+	}
+	s.count("unrenew_failed")
 }
 
 // ---- ending ----
