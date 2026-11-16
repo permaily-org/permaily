@@ -12,6 +12,7 @@ import {
   previewRoute,
   requestId,
   requestOf,
+  sentence,
   signedInWithMailboxes,
   snapshotOf,
   startRoute,
@@ -192,6 +193,58 @@ describe('V54: the hand-off', () => {
     await screen.findByText('That request ended. Start again from the app.')
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
   })
+
+  it('forgets the request once the person goes elsewhere in the app, so Back finds nothing', async () => {
+    const { user } = await consent()
+    server
+      .on(decisionRoute, refused(409, 'too_many_connections'))
+      .on('GET /api/v1/connections', ok({ connections: [] }))
+    await user.click(allowButton())
+    // The way to make room says the request has to start again from the app.
+    const alert = await screen.findByText(/Going there forgets this request/)
+    expect(alert.textContent).toContain('start again from Claude Code')
+    await user.click(screen.getByRole('link', { name: 'Your connections' }))
+    await screen.findByRole('heading', { level: 1, name: 'No connections.' })
+    // Back, within the same page: the router shows the consent screen again, with nothing held.
+    act(() => window.history.back())
+    await waitFor(() => expect(window.location.pathname).toBe('/oauth/authorize'))
+    await screen.findByRole('heading', { name: "This request isn't here any more" })
+    expect(server.asked(startRoute)).toHaveLength(1)
+  })
+
+  for (const alias of ['/oauth/authorize/', '/OAuth/Authorize', '/oauth/%61uthorize']) {
+    it(`takes the request out of ${alias}, which the router reads as the same page, signed out`, async () => {
+      server
+        .signedOut()
+        .on('POST /api/v1/auth/email/start', ok({ attempt: 'att_1', expires_in: 600 }))
+        .on('POST /api/v1/auth/email/finish', ok(meOf()))
+        .on('GET /api/v1/mailboxes', ok({ mailboxes: [personal, work], limit: 5 }))
+        .on(startRoute, ok({ request: requestOf() }))
+        .on(previewRoute, ok(previewOf()))
+      const { user } = await open(`${alias}?${vendorQuery}`)
+      await user.type(await screen.findByLabelText('Email address'), 'ana@example.org')
+      // Where the sign-in screen goes next is in the history's state: nothing of the request is.
+      expectNotKept(...secrets)
+      await user.click(screen.getByRole('button', { name: 'Continue' }))
+      await user.type(await screen.findByLabelText('Code from the message'), '123456')
+      await user.click(screen.getByRole('button', { name: 'Sign in' }))
+      await screen.findByRole('heading', { name: /asks to read your mail\.$/ })
+      expect(server.asked(startRoute)[0].body).toEqual({ query: vendorQuery })
+      expectNotKept(...secrets, requestId)
+    })
+
+    it(`takes the request out of ${alias} signed in, and shows it`, async () => {
+      signedInWithMailboxes()
+        .on(startRoute, ok({ request: requestOf() }))
+        .on(previewRoute, ok(previewOf()))
+      await open(`${alias}?${vendorQuery}#frag`)
+      await screen.findByRole('heading', { name: /asks to read your mail\.$/ })
+      expect(window.location.search).toBe('')
+      expect(window.location.hash).toBe('')
+      expect(server.asked(startRoute)[0].body).toEqual({ query: vendorQuery })
+      expectNotKept(...secrets, requestId)
+    })
+  }
 
   it('says nothing more when the session ended meanwhile: the gate leads to the sign-in screen', async () => {
     signedInWithMailboxes().on(startRoute, refused(401, 'unauthorized'))
@@ -553,6 +606,63 @@ describe('V54: deciding', () => {
     ).toBeTruthy()
   })
 
+  it('neither previews with the model nor agrees to a notice the app does not show', async () => {
+    const newer = '2099-01-01'
+    signedInWithMailboxes()
+      .on(
+        startRoute,
+        ok({
+          request: requestOf({
+            model_notice: newer,
+            draft: { mailboxes: [personal.id], since: { new: false } },
+          }),
+        }),
+      )
+      .on(previewRoute, (asked) =>
+        (asked.body as { ask_model?: boolean }).ask_model
+          ? refused(400, 'model_notice_needed')
+          : ok(previewOf([summary(1)])),
+      )
+      .on('POST /api/v1/account/model-notice', ok({ ...ana, model_notice: newer }))
+    await open(authorize)
+    await screen.findByRole('heading', { name: /asks to read your mail\.$/ })
+    await screen.findByText('Subject 1')
+    expect(allowButton().getAttribute('aria-disabled')).toBe('true')
+    // The preview with the model is refused as Allow is: the page shows another notice than the one in force.
+    expect(screen.queryByRole('button', { name: 'Preview with the model' })).toBeNull()
+    expect(screen.getByRole('region', { name: 'Preview' }).textContent).toContain(
+      'Reload it from the app to read what applies now.',
+    )
+    await settle()
+    expect(server.asked('POST /api/v1/account/model-notice')).toHaveLength(0)
+    expect(
+      server.asked(previewRoute).some((a) => (a.body as { ask_model?: boolean }).ask_model),
+    ).toBe(false)
+  })
+
+  it('agrees only to the version of the notice the page shows', async () => {
+    let agreed = false
+    const { user } = await consent(
+      requestOf({ draft: { mailboxes: [personal.id], since: { new: false } } }),
+      (asked) =>
+        (asked.body as { ask_model?: boolean }).ask_model && !agreed
+          ? refused(400, 'model_notice_needed')
+          : ok(previewOf([summary(1)])),
+    )
+    server.on('POST /api/v1/account/model-notice', () => {
+      agreed = true
+      return ok(ana)
+    })
+    await user.click(await screen.findByRole('button', { name: 'Preview with the model' }))
+    await user.click(
+      await screen.findByRole('button', { name: 'Agree and preview with the model' }),
+    )
+    await waitFor(() => expect(agreed).toBe(true))
+    expect(server.asked('POST /api/v1/account/model-notice').map((a) => a.body)).toEqual([
+      { version: MODEL_NOTICE_VERSION },
+    ])
+  })
+
   it('says what failed and lets the person decide again', async () => {
     const { user } = await consent()
     server.on(decisionRoute, network)
@@ -694,5 +804,206 @@ describe('V54: what the model preview says', () => {
       await screen.findByRole('button', { name: 'Agree and preview with the model' }),
     )
     await screen.findByText("Permaily can't be reached. Check your connection, then try again.")
+  })
+})
+
+describe('V54: what a replacement reaches that the connection did not', () => {
+  /** A message of the preview, received at `at`. */
+  function received(n: number, at: string) {
+    return { ...summary(n), received_at: at }
+  }
+
+  /** The rows of the preview, each with whether it is marked new. */
+  function rows() {
+    const list = screen.getByRole('list', { name: 'Emails it would read' })
+    return within(list)
+      .getAllByRole('listitem')
+      .map((row) => [
+        row.textContent?.match(/Subject \d+/)?.[0],
+        within(row).queryByText('new', { exact: true }) !== null,
+      ])
+  }
+
+  function replacing(connection: Record<string, unknown>, overrides: Record<string, unknown> = {}) {
+    return requestOf({
+      connection: connectionOf(connection),
+      draft: { mailboxes: [personal.id, work.id], since: { new: false } },
+      change: 'replace',
+      snapshot: snapshotOf({ change: 'replace', connection: 'con_claudecode', version: 7 }),
+      ...overrides,
+    })
+  }
+
+  /** Previews that answer each mailbox with its own messages, all replacing. */
+  function byMailbox(pages: Record<string, unknown[]>) {
+    return (asked: Asked) => {
+      const { mailbox } = asked.body as { mailbox: string }
+      return ok(previewOf(pages[mailbox] ?? [], { change: 'replace', draft_id: 'drf_wider' }))
+    }
+  }
+
+  it('marks the mail of a mailbox it did not read, and mail older than it read, as new', async () => {
+    await consent(
+      replacing({
+        mailboxes: [personal.id],
+        since: { new: false, at: '2026-11-01T00:00:00Z' },
+      }),
+      byMailbox({
+        [personal.id]: [received(1, '2026-11-10T09:00:00Z'), received(2, '2026-10-15T09:00:00Z')],
+        [work.id]: [received(3, '2026-11-12T09:00:00Z')],
+      }),
+    )
+    await screen.findByText('Subject 3')
+    expect(rows()).toEqual([
+      ['Subject 1', false],
+      ['Subject 2', true],
+      ['Subject 3', true],
+    ])
+    const preview = screen.getByRole('region', { name: 'Preview' })
+    expect(preview.textContent).toContain(
+      "2 of them your connection doesn't read. They're marked new.",
+    )
+    // Nothing of a query to compare: the old connection had none, so no other page was asked.
+    expect(server.asked(`POST /api/v1/mailboxes/${personal.id}/matches`)).toHaveLength(0)
+    await expectAccessible()
+  })
+
+  it('marks mail that arrived before a connection of new mail only as new', async () => {
+    await consent(
+      replacing({
+        mailboxes: [personal.id, work.id],
+        since: { new: true, at: '2026-11-01T10:00:00Z' },
+      }),
+      byMailbox({
+        [personal.id]: [received(1, '2026-11-10T09:00:00Z'), received(2, '2026-11-01T09:59:59Z')],
+      }),
+    )
+    await screen.findByText('Subject 2')
+    expect(rows()).toEqual([
+      ['Subject 1', false],
+      ['Subject 2', true],
+    ])
+  })
+
+  it('says the parts it would get that the connection does not, and another resource', async () => {
+    await consent(
+      replacing({ parts: ['sender', 'subject'], resource: 'api' }),
+      byMailbox({ [personal.id]: [received(1, '2026-11-10T09:00:00Z')] }),
+    )
+    await screen.findByText('Subject 1')
+    expect(rows()).toEqual([['Subject 1', false]])
+    const preview = screen.getByRole('region', { name: 'Preview' })
+    expect(preview.textContent).toContain(
+      "It would also get the text of every one, which your connection doesn't.",
+    )
+    expect(preview.textContent).toContain(
+      'It reads through MCP, where your connection reads through the API.',
+    )
+    expect(preview.textContent).toContain('Your connection already reads every one of them.')
+  })
+
+  it('asks which of them the connection’s own query matches when the query changes', async () => {
+    const old = {
+      formula: { v: 1, all: [{ any: [{ var: 'subject', op: 'contains', value: 'flight' }] }] },
+      id: 'qry_flights',
+      sentence: sentence('Flights'),
+      model: false,
+    }
+    const wider = {
+      formula: { v: 1, all: [] },
+      id: 'qry_everything',
+      sentence: sentence('Everything'),
+      model: false,
+    }
+    server.on(
+      `POST /api/v1/mailboxes/${personal.id}/matches`,
+      ok({ messages: [received(1, '2026-11-10T09:00:00Z')], needs_model: [], unknown: [] }),
+    )
+    await consent(
+      replacing(
+        { query: old, mailboxes: [personal.id], since: { new: false } },
+        {
+          query: wider,
+          mailboxes: [personal.id],
+          draft: { mailboxes: [personal.id], since: { new: false } },
+        },
+      ),
+      byMailbox({
+        [personal.id]: [received(1, '2026-11-10T09:00:00Z'), received(2, '2026-11-09T09:00:00Z')],
+      }),
+    )
+    await waitFor(() =>
+      expect(rows()).toEqual([
+        ['Subject 1', false],
+        ['Subject 2', true],
+      ]),
+    )
+    // The old query, with the received times of the page around it: the owner's own preview of a formula.
+    const asked = server.asked(`POST /api/v1/mailboxes/${personal.id}/matches`)
+    expect(asked).toHaveLength(1)
+    const formula = (
+      asked[0].body as { formula: { all: { any: { var: string; op: string }[] }[] } }
+    ).formula
+    expect(formula.all[0]).toEqual(old.formula.all[0])
+    expect(formula.all.slice(1).map((g) => g.any.map((c) => `${c.var} ${c.op}`))).toEqual([
+      ['received since'],
+      ['received before'],
+    ])
+  })
+
+  it('marks every one new when it cannot tell what the connection’s query matches', async () => {
+    const old = {
+      formula: { v: 1, all: [{ any: [{ var: 'message', op: 'about', value: 'travel' }] }] },
+      id: 'qry_travel',
+      sentence: sentence('About travel'),
+      model: true,
+    }
+    server.on(
+      `POST /api/v1/mailboxes/${personal.id}/matches`,
+      ok({ messages: [], needs_model: [summary(1).id], unknown: [] }),
+    )
+    await consent(
+      replacing(
+        { query: old, mailboxes: [personal.id], since: { new: false } },
+        { draft: { mailboxes: [personal.id], since: { new: false } } },
+      ),
+      byMailbox({ [personal.id]: [received(1, '2026-11-10T09:00:00Z')] }),
+    )
+    await waitFor(() => expect(rows()).toEqual([['Subject 1', true]]))
+    expect(screen.getByRole('region', { name: 'Preview' }).textContent).toContain(
+      "1 of them your connection doesn't read, or may not: a model decides its query. They're marked new.",
+    )
+  })
+
+  it('compares nothing when the query is the connection’s own, and marks nothing for a device added', async () => {
+    const same = {
+      formula: { v: 1, all: [] },
+      id: 'qry_same',
+      sentence: sentence('Same'),
+      model: false,
+    }
+    await consent(
+      replacing(
+        { query: same, mailboxes: [personal.id], since: { new: false }, parts: ['sender'] },
+        { query: same, draft: { mailboxes: [personal.id], since: { new: false } } },
+      ),
+      byMailbox({ [personal.id]: [received(1, '2026-11-10T09:00:00Z')] }),
+    )
+    await screen.findByText('Subject 1')
+    expect(rows()).toEqual([['Subject 1', false]])
+    expect(server.asked(`POST /api/v1/mailboxes/${personal.id}/matches`)).toHaveLength(0)
+
+    await consent(
+      requestOf({
+        connection: connectionOf(),
+        change: 'add_device',
+        snapshot: snapshotOf({ change: 'add_device' }),
+        draft: { mailboxes: [personal.id], since: { new: false } },
+      }),
+      ok(previewOf([received(1, '2026-10-01T09:00:00Z')], { change: 'add_device' })),
+    )
+    await screen.findByText('Subject 1')
+    expect(rows()).toEqual([['Subject 1', false]])
+    expect(screen.getByRole('region', { name: 'Preview' }).textContent).not.toContain('marked new')
   })
 })

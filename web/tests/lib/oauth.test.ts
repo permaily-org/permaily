@@ -46,6 +46,32 @@ describe('the vendor’s request on /oauth/authorize', () => {
     expect(current()).toBe('/oauth/authorize')
   })
 
+  it('is read on every spelling of its page the router reads as it, and the address becomes the page’s own', () => {
+    for (const alias of [
+      '/oauth/authorize/',
+      '/OAuth/Authorize',
+      '/oauth/%61uthorize',
+      '/OAUTH/AUTHORIZE/',
+    ]) {
+      window.history.replaceState(null, '', `${alias}?${query}#frag`)
+      oauth.takeAuthorization()
+      expect(current()).toBe('/oauth/authorize')
+      expect(oauth.heldAuthorization()).toBe(query)
+      oauth.dropAuthorization()
+    }
+  })
+
+  it('is forgotten when the app goes anywhere but its page and signing in', () => {
+    window.history.replaceState(null, '', `/oauth/authorize?${query}`)
+    oauth.takeAuthorization()
+    for (const kept of ['/oauth/authorize', '/OAuth/Authorize/', '/sign-in', '/sign-up']) {
+      oauth.keepAuthorizationOn(kept)
+      expect(oauth.heldAuthorization()).toBe(query)
+    }
+    oauth.keepAuthorizationOn('/connections')
+    expect(oauth.heldAuthorization()).toBeNull()
+  })
+
   it('is read only on its own page', () => {
     window.history.replaceState(null, '', `/oauth/authorize/x?${query}`)
     oauth.takeAuthorization()

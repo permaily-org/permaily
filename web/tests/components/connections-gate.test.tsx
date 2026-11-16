@@ -102,10 +102,30 @@ describe('V62: the connections under unagreed terms', () => {
     expect(server.asked(startRoute)).toHaveLength(0)
   })
 
-  it('does not reach the sample flow of connecting an agent', async () => {
+  // Every spelling the router reads as the sample flow's route: the gate decides with the router's own matching.
+  for (const path of [
+    '/connections/new',
+    '/connections/NEW',
+    '/connections/new/',
+    '/connections/%6eew',
+  ]) {
+    it(`does not reach the sample flow of connecting an agent at ${path}`, async () => {
+      asNotAgreed()
+      await open(path)
+      await settle()
+      expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('The terms changed')
+      expect(screen.queryByText('Connect an agent.')).toBeNull()
+    })
+  }
+
+  it('reaches a vendor’s overview and a connection in every spelling the router reads', async () => {
     asNotAgreed()
-    await open('/connections/new')
-    await screen.findByRole('heading', { name: 'The terms changed' })
+    await open('/connections/claude.ai/overview')
+    await screen.findByRole('heading', { level: 1, name: '2 connections.' })
+    expect(screen.getByRole('region', { name: 'The terms changed' })).toBeTruthy()
+    await open('/Connections/claude.ai/con_claudecode/')
+    await screen.findByRole('heading', { level: 1, name: 'Claude Code reads your mail.' })
+    expect(screen.getByRole('region', { name: 'The terms changed' })).toBeTruthy()
   })
 
   it('an account that is closing sees only that, its connections included', async () => {

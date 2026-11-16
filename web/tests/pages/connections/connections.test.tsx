@@ -81,7 +81,14 @@ describe('V55: the connections list', () => {
 
   it('opens a vendor on its overview, with a tab for each connection', async () => {
     connections()
-    await open('/connections/claude.ai')
+    await open('/connections')
+    await screen.findByRole('heading', { level: 1, name: '2 connections.' })
+    // Its address does not end in the vendor's domain, which the app's server would take for a file (internal/webui).
+    const vendor = within(screen.getByRole('region', { name: 'claude.ai' })).getByRole('link', {
+      name: 'claude.ai',
+    })
+    expect(vendor.getAttribute('href')).toBe('/connections/claude.ai/overview')
+    await open('/connections/claude.ai/overview')
     await screen.findByRole('heading', { level: 1, name: '2 connections.' })
     const tabs = within(screen.getByRole('navigation', { name: 'Connections of claude.ai' }))
     expect(tabs.getAllByRole('link').map((l) => l.textContent)).toEqual([
@@ -89,12 +96,15 @@ describe('V55: the connections list', () => {
       'Claude Code',
       'Claude Code, ended',
     ])
+    expect(tabs.getByRole('link', { name: 'Overview' }).getAttribute('href')).toBe(
+      '/connections/claude.ai/overview',
+    )
     await expectAccessible()
   })
 
   it('cannot find a vendor or a connection it does not have', async () => {
     connections()
-    await open('/connections/nobody.example')
+    await open('/connections/nobody.example/overview')
     await screen.findByRole('heading', { name: "We can't find that connection." })
     await open('/connections/claude.ai/con_nobody')
     await screen.findByRole('heading', { name: "We can't find that connection." })
