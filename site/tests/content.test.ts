@@ -137,19 +137,28 @@ describe('legal pages', () => {
     // whatever happens to the message; it is dropped only by a later write of its record, and a record not
     // written again stays until the mailbox is removed (services/mailboxes, decisions.go).
     const go = (path: string) => readFileSync(join(import.meta.dirname, '../..', path), 'utf8');
-    const days = go('internal/contracts/mailboxes.go').match(/MailboxRetentionDays = \[\]int\{([\d, ]+)\}/)?.[1];
+    const days = go('internal/contracts/mailboxes.go').match(
+      /MailboxRetentionDays = \[\]int\{([\d, ]+)\}/,
+    )?.[1];
     const longest = Math.max(...(days ?? '').split(',').map(Number));
     expect(longest).toBe(365);
-    expect(go('internal/inbox/rule_decisions.go')).toMatch(/\bDecisionKeptAfter\s*=\s*time\.Hour\b/);
+    expect(go('internal/inbox/rule_decisions.go')).toMatch(
+      /\bDecisionKeptAfter\s*=\s*time\.Hour\b/,
+    );
     const rows = page('privacy').querySelectorAll('tbody tr');
-    const decisions = rows.filter((tr) => tr.querySelector('th')?.text.includes('holds back sign-in mail'));
+    const decisions = rows.filter((tr) =>
+      tr.querySelector('th')?.text.includes('holds back sign-in mail'),
+    );
     expect(decisions, 'one row for the rule’s decisions').toHaveLength(1);
     const kept = decisions[0]?.querySelectorAll('td').at(-1)?.text ?? '';
     expect(kept).toContain(`${longest} days and an hour from when the message arrived`);
     expect(kept).toContain('even if the message is deleted sooner');
     expect(kept).toContain('until the mailbox is disconnected or the account is removed');
     // The model's answers kept for a message are a row of their own, which goes with the message.
-    const answers = rows.filter((tr) => tr.querySelector('th')?.text.trim() === 'What a model said about a message and a topic');
+    const answers = rows.filter(
+      (tr) =>
+        tr.querySelector('th')?.text.trim() === 'What a model said about a message and a topic',
+    );
     expect(answers[0]?.querySelectorAll('td').at(-1)?.text.trim()).toBe('As long as the message');
   });
 
