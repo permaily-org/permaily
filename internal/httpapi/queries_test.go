@@ -280,6 +280,9 @@ func TestQ34TheChecksOrderAndBody(t *testing.T) {
 		"cut":                  `{"formula":{"v":1,"all":[]}`,
 		"a member that is not": `{"formula":}`,
 		"past its bound":       `{"formula":"` + strings.Repeat("a", 2*contracts.MaxFormulaBytes) + `"}`,
+		// encoding/json reads a name in any case: these would be one member there.
+		"twice in another case": `{"formula":{"v":1,"all":[]},"Formula":{"v":2,"all":[]}}`,
+		"in another case":       `{"FORMULA":{"v":1,"all":[]}}`,
 	} {
 		if rec := a.checkAs("alice", body); rec.Code != 400 || errorCode(t, rec) != "invalid_body" {
 			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)

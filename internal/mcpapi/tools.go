@@ -272,7 +272,9 @@ func searchArgs(raw json.RawMessage) (contracts.VendorSearch, error) {
 }
 
 // members is raw as one JSON object whose members are among names, each at
-// most once, with nothing after it: each member's value as it was sent.
+// most once, with nothing after it: each member's value as it was sent. A
+// name is matched exactly, so one that encoding/json would take for one of
+// names (in another case, or with the Kelvin sign or the long s) is refused.
 func members(raw []byte, names ...string) (map[string]json.RawMessage, bool) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	out := map[string]json.RawMessage{}
