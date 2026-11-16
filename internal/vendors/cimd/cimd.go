@@ -444,10 +444,19 @@ const ageUnreadable = (1 << 31) * time.Second
 func initialAge(h http.Header, requested, received time.Time) time.Duration {
 	apparent := time.Duration(0)
 	if date, err := http.ParseTime(h.Get("Date")); err == nil && received.After(date) {
-		apparent = received.Sub(date)
+		apparent = capAge(received.Sub(date))
 	}
-	delay := max(received.Sub(requested), 0)
-	return max(apparent, ageValue(h.Values("Age"))+delay)
+	delay := capAge(max(received.Sub(requested), 0))
+	return capAge(max(apparent, ageValue(h.Values("Age"))+delay))
+}
+
+// capAge bounds an age at ageUnreadable, already past any freshness and any
+// stale hour, so that adding two ages never overflows into a negative one
+// (RFC 9111 section 1.2.2: an overflow stays a large positive age). A
+// vendor's Date of 1600 would otherwise make time.Time.Sub saturate, and the
+// time kept since wrap the sum below zero, keeping a copy fresh for ever.
+func capAge(d time.Duration) time.Duration {
+	return min(max(d, 0), ageUnreadable)
 }
 
 // ageValue is the one delta-seconds of an Age header: 0 for none,

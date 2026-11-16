@@ -23,7 +23,7 @@ type entry struct {
 // currentAge is e's age at now (RFC 9111 section 4.2.3): its age when it
 // was received plus the time it has been kept since.
 func (e *entry) currentAge(now time.Time) time.Duration {
-	return e.age + max(now.Sub(e.validated), 0)
+	return capAge(capAge(e.age) + capAge(now.Sub(e.validated)))
 }
 
 // lru holds at most max entries, the least recently used dropped first.
