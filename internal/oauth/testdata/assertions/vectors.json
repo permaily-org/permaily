@@ -1,0 +1,106 @@
+[
+  {
+    "name": "rs256",
+    "document_alg": "RS256",
+    "header": "{\"alg\":\"RS256\",\"kid\":\"rs-2026\",\"typ\":\"JWT\"}",
+    "claims": "{\"aud\":\"https://api.permaily.com/oauth/token\",\"exp\":1794830700,\"iat\":1794830400,\"iss\":\"https://chatgpt.com/oauth/client.json\",\"jti\":\"vector-a\",\"sub\":\"https://chatgpt.com/oauth/client.json\"}",
+    "signature": "Tm36o1yrzMlmdBAxD-3omhZlc-EIKaaQRCLqDFZfeGZugF9LIzju7aPXxFYO1snZvWFXc9Voxg16-saL880hKlV-h6k5X9dwY54Mq_lzgiMpA-s3IndvOJ-59YSrlBOKdMWMga1hetIHvds2I4dlBX-EavpHD2xlLV1nj4dpo0-Kgn9tSeWUcLK_5LK_sXpabzWqSkSRw5mO9jbTpaYkjBwC6rkGOaleAJjY6T7Vm8h3P5wVrmxFomfcZAj1fSF2tOE_erzCHu5P7tqe6ve5WTxlddyiu-kKgC0_djG57ZNZOeq7PUpQc6SQ9__wjO-WKgtY2gsj9_EwupRy_526Jw",
+    "want": ""
+  },
+  {
+    "name": "es256",
+    "document_alg": "",
+    "header": "{\"alg\":\"ES256\",\"kid\":\"es-2026\"}",
+    "claims": "{\"aud\":\"https://api.permaily.com/oauth/token\",\"exp\":1794830700,\"iat\":1794830400,\"iss\":\"https://chatgpt.com/oauth/client.json\",\"jti\":\"vector-b\",\"sub\":\"https://chatgpt.com/oauth/client.json\"}",
+    "signature": "KnZkikomLjnxj76iHWOWg3w-eIGJZmdoYqov-04XzKOZ3UxF6LOCpZJ4tiugl0ZWF3_bnGSitCBqPLskTPk0qg",
+    "want": ""
+  },
+  {
+    "name": "es256 under a document that names RS256",
+    "document_alg": "RS256",
+    "header": "{\"alg\":\"ES256\",\"kid\":\"es-2026\"}",
+    "claims": "{\"aud\":\"https://api.permaily.com/oauth/token\",\"exp\":1794830700,\"iat\":1794830400,\"iss\":\"https://chatgpt.com/oauth/client.json\",\"jti\":\"vector-c\",\"sub\":\"https://chatgpt.com/oauth/client.json\"}",
+    "signature": "enhloNKFsbmBxPv1AsZoxGujAQRo0Lr3xEBDXYss6B60XvUZ4Pzh6xGpEFsoxI3LOYsENSTuTBjpXcjKetU6Gw",
+    "want": "oauth: the assertion is signed with another algorithm than the document's"
+  },
+  {
+    "name": "rsa key of 1024 bits",
+    "document_alg": "",
+    "header": "{\"alg\":\"RS256\",\"kid\":\"rs-short\"}",
+    "claims": "{\"aud\":\"https://api.permaily.com/oauth/token\",\"exp\":1794830700,\"iat\":1794830400,\"iss\":\"https://chatgpt.com/oauth/client.json\",\"jti\":\"vector-d\",\"sub\":\"https://chatgpt.com/oauth/client.json\"}",
+    "signature": "qLvuqRshY4BbjLvcyY5zQ4ZqjFlnAVWcj7nJgAURRyHOIAPNot6HIWo74NWx03GwFf9y9otlCKyZdKeHQMLxnSwxKZU2jh9xB8lXigroHl4NhFKQh_nJDTJxCvOM9D0SUPA9i4wlg4Rlmr2delphtO8EhUIz8xDtnpFwQrNh0Dw",
+    "want": "jws: signed with a key that is not for this algorithm"
+  },
+  {
+    "name": "alg none",
+    "document_alg": "",
+    "header": "{\"alg\":\"none\",\"kid\":\"rs-2026\"}",
+    "claims": "{\"aud\":\"https://api.permaily.com/oauth/token\",\"exp\":1794830700,\"iat\":1794830400,\"iss\":\"https://chatgpt.com/oauth/client.json\",\"jti\":\"vector-e\",\"sub\":\"https://chatgpt.com/oauth/client.json\"}",
+    "signature": "",
+    "want": "jws: signed with another algorithm"
+  },
+  {
+    "name": "hs256 with the public key as its secret",
+    "document_alg": "",
+    "header": "{\"alg\":\"HS256\",\"kid\":\"rs-2026\"}",
+    "claims": "{\"aud\":\"https://api.permaily.com/oauth/token\",\"exp\":1794830700,\"iat\":1794830400,\"iss\":\"https://chatgpt.com/oauth/client.json\",\"jti\":\"vector-f\",\"sub\":\"https://chatgpt.com/oauth/client.json\"}",
+    "signature": "Y09BVsy0vLEeE6B8GFYvn6GO7OEC-CBDIRLRuElh9c8",
+    "want": "jws: signed with another algorithm"
+  },
+  {
+    "name": "unknown kid",
+    "document_alg": "",
+    "header": "{\"alg\":\"RS256\",\"kid\":\"rs-2025\"}",
+    "claims": "{\"aud\":\"https://api.permaily.com/oauth/token\",\"exp\":1794830700,\"iat\":1794830400,\"iss\":\"https://chatgpt.com/oauth/client.json\",\"jti\":\"vector-g\",\"sub\":\"https://chatgpt.com/oauth/client.json\"}",
+    "signature": "Myb1if_YZCcIorBEPw9D4AOel7jciVrcT0S-rCSG7X2pu03SUWtHXVze-j2QjCTb4Ni0O7A5LDoQp8Whfybw_LQ_hEe2tj7z8DcRSE-Fw0wLHw1oAdSk5lxgt49g5ldmIVlnf98wzm40cFpBy1PvyFWcNpbqj-1oZCkJhReyRgoiRDVNuhbHLjPcLReRIC_rHlDFgZ4nVxkH-0JdDM-HdzEVWH3vv9SqILbn9w5Y6-QvfOj0G7okKhDA9J9DeMkmdSzEc8xCBG1tY23vse4FGydBL1E5-agm2VCQJebrQz1QDyl5vKjWufBzAzRzeDnusmtbu6JaHwIm12Jzxw1tQA",
+    "want": "jws: signed with a key the set does not hold"
+  },
+  {
+    "name": "bad signature",
+    "document_alg": "",
+    "header": "{\"alg\":\"RS256\",\"kid\":\"rs-2026\"}",
+    "claims": "{\"aud\":\"https://api.permaily.com/oauth/token\",\"exp\":1794830700,\"iat\":1794830400,\"iss\":\"https://chatgpt.com/oauth/client.json\",\"jti\":\"vector-h\",\"sub\":\"https://chatgpt.com/oauth/client.json\"}",
+    "signature": "RT3yaJTFYj6AcOi1gOXoWD0RAEVAEzN07swFpy3TNgsMsBLVRschQP4ZewecKnKl31Zp3hbFAPXTyw3GbsrTEgWuDRYTYRMNCzcgoCVO4wUaOnH3kzyhsdk0P6bvQG0HP3WSiu-rruBW76Vx9HM8tsUmFpRCImrpGu9JG_66MJuK33Ov25su04MVSDWDfna4ikaDxyFy11RtqXqiINOSCx4gyXAEMKC39QASRHQ9pRhWRBeQ1Xod9T0xub0fvZX5S1_NGmhswviM4KwygbrgfearEOTHClrvfYOuXOihllsr_Suetdfkam8xgPM4g7EurA5tBIK2liiFfPDugeUPrw",
+    "want": "jws: wrong signature"
+  },
+  {
+    "name": "duplicate header member",
+    "document_alg": "",
+    "header": "{\"alg\":\"RS256\",\"kid\":\"rs-2026\",\"alg\":\"RS256\"}",
+    "claims": "{\"aud\":\"https://api.permaily.com/oauth/token\",\"exp\":1794830700,\"iat\":1794830400,\"iss\":\"https://chatgpt.com/oauth/client.json\",\"jti\":\"vector-i\",\"sub\":\"https://chatgpt.com/oauth/client.json\"}",
+    "signature": "g_9jnqOVnX3ZB9--Jf92ZD3n-M-61bMZKxJRl3ZpKnSo784b2mXFY0Lz_XxfEw8JRSoS-E75C7WBXrg8pKMwyv5aqAVS7OhlbnEE9YPBH8qGvgP4vEoXPKhUEuPMvkKxIjuSPxvXZ66wa7LHCqJkkyriRzLKnmRQmcLgHUKKvE9q3ia45XmFt-MhxQasSO_09Aj0J0fJGgom-LQkXnl53QZAR0lDstaXgpz49O9S0AtpkQAe90FsL5QI2SoRxH0NOpO9BCxn6QOKxzV77S2aKu7aYskioVwguPkVDMGbXrBwVXE_1QWovK8Zp_6pjTSgr9-ybiIHqXeSI7sSAi7afw",
+    "want": "jws: header is not one JSON object"
+  },
+  {
+    "name": "ec key named by an rs256 header",
+    "document_alg": "",
+    "header": "{\"alg\":\"RS256\",\"kid\":\"es-2026\"}",
+    "claims": "{\"aud\":\"https://api.permaily.com/oauth/token\",\"exp\":1794830700,\"iat\":1794830400,\"iss\":\"https://chatgpt.com/oauth/client.json\",\"jti\":\"vector-j\",\"sub\":\"https://chatgpt.com/oauth/client.json\"}",
+    "signature": "duOKWSIC-9YhX6T_2m9oV6_hQw0lGRM4kBeWtR8_dxMx9S0Ko8-CIEaLFzcP_87Cqe-uML_5XaEEvkVu7LGKXY8Podyonlpy5Wwuvxy-TJMsjxQNvc8WOuL7YdvrTl1qRcjpn1qBG0qgO1KkqiW2Suc6mFz12K6BKGOebtRwbYy_uX-Zq1cBZDj6BDBh_e4bHjm_WN9CvGIw41wr7_MVaroTPcgIB1yipnJ1mD4vTcawg66HhmK4ySnjHqRV8iD384hpGwuDa-2iOvZTFrYcoKwGgAzXsoMEGkRqHil3xg5Es1WoBJfBRxkayDVCU1lEfJSStyaupw6kVdbMqQa4fA",
+    "want": "jws: signed with a key that is not for this algorithm"
+  },
+  {
+    "name": "es256 signature in asn.1",
+    "document_alg": "",
+    "header": "{\"alg\":\"ES256\",\"kid\":\"es-2026\"}",
+    "claims": "{\"aud\":\"https://api.permaily.com/oauth/token\",\"exp\":1794830700,\"iat\":1794830400,\"iss\":\"https://chatgpt.com/oauth/client.json\",\"jti\":\"vector-k\",\"sub\":\"https://chatgpt.com/oauth/client.json\"}",
+    "signature": "MEYCIQDFVqgeyD77PRh6q36ZuhoxYlLzpLv37_Un7GPmu2rTwgIhANdj9Pleowv5M0trAPpHl7buQJBNITtZsVQDd54BJxsb",
+    "want": "jws: wrong signature"
+  },
+  {
+    "name": "no kid",
+    "document_alg": "",
+    "header": "{\"alg\":\"RS256\"}",
+    "claims": "{\"aud\":\"https://api.permaily.com/oauth/token\",\"exp\":1794830700,\"iat\":1794830400,\"iss\":\"https://chatgpt.com/oauth/client.json\",\"jti\":\"vector-l\",\"sub\":\"https://chatgpt.com/oauth/client.json\"}",
+    "signature": "bDewbTrVIf1LAPEShl-zbdGw-IcF-L_MzFFbvAlCV-5Va9SRBIlRQxdteY10VGdRQsTZfrZ4mZ9MECH0XaerPKjzuzOdy0lJ1aw9VOI-KNO1FXYBt0dHUfYvNv8TLLomDolhrOXFTIfWkPIEiELzngqquKygM1mJxO3lymTgkMo53cF_xGNx1XPR6GRykRFActSLCpj7epGsu3tn7mQzmt8PrG38bNkZz3qVwcV1rCVxLs_tSmfFgY4kbvD6De7e9VDRTmVqEx-WwtijVNm8u0iMyG-cLe0J9MK7mJ7qhKpeiqoSmo5WJiXY1-ff8SphE1MNvmq7UuKvRaCLe6QKlw",
+    "want": "jws: no key identifier"
+  },
+  {
+    "name": "crit",
+    "document_alg": "",
+    "header": "{\"alg\":\"RS256\",\"kid\":\"rs-2026\",\"crit\":[\"exp\"],\"exp\":1}",
+    "claims": "{\"aud\":\"https://api.permaily.com/oauth/token\",\"exp\":1794830700,\"iat\":1794830400,\"iss\":\"https://chatgpt.com/oauth/client.json\",\"jti\":\"vector-m\",\"sub\":\"https://chatgpt.com/oauth/client.json\"}",
+    "signature": "QEpYHnpBrLh-KSMDZMvw3I7J04mJGf6xOmFjwHiSM70iNe2vfft490f6k-K_WJxvbvMrhyfDfJj2F3nrDcSEKGZnGUIdWm1EPNyQtdojearJiRebV352OZ-A7wUVaxrzdghVd5iVqgHYZd-Nb0gjvyo45X_sr7qYfMMJH22RwKQ0iTMfyhAlRo3GS-hzV8Ya_l2Q4FxMnV6uoWMWUldU4r6P0t5o8Sj1KUKuBlrsF0tnBbMU5J1PJNGi227-cfgfLhXYGOT4AHS_lnnE4wfFCi_v4mp4aYDSqBi5roDjYMzncfBLv5qIWdUlekUajV-NZlpJCXpR7o7WHYvd2b8CYQ",
+    "want": "jws: header with members that must be understood"
+  }
+]

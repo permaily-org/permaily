@@ -47,6 +47,11 @@ func allows(st Standing, a Access) error {
 		return nil
 	case AccessDeleteMessages:
 		return refuse(st)
+	case AccessConnection:
+		if st.Closing {
+			return contracts.ErrAccountClosing
+		}
+		return nil
 	}
 	return contracts.ErrNotFound
 }
@@ -113,7 +118,7 @@ func (s *Service) settle(ctx context.Context, list *listDoc) ([]slot, bool, erro
 // are gone. Doing it twice does it once.
 func (s *Service) finish(ctx context.Context, l *loaded, rcpt string) error {
 	if l.state == stDisconnecting {
-		if err := s.queue(ctx, l.doc.DisconnectedAt, l.id); err != nil {
+		if err := s.queue(ctx, l.doc.DisconnectedAt, l.id, l.doc.CreatedAt); err != nil {
 			return err
 		}
 	}
@@ -394,6 +399,18 @@ func (s *Service) Open(ctx context.Context, c Caller, id string, a Access) (inbo
 		return inbox.Box{}, err
 	}
 	return inbox.Box{MailboxID: id, Key: key}, nil
+}
+
+// OpenForConnection opens one of an account's mailboxes for a read of one
+// of its connections (connections.Mailboxes, ADR 0030, "What a read
+// gives"): Open with AccessConnection. A mailbox that is not the account's,
+// was disconnected, or was deleted and made again under its address (a new
+// identifier) is contracts.ErrNotFound; a paused one is read (pausing stops
+// mail coming in, not reading it); a closing account is
+// contracts.ErrAccountClosing; a blocked or gone one
+// contracts.ErrUnauthorized.
+func (s *Service) OpenForConnection(ctx context.Context, account, mailbox string) (inbox.Box, error) {
+	return s.Open(ctx, Caller{Account: account}, mailbox, AccessConnection)
 }
 
 // CheckChange implements httpapi.MailboxesService: the checks Create and
@@ -694,7 +711,8 @@ func (s *Service) Disconnect(ctx context.Context, c Caller, id string) error {
 			// The list is the proof whose it is: remove the record at once, as
 			// it needs no value.
 			at := s.now().Truncate(time.Second)
-			if err := s.queue(ctx, at, id); err != nil {
+			// The list says when it was added: the bound of its days.
+			if err := s.queue(ctx, at, id, entry.AddedAt); err != nil {
 				return err
 			}
 			if err := s.cfg.Records.RemoveRecord(ctx, recordName(id)); errors.Is(err, store.ErrForked) {
@@ -763,7 +781,7 @@ func (s *Service) Disconnect(ctx context.Context, c Caller, id string) error {
 // request opens the mailbox and no mail is accepted for it.
 func (s *Service) disconnect(ctx context.Context, l *loaded, by string) (time.Time, error) {
 	at := s.now().Truncate(time.Second)
-	if err := s.queue(ctx, at, l.id); err != nil {
+	if err := s.queue(ctx, at, l.id, l.doc.CreatedAt); err != nil {
 		return at, err
 	}
 	doc := *l.doc

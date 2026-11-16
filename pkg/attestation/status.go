@@ -51,6 +51,118 @@ type Status struct {
 	// meaning (ADR 0028); nil in images older than this field or that ask
 	// none.
 	Model *ModelStatus `json:"model,omitempty"`
+	// Connections describes the authorization server of the API and MCP,
+	// the vendors it marks verified, the rule every connection's reads apply
+	// first and the record of what left (ADR 0030, ADR 0031); nil in images
+	// older than this field or without connections.
+	Connections *ConnectionsStatus `json:"connections,omitempty"`
+}
+
+// ConnectionsStatus is what the enclave reports of connections (ADR 0030,
+// "What /status and permaily-verify show"). Everything but Refused and Since
+// is compiled into the image, so it is what the measured code does. It never
+// holds a token, a code, a client's identifier other than the verified
+// vendors' domains, an account, a connection or a count of either.
+type ConnectionsStatus struct {
+	Issuer                string   `json:"issuer"`
+	AuthorizationEndpoint string   `json:"authorization_endpoint"`
+	TokenEndpoint         string   `json:"token_endpoint"`
+	RevocationEndpoint    string   `json:"revocation_endpoint"`
+	PushedEndpoint        string   `json:"pushed_endpoint"`
+	Resources             []string `json:"resources"`
+	// Grants are the grant types the token endpoint takes; ClientAuth the
+	// ways a client proves itself there ("none", "private_key_jwt").
+	Grants     []string `json:"grants"`
+	ClientAuth []string `json:"client_auth"`
+	// ClientDocuments is true: clients are identified by their metadata
+	// document's URL. DynamicRegistration is false: there is no
+	// registration endpoint. permaily-verify fails on any other value.
+	ClientDocuments     bool `json:"client_documents"`
+	DynamicRegistration bool `json:"dynamic_registration"`
+	// The lifetimes, in seconds, and the connection's default and longest
+	// life, in days; RevocationSeconds is how long another enclave may take
+	// a revoked connection's tokens.
+	// RefreshRetrySeconds is how long a refresh token used again for the
+	// same scope answers the same pair; a code has no such time (CodeReuse
+	// is "denied"). RevocationSeconds bounds when another enclave stops
+	// releasing a revoked connection's mail: no byte of any answer leaves
+	// later (ADR 0030, finding 5, the owner's decision 14).
+	AccessTokenSeconds    int    `json:"access_token_seconds"`
+	RefreshTokenSeconds   int    `json:"refresh_token_seconds"`
+	RefreshRetrySeconds   int    `json:"refresh_retry_seconds"`
+	CodeSeconds           int    `json:"code_seconds"`
+	CodeReuse             string `json:"code_reuse"`
+	RevocationSeconds     int    `json:"revocation_seconds"`
+	ConnectionDefaultDays int    `json:"connection_default_days"`
+	ConnectionMaxDays     int    `json:"connection_max_days"`
+	// RevocationCovers is RevocationEveryByte: the bound holds for every
+	// byte of an answer, an answer already being sent included, which is
+	// cut (the owner's decision 14); permaily-verify fails on any other
+	// value.
+	RevocationCovers string `json:"revocation_covers"`
+	// AssertionReplay is "strict": a client assertion's jti is decided by
+	// a strict anchored record, not a mark (ADR 0030, C1); permaily-verify
+	// fails on any other value.
+	AssertionReplay string `json:"assertion_replay"`
+	// VendorTransport is "h2": vendors' documents and key sets are fetched
+	// over HTTP/2 only (the owner's decision 11).
+	VendorTransport string `json:"vendor_transport"`
+	// DevicesPerConnection bounds a connection's active devices (token
+	// families, the owner's decisions 10 and 13).
+	DevicesPerConnection int `json:"devices_per_connection"`
+	// ModelUnavailable is what connections get while the model cannot be
+	// asked: ModelUnavailableNothingLeaves (the owner's decision 9);
+	// permaily-verify fails on any other value.
+	ModelUnavailable string `json:"model_unavailable"`
+	// Verified is the image's list of verified vendors.
+	Verified []VerifiedVendor `json:"verified"`
+	// Rules are the rules every connection's reads apply first: in step 5
+	// the default rule, with the canonical identifiers of its formulas.
+	Rules []RuleStatus `json:"rules"`
+	// Receipts says how the record of what left is kept: sealed, and, from
+	// step 8, chained with its head anchored.
+	Receipts ReceiptsStatus `json:"receipts"`
+	// Since is when this enclave started counting; Refused counts, by fixed
+	// reason (a key of the image, never one derived from what was sent),
+	// the requests this enclave refused since then (every reason, also at
+	// zero): one enclave's observation, not the deployment's.
+	Since   time.Time        `json:"since"`
+	Refused map[string]int64 `json:"refused"`
+}
+
+// ModelUnavailableNothingLeaves: while the model cannot be asked, no
+// connection is given any mail.
+const ModelUnavailableNothingLeaves = "nothing_leaves"
+
+// RevocationEveryByte: a revocation's bound holds for every byte, not only
+// an answer's first.
+const RevocationEveryByte = "every_byte"
+
+// VerifiedVendor is a domain of the image's list and whose it is.
+type VerifiedVendor struct {
+	Domain string `json:"domain"`
+	Owner  string `json:"owner"`
+}
+
+// RuleStatus is a rule compiled into the image.
+type RuleStatus struct {
+	ID       string   `json:"id"`
+	Version  int      `json:"version"`
+	Formulas []string `json:"formulas"`
+	On       bool     `json:"on"`
+}
+
+// ReceiptsStatus is how receipts are kept, and how the decisions of the
+// rules that protect are (ADR 0031): Decisions is "strict" (strict anchored
+// records, begun before the model is asked, each final one with the
+// evidence it rests on); DecisionsPerDay is the least number of
+// model-decided messages a mailbox's day holds before the rest is held,
+// undecided (the owner's decision 12).
+type ReceiptsStatus struct {
+	Sealed          bool   `json:"sealed"`
+	Chained         bool   `json:"chained"`
+	Decisions       string `json:"decisions"`
+	DecisionsPerDay int    `json:"decisions_per_day"`
 }
 
 // ModelStatus is what the enclave reports of the model it asks (ADR 0028,

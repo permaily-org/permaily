@@ -13,7 +13,9 @@ import (
 )
 
 // asked fails unless an accepted client data says what was asked. The package
-// refuses a member twice, so reading it into a map here chooses nothing.
+// refuses a member twice, in any case too, so reading it into a map here
+// (names exactly) or into a struct (names in any case, as encoding/json reads
+// them, the last of two taken) chooses nothing: both say the same.
 func asked(t *testing.T, clientData []byte, call string) {
 	t.Helper()
 	var members map[string]any
@@ -23,6 +25,27 @@ func asked(t *testing.T, clientData []byte, call string) {
 	crossOrigin, has := members["crossOrigin"]
 	if members["type"] != call || members["challenge"] != b64(challenge) || members["origin"] != origin || (has && crossOrigin != false) {
 		t.Fatalf("accepted a client data that does not say what was asked: %q", clientData)
+	}
+	var anyCase struct {
+		Type        any `json:"type"`
+		Challenge   any `json:"challenge"`
+		Origin      any `json:"origin"`
+		CrossOrigin any `json:"crossOrigin"`
+	}
+	if err := json.Unmarshal(clientData, &anyCase); err != nil {
+		t.Fatalf("accepted a client data that is not JSON: %q", clientData)
+	}
+	if anyCase.Type != call || anyCase.Challenge != b64(challenge) || anyCase.Origin != origin || (has && anyCase.CrossOrigin != false) {
+		t.Fatalf("accepted a client data that says another thing to encoding/json: %q", clientData)
+	}
+}
+
+// inAnotherCase adds to the client data a member that is one already in
+// another case, or in other letters encoding/json takes as one (the Kelvin
+// sign for a k, the long s for an s), with another value.
+func inAnotherCase(member string) func([]byte) []byte {
+	return func(d []byte) []byte {
+		return append(slices.Clone(d[:len(d)-1]), ","+member+"}"...)
 	}
 }
 
@@ -37,6 +60,12 @@ func FuzzRegistered(f *testing.F) {
 		a.Synced = true
 		a.EditAuthData = flag(0x80, 0, cmap("credProtect", 2)...)
 		_, clientData, attestation = a.Create(rpID, origin, challenge, user)
+		f.Add(clientData, attestation)
+	}
+	for _, m := range []string{`"TYPE":"webauthn.get"`, `"Origin":"https://evil.example.com"`, `"cro\u017fsOrigin":true`} {
+		a := webauthntest.New(algorithms[0].alg)
+		a.EditClientData = inAnotherCase(m)
+		_, clientData, attestation := a.Create(rpID, origin, challenge, user)
 		f.Add(clientData, attestation)
 	}
 	f.Add([]byte("{}"), []byte{0xa0})
@@ -84,6 +113,17 @@ func FuzzAsserted(f *testing.F) {
 		a.Synced = true
 		a.EditAuthData = flag(0x80, 0, cmap("appid", true)...)
 		clientData, data, signature, _ = a.Get(rpID, origin, challenge, id)
+		f.Add(cred.PublicKey, clientData, data, signature)
+	}
+	for _, m := range []string{`"TYPE":"webauthn.create"`, `"Origin":"https://evil.example.com"`, `"cro\u017fsOrigin":true`} {
+		a := webauthntest.New(algorithms[0].alg)
+		id, clientData, attestation := a.Create(rpID, origin, challenge, user)
+		cred, err := rp.Registered(challenge, clientData, attestation)
+		if err != nil {
+			f.Fatal(err)
+		}
+		a.EditClientData = inAnotherCase(m)
+		clientData, data, signature, _ := a.Get(rpID, origin, challenge, id)
 		f.Add(cred.PublicKey, clientData, data, signature)
 	}
 	f.Add([]byte{0xa0}, []byte("{}"), []byte{}, []byte{})

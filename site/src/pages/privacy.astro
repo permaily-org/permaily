@@ -7,7 +7,7 @@ import Legal from '../layouts/Legal.astro';
 // changes this page in the same pull request (docs/legal.md).
 const today = [
   {
-    data: 'Your account: contact address, name, language, whether it’s active or closing, when it was made and when the address was confirmed. While you change your address, the new one too',
+    data: 'Your account: contact address, name, language, whether it’s active or closing, when it was made and when the address was confirmed, and which version of the terms and of the model’s notice you agreed to, and when. While you change your address, the new one too',
     why: 'To run your account, sign you in and write to you',
     where:
       'Our database, readable by us and by the admins, signed by the service so nobody can change it by hand',
@@ -69,37 +69,56 @@ const today = [
     kept: 'Thirty days, or until used or revoked',
   },
   {
-    data: 'Something you started: a sign-in, a change of address, a confirmation that it’s you, or a sign-in with a provider waiting for you to confirm an address',
-    why: 'To finish it',
-    where: 'The service’s memory only, never stored',
-    kept: 'Five to twenty minutes, or until the service restarts',
+    data: 'Your mailboxes: each one’s address and label, the Gmail account that asked to forward to it and Gmail’s confirmations, its retention, and when it was made, started receiving, or was paused or disconnected',
+    why: 'To receive the mail you forward, and show you where it comes from',
+    where:
+      'Our database, signed. The address, the label, the Gmail account and the confirmations are sealed; we can see each mailbox’s state, retention and dates, and, given an address, which account’s mailbox it is',
+    kept: 'Until you disconnect it, or the account is removed. Gmail’s confirmations thirty days',
   },
-];
-
-const soon = [
   {
-    data: 'Mail you forward to Permaily: each message with its attachments, and its envelope, headers, subject, snippet and attachment names',
-    why: 'To hold it for the connections and rules you set',
+    data: 'Mail you forward to Permaily: each message with its attachments, and its envelope, headers, subject, snippet and attachment names, and what search reads of it',
+    why: 'To show it to you, search it for you, and give each connection only what you approved',
     where: 'Sealed: encrypted with your mailbox’s key, which only the service can use',
-    kept: '90 days unless you pick 7, 30, 180 or 365. Disconnecting the mailbox destroys its key at once',
+    kept: 'New mail expires after 90 days unless you choose 7, 30, 180 or 365 days for that mailbox. Changing the setting affects new arrivals; existing messages keep their original expiry. Expired mail is no longer available through the service. Encrypted storage is removed in background cleanup, which can take longer; database backups have the separate one-day window below. Disconnecting follows the deletion process described below.',
   },
   {
-    data: 'Your rules, your connections and the queries you approved',
+    data: 'Your connections and the queries you approved',
     why: 'To give each connection only what you approved',
-    where: 'Sealed, except the app’s name, dates and state of each connection, which we can read',
-    kept: 'Until you delete them, the connection ends, or the account is removed',
+    where:
+      'Your connections’ list and each connection’s record, signed. We can read which app or agent each is (its web address and the name it gives itself), what it may read (the parts of your mail and the mailboxes), its devices, dates and state; the query you approved and what the consent screen showed you are sealed',
+    kept: 'Until it ends, and 30 days after so you can see it ended. Connections stop when you request account deletion and do not restart if you cancel. Their connection and device token-family records are scheduled for removal 30 days after the connection ends, including when the account itself has already been removed. Our connection-list records and their account index currently have no automatic removal. They can retain your account identifier, app web addresses, connection identifiers and dates, and hashes of decided authorization requests; older list records can retain their earlier contents. Database backups can retain removed records for a further day.',
   },
   {
-    data: 'Receipts of what each connection received, and of what was refused',
-    why: 'So you can see what left',
-    where: 'Sealed, chained so that a missing one shows',
-    kept: 'As long as your account, even after the mail they describe is gone',
+    data: 'Requests from an app or agent waiting for your answer, and the codes and tokens it holds for a connection',
+    why: 'To check, on every request, that the connection is still yours and still on',
+    where: 'Sealed, under a hash of each secret: never the secret itself',
+    kept: 'A request fifteen minutes, a code a minute, an access token an hour, a refresh token 30 days, none past its connection’s end',
+  },
+  {
+    data: 'Receipts of what was prepared for release to each connection, and of what was refused, with the senders and subjects of that mail (never its text)',
+    why: 'So you can see what was prepared for release to each connection. The screen that shows them to you isn’t built yet',
+    where:
+      'Sealed. Not chained yet: until a later release chains them, someone who can write to our database could delete one without it showing',
+    kept: 'As long as your account, even after the mail they describe is gone. Receipts can also contain the topics, model answers or refusals, and model and prompt versions used to decide what was made available or held back; these stay with the receipt until the account is removed.',
   },
   {
     data: 'What a model said about a message and a topic',
     why: 'So the same question gets the same answer',
     where: 'Sealed',
     kept: 'As long as the message',
+  },
+  {
+    data: 'What the rule that holds back sign-in mail decided about a message the model was asked about (held or let through), with the model’s answers it rested on, in records by mailbox and day',
+    why: 'So a message held stays held, whatever happens to the model’s answers',
+    where: 'Sealed',
+    kept: 'At least 365 days and an hour from when the message arrived (365 days is the longest any mailbox keeps mail), even if the message is deleted sooner. After that it’s dropped the next time the record that holds it is written; a record that isn’t written again stays until the mailbox is disconnected or the account is removed',
+  },
+  {
+    data: 'Something you started: a sign-in, a change of address, a confirmation that it’s you, or a sign-in with a provider waiting for you to confirm an address',
+    why: 'To finish it',
+    where:
+      'Our database, sealed, so another service instance can finish the request. Some retry and used-request tracking is also kept in the service’s memory.',
+    kept: 'Valid for five minutes for a passkey ceremony, ten minutes for email and provider attempts, or twenty minutes while confirming an address after a provider sign-in. Used entries are removed; remaining entries are marked for expiry. Storage cleanup can take longer, and database backups can retain removed entries for a further day. Restarting the service can invalidate an attempt without deleting its stored copy.',
   },
 ];
 
@@ -160,12 +179,12 @@ const providers = [
     <h2>Who we are</h2>
     {/* TODO LEGAL: the operator's state (Florida) is not confirmed; docs/legal.md. */}
     <p>Permaily is run by one person, {OPERATOR.name}, in {OPERATOR.state}, {OPERATOR.country} (“we”), who decides what the service does with your data. Admins named by the operator can help run it from the app, with the powers listed below. Write to us at <a class="link" href={`mailto:${OPERATOR.privacy}`}>{OPERATOR.privacy}</a>.</p>
-    <p>Permaily is an early beta, by invitation, for adults. Invitations aren’t limited to one country, but United States sanctions law can forbid us to serve someone; the <a class="link" href={LINKS.terms}>terms</a> say who can use it. If you live in the EU, the EEA, Switzerland or the UK, read <a class="link" href="#europe">If you live in Europe</a> too. Today you can make an account, sign in and manage it. Mailboxes, connections, rules and receipts aren’t open yet: what this page says of them is how they’re planned to work, and we’ll update it before they open.</p>
+    <p>Permaily is an early beta, by invitation, for adults. Invitations aren’t limited to one country, but United States sanctions law can forbid us to serve someone; the <a class="link" href={LINKS.terms}>terms</a> say who can use it. If you live in the EU, the EEA, Switzerland or the UK, read <a class="link" href="#europe">If you live in Europe</a> too. Today you can make an account, forward your mail to mailboxes of your own, read and search it in the app, and let apps and AI agents read the part of it you approve, with a receipt kept of what was prepared for release to each one. Rules of your own, and a screen that shows you your receipts, aren’t built yet: where this page mentions them, it says they’re planned.</p>
     <p>We wrote this page ourselves, without a lawyer. If something here is wrong or unclear, tell us.</p>
   </div>
 
   <div class="stack">
-    <h2 class="h-h">What we keep today</h2>
+    <h2 class="h-h">What we keep</h2>
     <div class="tbl-scroll" tabindex="0">
       <table class="tbl">
         <thead>
@@ -198,66 +217,53 @@ const providers = [
     <ul>
       <li><b>Kept as the link:</b> which provider, and its identifier for you. Nothing else of the provider, and no token.</li>
       <li><b>Can become your account’s data:</b> if you sign up with a provider, the address it vouches for (Google, GitHub, and Microsoft for some accounts) becomes your contact address. If it doesn’t vouch for one (Facebook never does), you confirm an address with a code, and that becomes your contact address. Unlinking the provider later doesn’t change your contact address; change it in Settings.</li>
-      <li><b>Read and dropped:</b> your name at the provider, and an address it doesn’t vouch for, which is only offered back to you in the form while you confirm one, for up to twenty minutes.</li>
+      <li><b>Not kept as your data:</b> The name the provider gives us is read and dropped. An address it does not vouch for is offered back in the form and may be held in a sealed pending-sign-in record while you confirm an address, for up to twenty minutes of validity. The pending-record cleanup and backup periods above apply.</li>
     </ul>
     <p>The provider learns that you signed in to Permaily, and when.</p>
 
     <h2>Records that stay after something is deleted</h2>
     <ul>
-      <li><b>Integrity records.</b> Each change to your account’s record also writes a small record of that change: the record’s name, which includes your account’s identifier, a version number, a hash of the change and the time. It holds no address or name, but it can be matched to your account by anyone who knows the identifier. These records are locked for ten years so that nobody, us included, can delete them or quietly put back an old copy of your account. What happens to them when the lock ends hasn’t been decided or built yet, so we don’t promise they are deleted then.</li>
-      <li><b>Backups.</b> Our database keeps a rolling backup of the last 35 days, so something deleted stays in the backup until it ages out.</li>
+      <li><b>Integrity records.</b> Each change to the records of your account, your mailboxes and your connections also writes a small record of that change: the record’s name, which for your account and its lists includes your account’s identifier, a version number, a hash of the change and the time. It holds no address, name or mail, but it can be matched to your account by anyone who knows the identifier. These records are locked for ten years so that nobody, us included, can delete them or quietly put back an old copy of your account, a mailbox or a connection. What happens to them when the lock ends hasn’t been decided or built yet, so we don’t promise they are deleted then.</li>
+      <li><b>Your list of mailboxes.</b> After account removal, its mailbox list remains as a closed record to prevent new mailboxes being added to that account. Normally it is empty apart from the account identifier and record state. If conflicting integrity records prevent a mailbox from being safely removed, the list can also retain that mailbox’s identifier, address hash and creation date. Such a mailbox cannot be opened through the service; its remaining mail expires under its existing retention.</li>
+      <li><b>Your connections.</b> Their records, and our connection lists, stay as the connections row above says: the lists and their account index currently have no automatic removal, even after your account is removed.</li>
+      <li><b>Backups.</b> Our database keeps a rolling one-day backup, including wrapped keys from before a mailbox was disconnected. Disconnecting prevents new reads through the approved service; an old database copy alone cannot undo that because the service checks the newest integrity record. A request that already opened the key may finish within its deadline, at most one minute. This is not immediate cryptographic erasure: a saved wrapped key, the root secret and a saved copy of the encrypted mail could still be used to recover that mail outside those checks. Backups do not become inaccessible merely because the live record was removed. The backup is of the database, which holds sealed message details, search content and keys; the original messages and their attachments are stored separately, encrypted, and removed under their own retention rules, not kept in that backup.</li>
       <li><b>The admin log</b> keeps the identifier of an account an admin acted on for 400 days, also after the account is removed.</li>
     </ul>
 
     <h2>Logs and where data goes</h2>
-    <p>The service runs with Amazon Web Services in the United States (Ohio): that’s where accounts, and later mail, are stored. Its logs say what kind of thing happened and never name an address, an account, a code, a token or anything from your mail. The service as built doesn’t record your IP address; the machine in front of it, which we run and which isn’t covered by the verification, sees it in passing.</p>
-    <p>This website and the docs are served by AWS’s content delivery network from locations around the world. AWS keeps an access log of every visit, which we can read: the time, the page, your IP address and what your browser says of itself. It’s kept until we remove the site from AWS. We use it only to run and secure the site, and run no analytics. DNS for permaily.com is run by Cloudflare, worldwide. The planned model provider is in the United States.</p>
-  </div>
-
-  <div class="stack">
-    <h2 class="h-h">What we’ll keep once mailboxes open (planned)</h2>
-    <div class="tbl-scroll" tabindex="0">
-      <table class="tbl">
-        <thead>
-          <tr>
-            <th scope="col">Data</th>
-            <th scope="col">Why</th>
-            <th scope="col">Where</th>
-            <th scope="col">How long</th>
-          </tr>
-        </thead>
-        <tbody>
-          {
-            soon.map((row) => (
-              <tr>
-                <th scope="row">{row.data}</th>
-                <td>{row.why}</td>
-                <td>{row.where}</td>
-                <td>{row.kept}</td>
-              </tr>
-            ))
-          }
-        </tbody>
-      </table>
-    </div>
+    <p>The service runs with Amazon Web Services in the United States (Ohio): that’s where accounts and mail are stored. Its logs say what kind of thing happened and never name an address, an account, a code, a token or anything from your mail. The service as built doesn’t record your IP address; the machine in front of it, which we run and which isn’t covered by the verification, sees it in passing.</p>
+    <p>This website and the docs are served by AWS’s content delivery network from locations around the world. AWS keeps an access log of every visit, which we can read: the time, the page, your IP address and what your browser says of itself. It’s kept until we remove the site from AWS. We use it only to run and secure the site, and run no analytics. DNS for permaily.com is run by Cloudflare, worldwide. OpenAI, which decides what depends on meaning, is in the United States. Apps and agents you connect may be anywhere.</p>
   </div>
 
   <div class="prose">
-    <h2>What we’ll do with your mail (planned)</h2>
-    <p>The service will read mail only inside its verified environment, to apply your rules and answer the connections you approve, and release to each connection only what you approved. It won’t be used to train anything.</p>
-    <p>Some rules and requests depend on meaning, such as “mail about invoices.” When one does and exact conditions can’t settle it, the service will send OpenAI, in the United States, the subject or the body text of that message, cut at a set length, or its sentences one by one to remove what talks about a topic. Never the sender, the recipients or an attachment. OpenAI answers how likely the text is to be about the topic. A rule you write in plain words will also be sent to OpenAI, to be turned into conditions you confirm, without any of your mail. You turn each of these on yourself, and the consent screen will say when a model is involved.</p>
-    <p>What OpenAI keeps: it doesn’t train on what its API receives. Its abuse-monitoring logs may hold the text it receives, and its answer, for up to 30 days, and it may keep flagged text and a sample of requests for automated safety review, for a time it doesn’t state (<a class="link" href="https://developers.openai.com/api/docs/guides/your-data">OpenAI, your data</a>). The part that turns a rule into conditions also keeps a request for 30 days unless the request asks it not to; the service is planned to ask it not to. We’ll ask OpenAI for zero data retention, which only OpenAI can approve, and we won’t wait for it: until it’s approved, your mail goes to OpenAI on the terms above, and the consent screen will say so. Zero data retention takes the text out of those logs, OpenAI says; its page doesn’t say whether it also ends the safety sample, and either way it’s OpenAI’s word, which we can’t check.</p>
-    <p>None of this is running: mailboxes, rules and connections aren’t built yet.</p>
+    <h2>What we do with your mail</h2>
+    <p>Permaily’s own processing of your mail takes place inside the verified environment: to show and search it, apply its rules and prepare the mail a connection may read. When a decision needs the model, the topic and message content described below are also sent to OpenAI, outside that environment. Permaily does not use your mail to train models.</p>
+    <p>Opening or reading a message makes no request the sender or anyone outside Permaily can see: remote images are never loaded, and nothing else in a message is fetched. Following a link is your act: the app shows where it leads first and sends nothing until you press Open; the site then learns that the link was followed and when, and may know who followed it from the link itself. Browser features you turn on, such as translation, reader mode and extensions, see what the browser shows you and are outside our control. Images in a message keep their metadata, shown only to you. Nothing of the formatted message is stored.</p>
+    <p>Some conditions depend on meaning, such as “mail about invoices.” When exact conditions can’t settle one, the service asks OpenAI, in the United States. It sends the topic and, for a condition on the subject, the subject; for a condition on the whole message, the subject and the text, up to 256 KiB, read from the original message when the stored copy was cut. We do not add sender or recipient header fields, account identifiers or attachment files to the model request. The topic, subject and message text are not anonymised or redacted: they may themselves contain names, email addresses, sign-in information, information about children or other sensitive information. OpenAI receives that content even if the decision is to hold the message back from the app or agent. OpenAI answers how likely the text is to be about the topic, and the answer is kept with the message so the same question isn’t asked twice. This happens only after you agreed to the model’s notice, which the app shows before you first ask and the consent screen shows before you approve a connection, in three cases: when you preview a query with the model in the app; when a connection’s query has such a condition; and for the rule that holds back sign-in mail, below. Each request asks OpenAI not to cache it.</p>
+    <p>What OpenAI keeps: it doesn’t train on what its API receives. Its abuse-monitoring logs may hold the text it receives, and its answer, for up to 30 days, and it may keep flagged text and a sample of requests for automated safety review, for a time it doesn’t state (<a class="link" href="https://developers.openai.com/api/docs/guides/your-data">OpenAI, your data</a>). We asked OpenAI for zero data retention on 15 November 2026; it hasn’t approved it yet, and only OpenAI can. We didn’t wait for it: until it’s approved, your mail goes to OpenAI on the terms above, and the model’s notice says so. Zero data retention takes the text out of those logs, OpenAI says; its page doesn’t say whether it also ends the safety sample, and either way it’s OpenAI’s word, which we can’t check.</p>
+    <p>Planned, not built: rules of your own. A rule you write in plain words would be sent to OpenAI, without any of your mail, to be turned into conditions you confirm, and the service would ask OpenAI not to keep that request, which it otherwise keeps for 30 days; a rule that removes what talks about a topic would send OpenAI a message’s sentences one by one. We’ll update this page before they open.</p>
+
+    <h2>What a connection gives an app or an agent</h2>
+    <p>A connection is an app or an AI agent you allow to read some of your mail, on a screen that says who asks, what it asks for and what it would get. What it receives:</p>
+    <ul>
+      <li><b>Only what you approved.</b> The parts you allowed (the sender and when the message arrived always; the subject, the text, up to 256 KiB and never its HTML, and attachments only if allowed) of the mail the connection may read: the mailboxes you chose, since the date you chose, matching what it asked for, minus what a rule holds back. Nothing else of your mail, your account or your other connections.</li>
+      <li><b>Sign-in mail stays back.</b> Every account has a rule from the start, which can’t be turned off yet, that holds back sign-in codes and password resets from every connection. Exact checks hold matching messages. For each other message a connection would read, the service asks OpenAI, as above, whether it’s about a sign-in code or resetting a password, under the model’s notice you agree to on the consent screen, and holds the message unless the answer is clearly no. What it decided, with the model’s answers, is kept so that a message held stays held. An app or agent is never told a message was held. If the model is disabled, its key is missing or refused, or a provider, spending or account limit closes the model gate, the affected connections receive no mail, including mail previously cleared. If a particular message needs a new model answer and no reliable answer is available, that message is held. Previously cleared messages can still be delivered during a temporary request failure while the gate remains open.</li>
+      <li><b>Who asks.</b> To identify the app, the service fetches its public client description and, when needed, its public signing keys over HTTPS. The vendor sees those document requests; no account or mail data is added to them. The machine in front of Permaily sees the destination and timing, but not the encrypted request contents. Documents are cached in enclave memory with freshness capped at 24 hours and, where the vendor permits, up to one further hour of stale use after a fetch failure. An entry can remain in memory until it is replaced, evicted or the service restarts.</li>
+      <li><b>Another device.</b> The same app or agent on another of your devices is added to your connection only when you confirm it on the same screen.</li>
+      <li><b>It ends.</b> You can revoke a connection, or one of its devices, at any time in the app; it stops at once, and anything being sent stops within five seconds. Each connection also ends on its own: after 90 days, or the time the app asked for, a year at most, as the consent screen shows. You can renew it. Mail it was already given can’t be recalled.</li>
+      <li><b>What the app does with it is the app’s.</b> Apps and agents are recipients you choose, not companies working for us: their own policies govern what they keep and share.</li>
+      <li><b>A record of what was prepared for release.</b> Before answering an authenticated request to search or read mail or fetch an attachment, the service writes a sealed receipt of what was prepared for release or why the request was refused, including relevant senders and subjects but not message bodies. If the required receipt cannot be written, that mail is not released. Consent decisions and connection endings have receipts too. These records are not proof of delivery to the app. They stay until your account is removed; viewing and exporting them are planned.</li>
+    </ul>
 
     <h2>Why we use your data</h2>
     <p>Only to run the service you asked for, to keep accounts safe, to answer you, and to do what the law requires. We don’t sell or share your data for advertising, build profiles, or send marketing.</p>
 
     <h2>Who else is involved</h2>
-    <p>AWS runs the hardware, storage and keys, serves this website, and carries the mail we send you; its terms let it store and scan that mail to block spam and abuse. Cloudflare answers DNS questions, including the ones the service asks to check where a message came from. If you sign in with a provider, it tells us it’s you. Your mail provider will forward your mail to us once mailboxes open. Connections you approve receive what you approved, under their own policies. The list, with what each one gets, is on <a class="link" href={LINKS.subprocessors}>Subprocessors</a>. No other company collects information about what you do on other sites through Permaily.</p>
+    <p>AWS runs the hardware, storage and keys, serves this website, and carries the mail we send you; its terms let it store and scan that mail to block spam and abuse. Cloudflare answers DNS questions, including the ones the service asks to check where a message came from. If you sign in with a provider, it tells us it’s you. Your mail provider forwards your mail to us. OpenAI decides what depends on meaning, as above. Connections you approve receive what you approved, under their own policies: they’re recipients you choose, not companies working for us. The list, with what each one gets, is on <a class="link" href={LINKS.subprocessors}>Subprocessors</a>. No other company collects information about what you do on other sites through Permaily.</p>
 
     <h2>What we and the admins can see and do</h2>
-    <p>We, and the admins, see each account’s contact address, name, state, dates, how many passkeys and sessions it has, which providers are linked, whether it’s blocked or closing, and the admin log. Through the service we and the admins can block an account and unblock it, sign all its devices out, ask to delete it (the same seven days as when you ask), cancel a deletion we asked for (not one you asked for), make and revoke invitations, and, for the super admin, make and remove admins. You’re told by mail of a block, an unblock, a deletion asked or cancelled, and becoming or no longer being an admin; not when your devices are signed out.</p>
-    <p>The service gives neither us nor the admins a way to sign in as you, read your mail, change your contact address, or add or remove a way you sign in, and the public code can be checked for that. What this rests on, and its limits:</p>
+    <p>We, and the admins, see each account’s contact address, name, state, dates, how many passkeys and sessions it has, which providers are linked, whether it’s blocked or closing, and the admin log. Of mailboxes, we and the admins see how many each account has and each one’s state, retention and dates, never its address, label or mail, and, given an address someone reported, which account’s mailbox it is. Through the service we and the admins can block an account and unblock it, sign all its devices out, ask to delete it (the same seven days as when you ask), cancel a deletion we asked for (not one you asked for), pause a mailbox, which then refuses new mail and keeps what it holds, and resume it, make and revoke invitations, and, for the super admin, make and remove admins. You’re told by mail of a block, an unblock, a deletion asked or cancelled, a mailbox paused or resumed, and becoming or no longer being an admin; not when your devices are signed out.</p>
+    <p>The service gives neither us nor the admins a way to sign in as you, read your mail, delete it or disconnect your mailboxes, change your contact address, or add or remove a way you sign in, and the public code can be checked for that. What this rests on, and its limits:</p>
     <ul>
       <li>Signing in by mail trusts your mail provider and AWS, which carries the message. Someone who administers our AWS account could set it to keep a copy of the messages we send; the service watches for that and stops sending, but a copy made in the second a message leaves could go unseen. “Passkey only” takes mail out of signing in.</li>
       <li>AWS Support can give the account’s owner back control of a key that nobody can change; the service checks every minute and publishes what it sees, but that would make stored data readable from then on.</li>
@@ -267,7 +273,7 @@ const providers = [
     <p>How many of each kind of action we and the admins took since the service last started is public at <code>/status</code>, never naming an account.</p>
 
     <h2>Mail we send you</h2>
-    <p>Sign-in codes and links; a code to a new address when you change your contact address; a code when you confirm it’s you before a sensitive change. Notices, which you can’t turn off: a sign-in from a device that hadn’t signed in to your account before; a change in how you sign in (passkeys, providers, passkey only, recovery codes); a change of your contact address, to the old and the new one; a deletion asked for or cancelled; your account blocked or unblocked; your account made an admin or no longer one. A notice holds no code or link. We try once: if sending fails or takes too long, the notice is dropped. AWS carries this mail, and keeps addresses that bounced or complained so it doesn’t write to them again. We send no newsletters or marketing.</p>
+    <p>Sign-in codes and links; a code to a new address when you change your contact address; a code when you confirm it’s you before a sensitive change. Notices, which you can’t turn off: a sign-in from a device that hadn’t signed in to your account before; a change in how you sign in (passkeys, providers, passkey only, recovery codes); a change of your contact address, to the old and the new one; a deletion asked for or cancelled; your account blocked or unblocked; your account made an admin or no longer one; a mailbox added, Gmail asking to forward to one of your mailboxes, and a mailbox disconnected, paused or resumed. A notice holds no code or link, and nothing that names a mailbox. We try once: if sending fails or takes too long, the notice is dropped. AWS carries this mail, and keeps addresses that bounced or complained so it doesn’t write to them again. We send no newsletters or marketing.</p>
 
     <h2>Cookies and storage in your browser</h2>
     <p>The app sets three cookies, all for signing in and your account’s security, and keeps your theme and two other small things in the browser; this site keeps only your theme. None are for analytics or advertising, and none are anyone else’s. Because nothing tracks you, every visit is treated the same, with or without a “Do Not Track” signal.</p>
@@ -301,19 +307,21 @@ const providers = [
   <div class="prose">
     <h2>Seeing, copying and deleting your data</h2>
     <ul>
-      <li><b>See and change it.</b> Settings shows your account, your ways to sign in and your devices. You can change your name and contact address there.</li>
-      <li><b>A copy.</b> There’s no export button yet. Until there is, write to us from your contact address and we’ll send your account data within 30 days. Mail we can’t read, so we can’t send it; once mailboxes open, you can read and delete it in the app.</li>
+      <li><b>See and change it.</b> Settings shows your account, your ways to sign in and your devices; you can change your name and contact address there. Accounts shows your mailboxes, and Connections the apps and agents you approved, with their devices.</li>
+      <li><b>A copy.</b> There’s no export button yet. Until there is, write to us from your contact address and we’ll send your account data within 30 days. Mail we can’t read, so we can’t send it; you can read and delete it in the app.</li>
       <li><b>Delete it.</b> Delete your account in Settings. It closes at once, you can cancel for seven days, and then it’s removed. What’s removed, when, and what stays: <a class="link" href={LINKS.dataDeletion}>Deleting your data</a>.</li>
-      <li><b>Revoke access.</b> Once connections open, revoking one stops it at once. Mail a connection already received can’t be recalled.</li>
+      <li><b>Revoke access.</b> In Connections, revoking a connection, or one of its devices, stops it at once, and anything being sent within five seconds. Mail a connection already received can’t be recalled.</li>
       <li><b>Unlink a provider.</b> Do it in Settings. You can also remove Permaily at the provider: {providers.map((p, i) => (<>{i > 0 && (i === providers.length - 1 ? ' or ' : ', ')}<a class="link" href={p.href}>{p.name}</a></>))}.</li>
     </ul>
-    <p>If someone forwards mail you sent them to Permaily, it will be in their mailbox, sealed: we can’t search it or tell whose mail it is. Ask the person you wrote to.</p>
+    <p>Mail can contain information about its senders, recipients and people mentioned in it. We receive that information from the account holder and the mail provider they use to forward it, rather than directly from everyone named. It can include names, addresses, message content, attachments and sensitive information. We process it to provide the inbox and the sharing the account holder requests, with the OpenAI disclosures and retention described above. If you are mentioned in someone else’s mail, you may contact <a class="link" href={`mailto:${OPERATOR.privacy}`}>{OPERATOR.privacy}</a> about your rights. We may need information that lets us identify the relevant account or record; the operator cannot search sealed mail by your name. Contacting the account holder may also help, but is not the only way to contact us.</p>
 
     <h2 id="europe">If you live in Europe</h2>
     <p>We may invite people who live in the European Union, the European Economic Area, Switzerland or the United Kingdom. If you’re one of them, European data protection law, such as the GDPR or the UK GDPR, may apply to what we do with your data, even though we’re in the United States. What that means today:</p>
     <ul>
       <li><b>Who decides.</b> The person named in “Who we are” decides what’s done with your data, and is who you write to.</li>
-      <li><b>Why.</b> Your account, signing in and the mail we send you: to provide the service you asked for under the <a class="link" href={LINKS.terms}>terms</a>. Sessions, devices, blocks, the admin log, the integrity records and backups: to keep accounts and the service safe, which is our legitimate interest and yours. Keeping or handing over data the law requires: a legal obligation. Once connections and models open, sending mail to one: the instruction you give when you turn it on.</li>
+      <li><b>Why.</b> Your account, signing in and the mail we send you: to provide the service you asked for under the <a class="link" href={LINKS.terms}>terms</a>. Sessions, devices, blocks, the admin log, the integrity records and backups: to keep accounts and the service safe, which is our legitimate interest and yours. Keeping or handing over data the law requires: a legal obligation. Giving mail to a connection, and sending it to OpenAI to decide what depends on meaning: the instruction you give when you approve the connection or agree to the model’s notice.</li>
+      <li><b>What you must give, and what is optional.</b> To create an account, you must provide a contact email address you control and an invitation, and accept the terms. Without those we cannot create the account. Linking a sign-in provider, forwarding mail, approving connections and asking the model are optional. If you do not approve a connection or agree to its model notice, it receives no mail. You can continue using your own inbox without approving a connection.</li>
+      <li><b>Withdrawing consent.</b> Where we rely on your consent, you may withdraw it at any time. Revoke the relevant connection in Connections to stop its future mail and model requests; not making further model previews stops requests from that feature. Other approved connections continue until you revoke them. Withdrawal does not affect processing that was lawful before withdrawal, and cannot recall information already received by OpenAI or an app.</li>
       <li><b>Where.</b> Your data is stored in the United States and handled by the companies on <a class="link" href={LINKS.subprocessors}>Subprocessors</a>, mostly there. We have no office or representative in Europe.</li>
       <li><b>Your rights.</b> You can ask us for a copy of your data, in a form you can reuse; to correct or delete it; to limit what we do with it; and you can object to what we do for security. Write to <a class="link" href={`mailto:${OPERATOR.privacy}`}>{OPERATOR.privacy}</a>; we answer within a month. You can also complain to the data protection authority where you live or work.</li>
     </ul>
@@ -322,18 +330,19 @@ const providers = [
       <li>We haven’t named a representative in the EU or in the UK. Until we do, write to us directly.</li>
       <li>We haven’t done a data protection impact assessment, or a written assessment of the interests above.</li>
       <li>The session cookie keeps you signed in for up to 30 days, and there’s no choice yet to keep it only until you close the browser.</li>
-      <li>Once mailboxes open, people whose mail you forward won’t be told by us that it’s there.</li>
+      <li>People whose mail you forward aren’t told by us that it’s there.</li>
+      <li>We haven’t documented, for each kind of processing, our role, its legal basis and the safeguards for data that leaves Europe, so this section doesn’t list them yet.</li>
     </ul>
 
     <h2>Requests from authorities</h2>
-    <p>We hand over data only when the law requires it, after checking that the request is valid and no wider than it must be. We can read your account’s record, your sessions, the admin log and the integrity records, and could hand those over. Mail and everything else that’s sealed we can only hand over encrypted, because we can’t open it, and we don’t promise anyone a way to. Unless the law or a court order forbids it, we tell you before we answer, or as soon as we may.</p>
+    <p>We hand over data only when the law requires it, after checking that the request is valid and no wider than it must be. We can read your account’s record, your sessions, the parts of your mailboxes’ and connections’ records that aren’t sealed, the admin log and the integrity records, and could hand those over. Mail and everything else that’s sealed we can only hand over encrypted, because we can’t open it, and we don’t promise anyone a way to. Unless the law or a court order forbids it, we tell you before we answer, or as soon as we may.</p>
     <p>If the law requires us to preserve specific records, such as a government request to preserve them for 90 days, renewable once, those records are kept for that time even if you delete them or your account; they’re deleted when it ends. If we learn of child sexual abuse material, the law requires us to report it, and to keep what we reported for a year.</p>
 
     <h2>Security and breaches</h2>
     <p>How the service is protected, and what that does and doesn’t prove, is on <a class="link" href="/security/">Security</a> and in the <a class="link" href={LINKS.trustModel}>trust model</a>. If a breach puts your data at risk, we’ll tell you and the authorities the law requires, as fast as we can and within the time the law sets.</p>
 
     <h2>Age</h2>
-    <p>Accounts are for people {MINIMUM_AGE} and older. If we learn an account belongs to someone younger, we close it and delete its data. Mail people forward will mention others, children included; we can’t read it and use it only to run the service for the account holder.</p>
+    <p>Accounts are for people {MINIMUM_AGE} and older. If we learn an account belongs to someone younger, we close it and delete its data. An adult’s mail may contain information about other people, including children. The operator cannot read the sealed mail through the service, but the service processes it and may send its subject and text to OpenAI under the conditions described above.</p>
 
     <h2>Changes</h2>
     <p>This page takes effect on the date at the top, which says when it last changed. If a change matters to how we use your data, we’ll tell you by mail before it takes effect.</p>

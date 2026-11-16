@@ -196,7 +196,7 @@ func AccountName(s string) (string, error) {
 // changes. The site's TERMS_VERSION, in site/src/config/legal.ts, must be the
 // same: a test on the site's side checks it. So must the web app's, in
 // web/src/lib/terms.ts, which TestTermsVersionMatchesTheWebApp checks.
-const TermsVersion = "2026-11-12"
+const TermsVersion = "2026-11-16"
 
 // ModelNoticeVersion is the version of the model's notice (ADR 0028,
 // "Consent"): what is sent to OpenAI to decide a condition a model decides,
@@ -205,7 +205,7 @@ const TermsVersion = "2026-11-12"
 // words (zero data retention approved, another provider) changes it. The web
 // app's, in web/src/lib/model-notice.ts, must be the same, which
 // TestModelNoticeVersionMatchesTheWebApp checks.
-const ModelNoticeVersion = "2026-11-15"
+const ModelNoticeVersion = "2026-11-16"
 
 // AccountClosing is how long an account that its person asked to delete can
 // still be kept, by cancelling (ADR 0017).

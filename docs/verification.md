@@ -80,6 +80,15 @@ From the release that composes it (ADR 0028), the enclave asks OpenAI's Decision
 
 What this proves: which model, address, organisation and project the measured code calls, that it turns the prompt cache off on every request, and the limits it holds itself. What it does not: what OpenAI keeps of what it is sent, whether the operator approved zero data retention or set the project's own spend limit, and whether the key is used elsewhere; those are OpenAI's and the operator's word. The canary is a sample of 156 fixed synthetic statements a day, not a proof that the model did not change between two checks. `/status` never holds the key, its fingerprint, an amount spent, an account, a topic, a message or a probability.
 
+## Connections
+
+From the release that composes them (ADR 0030 and 0031), apps and agents a person allows read some of their mail through the API (`https://api.permaily.com/v1`) and MCP (`https://mcp.permaily.com/mcp`), authorized by the enclave's own authorization server (issuer `https://api.permaily.com`). `permaily-verify` prints the `connections` section of `/status`: the issuer, the endpoints and the two resources, the grant types and the ways a client authenticates, the lifetimes, what a code used again gets, the bound of a revocation in another enclave and what it covers, how a client assertion used again is refused, how vendors' documents are fetched, the devices a connection may have, what connections get while the model cannot be asked, the verified vendors, the rules every read applies first with the canonical identifiers of their formulas, how receipts and the rules' decisions are kept, and what this enclave refused by reason since it started.
+
+- It **fails** when `dynamic_registration` is true or `client_documents` false; when the issuer, an endpoint or a resource is not the deployment's (`https://api.<domain>` and its `/oauth/token`, `/oauth/revoke`, `/oauth/par`, `https://app.<domain>/oauth/authorize`, and the resources `https://api.<domain>/v1` and `https://mcp.<domain>/mcp`, the domain read from the URL checked); when `revocation_seconds` is over 5 or `revocation_covers` is not `every_byte`; when `assertion_replay` is not `strict` or `code_reuse` not `denied`; when `model_unavailable` is not `nothing_leaves`; when `receipts.decisions` is not `strict`; and when the default rule (`default-sign-in-and-security`) is absent, off, or not the version and the formulas, by canonical identifier, that `internal/rules` compiles in the verifier, which `scripts/verify.sh` builds from the release's own commit. Like the model's, this section is checked whatever else is skipped.
+- It **warns** while receipts are not chained (`receipts.chained` false, until step 8): whoever writes the storage can delete a receipt without it showing.
+
+What this proves: what the measured code does with every token and connection (opaque tokens checked on every request, codes once, a revocation's five seconds bounding every byte of an answer already being sent, nothing leaving while the model cannot be asked), and which rule holds sign-in mail back before anything leaves, by its formulas' canonical identifiers. What it does not: what a vendor does with what it was given, which is the vendor's; how many people connected what, on purpose (`/status` has no count of connections or consents, no client but the verified list, no account and no connection); and anything from before the enclave started, since `refused` is this enclave's count in memory. The vendors' documents are fetched through the host's vendor egress (vsock 8004), which sees which vendor's document is fetched and when, and cannot read or change it.
+
 ## How mail gets in
 
 Mail arrives over SMTP on port 25, which the HTTPS checks above do not cover. When no URLs are given, `permaily-verify` also checks:
@@ -207,6 +216,26 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
     "since": "<when this enclave started counting>",
     "calls": {"answered": 0, "kept": 0, "refusal": 0, "timeout": 0, "unavailable": 0, "key_refused": 0, "limit": 0, "request": 0, "invalid": 0, "other_model": 0, "held": 0, "canary": 0}
   },
+  "connections": {
+    "issuer": "https://api.permaily.com",
+    "authorization_endpoint": "https://app.permaily.com/oauth/authorize",
+    "token_endpoint": "https://api.permaily.com/oauth/token",
+    "revocation_endpoint": "https://api.permaily.com/oauth/revoke",
+    "pushed_endpoint": "https://api.permaily.com/oauth/par",
+    "resources": ["https://api.permaily.com/v1", "https://mcp.permaily.com/mcp"],
+    "grants": ["authorization_code", "refresh_token"],
+    "client_auth": ["none", "private_key_jwt"],
+    "client_documents": true, "dynamic_registration": false,
+    "access_token_seconds": 3600, "refresh_token_seconds": 2592000, "refresh_retry_seconds": 30, "code_seconds": 60, "code_reuse": "denied",
+    "revocation_seconds": 5, "revocation_covers": "every_byte", "assertion_replay": "strict", "vendor_transport": "h2",
+    "connection_default_days": 90, "connection_max_days": 365, "devices_per_connection": 16,
+    "model_unavailable": "nothing_leaves",
+    "verified": [{"domain": "claude.ai", "owner": "Anthropic"}, {"domain": "chatgpt.com", "owner": "OpenAI"}],
+    "rules": [{"id": "default-sign-in-and-security", "version": 1, "formulas": ["qry_ghi2xjhazzz25rgsy6arrif4ke", "qry_dq33uknaplrglzyuws6gcb2uje", "qry_lh52gob7oeycyjrkqg2lpn2lje"], "on": true}],
+    "receipts": {"sealed": true, "chained": false, "decisions": "strict", "decisions_per_day": 28800},
+    "since": "<when this enclave started counting>",
+    "refused": {"invalid_token": 0, "wrong_resource": 0, "assertion_replay": 0, "model_unavailable": 0, "decisions_full": 0, "…": 0}
+  },
   "anchors": {
     "bucket": "<S3 bucket with Object Lock that holds the commits>",
     "retention_days": 3650,
@@ -223,6 +252,8 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
 `mail` says what SES would do with a message of the enclave besides delivering it, as the enclave read it: each identity is `no_configuration_set`, `configuration_set`, `not_verified` or `absent`. `failing` is true when the newest attempt got no answer to go by, and `state` and `checked_at` then describe the last one that did; `history_truncated` appears after more than 32 states. It is absent in an image that sends no mail. A regression of the record of an account is listed in `anchors.regressions` without the account's name. One of a mailbox's record or an account's list of mailboxes (strict records, ADR 0026) is listed under the name `mailbox`, with `fork: true` when the record has two commits of different digests at one version, `unlocked: true` when a commit has no copy S3 keeps locked as the enclave wrote it, and `lost: true` when its newest commit names a value the table no longer holds (whoever writes to the table deleted or changed it); the verifier fails on each, naming which. Pausing and resuming a mailbox is counted in `admin`, never a regression. A regression of one of the model's records (its key, a month's spend, the canary's state, the alarms: strict records, ADR 0028) is listed under the name `model`, with `fork`, `unlocked` or `lost` and without its versions, which for a month's spend would say how much was spent.
 
 `admin` counts what the operator did to accounts through this enclave since it started, by kind: an account blocked or unblocked, a deletion asked or cancelled, the devices of an account signed out, invitations made (one by one) and one revoked, the application of a provider set or removed, an admin made or removed, and a mailbox paused or resumed (`mailbox_paused`, `mailbox_resumed`, from the release that builds mailboxes per account, ADR 0026; never which mailbox: the operator cannot read, disconnect or empty one), and the model's key set or removed (`model_key_set`, `model_key_removed`, ADR 0028; never the key or its fingerprint). It counts what the operator does with the token and what the admins do in the web app together. Every kind the enclave knows is there, also at zero; a later image may count more kinds, which the verifier prints by name. It never holds an account, an address or an identifier. It is absent in an image without accounts and in images up to v0.10.0. The verifier checks nothing of it.
+
+`connections` is absent in an image without connections. `refused` counts, by a fixed reason of the image (never one taken from what a vendor sent), what this enclave refused and a few events (`allowed`, `denied`, `token_issued`, `revoked_person`, `revoked_vendor`) since it started, every reason listed at zero; `decisions_full` counts the messages held, undecided, in a request because a rule's decision had no room in its day (whether the day is spent or its last block waits for its pending decisions), once per request, never a gauge of full days (ADR 0031, "Bounds"). In `anchors`, a regression of a connection's, an account's list's, a token family's or a record of assertions' record is named `connection`, without its versions.
 
 `root` is absent in an image that stores no mail. `from` is present when another release's enclave handed the root secret over. `history` and `gaps` are every state of the key's policy and grants the enclave has read since it started, and the periods in which it could not read. Releases up to v0.7.0 also report `kms`, the key they wrapped data keys with directly, with the same `history` and `gaps`. If KMS cannot be reached, or the image has no root secret yet, the endpoint answers 503.
 

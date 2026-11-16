@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"time"
 )
 
@@ -23,7 +22,7 @@ import (
 // restart, for as long as both commits exist: each was written by an enclave
 // with its lock, which nobody can remove during the lock period. It is not
 // an ErrNotFound.
-var ErrForked = errors.New("store: two commits of a record at one version: the store of commits was written to by someone else")
+var ErrForked error = &kind{msg: "store: two commits of a record at one version: the store of commits was written to by someone else"}
 
 // Fork is two or more commits of one record at one version whose digests
 // differ. Copies of one commit (the same digest, however many object

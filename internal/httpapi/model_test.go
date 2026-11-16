@@ -163,8 +163,11 @@ func TestA28TheModelNoticeComesAfterTheStandingAndBeforeTheMail(t *testing.T) {
 	if m.notices.asked != 0 {
 		t.Fatalf("the agreement was read %d times before the standing", m.notices.asked)
 	}
-	// ask_model is a JSON boolean, once.
-	for _, v := range []string{`"true"`, `1`, `null`, `{}`, `true,"ask_model":true`} {
+	// ask_model is a JSON boolean, once: in another case, or with the long s
+	// and the Kelvin sign that encoding/json reads as s and k, it is a name
+	// that is not among the body's, so a reader that takes names in any case
+	// never finds the model asked where this one does not.
+	for _, v := range []string{`"true"`, `1`, `null`, `{}`, `true,"ask_model":true`, `false,"ASK_MODEL":true`, `false,"Ask_Model":true`, `false,"a\u017f\u212a_model":true`} {
 		want(t, m.matches("alice", m.box.ID, `{"formula":`+aboutInvoices+`,"ask_model":`+v+`}`), 400, "invalid_body")
 	}
 	// Without the agreement: refused before the formula, the limit and the
@@ -446,6 +449,8 @@ func TestA30TheModelKeyRoutes(t *testing.T) {
 	for _, b := range []string{
 		"", "nonsense", "{}", "[]", `["` + key + `"]`, `{"key":null}`, `{"key":5}`, `{"key":["x"]}`, `{"key":{"k":"x"}}`,
 		`{"key":"a","key":"b"}`, `{"key":"a","other":1}`, `{"Key":"a"}`, `{"key":"a"} {}`, `{"key":"a"}x`, `"` + key + `"`,
+		// A name encoding/json reads as key (in any case; the Kelvin sign is a k there).
+		`{"key":"a","KEY":"b"}`, `{"KEY":"b","key":"a"}`, `{"key":"a","\u212aey":"b"}`, `{"\u212aey":"a"}`,
 		`{"key":"` + strings.Repeat("a", 9000) + `"}`,
 	} {
 		rec := do(h, "PUT", path, token, b)
@@ -541,7 +546,7 @@ func TestA29TheModelNoticeRoute(t *testing.T) {
 	if agreed, err := a.svc.ModelNoticeAgreed(context.Background(), who); err != nil || agreed {
 		t.Fatalf("before: %v %v", agreed, err)
 	}
-	for _, v := range []string{"", "2020-01-01", domain.TermsVersion} {
+	for _, v := range []string{"", "2020-01-01", "2026-11-15"} { // the notice before the one in force
 		want(t, a.call("POST", "/api/v1/account/model-notice", `{"version":"`+v+`"}`, nil), 400, "model_notice_needed")
 	}
 	for _, b := range []string{"", "nonsense", `{"version":"` + domain.ModelNoticeVersion + `","other":1}`, `{"version":5}`} {

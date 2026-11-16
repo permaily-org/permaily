@@ -427,7 +427,7 @@ func TestAccountsAPIInternalErrors(t *testing.T) {
 		t.Fatal("a failure dropped the session's cookie")
 	}
 	// It is logged, without the account it was about.
-	if logs := a.logs.String(); !strings.Contains(logs, "commits of account-acc_…: down") || strings.Contains(logs, id) {
+	if logs := a.logs.String(); !strings.Contains(logs, domain.Unclassified) || strings.Contains(logs, id) {
 		t.Fatalf("logs:\n%s", logs)
 	}
 	h := httpapi.Invitations(broken{err: contracts.ErrTooManyRequests}, slog.New(slog.DiscardHandler))
@@ -944,7 +944,7 @@ func TestAccountsAdminAPI(t *testing.T) {
 			t.Fatalf("%s with the storage down: %d %s", path, rec.Code, rec.Body)
 		}
 	}
-	if logs := a.logs.String(); !strings.Contains(logs, "commits of account-acc_…: down") {
+	if logs := a.logs.String(); !strings.Contains(logs, domain.Unclassified) {
 		t.Fatalf("logs:\n%s", logs)
 	}
 	for _, secret := range []string{"ana@", "example.org", made[0].Account.ID, made[2].Account.ID, "Cho", token} {

@@ -1,0 +1,406 @@
+package httpapi_test
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"errors"
+	"io"
+	"log"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/httpapi"
+	"github.com/permaily-org/permaily/internal/inbox"
+	"github.com/permaily-org/permaily/internal/oauth"
+	"github.com/permaily-org/permaily/internal/services/connections"
+	"github.com/permaily-org/permaily/internal/services/connections/connectionstest"
+)
+
+// A cut while a write of the answer is blocked in the connection, as #135
+// found for MCP and fixed in internal/mcpapi (its release.go), mirrored here:
+// row 6 may not touch internal/mcpapi (ADR 0030, "Implementation pull
+// requests").
+
+// notifiedLease is countedLease, closing finished on its first Finish.
+type notifiedLease struct {
+	*countedLease
+	finished chan struct{}
+	once     sync.Once
+}
+
+func newNotifiedLease() *notifiedLease {
+	return &notifiedLease{countedLease: newLease(), finished: make(chan struct{})}
+}
+
+func (l *notifiedLease) Finish(sent bool) {
+	l.countedLease.Finish(sent)
+	l.once.Do(func() { close(l.finished) })
+}
+
+// lockedBuffer is a log's buffer written by a server's goroutines.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
+// attachmentAPI is the API whose attachment is data under lease.
+func attachmentAPI(data []byte, lease connections.Release, logs io.Writer) http.Handler {
+	fake := &connectionstest.Fake{}
+	grants(fake, apiGrant)
+	fake.AttachmentFunc = func(context.Context, *oauth.Grant, string, int) (*inbox.Attachment, connections.Release, error) {
+		return &inbox.Attachment{Data: data}, lease, nil
+	}
+	return httpapi.VendorAPI(httpapi.ConnectionsConfig{
+		Service: fake, OAuth: testOAuth, Challenge: testChallenge, Log: slog.New(slog.NewJSONHandler(logs, nil)),
+	})
+}
+
+// V45 (#135's finding, for the API): a lease cut while a write of the answer
+// is blocked (a peer that reads nothing) sends no byte more on the wire,
+// over HTTP/1.1 with TLS, as the enclave serves it: the socket's write is
+// interrupted, its deadline set before TLS's Close (which waits for TLS's
+// output lock, held by the blocked write), so nothing the server holds
+// leaves when the peer reads again. The lease is finished once, promptly
+// and not sent, and the request is logged as cut. Over HTTP/2 the answer is
+// refused before its lease is used (TestV45HTTP2ReleasesNoMail).
+func TestV45ACutDuringABlockedWriteSendsNoByteAfterIt(t *testing.T) {
+	t.Run("http1", func(t *testing.T) {
+		data := make([]byte, contracts.VendorAttachmentMax)
+		_, _ = rand.Read(data)
+		lease := newNotifiedLease()
+		var logs lockedBuffer
+		api := attachmentAPI(data, lease, &logs)
+		handled := make(chan struct{})
+		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer close(handled)
+			api.ServeHTTP(w, r)
+		}))
+		srv.Config.ConnContext = httpapi.ConnContext
+		srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+		ln := &pauseListener{Listener: srv.Listener, left: 256 << 10, paused: make(chan struct{}), resume: make(chan struct{})}
+		srv.Listener = ln
+		srv.StartTLS()
+		t.Cleanup(srv.Close)
+		t.Cleanup(ln.unpause) // first: a failure never leaves a write blocked
+
+		done := make(chan struct{})
+		var n int64
+		var proto int
+		var readErr error
+		go func() {
+			defer close(done)
+			r, _ := http.NewRequest("GET", srv.URL+"/v1/messages/mbx_1.1/attachments/0", nil)
+			r.Header.Set("Authorization", "Bearer "+apiToken)
+			resp, err := srv.Client().Do(r)
+			if err != nil {
+				readErr = err
+				return
+			}
+			defer resp.Body.Close()
+			proto = resp.ProtoMajor
+			n, readErr = io.Copy(io.Discard, resp.Body)
+		}()
+		select {
+		case <-ln.paused:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the transfer never blocked")
+		}
+		ln.cut()
+		lease.Cut()
+		select {
+		case <-lease.finished:
+		case <-time.After(2 * time.Second):
+			t.Error("the lease was not finished after the cut while the peer read nothing")
+		}
+		ln.unpause() // the peer reads again
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the response was not aborted")
+		}
+		srv.Close()
+		select { // an HTTP/2 handler may outlive Close
+		case <-handled:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the handler did not return")
+		}
+		if after := ln.afterCut(); after != 0 {
+			t.Errorf("%d bytes left on the wire after the cut", after)
+		}
+		if readErr == nil || n >= int64(len(data)) || (proto != 0 && proto != 1) {
+			t.Errorf("HTTP/%d: the client read %d bytes, error %v", proto, n, readErr)
+		}
+		lease.finishedUnsent(t)
+		if s := logs.String(); !strings.Contains(s, `"outcome":"cut"`) || strings.Contains(s, `"outcome":"ok"`) {
+			t.Errorf("the request was logged %s", s)
+		}
+	})
+}
+
+// finishedUnsent says Finish was called once, unsent.
+func (l *notifiedLease) finishedUnsent(t *testing.T) {
+	t.Helper()
+	l.countedLease.finished(t, false)
+}
+
+// V45 (#135's finding, for the API, and the second review's findings 1 and
+// 3): over HTTP/2, with the connection's abort (httpapi.ConnContext) or
+// without it, a leased answer is refused before the token is checked: 503
+// with Retry-After, nothing of it, its lease never used, logged no_abort. Go's
+// HTTP/2 server writes the stream's last bytes after the handler returned,
+// so nothing could say when they left.
+func TestV45HTTP2ReleasesNoMail(t *testing.T) {
+	const secret = "the bytes of an attachment"
+	for _, hook := range []bool{false, true} {
+		t.Run(map[bool]string{false: "without ConnContext", true: "with ConnContext"}[hook], func(t *testing.T) {
+			lease := newNotifiedLease()
+			var logs lockedBuffer
+			api := attachmentAPI([]byte(secret), lease, &logs)
+			handled := make(chan struct{})
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer close(handled)
+				api.ServeHTTP(w, r)
+			}))
+			srv.EnableHTTP2 = true
+			if hook {
+				srv.Config.ConnContext = httpapi.ConnContext
+			}
+			srv.StartTLS()
+			t.Cleanup(srv.Close)
+			r, _ := http.NewRequest("GET", srv.URL+"/v1/messages/mbx_1.1/attachments/0", nil)
+			r.Header.Set("Authorization", "Bearer "+apiToken)
+			resp, err := srv.Client().Do(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			srv.Close()
+			<-handled // its line is written when it returns
+			if resp.ProtoMajor != 2 || resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("Retry-After") != "5" || strings.Contains(string(body), secret) {
+				t.Fatalf("HTTP/%d %d %s", resp.ProtoMajor, resp.StatusCode, body)
+			}
+			if started, finished, _, _ := lease.State(); started || finished {
+				t.Fatal("the lease was used")
+			}
+			if s := logs.String(); !strings.Contains(s, `"outcome":"no_abort"`) {
+				t.Errorf("the request was logged %s", s)
+			}
+		})
+	}
+}
+
+// lateWriter cuts the lease as the answer is flushed, and records a write
+// deadline set after the handler returned.
+type lateWriter struct {
+	*httptest.ResponseRecorder
+	lease     *countedLease
+	returned  atomic.Bool
+	deadlines atomic.Int32
+	late      atomic.Bool
+}
+
+func (l *lateWriter) Flush() { l.lease.Cut() }
+
+func (l *lateWriter) SetWriteDeadline(time.Time) error {
+	if l.returned.Load() {
+		l.late.Store(true)
+	}
+	l.deadlines.Add(1)
+	return nil
+}
+
+// V45 (#135's finding, for the API): the abort a cut sets off acts while the
+// handler runs and never after it returned, when the writer is no longer
+// its own.
+func TestV45TheCutNeverActsOnTheWriterAfterTheHandlerReturned(t *testing.T) {
+	prev := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(prev)
+	lease := newLease()
+	h := httpapi.Hooked(attachmentAPI([]byte("x"), lease, io.Discard))
+	lw := &lateWriter{ResponseRecorder: httptest.NewRecorder(), lease: lease}
+	r := httptest.NewRequest("GET", "https://"+apiHost+"/v1/messages/mbx_1.1/attachments/0", nil)
+	r.Header.Set("Authorization", "Bearer "+apiToken)
+	func() {
+		defer func() {
+			if v := recover(); v != nil {
+				if err, _ := v.(error); !errors.Is(err, http.ErrAbortHandler) {
+					panic(v)
+				}
+			}
+		}()
+		h.ServeHTTP(lw, r)
+	}()
+	lw.returned.Store(true)
+	for end := time.Now().Add(time.Second); lw.deadlines.Load() == 0 && time.Now().Before(end); {
+		runtime.Gosched()
+	}
+	if lw.deadlines.Load() == 0 || lw.late.Load() {
+		t.Fatalf("deadlines %d, one after the handler returned: %v", lw.deadlines.Load(), lw.late.Load())
+	}
+}
+
+// pauseListener's connections write until left bytes have gone, then block
+// the next large write as a peer that reads nothing does, until the write
+// is interrupted (a write deadline that passed, or Close) or the peer reads
+// again (unpause); it counts what reaches the wire after cut.
+type pauseListener struct {
+	net.Listener
+	paused, resume chan struct{}
+
+	mu          sync.Mutex
+	left        int
+	isCut       bool
+	after       int
+	pauseOnce   sync.Once
+	unpauseOnce sync.Once
+}
+
+func (l *pauseListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &pauseConn{Conn: c, l: l, interrupted: make(chan struct{})}, nil
+}
+
+func (l *pauseListener) unpause() { l.unpauseOnce.Do(func() { close(l.resume) }) }
+
+func (l *pauseListener) cut() {
+	l.mu.Lock()
+	l.isCut = true
+	l.mu.Unlock()
+}
+
+func (l *pauseListener) afterCut() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.after
+}
+
+type pauseConn struct {
+	net.Conn
+	l           *pauseListener
+	interrupted chan struct{}
+	stop        sync.Once
+}
+
+func (c *pauseConn) interrupt() { c.stop.Do(func() { close(c.interrupted) }) }
+
+func (c *pauseConn) Write(p []byte) (int, error) {
+	c.l.mu.Lock()
+	pause := c.l.left <= 0 && len(p) > 1024
+	c.l.left -= len(p)
+	c.l.mu.Unlock()
+	if pause {
+		c.l.pauseOnce.Do(func() { close(c.l.paused) })
+		select {
+		case <-c.l.resume:
+		case <-c.interrupted:
+			return 0, os.ErrDeadlineExceeded
+		}
+	}
+	select {
+	case <-c.interrupted:
+		return 0, os.ErrDeadlineExceeded
+	default:
+	}
+	n, err := c.Conn.Write(p)
+	c.l.mu.Lock()
+	if c.l.isCut {
+		c.l.after += n
+	}
+	c.l.mu.Unlock()
+	return n, err
+}
+
+func (c *pauseConn) SetWriteDeadline(t time.Time) error {
+	if !t.IsZero() && !t.After(time.Now()) {
+		c.interrupt()
+	}
+	return c.Conn.SetWriteDeadline(t)
+}
+
+func (c *pauseConn) SetDeadline(t time.Time) error {
+	if err := c.SetWriteDeadline(t); err != nil {
+		return err
+	}
+	return c.SetReadDeadline(t)
+}
+
+func (c *pauseConn) Close() error {
+	c.interrupt()
+	return c.Conn.Close()
+}
+
+// keyUpdateConn pauses one wire write once armed, with the same
+// unblock-on-close and unblock-on-expired-deadline semantics as net.Conn. It
+// never holds TLS's locks itself; any such lock is the unmodified Go TLS
+// server's.
+type keyUpdateConn struct {
+	net.Conn
+	armed       atomic.Bool
+	paused      chan struct{}
+	resume      chan struct{}
+	interrupted chan struct{}
+	once        sync.Once
+}
+
+func (c *keyUpdateConn) Write(p []byte) (int, error) {
+	if c.armed.CompareAndSwap(true, false) {
+		close(c.paused)
+		select {
+		case <-c.resume:
+		case <-c.interrupted:
+			return 0, os.ErrDeadlineExceeded
+		}
+	}
+	select {
+	case <-c.interrupted:
+		return 0, os.ErrDeadlineExceeded
+	default:
+	}
+	return c.Conn.Write(p)
+}
+
+func (c *keyUpdateConn) Close() error {
+	c.once.Do(func() { close(c.interrupted) })
+	return c.Conn.Close()
+}
+
+func (c *keyUpdateConn) SetWriteDeadline(d time.Time) error {
+	if !d.IsZero() && !d.After(time.Now()) {
+		c.once.Do(func() { close(c.interrupted) })
+	}
+	return c.Conn.SetWriteDeadline(d)
+}
+
+func (c *keyUpdateConn) SetDeadline(d time.Time) error {
+	if e := c.SetWriteDeadline(d); e != nil {
+		return e
+	}
+	return c.SetReadDeadline(d)
+}

@@ -110,7 +110,7 @@ The site has no sign-up or log-in page of its own. The old addresses `/signup/` 
 ## Not connected yet
 
 - **Contact form.** It doesn't send anything. It's marked `data-no-backend`.
-- **Agreeing to the terms.** The legal pages (Terms, Privacy, Data processing, Subprocessors, Deleting your data) are written, without a lawyer, and `docs/legal.md` holds the reasoning and what is open. The app does not record acceptance of the terms yet (engineering item 1 there).
+- **Agreeing to the terms.** The legal pages (Terms, Privacy, Data processing, Subprocessors, Deleting your data) are written, without a lawyer, and `docs/legal.md` holds the reasoning and what is open. The app records which version of the terms each account agreed to, and when, since v0.11.0 (engineering item 1 there); `TERMS_VERSION` in `src/config/legal.ts` is the service's and the web app's too.
 - **The domain.** `permaily.com` is set in `astro.config.mjs` and is used for canonical links, the sitemap and the social image.
 - **API reference.** See [Generated pages](#generated-pages-not-wired-up-yet).
 - **A 301 for the old sign-up and log-in addresses.** A rule on the Amplify app (`deploy/tofu/site.tf`) could send `/signup/` and `/login/` to the app with a 301, so links elsewhere pass on. The meta refresh pages work until then.

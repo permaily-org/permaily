@@ -9,6 +9,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,6 +26,7 @@ import (
 	"github.com/permaily-org/permaily/internal/decide"
 	"github.com/permaily-org/permaily/internal/decide/decidetest"
 	"github.com/permaily-org/permaily/internal/domain"
+	"github.com/permaily-org/permaily/internal/enclave"
 	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/idp/idptest"
 	"github.com/permaily-org/permaily/internal/inbox"
@@ -74,6 +77,14 @@ type platform struct {
 	// model asks the model what depends on meaning (ADR 0028), and holds
 	// its key, its spend, its canary and its alarms; nil without mailboxes.
 	model *decisions.Service
+	// connections is the authorization server's state and the connections
+	// it makes (ADR 0030); nil without the model. connectionRecords is the
+	// one strict Anchored of its records.
+	connections       *composedConnections
+	connectionRecords *store.Anchored
+	// records are the Anchored of each kind of record, by kind, for the
+	// test that no name is read through two (dev mode only).
+	records map[string]*store.Anchored
 }
 
 // devAhead is how far the clock of dev mode runs ahead of the real one, in
@@ -129,6 +140,102 @@ func newDevStorage() (*devStorage, error) {
 	mem := store.NewMemory()
 	mem.Now = devClock
 	return &devStorage{mem: mem, commits: store.NewMemoryCommits(), keys: local}, nil
+}
+
+// devConfig is what dev mode alone reads: where the played vendors are.
+// Without it dev mode reaches no vendor at all.
+type devConfig struct {
+	// vendors is the address every vendor's name is dialled at, and
+	// vendorsCA the PEM file of the only roots their certificates are
+	// checked against.
+	vendors, vendorsCA string
+}
+
+func devFlags(fs *flag.FlagSet, d *devConfig) {
+	fs.StringVar(&d.vendors, "dev-vendors", "", "dev mode: address of the played vendors, which every vendor's name is dialled at; empty reaches no vendor")
+	fs.StringVar(&d.vendorsCA, "dev-vendors-ca", "", "dev mode: PEM file of the only roots the played vendors' certificates are checked against")
+}
+
+// devVendors, when a test sets it, is the client dev mode fetches vendors'
+// documents and key sets with: a played vendor's. It takes the place of
+// -dev-vendors.
+var devVendors atomic.Pointer[http.Client]
+
+// errNoVendor is every fetch of dev mode with no played vendor.
+var errNoVendor = errors.New("dev mode reaches no vendor")
+
+// devVendorHTTP is the client of dev mode's vendors: the test's, else one
+// that dials the played vendors' address for every name and checks their
+// certificates against their roots alone, over HTTP/2 only, as the image's
+// vendor egress client does; with neither, one that dials nothing. No real
+// vendor is ever reached from dev mode.
+func devVendorHTTP(d devConfig) *http.Client {
+	if hc := devVendors.Load(); hc != nil {
+		return hc
+	}
+	if d.vendors == "" {
+		return &http.Client{Transport: &http.Transport{
+			DialContext: func(context.Context, string, string) (net.Conn, error) { return nil, errNoVendor },
+		}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	}
+	roots := x509.NewCertPool()
+	if pem, err := os.ReadFile(d.vendorsCA); err == nil {
+		roots.AppendCertsFromPEM(pem)
+	}
+	return playedVendorClient(d.vendors, roots)
+}
+
+// playedVendorClient is the image's vendor egress client (HTTPS, HTTP/2
+// only, TLS 1.2 or later, no redirect, no cookie, no compression, headers
+// and time bounded) dialling addr for every name, against roots alone.
+func playedVendorClient(addr string, roots *x509.CertPool) *http.Client {
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+		},
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			RootCAs:    roots,
+			NextProtos: []string{"h2"},
+			VerifyConnection: func(cs tls.ConnectionState) error {
+				if cs.NegotiatedProtocol != "h2" {
+					return errors.New("the played vendor does not speak HTTP/2")
+				}
+				return nil
+			},
+		},
+		Protocols:              new(http.Protocols),
+		DisableCompression:     true,
+		MaxResponseHeaderBytes: enclave.VendorEgressHeaderMaxBytes,
+		TLSHandshakeTimeout:    enclave.VendorEgressTimeout,
+	}
+	tr.Protocols.SetHTTP2(true)
+	return &http.Client{
+		Transport:     tr,
+		Timeout:       enclave.VendorEgressTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+// devPlatforms are the platforms this process started in dev mode, for the
+// tests that look at what each composed.
+var devPlatforms platformList
+
+type platformList struct {
+	mu sync.Mutex
+	ps []*platform
+}
+
+func (l *platformList) add(p *platform) {
+	l.mu.Lock()
+	l.ps = append(l.ps, p)
+	l.mu.Unlock()
+}
+
+func (l *platformList) all() []*platform {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]*platform(nil), l.ps...)
 }
 
 // defaultSuperAdmin is the super admin's address in dev mode, which a test or
@@ -217,9 +324,13 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 		<-ctx.Done()
 		providers.Close()
 	}()
+	// Each kind of record has an Anchored of its own, as in the enclave.
+	accountRecords := &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Now: devClock}
+	mailboxRecords := &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock}
+	modelRecords := &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock}
 	if p.accounts, err = accounts.New(accounts.Config{
 		// As in the enclave: only the newest version of an account's record is kept.
-		Records: &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Now: devClock}, Entries: mem,
+		Records: accountRecords, Entries: mem,
 		Keys: local, Mailer: outbox, AppURL: appURL, SuperAdmin: cfg.superAdmin, Log: log, Now: devClock, Terms: devTermsVersion,
 		Providers: &idp.Client{HTTP: &http.Client{}, RedirectURL: appURL + providerCallback, Now: devClock, Endpoints: providers.Endpoints()},
 	}); err != nil {
@@ -252,7 +363,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	// The mailboxes of accounts, with their own strict records, and SMTP on
 	// -smtp-port (2525 by default in dev mode).
 	if p.mailboxes, err = mailboxes.New(mailboxes.Config{
-		Records: &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock},
+		Records: mailboxRecords,
 		Storage: mem, Keys: local, Accounts: p.accounts, Notifier: p.accounts, Domain: hosts.Inbox, Log: log, Now: devClock,
 		Auth: msgauth.DKIM(net.DefaultResolver.LookupTXT),
 	}); err != nil {
@@ -265,7 +376,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	// their own, its alarms in the outbox. No key is set: the operator gives
 	// one (PUT /v1/admin/model-key) and the model is off until then.
 	model := modelParts{
-		cfg: cfg.model, records: &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock},
+		cfg: cfg.model, records: modelRecords,
 		entries: mem, keys: local, mailer: outbox, superAdmin: cfg.superAdmin, log: log, now: devClock,
 	}
 	if hc := devModelClient.Load(); hc != nil {
@@ -277,6 +388,17 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	if p.model, err = composeModel(model); err != nil {
 		return nil, err
 	}
+	// Connections, as in the enclave: their records strict in one Anchored
+	// of their own, and vendors played, never a real one (devVendorHTTP).
+	p.connectionRecords = &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock}
+	if p.connections, err = composeConnections(connectionsParts{
+		oauth: oauthConfig(hosts, cfg.oauthPort()), domain: cfg.domain, records: p.connectionRecords, entries: mem, keys: local,
+		vendorHTTP: devVendorHTTP(cfg.dev), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model, now: devClock,
+	}); err != nil {
+		return nil, err
+	}
+	p.records = map[string]*store.Anchored{"accounts": accountRecords, "mailboxes": mailboxRecords, "model": modelRecords, "connections": p.connectionRecords}
+	devPlatforms.add(p)
 	port := cfg.smtpPort
 	if port == 25 {
 		port = 2525 // unprivileged default for local runs

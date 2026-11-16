@@ -386,6 +386,15 @@ func TestCreations(t *testing.T) {
 		{name: "the type under another spelling", set: func(a *webauthntest.Authenticator) {
 			a.EditClientData = func(d []byte) []byte { return bytes.Replace(d, []byte(`"type"`), []byte(`"TYPE"`), 1) }
 		}, want: stricter(jsonOfGo)},
+		{name: "a member of the client data twice in another case", set: func(a *webauthntest.Authenticator) {
+			a.EditClientData = before(`,"TYPE":"webauthn.create"`)
+		}, want: stricter(jsonOfGo)},
+		{name: "a member of the client data twice in other letters", set: func(a *webauthntest.Authenticator) {
+			a.EditClientData = before(`,"cro\u017fsOrigin":false`) // the long s is an s to encoding/json
+		}, want: stricter(jsonOfGo)},
+		{name: "the origin twice in another case", set: func(a *webauthntest.Authenticator) {
+			a.EditClientData = before(`,"Origin":"https://evil.example.com"`)
+		}, want: refused},
 
 		{name: "no credential flag", set: func(a *webauthntest.Authenticator) { a.EditAuthData = flag(0, 0x40) }, want: refused},
 		{name: "authenticator data cut inside the fixed part", set: func(a *webauthntest.Authenticator) {
@@ -518,6 +527,12 @@ func TestUses(t *testing.T) {
 				{name: "a member of the client data twice", set: func(a *webauthntest.Authenticator) {
 					a.EditClientData = before(`,"type":"webauthn.get"`)
 				}, want: stricter(jsonOfGo)},
+				{name: "a member of the client data twice in another case", set: func(a *webauthntest.Authenticator) {
+					a.EditClientData = before(`,"Type":"webauthn.get"`)
+				}, want: stricter(jsonOfGo)},
+				{name: "the origin twice in another case", set: func(a *webauthntest.Authenticator) {
+					a.EditClientData = before(`,"ORIGIN":"https://evil.example.com"`)
+				}, want: refused},
 
 				{name: "the signature of another answer", edit: func(u *use) { u.signature = otherSignature }, want: refused},
 				{name: "the signature of another answer, with its authenticator data", edit: func(u *use) {

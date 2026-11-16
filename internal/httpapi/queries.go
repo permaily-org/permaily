@@ -166,13 +166,26 @@ func writeInvalidBody(w http.ResponseWriter) {
 // nothing after it, and returns each member's value as it was sent: a
 // formula is read again, strictly, by query.Parse, from its own bytes. A
 // member twice is refused, as Parse refuses one inside a formula: two
-// readers would read it differently. Anything else is answered invalid_body.
+// readers would read it differently. A name is matched exactly, so one that
+// encoding/json would take for one of names (in another case, or with the
+// Kelvin sign or the long s) is not among them and is refused too. Anything
+// else is answered invalid_body.
 func readObject(w http.ResponseWriter, r *http.Request, names ...string) (map[string]json.RawMessage, bool) {
 	return readObjectUpTo(w, r, maxQueryBody, names...)
 }
 
 // readObjectUpTo is readObject with a body of at most limit bytes.
 func readObjectUpTo(w http.ResponseWriter, r *http.Request, limit int64, names ...string) (map[string]json.RawMessage, bool) {
+	out, ok := parseObjectUpTo(w, r, limit, names...)
+	if !ok {
+		writeInvalidBody(w)
+	}
+	return out, ok
+}
+
+// parseObjectUpTo is readObjectUpTo answering nothing: false for a body it
+// does not take, which its caller answers.
+func parseObjectUpTo(w http.ResponseWriter, r *http.Request, limit int64, names ...string) (map[string]json.RawMessage, bool) {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	out := map[string]json.RawMessage{}
 	ok := func() bool {
@@ -201,7 +214,6 @@ func readObjectUpTo(w http.ResponseWriter, r *http.Request, limit int64, names .
 		return errors.Is(err, io.EOF)
 	}()
 	if !ok {
-		writeInvalidBody(w)
 		return nil, false
 	}
 	return out, true

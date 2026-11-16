@@ -243,6 +243,7 @@ func (s *Service) deleteAccount(ctx context.Context, by *acting, id string) (*co
 		s.cfg.Log.Info("accounts: account closing")
 		s.notify(ctx, noticeDeletionAsked, deletionAskedMail(doc, s.rp.ID, s.now()))
 	}
+	s.fenceConnections(ctx, doc.ID)
 	return s.record(ctx, doc)
 }
 

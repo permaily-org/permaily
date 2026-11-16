@@ -1176,6 +1176,12 @@ func TestMailEndToEnd(t *testing.T) {
 	modelProvider := decidetest.NewProvider(t, modelTab)
 	devModelClient.Store(modelProvider.Client())
 	t.Cleanup(func() { devModelClient.Store(nil) })
+	// The vendors, played: dev mode fetches their documents from here and
+	// from nowhere else (V57).
+	vendor := newPlayedVendor(t, "apps.vendor-e2e.org", "agents.vendor-e2e.org")
+	devVendors.Store(vendor.client())
+	t.Cleanup(func() { devVendors.Store(nil) })
+	platformsBefore := len(devPlatforms.all())
 	const admin = "pma_mail_e2e_token"
 	sum := sha256.Sum256([]byte(admin))
 	var logs lockedBuffer
@@ -1184,6 +1190,9 @@ func TestMailEndToEnd(t *testing.T) {
 		cfg := config{
 			domain: "permaily.test", acmeDirectory: "unused", port: freePort(t), smtpPort: freePort(t), mtaSTSMode: "testing",
 			adminTokenSHA256: hex.EncodeToString(sum[:]), model: modelConfig{organization: "org-e2e-7f3a", project: "proj-e2e-7f3a"},
+			// Both behind one address, as the deployment's two are behind
+			// 443: one issuer and one pair of resources.
+			clientPort: 8443,
 		}
 		enclaves = append(enclaves, cfg)
 		go func() {
@@ -1198,7 +1207,7 @@ func TestMailEndToEnd(t *testing.T) {
 	}
 	// A browser of its own for each person, whose requests go to one enclave
 	// or the other.
-	type browser struct{ jar http.CookieJar }
+	type browser = e2eBrowser
 	// fetchAs asks as a browser whose request says it came from site (the
 	// Sec-Fetch-Site of a request to the app's host; "" sends none).
 	var fetchAs func(b browser, enclave int, method, path, body, site string) mailAnswer
@@ -1710,14 +1719,25 @@ func TestMailEndToEnd(t *testing.T) {
 		t.Fatalf("without a session: %d", a.code)
 	}
 
+	// Connections (V47): a vendor's connection end to end, through both
+	// enclaves.
+	ps := devPlatforms.all()[platformsBefore:]
+	if len(ps) != 2 {
+		t.Fatalf("%d platforms", len(ps))
+	}
+	connectionSecrets := connectionsEndToEnd(t, e2eWorld{
+		enclaves: enclaves, call: call, newBrowser: newBrowser, outboxCode: outboxCode, send: send, modelTab: modelTab, modelKey: modelKey,
+		vendor: vendor, bea: bea, mailbox: beas.ID, address: beas.Address, platforms: ps,
+	})
+
 	out := logs.String()
 	if !strings.Contains(out, "mailboxes: a message was stored") {
 		t.Fatalf("the log does not record the deliveries:\n%s", out)
 	}
-	for _, secret := range []string{"alice", "ana@", "bea@", "example.org", work.Address, home.Address, beas.Address, work.ID, home.ID, beas.ID, msg,
+	for _, secret := range append([]string{"alice", "ana@", "bea@", "example.org", work.Address, home.Address, beas.Address, work.ID, home.ID, beas.ID, msg,
 		"Booking", "Friday", "zebra", "Receipt", "onerror", "evil", "script", started.Attempt,
 		"walrus", "Walrus", "quarterly", "Quarterly", "news", "NEWS", "4b1d", check.ID, check.ID[len("qry_"):], check.Sentence.Text, "your mailbox", newsID,
-		"otter-9c2e", "ignore the email", "phone number", "invoices", "quarterly reports", "the developer says", modelKey, keyPrint} {
+		"otter-9c2e", "ignore the email", "phone number", "invoices", "quarterly reports", "the developer says", modelKey, keyPrint}, connectionSecrets...) {
 		if strings.Contains(out, secret) {
 			t.Fatalf("the log contains %q", secret)
 		}

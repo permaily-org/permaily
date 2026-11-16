@@ -1,0 +1,15 @@
+{
+  "resource": "https://mcp.permaily.com/mcp",
+  "authorization_servers": [
+    "https://api.permaily.com"
+  ],
+  "scopes_supported": [
+    "mail.sender",
+    "mail.subject",
+    "mail.body"
+  ],
+  "bearer_methods_supported": [
+    "header"
+  ],
+  "resource_name": "Permaily"
+}

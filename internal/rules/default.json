@@ -1,0 +1,81 @@
+[
+  {
+    "v": 1,
+    "all": [
+      {
+        "any": [
+          { "var": "subject", "op": "contains", "value": "verification code" },
+          { "var": "subject", "op": "contains", "value": "security code" },
+          { "var": "subject", "op": "contains", "value": "sign-in code" },
+          { "var": "subject", "op": "contains", "value": "sign in code" },
+          { "var": "subject", "op": "contains", "value": "login code" },
+          { "var": "subject", "op": "contains", "value": "log-in code" },
+          { "var": "subject", "op": "contains", "value": "one-time code" },
+          { "var": "subject", "op": "contains", "value": "one-time password" },
+          { "var": "subject", "op": "contains", "value": "one time password" },
+          { "var": "subject", "op": "contains", "value": "passcode" },
+          { "var": "subject", "op": "contains", "value": "authentication code" },
+          { "var": "subject", "op": "contains", "value": "two-factor" },
+          { "var": "subject", "op": "contains", "value": "2-step verification" },
+          { "var": "subject", "op": "contains", "value": "password reset" },
+          { "var": "subject", "op": "contains", "value": "reset your password" },
+          { "var": "subject", "op": "contains", "value": "reset password" },
+          { "var": "subject", "op": "contains", "value": "código de verificación" },
+          { "var": "subject", "op": "contains", "value": "código de seguridad" },
+          { "var": "subject", "op": "contains", "value": "código de acceso" },
+          { "var": "subject", "op": "contains", "value": "restablecer tu contraseña" },
+          { "var": "subject", "op": "contains", "value": "restablecer la contraseña" }
+        ]
+      }
+    ]
+  },
+  {
+    "v": 1,
+    "all": [
+      {
+        "any": [
+          { "var": "body", "op": "contains", "value": "verification code" },
+          { "var": "body", "op": "contains", "value": "security code" },
+          { "var": "body", "op": "contains", "value": "sign-in code" },
+          { "var": "body", "op": "contains", "value": "sign in code" },
+          { "var": "body", "op": "contains", "value": "login code" },
+          { "var": "body", "op": "contains", "value": "log-in code" },
+          { "var": "body", "op": "contains", "value": "one-time code" },
+          { "var": "body", "op": "contains", "value": "one-time password" },
+          { "var": "body", "op": "contains", "value": "one time password" },
+          { "var": "body", "op": "contains", "value": "passcode" },
+          { "var": "body", "op": "contains", "value": "authentication code" },
+          { "var": "body", "op": "contains", "value": "two-factor" },
+          { "var": "body", "op": "contains", "value": "2-step verification" },
+          { "var": "body", "op": "contains", "value": "password reset" },
+          { "var": "body", "op": "contains", "value": "reset your password" },
+          { "var": "body", "op": "contains", "value": "reset password" },
+          { "var": "body", "op": "contains", "value": "código de verificación" },
+          { "var": "body", "op": "contains", "value": "código de seguridad" },
+          { "var": "body", "op": "contains", "value": "código de acceso" },
+          { "var": "body", "op": "contains", "value": "restablecer tu contraseña" },
+          { "var": "body", "op": "contains", "value": "restablecer la contraseña" }
+        ]
+      }
+    ]
+  },
+  {
+    "v": 1,
+    "all": [
+      {
+        "any": [
+          {
+            "var": "message",
+            "op": "about",
+            "value": "a sign-in, login or verification code, or a one-time password"
+          },
+          {
+            "var": "message",
+            "op": "about",
+            "value": "resetting a password or recovering an account"
+          }
+        ]
+      }
+    ]
+  }
+]

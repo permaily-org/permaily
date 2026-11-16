@@ -124,6 +124,24 @@ func TestStatus(t *testing.T) {
 		}
 	})
 
+	t.Run("the connections", func(t *testing.T) {
+		conns := &attestation.ConnectionsStatus{Issuer: "https://api.permaily.test", ClientDocuments: true, CodeReuse: "denied", Refused: map[string]int64{"invalid_token": 2}}
+		rec := call(httpapi.Status(httpapi.StatusSources{Connections: func() *attestation.ConnectionsStatus { return conns }}), http.MethodGet)
+		var got attestation.Status
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || !reflect.DeepEqual(got.Connections, conns) {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body)
+		}
+		// An image without connections has no section, not an empty one.
+		for name, src := range map[string]httpapi.StatusSources{
+			"no source":      {},
+			"nothing to say": {Connections: func() *attestation.ConnectionsStatus { return nil }},
+		} {
+			if rec := call(httpapi.Status(src), http.MethodGet); rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"connections"`) {
+				t.Fatalf("%s: status %d: %s", name, rec.Code, rec.Body)
+			}
+		}
+	})
+
 	t.Run("other methods", func(t *testing.T) {
 		if rec := call(httpapi.Status(httpapi.StatusSources{}), http.MethodPost); rec.Code != http.StatusMethodNotAllowed {
 			t.Fatalf("status %d", rec.Code)
