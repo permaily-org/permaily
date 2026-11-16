@@ -27,21 +27,30 @@ regexes = [
 
 [[allowlists]]
 description = "the OpenAI client's tests (ADR 0028) send a made-up key, sk-proj-test…, to played providers on the test machine; it was never a key of any OpenAI project, and the scan reads every branch's history"
-condition = "AND"
-paths = ['''^internal/decide/openai/openai_test\.go$''']
 regexTarget = "match"
 regexes = ['''^testKey = "sk-proj-test[A-Za-z0-9_-]*"$''']
 
 [[allowlists]]
 description = "the model key route's tests (ADR 0028, pull request 4) send a made-up key to played enclaves on the test machine; it was never a key of any OpenAI project"
-condition = "AND"
-paths = ['''^internal/httpapi/model_test\.go$''']
 regexTarget = "match"
 regexes = ['''^key = "sk-proj-Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z"$''']
 
 [[allowlists]]
 description = "model-key.sh's tests (ADR 0028, pull request 4) send a made-up key to a played enclave on the test machine; it was never a key of any OpenAI project"
-condition = "AND"
-paths = ['''^scripts/operator-scripts\.test\.ts$''']
 regexTarget = "match"
 regexes = ['''^key = 'sk-proj-Mk7q2Zr9Wd4Lp1Xn8Tv3'$''']
+
+[[allowlists]]
+description = "the composition's tests (ADR 0028, pull request 5) give made-up keys to a played provider on the test machine: A34's three keys of two enclaves; they were never keys of any OpenAI project"
+regexTarget = "match"
+regexes = ['''^pm-a34-first-key-1c2d", "pm-a34-second-key-3e4f"$''']
+
+[[allowlists]]
+description = "the composition's tests (ADR 0028, pull request 5) give a made-up key to a played provider on the test machine: A34's canary key; it was never a key of any OpenAI project"
+regexTarget = "match"
+regexes = ['''^key = "pm-a34-canary-key-7d8e"$''']
+
+[[allowlists]]
+description = "from pull request 5 of ADR 0028 on, a test's made-up key is written sk-proj-test- and then letters, digits, - or _: only assigned with = to a name holding key or Key, the whole value between quotes; no OpenAI key starts with sk-proj-test-; no path is named, because gitleaks dir skips a named path's whole file whatever its regexes"
+regexTarget = "match"
+regexes = ['''^[A-Za-z_]*[Kk]ey[A-Za-z_]* = ["']sk-proj-test-[A-Za-z0-9_-]+["']$''']

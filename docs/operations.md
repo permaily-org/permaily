@@ -324,6 +324,49 @@ At each provider's console the application is a web application whose only redir
 - **A provider's sign-in fails for everyone.** The enclave's log says `provider` and a fixed reason: the secret or the redirect address is wrong at the provider (`invalid_provider_app`), or the provider cannot be reached (an old `permaily-host` without its hosts in the allowlist). Rotating a secret at the provider means setting it again here.
 - **Meta and Microsoft work accounts** always ask the person to confirm an address by mail the first time: neither vouches for the address (ADR 0017).
 
+## The model (OpenAI)
+
+From the release that composes it (ADR 0028), the enclave asks OpenAI's Decisions API (`gpt-6-luna` at `https://api.openai.com/v1/decisions`, prompt cache off on every request) what exact conditions cannot settle, for the owner's previews of a formula (`ask_model`), and only for an account that agreed to the model's notice. It needs a key, which only the operator gives; without one the model is off and what needs it stays in `needs_model`.
+
+**The OpenAI project.** The key is of a project of its own, `permaily-enclave`, in Permaily's OpenAI organisation, and of nothing else: give it to no other program, workstation or service. The eval of ADR 0028 (`go test -tags modeleval`) uses another key of another project, `permaily-eval`, on the owner's workstation. In OpenAI's dashboard, for `permaily-enclave`:
+
+1. Restrict the key to the Decisions endpoint where OpenAI's permissions allow it.
+2. Set the project's monthly budget to **50 USD** and turn its **hard enforcement** on, so OpenAI refuses calls past it (`project_spend_limit_exceeded`); set its notification at **25 USD**, which reaches the owner by OpenAI's mail. The enclave's own guard holds the same 50 USD for every enclave together, before any request leaves, and is what `/status` shows; the project's limit is the stop for what the enclave cannot count (the key used elsewhere, or a bug in its count). Neither the enclave nor a verifier can see whether this setting is on: record it, with a screenshot of the dashboard, in docs/acceptance.md (A35) whenever it changes.
+3. Put the organisation's identifier (`org-…`) and the project's (`proj_…`) in `deploy/enclave.json`, `model.organization` and `model.project`, before the release: the enclave sends them as `OpenAI-Organization` and `OpenAI-Project`, so a key of another organisation or project is refused by OpenAI rather than used. While they are empty the requests pin neither, `/status` leaves them out, and `permaily-verify` warns on every run. They are in the image (PCR0): changing them is a release.
+
+**Set, replace or remove the key**, over the connection pinned to the attested key ("The operator's scripts verify first"):
+
+```sh
+export PERMAILY_RELEASE=<running tag> PERMAILY_PCRS=<dir>/pcrs.json
+scripts/model-key.sh                             # whether a key is set, since when, and its fingerprint
+pass show permaily/openai | scripts/model-key.sh set   # or: scripts/model-key.sh set, which asks without showing it
+printf %s "$key" | sha256sum | cut -c1-16        # your copy's fingerprint, to compare
+scripts/model-key.sh remove                      # the model is off from then
+```
+
+The key is sealed in the record `model-key` and never answered back, logged or shown. A key set or removed through one enclave is used, or stops being used, by every other within a minute. To rotate it: make the new key in the project, `set` it, check the fingerprint, then revoke the old one in OpenAI's dashboard. After starting over (a new deployment) the key has to be set again.
+
+**The limits** are compiled into the image (`deploy/enclave.json`, `model`): 50 USD a month for every enclave together (`month_limit_usd`), an alarm when a day's reservations pass 10 USD (`day_alarm_usd`), and 0.50 USD a day for one account in one enclave (`account_day_usd`). A staging image (`.#eif-staging`) lowers the month's limit to 1 USD and the day's alarm to 0.20 USD (`staging.model`), so A35 can reach both. `/status` shows the limits and the guard's state (`ok`, `month_limit`, `provider_limit`, `key_refused`, `unreadable`), never an amount spent: the bill is at OpenAI.
+
+**The alarm** is mail through SES to the super admin's address (`super_admin`), at most once a day for each kind, sent by whichever enclave runs, and again every minute until SES takes it. Its words are fixed and hold no amount tied to an account and nothing of anyone's mail. What to do:
+
+- **The model's spend passed the day's alarm**: nothing is held back yet. Look at the project's usage at OpenAI and at `/status`'s `calls`: a person's previews are bounded by their share, so a jump means many accounts or a bug.
+- **The model's monthly limit was reached**: nothing new is asked until the month ends (UTC); kept answers are still used. Only a release changes the limit.
+- **OpenAI's limit was reached**: the project's budget or the organisation's credit ran out. The enclave probes every ten minutes and asks again once one is answered. If the enclave's own guard is not at its limit, someone used the key elsewhere, or OpenAI counts what the enclave does not: rotate the key and find out which.
+- **OpenAI refused the model's key**: it was revoked, belongs to another project than `model.project`, or the project was deleted. Set a key of `permaily-enclave`; the enclave tries a new key at once.
+- **The model's canary saw an answer move**: see "When the canary changes".
+- **No canary check completed for two days**: look at the enclave's logs for `canary` lines (`decisions: the canary's check did not complete`), at the guard on `/status` (a check is reserved like any call, and is not sent with no key or at a limit), and at whether the host still allows `api.openai.com:443`.
+
+The enclave's log says, by kind alone, when an alarm could not be added or sent (`decisions: an alarm could not be added; it is kept to add again`): the mail system's error is never logged, as it carries addresses. A lost or forked record of the model (`/status` `anchors.regressions` with the name `model`, without versions) stops what needs it: the spend's for the rest of the month, the key's until it is set again.
+
+**When the canary changes.** Once a day an enclave asks 156 fixed synthetic statements (`internal/decide/canary.json`) and compares the answers with what was measured for the prompt version in force. `changed` on `/status` (and a warning of `permaily-verify`) says an answer moved past 0.02, changed a classification, or another model answered; the service is not paused and kept answers do not change. Then:
+
+1. Run the eval on the whole corpus with the eval project's key, never the enclave's: `OPENAI_API_KEY=… PERMAILY_EVAL_ORG=org-… PERMAILY_EVAL_PROJECT=proj_… go test -tags modeleval -run TestA10 -v -timeout 30m ./internal/decide/openai/` (ADR 0028, A10; `eval_test.go` says the rest).
+2. If its thresholds still hold, re-measure the canary and release it as the new baseline (`canary.json`'s values, so its SHA-256 and the canary's state are new); if they do not, release a new prompt version, or an image without the model.
+3. Write down in ADR 0028 what the eval found and what was released.
+
+`permaily-verify` also warns when the canary's baseline is not the SHA-256 of the `canary.json` of the commit the enclave runs: the image compares answers with another release's.
+
 ## Outgoing mail
 
 The enclave sends its own mail (sign-in messages) through SES in `us-east-2`, from the address in `mail_from` of `deploy/enclave.json`, on a domain of its own (`deploy/tofu/ses.tf`: the identity, DKIM, the bounce domain with SPF, DMARC).

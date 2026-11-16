@@ -69,6 +69,14 @@ type config struct {
 	awsAccount       string
 	adminTokenSHA256 string
 	releases         provenance.Policy
+
+	// model is what the image says of the model it asks (ADR 0028,
+	// deploy/enclave.json "model"); it is composed wherever the mailboxes
+	// of accounts are.
+	model modelConfig
+	// modelTicks is never a flag: the image's model runs on tickers, and
+	// only a test gives ticks of its own.
+	modelTicks modelTicks
 }
 
 func main() {
@@ -98,6 +106,7 @@ func main() {
 	flag.StringVar(&cfg.mailFrom, "mail-from", "", "address the service's own mail is sent from, through SES; empty leaves accounts off")
 	flag.StringVar(&cfg.superAdmin, "super-admin", defaultSuperAdmin, "contact address of the super admin's account; empty leaves the admin panel to nobody")
 	flag.StringVar(&cfg.dohEndpoint, "doh-endpoint", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS endpoint for DKIM lookups")
+	modelFlags(flag.CommandLine, &cfg.model)
 	flag.Parse()
 
 	// Logs go to the console (visible only in debug mode) and to the parent
@@ -170,6 +179,11 @@ func run(cfg config, log *slog.Logger) error {
 		// Every enclave sweeps what disconnected mailboxes left.
 		go p.mailboxes.Run(ctx)
 	}
+	if p.model != nil {
+		// Every enclave runs the day's canary, under its lease, and sends the
+		// alarms any image left due (ADR 0028).
+		runModel(ctx, p.model, log, cfg.modelTicks)
+	}
 	if p.smtpListener != nil {
 		var recipients smtpd.Recipients = nobody{}
 		if p.mailboxes != nil {
@@ -228,10 +242,16 @@ func handler(cfg config, hosts router.Hosts, p *platform, log *slog.Logger) http
 		app.Handle("/api/", httpapi.AccountsAPI(p.accounts, log))
 		var mine http.Handler
 		if p.mailboxes != nil {
-			// The person's mailboxes and their mail (ADR 0026, "The API").
-			mine = httpapi.MailboxesAPI(httpapi.MailboxesConfig{
-				Service: p.mailboxes, Reader: p.reader, Matcher: p.matcher, Sessions: p.accounts, Log: log, AppOrigin: appOrigin(hosts.App, cfg.port),
-			})
+			// The person's mailboxes and their mail (ADR 0026, "The API"). A
+			// page of matches asks the model only for an account that agreed
+			// to the model's notice in force (ADR 0028, "Consent").
+			mc := httpapi.MailboxesConfig{
+				Service: p.mailboxes, Reader: p.reader, Matcher: p.matcher, ModelNotices: p.accounts, Sessions: p.accounts, Log: log, AppOrigin: appOrigin(hosts.App, cfg.port),
+			}
+			if p.model != nil {
+				mc.Asker = p.model
+			}
+			mine = httpapi.MailboxesAPI(mc)
 			app.Handle("/api/v1/mailboxes", mine)
 			app.Handle("/api/v1/mailboxes/", mine)
 			// A formula's canonical form and sentence, for the owner's own
@@ -267,6 +287,11 @@ func handler(cfg config, hosts router.Hosts, p *platform, log *slog.Logger) http
 		mailboxesOf := httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.Mailboxes(p.accounts, log))
 		api.Handle("/v1/admin/mailboxes", mailboxesOf)
 		api.Handle("/v1/admin/mailboxes/", mailboxesOf)
+		if p.model != nil {
+			// The model's key, given over the connection pinned to the
+			// attested key (scripts/model-key.sh) and never answered back.
+			api.Handle("/v1/admin/model-key", httpapi.TokenAuth(cfg.adminTokenSHA256, httpapi.ModelKey(p.model, p.accounts, log)))
+		}
 	}
 
 	keyRoutes(api, cfg, p, log)
@@ -279,6 +304,9 @@ func handler(cfg config, hosts router.Hosts, p *platform, log *slog.Logger) http
 			since, actions := p.accounts.OperatorActions()
 			return &attestation.AdminStatus{Since: since, Actions: actions}
 		}
+	}
+	if p.model != nil {
+		status.Model = modelStatus(p.model, cfg.model)
 	}
 	common := map[string]http.Handler{
 		"/attestation": httpapi.Attestation(p.attester, p.certs.UserData),

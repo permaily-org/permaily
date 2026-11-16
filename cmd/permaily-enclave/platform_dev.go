@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/decide"
+	"github.com/permaily-org/permaily/internal/decide/decidetest"
 	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/idp/idptest"
@@ -32,6 +34,7 @@ import (
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/services/accounts"
+	"github.com/permaily-org/permaily/internal/services/decisions"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
@@ -68,6 +71,9 @@ type platform struct {
 	// mail describes who else could get a copy of the mail the enclave
 	// sends, as SES answers; nil when it sends none.
 	mail func() *attestation.MailStatus
+	// model asks the model what depends on meaning (ADR 0028), and holds
+	// its key, its spend, its canary and its alarms; nil without mailboxes.
+	model *decisions.Service
 }
 
 // devAhead is how far the clock of dev mode runs ahead of the real one, in
@@ -128,6 +134,25 @@ func newDevStorage() (*devStorage, error) {
 // defaultSuperAdmin is the super admin's address in dev mode, which a test or
 // a person trying the admin panel signs up with.
 const defaultSuperAdmin = "admin@permaily.test"
+
+// devModelClient, when a test sets it, is the egress of the model's real
+// client (openai.New) in dev mode: a played provider over HTTP/2
+// (decidetest.Provider), so dev mode composes the model as the image does.
+// Without it, dev mode asks decidetest's fake, which never reaches OpenAI.
+var devModelClient atomic.Pointer[http.Client]
+
+// devCanary makes tab answer the canary compiled into the image as it was
+// measured, so the canary of dev mode finds nothing moved.
+func devCanary(tab *decidetest.Table) *decidetest.Table {
+	if c, err := decide.LoadCanary(); err == nil {
+		for _, m := range c.Messages {
+			for _, a := range m.Atoms {
+				tab.SetFor(m.Subject, m.Body, a.Atom(), a.P)
+			}
+		}
+	}
+	return tab
+}
 
 // devRemoveEvery is how often dev mode looks for accounts that are due: its
 // storage is in memory, so looking costs nothing.
@@ -236,6 +261,22 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	p.accounts.SetMailboxes(p.mailboxes)
 	p.reader = inbox.NewReader(mem)
 	p.matcher = inbox.NewMatcher(mem, query.Eval)
+	// The model, as in the enclave: its records strict in one Anchored of
+	// their own, its alarms in the outbox. No key is set: the operator gives
+	// one (PUT /v1/admin/model-key) and the model is off until then.
+	model := modelParts{
+		cfg: cfg.model, records: &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock},
+		entries: mem, keys: local, mailer: outbox, superAdmin: cfg.superAdmin, log: log, now: devClock,
+	}
+	if hc := devModelClient.Load(); hc != nil {
+		model.egress = hc
+	} else {
+		tab := devCanary(decidetest.NewTable())
+		model.newModel = func(key decide.Credential) decide.Model { return decidetest.NewFake(tab, key) }
+	}
+	if p.model, err = composeModel(model); err != nil {
+		return nil, err
+	}
 	port := cfg.smtpPort
 	if port == 25 {
 		port = 2525 // unprivileged default for local runs

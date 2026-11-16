@@ -28,6 +28,7 @@ import (
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/services/accounts"
+	"github.com/permaily-org/permaily/internal/services/decisions"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
 	"github.com/permaily-org/permaily/internal/sesmail"
 	"github.com/permaily-org/permaily/internal/store"
@@ -65,6 +66,9 @@ type platform struct {
 	// mail describes who else could get a copy of the mail the enclave
 	// sends, as SES answers; nil when it sends none.
 	mail func() *attestation.MailStatus
+	// model asks the model what depends on meaning (ADR 0028), and holds
+	// its key, its spend, its canary and its alarms; nil without mailboxes.
+	model *decisions.Service
 }
 
 // defaultSuperAdmin is empty in the enclave: the super admin's address is
@@ -157,10 +161,11 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			// Only the newest version of one is kept, so a name or a passkey
 			// that was removed does not stay in the table (ADR 0017); the TLS
 			// identity above keeps every version (ADR 0016).
-			var accountRecords, mailboxRecords *store.Anchored
+			var accountRecords, mailboxRecords, modelRecords *store.Anchored
 			if cfg.mailFrom != "" {
 				accountRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true}
-				if err := p.signIn(ctx, cfg, hosts, awsCfg, egress, accountRecords, awsStore, root, log); err != nil {
+				sender, err := p.signIn(ctx, cfg, hosts, awsCfg, egress, accountRecords, awsStore, root, log)
+				if err != nil {
 					return nil, err
 				}
 				// The mailboxes' records and the accounts' lists are strict, and
@@ -177,9 +182,21 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 				p.accounts.SetMailboxes(p.mailboxes)
 				p.reader = inbox.NewReader(awsStore)
 				p.matcher = inbox.NewMatcher(awsStore, query.Eval)
+				// The model (ADR 0028): its key, each month's spend, the
+				// canary's state and the alarms are strict records, read and
+				// written through this Anchored alone, which reads no other
+				// name; it asks OpenAI through the host's proxy over TLS that
+				// ends here, and its alarms go to the super admin through SES.
+				modelRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true, Strict: true}
+				if p.model, err = composeModel(modelParts{
+					cfg: cfg.model, egress: egress, records: modelRecords, entries: awsStore, keys: root,
+					mailer: sender, superAdmin: cfg.superAdmin, log: log,
+				}); err != nil {
+					return nil, err
+				}
 			}
 			p.anchors = func() *attestation.AnchorStatus {
-				return anchorStatus(anchored, accountRecords, mailboxRecords, cfg.anchorBucket, cfg.anchorRetentionDays)
+				return anchorStatus(anchored, accountRecords, mailboxRecords, modelRecords, cfg.anchorBucket, cfg.anchorRetentionDays)
 			}
 		} else if cfg.mailFrom != "" {
 			// An account's ways to sign in must not come back (ADR 0017).
@@ -196,10 +213,12 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 
 // signIn turns accounts on: the mail of a sign-in goes out through SES, and
 // only while SES says nobody else gets a copy of it.
-func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, awsCfg aws.Config, egress *http.Client, records accounts.Records, entries store.Entries, root *keys.Root, log *slog.Logger) error {
+//
+// It returns the sender of that mail, which the model's alarms use too.
+func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, awsCfg aws.Config, egress *http.Client, records accounts.Records, entries store.Entries, root *keys.Root, log *slog.Logger) (*sesmail.Sender, error) {
 	_, domain, ok := strings.Cut(cfg.mailFrom, "@")
 	if !ok || domain == "" {
-		return errors.New("-mail-from is not an address")
+		return nil, errors.New("-mail-from is not an address")
 	}
 	watch := &sesmail.Watch{
 		HTTP: egress, Credentials: awsCfg.Credentials, Region: cfg.awsRegion,
@@ -207,24 +226,25 @@ func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, a
 	}
 	go watch.Run(ctx)
 	p.mail = watch.Status
+	sender := &sesmail.Sender{
+		HTTP: egress, Credentials: awsCfg.Credentials, Region: cfg.awsRegion,
+		Name: "Permaily", Address: cfg.mailFrom, Watch: watch, Log: log,
+	}
 	var err error
 	p.accounts, err = accounts.New(accounts.Config{
 		Records: records, Entries: entries, Keys: root,
-		Mailer: &sesmail.Sender{
-			HTTP: egress, Credentials: awsCfg.Credentials, Region: cfg.awsRegion,
-			Name: "Permaily", Address: cfg.mailFrom, Watch: watch, Log: log,
-		},
+		Mailer: sender,
 		// The providers are asked who signed in over TLS that ends here, through
 		// the host's proxy, and send the browser back to the app's own host.
 		Providers: &idp.Client{HTTP: egress, RedirectURL: "https://" + hosts.App + providerCallback},
 		AppURL:    "https://" + hosts.App, SuperAdmin: cfg.superAdmin, Log: log,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Accounts whose person asked to delete them are removed when their day comes.
 	go p.accounts.Run(ctx, accounts.RemoveEvery)
-	return nil
+	return sender, nil
 }
 
 // accountRecord stands for the name of an account's record in /status: the
@@ -235,11 +255,17 @@ const accountRecord = "the record of an account"
 // list of mailboxes, whose names hold identifiers too (ADR 0026).
 const mailboxRecord = "mailbox"
 
+// modelRecord stands for the model's records (ADR 0028) in /status: their
+// names say nothing of a person, but the versions of a month's spend say
+// how much was spent, which /status never says.
+const modelRecord = "model"
+
 // anchorStatus reports the records an enclave refuses an earlier copy of, as
 // far as it read or wrote them since it started. Of the records of accounts
 // and of mailboxes (nil when there are none) it reports only that one went
-// back, was forked or has a commit S3 did not keep locked, never which.
-func anchorStatus(a, ofAccounts, ofMailboxes *store.Anchored, bucket string, retentionDays int) *attestation.AnchorStatus {
+// back, was forked or has a commit S3 did not keep locked, never which; of
+// the model's records the same, without their versions.
+func anchorStatus(a, ofAccounts, ofMailboxes, ofModel *store.Anchored, bucket string, retentionDays int) *attestation.AnchorStatus {
 	st := &attestation.AnchorStatus{Bucket: bucket, RetentionDays: retentionDays, Records: []attestation.AnchoredRecord{}}
 	for _, c := range a.Seen() {
 		st.Records = append(st.Records, attestation.AnchoredRecord{Name: c.Name, Version: c.Version, CommittedAt: c.At, LockedUntil: c.LockedUntil})
@@ -255,6 +281,11 @@ func anchorStatus(a, ofAccounts, ofMailboxes *store.Anchored, bucket string, ret
 	if ofMailboxes != nil {
 		for _, r := range ofMailboxes.Regressions() {
 			st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: mailboxRecord, Had: r.Had, Found: r.Found, At: r.At, Fork: r.Fork, Unlocked: r.Unlocked, Lost: r.Lost})
+		}
+	}
+	if ofModel != nil {
+		for _, r := range ofModel.Regressions() {
+			st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: modelRecord, At: r.At, Fork: r.Fork, Unlocked: r.Unlocked, Lost: r.Lost})
 		}
 	}
 	return st
