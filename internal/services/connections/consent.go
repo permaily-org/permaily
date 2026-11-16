@@ -559,7 +559,18 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 	}
 	reqHash := oauth.Hash(oauth.KindRequest, id)
 	partition := PartitionRequest + reqHash
-	if s.usedHere(partition) || s.decided(ctx, req.Account, reqHash) {
+	if s.usedHere(partition) {
+		return nil, contracts.ErrRequestEnded
+	}
+	// The list's closing generation is read before the standing is: the
+	// approval commits only in it, so a deletion asked and cancelled while
+	// it is in flight, before anything of it is in the list, fences it too
+	// (PR #136's second review, finding 1).
+	fence, decided, err := s.listFence(ctx, req.Account, reqHash)
+	if err != nil {
+		return nil, err
+	}
+	if decided {
 		return nil, contracts.ErrRequestEnded
 	}
 	if !in.Allow {
@@ -623,9 +634,9 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 	defer cancel()
 	var made *made
 	if snap.Change == contracts.ChangeAddDevice {
-		made, err = s.addDevice(ctx, req, reqHash, cur, snap, ds, inTime)
+		made, err = s.addDevice(ctx, req, reqHash, fence, cur, snap, ds, inTime)
 	} else {
-		made, err = s.makeConnection(ctx, req, reqHash, snap, raw, ds, *in.Draft, inTime)
+		made, err = s.makeConnection(ctx, req, reqHash, fence, snap, raw, ds, *in.Draft, inTime)
 	}
 	if err != nil {
 		if errors.Is(err, contracts.ErrConsentChanged) {
@@ -662,12 +673,27 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 	return &contracts.AuthorizationAnswer{Redirect: oauth.Redirect(req.RedirectURI, v, s.cfg.OAuth.Issuer)}, nil
 }
 
-// decided says the account's list has the request decided (a request is
-// decided once, also when its mark was deleted); the list's own write
-// decides it again at the commit.
-func (s *Service) decided(ctx context.Context, account, reqHash string) bool {
+// listFence reads the account's list strictly: its closing generation (0
+// when it has none), which an approval commits in or not at all, and
+// whether the request is decided in it (a request is decided once, also
+// when its mark was deleted; the list's own write decides it again at the
+// commit).
+func (s *Service) listFence(ctx context.Context, account, reqHash string) (uint64, bool, error) {
 	l, _, err := s.readList(ctx, account)
-	return err == nil && l != nil && slices.ContainsFunc(l.Decided, func(d ListDecision) bool { return d.Request == reqHash })
+	if err != nil || l == nil {
+		return 0, false, err
+	}
+	return l.Generation, slices.ContainsFunc(l.Decided, func(d ListDecision) bool { return d.Request == reqHash }), nil
+}
+
+// inFence refuses a list that is no longer in the closing generation the
+// approval read before its standing (fence): a deletion was asked since,
+// and cancelled or not, nothing of the approval commits.
+func inFence(l *ListState, fence uint64) error {
+	if l.Generation != fence {
+		return contracts.ErrAccountClosing
+	}
+	return nil
 }
 
 // deny records the request as decided and sends the vendor access_denied.
@@ -705,7 +731,7 @@ type made struct {
 // for none), and a replaced connection still at the version shown; anything
 // else is contracts.ErrConsentChanged, and only what this approval made is
 // fenced: a connection that changed since is never chased and ended.
-func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash string, snap contracts.ConsentSnapshot, raw string, ds scopeOf, draft contracts.ConsentDraft, inTime func() error) (*made, error) {
+func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash string, fence uint64, snap contracts.ConsentSnapshot, raw string, ds scopeOf, draft contracts.ConsentDraft, inTime func() error) (*made, error) {
 	now := s.now()
 	id, err := s.newID("con")
 	if err != nil {
@@ -722,6 +748,9 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 	var generation uint64
 	if _, err := s.updateList(ctx, req.Account, func(l *ListState) error {
 		if err := inTime(); err != nil {
+			return err
+		}
+		if err := inFence(l, fence); err != nil {
 			return err
 		}
 		if l.Current[req.ClientID] != raw {
@@ -777,6 +806,9 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 		if err := inTime(); err != nil {
 			return err
 		}
+		if err := inFence(l, generation); err != nil {
+			return err
+		}
 		if l.Closing {
 			return contracts.ErrAccountClosing
 		}
@@ -808,7 +840,7 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 
 // addDevice adds the request to the client's connection as another device
 // (ADR 0030, "Adding a device").
-func (s *Service) addDevice(ctx context.Context, req *requestEntry, reqHash string, cur *connDoc, snap contracts.ConsentSnapshot, ds scopeOf, inTime func() error) (*made, error) {
+func (s *Service) addDevice(ctx context.Context, req *requestEntry, reqHash string, fence uint64, cur *connDoc, snap contracts.ConsentSnapshot, ds scopeOf, inTime func() error) (*made, error) {
 	now := s.now()
 	d, at, err := s.readConn(ctx, cur.ID)
 	if err != nil || at.Version() != snap.Version || !d.live(now) {
@@ -824,6 +856,9 @@ func (s *Service) addDevice(ctx context.Context, req *requestEntry, reqHash stri
 	}
 	if _, err := s.updateList(ctx, req.Account, func(l *ListState) error {
 		if err := inTime(); err != nil {
+			return err
+		}
+		if err := inFence(l, fence); err != nil {
 			return err
 		}
 		if l.Current[req.ClientID] != cur.ID {
