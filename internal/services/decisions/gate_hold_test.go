@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -177,5 +178,96 @@ func TestH3ADueProbeIsNotARecoveredModel(t *testing.T) {
 				t.Fatal("not released once the provider answered the probe")
 			}
 		})
+	}
+}
+
+// H3: the gate's probe uses the key in use when it is sent, which the
+// operator may have replaced since the gate read it. When the provider
+// refuses that replacement, the refusal holds: the gate never lifts it on
+// the key it read before, and a cleared message stays (the second review
+// of pull request 134, its first finding). The clock orders the
+// replacement after the gate read key A and before its probe reads the
+// key; it returns the same time, so nothing relies on sleeps.
+func TestH3TheGateKeepsTheRefusalOfTheKeyItsProbeUsed(t *testing.T) {
+	c := newClearedWorld(t)
+	e := c.e
+	e.keyRefused(c.ctx, e.keyState(c.ctx).fp)
+	c.w.advance(probeEvery)
+	e.keyState(c.ctx) // A in the cache before the schedule is imposed
+	const replacement = "sk-proj-test-rejectedreplacement"
+	var ticks atomic.Int32
+	e.cfg.Now = func() time.Time {
+		if ticks.Add(1) == 2 { // stopped, after the gate's keyState
+			if _, err := e.SetKey(context.Background(), keySetOf(replacement)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return c.w.clock()
+	}
+	e.model.onCall(func(context.Context, int, decide.Call) (*decide.Result, error) {
+		return nil, &decide.AttemptError{Err: decide.ErrKeyRefused, Sent: true}
+	})
+	before := e.model.count()
+	got := e.Gate(c.ctx, c.d.Account)
+	e.cfg.Now = c.w.clock
+	if e.model.count() != before+1 || e.keyState(c.ctx).fp != fingerprint(replacement) {
+		t.Fatal("the replacement and the probe did not run as scheduled")
+	}
+	e.model.mu.Lock()
+	sent := e.model.keys[len(e.model.keys)-1]
+	e.model.mu.Unlock()
+	if sent != replacement {
+		t.Fatal("the probe did not use the replacement")
+	}
+	out, err := c.disc.Message(c.ctx, testBox, c.d, c.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == inbox.AskAnswered && out.Disclosed != nil {
+		t.Fatalf("released cleared mail after the provider refused the key the gate's probe used; refusedStop=%v", e.guard.refusedStop)
+	}
+}
+
+// probePause pauses a gate at its probe's deadline, once: after it found a
+// probe due and before the probe is reserved. The warm key cache and the
+// guard's check in memory do not ask for the deadline.
+type probePause struct {
+	context.Context
+	once            atomic.Bool
+	reached, resume chan struct{}
+}
+
+func (c *probePause) Deadline() (time.Time, bool) {
+	if c.once.CompareAndSwap(false, true) {
+		close(c.reached)
+		<-c.resume
+	}
+	return c.Context.Deadline()
+}
+
+// H3: gates that find the same probe due send one probe between them. One
+// pauses after it found the probe due; another sends the probe, which the
+// provider answers; the first, resumed, sends nothing and opens on the
+// recovery it finds (the second review of pull request 134, its second
+// finding).
+func TestH3GatesThatFindAProbeDueSendOneProbe(t *testing.T) {
+	w := newWorld(t)
+	e := w.keyed()
+	ctx := context.Background()
+	e.keyRefused(ctx, e.keyState(ctx).fp)
+	w.advance(probeEvery)
+	e.keyState(ctx) // nothing read from storage before the probe's deadline
+	slow := &probePause{Context: ctx, reached: make(chan struct{}), resume: make(chan struct{})}
+	done := make(chan inbox.AskOutcome, 1)
+	go func() { done <- e.Gate(slow, "acc_slow") }()
+	<-slow.reached
+	first := e.Gate(ctx, "acc_fast")
+	close(slow.resume)
+	second := <-done
+	if first != inbox.AskAnswered || second != inbox.AskAnswered {
+		t.Fatalf("gates: %v %v", first, second)
+	}
+	if calls := e.model.count(); calls != 1 {
+		t.Fatalf("gates that found one probe due sent %d probes", calls)
 	}
 }
