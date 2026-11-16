@@ -148,7 +148,7 @@ export function PreviewPane({
         )}
       </div>
       {!noticeShown && (
-        <p className="mt-2 max-w-[560px] text-small text-ink-2">
+        <p className="mt-2 text-small text-ink-2">
           The preview with the model isn't offered: this page is older than Permaily. Reload it from
           the app to read what applies now.
         </p>
@@ -210,7 +210,7 @@ function Widening({ request, count }: { request: api.AuthorizationRequest; count
   const added = request.parts.filter((p) => p !== 'sender' && !connection.parts.includes(p))
   const through = (resource: api.ConnectionResource) => (resource === 'mcp' ? 'MCP' : 'the API')
   return (
-    <div className="mt-3 flex max-w-[560px] flex-col gap-1.5 text-small text-ink-2">
+    <div className="mt-3 flex flex-col gap-1.5 text-small text-ink-2">
       {count.messages.length > 0 &&
         (fresh === 0 ? (
           <p>Your connection already reads every one of them.</p>
