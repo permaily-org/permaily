@@ -2,6 +2,7 @@ package connections
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -130,5 +131,43 @@ func TestV59LateRefreshDoesNotReviveTheLease(t *testing.T) {
 	l.mu.Unlock()
 	if !checked.Equal(g.CheckedAt) {
 		t.Fatal("a late refresh extended the lease's authority")
+	}
+}
+
+// V59: the reviewer's blocked refresh (PR #136's third review, its
+// disposition of the second review's finding 3; ruling 2 of the fourth
+// rulings): the authority's read again is held, so only the cutoff armed
+// at Start can end the answer; it ends when the freshness passes, between
+// the watcher's 250ms ticks.
+func TestV59LeaseCutoffIndependentOfRefresh(t *testing.T) {
+	w := newWorld(t)
+	s, f := w.hooked()
+	x := w.ask(claudeCode)
+	tok := w.connectAll(s, w.person(accountA), x)
+	g := w.grant(s, x, tok.AccessToken)
+	_, rel, err := s.Search(context.Background(), g, contracts.VendorSearch{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rel.Finish(false)
+	entered, unblock := make(chan struct{}), make(chan struct{})
+	defer close(unblock)
+	var once sync.Once
+	f.set(func(op, name string) error {
+		if op == "get" && name == connName(g.Connection) {
+			once.Do(func() { close(entered); <-unblock })
+		}
+		return nil
+	})
+	w.clock.add(oauth.ConnectionFresh - 60*time.Millisecond)
+	advancing(w, s)
+	c, err := rel.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	<-time.After(g.FreshUntil().Sub(s.now()) + 60*time.Millisecond)
+	if c.Err() == nil {
+		t.Fatal("the answer is still writable after its freshness, its refresh blocked, between the 250ms ticks")
 	}
 }
