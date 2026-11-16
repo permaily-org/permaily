@@ -208,9 +208,11 @@ const DiscloseMaxLimit = 50
 // is strict and made now: an absence or a pending decision is never answered
 // from an earlier read (finding 2); a final decision may be.
 //
-// Implemented by services/mailboxes (pull request 4) over the record of
-// rule_decisions.go; inbox/disclosetest has the in-memory fake and the
-// contract test both pass.
+// Implemented once, by BlockDecisions over a DecisionStore (ADR 0031,
+// "Changed after the third design review"): services/mailboxes gives it its
+// strict anchored records, sealed (pull request 4); inbox/disclosetest gives
+// it memory and unsealed strict records, and has the contract every store
+// passes.
 type Decisions interface {
 	// Begin reads the blocks of ids' days and, for every id with no
 	// decision of rule, commits one Pending (one write per block changed);
@@ -218,14 +220,17 @@ type Decisions interface {
 	// Begun for those this call began, which the caller may ask the model
 	// for and must settle; Pending for one begun by another request (At
 	// says when); Held or Cleared when final, with their Evidence (or
-	// Recovered); Full when its day has no room. An error is a block that
-	// cannot be read or written: every id of its day is held, undecided.
+	// Recovered); Full when its day has no room; Expired when its message
+	// has expired by this enclave's clock (nothing stored). An error is a
+	// block that cannot be read or written: every id of its day is held,
+	// undecided.
 	Begin(ctx context.Context, b Box, rule rules.Ref, ids []DecisionKey) (map[string]Decision, error)
 	// Settle commits the outcome of what this call's caller began, as
 	// SettleAfterAsk says (Held or Cleared with the evidence they rest on,
-	// or Abandoned only on positive evidence that no answer of the model
-	// was received, which drops the pending decision so a later request
-	// may decide; a decision SettleAfterAsk leaves Pending is not given),
+	// Held too on Unknown with any answer received, or Abandoned only on
+	// positive evidence that the model answered no part of it, which drops
+	// the pending decision so a later request may decide; a decision
+	// SettleAfterAsk leaves Pending is not given),
 	// and settles Held, Recovered, every pending decision older than
 	// PendingGrace it is given with no evidence; it answers each id's final
 	// state as it is after the write, which may be Held where Cleared was

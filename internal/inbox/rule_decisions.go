@@ -3,6 +3,7 @@ package inbox
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"time"
 
@@ -28,13 +29,19 @@ import (
 // and with no evidence: its settlement was lost, and what it would have
 // said cannot be recovered from the table, so it fails closed.
 //
-// A day's decisions are kept in blocks (the owner's decision 12): block 0
-// first; when no block has room for a new decision, the last one is written
-// Next and the next block made with CreateNew, up to DecisionBlocksMax. A
-// decision stays in the block that began it. Every block of the day is read,
-// strictly and now, before a decision is begun, so a decision is found
-// wherever it is; which day holds a decision is in the message's identifier,
-// so it cannot be changed by writing to the table.
+// A day's decisions are kept in blocks (the owner's decision 12), a chain
+// from block 0, each written Next once its successor is opened. Only the
+// chain's tail, the one block not written Next, ever takes a new decision,
+// and opening its successor is itself a write of the tail at the version
+// read: so every new decision of a day is written to one record at a time,
+// under that record's version, and two requests can never begin one message
+// in two blocks (ADR 0031, "Changed after the third design review", R1). A
+// decision stays in the block that began it; every block of the day is read,
+// strictly and now, before one is begun, so a decision is found wherever it
+// is; which day holds a decision is in the message's identifier, so it
+// cannot be changed by writing to the table. Should one message ever be
+// found in two blocks, its most protective decision is answered and neither
+// is written (DecisionBlocks.lookup).
 
 // RecordRuleDecisions + the mailbox's identifier + "-" + the day (UTC,
 // YYYYMMDD, of the message identifier's time) + "-" + the block (decimal,
@@ -48,7 +55,11 @@ func RuleDecisionsName(mailboxID, messageID string, block int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return RecordRuleDecisions + mailboxID + "-" + day + "-" + strconv.Itoa(block), nil
+	return decisionsName(mailboxID, day, block), nil
+}
+
+func decisionsName(mailboxID, day string, block int) string {
+	return RecordRuleDecisions + mailboxID + "-" + day + "-" + strconv.Itoa(block)
 }
 
 // DecisionDay is the day of messageID, UTC, as YYYYMMDD.
@@ -70,12 +81,16 @@ var ErrNotAMessageID = errors.New("inbox: not a message identifier")
 // always fits; how many versions (a strict read lists every version and
 // fails past 10,000 objects), with one kept for the settlement of every
 // Pending and one for writing the block Next, so a begun decision can
-// always be settled; and how many blocks a day may have. A day past its
-// last block's room answers Full to a new decision: the message is held,
-// undecided, and the day recovers only as its decisions expire with their
-// messages (dropped by a write made anyway, a begin's own included), which
-// docs/data.md and ADR 0031 state. A settled decision of the default rule
-// with its two answers is about 580 bytes, so a block filled by pages of
+// always be settled and the tail can always open its successor; and how
+// many blocks a day may have. A tail out of room, bytes or versions opens
+// its successor (R3); past the last block a new decision is Full: the
+// message is held, undecided. A block's room comes back as its decisions
+// expire with their messages (dropped by a write made anyway, a begin's own
+// included), which docs/data.md and ADR 0031 state; its versions never come
+// back (a commit is history), and only the tail's room is used for new
+// decisions, so a full day takes new ones again as its last block's
+// decisions expire. A settled decision of the default rule with its two
+// answers is about 580 bytes, so a block filled by pages of
 // DiscloseMaxLimit holds DecisionsMax - DiscloseMaxLimit to DecisionsMax
 // settled ones, and a day at least DecisionsPerDay (28,800), far above any
 // real mailbox's model-decided mail of one day; even with every decision
@@ -96,6 +111,12 @@ const (
 	// is recovered Held), never kept without its evidence.
 	DecisionEvidenceMax      = 8
 	DecisionEvidenceBytesMax = 2 << 10
+	// DecisionKeptAfter is how long a decision outlives its message before a
+	// write drops it: far longer than two enclaves' clocks differ, so a
+	// request whose clock is behind never finds a message still there and
+	// its decision already gone (ADR 0031, "Changed after the third design
+	// review"). Begin refuses a message already expired by its own clock.
+	DecisionKeptAfter = time.Hour
 	// PendingGrace is how long a decision may stay Pending before whoever
 	// finds it settles it Held: longer than one message's ask
 	// (decide.MessageDeadline, 20 seconds) and its settlement's tries.
@@ -120,6 +141,10 @@ const (
 	// Full: Begin's or Settle's answer when the day has no room; nothing
 	// was stored for it.
 	DecisionFull DecisionState = "full"
+	// Expired: Begin's answer for a message already expired by the
+	// caller's clock: nothing is stored or decided, and it does not leave.
+	// Told from Full, which is the day's room (R3).
+	DecisionExpired DecisionState = "expired"
 	// Abandoned: Settle's input for a decision the caller began and for
 	// which SettleAfterAsk found positive evidence that no answer of the
 	// model was received; its Pending is dropped. Settle answers it for an
@@ -156,7 +181,8 @@ type DecisionRecord struct {
 	Mailbox string `json:"mailbox"`
 	Day     string `json:"day"`
 	Block   int    `json:"block"`
-	// Next says block+1 was opened: it is read too. Written before the next
+	// Next says block+1 was opened: it is read too, and this block takes no
+	// new decision again (only the tail does, R1). Written before the next
 	// block is made, so a crash between the two leaves a Next whose block a
 	// strict read finds never written, which the next writer makes.
 	Next    bool            `json:"next,omitzero"`
@@ -171,7 +197,7 @@ type DecisionEntry struct {
 	State   DecisionState `json:"s"`
 	At      time.Time     `json:"at"`
 	// Expires is the message's; the entry is dropped from the first version
-	// written after it.
+	// written DecisionKeptAfter after it.
 	Expires   time.Time          `json:"x,omitzero"`
 	Evidence  []DecisionEvidence `json:"e,omitempty"`
 	Recovered bool               `json:"rc,omitzero"`
@@ -244,7 +270,7 @@ func (r *DecisionRecord) find(rule rules.Ref, id string) int {
 func (r *DecisionRecord) prune(now time.Time) {
 	kept := r.Entries[:0]
 	for _, e := range r.Entries {
-		if e.Expires.IsZero() || now.Before(e.Expires) {
+		if e.Expires.IsZero() || now.Before(e.Expires.Add(DecisionKeptAfter)) {
 			kept = append(kept, e)
 		}
 	}
@@ -275,10 +301,7 @@ func (r *DecisionRecord) fits() bool {
 // pending decisions in it: one version kept for each one's settlement and
 // one for writing it Next.
 func versionsFor(versions uint64, pending int) bool {
-	if pending < 0 || pending > DecisionsMax {
-		return false
-	}
-	return versions+1+uint64(pending)+1 <= DecisionsVersionsMax //nolint:gosec // G115: pending is bounded above
+	return pending >= 0 && pending <= DecisionsMax && versions+1+uint64(pending)+1 <= DecisionsVersionsMax //nolint:gosec // G115: pending is bounded first
 }
 
 // Begin is the transition of Decisions.Begin on one block read at versions
@@ -286,9 +309,11 @@ func versionsFor(versions uint64, pending int) bool {
 // whether the block changed and must be written at the version read (a
 // write refused with store.ErrChanged is read again and begun again, at
 // most DecisionTries times; a write that fails otherwise holds every id of
-// it, undecided). ids must all be of this block's day. An id the block has
-// no room or versions for is answered Full; DecisionBlocks.Begin then tries
-// the day's other blocks.
+// it, undecided). ids must all be of this block's day. An id whose message
+// has expired by now is answered Expired; one the block has no room or
+// versions for, and every new one when the block is written Next (only the
+// tail takes new decisions), Full: DecisionBlocks.Begin then opens the
+// tail's successor.
 func (r *DecisionRecord) Begin(rule rules.Ref, ids []DecisionKey, now time.Time, versions uint64) (map[string]Decision, bool) {
 	out := make(map[string]Decision, len(ids))
 	var fresh []DecisionKey
@@ -300,10 +325,14 @@ func (r *DecisionRecord) Begin(rule rules.Ref, ids []DecisionKey, now time.Time,
 			out[k.ID] = r.Entries[i].decision()
 			continue
 		}
+		if !k.ExpiresAt.IsZero() && !now.Before(k.ExpiresAt) {
+			out[k.ID] = Decision{State: DecisionExpired} // nothing to decide, and it does not leave
+			continue
+		}
 		out[k.ID] = Decision{State: DecisionFull}
 		fresh = append(fresh, k)
 	}
-	if len(fresh) == 0 {
+	if len(fresh) == 0 || r.Next {
 		return out, false
 	}
 	// Pruning is kept only with a write made anyway.
@@ -311,9 +340,6 @@ func (r *DecisionRecord) Begin(rule rules.Ref, ids []DecisionKey, now time.Time,
 	r.prune(now)
 	began := false
 	for _, k := range fresh {
-		if !k.ExpiresAt.IsZero() && !now.Before(k.ExpiresAt) {
-			continue // its message has expired: nothing to decide, held
-		}
 		r.Entries = append(r.Entries, DecisionEntry{Message: k.ID, Rule: rule.ID, Version: rule.Version, State: DecisionPending, At: now, Expires: k.ExpiresAt})
 		if !r.fits() || !versionsFor(versions, r.pending()) {
 			r.Entries = r.Entries[:len(r.Entries)-1]
@@ -332,8 +358,9 @@ func (r *DecisionRecord) Begin(rule rules.Ref, ids []DecisionKey, now time.Time,
 // versions. For each id: a Pending becomes what its settlement says (Held
 // or Cleared with its evidence, or dropped for Abandoned); a final decision
 // stays as it is and is answered; an id with nothing stored is answered
-// Abandoned, and for Held a final Held is stored when the block has room
-// (it fails closed; DecisionBlocks.Settle tries the day's other blocks).
+// Abandoned, and for Held a final Held is stored when the block is the tail
+// and has room and versions (one kept for each of its Pending and for Next);
+// it fails closed, and DecisionBlocks.Settle opens the tail's successor.
 // Held with no evidence is stored Recovered. A settlement whose evidence is
 // past its bounds changes nothing: the Pending stays, and is recovered Held.
 // A caller settles Held a Pending it did not begin only once it is older
@@ -362,7 +389,7 @@ func (r *DecisionRecord) Settle(rule rules.Ref, settle map[string]Settlement, no
 			changed = true
 		case i >= 0:
 			out[id] = Decision{State: DecisionPending, At: r.Entries[i].At}
-		case want.State == DecisionHeld && writable && evidenceFits(want.Evidence):
+		case want.State == DecisionHeld && !r.Next && versionsFor(versions, r.pending()) && evidenceFits(want.Evidence):
 			r.Entries = append(r.Entries, DecisionEntry{
 				Message: id, Rule: rule.ID, Version: rule.Version, State: DecisionHeld, At: now,
 				Evidence: storedEvidence(want.Evidence), Recovered: len(want.Evidence) == 0,
@@ -388,10 +415,13 @@ func (r *DecisionRecord) Settle(rule rules.Ref, settle map[string]Settlement, no
 
 // DecisionBlocks is one mailbox-day's chain of blocks as read, strictly and
 // now, by following Next from block 0: Blocks[i] is block i, Versions[i] its
-// committed versions. The real Decisions (pull request 4) and the fake
-// apply these transitions and write the blocks they say changed, in their
-// order: an existing block at the version read, a new one (Versions 0) with
-// CreateNew once the block before it is written Next.
+// committed versions. Every block but the last is written Next; the last is
+// the tail, which alone takes new decisions, unless it is written Next too
+// (a crash left its successor never written, which the next writer makes).
+// BlockDecisions applies these transitions and writes the blocks they say
+// changed, in their order: an existing block at the version read, a new one
+// (Versions 0) made only if nobody made it meanwhile, once the block before
+// it is written Next.
 type DecisionBlocks struct {
 	Mailbox  string
 	Day      string
@@ -399,18 +429,52 @@ type DecisionBlocks struct {
 	Versions []uint64
 }
 
-// find is the block holding id's decision of rule, -1 for none.
-func (d *DecisionBlocks) find(rule rules.Ref, id string) int {
+// lookup is id's decision of rule in the day and the blocks that hold it.
+// A message is in one block (only the tail takes new decisions, R1); should
+// it ever be in more, the most protective of its decisions is answered
+// (Held, then Pending, then Cleared), and the caller writes none of them.
+func (d *DecisionBlocks) lookup(rule rules.Ref, id string) (Decision, []int) {
+	var found []int
+	var best Decision
 	for b, r := range d.Blocks {
-		if r.find(rule, id) >= 0 {
-			return b
+		i := r.find(rule, id)
+		if i < 0 {
+			continue
 		}
+		if dec := r.Entries[i].decision(); len(found) == 0 || protection(dec.State) > protection(best.State) {
+			best = dec
+		}
+		found = append(found, b)
 	}
-	return -1
+	return best, found
 }
 
-// open makes the next block, writing the last one Next, when the day may
-// have one more; it answers the new block's index, -1 when it may not.
+// protection orders stored states from the one that lets a message leave.
+func protection(s DecisionState) int {
+	switch s {
+	case DecisionHeld:
+		return 2
+	case DecisionPending:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// tail is the block that takes new decisions: the last one, or its
+// successor opened when it is written Next or the day has none; -1 when
+// none may be opened.
+func (d *DecisionBlocks) tail(changed map[int]bool) int {
+	if n := len(d.Blocks); n > 0 && !d.Blocks[n-1].Next {
+		return n - 1
+	}
+	return d.open(changed)
+}
+
+// open makes the tail's successor: the tail written Next (in the write that
+// changes it anyway, or with the version every write keeps for it), then a
+// new block. It answers the new block's index, -1 when the day may not have
+// one more or the tail has no version left.
 func (d *DecisionBlocks) open(changed map[int]bool) int {
 	n := len(d.Blocks)
 	if n >= DecisionBlocksMax {
@@ -419,7 +483,7 @@ func (d *DecisionBlocks) open(changed map[int]bool) int {
 	if n > 0 {
 		last := d.Blocks[n-1]
 		if !last.Next {
-			if d.Versions[n-1]+1 > DecisionsVersionsMax {
+			if !changed[n-1] && d.Versions[n-1]+1 > DecisionsVersionsMax {
 				return -1
 			}
 			last.Next = true
@@ -432,9 +496,10 @@ func (d *DecisionBlocks) open(changed map[int]bool) int {
 }
 
 // Begin is Decisions.Begin on one day: every id found in any block is
-// answered as it is; the others are begun in the first block with room,
-// a new block opened when none has; Full past DecisionBlocksMax. It answers
-// the blocks to write, in order.
+// answered as it is (lookup); one whose message has expired by now is
+// Expired; the others are begun in the tail, its successor opened while
+// some are left (the tail out of decisions, bytes or versions, R3); Full
+// past DecisionBlocksMax. It answers the blocks to write, in order.
 func (d *DecisionBlocks) Begin(rule rules.Ref, ids []DecisionKey, now time.Time) (map[string]Decision, []int) {
 	out := make(map[string]Decision, len(ids))
 	changed := map[int]bool{}
@@ -443,17 +508,22 @@ func (d *DecisionBlocks) Begin(rule rules.Ref, ids []DecisionKey, now time.Time)
 		if _, seen := out[k.ID]; seen {
 			continue
 		}
-		if b := d.find(rule, k.ID); b >= 0 {
-			out[k.ID] = d.Blocks[b].Entries[d.Blocks[b].find(rule, k.ID)].decision()
+		if dec, found := d.lookup(rule, k.ID); len(found) > 0 {
+			out[k.ID] = dec
+			continue
+		}
+		if !k.ExpiresAt.IsZero() && !now.Before(k.ExpiresAt) {
+			out[k.ID] = Decision{State: DecisionExpired}
 			continue
 		}
 		out[k.ID] = Decision{State: DecisionFull}
 		todo = append(todo, k)
 	}
-	for b := 0; len(todo) > 0; b++ {
-		if b == len(d.Blocks) && d.open(changed) < 0 {
-			break
-		}
+	b := -1
+	if len(todo) > 0 {
+		b = d.tail(changed)
+	}
+	for b >= 0 && len(todo) > 0 {
 		got, wrote := d.Blocks[b].Begin(rule, todo, now, d.Versions[b])
 		if wrote {
 			changed[b] = true
@@ -466,38 +536,40 @@ func (d *DecisionBlocks) Begin(rule rules.Ref, ids []DecisionKey, now time.Time)
 			}
 			out[k.ID] = got[k.ID]
 		}
-		if len(left) == len(todo) && len(d.Blocks[b].Entries) == 0 {
-			// An empty block took none: what is left cannot be begun
-			// anywhere (its message has expired). Stop.
-			break
+		if len(left) == len(todo) && d.Versions[b] == 0 && len(d.Blocks[b].Entries) == 0 {
+			break // a new block took none: no other would
 		}
-		todo = left
+		if todo = left; len(todo) > 0 {
+			b = d.open(changed)
+		}
 	}
 	return out, sorted(changed)
 }
 
 // Settle is Decisions.Settle on one day: each id is settled in the block
-// that holds it; a Held for an id no block holds is stored in the first
-// block with room (a new one opened when none has).
+// that holds it (one found in more is answered as lookup says and not
+// written); a Held for an id no block holds is stored in the tail, its
+// successor opened when it has no room.
 func (d *DecisionBlocks) Settle(rule rules.Ref, settle map[string]Settlement, now time.Time) (map[string]Decision, []int) {
 	out := make(map[string]Decision, len(settle))
 	changed := map[int]bool{}
 	byBlock := map[int]map[string]Settlement{}
 	var unknown []string
 	for id, s := range settle {
-		b := d.find(rule, id)
-		if b < 0 {
-			if s.State != DecisionHeld {
-				out[id] = Decision{State: DecisionAbandoned}
-				continue
+		dec, found := d.lookup(rule, id)
+		switch {
+		case len(found) > 1:
+			out[id] = dec
+		case len(found) == 1:
+			if byBlock[found[0]] == nil {
+				byBlock[found[0]] = map[string]Settlement{}
 			}
+			byBlock[found[0]][id] = s
+		case s.State == DecisionHeld:
 			unknown = append(unknown, id)
-			continue
+		default:
+			out[id] = Decision{State: DecisionAbandoned}
 		}
-		if byBlock[b] == nil {
-			byBlock[b] = map[string]Settlement{}
-		}
-		byBlock[b][id] = s
 	}
 	for b, s := range byBlock {
 		got, wrote := d.Blocks[b].Settle(rule, s, now, d.Versions[b])
@@ -508,12 +580,13 @@ func (d *DecisionBlocks) Settle(rule rules.Ref, settle map[string]Settlement, no
 			out[id] = dec
 		}
 	}
+	slices.Sort(unknown)
 	for _, id := range unknown {
 		out[id] = Decision{State: DecisionFull}
-		for b := 0; ; b++ {
-			if b == len(d.Blocks) && d.open(changed) < 0 {
-				break
-			}
+		if !evidenceFits(settle[id].Evidence) {
+			continue // never kept without its evidence: held, undecided
+		}
+		for b := d.tail(changed); b >= 0; b = d.open(changed) {
 			got, wrote := d.Blocks[b].Settle(rule, map[string]Settlement{id: settle[id]}, now, d.Versions[b])
 			if got[id].State != DecisionFull {
 				out[id] = got[id]
@@ -522,7 +595,7 @@ func (d *DecisionBlocks) Settle(rule rules.Ref, settle map[string]Settlement, no
 				}
 				break
 			}
-			if b == len(d.Blocks)-1 && len(d.Blocks[b].Entries) == 0 {
+			if d.Versions[b] == 0 && len(d.Blocks[b].Entries) == 0 {
 				break
 			}
 		}
@@ -541,55 +614,45 @@ func sorted(m map[int]bool) []int {
 }
 
 // SettleAfterAsk is how a decision is settled once the discloser has asked
-// for it (ADR 0031, "Ask and settle", N1): r is the rule's formulas
+// for it (ADR 0031, "Ask and settle", N1, R2): r is the rule's formulas
 // evaluated for a rule (query.ForRule) with a.Answers, atoms the rule's
-// model atoms asked, a and err what Ask answered. True, or Unknown with
-// every atom it needs answered in doubt or refused, is Held; False is
-// Cleared; each with the evidence of atoms. Unknown because an atom has no
-// answer is Abandoned only on positive evidence that none was received:
-// Ask failed (it fails only before asking anything, Asker's contract), or
-// none of those atoms is in a.Unsettled. Otherwise the decision is left
+// model atoms asked, a and err what Ask answered. True is Held and False
+// Cleared, each with the evidence of atoms. Unknown applies the rule, so it
+// is Held, with the evidence of whatever answers of atoms were received (an
+// answer in doubt, a refusal, or any answer beside one that is missing): a
+// received answer is never forgotten. With none received but one in
+// a.Unsettled (received and not confirmed kept), the decision is left
 // Pending (State Pending: do not settle it): this request holds the message,
-// undecided, and the first request after PendingGrace settles it Held.
+// undecided, and the first request after PendingGrace settles it Held. Only
+// when the model answered no part of it, on positive evidence (Ask failed,
+// which it does only before asking anything, by the Asker's contract; or no
+// atom of the rule has evidence or is unsettled: the guard stopped the ask,
+// or every call failed without an answer), is it Abandoned, so a later
+// request decides it.
 func SettleAfterAsk(r query.Result, atoms []query.Atom, a *Asked, err error) Settlement {
 	var ev []Decided
-	if a != nil {
+	unsettled := false
+	if a != nil && err == nil {
 		for _, atom := range atoms {
 			if e, ok := a.Evidence[atom]; ok {
 				ev = append(ev, Decided{Atom: atom, Evidence: e})
 			}
+			unsettled = unsettled || slices.Contains(a.Unsettled, atom)
 		}
 	}
-	switch r.Value {
-	case query.True:
+	switch {
+	case r.Value == query.True:
 		return Settlement{State: DecisionHeld, Evidence: ev}
-	case query.False:
+	case r.Value == query.False:
 		return Settlement{State: DecisionCleared, Evidence: ev}
-	}
-	var missing []query.Atom
-	for _, atom := range r.Model {
-		if a == nil {
-			missing = append(missing, atom)
-			continue
-		}
-		if _, ok := a.Evidence[atom]; !ok {
-			missing = append(missing, atom)
-		}
-	}
-	if len(missing) == 0 {
+	case len(ev) > 0 || len(r.Model) == 0:
+		// Unknown on an answer received, or not for want of one.
 		return Settlement{State: DecisionHeld, Evidence: ev}
-	}
-	if err != nil || a == nil {
+	case unsettled:
+		return Settlement{State: DecisionPending}
+	default:
 		return Settlement{State: DecisionAbandoned}
 	}
-	for _, atom := range missing {
-		for _, u := range a.Unsettled {
-			if u == atom {
-				return Settlement{State: DecisionPending}
-			}
-		}
-	}
-	return Settlement{State: DecisionAbandoned}
 }
 
 // OverdueAt says a Pending decision begun at began is to be settled Held by

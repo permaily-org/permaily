@@ -578,3 +578,26 @@ func TestAnchoredLeavesAValueItCannotPlace(t *testing.T) {
 type emptied struct{ store.Commits }
 
 func (emptied) Head(context.Context, string) (*store.Commit, uint64, error) { return nil, 1, nil }
+
+// A mark says the version it was read at: none for a record never written,
+// then each commit's, which is how many versions the record has.
+func TestAMarkSaysItsVersion(t *testing.T) {
+	ctx := context.Background()
+	records, commits := store.NewMemory(), store.NewMemoryCommits()
+	a := &store.Anchored{Records: records, Commits: commits, Strict: true, OnlyNewest: true}
+	if _, at, err := a.GetRecordAt(ctx, "strict-record"); !errors.Is(err, store.ErrNotFound) || at.Version() != 0 {
+		t.Fatalf("%v %d", err, at.Version())
+	}
+	if err := a.CreateNew(ctx, rec("strict-record", "one")); err != nil {
+		t.Fatal(err)
+	}
+	for want := uint64(1); want <= 3; want++ {
+		_, at, err := a.GetRecordAt(ctx, "strict-record")
+		if err != nil || at.Version() != want {
+			t.Fatalf("%v %d, want %d", err, at.Version(), want)
+		}
+		if err := a.PutRecordAt(ctx, rec("strict-record", "next"), at); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

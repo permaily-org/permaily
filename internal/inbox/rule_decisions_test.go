@@ -115,7 +115,8 @@ func TestADecisionsRecordIsBounded(t *testing.T) {
 		t.Fatalf("bytes %d", len(b))
 	}
 
-	// Expired decisions go with the next write, never on their own.
+	// Expired decisions go with the next write DecisionKeptAfter after their
+	// message, never on their own.
 	later := at.Add(2 * time.Hour)
 	if got, changed := r.Begin(decisionRule, ks[:1], later, 1); changed || got[ks[0].ID].State != inbox.DecisionPending || len(r.Entries) != begun {
 		t.Fatalf("pruned without a write: %d entries", len(r.Entries))
@@ -125,7 +126,7 @@ func TestADecisionsRecordIsBounded(t *testing.T) {
 		t.Fatalf("expired kept: %d entries", len(r.Entries))
 	}
 	gone := inbox.DecisionKey{ID: inbox.NewMessageID(at), ExpiresAt: at}
-	if got, changed := r.Begin(decisionRule, []inbox.DecisionKey{gone}, later, 2); changed || got[gone.ID].State != inbox.DecisionFull {
+	if got, changed := r.Begin(decisionRule, []inbox.DecisionKey{gone}, later, 2); changed || got[gone.ID].State != inbox.DecisionExpired || got[gone.ID].Leaves() {
 		t.Fatalf("an expired key begun: %v %+v", changed, got)
 	}
 }
@@ -146,7 +147,7 @@ func TestSettlingPastTheVersionsChangesNothing(t *testing.T) {
 // The contract every Decisions keeps, run here on the fake over this
 // package's transitions.
 func TestTheTransitionsKeepTheContract(t *testing.T) {
-	disclosetest.Contract(t, func(now func() time.Time) inbox.Decisions { return disclosetest.NewDecisions(now) })
+	disclosetest.Contract(t, disclosetest.Shared)
 }
 
 // Every branch of the transitions, on one block.
@@ -190,9 +191,10 @@ func TestEveryTransition(t *testing.T) {
 	}
 }
 
-// The owner's decision 12: a day opens a new block when none has room, up
-// to DecisionBlocksMax; past the last, a new decision is Full (held,
-// undecided), and a day recovers as its decisions expire.
+// The owner's decision 12: a day opens a new block when its tail has no
+// room, up to DecisionBlocksMax; past the last, a new decision is Full
+// (held, undecided), and a day recovers as its last block's decisions
+// expire (only the tail takes new decisions, R1).
 func TestADayOpensBlocksUpToItsBound(t *testing.T) {
 	at := time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC)
 	fill := func(n int, expires time.Time) *inbox.DecisionBlocks {
@@ -226,9 +228,11 @@ func TestADayOpensBlocksUpToItsBound(t *testing.T) {
 	if got[next.ID].State != inbox.DecisionFull {
 		t.Fatalf("held past the last block: %+v", got[next.ID])
 	}
-	// Once its decisions expired, a begin's own write drops them.
-	got, changed = d.Begin(decisionRule, []inbox.DecisionKey{next}, at.Add(25*time.Hour))
-	if got[next.ID].State != inbox.DecisionBegun || len(changed) != 1 || len(d.Blocks[0].Entries) != 1 {
+	// Once its decisions expired, a begin's own write drops them: in the
+	// tail, the only block that takes new decisions.
+	got, changed = d.Begin(decisionRule, []inbox.DecisionKey{next}, at.Add(24*time.Hour+inbox.DecisionKeptAfter))
+	last := inbox.DecisionBlocksMax - 1
+	if got[next.ID].State != inbox.DecisionBegun || len(changed) != 1 || changed[0] != last || len(d.Blocks[last].Entries) != 1 || len(d.Blocks[0].Entries) != inbox.DecisionsMax {
 		t.Fatalf("recovered: %+v changed %v", got[next.ID], changed)
 	}
 }
@@ -256,7 +260,7 @@ func TestReview2N1OnlyPositiveEvidenceAbandons(t *testing.T) {
 		{"the call failed", unknown, &inbox.Asked{Called: 2, Evidence: map[query.Atom]inbox.Evidence{}}, nil, inbox.DecisionAbandoned, 0},
 		{"the storage failed before asking", unknown, nil, errTest, inbox.DecisionAbandoned, 0},
 		{"the review's schedule: kept, then the cleanup read failed", unknown, &inbox.Asked{Called: 1, Evidence: map[query.Atom]inbox.Evidence{}, Unsettled: atoms}, nil, inbox.DecisionPending, 0},
-		{"one answer unsettled", unknown, &inbox.Asked{Called: 1, Evidence: map[query.Atom]inbox.Evidence{codeAtom: answer(0.05, at)}, Unsettled: []query.Atom{resetAtom}}, nil, inbox.DecisionPending, 0},
+		{"one answer unsettled", unknown, &inbox.Asked{Called: 1, Evidence: map[query.Atom]inbox.Evidence{codeAtom: answer(0.05, at)}, Unsettled: []query.Atom{resetAtom}}, nil, inbox.DecisionHeld, 1},
 	}
 	for _, c := range cases {
 		model := c.r.Model
