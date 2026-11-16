@@ -226,6 +226,9 @@ func (h *handler) searchMail(ctx context.Context, req *mcp.CallToolRequest) (*mc
 	if err != nil {
 		return nil, nil, toolFailure(contracts.ErrUnauthorized)
 	}
+	if err := c.admitMail(); err != nil {
+		return nil, nil, err
+	}
 	in, err := searchArgs(req.Params.Arguments)
 	if err != nil {
 		return nil, nil, h.failed(c, ToolSearchMail, err)
@@ -308,6 +311,9 @@ func (h *handler) readMessage(ctx context.Context, req *mcp.CallToolRequest, in 
 	if err != nil {
 		return nil, nil, toolFailure(contracts.ErrUnauthorized)
 	}
+	if err := c.admitMail(); err != nil {
+		return nil, nil, err
+	}
 	ctx, cancel := c.bind(ctx)
 	defer cancel()
 	msg, rel, err := h.svc.Read(ctx, c.grant, in.ID)
@@ -338,6 +344,9 @@ func (h *handler) getAttachment(ctx context.Context, req *mcp.CallToolRequest, i
 	c, err := grantedCall(req)
 	if err != nil {
 		return nil, nil, toolFailure(contracts.ErrUnauthorized)
+	}
+	if err := c.admitMail(); err != nil {
+		return nil, nil, err
 	}
 	// Checked again here, whatever the middleware read of the body: the
 	// tool runs only with the part (ADR 0030, step-up).
@@ -434,6 +443,21 @@ func (h *handler) failed(c *call, tool string, err error) error {
 	}
 	c.setOutcome("internal")
 	return toolErrorOf("internal", "internal error", nil)
+}
+
+// admitMail is the mail tools' own boundary, before the service is asked
+// for anything: the middleware held this call's answer for its lease, and
+// the request came over HTTP/1.1 on a connection a cut can close
+// (call.abortable). Otherwise the call is 503 no_abort, as the middleware
+// answers it, and the service prepares nothing.
+func (c *call) admitMail() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.buffered && c.abortable {
+		return nil
+	}
+	c.status, c.outcome = http.StatusServiceUnavailable, "no_abort"
+	return toolErrorOf("temporarily_unavailable", "Permaily cannot answer now; try again shortly", nil)
 }
 
 func (c *call) setOutcome(o string) {

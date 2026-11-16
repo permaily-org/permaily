@@ -64,14 +64,19 @@ func TestAToolWithoutTheMiddlewaresGrantAnswersNothing(t *testing.T) {
 	}
 }
 
-// Mail for an answer the middleware did not hold for its lease (the SDK
-// read the body otherwise than the middleware did), or a second lease for
-// one answer, is never sent: the lease is ended and the tool answers
-// "internal".
+// Mail for an answer the middleware did not hold for its lease, or a second
+// lease for one answer, is never sent: the lease is ended and the tool
+// answers "internal".
 func TestMailForAnAnswerNotHeldIsNeverSent(t *testing.T) {
+	l := &connectionstest.Lease{}
+	if err := (&call{abortable: true}).hold(l); !errors.Is(err, errNotBuffered) {
+		t.Fatal(err)
+	}
+	if started, finished, _, _ := l.State(); started || !finished {
+		t.Fatal("the lease was not ended")
+	}
 	for _, c := range []*call{
-		{grant: testGrant(contracts.PartSender)},
-		{grant: testGrant(contracts.PartSender), buffered: true, release: &connectionstest.Lease{}},
+		{grant: testGrant(contracts.PartSender), buffered: true, abortable: true, release: &connectionstest.Lease{}},
 	} {
 		f := &connectionstest.Fake{}
 		l := &connectionstest.Lease{}
@@ -103,12 +108,51 @@ func TestMailForAnAnswerNotHeldIsNeverSent(t *testing.T) {
 // body: without it the service is not asked and the answer is the step-up.
 func TestTheToolChecksThePartItself(t *testing.T) {
 	f := &connectionstest.Fake{}
-	c := &call{grant: testGrant(contracts.PartSender, contracts.PartSubject), buffered: true}
+	c := &call{grant: testGrant(contracts.PartSender, contracts.PartSubject), buffered: true, abortable: true}
 	if _, _, err := testHandler(f).getAttachment(context.Background(), requestWith(c), AttachmentID{ID: "x"}); err == nil {
 		t.Fatal("answered")
 	}
 	if _, stepUp, _, _ := c.taken(); !slices.Equal(stepUp, []contracts.Part{contracts.PartAttachments}) || len(f.Calls()) != 0 {
 		t.Fatalf("%v %v", stepUp, f.Calls())
+	}
+}
+
+// V50 (the third review of #131 and #144, finding 1 and ruling 2): each mail
+// tool is its own boundary, whatever the middleware read of the body: a call
+// whose answer is not held for its lease, or that did not come over HTTP/1.1
+// on a connection a cut can close, is 503 no_abort and the service is asked
+// nothing, so it prepares no mail and no receipt.
+func TestV50CEachMailToolRefusesOffAnAbortCapableConnection(t *testing.T) {
+	for _, held := range []struct{ buffered, abortable bool }{{false, false}, {true, false}, {false, true}} {
+		f := &connectionstest.Fake{}
+		h := testHandler(f)
+		ctx := context.Background()
+		tools := map[string]func(*call) error{
+			ToolSearchMail: func(c *call) error {
+				_, _, err := h.searchMail(ctx, requestWith(c))
+				return err
+			},
+			ToolReadMessage: func(c *call) error {
+				_, _, err := h.readMessage(ctx, requestWith(c), MessageID{ID: "mbx_A.msg_1"})
+				return err
+			},
+			ToolGetAttachment: func(c *call) error {
+				_, _, err := h.getAttachment(ctx, requestWith(c), AttachmentID{ID: "mbx_A.msg_1"})
+				return err
+			},
+		}
+		for tool, run := range tools {
+			c := &call{grant: testGrant(contracts.PartSender, contracts.PartAttachments), buffered: held.buffered, abortable: held.abortable}
+			if err := run(c); err == nil || !strings.Contains(err.Error(), "temporarily_unavailable") {
+				t.Fatalf("%s: %v", tool, err)
+			}
+			if _, _, status, outcome := c.taken(); status != http.StatusServiceUnavailable || outcome != "no_abort" {
+				t.Fatalf("%s: %d %s", tool, status, outcome)
+			}
+		}
+		if calls := f.Calls(); len(calls) != 0 {
+			t.Fatalf("the service was asked %v", calls)
+		}
 	}
 }
 
@@ -282,4 +326,16 @@ func TestSchemaOfPanicsOnATypeWithoutASchema(t *testing.T) {
 		}
 	}()
 	schemaOf[chan int]()
+}
+
+// An empty answer's header is flushed under its lease, before send says it
+// was sent (#131's second review, finding 1), never left for the server to
+// write once the handler returned.
+func TestAnEmptyAnswerIsFlushedUnderItsLease(t *testing.T) {
+	rec := newRecorder(AnswerMax)
+	rec.WriteHeader(http.StatusOK)
+	w := httptest.NewRecorder()
+	if sent, ended := send(context.Background(), context.Background(), w, nil, rec); !sent || ended != "" || !w.Flushed {
+		t.Fatalf("sent %v ended %q flushed %v", sent, ended, w.Flushed)
+	}
 }
