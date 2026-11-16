@@ -174,11 +174,8 @@ func devVendorHTTP(d devConfig) *http.Client {
 		return hc
 	}
 	if d.vendors == "" {
-		// cimd.Harden reads the transport's TLS configuration: it is given
-		// one, though nothing is ever dialled.
 		return &http.Client{Transport: &http.Transport{
-			DialContext:     func(context.Context, string, string) (net.Conn, error) { return nil, errNoVendor },
-			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+			DialContext: func(context.Context, string, string) (net.Conn, error) { return nil, errNoVendor },
 		}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	roots := x509.NewCertPool()

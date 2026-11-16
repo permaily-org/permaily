@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"errors"
 	"log/slog"
@@ -111,7 +110,6 @@ func composeConnections(c connectionsParts) (*composedConnections, error) {
 	}
 	store := inbox.NewDiscloser(c.entries, query.Eval, c.mailboxes.Decisions())
 	full, _ := store.(inbox.DecisionsFullCounter)
-	disclose := askingDiscloser{Discloser: store, asker: c.model}
 	svc, err := connections.New(connections.Config{
 		OAuth:       c.oauth,
 		Records:     c.records,
@@ -120,12 +118,12 @@ func composeConnections(c connectionsParts) (*composedConnections, error) {
 		Vendors:     cimd.New(c.vendorHTTP, c.domain, now),
 		Accounts:    c.accounts,
 		Mailboxes:   connectionMailboxes{c.mailboxes},
-		Discloser:   disclose,
+		Discloser:   store,
 		Asker:       c.model,
 		Model:       c.model,
 		ModelNotice: domain.ModelNoticeVersion,
 		Rules:       []rules.Rule{rules.Default()},
-		Receipts:    receipts.New(c.entries, c.keys, now, randomBytes),
+		Receipts:    receipts.New(c.entries, c.keys, now, nil),
 		Now:         now,
 	})
 	if err != nil {
@@ -135,38 +133,6 @@ func composeConnections(c connectionsParts) (*composedConnections, error) {
 	// cancelled deletion reopens them (ADR 0030, finding 6).
 	c.accounts.SetConnections(svc)
 	return &composedConnections{svc: svc, full: full, cfg: c.oauth, since: now()}, nil
-}
-
-// askingDiscloser gives the Discloser the model's Asker for the account a
-// read is for, whenever its Disclosure says the model may be asked
-// (inbox.WithAsker): the service checked the model's gate and the notice
-// before it got here. The Discloser asks only through the Asker its
-// context carries, and the service hands its Config.Asker to none, so
-// without this every message the default rule needs the model for is held
-// and every read is model_unavailable. A context that carries an Asker
-// already keeps it.
-type askingDiscloser struct {
-	inbox.Discloser
-	asker inbox.Asker
-}
-
-func (a askingDiscloser) with(ctx context.Context, d inbox.Disclosure) context.Context {
-	if _, ok := inbox.AskerFrom(ctx); ok || !d.Model || a.asker == nil {
-		return ctx
-	}
-	return inbox.WithAsker(ctx, inbox.Asking{Asker: a.asker, Account: d.Account})
-}
-
-func (a askingDiscloser) Page(ctx context.Context, b inbox.Box, d inbox.Disclosure, before string, limit int) (*inbox.DisclosePage, error) {
-	return a.Discloser.Page(a.with(ctx, d), b, d, before, limit)
-}
-
-func (a askingDiscloser) Message(ctx context.Context, b inbox.Box, d inbox.Disclosure, id string) (inbox.Outcome, error) {
-	return a.Discloser.Message(a.with(ctx, d), b, d, id)
-}
-
-func (a askingDiscloser) Attachment(ctx context.Context, b inbox.Box, d inbox.Disclosure, id string, index int) (inbox.Outcome, *inbox.Attachment, error) {
-	return a.Discloser.Attachment(a.with(ctx, d), b, d, id, index)
 }
 
 // connectionMailboxes is what the connections service reads of mailboxes
@@ -317,13 +283,6 @@ var connectionsReasons = []string{
 	"request_too_large", "model_notice_changed", "model_unavailable", "invalid_formula", "invalid_limit",
 	"invalid_cursor", "too_late", "cut", "receipt_failed", "allowed", "denied", "token_issued",
 	"revoked_person", "revoked_vendor", "decisions_full",
-}
-
-// randomBytes fills b from the enclave's source of randomness (the NSM's,
-// through the kernel).
-func randomBytes(b []byte) error {
-	_, err := rand.Read(b)
-	return err
 }
 
 func seconds(d time.Duration) int { return int(d / time.Second) }

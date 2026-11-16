@@ -25,7 +25,6 @@ import (
 
 	"golang.org/x/crypto/acme"
 
-	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/rules"
@@ -304,62 +303,6 @@ func selfSigned(t *testing.T, names ...string) tls.Certificate {
 		t.Fatal(err)
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
-}
-
-// recordingDiscloser is a Discloser that records the Asker each call's
-// context carries.
-type recordingDiscloser struct {
-	inbox.Discloser
-	got []inbox.Asking
-}
-
-func (r *recordingDiscloser) record(ctx context.Context) {
-	a, _ := inbox.AskerFrom(ctx)
-	r.got = append(r.got, a)
-}
-
-func (r *recordingDiscloser) Page(ctx context.Context, _ inbox.Box, _ inbox.Disclosure, _ string, _ int) (*inbox.DisclosePage, error) {
-	r.record(ctx)
-	return &inbox.DisclosePage{}, nil
-}
-
-func (r *recordingDiscloser) Message(ctx context.Context, _ inbox.Box, _ inbox.Disclosure, _ string) (inbox.Outcome, error) {
-	r.record(ctx)
-	return inbox.Outcome{}, nil
-}
-
-func (r *recordingDiscloser) Attachment(ctx context.Context, _ inbox.Box, _ inbox.Disclosure, _ string, _ int) (inbox.Outcome, *inbox.Attachment, error) {
-	r.record(ctx)
-	return inbox.Outcome{}, nil, nil
-}
-
-// playedAsker stands for the model's service.
-type playedAsker struct{ inbox.Asker }
-
-// What a connection reads asks the model through the model's Asker, for
-// the account the read is for, whenever the Disclosure says the model may
-// be asked (the service checked its gate first), and never when it says
-// not; a context that carries an Asker keeps it.
-func TestAConnectionsReadAsksTheModelsAsker(t *testing.T) {
-	model, other := &playedAsker{}, &playedAsker{}
-	rec := &recordingDiscloser{}
-	d := askingDiscloser{Discloser: rec, asker: model}
-	ctx := context.Background()
-	on := inbox.Disclosure{Account: "acc_one", Model: true}
-	_, _ = d.Page(ctx, inbox.Box{}, on, "", 1)
-	_, _ = d.Message(ctx, inbox.Box{}, on, "m")
-	_, _, _ = d.Attachment(ctx, inbox.Box{}, on, "m", 0)
-	_, _ = d.Page(ctx, inbox.Box{}, inbox.Disclosure{Account: "acc_one"}, "", 1)
-	_, _ = d.Message(inbox.WithAsker(ctx, inbox.Asking{Asker: other, Account: "acc_two"}), inbox.Box{}, on, "m")
-	want := []inbox.Asking{{Asker: model, Account: "acc_one"}, {Asker: model, Account: "acc_one"}, {Asker: model, Account: "acc_one"}, {}, {Asker: other, Account: "acc_two"}}
-	if len(rec.got) != len(want) {
-		t.Fatalf("%+v", rec.got)
-	}
-	for i := range want {
-		if rec.got[i] != want[i] {
-			t.Errorf("call %d: %+v, want %+v", i, rec.got[i], want[i])
-		}
-	}
 }
 
 // The authorization server's addresses are the image's hosts, with the
