@@ -959,6 +959,34 @@ describe('model-key.sh', () => {
       expect(seen.length).toBe(1)
     }
   })
+
+  test('under bash -x, a key refused as an argument and a refused PERMAILY_API are not printed', async () => {
+    // Refused before anything runs, and the trace is off from the script's first line: the mistaken key,
+    // given as the file or as the action, and a password in an origin that is refused, are never echoed.
+    const password = 'origin-password-Qx81'
+    for (const [env, args, secret] of [
+      [{}, ['model-key.sh', 'set', key], key],
+      [{}, ['model-key.sh', key], key],
+      [{}, ['model-key.sh', 'status', key], key],
+      [{}, ['model-key.sh', 'remove', key], key],
+      [
+        { PERMAILY_API: `https://operator:${password}@127.0.0.1:${enclave.port}` },
+        ['model-key.sh'],
+        password,
+      ],
+    ] as const) {
+      seen = []
+      const out = await runHow({ trace: true }, env, ...(args as unknown as [string, ...string[]]))
+      const printed = out.stdout + out.stderr
+      expect(out.stderr).toContain('+ ')
+      expect({ args, exit: out.exit, secret: printed.includes(secret) }).toEqual({
+        args,
+        exit: 2,
+        secret: false,
+      })
+      expect(seen).toEqual([])
+    }
+  })
 })
 
 test('the admin token goes only through attested.sh: enclave_curl --token or with_token, after attest', () => {

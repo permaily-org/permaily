@@ -34,6 +34,10 @@
 # Needs curl and jq; go and git 2.32 or later unless PERMAILY_VERIFY is set; gh with PERMAILY_RELEASE,
 # unless PERMAILY_VERIFY and PERMAILY_PCRS are both set.
 set -euo pipefail
+# Under bash -x, nothing is traced until the arguments and PERMAILY_API are checked: a key given here by
+# mistake, as the file or the action, or a password in a refused origin, would be printed.
+traced=${-//[^x]/}
+{ set +x; } 2>/dev/null
 
 usage() { sed -n '2,35p' "$0"; exit 2; }
 
@@ -64,6 +68,8 @@ work=$(mktemp -d)
 trap attested_cleanup EXIT
 load_token
 attest
+# The arguments and $api are checked: from here, a trace prints what it would.
+[[ -z $traced ]] || set -x
 
 # ask <method> [file with the body] writes the answer to $work/response.json
 # and its status to $code.
