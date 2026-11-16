@@ -32,6 +32,7 @@ import (
 	"math/big"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -413,8 +414,10 @@ func decode(s string) ([]byte, bool) {
 
 // Object reads the members of one JSON object of valid UTF-8 with nothing
 // after it. encoding/json alone would take the last of two members with one
-// name, and match names in any case; here a name twice is refused and names
-// are matched exactly by the caller.
+// name, and match names in any case; here a name twice is refused, in any
+// case too (fold), and names are matched exactly by the caller. So whoever
+// else reads the same bytes, with encoding/json or exactly, reads the same
+// members.
 func Object(raw []byte) (map[string]json.RawMessage, bool) {
 	if !utf8.Valid(raw) {
 		return nil, false
@@ -424,15 +427,18 @@ func Object(raw []byte) (map[string]json.RawMessage, bool) {
 		return nil, false
 	}
 	members := map[string]json.RawMessage{}
+	folded := map[string]bool{}
 	for dec.More() {
 		token, err := dec.Token()
 		if err != nil {
 			return nil, false
 		}
 		name, _ := token.(string) // inside an object the decoder gives only names here
-		if _, twice := members[name]; twice {
+		key := fold(name)
+		if folded[key] {
 			return nil, false
 		}
+		folded[key] = true
 		var value json.RawMessage
 		if err := dec.Decode(&value); err != nil {
 			return nil, false
@@ -446,6 +452,23 @@ func Object(raw []byte) (map[string]json.RawMessage, bool) {
 		return nil, false
 	}
 	return members, true
+}
+
+// fold is name as one of the names any reader that matches names in any case
+// takes for it: each letter the smallest of those Unicode's simple case
+// folding makes one (A and a, k, K and the Kelvin sign, s, S and the long s),
+// after the upper case of its lower case, which is how encoding/json has
+// folded in some versions and which also makes the Turkish dotted and
+// dotless i an I.
+func fold(name string) string {
+	return strings.Map(func(r rune) rune {
+		r = unicode.ToUpper(unicode.ToLower(r))
+		smallest := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			smallest = min(smallest, f)
+		}
+		return smallest
+	}, name)
 }
 
 // list reads the items of one JSON array, at most limit of them.

@@ -185,6 +185,7 @@ func TestBroken(t *testing.T) {
 	const (
 		oneWriting  = "one token has one writing here: encoding/base64, which go-jose reads with, skips line breaks and takes any spare bits in the last character"
 		strictJSON  = "what the provider signed is read with a member twice refused, so no two readers can take different values; go-oidc reads the claims with encoding/json, which takes the last"
+		foldedJSON  = "a member twice in another case is refused too, since encoding/json, which go-oidc reads the claims with, takes names in any case and so the last of the two"
 		ownKeyRules = "go-oidc takes any key of the set whose identifier matches, whatever the set says it is for"
 		wholeTimes  = "a time is a whole number of seconds written plainly, as both providers write it; go-oidc takes any JSON number"
 	)
@@ -369,6 +370,18 @@ func TestBroken(t *testing.T) {
 				})
 			}}
 		}, "", strictJSON},
+		{"subject twice in another case", func(fake *idptest.Server) faults {
+			return faults{EditIDToken: func(token string) string {
+				return resign(fake, token, func(claims string) string { return strings.Replace(claims, `"sub":`, `"SUB":"eve","sub":`, 1) })
+			}}
+		}, "", foldedJSON},
+		{"audience twice in another case, another application first", func(fake *idptest.Server) faults {
+			return faults{EditIDToken: func(token string) string {
+				return resign(fake, token, func(claims string) string {
+					return strings.Replace(claims, `"aud":`, `"Aud":"another-client","aud":`, 1)
+				})
+			}}
+		}, "", foldedJSON},
 		{"claims that are a list", plain(faults{RawClaims: []byte(`[]`)}), "", ""},
 		{"claims that are not JSON", plain(faults{RawClaims: []byte(`sub=ada`)}), "", ""},
 		{"claims with something after them", func(fake *idptest.Server) faults {

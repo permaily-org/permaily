@@ -128,6 +128,15 @@ func TestIDTokenRefused(t *testing.T) {
 			kid, _ := w.fake.SigningKey()
 			return faults{RawHeader: []byte(`{"alg":"RS256","kid":"another-key","kid":"` + kid + `"}`)}
 		}, "ID token header is not one JSON object", ""},
+		// encoding/json would read these as one member, in any case.
+		{"algorithm twice in another case", func(w *world) faults {
+			kid, _ := w.fake.SigningKey()
+			return faults{RawHeader: []byte(`{"ALG":"none","alg":"RS256","kid":"` + kid + `"}`)}
+		}, "ID token header is not one JSON object", ""},
+		{"key identifier twice in other letters", func(w *world) faults {
+			kid, _ := w.fake.SigningKey()
+			return faults{RawHeader: []byte(`{"alg":"RS256","\u212aid":"another-key","kid":"` + kid + `"}`)}
+		}, "ID token header is not one JSON object", ""},
 		{"header is a list", func(*world) faults { return faults{RawHeader: []byte(`["RS256"]`)} }, "ID token header is not one JSON object", ""},
 		{"header is not JSON", func(*world) faults { return faults{RawHeader: []byte(`{"alg":"RS256"`)} }, "ID token header is not one JSON object", ""},
 		{"header with something after it", func(w *world) faults {
@@ -275,6 +284,9 @@ func TestIDTokenRefused(t *testing.T) {
 		{"keys twice", func(*world) faults {
 			return faults{Keys: &idptest.Answer{Body: []byte(`{"keys":[],"keys":[]}`)}}
 		}, "keys are not one JSON object", ""},
+		{"keys twice in another case", func(*world) faults {
+			return faults{Keys: &idptest.Answer{Body: []byte(`{"Keys":[],"keys":[]}`)}}
+		}, "keys are not one JSON object", ""},
 		{"keys without a list", func(*world) faults { return faults{Keys: &idptest.Answer{Body: []byte(`{}`)}} }, "keys without a list, or with one too long", ""},
 		{"keys that are an object", func(*world) faults { return faults{Keys: &idptest.Answer{Body: []byte(`{"keys":{}}`)}} }, "keys without a list, or with one too long", ""},
 		{"keys with something after the list", func(*world) faults {
@@ -283,6 +295,9 @@ func TestIDTokenRefused(t *testing.T) {
 		{"a key that is not an object", func(*world) faults { return faults{Keys: &idptest.Answer{Body: []byte(`{"keys":["RSA"]}`)}} }, "a key is not one JSON object", ""},
 		{"a key with a member twice", func(*world) faults {
 			return faults{Keys: &idptest.Answer{Body: []byte(`{"keys":[{"kid":"a","kid":"b"}]}`)}}
+		}, "a key is not one JSON object", ""},
+		{"a key with a member twice in another case", func(*world) faults {
+			return faults{Keys: &idptest.Answer{Body: []byte(`{"keys":[{"kid":"a","KID":"b"}]}`)}}
 		}, "a key is not one JSON object", ""},
 		{"a key of Microsoft's personal accounts on a token of an organisation", func(*world) faults {
 			return faults{EditKeys: keys(set("issuer", "https://login.microsoftonline.com/"+idptest.PersonalTenant+"/v2.0")),
@@ -415,6 +430,28 @@ func TestIDTokenRefused(t *testing.T) {
 				})
 			}}
 		}, "ID token claims are not one JSON object", ""},
+		// encoding/json would read these as one member, in any case.
+		{"subject twice in another case", func(w *world) faults {
+			return faults{EditTokenAnswer: func(m map[string]any) {
+				m["id_token"] = resign(w, m["id_token"].(string), func(claims string) string {
+					return strings.Replace(claims, `"sub":`, `"SUB":"eve","sub":`, 1)
+				})
+			}}
+		}, "ID token claims are not one JSON object", ""},
+		{"address twice in another case", func(w *world) faults {
+			return faults{EditTokenAnswer: func(m map[string]any) {
+				m["id_token"] = resign(w, m["id_token"].(string), func(claims string) string {
+					return strings.Replace(claims, `"email":`, `"Email":"eve@example.com","email":`, 1)
+				})
+			}}
+		}, "ID token claims are not one JSON object", ""},
+		{"verified twice in another case", func(w *world) faults {
+			return faults{EditTokenAnswer: func(m map[string]any) {
+				m["id_token"] = resign(w, m["id_token"].(string), func(claims string) string {
+					return strings.Replace(claims, `"email":`, `"EMAIL_VERIFIED":false,"email":`, 1)
+				})
+			}}
+		}, "ID token claims are not one JSON object", idp.Google},
 		{"claims that are a list", func(*world) faults { return faults{RawClaims: []byte(`[]`)} }, "ID token claims are not one JSON object", ""},
 		{"claims that are not JSON", func(*world) faults { return faults{RawClaims: []byte(`sub=ada`)} }, "ID token claims are not one JSON object", ""},
 		{"claims cut short", func(*world) faults { return faults{RawClaims: []byte(`{"sub":"ada"`)} }, "ID token claims are not one JSON object", ""},
