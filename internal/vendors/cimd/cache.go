@@ -8,14 +8,22 @@ import (
 )
 
 // entry is a document or a key set as fetched and checked, with what its
-// answer said of caching it and when it was last fetched or revalidated.
+// answer said of caching it, when the answer that last fetched or
+// revalidated it was received and how old that answer was then.
 type entry struct {
 	key       string
 	value     any // *oauth.ClientDocument or []vendors.Key
 	policy    vendors.CachePolicy
 	validated time.Time
+	age       time.Duration // the corrected initial age at validated
 	etag      string
 	modified  string
+}
+
+// currentAge is e's age at now (RFC 9111 section 4.2.3): its age when it
+// was received plus the time it has been kept since.
+func (e *entry) currentAge(now time.Time) time.Duration {
+	return e.age + max(now.Sub(e.validated), 0)
 }
 
 // lru holds at most max entries, the least recently used dropped first.
@@ -64,3 +72,46 @@ func (c *lru) remove(key string) {
 
 // len is how many entries are held.
 func (c *lru) len() int { return c.order.Len() }
+
+// refreshes remembers, of at most max key-set URLs, when each was last
+// fetched again for a kid it did not have, so that it is at most once every
+// KeysRefreshEvery. A URL is remembered only when its fetch is admitted or
+// already in flight; one remembered is never forgotten within its minute,
+// so past max a new refresh is refused rather than one remembered dropped.
+type refreshes struct {
+	max   int
+	order *list.List // of *refresh, the oldest first
+	byURL map[string]*list.Element
+}
+
+type refresh struct {
+	uri string
+	at  time.Time
+}
+
+func newRefreshes(max int) *refreshes {
+	return &refreshes{max: max, order: list.New(), byURL: map[string]*list.Element{}}
+}
+
+// may says uri may be fetched again at now: it was not within
+// KeysRefreshEvery, and there is room to remember it.
+func (r *refreshes) may(uri string, now time.Time) bool {
+	for el := r.order.Front(); el != nil && now.Sub(el.Value.(*refresh).at) >= KeysRefreshEvery; el = r.order.Front() {
+		r.order.Remove(el)
+		delete(r.byURL, el.Value.(*refresh).uri)
+	}
+	if _, ok := r.byURL[uri]; ok {
+		return false
+	}
+	return len(r.byURL) < r.max
+}
+
+// mark remembers that uri is fetched again at now; may said it could be.
+func (r *refreshes) mark(uri string, now time.Time) {
+	if el, ok := r.byURL[uri]; ok {
+		el.Value.(*refresh).at = now
+		r.order.MoveToBack(el)
+		return
+	}
+	r.byURL[uri] = r.order.PushBack(&refresh{uri: uri, at: now})
+}

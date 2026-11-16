@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -82,10 +83,10 @@ type Resolver struct {
 	mu      sync.Mutex
 	docs    *lru
 	keys    *lru
-	flights map[string]*flight
-	window  time.Time // when the current minute of FetchesPerMinute began
-	fetched int       // fetches of clients not held in it
-	forced  map[string]time.Time
+	flights map[string]*flight // by URL, whatever it is fetched as
+	window  time.Time          // when the current minute of FetchesPerMinute began
+	fetched int                // fetches of clients not held in it
+	forced  *refreshes
 }
 
 var _ vendors.Resolver = (*Resolver)(nil)
@@ -104,7 +105,7 @@ func New(hc *http.Client, deployment string, now func() time.Time) *Resolver {
 		docs:       newLRU(vendors.CacheMax),
 		keys:       newLRU(vendors.CacheMax),
 		flights:    map[string]*flight{},
-		forced:     map[string]time.Time{},
+		forced:     newRefreshes(vendors.CacheMax),
 	}
 	if hc != nil {
 		r.hc = *hc
@@ -178,7 +179,9 @@ func (r *Resolver) Client(ctx context.Context, clientID string) (*vendors.Client
 }
 
 // Keys returns the key set at c's jwks_uri; with refresh, it revalidates it
-// first, at most once every KeysRefreshEvery for one URL.
+// first, at most once every KeysRefreshEvery for one URL. Only a refresh
+// that is fetched is remembered, of at most CacheMax URLs at once: past
+// them, a refresh is refused and the key set held is answered.
 func (r *Resolver) Keys(ctx context.Context, c *vendors.Client, refresh bool) ([]vendors.Key, error) {
 	if c == nil || c.Document.TokenEndpointAuthMethod != oauth.AuthPrivateKeyJWT || c.Document.JWKSURI == "" {
 		return nil, fail(vendors.ErrDocument, ReasonNoKeys)
@@ -187,27 +190,8 @@ func (r *Resolver) Keys(ctx context.Context, c *vendors.Client, refresh bool) ([
 	if _, err := checkClientID(uri, r.deployment); err != nil {
 		return nil, fail(vendors.ErrDocument, ReasonRules)
 	}
-	force := false
-	if refresh {
-		r.mu.Lock()
-		now := r.now()
-		if last, ok := r.forced[uri]; !ok || now.Sub(last) >= KeysRefreshEvery {
-			r.forced[uri] = now
-			force = true
-		}
-		// What a vendor's URLs leave here is bounded: past CacheMax, the
-		// refreshes older than a minute, which decide nothing, are dropped.
-		if len(r.forced) > vendors.CacheMax {
-			for u, at := range r.forced {
-				if now.Sub(at) >= KeysRefreshEvery {
-					delete(r.forced, u)
-				}
-			}
-		}
-		r.mu.Unlock()
-	}
 	parse := func(body []byte) (any, error) { return parseKeys(body) }
-	v, _, err := r.resolve(ctx, r.keys, "keys "+uri, uri, oauth.JWKSMaxBytes, force, parse)
+	v, _, err := r.resolve(ctx, r.keys, "keys "+uri, uri, oauth.JWKSMaxBytes, refresh, parse)
 	if err != nil {
 		return nil, err
 	}
@@ -215,46 +199,65 @@ func (r *Resolver) Keys(ctx context.Context, c *vendors.Client, refresh bool) ([
 }
 
 // flight is one fetch of one URL that every caller asking for it at once
-// waits on.
+// waits on: as key (a document or a key set) says.
 type flight struct {
+	key   string
 	done  chan struct{}
 	value any
 	at    time.Time
 	err   error
 }
 
-// resolve answers what the cache c holds for key when it is fresh (and not
-// force), and otherwise fetches uri, one fetch of it at once, as "Caching"
-// says.
-func (r *Resolver) resolve(ctx context.Context, c *lru, key, uri string, limit int64, force bool, parse func([]byte) (any, error)) (any, time.Time, error) {
-	r.mu.Lock()
-	now := r.now()
-	e := c.get(key)
-	if e != nil && !force && e.policy.Fresh(now.Sub(e.validated)) {
-		r.mu.Unlock()
-		return e.value, e.validated, nil
-	}
-	f := r.flights[key]
-	if f == nil {
-		if e == nil && !r.admit(now) {
+// resolve answers what the cache c holds for key when it is fresh, and
+// otherwise fetches uri, one fetch of it at once, as "Caching" says. With
+// refresh, it fetches a held key fresh or not, when r.forced allows it. A
+// URL is fetched once at a time whatever it is fetched as: a fetch of it as
+// the other kind (a jwks_uri may be the document's own URL) is waited for,
+// and the cache looked at again.
+func (r *Resolver) resolve(ctx context.Context, c *lru, key, uri string, limit int64, refresh bool, parse func([]byte) (any, error)) (any, time.Time, error) {
+	for {
+		r.mu.Lock()
+		now := r.now()
+		force := refresh && r.forced.may(uri, now)
+		e := c.get(key)
+		if e != nil && !force && e.policy.Fresh(e.currentAge(now)) {
 			r.mu.Unlock()
-			return nil, time.Time{}, fail(vendors.ErrUnreachable, ReasonRateLimited)
+			return e.value, e.validated, nil
 		}
-		f = &flight{done: make(chan struct{})}
-		r.flights[key] = f
-		var held *entry
-		if e != nil {
-			copied := *e
-			held = &copied
+		f := r.flights[uri]
+		if f != nil && f.key != key {
+			r.mu.Unlock()
+			select {
+			case <-f.done:
+				continue
+			case <-ctx.Done():
+				return nil, time.Time{}, fail(vendors.ErrUnreachable, ReasonTransport)
+			}
 		}
-		go r.fly(ctx, c, key, uri, limit, held, parse, f)
-	}
-	r.mu.Unlock()
-	select {
-	case <-f.done:
-		return f.value, f.at, f.err
-	case <-ctx.Done():
-		return nil, time.Time{}, fail(vendors.ErrUnreachable, ReasonTransport)
+		if f == nil {
+			if e == nil && !r.admit(now) {
+				r.mu.Unlock()
+				return nil, time.Time{}, fail(vendors.ErrUnreachable, ReasonRateLimited)
+			}
+			f = &flight{key: key, done: make(chan struct{})}
+			r.flights[uri] = f
+			var held *entry
+			if e != nil {
+				copied := *e
+				held = &copied
+			}
+			go r.fly(ctx, c, uri, limit, held, parse, f)
+		}
+		if force {
+			r.forced.mark(uri, now)
+		}
+		r.mu.Unlock()
+		select {
+		case <-f.done:
+			return f.value, f.at, f.err
+		case <-ctx.Done():
+			return nil, time.Time{}, fail(vendors.ErrUnreachable, ReasonTransport)
+		}
 	}
 }
 
@@ -273,14 +276,15 @@ func (r *Resolver) admit(now time.Time) bool {
 // fly fetches uri for f and keeps what it may in c. It runs apart from the
 // caller that started it, which may give up, so that the others waiting on
 // f are answered.
-func (r *Resolver) fly(ctx context.Context, c *lru, key, uri string, limit int64, held *entry, parse func([]byte) (any, error), f *flight) {
+func (r *Resolver) fly(ctx context.Context, c *lru, uri string, limit int64, held *entry, parse func([]byte) (any, error), f *flight) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.timeout)
 	defer cancel()
 	res, err := r.fetch(ctx, uri, held, limit)
 
+	key := f.key
 	r.mu.Lock()
 	defer func() {
-		delete(r.flights, key)
+		delete(r.flights, uri)
 		r.mu.Unlock()
 		close(f.done)
 	}()
@@ -293,13 +297,13 @@ func (r *Resolver) fly(ctx context.Context, c *lru, key, uri string, limit int64
 			f.err = perr
 			return
 		}
-		e := &entry{key: key, value: value, policy: res.policy, validated: now, etag: res.etag, modified: res.modified}
+		e := &entry{key: key, value: value, policy: res.policy, validated: res.received, age: res.age, etag: res.etag, modified: res.modified}
 		if res.policy.NoStore {
 			c.remove(key)
 		} else {
 			c.put(e)
 		}
-		f.value, f.at = value, now
+		f.value, f.at = value, res.received
 	case err == nil && res.status == http.StatusNotModified && held != nil:
 		e := c.get(key)
 		if e == nil {
@@ -314,9 +318,15 @@ func (r *Resolver) fly(ctx context.Context, c *lru, key, uri string, limit int64
 		if res.modified != "" {
 			e.modified = res.modified
 		}
-		e.validated = now
-		c.put(e)
-		f.value, f.at = e.value, now
+		e.validated, e.age = res.received, res.age
+		// A 304 that now says no-store answers this request and drops
+		// the copy and its validators.
+		if e.policy.NoStore {
+			c.remove(key)
+		} else {
+			c.put(e)
+		}
+		f.value, f.at = e.value, res.received
 	default:
 		if err == nil {
 			err = fail(vendors.ErrUnreachable, ReasonStatus)
@@ -326,7 +336,7 @@ func (r *Resolver) fly(ctx context.Context, c *lru, key, uri string, limit int64
 		}
 		if errors.Is(err, vendors.ErrDocument) {
 			c.remove(key)
-		} else if held != nil && held.policy.StaleOnError(now.Sub(held.validated)) {
+		} else if held != nil && held.policy.StaleOnError(held.currentAge(now)) {
 			f.value, f.at = held.value, held.validated
 			return
 		}
@@ -334,10 +344,13 @@ func (r *Resolver) fly(ctx context.Context, c *lru, key, uri string, limit int64
 	}
 }
 
-// response is what a fetch read: its status, and for a 200 its body.
+// response is what a fetch read: its status, and for a 200 its body; when
+// it was received and how old it was then.
 type response struct {
 	status    int
 	body      []byte
+	received  time.Time
+	age       time.Duration
 	policy    vendors.CachePolicy
 	hasPolicy bool
 	etag      string
@@ -365,13 +378,17 @@ func (r *Resolver) fetch(ctx context.Context, uri string, held *entry, limit int
 			req.Header.Set("If-Modified-Since", held.modified)
 		}
 	}
+	requested := r.now()
 	resp, err := r.hc.Do(req)
 	if err != nil {
 		return nil, fail(vendors.ErrUnreachable, ReasonTransport)
 	}
 	defer resp.Body.Close()
+	received := r.now()
 	res := &response{
 		status:    resp.StatusCode,
+		received:  received,
+		age:       initialAge(resp.Header, requested, received),
 		etag:      resp.Header.Get("ETag"),
 		modified:  resp.Header.Get("Last-Modified"),
 		hasPolicy: len(resp.Header.Values("Cache-Control")) > 0,
@@ -413,4 +430,44 @@ func (r *Resolver) fetch(ctx context.Context, uri string, held *entry, limit int
 	}
 	res.body = b
 	return res, nil
+}
+
+// ageUnreadable is how old a response whose Age cannot be read is taken to
+// be: RFC 9111's 2^31 seconds, past any freshness and any stale hour.
+const ageUnreadable = (1 << 31) * time.Second
+
+// initialAge is a response's corrected initial age (RFC 9111 section
+// 4.2.3): the larger of the time since its Date and its Age plus the time
+// it took to come, so that an answer a CDN kept does not start its max-age
+// again. A Date that cannot be read, or that is later than received, adds
+// nothing.
+func initialAge(h http.Header, requested, received time.Time) time.Duration {
+	apparent := time.Duration(0)
+	if date, err := http.ParseTime(h.Get("Date")); err == nil && received.After(date) {
+		apparent = received.Sub(date)
+	}
+	delay := max(received.Sub(requested), 0)
+	return max(apparent, ageValue(h.Values("Age"))+delay)
+}
+
+// ageValue is the one delta-seconds of an Age header: 0 for none,
+// ageUnreadable for one that is not a non-negative integer, two that
+// differ, or one past 2^31.
+func ageValue(values []string) time.Duration {
+	if len(values) == 0 {
+		return 0
+	}
+	var n int64
+	for i, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" || strings.Trim(v, "0123456789") != "" {
+			return ageUnreadable
+		}
+		m, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || m >= 1<<31 || (i > 0 && m != n) {
+			return ageUnreadable
+		}
+		n = m
+	}
+	return time.Duration(n) * time.Second
 }

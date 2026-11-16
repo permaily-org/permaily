@@ -225,25 +225,45 @@ func TestV15WhatOfAKeySetIsKept(t *testing.T) {
 	}
 }
 
-// The refreshes remembered are bounded: past vendors.CacheMax URLs, those
-// older than a minute are dropped.
-func TestTheRefreshesRememberedAreBounded(t *testing.T) {
+// V15 (review of pull request 130, finding 4): at most CacheMax key-set
+// refreshes are remembered at once. Past them a refresh is refused, the key
+// set held answered and nothing fetched, and none remembered is dropped
+// within its minute; after it they are forgotten and a refresh is fetched.
+func TestV15TheRefreshesRememberedAreBounded(t *testing.T) {
 	p := newPlayed(t, jwtVendor(func() []byte { return keySet(rsaJWK(t, "k1")) }, "max-age=300"))
-	c, err := p.r.Client(context.Background(), clientURL)
+	ctx := context.Background()
+	c, err := p.r.Client(ctx, clientURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.r.mu.Lock()
-	for i := range vendors.CacheMax + 1 {
-		p.r.forced[fmt.Sprintf("https://keys-%d.vendor.dev/jwks.json", i)] = p.clk.now()
-	}
-	p.r.mu.Unlock()
-	p.clk.add(time.Minute)
-	if _, err := p.r.Keys(context.Background(), c, true); err != nil {
+	if _, err := p.r.Keys(ctx, c, false); err != nil {
 		t.Fatal(err)
 	}
 	p.r.mu.Lock()
-	n := len(p.r.forced)
+	for i := range vendors.CacheMax {
+		u := fmt.Sprintf("https://keys-%d.vendor.dev/jwks.json", i)
+		if !p.r.forced.may(u, p.clk.now()) {
+			t.Fatalf("%d: no room", i)
+		}
+		p.r.forced.mark(u, p.clk.now())
+	}
+	p.r.mu.Unlock()
+	p.clk.add(KeysRefreshEvery - time.Second)
+	if keys, err := p.r.Keys(ctx, c, true); err != nil || len(keys) != 1 || p.jwksFetches() != 1 {
+		t.Fatalf("a refresh past the bound: %v, %d fetches", err, p.jwksFetches())
+	}
+	p.r.mu.Lock()
+	n, first := len(p.r.forced.byURL), p.r.forced.byURL["https://keys-0.vendor.dev/jwks.json"] != nil
+	p.r.mu.Unlock()
+	if n != vendors.CacheMax || !first {
+		t.Fatalf("%d refreshes remembered, the first kept %v", n, first)
+	}
+	p.clk.add(time.Second)
+	if _, err := p.r.Keys(ctx, c, true); err != nil || p.jwksFetches() != 2 {
+		t.Fatalf("a refresh after the minute: %v, %d fetches", err, p.jwksFetches())
+	}
+	p.r.mu.Lock()
+	n = len(p.r.forced.byURL)
 	p.r.mu.Unlock()
 	if n != 1 {
 		t.Fatalf("%d refreshes remembered", n)
@@ -266,7 +286,7 @@ func TestV15ARefusedRefreshRemembersNothing(t *testing.T) {
 		}
 	}
 	p.r.mu.Lock()
-	n := len(p.r.forced)
+	n := len(p.r.forced.byURL)
 	p.r.mu.Unlock()
 	if n != 0 {
 		t.Errorf("%d refreshes remembered of none fetched", n)

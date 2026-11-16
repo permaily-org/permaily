@@ -196,13 +196,11 @@ func firstPublic(addrs []netip.Addr) (netip.Addr, bool) {
 	return netip.Addr{}, false
 }
 
-// notPublic are the ranges that are not the public internet beyond what
-// netip's predicates say: shared address space (CGNAT), IETF and
-// documentation ranges, benchmarking, 6to4 relays, the reserved class E and
-// broadcast; in IPv6 the translation and transition prefixes that embed an
-// IPv4 address the host does not check, discard-only, documentation and
-// the deprecated site-local.
-var notPublic = []netip.Prefix{
+// notPublic4 are the IPv4 ranges that are not the public internet beyond
+// what netip's predicates say: "this network", shared address space
+// (CGNAT), IETF protocol assignments, documentation, benchmarking, 6to4
+// relays, the reserved class E and broadcast.
+var notPublic4 = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.64.0.0/10"),
 	netip.MustParsePrefix("192.0.0.0/24"),
@@ -212,27 +210,50 @@ var notPublic = []netip.Prefix{
 	netip.MustParsePrefix("198.51.100.0/24"),
 	netip.MustParsePrefix("203.0.113.0/24"),
 	netip.MustParsePrefix("240.0.0.0/4"),
-	netip.MustParsePrefix("64:ff9b::/96"),
-	netip.MustParsePrefix("64:ff9b:1::/48"),
-	netip.MustParsePrefix("100::/64"),
+}
+
+// global6 is IPv6's global unicast space (IANA's IPv6 address space
+// registry). Everything outside it is not public: the unspecified,
+// loopback, IPv4-compatible, IPv4-translated and NAT64 forms, discard-only,
+// SRv6 SIDs, ULA, link-local, site-local, multicast and the reserved space.
+var global6 = netip.MustParsePrefix("2000::/3")
+
+// notPublic6 are the IANA special-purpose IPv6 ranges inside global6: the
+// IETF protocol assignments (Teredo, the anycast services, benchmarking,
+// AMT, AS112, ORCHID, drone remote ID), documentation, 6to4 and AS112's
+// direct delegation. Teredo and 6to4 embed an IPv4 address the host does
+// not check.
+var notPublic6 = []netip.Prefix{
 	netip.MustParsePrefix("2001::/23"),
 	netip.MustParsePrefix("2001:db8::/32"),
 	netip.MustParsePrefix("2002::/16"),
-	netip.MustParsePrefix("fec0::/10"),
+	netip.MustParsePrefix("2620:4f:8000::/48"),
+	netip.MustParsePrefix("3fff::/20"),
 }
 
 // Public says a is an address of the public internet the vendor egress may
-// dial: not loopback, private (RFC 1918, ULA), link-local (169.254.0.0/16
-// and fe80::/10, which hold the instance metadata service), CGNAT,
-// multicast, unspecified or reserved. An IPv4-mapped IPv6 address is
-// judged as its IPv4 address.
+// dial: not loopback, private (RFC 1918), link-local (169.254.0.0/16, which
+// holds the instance metadata service), CGNAT, multicast, unspecified or
+// reserved. An IPv4-mapped IPv6 address (::ffff:a.b.c.d) is judged as its
+// IPv4 address. Any other IPv6 address is public only in the global
+// unicast space and outside its special-purpose ranges: IsGlobalUnicast
+// alone says nothing of the reserved space, the deprecated
+// IPv4-compatible form or the translation prefixes.
 func Public(a netip.Addr) bool {
 	a = a.Unmap()
-	if !a.IsValid() || a.Zone() != "" || a.IsLoopback() || a.IsPrivate() || a.IsUnspecified() ||
-		a.IsLinkLocalUnicast() || a.IsMulticast() || a.IsLinkLocalMulticast() || a.IsInterfaceLocalMulticast() {
+	if !a.IsValid() || a.Zone() != "" {
 		return false
 	}
-	for _, p := range notPublic {
+	ranges := notPublic4
+	if a.Is6() {
+		if !global6.Contains(a) {
+			return false
+		}
+		ranges = notPublic6
+	} else if a.IsLoopback() || a.IsPrivate() || a.IsUnspecified() || a.IsLinkLocalUnicast() || a.IsMulticast() {
+		return false
+	}
+	for _, p := range ranges {
 		if p.Contains(a) {
 			return false
 		}
