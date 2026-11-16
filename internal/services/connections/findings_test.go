@@ -951,3 +951,63 @@ func TestV23AskingAgainLaterKeepsOrMovesTheSinceAsChosen(t *testing.T) {
 		})
 	}
 }
+
+// V25: more than eight epochs of real rotations, one rollover crashing
+// before it made its next epoch: a cold enclave refreshes the newest token,
+// and an old token replayed to another cold enclave reaches reuse
+// detection and ends the device (finding 10).
+func TestV25ColdEnclavesAcrossManyRealRollovers(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	s, f := w.hooked()
+	x := w.ask(claudeCode)
+	first := w.connectAll(s, w.person(accountA), x)
+	g := w.grant(s, x, first.AccessToken)
+	crashAt := familyName(g.Family, 3)
+	crashed := false
+	f.set(func(op, name string) error {
+		if op == "create" && name == crashAt && !crashed {
+			crashed = true
+			return errCrash
+		}
+		return nil
+	})
+	tok := first
+	rotations := 9*oauth.FamilyEpochRotations + 3
+	for i := 0; i < rotations; {
+		w.clock.add(7 * time.Second) // within RefreshesPerFamilyPerMinute
+		next, err := w.refresh(s, x, tok.RefreshToken)
+		if err != nil {
+			if !crashed || i != 3*oauth.FamilyEpochRotations-1 {
+				t.Fatalf("refresh %d: %v", i, err)
+			}
+			// The rollover wrote its epoch Moved and crashed before the next:
+			// the retry, through a cold enclave, makes it.
+			s = w.enclave()
+			continue
+		}
+		tok = next
+		i++
+	}
+	f.set(nil)
+	if !crashed {
+		t.Fatal("the rollover did not crash")
+	}
+	cur, _, err := w.enclave().readFamily(ctx, g.Family, 0)
+	if err != nil || cur == nil || cur.Epoch != 9 {
+		t.Fatalf("a cold enclave does not reach the newest epoch: %+v %v", cur, err)
+	}
+	if _, err := w.check(w.enclave(), x, tok.AccessToken); err != nil {
+		t.Fatal(err)
+	}
+	newest, err := w.refresh(w.enclave(), x, tok.RefreshToken)
+	if err != nil {
+		t.Fatalf("a cold enclave cannot refresh the newest token: %v", err)
+	}
+	if _, err := w.refresh(w.enclave(), x, first.RefreshToken); oauthCode(err) != oauth.ErrInvalidGrant {
+		t.Fatalf("an old token replayed to a cold enclave did not reach reuse detection: %v", err)
+	}
+	if _, err := w.check(w.enclave(), x, newest.AccessToken); err == nil {
+		t.Fatal("the device stays active after its old token was replayed")
+	}
+}

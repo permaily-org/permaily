@@ -23,12 +23,16 @@ func familyName(family string, epoch uint64) string {
 
 // readFamily is the newest epoch of a family's record, from at least epoch
 // from, following Moved and making an epoch a crash left unmade: nil when
-// the family was never made or was removed.
+// the family was never made or was removed. Past a Moved epoch it finds the
+// newest one made in a number of reads that grows with the logarithm of the
+// epochs passed (newestFamilyEpoch), so an old token reaches the current
+// epoch however many there are, and what it found is kept for the next
+// read (finding 10).
 func (s *Service) readFamily(ctx context.Context, family string, from uint64) (*oauth.FamilyState, store.Mark, error) {
 	s.mu.Lock()
 	e := max(s.epochs["family "+family], from)
 	s.mu.Unlock()
-	for range 8 {
+	for range familyReadsMax {
 		var f oauth.FamilyState
 		at, found, err := s.readSealed(ctx, familyName(family, e), &f)
 		if err != nil {
@@ -56,17 +60,77 @@ func (s *Service) readFamily(ctx context.Context, family string, from uint64) (*
 			return nil, at, errDocument
 		}
 		if f.Status == oauth.FamilyMoved {
-			e++
+			if e, err = s.newestFamilyEpoch(ctx, family, e+1); err != nil {
+				return nil, store.Mark{}, err
+			}
+			s.sawFamilyEpoch(family, e)
 			continue
 		}
-		s.mu.Lock()
-		if e > s.epochs["family "+family] {
-			s.epochs["family "+family] = e
-		}
-		s.mu.Unlock()
+		s.sawFamilyEpoch(family, e)
 		return &f, at, nil
 	}
 	return nil, store.Mark{}, errBusy
+}
+
+// familyReadsMax bounds the passes of one readFamily: each either makes an
+// unmade epoch or jumps to the newest made.
+const familyReadsMax = 8
+
+func (s *Service) sawFamilyEpoch(family string, e uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e > s.epochs["family "+family] {
+		s.epochs["family "+family] = e
+	}
+}
+
+// newestFamilyEpoch is the newest epoch of a family made from lo on, lo-1
+// having been written Moved: lo itself when it is not made (a crash, which
+// readFamily makes again). An epoch is made only after the one before it was
+// written Moved, and a strict read refuses one made and then lost, so the
+// epochs made are lo to some n: it doubles its step until one is not made,
+// then halves between the last made and the first not.
+func (s *Service) newestFamilyEpoch(ctx context.Context, family string, lo uint64) (uint64, error) {
+	made := func(e uint64) (bool, error) {
+		var f oauth.FamilyState
+		_, found, err := s.readSealed(ctx, familyName(family, e), &f)
+		if err != nil {
+			return false, err
+		}
+		if found && (f.Family != family || f.Epoch != e) {
+			return false, errDocument
+		}
+		return found, nil
+	}
+	ok, err := made(lo)
+	if err != nil || !ok {
+		return lo, err
+	}
+	good, bad := lo, uint64(0)
+	for step := uint64(1); ; step *= 2 {
+		ok, err := made(good + step)
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			bad = good + step
+			break
+		}
+		good += step
+	}
+	for bad-good > 1 {
+		mid := good + (bad-good)/2
+		ok, err := made(mid)
+		if err != nil {
+			return 0, err
+		}
+		if ok {
+			good = mid
+		} else {
+			bad = mid
+		}
+	}
+	return good, nil
 }
 
 // endFamily ends a family's record, if it is active.
