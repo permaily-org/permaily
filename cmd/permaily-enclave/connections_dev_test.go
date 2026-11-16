@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -26,6 +27,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,6 +38,7 @@ import (
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/rules"
+	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/pkg/attestation"
 )
 
@@ -629,6 +632,69 @@ func TestV57DevModeReachesOnlyPlayedVendors(t *testing.T) {
 	t.Cleanup(func() { devVendors.Store(nil) })
 	if devVendorHTTP(devConfig{vendors: "203.0.113.1:443"}) != devVendors.Load() {
 		t.Fatal("the test's client is not the one used")
+	}
+}
+
+// V57 (ADR 0030, "Revocation and two enclaves"): the image runs the
+// connections' hourly pass on its own. run, the enclave's startup, with the
+// configuration main reads (newConfig) and a ticker the test gives
+// (config.sweepTick), over storage the test watches: the pass lists the
+// connections' index of accounts once as the enclave starts, before any
+// tick, and once more after each tick, and the server it started answers.
+// Without runConnections in run it fails.
+func TestV57TheImageRunsTheConnectionsPassOnItsOwn(t *testing.T) {
+	shared, err := newDevStorage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var passes atomic.Int64
+	shared.mem.Interrupt = func(_ context.Context, step store.Step, partition, _ string) error {
+		if step == store.StepRead && partition == "connections#accounts" {
+			passes.Add(1)
+		}
+		return nil
+	}
+	devShared.Store(shared)
+	t.Cleanup(func() { devShared.Store(nil) })
+	fs := flag.NewFlagSet("permaily-enclave", flag.ContinueOnError)
+	cfg := newConfig(fs)
+	port := freePort(t)
+	if err := fs.Parse([]string{"-domain", "permaily.test", "-acme-directory", "unused", "-port", fmt.Sprint(port), "-smtp-port", fmt.Sprint(freePort(t))}); err != nil {
+		t.Fatal(err)
+	}
+	sweep := make(chan time.Time)
+	cfg.sweepTick = sweep
+	go func() { _ = run(*cfg, slog.New(slog.DiscardHandler)) }()
+
+	waitUntil(t, "the enclave started without the connections' pass", func() bool { return passes.Load() >= 1 })
+	// The server run started answers: the pass is the running enclave's.
+	client := &http.Client{Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // dev mode's self-signed certificate
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		},
+	}}
+	var st attestation.Status
+	waitUntil(t, "the enclave's /status", func() bool {
+		res, err := client.Get("https://app.permaily.test/status")
+		if err != nil {
+			return false
+		}
+		defer res.Body.Close()
+		return res.StatusCode == http.StatusOK && json.NewDecoder(res.Body).Decode(&st) == nil
+	})
+	if st.Connections == nil {
+		t.Fatal("/status has no connections")
+	}
+	// No pass but the first runs until a tick: the pass is on the ticker
+	// it is given, not on another.
+	time.Sleep(100 * time.Millisecond)
+	if n := passes.Load(); n != 1 {
+		t.Fatalf("%d passes before any tick", n)
+	}
+	for want := int64(2); want <= 3; want++ {
+		tick(t, "the connections' pass", sweep)
+		waitUntil(t, fmt.Sprintf("no pass %d after a tick", want), func() bool { return passes.Load() >= want })
 	}
 }
 

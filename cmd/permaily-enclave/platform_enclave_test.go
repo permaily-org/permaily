@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -51,10 +52,13 @@ func TestAnchorStatusSaysTheModelsRecordsWentBackWithoutTheirVersions(t *testing
 }
 
 // V57 (ADR 0030, "The image"): the image fetches vendors' documents through
-// the host's vendor egress on vsock port 8004 and nothing else: the
-// composition asks for that client alone, with the port the host listens
-// on by default; the deployment's entry point names no other port; and no
-// file of the image but the composition makes a vendor client.
+// the host's vendor egress on vsock port 8004 and nothing else: with the
+// configuration main reads (newConfig, its defaults and flags, given no
+// flag, as the entry point gives neither port), the image's composition
+// asks for that client alone, on the port the host listens on by default
+// and never on the egress port; the deployment's entry point names no
+// other port; and no file of the image but the composition makes a vendor
+// client.
 func TestV57TheVendorsAreFetchedThroughTheVendorEgress(t *testing.T) {
 	var ports []uint32
 	old := vendorEgress
@@ -64,14 +68,28 @@ func TestV57TheVendorsAreFetchedThroughTheVendorEgress(t *testing.T) {
 	}
 	t.Cleanup(func() { vendorEgress = old })
 	w := newConnectionsWorld(t)
-	cfg := config{domain: "permaily.com", port: 443, egressPort: 8000, vendorEgressPort: vendorEgressPort}
+	fs := flag.NewFlagSet("permaily-enclave", flag.ContinueOnError)
+	cfg := newConfig(fs)
+	if err := fs.Parse(nil); err != nil {
+		t.Fatal(err)
+	}
 	p := &platform{accounts: w.parts.accounts, mailboxes: w.parts.mailboxes, model: w.parts.model}
-	c, err := enclaveConnections(cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p)
+	c, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p)
 	if err != nil || c == nil {
 		t.Fatal(err)
 	}
-	if len(ports) != 1 || ports[0] != 8004 || vendorEgressPort == cfg.egressPort {
-		t.Fatalf("the vendor egress was asked on %v", ports)
+	if len(ports) != 1 || ports[0] != 8004 || ports[0] == cfg.egressPort || cfg.egressPort != 8000 {
+		t.Fatalf("the vendor egress was asked on %v (the egress is on %d)", ports, cfg.egressPort)
+	}
+	// The flag, when an operator gives it, is the port the composition asks.
+	ports = nil
+	fs = flag.NewFlagSet("permaily-enclave", flag.ContinueOnError)
+	cfg = newConfig(fs)
+	if err := fs.Parse([]string{"-vendor-egress-port", "9004"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p); err != nil || len(ports) != 1 || ports[0] != 9004 {
+		t.Fatalf("-vendor-egress-port 9004: asked on %v (%v)", ports, err)
 	}
 	// The host listens there by default, and the entry point changes
 	// neither port.
@@ -114,11 +132,13 @@ func TestV57TheVendorsAreFetchedThroughTheVendorEgress(t *testing.T) {
 			}
 		}
 		src := strings.Join(code, "\n")
-		for _, call := range []string{"cimd.New(", "enclave.VendorEgressClient", "vendorEgress(", "Vendors:"} {
+		for _, call := range []string{"cimd.New(", "enclave.VendorEgressClient", "vendorEgress(", "Vendors:", "enclaveConnections(cfg, "} {
 			count[call] += strings.Count(src, call)
 		}
 	}
-	if count["cimd.New("] != 1 || count["enclave.VendorEgressClient"] != 1 || count["vendorEgress("] != 1 || count["Vendors:"] != 1 {
+	// newPlatform hands enclaveConnections the configuration run was given,
+	// as it is: the one place the image composes its connections.
+	if count["cimd.New("] != 1 || count["enclave.VendorEgressClient"] != 1 || count["vendorEgress("] != 1 || count["Vendors:"] != 1 || count["enclaveConnections(cfg, "] != 1 {
 		t.Fatalf("vendor clients made: %v", count)
 	}
 }
