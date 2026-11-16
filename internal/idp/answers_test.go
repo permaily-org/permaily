@@ -32,6 +32,11 @@ func TestTokenAnswerRefused(t *testing.T) {
 		// The first would be for one account and the second for another.
 		{"the access token twice", faults{Token: body(`{"access_token":"abc","access_token":"def","token_type":"bearer"}`)}, "token answer is not one JSON object"},
 		{"the ID token twice", faults{Token: body(`{"id_token":"a.b.c","id_token":"d.e.f","token_type":"bearer"}`)}, "token answer is not one JSON object"},
+		// encoding/json would read these as one member, in any case.
+		{"the access token twice in another case", faults{Token: body(`{"access_token":"abc","ACCESS_TOKEN":"def","token_type":"bearer"}`)}, "token answer is not one JSON object"},
+		{"the kind twice in another case", faults{Token: body(`{"access_token":"abc","id_token":"a.b.c","token_type":"bearer","Token_Type":"mac"}`)}, "token answer is not one JSON object"},
+		// The Kelvin sign is a k to encoding/json, and the long s an s.
+		{"the access token twice in other letters", faults{Token: body(`{"access_token":"abc","acce\u017fs_to\u212aen":"def","token_type":"bearer"}`)}, "token answer is not one JSON object"},
 		{"no kind of token", faults{EditTokenAnswer: drop("token_type")}, "token answer of another kind"},
 		{"another kind of token", faults{EditTokenAnswer: set("token_type", "mac")}, "token answer of another kind"},
 		{"a kind that is not text", faults{EditTokenAnswer: set("token_type", 1)}, "token answer of another kind"},
@@ -127,6 +132,7 @@ func TestGitHubUserRefused(t *testing.T) {
 		{"not JSON", faults{User: body(`<html>`)}, "user is not one JSON object"},
 		{"a list", faults{User: body(`[{"id":7}]`)}, "user is not one JSON object"},
 		{"the identifier twice", faults{User: body(`{"id":7,"id":8}`)}, "user is not one JSON object"},
+		{"the identifier twice in another case", faults{User: body(`{"id":7,"ID":8}`)}, "user is not one JSON object"},
 		{"not UTF-8", faults{User: body("{\"id\":7,\"name\":\"\xff\"}")}, "user is not one JSON object"},
 		{"no identifier", faults{EditUser: drop("id")}, "user without a numeric identifier"},
 		{"a null identifier", faults{EditUser: set("id", nil)}, "user without a numeric identifier"},
@@ -182,6 +188,12 @@ func TestGitHubEmailsRefused(t *testing.T) {
 		{"more than a page", only(many...), "addresses are not one JSON array of a page"},
 		{"an address that is text alone", faults{Emails: body(`["ada@example.com"]`)}, "an address is not one JSON object"},
 		{"a member twice", faults{Emails: body(`[{"email":"ada@example.com","primary":false,"primary":true,"verified":true}]`)}, "an address is not one JSON object"},
+		// FuzzGitHubEmails found it (testdata/fuzz/FuzzGitHubEmails/faae1417577271eb):
+		// encoding/json reads "PrimArY" as "primary", so another reader of the
+		// same answer could take the address as not primary, or not verified.
+		{"a member twice in another case", faults{Emails: body(`[{"email":"ada@example.com","PrimArY":"","primary":true,"verified":true}]`)}, "an address is not one JSON object"},
+		{"verified twice in another case", faults{Emails: body(`[{"email":"ada@example.com","primary":true,"verified":true,"Verified":false}]`)}, "an address is not one JSON object"},
+		{"the address twice in another case", faults{Emails: body(`[{"EMAIL":"eve@example.com","email":"ada@example.com","primary":true,"verified":true}]`)}, "an address is not one JSON object"},
 		{"no address", only(map[string]any{"primary": true, "verified": true}), "an address without its three members"},
 		{"an address that is not text", only(entry("", true, true), map[string]any{"email": 7, "primary": false, "verified": true}), "an address without its three members"},
 		{"a null address", only(map[string]any{"email": nil, "primary": true, "verified": true}), "an address without its three members"},
@@ -319,6 +331,9 @@ func TestMetaUserRefused(t *testing.T) {
 		{"a list", faults{User: body(`[{"id":"7"}]`)}, "user is not one JSON object"},
 		{"the identifier twice", faults{User: body(`{"id":"7","id":"8"}`)}, "user is not one JSON object"},
 		{"the address twice", faults{User: body(`{"id":"7","email":"ada@example.com","email":"eve@example.com"}`)}, "user is not one JSON object"},
+		{"the identifier twice in another case", faults{User: body(`{"id":"7","Id":"8"}`)}, "user is not one JSON object"},
+		{"the address twice in another case", faults{User: body(`{"id":"7","email":"ada@example.com","EMAIL":"eve@example.com"}`)}, "user is not one JSON object"},
+		{"an error in another case", faults{User: body(`{"ERROR":{"message":"Invalid OAuth access token."},"error":null,"id":"7"}`)}, "user is not one JSON object"},
 		{"no identifier", faults{EditUser: drop("id")}, "user without a numeric identifier"},
 		// Meta writes text; a number that large would not be exact.
 		{"an identifier as a number", faults{EditUser: set("id", 10158123456789012)}, "user without a numeric identifier"},
