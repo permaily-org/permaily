@@ -563,6 +563,45 @@ func TestS17InterruptStopsTheStoreBetweenRequests(t *testing.T) {
 	}
 }
 
+// lateDone is a context whose Done waits until Interrupt has returned, so
+// the store sees the context's end and Interrupt's answer ready together:
+// the interleaving in which a select between them picks either.
+type lateDone struct {
+	context.Context
+	returned chan struct{}
+}
+
+func (c lateDone) Done() <-chan struct{} {
+	<-c.returned
+	time.Sleep(time.Millisecond) // Interrupt's answer reaches the store
+	return c.Context.Done()
+}
+
+// A request whose context ends while Interrupt holds it is not made, even
+// when Interrupt then lets it go on: the store must not pick Interrupt's nil
+// over the context's end by chance. On AWS a request whose context has
+// ended is never sent. Tried many times, as a select between two ready
+// cases picks either.
+func TestInterruptAContextEndedDuringTheStepStopsTheWrite(t *testing.T) {
+	for i := range 200 {
+		s := NewMemory()
+		inner, cancel := context.WithCancel(context.Background())
+		ctx := lateDone{Context: inner, returned: make(chan struct{})}
+		s.Interrupt = func(context.Context, Step, string, string) error {
+			defer close(ctx.returned)
+			cancel()
+			return nil
+		}
+		err := s.PutEntry(ctx, &Entry{Partition: "p", Key: "k", Value: []byte("v")})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("try %d: a write whose context ended answered %v", i, err)
+		}
+		if all := s.AllEntries(); len(all) != 0 {
+			t.Fatalf("try %d: a write whose context ended stored %+v", i, all)
+		}
+	}
+}
+
 // Every request of Memory goes through Interrupt, with what it is about: a
 // failure there fails the request.
 func TestInterruptSeesEveryRequest(t *testing.T) {
