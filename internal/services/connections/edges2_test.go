@@ -134,7 +134,7 @@ func TestPushedRequests(t *testing.T) {
 	saved := w.vendors.clients[otherApp].Document.RedirectURIs
 	w.vendors.clients[otherApp].Document.RedirectURIs = []string{"https://tools.example.org/new"}
 	w.vendors.mu.Unlock()
-	if _, err := s.Start(ctx, p, url.Values{"client_id": {otherApp}, "request_uri": {uri}}.Encode()); ClientProblemOf(err) != contracts.RedirectURIInvalid {
+	if _, err := s.Start(ctx, p, url.Values{"client_id": {otherApp}, "request_uri": {uri}}.Encode()); clientProblem(err) != contracts.RedirectURIInvalid {
 		t.Fatal(err)
 	}
 	w.vendors.mu.Lock()

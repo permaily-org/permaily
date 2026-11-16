@@ -23,7 +23,7 @@ func (s *Service) Check(ctx context.Context, r contracts.Resource, bearer string
 		return nil, ErrInvalidToken
 	}
 	var e accessEntry
-	if err := s.getEntry(ctx, PartitionAccess+hashOf(oauth.KindAccess, bearer), &e); err != nil {
+	if err := s.getEntry(ctx, PartitionAccess+oauth.Hash(oauth.KindAccess, bearer), &e); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			s.count("invalid_token")
 			return nil, ErrInvalidToken
@@ -62,14 +62,15 @@ func (s *Service) Check(ctx context.Context, r contracts.Resource, bearer string
 		}
 		s.keepScope(e.ScopeID, fs)
 	}
-	g.Parts = intersect(partsOf(e.Scopes), dev.Parts, d.Parts)
+	g.Parts = intersect(oauth.Parts(e.Scopes), dev.Parts, d.Parts)
+	g.ConnectionScopes = slices.Clone(d.Scopes)
 	g.ConnectionEndsAt, g.CheckedAt = d.EndsAt, checked
 	return g, nil
 }
 
 // errRefusedAuthority is an authority read again that no longer allows the
 // grant: revoked, ended, closing, blocked or gone.
-var errRefusedAuthority = errors.New("connections: the connection may no longer be read")
+var errRefusedAuthority error = &kind{"connections: the connection may no longer be read"}
 
 // authority checks a grant's connection, device, account's list and
 // standing: from this enclave's reads younger than ConnectionFresh, or, when

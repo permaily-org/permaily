@@ -39,7 +39,6 @@ package connections
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/inbox"
@@ -244,16 +243,25 @@ const (
 	EndedKept = 30 * 24 * time.Hour
 )
 
+// kind is an error of the service of a fixed kind (domain.FixedKind): its
+// words are written here and hold nothing of a request, so a log shows
+// which it is however a caller wraps it with %w (ADR 0030, "Seams added
+// while building": every other error is logged without its text).
+type kind struct{ msg string }
+
+func (k *kind) Error() string   { return k.msg }
+func (k *kind) LogKind() string { return k.msg }
+
 // Errors of the service, besides contracts' ones. A token that is not valid,
 // whatever the reason, is ErrInvalidToken, and the reason is only counted
 // (ADR 0030, "Checking a token").
 var (
-	ErrInvalidToken = errors.New("connections: the token is not valid")
+	ErrInvalidToken error = &kind{"connections: the token is not valid"}
 	// ErrUnavailable is a check that could not read the storage: answered
 	// 503, never 401, so a client keeps its tokens.
-	ErrUnavailable = errors.New("connections: the storage could not be read")
+	ErrUnavailable error = &kind{"connections: the storage could not be read"}
 	// ErrWrongResource is a valid token for the other resource.
-	ErrWrongResource = errors.New("connections: the token is for another resource")
+	ErrWrongResource error = &kind{"connections: the token is for another resource"}
 )
 
 // OAuthError is a refusal of the token, revocation or pushed request

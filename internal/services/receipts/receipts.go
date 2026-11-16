@@ -191,6 +191,15 @@ const (
 	// JSON-RPC call it cannot read), so it never reached the service
 	// (connections.API.Refuse; PR #131's review, finding 2).
 	RefusedInvalidBody RefusedReason = "invalid_body"
+	// The refusals of the connections service of a request a valid token
+	// attributed that are none of the above (PR #136's review, finding 8):
+	// a search's limit or cursor it cannot use, a connection asking more
+	// often than its limits allow, and the storage or the authority that
+	// could not be read in time, so the vendor is answered 503.
+	RefusedInvalidLimit  RefusedReason = "invalid_limit"
+	RefusedInvalidCursor RefusedReason = "invalid_cursor"
+	RefusedRateLimited   RefusedReason = "rate_limited"
+	RefusedUnavailable   RefusedReason = "unavailable"
 	// RefusedTooLate: the answer of Receipt was prepared and recorded, and
 	// then not released (the grant's deadline passed or this enclave
 	// revoked it, finding 5). The earlier receipt stays: a receipt may

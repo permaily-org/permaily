@@ -2,7 +2,6 @@ package connections
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 
@@ -32,7 +31,7 @@ type lease struct {
 }
 
 // errLeaseStarted is a second Start, or a Start after Finish.
-var errLeaseStarted = errors.New("connections: the answer was started or finished already")
+var errLeaseStarted error = &kind{"connections: the answer was started or finished already"}
 
 // newLease registers a lease for r's answer, whose receipt is receipt.
 func (s *Service) newLease(r *reading, receipt string) *lease {

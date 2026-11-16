@@ -132,7 +132,7 @@ func (s *Service) writeList(ctx context.Context, l *ListState, at store.Mark, cr
 }
 
 // errListFull is a list past its bytes (ListBytesMax).
-var errListFull = errors.New("connections: the account's list is full")
+var errListFull error = &kind{"connections: the account's list is full"}
 
 // updateList reads the account's list, changes it with change and writes
 // it, reading again and deciding again on a lost race, at most RecordTries

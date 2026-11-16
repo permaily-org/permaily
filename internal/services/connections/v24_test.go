@@ -101,7 +101,7 @@ func TestV24Codes(t *testing.T) {
 		w := newWorld(t)
 		s := w.enclave()
 		x, code := w.approved(s, claudeCode)
-		partition := PartitionCode + hashOf(oauth.KindCode, code)
+		partition := PartitionCode + oauth.Hash(oauth.KindCode, code)
 		saved, err := w.mem.GetEntry(ctx, partition, entryKey)
 		if err != nil {
 			t.Fatal(err)
@@ -313,8 +313,8 @@ func TestV25Refresh(t *testing.T) {
 		if err := s.writeSealed(ctx, familyName(fam, 0), f, at, false); err != nil {
 			t.Fatal(err)
 		}
-		last := familySecret(s.familyKey, oauth.KindRefresh, fam, f.Generation)
-		if err := s.putEntry(ctx, PartitionRefresh+hashOf(oauth.KindRefresh, last), refreshEntry{Connection: c.ID, Family: fam, Generation: f.Generation, Account: accountA, Expires: w.clock.now().Add(time.Hour)}, w.clock.now().Add(time.Hour)); err != nil {
+		last := oauth.FamilySecret(s.familyKey, oauth.KindRefresh, fam, f.Generation)
+		if err := s.putEntry(ctx, PartitionRefresh+oauth.Hash(oauth.KindRefresh, last), refreshEntry{Connection: c.ID, Family: fam, Generation: f.Generation, Account: accountA, Expires: w.clock.now().Add(time.Hour)}, w.clock.now().Add(time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 		next, err := w.refresh(s, x, last)

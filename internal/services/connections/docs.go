@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"slices"
 	"strings"
 	"time"
@@ -325,7 +324,7 @@ func (sc scopeOf) list() []*query.Canonical {
 	return out
 }
 
-var errScope = errors.New("connections: a scope's formulas do not read")
+var errScope error = &kind{"connections: a scope's formulas do not read"}
 
 func everything() *query.Canonical {
 	c, _ := query.Canonicalise(contracts.Formula{V: contracts.FormulaVersion, All: []contracts.Group{}})

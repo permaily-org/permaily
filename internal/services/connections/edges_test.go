@@ -2,12 +2,7 @@ package connections
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
-	"math/big"
 	"net/url"
 	"strings"
 	"testing"
@@ -20,8 +15,8 @@ import (
 	"github.com/permaily-org/permaily/internal/vendors"
 )
 
-// The service's edges: what it is given, the stand-ins of pull request 1,
-// and the storage failing at each step.
+// The service's edges: what it is given and the storage failing at each
+// step.
 
 type badKeys struct{}
 
@@ -50,158 +45,19 @@ func TestNewNeedsWhatItIsGiven(t *testing.T) {
 	if _, err := s.newID("con"); err == nil {
 		t.Fatal("an identifier without randomness")
 	}
-	if _, err := newSecret("pmc_", s.cfg.Random); err == nil {
-		t.Fatal("a secret without randomness")
-	}
 }
 
-func TestTheStandIns(t *testing.T) {
-	t.Run("redirects", func(t *testing.T) {
-		reg := []string{"http://localhost/callback", "http://127.0.0.1:8080/cb", "https://app.example/back"}
-		for got, want := range map[string]bool{
-			"http://localhost:53682/callback": true, "http://localhost/callback": true, "http://127.0.0.1/cb": true,
-			"http://127.0.0.1:1/cb": true, "http://127.0.0.1/other": false, "http://localhost/callback#x": false,
-			"https://localhost/callback": false, "https://app.example/back": true, "https://app.example/back/": false,
-			"http://u@localhost/callback": false, "%zz": false, "http://[::1]/callback": false,
-		} {
-			if redirectAllowed(reg, got) != want {
-				t.Error(got)
-			}
-		}
-		if h, lo := redirectHost("http://[::1]:9/cb"); h != "[::1]" || !lo {
-			t.Error(h, lo)
-		}
-		if h, lo := redirectHost("https://claude.ai/x"); h != "claude.ai" || lo {
-			t.Error(h, lo)
-		}
-		if h, _ := redirectHost("%zz"); h != "" {
-			t.Error(h)
-		}
-		if redirectWith("%zz", nil, issuer) != "" {
-			t.Error("a redirect of nothing")
-		}
-	})
-	t.Run("PKCE and scopes", func(t *testing.T) {
-		v, c := pkce(t)
-		if !verifyPKCE(c, v) || verifyPKCE(c, v+"x") || verifyPKCE(c, "short") || verifyPKCE("bad", v) {
-			t.Error("pkce")
-		}
-		for s, ok := range map[string]bool{"": false, "mail.sender": true, "mail.body mail.body": false, "mail.x": false, "mail.sender mail.sender": false,
-			"mail.sender\tmail.subject": false, " mail.subject": false, "mail.subject  mail.body": false, "mail.subject mail.body": true} {
-			if _, err := parseScopes(s, true); (err == nil) != ok {
-				t.Error(s)
-			}
-		}
-		if got, _ := parseScopes("", false); strings.Join(got, " ") != "mail.sender mail.subject mail.body" {
-			t.Error(got)
-		}
-	})
-	t.Run("pushed forms", func(t *testing.T) {
-		doc := &oauth.ClientDocument{ClientID: otherApp, RedirectURIs: []string{"https://tools.example.org/back"}}
-		_, c := pkce(t)
-		base := func() url.Values {
-			return url.Values{"client_id": {otherApp}, "redirect_uri": {"https://tools.example.org/back"}, "response_type": {"code"}, "code_challenge": {c},
-				"code_challenge_method": {"S256"}, "resource": {apiResource}}
-		}
-		for name, change := range map[string]func(url.Values){
-			"no redirect":    func(v url.Values) { v.Del("redirect_uri") },
-			"two queries":    func(v url.Values) { v["query"] = []string{"{}", "{}"} },
-			"not JSON":       func(v url.Values) { v.Set("query", "{") },
-			"a future since": func(v url.Values) { v.Set("mail_since", "yesterday") },
-			"0 days":         func(v url.Values) { v.Set("ends_in_days", "0") },
-			"366 days":       func(v url.Values) { v.Set("ends_in_days", "366") },
-			"no response":    func(v url.Values) { v.Del("response_type") },
-		} {
-			v := base()
-			change(v)
-			if _, err := pushedParams(v, doc, oauthConfig); err == nil {
-				t.Error(name)
-			}
-		}
-		v := base()
-		v.Set("mail_since", "new")
-		if p, err := pushedParams(v, doc, oauthConfig); err != nil || p.Since != "new" {
-			t.Error(p, err)
-		}
-	})
-	t.Run("assertions", func(t *testing.T) {
-		w := newWorld(t)
-		doc := &oauth.ClientDocument{ClientID: chatgpt, TokenEndpointAuthMethod: oauth.AuthPrivateKeyJWT}
-		keys := w.vendors.keys[chatgpt]
-		now := w.clock.now()
-		sign := func(header, claims map[string]any) string {
-			h, _ := json.Marshal(header)
-			c, _ := json.Marshal(claims)
-			in := b64.EncodeToString(h) + "." + b64.EncodeToString(c)
-			sum := sha256.Sum256([]byte(in))
-			if header["alg"] == "ES256" {
-				r, s, _ := ecdsa.Sign(rand.Reader, w.ecKey, sum[:])
-				sig := make([]byte, 64)
-				r.FillBytes(sig[:32])
-				s.FillBytes(sig[32:])
-				return in + "." + b64.EncodeToString(sig)
-			}
-			return w.assertion(chatgpt, issuer, "x", now.Add(time.Minute))[:0] + in + "." + b64.EncodeToString(rsaSign(t, w, sum[:]))
-		}
-		claims := func() map[string]any {
-			return map[string]any{"iss": chatgpt, "sub": chatgpt, "aud": []string{"x", issuer}, "exp": now.Add(time.Minute).Unix(), "jti": "j"}
-		}
-		if jti, _, err := verifyAssertion(doc, keys, sign(map[string]any{"alg": "ES256", "kid": "e1"}, claims()), []string{issuer}, now); err != nil || jti != "j" {
-			t.Fatal(jti, err)
-		}
-		bad := map[string]string{}
-		c := claims()
-		c["iat"] = now.Add(2 * time.Minute).Unix()
-		bad["iat ahead"] = sign(map[string]any{"alg": "RS256", "kid": "k1"}, c)
-		c = claims()
-		c["jti"] = strings.Repeat("j", 257)
-		bad["a long jti"] = sign(map[string]any{"alg": "RS256", "kid": "k1"}, c)
-		c = claims()
-		c["aud"] = 7
-		bad["aud a number"] = sign(map[string]any{"alg": "RS256", "kid": "k1"}, c)
-		c = claims()
-		delete(c, "exp")
-		bad["no exp"] = sign(map[string]any{"alg": "RS256", "kid": "k1"}, c)
-		bad["HS256"] = sign(map[string]any{"alg": "HS256", "kid": "k1"}, claims())
-		bad["RS256 on the EC key"] = sign(map[string]any{"alg": "RS256", "kid": "e1"}, claims())
-		bad["a bad signature"] = sign(map[string]any{"alg": "RS256", "kid": "k1"}, claims())[:20] + "x" + sign(map[string]any{"alg": "RS256", "kid": "k1"}, claims())[21:]
-		bad["duplicate members"] = b64.EncodeToString([]byte(`{"alg":"RS256","alg":"RS256","kid":"k1"}`)) + ".e30.e30"
-		bad["not JSON"] = b64.EncodeToString([]byte(`[1]`)) + ".e30.e30"
-		for name, j := range bad {
-			if _, _, err := verifyAssertion(doc, keys, j, []string{issuer}, now); err == nil {
-				t.Error(name)
-			}
-		}
-		withAlg := *doc
-		withAlg.TokenEndpointAuthAlg = "ES256"
-		if _, _, err := verifyAssertion(&withAlg, keys, sign(map[string]any{"alg": "RS256", "kid": "k1"}, claims()), []string{issuer}, now); err == nil {
-			t.Error("an alg other than the document's")
-		}
-		weird := []vendors.Key{{ID: "k1", Algorithm: "RS256", Public: "not a key"}}
-		if _, _, err := verifyAssertion(doc, weird, sign(map[string]any{"alg": "RS256", "kid": "k1"}, claims()), []string{issuer}, now); err == nil {
-			t.Error("an unknown key type")
-		}
-		if _, ok := jsonObject([]byte(`not json`)); ok {
-			t.Error("not JSON read")
-		}
-		if _, ok := jsonObject([]byte(`{"a":1,"b":{"a":2}}`)); !ok {
-			t.Error("a nested name taken for a duplicate")
-		}
-		// An unknown kid: the key set fetched once more.
-		if _, _, err := verifyAssertion(doc, keys, sign(map[string]any{"alg": "RS256", "kid": "k9"}, claims()), []string{issuer}, now); !errors.Is(err, errUnknownKey) {
-			t.Error(err)
-		}
-		_ = big.NewInt
-	})
-}
-
-func rsaSign(t *testing.T, w *world, digest []byte) []byte {
-	t.Helper()
-	sig, err := w.jwtKey.Sign(rand.Reader, digest, cryptoHash())
-	if err != nil {
-		t.Fatal(err)
+// The host a redirect URI names, as the consent screen shows it.
+func TestRedirectHost(t *testing.T) {
+	if h, lo := redirectHost("http://[::1]:9/cb"); h != "[::1]" || !lo {
+		t.Error(h, lo)
 	}
-	return sig
+	if h, lo := redirectHost("https://claude.ai/x"); h != "claude.ai" || lo {
+		t.Error(h, lo)
+	}
+	if h, _ := redirectHost("%zz"); h != "" {
+		t.Error(h)
+	}
 }
 
 // A preview's refusals, and its page with the model.

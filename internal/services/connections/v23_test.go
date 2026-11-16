@@ -359,14 +359,14 @@ func TestV23N6SixteenNarrowerDevices(t *testing.T) {
 
 	// A token entry whose formulas are not the ones its ScopeID names.
 	var e accessEntry
-	if err := a.getEntry(ctx, PartitionAccess+hashOf(oauth.KindAccess, devices[0].tok.AccessToken), &e); err != nil {
+	if err := a.getEntry(ctx, PartitionAccess+oauth.Hash(oauth.KindAccess, devices[0].tok.AccessToken), &e); err != nil {
 		t.Fatal(err)
 	}
 	var other accessEntry
-	_ = a.getEntry(ctx, PartitionAccess+hashOf(oauth.KindAccess, devices[1].tok.AccessToken), &other)
+	_ = a.getEntry(ctx, PartitionAccess+oauth.Hash(oauth.KindAccess, devices[1].tok.AccessToken), &other)
 	e.Scope = other.Scope
 	forged := oauth.PrefixAccess + strings.Repeat("f", 43)
-	if err := a.putEntry(ctx, PartitionAccess+hashOf(oauth.KindAccess, forged), e, e.Expires); err != nil {
+	if err := a.putEntry(ctx, PartitionAccess+oauth.Hash(oauth.KindAccess, forged), e, e.Expires); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.Check(ctx, contracts.ResourceMCP, forged); err == nil {
@@ -374,7 +374,7 @@ func TestV23N6SixteenNarrowerDevices(t *testing.T) {
 	}
 	e.ScopeID = ""
 	forged2 := oauth.PrefixAccess + strings.Repeat("g", 43)
-	_ = a.putEntry(ctx, PartitionAccess+hashOf(oauth.KindAccess, forged2), e, e.Expires)
+	_ = a.putEntry(ctx, PartitionAccess+oauth.Hash(oauth.KindAccess, forged2), e, e.Expires)
 	if _, err := a.Check(ctx, contracts.ResourceMCP, forged2); !errors.Is(err, ErrInvalidToken) {
 		t.Fatal(err)
 	}

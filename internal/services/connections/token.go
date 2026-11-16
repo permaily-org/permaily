@@ -10,6 +10,7 @@ import (
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/envelope"
+	"github.com/permaily-org/permaily/internal/jws"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/vendors"
@@ -88,10 +89,10 @@ func (s *Service) assertion(ctx context.Context, form url.Values, c *vendors.Cli
 		s.count("assertion")
 		return oauthErr(oauth.ErrInvalidClient)
 	}
-	jti, exp, err := verifyAssertion(&c.Document, keys, jwt, audiences, now)
-	if errors.Is(err, errUnknownKey) {
+	jti, exp, err := oauth.VerifyAssertion(&c.Document, jwsKeys(keys), jwt, audiences, now)
+	if errors.Is(err, jws.ErrUnknownKey) {
 		if keys, err = s.cfg.Vendors.Keys(ctx, c, true); err == nil {
-			jti, exp, err = verifyAssertion(&c.Document, keys, jwt, audiences, now)
+			jti, exp, err = oauth.VerifyAssertion(&c.Document, jwsKeys(keys), jwt, audiences, now)
 		}
 	}
 	if err != nil {
@@ -166,7 +167,7 @@ func (s *Service) Push(ctx context.Context, form url.Values) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	p, err := pushedParams(form, &c.Document, s.cfg.OAuth)
+	p, err := oauth.Pushed(form, &c.Document, s.cfg.OAuth)
 	if err != nil {
 		err = endpointError(err)
 		var oe *OAuthError
@@ -175,11 +176,11 @@ func (s *Service) Push(ctx context.Context, form url.Values) (string, error) {
 		}
 		return "", err
 	}
-	id, err := newSecret(oauth.PrefixPushed, s.cfg.Random)
+	id, err := oauth.NewSecret(oauth.PrefixPushed, s.cfg.Random)
 	if err != nil {
 		return "", err
 	}
-	if err := s.putEntry(ctx, PartitionPushed+hashOf(oauth.KindPushed, id), pushedEntry{ClientID: c.ID, Params: *p}, s.now().Add(oauth.PushedRequestTTL)); err != nil {
+	if err := s.putEntry(ctx, PartitionPushed+oauth.Hash(oauth.KindPushed, id), pushedEntry{ClientID: c.ID, Params: *p}, s.now().Add(oauth.PushedRequestTTL)); err != nil {
 		return "", err
 	}
 	return oauth.RequestURIPrefix + id, nil
@@ -224,13 +225,13 @@ func (s *Service) exchange(ctx context.Context, form url.Values) (*TokenAnswer, 
 		return nil, err
 	}
 	var e codeEntry
-	if err := s.getEntry(ctx, PartitionCode+hashOf(oauth.KindCode, code), &e); err != nil {
+	if err := s.getEntry(ctx, PartitionCode+oauth.Hash(oauth.KindCode, code), &e); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, s.grantRefused("invalid_grant")
 		}
 		return nil, ErrUnavailable
 	}
-	matches := e.ClientID == c.ID && e.RedirectURI == redirect && verifyPKCE(e.Challenge, verifier) && (resource == "" || resource == e.ResourceURI)
+	matches := e.ClientID == c.ID && e.RedirectURI == redirect && oauth.VerifyPKCE(e.Challenge, verifier) && (resource == "" || resource == e.ResourceURI)
 	for range RecordTries {
 		d, at, err := s.readConn(ctx, e.Connection)
 		if err != nil && !refusedRecord(err) {
@@ -240,7 +241,7 @@ func (s *Service) exchange(ctx context.Context, form url.Values) (*TokenAnswer, 
 			return nil, s.grantRefused("invalid_grant")
 		}
 		dev := d.device(e.Family)
-		if dev == nil || dev.Code.Hash != hashOf(oauth.KindCode, code) {
+		if dev == nil || dev.Code.Hash != oauth.Hash(oauth.KindCode, code) {
 			return nil, s.grantRefused("invalid_grant")
 		}
 		now := s.now()
@@ -318,7 +319,7 @@ func (s *Service) refresh(ctx context.Context, form url.Values) (*TokenAnswer, e
 		return nil, err
 	}
 	var e refreshEntry
-	if err := s.getEntry(ctx, PartitionRefresh+hashOf(oauth.KindRefresh, token), &e); err != nil {
+	if err := s.getEntry(ctx, PartitionRefresh+oauth.Hash(oauth.KindRefresh, token), &e); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, s.grantRefused("invalid_grant")
 		}
@@ -334,7 +335,7 @@ func (s *Service) refresh(ctx context.Context, form url.Values) (*TokenAnswer, e
 	var asked []string
 	if _, sent := form["scope"]; sent {
 		// mail.sender is every connection's, asked or not.
-		if asked, err = parseScopes(scopeRaw, true); err != nil {
+		if asked, err = oauth.Scopes(scopeRaw, true); err != nil {
 			return nil, oauthErr(oauth.ErrInvalidScope)
 		}
 	}
@@ -434,7 +435,7 @@ func (s *Service) RevokeToken(ctx context.Context, form url.Values) error {
 	switch {
 	case strings.HasPrefix(token, oauth.PrefixAccess):
 		var e accessEntry
-		if err := s.getEntry(ctx, PartitionAccess+hashOf(oauth.KindAccess, token), &e); err != nil {
+		if err := s.getEntry(ctx, PartitionAccess+oauth.Hash(oauth.KindAccess, token), &e); err != nil {
 			return s.unknownToken(err)
 		}
 		if e.ClientID != c.ID {
@@ -443,7 +444,7 @@ func (s *Service) RevokeToken(ctx context.Context, form url.Values) error {
 		conn, family = e.Connection, e.Family
 	case strings.HasPrefix(token, oauth.PrefixRefresh):
 		var e refreshEntry
-		if err := s.getEntry(ctx, PartitionRefresh+hashOf(oauth.KindRefresh, token), &e); err != nil {
+		if err := s.getEntry(ctx, PartitionRefresh+oauth.Hash(oauth.KindRefresh, token), &e); err != nil {
 			return s.unknownToken(err)
 		}
 		d, _, err := s.readConn(ctx, e.Connection)

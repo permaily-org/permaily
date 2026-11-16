@@ -194,11 +194,11 @@ type refreshEntry struct {
 
 // issue hands out the pair of a family's generation, issued at issued with
 // scope: the same values for the same generation in every enclave
-// (familySecret), so a retry answers what the first use answered. Its
+// (oauth.FamilySecret), so a retry answers what the first use answered. Its
 // entries are made once; one there already is the same.
 func (s *Service) issue(ctx context.Context, conn *connDoc, f *oauth.FamilyState, generation uint64, scope []string, issued time.Time) (*TokenAnswer, error) {
-	access := familySecret(s.familyKey, oauth.KindAccess, f.Family, generation)
-	refresh := familySecret(s.familyKey, oauth.KindRefresh, f.Family, generation)
+	access := oauth.FamilySecret(s.familyKey, oauth.KindAccess, f.Family, generation)
+	refresh := oauth.FamilySecret(s.familyKey, oauth.KindRefresh, f.Family, generation)
 	expires := issued.Add(oauth.AccessTokenTTL)
 	if conn.EndsAt.Before(expires) {
 		expires = conn.EndsAt
@@ -207,11 +207,11 @@ func (s *Service) issue(ctx context.Context, conn *connDoc, f *oauth.FamilyState
 		Connection: conn.ID, Family: f.Family, Generation: generation, Account: conn.Account, ClientID: conn.ClientID,
 		Vendor: conn.Vendor, Resource: conn.Resource, Scopes: scope, Issued: issued, Expires: expires, ScopeID: f.ScopeID, Scope: f.Scope,
 	}
-	if err := s.putEntry(ctx, PartitionAccess+hashOf(oauth.KindAccess, access), a, expires); err != nil && !errors.Is(err, store.ErrExists) {
+	if err := s.putEntry(ctx, PartitionAccess+oauth.Hash(oauth.KindAccess, access), a, expires); err != nil && !errors.Is(err, store.ErrExists) {
 		return nil, err
 	}
 	r := refreshEntry{Connection: conn.ID, Family: f.Family, Generation: generation, Account: conn.Account, Expires: issued.Add(oauth.RefreshTokenTTL)}
-	if err := s.putEntry(ctx, PartitionRefresh+hashOf(oauth.KindRefresh, refresh), r, r.Expires); err != nil && !errors.Is(err, store.ErrExists) {
+	if err := s.putEntry(ctx, PartitionRefresh+oauth.Hash(oauth.KindRefresh, refresh), r, r.Expires); err != nil && !errors.Is(err, store.ErrExists) {
 		return nil, err
 	}
 	left := int(expires.Sub(s.now()) / time.Second)

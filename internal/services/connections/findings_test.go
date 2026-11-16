@@ -1129,15 +1129,15 @@ func TestV32EveryAttributedRefusalHasItsReceipt(t *testing.T) {
 		want   error
 		reason receipts.RefusedReason
 	}{
-		{name: "a malformed cursor", want: contracts.ErrInvalidCursor, reason: refusedInvalidCursor, call: func(w *world, s *Service, g *oauth.Grant) error {
+		{name: "a malformed cursor", want: contracts.ErrInvalidCursor, reason: receipts.RefusedInvalidCursor, call: func(w *world, s *Service, g *oauth.Grant) error {
 			_, _, err := s.Search(ctx, g, contracts.VendorSearch{Cursor: oauth.PrefixCursor + "AAAA"})
 			return err
 		}},
-		{name: "a limit out of bounds", want: contracts.ErrInvalidLimit, reason: refusedInvalidLimit, call: func(w *world, s *Service, g *oauth.Grant) error {
+		{name: "a limit out of bounds", want: contracts.ErrInvalidLimit, reason: receipts.RefusedInvalidLimit, call: func(w *world, s *Service, g *oauth.Grant) error {
 			_, _, err := s.Search(ctx, g, contracts.VendorSearch{Limit: 1000})
 			return err
 		}},
-		{name: "searches past their limit", want: contracts.ErrTooManyRequests, reason: refusedRateLimited, call: func(w *world, s *Service, g *oauth.Grant) error {
+		{name: "searches past their limit", want: contracts.ErrTooManyRequests, reason: receipts.RefusedRateLimited, call: func(w *world, s *Service, g *oauth.Grant) error {
 			for range SearchesPerMinute {
 				_, rel, err := s.Search(ctx, g, contracts.VendorSearch{})
 				if err != nil {
@@ -1148,7 +1148,7 @@ func TestV32EveryAttributedRefusalHasItsReceipt(t *testing.T) {
 			_, _, err := s.Search(ctx, g, contracts.VendorSearch{})
 			return err
 		}},
-		{name: "reads past their limit", want: contracts.ErrTooManyRequests, reason: refusedRateLimited, call: func(w *world, s *Service, g *oauth.Grant) error {
+		{name: "reads past their limit", want: contracts.ErrTooManyRequests, reason: receipts.RefusedRateLimited, call: func(w *world, s *Service, g *oauth.Grant) error {
 			for range ReadsPerMinute {
 				_, rel, err := s.Read(ctx, g, mailboxID(1)+".m001")
 				if err != nil {
@@ -1159,28 +1159,28 @@ func TestV32EveryAttributedRefusalHasItsReceipt(t *testing.T) {
 			_, _, err := s.Read(ctx, g, mailboxID(1)+".m001")
 			return err
 		}},
-		{name: "a search whose mailbox cannot be opened", want: errCrash, reason: refusedUnavailable, call: func(w *world, s *Service, g *oauth.Grant) error {
+		{name: "a search whose mailbox cannot be opened", want: errCrash, reason: receipts.RefusedUnavailable, call: func(w *world, s *Service, g *oauth.Grant) error {
 			w.mbx.mu.Lock()
 			w.mbx.fail = errCrash
 			w.mbx.mu.Unlock()
 			_, _, err := s.Search(ctx, g, contracts.VendorSearch{})
 			return err
 		}},
-		{name: "a read whose mailbox cannot be opened", want: errCrash, reason: refusedUnavailable, call: func(w *world, s *Service, g *oauth.Grant) error {
+		{name: "a read whose mailbox cannot be opened", want: errCrash, reason: receipts.RefusedUnavailable, call: func(w *world, s *Service, g *oauth.Grant) error {
 			w.mbx.mu.Lock()
 			w.mbx.fail = errCrash
 			w.mbx.mu.Unlock()
 			_, _, err := s.Read(ctx, g, mailboxID(1)+".m001")
 			return err
 		}},
-		{name: "a discloser that fails a search", want: errCrash, reason: refusedUnavailable, call: func(w *world, s *Service, g *oauth.Grant) error {
+		{name: "a discloser that fails a search", want: errCrash, reason: receipts.RefusedUnavailable, call: func(w *world, s *Service, g *oauth.Grant) error {
 			w.disc.mu.Lock()
 			w.disc.fail = errCrash
 			w.disc.mu.Unlock()
 			_, _, err := s.Search(ctx, g, contracts.VendorSearch{})
 			return err
 		}},
-		{name: "a discloser that fails a read", want: errCrash, reason: refusedUnavailable, call: func(w *world, s *Service, g *oauth.Grant) error {
+		{name: "a discloser that fails a read", want: errCrash, reason: receipts.RefusedUnavailable, call: func(w *world, s *Service, g *oauth.Grant) error {
 			w.disc.mu.Lock()
 			w.disc.fail = errCrash
 			w.disc.mu.Unlock()

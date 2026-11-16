@@ -82,6 +82,10 @@ type resolver struct {
 	clients map[string]*vendors.Client
 	keys    map[string][]vendors.Key
 	fail    error
+	// clientErr is the error a client_id is answered with, when set.
+	clientErr map[string]error
+	// fresh are keys a client's set holds only when fetched again.
+	fresh map[string][]vendors.Key
 	// onClient runs on every Client, for a test's barrier.
 	onClient func()
 	fetches  int
@@ -90,6 +94,9 @@ type resolver struct {
 func (r *resolver) Client(_ context.Context, id string) (*vendors.Client, error) {
 	r.mu.Lock()
 	f, c, fail := r.onClient, r.clients[id], r.fail
+	if e, ok := r.clientErr[id]; ok {
+		fail = e
+	}
 	r.fetches++
 	r.mu.Unlock()
 	if f != nil {
@@ -105,15 +112,25 @@ func (r *resolver) Client(_ context.Context, id string) (*vendors.Client, error)
 	return &cc, nil
 }
 
-func (r *resolver) Keys(_ context.Context, c *vendors.Client, _ bool) ([]vendors.Key, error) {
+func (r *resolver) Keys(_ context.Context, c *vendors.Client, refresh bool) ([]vendors.Key, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if f, ok := r.fresh[c.ID]; ok && refresh {
+		r.keys[c.ID] = append(r.keys[c.ID], f...)
+		delete(r.fresh, c.ID)
+	}
 	k, ok := r.keys[c.ID]
 	if !ok {
 		return nil, vendors.ErrUnreachable
 	}
 	return k, nil
 }
+
+// What the resolver answers of a client_id or a document it cannot use.
+var (
+	errClientIDForTest = fmt.Errorf("resolve: %w", vendors.ErrClientID)
+	errDocumentForTest = fmt.Errorf("resolve: %w", vendors.ErrDocument)
+)
 
 // ---- accounts ----
 
@@ -688,4 +705,11 @@ func (w *world) connectionOf(s *Service, account, client string) *connDoc {
 	return d
 }
 
-func cryptoHash() crypto.Hash { return crypto.SHA256 }
+// clientProblem is the reason of a contracts.ClientError, "" for none.
+func clientProblem(err error) contracts.ClientProblem {
+	var ce *contracts.ClientError
+	if errors.As(err, &ce) {
+		return ce.Problem
+	}
+	return ""
+}

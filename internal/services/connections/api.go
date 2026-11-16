@@ -2,7 +2,6 @@ package connections
 
 import (
 	"context"
-	"errors"
 	"net/url"
 	"time"
 
@@ -111,7 +110,7 @@ const RefusalMessageMax = 128
 
 // ErrInvalidRefusal is Refuse's answer to a Refusal that is not ValidOn
 // its grant's resource, or to one without a grant.
-var ErrInvalidRefusal = errors.New("connections: not a refusal an adapter makes")
+var ErrInvalidRefusal error = &kind{"connections: not a refusal an adapter makes"}
 
 // Valid says whether r is one an adapter may make: a known operation and a
 // reason only the adapter sees. A body or tool arguments it cannot read
@@ -222,7 +221,7 @@ type Release interface {
 // read again. The adapter answers 503 with Retry-After (never 401, so a
 // client keeps its tokens when the storage failed; a revoked one is told
 // invalid_token on its next request).
-var ErrTooLate = errors.New("connections: the answer can no longer be released")
+var ErrTooLate error = &kind{"connections: the answer can no longer be released"}
 
 // ReceiptWriteMax bounds writing one receipt (receipts.Writer), on its own
 // deadline, not the grant's freshness (N3): a preparation that outlasts the

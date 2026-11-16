@@ -28,23 +28,6 @@ import (
 // snapshot. The routes answer it 400 invalid_body.
 var ErrInvalidBody = &contracts.Error{Code: "invalid_body", Message: "that is not a choice this request takes"}
 
-// clientRefusal is contracts.ErrInvalidClient with its fixed reason, for the
-// app to show; never redirected.
-type clientRefusal struct{ Problem contracts.ClientProblem }
-
-func (e *clientRefusal) Error() string { return contracts.ErrInvalidClient.Error() }
-func (e *clientRefusal) Unwrap() error { return contracts.ErrInvalidClient }
-
-// ClientProblemOf is the reason of a contracts.ErrInvalidClient the service
-// answered, for the details of its answer ("" for none).
-func ClientProblemOf(err error) contracts.ClientProblem {
-	var r *clientRefusal
-	if errors.As(err, &r) {
-		return r.Problem
-	}
-	return ""
-}
-
 // requestEntry is an authorization request waiting for the person, sealed.
 type requestEntry struct {
 	ClientID    string              `json:"client_id"`
@@ -93,10 +76,10 @@ func (s *Service) resolve(ctx context.Context, clientID string) (*vendors.Client
 	switch {
 	case errors.Is(err, vendors.ErrClientID):
 		s.count(string(contracts.ClientIDInvalid))
-		return nil, &clientRefusal{contracts.ClientIDInvalid}
+		return nil, contracts.InvalidClient(contracts.ClientIDInvalid)
 	case errors.Is(err, vendors.ErrDocument):
 		s.count(string(contracts.ClientDocumentInvalid))
-		return nil, &clientRefusal{contracts.ClientDocumentInvalid}
+		return nil, contracts.InvalidClient(contracts.ClientDocumentInvalid)
 	case err != nil:
 		s.count("vendor_unreachable")
 		return nil, contracts.ErrVendorUnreachable
@@ -111,7 +94,7 @@ func (s *Service) refusedRedirect(p *oauth.AuthorizeParams, code oauth.ErrorCode
 	if p.State != "" {
 		v.Set("state", p.State)
 	}
-	return &contracts.AuthorizationStarted{Redirect: redirectWith(p.RedirectURI, v, s.cfg.OAuth.Issuer)}
+	return &contracts.AuthorizationStarted{Redirect: oauth.Redirect(p.RedirectURI, v, s.cfg.OAuth.Issuer)}
 }
 
 // Start implements API.
@@ -119,7 +102,7 @@ func (s *Service) Start(ctx context.Context, p Person, raw string) (*contracts.A
 	q, err := url.ParseQuery(raw)
 	if err != nil || len(q["client_id"]) != 1 {
 		s.count(string(contracts.ClientIDInvalid))
-		return nil, &clientRefusal{contracts.ClientIDInvalid}
+		return nil, contracts.InvalidClient(contracts.ClientIDInvalid)
 	}
 	clientID := q.Get("client_id")
 	client, err := s.resolve(ctx, clientID)
@@ -131,15 +114,15 @@ func (s *Service) Start(ctx context.Context, p Person, raw string) (*contracts.A
 		if params, err = s.takePushed(ctx, clientID, uri); err != nil {
 			return nil, err
 		}
-		if !redirectAllowed(client.Document.RedirectURIs, params.RedirectURI) {
-			return nil, &clientRefusal{contracts.RedirectURIInvalid}
+		if !oauth.RedirectAllowed(client.Document.RedirectURIs, params.RedirectURI) {
+			return nil, contracts.InvalidClient(contracts.RedirectURIInvalid)
 		}
 		if len(q) != 2 {
 			return s.refusedRedirect(params, oauth.ErrInvalidRequest), nil
 		}
 	} else {
 		var proven bool
-		params, proven, err = authorizeParams(q, &client.Document, s.cfg.OAuth)
+		params, proven, err = oauth.Authorize(q, &client.Document, s.cfg.OAuth)
 		switch {
 		case !proven:
 			// Never redirected: the person is shown the client's problem.
@@ -161,7 +144,7 @@ func (s *Service) Start(ctx context.Context, p Person, raw string) (*contracts.A
 	req := &requestEntry{
 		ClientID: clientID, ClientName: clientName(client), Vendor: client.Domain, RedirectURI: params.RedirectURI,
 		State: params.State, Challenge: params.CodeChallenge, ResourceURI: params.Resource, Scopes: params.Scope,
-		Parts: partsOf(params.Scope), Session: p.Session, Account: p.Account, Mailboxes: slices.Clone(catalogue),
+		Parts: oauth.Parts(params.Scope), Session: p.Session, Account: p.Account, Mailboxes: slices.Clone(catalogue),
 		Days: oauth.ConnectionDefaultDays, Since: contracts.MailSince{New: true}, Expires: now.Add(oauth.RequestTTL),
 	}
 	req.Resource, _ = resourceOf(s.cfg.OAuth, params.Resource)
@@ -186,11 +169,11 @@ func (s *Service) Start(ctx context.Context, p Person, raw string) (*contracts.A
 		s.count("request_too_large")
 		return nil, err
 	}
-	id, err := newSecret(oauth.PrefixRequest, s.cfg.Random)
+	id, err := oauth.NewSecret(oauth.PrefixRequest, s.cfg.Random)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.putEntry(ctx, PartitionRequest+hashOf(oauth.KindRequest, id), req, req.Expires); err != nil {
+	if err := s.putEntry(ctx, PartitionRequest+oauth.Hash(oauth.KindRequest, id), req, req.Expires); err != nil {
 		return nil, err
 	}
 	out, err := s.screen(ctx, id, req)
@@ -247,7 +230,7 @@ func (s *Service) takePushed(ctx context.Context, clientID string, uri []string)
 	if len(uri) != 1 || !strings.HasPrefix(uri[0], oauth.RequestURIPrefix+oauth.PrefixPushed) {
 		return nil, contracts.ErrRequestEnded
 	}
-	partition := PartitionPushed + hashOf(oauth.KindPushed, strings.TrimPrefix(uri[0], oauth.RequestURIPrefix))
+	partition := PartitionPushed + oauth.Hash(oauth.KindPushed, strings.TrimPrefix(uri[0], oauth.RequestURIPrefix))
 	var e pushedEntry
 	if err := s.getEntry(ctx, partition, &e); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -319,7 +302,7 @@ func (s *Service) request(ctx context.Context, p Person, id string) (*requestEnt
 		return nil, contracts.ErrRequestEnded
 	}
 	var req requestEntry
-	if err := s.getEntry(ctx, PartitionRequest+hashOf(oauth.KindRequest, id), &req); err != nil {
+	if err := s.getEntry(ctx, PartitionRequest+oauth.Hash(oauth.KindRequest, id), &req); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, contracts.ErrRequestEnded
 		}
@@ -574,7 +557,7 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 	if err != nil {
 		return nil, err
 	}
-	reqHash := hashOf(oauth.KindRequest, id)
+	reqHash := oauth.Hash(oauth.KindRequest, id)
 	partition := PartitionRequest + reqHash
 	if s.usedHere(partition) || s.decided(ctx, req.Account, reqHash) {
 		return nil, contracts.ErrRequestEnded
@@ -603,8 +586,8 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 	if err != nil {
 		return nil, err
 	}
-	if !redirectAllowed(client.Document.RedirectURIs, req.RedirectURI) {
-		return nil, &clientRefusal{contracts.RedirectURIInvalid}
+	if !oauth.RedirectAllowed(client.Document.RedirectURIs, req.RedirectURI) {
+		return nil, contracts.InvalidClient(contracts.RedirectURIInvalid)
 	}
 	snap, cur, _, ds, raw, err := s.changeFor(ctx, req, *in.Draft)
 	if err != nil {
@@ -676,7 +659,7 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 		v.Set("state", req.State)
 	}
 	s.count("allowed")
-	return &contracts.AuthorizationAnswer{Redirect: redirectWith(req.RedirectURI, v, s.cfg.OAuth.Issuer)}, nil
+	return &contracts.AuthorizationAnswer{Redirect: oauth.Redirect(req.RedirectURI, v, s.cfg.OAuth.Issuer)}, nil
 }
 
 // decided says the account's list has the request decided (a request is
@@ -701,7 +684,7 @@ func (s *Service) deny(ctx context.Context, req *requestEntry, reqHash, partitio
 		v.Set("state", req.State)
 	}
 	s.count("denied")
-	return &contracts.AuthorizationAnswer{Redirect: redirectWith(req.RedirectURI, v, s.cfg.OAuth.Issuer)}, nil
+	return &contracts.AuthorizationAnswer{Redirect: oauth.Redirect(req.RedirectURI, v, s.cfg.OAuth.Issuer)}, nil
 }
 
 // made is what an approval made: the connection, its new device and its
@@ -732,7 +715,7 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 	if err != nil {
 		return nil, err
 	}
-	code, err := newSecret(oauth.PrefixCode, s.cfg.Random)
+	code, err := oauth.NewSecret(oauth.PrefixCode, s.cfg.Random)
 	if err != nil {
 		return nil, err
 	}
@@ -764,7 +747,7 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 		Generation: generation,
 		Devices: []deviceDoc{{
 			ID: family, State: contracts.ConnectionActive, MadeAt: now, Parts: slices.Clone(req.Parts), Scopes: slices.Clone(req.Scopes),
-			Code: oauth.CodeState{Hash: hashOf(oauth.KindCode, code), Family: family, ExpiresAt: now.Add(oauth.CodeTTL), Status: oauth.CodeIssued},
+			Code: oauth.CodeState{Hash: oauth.Hash(oauth.KindCode, code), Family: family, ExpiresAt: now.Add(oauth.CodeTTL), Status: oauth.CodeIssued},
 		}},
 		private: &connPrivate{Query: req.Query, Since: since, Shown: s.shown(req)},
 	}
@@ -857,7 +840,7 @@ func (s *Service) addDevice(ctx context.Context, req *requestEntry, reqHash stri
 	if err != nil {
 		return nil, err
 	}
-	code, err := newSecret(oauth.PrefixCode, s.cfg.Random)
+	code, err := oauth.NewSecret(oauth.PrefixCode, s.cfg.Random)
 	if err != nil {
 		return nil, err
 	}
@@ -874,7 +857,7 @@ func (s *Service) addDevice(ctx context.Context, req *requestEntry, reqHash stri
 	d.dropDevices(drop)
 	d.Devices = append(d.Devices, deviceDoc{
 		ID: family, State: contracts.ConnectionActive, MadeAt: now, Parts: slices.Clone(req.Parts), Scopes: slices.Clone(req.Scopes), ScopeID: sid,
-		Code: oauth.CodeState{Hash: hashOf(oauth.KindCode, code), Family: family, ExpiresAt: now.Add(oauth.CodeTTL), Status: oauth.CodeIssued},
+		Code: oauth.CodeState{Hash: oauth.Hash(oauth.KindCode, code), Family: family, ExpiresAt: now.Add(oauth.CodeTTL), Status: oauth.CodeIssued},
 	})
 	if err := inTime(); err != nil {
 		return nil, err
@@ -924,7 +907,7 @@ func (s *Service) issueCode(ctx context.Context, req *requestEntry, m *made) (st
 		Challenge: req.Challenge, Resource: req.Resource, ResourceURI: req.ResourceURI, Scopes: req.Scopes,
 		ScopeID: m.scopeID, Scope: encodeScope(m.scope),
 	}
-	if err := s.putEntry(ctx, PartitionCode+hashOf(oauth.KindCode, m.code), e, s.now().Add(oauth.CodeTTL)); err != nil {
+	if err := s.putEntry(ctx, PartitionCode+oauth.Hash(oauth.KindCode, m.code), e, s.now().Add(oauth.CodeTTL)); err != nil {
 		return "", err
 	}
 	return m.code, nil

@@ -77,7 +77,7 @@ type cachedStanding struct {
 const cacheMax = 10000
 
 // errMissing is what New says of a Config without one of what it needs.
-var errMissing = errors.New("connections: the service needs its records, entries, keys, vendors, accounts, mailboxes and receipts")
+var errMissing error = &kind{"connections: the service needs its records, entries, keys, vendors, accounts, mailboxes and receipts"}
 
 // New makes the service. The keys are derived once.
 func New(cfg Config) (*Service, error) {
@@ -152,7 +152,7 @@ func refusedRecord(err error) bool {
 }
 
 // errDocument is a record or an entry whose document does not read.
-var errDocument = errors.New("connections: a stored document does not read")
+var errDocument error = &kind{"connections: a stored document does not read"}
 
 func recordAAD(name string) []byte { return envelope.AAD("record", name) }
 
@@ -235,7 +235,7 @@ func retry(err error) bool {
 }
 
 // errBusy is a record that kept changing for RecordTries reads.
-var errBusy = errors.New("connections: a record kept changing")
+var errBusy error = &kind{"connections: a record kept changing"}
 
 // ---- entries ----
 

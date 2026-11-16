@@ -83,14 +83,14 @@ func TestV20Start(t *testing.T) {
 		}
 		for name, c := range cases {
 			got, err := s.Start(ctx, p, c.query)
-			if !errors.Is(err, c.want) || got != nil || ClientProblemOf(err) != c.why {
+			if !errors.Is(err, c.want) || got != nil || clientProblem(err) != c.why {
 				t.Errorf("%s: %v %v", name, got, err)
 			}
 		}
 		w.vendors.mu.Lock()
 		w.vendors.fail = vendors.ErrDocument
 		w.vendors.mu.Unlock()
-		if _, err := s.Start(ctx, p, w.ask(claudeCode).query()); ClientProblemOf(err) != contracts.ClientDocumentInvalid {
+		if _, err := s.Start(ctx, p, w.ask(claudeCode).query()); clientProblem(err) != contracts.ClientDocumentInvalid {
 			t.Error(err)
 		}
 		w.vendors.mu.Lock()
@@ -102,7 +102,7 @@ func TestV20Start(t *testing.T) {
 		w.vendors.mu.Lock()
 		w.vendors.fail = nil
 		w.vendors.mu.Unlock()
-		if ClientProblemOf(errors.New("x")) != "" {
+		if clientProblem(errors.New("x")) != "" {
 			t.Error("a reason for nothing")
 		}
 	})
@@ -324,7 +324,7 @@ func TestV21Decide(t *testing.T) {
 		doc.Document.RedirectURIs = []string{"https://tools.example.org/elsewhere"}
 		w.vendors.mu.Unlock()
 		d := req.Draft
-		if _, err := a.Decide(ctx, w.person(accountA), req.ID, contracts.AuthorizationDecision{Allow: true, Draft: &d, ModelNotice: notice, Snapshot: &req.Snapshot}); ClientProblemOf(err) != contracts.RedirectURIInvalid {
+		if _, err := a.Decide(ctx, w.person(accountA), req.ID, contracts.AuthorizationDecision{Allow: true, Draft: &d, ModelNotice: notice, Snapshot: &req.Snapshot}); clientProblem(err) != contracts.RedirectURIInvalid {
 			t.Fatal(err)
 		}
 		w.vendors.mu.Lock()
