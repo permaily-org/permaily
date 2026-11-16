@@ -74,6 +74,9 @@ type config struct {
 	// deploy/enclave.json "model"); it is composed wherever the mailboxes
 	// of accounts are.
 	model modelConfig
+	// modelTicks is never a flag: the image's model runs on tickers, and
+	// only a test gives ticks of its own.
+	modelTicks modelTicks
 }
 
 func main() {
@@ -179,7 +182,7 @@ func run(cfg config, log *slog.Logger) error {
 	if p.model != nil {
 		// Every enclave runs the day's canary, under its lease, and sends the
 		// alarms any image left due (ADR 0028).
-		runModel(ctx, p.model, log)
+		runModel(ctx, p.model, log, cfg.modelTicks)
 	}
 	if p.smtpListener != nil {
 		var recipients smtpd.Recipients = nobody{}

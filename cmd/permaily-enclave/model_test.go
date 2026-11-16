@@ -254,13 +254,20 @@ func TestA34TheComposedModelUsesTheKeyOfEitherEnclave(t *testing.T) {
 	}
 }
 
-// A34. The canary and the alarms run on their tickers, once when they
-// start; the alarm goes by mail to the super admin.
+// A34. The canary and the alarms run on their own, on their tickers: the
+// key is given and the canary's answer moves only once both loops are past
+// the run they make when they start, so only a tick runs the canary and
+// sends its alarm, by mail to the super admin. The test never calls
+// RunCanary or RunAlarms.
 func TestA34TheCanaryAndTheAlarmsRunOnTheirTickers(t *testing.T) {
 	w := newModelWorld(t)
 	svc, _ := w.enclave()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	canaryTick, alarmTick := make(chan time.Time), make(chan time.Time)
+	runModel(ctx, svc, slog.New(slog.NewJSONHandler(w.logs, nil)), modelTicks{canary: canaryTick, alarms: alarmTick})
+	tick(t, "the alarms' loop", alarmTick)
+	tick(t, "the canary's loop", canaryTick)
 	const key = "pm-a34-canary-key-7d8e"
 	w.tab.RequireKey(key)
 	if _, err := svc.SetKey(ctx, contracts.ModelKeySet{Key: key}); err != nil {
@@ -273,22 +280,16 @@ func TestA34TheCanaryAndTheAlarmsRunOnTheirTickers(t *testing.T) {
 	}
 	m := c.Messages[0]
 	w.tab.SetFor(m.Subject, m.Body, m.Atoms[0].Atom(), 1-m.Atoms[0].P)
-	runModel(ctx, svc, slog.New(slog.NewJSONHandler(w.logs, nil)))
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if st := svc.Status(ctx); st.Canary != nil && st.Canary.State == attestation.CanaryChanged {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the canary did not run: %+v", svc.Status(ctx).Canary)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	// RunAlarms ran once when it started, maybe before the canary added its
-	// alarm; its ticker sends it a minute later. It is the same call.
-	if err := svc.RunAlarms(ctx); err != nil {
-		t.Fatal(err)
-	}
+	// Without a key the check did not complete: it is tried again once its
+	// lease is over.
+	w.advance(decisions.CanaryLease + time.Second)
+	tick(t, "the canary's loop", canaryTick)
+	waitUntil(t, "the canary did not run on its ticker", func() bool {
+		st := svc.Status(ctx)
+		return st.Canary != nil && st.Canary.State == attestation.CanaryChanged
+	})
+	tick(t, "the alarms' loop", alarmTick)
+	waitUntil(t, "the alarm was not sent on its ticker", func() bool { return len(w.outbox.Sent()) > 0 })
 	sent := w.outbox.Sent()
 	if len(sent) != 1 || sent[0].To != "admin@permaily.test" || sent[0].Subject != "Permaily: the model's canary saw an answer move" {
 		t.Fatalf("the alarm: %+v", sent)
@@ -298,12 +299,34 @@ func TestA34TheCanaryAndTheAlarmsRunOnTheirTickers(t *testing.T) {
 	}
 }
 
+// tick gives a loop of runModel its next tick, and fails when the loop
+// does not take it. Once it is taken, the loop's run when it started is
+// over: what it does after comes from a tick.
+func tick(t *testing.T, loop string, c chan<- time.Time) {
+	t.Helper()
+	select {
+	case c <- time.Now():
+	case <-time.After(10 * time.Second):
+		t.Fatalf("%s does not run: it takes no tick", loop)
+	}
+}
+
+// waitUntil waits for ok, and fails with why after 10 seconds.
+func waitUntil(t *testing.T, why string, ok func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); !ok(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal(why)
+		}
+	}
+}
+
 func TestEveryRunsNowAndOnItsTicker(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var n atomic.Int32
 	done := make(chan struct{})
 	go func() {
-		every(ctx, time.Millisecond, func() {
+		every(ctx, time.Millisecond, nil, func() {
 			if n.Add(1) == 3 {
 				cancel()
 			}
@@ -318,6 +341,19 @@ func TestEveryRunsNowAndOnItsTicker(t *testing.T) {
 	if n.Load() < 3 {
 		t.Fatalf("ran %d times", n.Load())
 	}
+	// With ticks of its own, it runs once when it starts and once a tick.
+	ctx, cancel = context.WithCancel(context.Background())
+	ticks, ran := make(chan time.Time), make(chan struct{}, 3)
+	done = make(chan struct{})
+	go func() {
+		every(ctx, time.Hour, ticks, func() { ran <- struct{}{} })
+		close(done)
+	}()
+	<-ran
+	tick(t, "every's loop", ticks)
+	<-ran
+	cancel()
+	<-done
 }
 
 // enclaveJSON is deploy/enclave.json's model section and staging's.

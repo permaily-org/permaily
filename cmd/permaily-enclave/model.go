@@ -140,32 +140,43 @@ func modelStatus(svc *decisions.Service, cfg modelConfig) func(context.Context) 
 // and did not complete is taken over once its lease ends.
 const canaryEvery = decisions.CanaryLease
 
+// modelTicks, when set, tick runModel's loops in place of tickers of
+// canaryEvery and decisions.AlarmRetry: a test's, which then knows each
+// loop runs again only when it gives it a tick. The image sets neither.
+type modelTicks struct {
+	canary, alarms <-chan time.Time
+}
+
 // runModel runs the model's canary and its alarms on their tickers, each
 // once when it starts, until ctx ends. Their errors are logged by kind
 // alone: the service already logged what it can say.
-func runModel(ctx context.Context, svc *decisions.Service, log *slog.Logger) {
-	go every(ctx, canaryEvery, func() {
+func runModel(ctx context.Context, svc *decisions.Service, log *slog.Logger, ticks modelTicks) {
+	go every(ctx, canaryEvery, ticks.canary, func() {
 		if err := svc.RunCanary(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("model: the canary did not run", "kind", "canary")
 		}
 	})
-	go every(ctx, decisions.AlarmRetry, func() {
+	go every(ctx, decisions.AlarmRetry, ticks.alarms, func() {
 		if err := svc.RunAlarms(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("model: the alarms were not all sent", "kind", "alarms")
 		}
 	})
 }
 
-// every runs f now and then every d, until ctx ends.
-func every(ctx context.Context, d time.Duration, f func()) {
-	t := time.NewTicker(d)
-	defer t.Stop()
+// every runs f now and then on every tick, until ctx ends: of tick when it
+// is set, else of a ticker of d.
+func every(ctx context.Context, d time.Duration, tick <-chan time.Time, f func()) {
+	if tick == nil {
+		t := time.NewTicker(d)
+		defer t.Stop()
+		tick = t.C
+	}
 	for {
 		f()
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-tick:
 		}
 	}
 }
