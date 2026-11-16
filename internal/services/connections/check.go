@@ -186,7 +186,9 @@ func (s *Service) verify(ctx context.Context, g *oauth.Grant) (time.Time, error)
 }
 
 // deviceScope is a device's own narrower formulas, from memory (by their
-// identifier) or its family's record.
+// identifier) or its family's record: errScope when that record is gone or
+// refused, or its formulas are not the ones the device names;
+// ErrUnavailable when it could not be read.
 func (s *Service) deviceScope(ctx context.Context, d *connDoc, family string) ([]*query.Canonical, error) {
 	dev := d.device(family)
 	if dev == nil || dev.ScopeID == "" {
@@ -199,6 +201,9 @@ func (s *Service) deviceScope(ctx context.Context, d *connDoc, family string) ([
 		return fs, nil
 	}
 	f, _, err := s.readFamily(ctx, family, 0)
+	if err != nil && !refusedRecord(err) {
+		return nil, ErrUnavailable // storage that could not be read, never a refusal (V27)
+	}
 	if err != nil || f == nil {
 		return nil, errScope
 	}

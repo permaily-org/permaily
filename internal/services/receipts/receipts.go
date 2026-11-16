@@ -200,6 +200,14 @@ const (
 	RefusedInvalidCursor RefusedReason = "invalid_cursor"
 	RefusedRateLimited   RefusedReason = "rate_limited"
 	RefusedUnavailable   RefusedReason = "unavailable"
+	// RefusedConnectionEnded: the authority of a request a valid token
+	// attributed no longer allows it when the service reads it before
+	// preparing anything (PR #136's second review, finding 4): the
+	// connection or its device revoked or ended, the account closing, or
+	// its record or its device's scope gone or not opening; the vendor is
+	// answered invalid_token. A record that could not be read is
+	// RefusedUnavailable.
+	RefusedConnectionEnded RefusedReason = "connection_ended"
 	// RefusedTooLate: the answer of Receipt was prepared and recorded, and
 	// then not released (the grant's deadline passed or this enclave
 	// revoked it, finding 5). The earlier receipt stays: a receipt may

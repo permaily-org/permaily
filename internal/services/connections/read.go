@@ -34,19 +34,30 @@ type reading struct {
 // prepare checks the gates of a read and makes its disclosure, the search's
 // formula (nil for none) evaluated with the connection's.
 func (s *Service) prepare(ctx context.Context, g *oauth.Grant, search *query.Canonical) (*reading, error) {
+	// The grant is Check's: the request is attributed from here, so every
+	// refusal is recorded, those before its disclosure too, with the
+	// grant's attribution alone and a fixed reason (PR #136's second
+	// review, finding 4).
+	r := &reading{g: g, conn: &connDoc{}}
+	refused := func(err error) (*reading, error) {
+		if errors.Is(err, ErrUnavailable) {
+			return nil, s.refuse(ctx, r, &receipts.Refused{Reason: receipts.RefusedUnavailable}, ErrUnavailable)
+		}
+		return nil, s.refuse(ctx, r, &receipts.Refused{Reason: receipts.RefusedConnectionEnded}, ErrInvalidToken)
+	}
 	d, _, err := s.authority(ctx, g, false)
 	if err != nil {
-		return nil, err
+		return refused(err)
 	}
 	sc, err := d.scope()
 	if err != nil {
-		return nil, err
+		return refused(ErrInvalidToken) // a stored scope that does not read
 	}
 	own, err := s.deviceScope(ctx, d, g.Family)
 	if err != nil {
-		return nil, ErrInvalidToken
+		return refused(err)
 	}
-	r := &reading{g: g, conn: d}
+	r.conn = d
 	add := func(role receipts.FormulaRole, c *query.Canonical, full bool) {
 		r.d.Formulas = append(r.d.Formulas, c)
 		f := receipts.Formula{Role: role, ID: c.ID}
