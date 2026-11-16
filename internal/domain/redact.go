@@ -1,15 +1,14 @@
 package domain
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"regexp"
 )
 
-// What is taken out of an error before it is logged (ADR 0015: logs leave
-// the enclave and are public). One redactor for every place that logs an
-// error (services/accounts, services/mailboxes, httpapi), so no copy of the
-// patterns falls behind another.
+// The patterns Redact takes out of a text (ADR 0015: logs leave the enclave
+// and are public). What is logged of an error is Redacted's, never these.
 var (
 	// prefixedIDs are the identifiers this deployment makes: accounts,
 	// sessions, sign-in attempts, ceremonies, invitations and mailboxes.
@@ -32,15 +31,19 @@ var (
 	addresses = regexp.MustCompile(`[^\s"'<>(),;:@/\\]+@[^\s"'<>(),;:@/\\]+`)
 )
 
-// Redact takes identifiers, URLs and addresses out of a text that is about
-// to be logged: "mbx_…", "pma_…", "con_…" and the other prefixed
-// identifiers keep their prefix, a URL its scheme ("https://…"), a
-// hexadecimal identifier becomes "…", an address "…@…".
+// Redact takes identifiers, URLs and addresses out of a text: "mbx_…",
+// "pma_…", "con_…" and the other prefixed identifiers keep their prefix, a
+// URL its scheme ("https://…"), a hexadecimal identifier becomes "…", an
+// address "…@…".
 //
-// What has no shape cannot be recognised: a PKCE verifier or challenge, a
-// state, a client assertion, a jti, a client_id's host written alone. An
-// error that may carry one is never text that wraps it: it is a fixed kind
-// (FixedKind), which Redacted logs alone.
+// Redact is not a safety boundary, and an error's text is never logged
+// through it (Redacted logs none). It knows the literal spelling of what it
+// looks for and nothing else: a secret or a URL percent-encoded
+// ("pma%5F…"), JSON-escaped ("pma\u005f…", "https:\/\/…"), in base64, in
+// upper case, without a scheme, or split across two errors passes through
+// it whole, and what has no shape (a PKCE verifier or challenge, a state, a
+// client assertion, a jti, a client_id's host written alone) cannot be
+// recognised at all (PR #137's review, finding 2).
 //
 // The longer values go first: a connection's base64url secret may hold
 // "-acc_a" or any older prefix after a hyphen, and replacing that first
@@ -56,21 +59,30 @@ func Redact(s string) string {
 
 // FixedKind is an error of a fixed kind: what it says in a log is its kind, a
 // fixed text that holds nothing of a request (contracts.ClientError,
-// connections.OAuthError). Every error of connections that may carry a
-// value no pattern of Redact recognises (a verifier, a challenge, a state,
-// an assertion, a jti, an unverified client_id or its host, a formula) is
-// one, or a sentinel with fixed words, never text formatted with the value
-// (ADR 0030, "Logging", "Seams added while building").
+// connections.OAuthError). LogKind returns words written in the code, or
+// chosen from a fixed set after checking the value against it, never a
+// value it was given: it is trusted, and Redacted logs it as it is.
 type FixedKind interface {
 	LogKind() string
 }
 
-// Redacted is what may be logged of an error. An error of a fixed kind
-// (FixedKind) anywhere in its chain is logged as that kind alone: whatever
-// wraps it is dropped, so text formatted around it cannot leak. A transport
+// Unclassified is what is logged of an error that is not of a fixed kind,
+// a transport error or a context's end: its text is not logged at all,
+// whatever it holds (PR #137's review, finding 2).
+const Unclassified = "error (its text is not logged)"
+
+// Redacted is what may be logged of an error, safe by construction: never
+// its text, only a fixed kind. An error of a fixed kind (FixedKind) anywhere
+// in its tree is logged as that kind alone, whatever wraps it. A transport
 // error (a request to the storage, KMS or any other service that failed)
-// is logged as its category and its method only: its URL names records and
-// objects, and so identifiers. Anything else is its text, redacted.
+// is logged as its category and its HTTP method only: its URL names records
+// and objects. A context's end is logged as that. Anything else is
+// Unclassified: storage, the connections service and the OAuth paths make
+// errors whose text may hold a secret in a form no pattern recognises, so
+// an error is logged by what it is, never by what it says. The error is
+// read, never changed: callers wrap with %w and keep the chain for
+// errors.Is and errors.As. An error formatted with %v or %s instead of %w
+// is no longer of its kind, and is Unclassified.
 func Redacted(err error) string {
 	if err == nil {
 		return ""
@@ -81,7 +93,22 @@ func Redacted(err error) string {
 	}
 	var u *url.Error
 	if errors.As(err, &u) {
-		return "transport error (" + u.Op + ")"
+		if m, ok := methods[u.Op]; ok {
+			return "transport error (" + m + ")"
+		}
+		return "transport error"
 	}
-	return Redact(err.Error())
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "context canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "context deadline exceeded"
+	}
+	return Unclassified
+}
+
+// methods are the Ops net/http gives a *url.Error: an HTTP method, the
+// first letter upper case. Any other Op is not logged.
+var methods = map[string]string{
+	"Get": "Get", "Head": "Head", "Post": "Post", "Put": "Put", "Patch": "Patch", "Delete": "Delete", "Options": "Options",
 }

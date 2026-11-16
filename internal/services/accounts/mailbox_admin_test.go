@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
 	"github.com/permaily-org/permaily/internal/services/mailboxes/mailboxestest"
 )
@@ -446,7 +447,7 @@ func TestWhenTheMailboxesServiceFails(t *testing.T) {
 	if strings.Contains(logged, "inbox.permaily") || strings.Contains(logged, "secret") || strings.Contains(logged, "mbx_a") {
 		t.Fatalf("logged what the error says:\n%s", logged)
 	}
-	if !strings.Contains(logged, "mailboxes could not be counted") || !strings.Contains(logged, "mbx_…") {
+	if !strings.Contains(logged, "mailboxes could not be counted") || !strings.Contains(logged, domain.Unclassified) {
 		t.Fatalf("the counts' failure is not logged:\n%s", logged)
 	}
 	_, actions := w.svc.OperatorActions()

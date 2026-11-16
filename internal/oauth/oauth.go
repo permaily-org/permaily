@@ -294,6 +294,18 @@ const (
 	ErrInsufficientScope    ErrorCode = "insufficient_scope"
 )
 
+// Valid says whether c is one of the codes above, the only ones a refusal
+// may name in a log (connections.OAuthError's LogKind).
+func (c ErrorCode) Valid() bool {
+	switch c {
+	case ErrInvalidRequest, ErrInvalidClient, ErrInvalidGrant, ErrUnauthorizedClient, ErrUnsupportedGrantType,
+		ErrUnsupportedResponse, ErrInvalidScope, ErrInvalidTarget, ErrAccessDenied, ErrServerError, ErrTemporarily,
+		ErrInvalidToken, ErrInsufficientScope:
+		return true
+	}
+	return false
+}
+
 // AuthorizeParams is an authorization request as the server reads it, from
 // the query string or a pushed request. Query and Since come only from a
 // pushed request (ADR 0030, "Pushed requests").

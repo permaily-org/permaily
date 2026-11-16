@@ -115,3 +115,18 @@ func TestStepUpNamesTheConnectionsScopes(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+// PR #137's review, finding 2: only the OAuth codes are codes a log names.
+func TestOnlyTheOAuthCodesAreValid(t *testing.T) {
+	for _, c := range []ErrorCode{ErrInvalidRequest, ErrInvalidClient, ErrInvalidGrant, ErrUnauthorizedClient, ErrUnsupportedGrantType,
+		ErrUnsupportedResponse, ErrInvalidScope, ErrInvalidTarget, ErrAccessDenied, ErrServerError, ErrTemporarily, ErrInvalidToken, ErrInsufficientScope} {
+		if !c.Valid() {
+			t.Errorf("%q", c)
+		}
+	}
+	for _, c := range []ErrorCode{"", "INVALID_GRANT", "invalid_grant ", "pma_PrivateMark"} {
+		if c.Valid() {
+			t.Errorf("%q", c)
+		}
+	}
+}

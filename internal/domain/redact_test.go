@@ -40,14 +40,20 @@ func TestRedactedErrors(t *testing.T) {
 	if got := Redacted(transport); got != "transport error (Put)" {
 		t.Fatalf("%s", got)
 	}
-	if got := Redacted(errors.New("commits of account-acc_abcdefghijklmnopqrstuvwxyz: down")); got != "commits of account-acc_…: down" {
+	// Any other error's text is not logged at all (PR #137's review,
+	// finding 2); Redact still takes the identifiers out of a text.
+	if got := Redacted(errors.New("commits of account-acc_abcdefghijklmnopqrstuvwxyz: down")); got != Unclassified {
+		t.Fatalf("%s", got)
+	}
+	if got := Redact("commits of account-acc_abcdefghijklmnopqrstuvwxyz: down"); got != "commits of account-acc_…: down" {
 		t.Fatalf("%s", got)
 	}
 }
 
 // PR #131's review, seam gap 2: the identifiers and secrets of connections
 // (ADR 0030, "Codes and tokens"), whole base64url values included, and
-// every URL are taken out of a text before it is logged, wrapped or not.
+// every URL written literally are taken out of a text by Redact; what is
+// logged of the error is its kind alone (PR #137's review, finding 2).
 func TestRedactKnowsConnectionsIdentifiersAndURLs(t *testing.T) {
 	b64 := "Ab-_9zQ" + strings.Repeat("xY_-", 9) // 43 characters of base64url: upper case, '_' and '-'
 	secrets := []string{
@@ -58,7 +64,10 @@ func TestRedactKnowsConnectionsIdentifiersAndURLs(t *testing.T) {
 	}
 	text := "connections: record connection-" + strings.Join(secrets, " oauth-family-") + ": changed"
 	for _, err := range []error{errors.New(text), fmt.Errorf("refresh: %w", errors.New(text))} {
-		got := Redacted(err)
+		if Redacted(err) != Unclassified {
+			t.Errorf("logged: %s", Redacted(err))
+		}
+		got := Redact(err.Error())
 		for _, s := range secrets {
 			if strings.Contains(got, s) {
 				t.Errorf("%q kept: %s", s, got)

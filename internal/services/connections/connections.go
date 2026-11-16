@@ -267,5 +267,12 @@ func (e *OAuthError) Error() string { return "connections: " + string(e.Code) }
 
 // LogKind is what a log says of it (domain.FixedKind): its code alone, so a
 // refusal wrapped in text that carries a verifier, a state, an assertion or
-// a jti is still logged as its code.
-func (e *OAuthError) LogKind() string { return e.Error() }
+// a jti is still logged as its code; a Code that is not one of the OAuth
+// codes (oauth.ErrorCode.Valid) is never logged, only that it was a
+// refusal (PR #137's review, finding 2).
+func (e *OAuthError) LogKind() string {
+	if !e.Code.Valid() {
+		return "connections: an OAuth refusal"
+	}
+	return e.Error()
+}
