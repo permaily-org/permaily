@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"log/slog"
@@ -280,7 +281,7 @@ func TestV45EveryAPIRequestLogsItsRouteAndOutcome(t *testing.T) {
 		{apiToken, "DELETE", "/v1/messages/mbx_" + marker, "", nil, event("read", "refused", 405)},
 		{apiToken, "GET", "/v1/messages/mbx_1.1/attachments/0", "", refused, event("attachment", "not_released", 503)},
 		{apiToken, "GET", "/v1/messages/mbx_1.1/attachments/0", "", cut, event("attachment", "cut", 200)},
-		{apiToken, "GET", "/v1/" + marker, "", nil, event("other", "refused", 404)},
+		{apiToken, "GET", "/v1/messages/mbx_1.1/" + marker, "", nil, event("other", "refused", 404)},
 		{"", "OPTIONS", "/v1/connection", "", nil, event("other", "ok", 204)},
 	} {
 		a.logs.Reset()
@@ -382,6 +383,63 @@ func TestV43TheConsentBodiesAreOneBoundedObject(t *testing.T) {
 		answerEverything(a.fake)
 		if rec := a.app("fresh", c.method, c.path, c.body+" \n\t "); rec.Code != 200 {
 			t.Fatalf("%s with white space after its body: %d %s", c.path, rec.Code, rec.Body)
+		}
+	}
+}
+
+// noFlush is a ResponseWriter that cannot flush.
+type noFlush struct{ rec *httptest.ResponseRecorder }
+
+func (w noFlush) Header() http.Header         { return w.rec.Header() }
+func (w noFlush) Write(b []byte) (int, error) { return w.rec.Write(b) }
+func (w noFlush) WriteHeader(code int)        { w.rec.WriteHeader(code) }
+
+// V45: an answer whose chunk cannot be flushed is aborted, its lease
+// finished once, unsent; a failure of the service's own is logged by its
+// kind and its request's line says failed, and a request its client left
+// says client_left, neither with the error's text.
+func TestV45AFailedTransferAndAFailedServiceAreLoggedByTheirKind(t *testing.T) {
+	a := newConnApp(t)
+	grants(a.fake, apiGrant)
+	lease := newLease()
+	a.fake.AttachmentFunc = func(context.Context, *oauth.Grant, string, int) (*inbox.Attachment, connections.Release, error) {
+		return &inbox.Attachment{Data: []byte("x")}, lease, nil
+	}
+	r := httptest.NewRequest("GET", "https://"+apiHost+"/v1/messages/mbx_1.1/attachments/0", nil)
+	r.Header.Set("Authorization", "Bearer "+apiToken)
+	if !abortedBy(a.h, noFlush{httptest.NewRecorder()}, r) {
+		t.Fatal("not aborted")
+	}
+	lease.finished(t, false)
+	if got := logEvents(t, a.logs, "api: request"); len(got) != 1 || !mapsEqual(got[0], event("attachment", "aborted", 200)) {
+		t.Fatalf("logged %v", got)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var fail error
+	a.fake.InfoFunc = func(context.Context, *oauth.Grant) (*contracts.VendorConnection, error) {
+		if errors.Is(fail, context.Canceled) {
+			cancel()
+		}
+		return nil, fail
+	}
+	for _, c := range []struct {
+		err  error
+		want map[string]any
+	}{
+		{errors.New("pmr_leaked at https://vendor.example/c"), event("connection", "failed", 500)},
+		{context.Canceled, event("connection", "client_left", 500)},
+	} {
+		a.logs.Reset()
+		fail = c.err
+		r := httptest.NewRequestWithContext(ctx, "GET", "https://"+apiHost+"/v1/connection", nil)
+		r.Header.Set("Authorization", "Bearer "+apiToken)
+		a.serve(r)
+		if got := logEvents(t, a.logs, "api: request"); len(got) != 1 || !mapsEqual(got[0], c.want) {
+			t.Errorf("%v: logged %v", c.err, got)
+		}
+		if strings.Contains(a.logs.String(), "leaked") || strings.Contains(a.logs.String(), "vendor.example") {
+			t.Errorf("the log holds the error's text: %s", a.logs)
 		}
 	}
 }

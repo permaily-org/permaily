@@ -105,14 +105,32 @@ func AuthorizationServer(cfg ConnectionsConfig) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle(oauth.PathServerMetadata, metadata(func() any { return cfg.Metadata(cfg.OAuth) }))
 	mux.Handle(oauth.PathResourceMetadata+oauth.PathAPI, metadata(func() any { return cfg.ResourceMetadata(cfg.OAuth, contracts.ResourceAPI) }))
-	mux.Handle(oauth.PathToken, s.endpoint(true, s.token))
-	mux.Handle(oauth.PathRevoke, s.endpoint(true, s.revoke))
-	mux.Handle(oauth.PathPushed, s.endpoint(false, s.push))
+	mux.Handle(oauth.PathToken, s.endpoint("token", true, s.token))
+	mux.Handle(oauth.PathRevoke, s.endpoint("revoke", true, s.revoke))
+	mux.Handle(oauth.PathPushed, s.endpoint("par", false, s.push))
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		http.Error(w, "not found", http.StatusNotFound)
 	})
-	return mux
+	return logRequests(cfg.Log, "oauth: request", ResourceHost(mux))
+}
+
+// ResourceHost is the outermost handler of the api and the mcp hosts, as
+// AppHost is the app's: a request whose path is not in canonical form
+// (canonicalPath: no "//", "/./", "/../" or escape) is answered 404 here,
+// fixed and no-store, before any ServeMux, which would answer it a redirect
+// to the path cleaned with the query string it carried (a code, a token, a
+// client's address). The composition mounts each of those hosts' ServeMux
+// behind it; AuthorizationServer and VendorAPI refuse such a path on their
+// own too.
+func ResourceHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !requestCanonical(r) {
+			noSuchEndpoint(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // ResourceMetadataMCP returns the mcp host's resource metadata, at
@@ -126,6 +144,7 @@ func ResourceMetadataMCP(cfg ConnectionsConfig) http.Handler {
 // metadata serves a published document: GET or HEAD, any origin, an hour.
 func metadata(doc func() any) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setRoute(r, "metadata")
 		h := w.Header()
 		h.Set("Access-Control-Allow-Origin", "*")
 		switch r.Method {
@@ -155,9 +174,11 @@ type oauthServer struct{ cfg ConnectionsConfig }
 // endpoint reads a form request of an endpoint of the issuer and hands its
 // values to serve: POST only (and OPTIONS for a browser, with cors), the
 // body a form of at most oauth.FormMaxBytes and nothing in the address,
-// no Authorization header. Every refusal is RFC 6749's JSON.
-func (s *oauthServer) endpoint(cors bool, serve func(http.ResponseWriter, *http.Request, url.Values)) http.Handler {
+// no Authorization header. Every refusal is RFC 6749's JSON. name is the
+// endpoint in the request's line.
+func (s *oauthServer) endpoint(name string, cors bool, serve func(http.ResponseWriter, *http.Request, url.Values)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setRoute(r, name)
 		h := w.Header()
 		h.Set("Cache-Control", "no-store")
 		h.Set("Pragma", "no-cache")
@@ -282,7 +303,9 @@ func (s *oauthServer) failed(w http.ResponseWriter, r *http.Request, err error) 
 		w.Header().Set("Retry-After", retryAfterStorage)
 		writeOAuthError(w, http.StatusTooManyRequests, oauth.ErrTemporarily)
 	default:
-		if !clientLeft(r, err) {
+		if clientLeft(r, err) {
+			setOutcome(r, outcomeClientLeft)
+		} else {
 			// Its kind alone, as internalFailure logs (the form held a
 			// code, a token or an assertion).
 			s.cfg.Log.Error("oauth: internal error", "endpoint", strings.TrimPrefix(r.URL.Path, "/oauth/"))

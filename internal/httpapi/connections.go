@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -122,7 +124,7 @@ type consentAPI struct{ cfg ConnectionsConfig }
 
 func (a *consentAPI) start(w http.ResponseWriter, r *http.Request, p connections.Person) {
 	var in contracts.AuthorizationStart
-	if !decodeUpTo(w, r, &in, maxConsentBody) {
+	if !decodeWhole(w, r, &in) {
 		return
 	}
 	out, err := a.cfg.Service.Start(r.Context(), p, in.Query)
@@ -131,7 +133,7 @@ func (a *consentAPI) start(w http.ResponseWriter, r *http.Request, p connections
 
 func (a *consentAPI) preview(w http.ResponseWriter, r *http.Request, p connections.Person) {
 	var in contracts.ConsentPreview
-	if !decodeUpTo(w, r, &in, maxConsentBody) {
+	if !decodeWhole(w, r, &in) {
 		return
 	}
 	out, err := a.cfg.Service.Preview(r.Context(), p, r.PathValue("id"), in)
@@ -140,7 +142,7 @@ func (a *consentAPI) preview(w http.ResponseWriter, r *http.Request, p connectio
 
 func (a *consentAPI) decide(w http.ResponseWriter, r *http.Request, p connections.Person) {
 	var in contracts.AuthorizationDecision
-	if !decodeUpTo(w, r, &in, maxConsentBody) {
+	if !decodeWhole(w, r, &in) {
 		return
 	}
 	if in.Allow && !a.fresh(p) {
@@ -173,7 +175,7 @@ func (a *consentAPI) revokeDevice(w http.ResponseWriter, r *http.Request, p conn
 
 func (a *consentAPI) renew(w http.ResponseWriter, r *http.Request, p connections.Person) {
 	var in contracts.ConnectionRenewal
-	if !decodeUpTo(w, r, &in, maxConsentBody) {
+	if !decodeWhole(w, r, &in) {
 		return
 	}
 	if !a.fresh(p) {
@@ -188,6 +190,25 @@ func (a *consentAPI) renew(w http.ResponseWriter, r *http.Request, p connections
 // 0022).
 func (a *consentAPI) fresh(p connections.Person) bool {
 	return a.cfg.Now().Before(p.ConfirmedUntil)
+}
+
+// decodeWhole reads a body of the person's routes: one JSON object of v's
+// fields alone and nothing after it but white space, all of it within
+// maxConsentBody. Anything else is invalid_body, before the service is
+// asked. (decodeUpTo stops after its first value: a body could carry more
+// after it, beyond the bound.)
+func decodeWhole(w http.ResponseWriter, r *http.Request, v any) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxConsentBody))
+	dec.DisallowUnknownFields()
+	if dec.Decode(v) != nil {
+		writeInvalidBody(w)
+		return false
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		writeInvalidBody(w)
+		return false
+	}
+	return true
 }
 
 // answer writes the service's answer, or its refusal.
@@ -244,7 +265,9 @@ func refusal(err error) bool {
 // domain.Redact does not know of (ADR 0030, "Logging"). A request its
 // client left is not logged (clientLeft).
 func internalFailure(w http.ResponseWriter, r *http.Request, log *slog.Logger, where string, err error) {
-	if !clientLeft(r, err) {
+	if clientLeft(r, err) {
+		setOutcome(r, outcomeClientLeft)
+	} else {
 		kind := "failed"
 		if errors.Is(err, context.DeadlineExceeded) {
 			kind = "deadline"

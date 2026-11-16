@@ -57,12 +57,12 @@ func VendorAPI(cfg ConnectionsConfig) http.Handler {
 	cfg = cfg.withDefaults()
 	v := &vendorAPI{cfg: cfg}
 	mux := http.NewServeMux()
-	mux.HandleFunc(oauth.PathAPI+"/connection", v.route(http.MethodGet, v.info))
-	mux.HandleFunc(oauth.PathAPI+"/messages/search", v.route(http.MethodPost, v.search))
-	mux.HandleFunc(oauth.PathAPI+"/messages/{id}", v.route(http.MethodGet, v.read))
-	mux.HandleFunc(oauth.PathAPI+"/messages/{id}/attachments/{index}", v.route(http.MethodGet, v.attachment))
+	mux.HandleFunc(oauth.PathAPI+"/connection", v.route("connection", http.MethodGet, v.info))
+	mux.HandleFunc(oauth.PathAPI+"/messages/search", v.route("search", http.MethodPost, v.search))
+	mux.HandleFunc(oauth.PathAPI+"/messages/{id}", v.route("read", http.MethodGet, v.read))
+	mux.HandleFunc(oauth.PathAPI+"/messages/{id}/attachments/{index}", v.route("attachment", http.MethodGet, v.attachment))
 	mux.HandleFunc("/", noSuchEndpoint)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return logRequests(cfg.Log, "api: request", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Cache-Control", "no-store")
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -75,16 +75,21 @@ func VendorAPI(cfg ConnectionsConfig) http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		if !requestCanonical(r) {
+			noSuchEndpoint(w, r) // never ServeMux's redirect to the path cleaned
+			return
+		}
 		mux.ServeHTTP(w, r)
-	})
+	}))
 }
 
 type vendorAPI struct{ cfg ConnectionsConfig }
 
 // route answers method alone, and runs next with the grant of the request's
-// bearer token.
-func (v *vendorAPI) route(method string, next func(http.ResponseWriter, *http.Request, *oauth.Grant)) http.HandlerFunc {
+// bearer token; name is the route in the request's line.
+func (v *vendorAPI) route(name, method string, next func(http.ResponseWriter, *http.Request, *oauth.Grant)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		setRoute(r, name)
 		if r.Method != method {
 			refuse(method)(w, r)
 			return
@@ -214,8 +219,9 @@ func (v *vendorAPI) sendJSON(w http.ResponseWriter, r *http.Request, rel connect
 
 // send writes a prepared answer under its lease (ADR 0030, "Release"): Start
 // immediately before the first byte, refused by 503 with nothing of the
-// answer; then every chunk written and flushed only while Start's context
-// lasts. When it ends during the transfer (a revocation, the authority read
+// answer; then every chunk written, and flushed, only while Start's context
+// lasts, read before each write and before each flush. When it ends during
+// the transfer (a revocation, the authority read
 // again and found ended, the token's or the connection's end, TransferMax),
 // the write deadline is set to now, so a write blocked on a client that
 // reads nothing returns, and the response is aborted: no byte is written
@@ -223,17 +229,28 @@ func (v *vendorAPI) sendJSON(w http.ResponseWriter, r *http.Request, rel connect
 func (v *vendorAPI) send(w http.ResponseWriter, r *http.Request, rel connections.Release, contentType string, body []byte, header func(http.Header)) {
 	if r.Context().Err() != nil {
 		rel.Finish(false) // the client left: nothing is started
+		setOutcome(r, outcomeClientLeft)
 		return
 	}
 	ctx, err := rel.Start(r.Context())
 	if err != nil {
 		rel.Finish(false)
+		setOutcome(r, outcomeNotReleased)
 		w.Header().Set("Retry-After", retryAfterStorage)
 		writeError(w, http.StatusServiceUnavailable, "unavailable", "this answer can't be given now; try again later")
 		return
 	}
 	sent := false
-	defer func() { rel.Finish(sent) }()
+	defer func() {
+		switch {
+		case sent:
+		case r.Context().Err() != nil:
+			setOutcome(r, outcomeClientLeft)
+		case ctx.Err() != nil:
+			setOutcome(r, outcomeCut)
+		}
+		rel.Finish(sent)
+	}()
 	rc := http.NewResponseController(w)
 	stop := context.AfterFunc(ctx, func() { _ = rc.SetWriteDeadline(time.Now()) })
 	defer stop()
@@ -249,9 +266,18 @@ func (v *vendorAPI) send(w http.ResponseWriter, r *http.Request, rel connections
 		panic(http.ErrAbortHandler)
 	}
 	w.WriteHeader(http.StatusOK)
+	// The lease is read before every write and again before every flush:
+	// the deadline above only interrupts a write already blocked, and its
+	// callback may not have run yet when the context ends, so a chunk is
+	// never written, nor one already buffered flushed, once it has ended.
 	for off := 0; off < len(body); off += sendChunk {
-		_, err := w.Write(body[off:min(off+sendChunk, len(body))])
-		if err != nil || rc.Flush() != nil || ctx.Err() != nil {
+		if ctx.Err() != nil {
+			panic(http.ErrAbortHandler)
+		}
+		if _, err := w.Write(body[off:min(off+sendChunk, len(body))]); err != nil || ctx.Err() != nil {
+			panic(http.ErrAbortHandler)
+		}
+		if rc.Flush() != nil {
 			panic(http.ErrAbortHandler)
 		}
 	}

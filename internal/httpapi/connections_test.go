@@ -120,7 +120,7 @@ func newConnApp(t *testing.T) *connApp {
 	})
 	httpapi.MountConnections(httpapi.ConnectionsMounts{App: app, API: api, MCP: mcp, SPA: spa}, cfg)
 	app.Handle("/", spa)
-	a.h = router.New(nil, map[string]http.Handler{appHost: httpapi.AppHost(app, nil), apiHost: api, mcpHost: mcp})
+	a.h = router.New(nil, map[string]http.Handler{appHost: httpapi.AppHost(app, nil), apiHost: httpapi.ResourceHost(api), mcpHost: httpapi.ResourceHost(mcp)})
 	return a
 }
 
@@ -677,7 +677,8 @@ func TestV44TheIssuersEndpoints(t *testing.T) {
 	if out := a.logs.String(); !strings.Contains(out, "oauth: internal error") || strings.Contains(out, "pmr_leaked") || strings.Contains(out, "vendor.example") {
 		t.Fatalf("log: %s", out)
 	}
-	// A request its client left is not the server's failure, and not logged.
+	// A request its client left is not the server's failure: no error is
+	// logged, only its request's line, client_left.
 	a.logs.Reset()
 	ctx, cancel := context.WithCancel(context.Background())
 	refusal = nil
@@ -688,7 +689,8 @@ func TestV44TheIssuersEndpoints(t *testing.T) {
 	r := httptest.NewRequestWithContext(ctx, http.MethodPost, "https://"+apiHost+oauth.PathToken, strings.NewReader("grant_type=refresh_token"))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	oauthError(a.serve(r), 500, oauth.ErrServerError)
-	if a.logs.Len() != 0 {
+	if strings.Contains(a.logs.String(), "internal error") || strings.Count(a.logs.String(), "\n") != 1 ||
+		!strings.Contains(a.logs.String(), `"msg":"oauth: request","route":"token","outcome":"client_left"`) {
 		t.Fatalf("log: %s", a.logs)
 	}
 }
