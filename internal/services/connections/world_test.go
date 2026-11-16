@@ -167,6 +167,8 @@ type mailboxes struct {
 	msgs      map[string][]mail // by mailbox, oldest first
 	gone      map[string]bool
 	opened    []string
+	// fail fails every OpenForConnection.
+	fail error
 }
 
 func (m *mailboxes) Catalogue(_ context.Context, account string) ([]string, error) {
@@ -178,6 +180,9 @@ func (m *mailboxes) Catalogue(_ context.Context, account string) ([]string, erro
 func (m *mailboxes) OpenForConnection(_ context.Context, account, mailbox string) (inbox.Box, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fail != nil {
+		return inbox.Box{}, m.fail
+	}
 	if !slices.Contains(m.catalogue[account], mailbox) || m.gone[mailbox] {
 		return inbox.Box{}, contracts.ErrNotFound
 	}
@@ -201,6 +206,10 @@ type discloser struct {
 	pause func()
 	// pageMax bounds a page's items, as the matcher's budgets would.
 	pageMax int
+	// fail fails every call; model, when set, is what a page says of the
+	// model.
+	fail  error
+	model contracts.MatchModel
 }
 
 func (d *discloser) record(ds inbox.Disclosure) {
@@ -247,12 +256,22 @@ func (d *discloser) outcome(ml mail, ds inbox.Disclosure) (inbox.Outcome, bool) 
 
 func (d *discloser) Page(_ context.Context, b inbox.Box, ds inbox.Disclosure, before string, limit int) (*inbox.DisclosePage, error) {
 	d.record(ds)
+	d.mu.Lock()
+	fail, model := d.fail, d.model
+	d.mu.Unlock()
+	if fail != nil {
+		return nil, fail
+	}
+
 	d.m.mu.Lock()
 	msgs := slices.Clone(d.m.msgs[b.MailboxID])
 	d.m.mu.Unlock()
 	page := &inbox.DisclosePage{Model: contracts.MatchModelAsked}
 	if !ds.Model {
 		page.Model = contracts.MatchModelOff
+	}
+	if model != "" {
+		page.Model = model
 	}
 	considered := 0
 	for i := len(msgs) - 1; i >= 0; i-- {
@@ -286,6 +305,12 @@ func (d *discloser) find(b inbox.Box, id string) (mail, bool) {
 
 func (d *discloser) Message(_ context.Context, b inbox.Box, ds inbox.Disclosure, id string) (inbox.Outcome, error) {
 	d.record(ds)
+	d.mu.Lock()
+	fail := d.fail
+	d.mu.Unlock()
+	if fail != nil {
+		return inbox.Outcome{}, fail
+	}
 	ml, ok := d.find(b, id)
 	if !ok {
 		return inbox.Outcome{}, contracts.ErrNotFound
@@ -349,12 +374,19 @@ type writer struct {
 }
 
 func (w *writer) Write(ctx context.Context, account string, r *receipts.Receipt) error {
+	// As the real writer, it honours its context.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	w.mu.Lock()
-	fail, block, on := w.fail, w.block, w.onWrite
+	block, on := w.block, w.onWrite
 	w.mu.Unlock()
 	if on != nil {
 		on(r)
 	}
+	w.mu.Lock()
+	fail := w.fail
+	w.mu.Unlock()
 	if block != nil {
 		select {
 		case <-block:

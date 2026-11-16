@@ -1101,3 +1101,147 @@ func TestV32ReceiptBoundaryBelowAtAndAbove(t *testing.T) {
 		}
 	}
 }
+
+// V32: every way a request a valid token attributed ends without mail has
+// its refused receipt with its fixed reason; one whose receipt cannot be
+// written is 503; a model-short page keeps what it held with its evidence;
+// a too_late after the grant's hard end is recorded by a writer that
+// honours its context (finding 8).
+func TestV32EveryAttributedRefusalHasItsReceipt(t *testing.T) {
+	ctx := context.Background()
+	setup := func(t *testing.T) (*world, *Service, *oauth.Grant) {
+		w := newWorld(t)
+		s := w.enclave()
+		x := w.ask(claudeCode)
+		tok := w.connectAll(s, w.person(accountA), x)
+		return w, s, w.grant(s, x, tok.AccessToken)
+	}
+	last := func(t *testing.T, w *world) receipts.Receipt {
+		r := w.rcpt.of(receipts.KindRefused)
+		if len(r) == 0 {
+			t.Fatal("no refused receipt")
+		}
+		return r[len(r)-1]
+	}
+	for _, c := range []struct {
+		name   string
+		call   func(w *world, s *Service, g *oauth.Grant) error
+		want   error
+		reason receipts.RefusedReason
+	}{
+		{name: "a malformed cursor", want: contracts.ErrInvalidCursor, reason: refusedInvalidCursor, call: func(w *world, s *Service, g *oauth.Grant) error {
+			_, _, err := s.Search(ctx, g, contracts.VendorSearch{Cursor: oauth.PrefixCursor + "AAAA"})
+			return err
+		}},
+		{name: "a limit out of bounds", want: contracts.ErrInvalidLimit, reason: refusedInvalidLimit, call: func(w *world, s *Service, g *oauth.Grant) error {
+			_, _, err := s.Search(ctx, g, contracts.VendorSearch{Limit: 1000})
+			return err
+		}},
+		{name: "searches past their limit", want: contracts.ErrTooManyRequests, reason: refusedRateLimited, call: func(w *world, s *Service, g *oauth.Grant) error {
+			for range SearchesPerMinute {
+				_, rel, err := s.Search(ctx, g, contracts.VendorSearch{})
+				if err != nil {
+					return err
+				}
+				rel.Finish(true)
+			}
+			_, _, err := s.Search(ctx, g, contracts.VendorSearch{})
+			return err
+		}},
+		{name: "reads past their limit", want: contracts.ErrTooManyRequests, reason: refusedRateLimited, call: func(w *world, s *Service, g *oauth.Grant) error {
+			for range ReadsPerMinute {
+				_, rel, err := s.Read(ctx, g, mailboxID(1)+".m001")
+				if err != nil {
+					return err
+				}
+				rel.Finish(true)
+			}
+			_, _, err := s.Read(ctx, g, mailboxID(1)+".m001")
+			return err
+		}},
+		{name: "a search whose mailbox cannot be opened", want: errCrash, reason: refusedUnavailable, call: func(w *world, s *Service, g *oauth.Grant) error {
+			w.mbx.mu.Lock()
+			w.mbx.fail = errCrash
+			w.mbx.mu.Unlock()
+			_, _, err := s.Search(ctx, g, contracts.VendorSearch{})
+			return err
+		}},
+		{name: "a read whose mailbox cannot be opened", want: errCrash, reason: refusedUnavailable, call: func(w *world, s *Service, g *oauth.Grant) error {
+			w.mbx.mu.Lock()
+			w.mbx.fail = errCrash
+			w.mbx.mu.Unlock()
+			_, _, err := s.Read(ctx, g, mailboxID(1)+".m001")
+			return err
+		}},
+		{name: "a discloser that fails a search", want: errCrash, reason: refusedUnavailable, call: func(w *world, s *Service, g *oauth.Grant) error {
+			w.disc.mu.Lock()
+			w.disc.fail = errCrash
+			w.disc.mu.Unlock()
+			_, _, err := s.Search(ctx, g, contracts.VendorSearch{})
+			return err
+		}},
+		{name: "a discloser that fails a read", want: errCrash, reason: refusedUnavailable, call: func(w *world, s *Service, g *oauth.Grant) error {
+			w.disc.mu.Lock()
+			w.disc.fail = errCrash
+			w.disc.mu.Unlock()
+			_, _, err := s.Read(ctx, g, mailboxID(1)+".m001")
+			return err
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w, s, g := setup(t)
+			if err := c.call(w, s, g); !errors.Is(err, c.want) {
+				t.Fatal(err)
+			}
+			if r := last(t, w); r.Refused == nil || r.Refused.Reason != c.reason || r.Connection != g.Connection {
+				t.Fatalf("%+v", r.Refused)
+			}
+		})
+		t.Run(c.name+", its receipt failing", func(t *testing.T) {
+			w, s, g := setup(t)
+			w.rcpt.mu.Lock()
+			w.rcpt.onWrite = func(r *receipts.Receipt) {
+				if r.Kind == receipts.KindRefused {
+					w.rcpt.mu.Lock()
+					w.rcpt.fail = errCrash
+					w.rcpt.mu.Unlock()
+				}
+			}
+			w.rcpt.mu.Unlock()
+			if err := c.call(w, s, g); !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("a refusal not recorded was answered: %v", err)
+			}
+		})
+	}
+
+	t.Run("a page the model fell short on keeps what it held", func(t *testing.T) {
+		w, s, g := setup(t)
+		w.mbx.mu.Lock()
+		w.mbx.msgs[mailboxID(1)] = []mail{{ID: "h001", Mailbox: mailboxID(1), Received: start.Add(-time.Hour), From: "a@example.com", Subject: "code", Held: true}}
+		w.mbx.msgs[mailboxID(2)] = nil
+		w.mbx.mu.Unlock()
+		w.disc.mu.Lock()
+		w.disc.model = contracts.MatchModelLimit
+		w.disc.mu.Unlock()
+		if _, _, err := s.Search(ctx, g, contracts.VendorSearch{}); !errors.Is(err, contracts.ErrModelUnavailable) {
+			t.Fatal(err)
+		}
+		r := last(t, w)
+		if r.Refused.Reason != receipts.RefusedModelUnavailable || len(r.Held) != 1 || r.Held[0].Message != "h001" || r.Held[0].Rule.ID == "" {
+			t.Fatalf("the held evidence was dropped: %+v", r)
+		}
+	})
+
+	t.Run("too_late after the grant's hard end", func(t *testing.T) {
+		w, s, g := setup(t)
+		w.disc.mu.Lock()
+		w.disc.pause = func() { w.clock.add(oauth.AccessTokenTTL) }
+		w.disc.mu.Unlock()
+		if _, _, err := s.Search(ctx, g, contracts.VendorSearch{}); !errors.Is(err, ErrTooLate) {
+			t.Fatal(err)
+		}
+		if r := last(t, w); r.Refused.Reason != receipts.RefusedTooLate {
+			t.Fatalf("the too_late refusal was not recorded: %+v", r.Refused)
+		}
+	})
+}

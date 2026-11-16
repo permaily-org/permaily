@@ -936,8 +936,10 @@ func (s *Service) writeReceipt(ctx context.Context, account string, r *receipts.
 	ctx, cancel := context.WithTimeout(ctx, ReceiptWriteMax)
 	defer cancel()
 	if !hard.IsZero() {
+		// hard is of the service's clock; the context's deadline is the
+		// machine's.
 		var c2 context.CancelFunc
-		ctx, c2 = context.WithDeadline(ctx, hard)
+		ctx, c2 = context.WithDeadline(ctx, time.Now().Add(hard.Sub(s.now())))
 		defer c2()
 	}
 	return s.cfg.Receipts.Write(ctx, account, r)

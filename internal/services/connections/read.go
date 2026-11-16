@@ -72,9 +72,8 @@ func (s *Service) prepare(ctx context.Context, g *oauth.Grant, search *query.Can
 	// Nothing leaves while the model cannot be asked, nor for a connection
 	// approved under another notice (the owner's decision 9, finding 18).
 	if d.ModelNotice != s.cfg.ModelNotice || s.cfg.Model == nil || s.cfg.Model.Gate(ctx, g.Account) != inbox.AskAnswered {
-		s.refusal(ctx, r, &receipts.Refused{Reason: receipts.RefusedModelUnavailable})
 		s.count("model_unavailable")
-		return nil, contracts.ErrModelUnavailable
+		return nil, s.refuse(ctx, r, &receipts.Refused{Reason: receipts.RefusedModelUnavailable}, contracts.ErrModelUnavailable)
 	}
 	return r, nil
 }
@@ -87,14 +86,38 @@ func (s *Service) receipt(r *reading, kind receipts.Kind) *receipts.Receipt {
 	}
 }
 
-// refusal records a request for mail that got none. Its failure does not
-// change the answer, which gives nothing.
-func (s *Service) refusal(ctx context.Context, r *reading, why *receipts.Refused) {
+// The refusals of a request a valid token attributed that the receipts
+// seam names no reason for yet (finding 8): fixed values, never what the
+// vendor sent, for receipts.go to adopt.
+const (
+	refusedInvalidLimit  receipts.RefusedReason = "invalid_limit"
+	refusedInvalidCursor receipts.RefusedReason = "invalid_cursor"
+	refusedRateLimited   receipts.RefusedReason = "rate_limited"
+	refusedUnavailable   receipts.RefusedReason = "unavailable"
+)
+
+// refuse records the refusal of a request a valid token attributed to its
+// connection (ADR 0031's choice 7): every way Search, Read and Attachment
+// end after prepare without giving mail goes through it, with its fixed
+// reason (finding 8). It answers err, or ErrUnavailable when the refusal
+// could not be recorded, so the vendor is answered 503 and asks again.
+func (s *Service) refuse(ctx context.Context, r *reading, why *receipts.Refused, err error) error {
 	rc := s.receipt(r, receipts.KindRefused)
 	rc.Refused = why
-	if err := s.writeReceipt(ctx, r.g.Account, rc, r.g.Expires()); err != nil {
+	return s.refuseWith(ctx, r, rc, err)
+}
+
+// refuseWith records rc, a refusal with what it already holds (a page's
+// held messages and their evidence), as refuse does. A refusal releases
+// nothing, so it is written under ReceiptWriteMax alone, not the grant's
+// hard end nor the request's context: a too_late after the hard end is
+// still recorded.
+func (s *Service) refuseWith(ctx context.Context, r *reading, rc *receipts.Receipt, err error) error {
+	if werr := s.writeReceipt(context.WithoutCancel(ctx), r.g.Account, rc, time.Time{}); werr != nil {
 		s.count("receipt_failed")
+		return ErrUnavailable
 	}
+	return err
 }
 
 // release is steps 3 to 5 of "Release": the authority again when the
@@ -103,11 +126,11 @@ func (s *Service) refusal(ctx context.Context, r *reading, why *receipts.Refused
 func (s *Service) release(ctx context.Context, r *reading, rc *receipts.Receipt) (Release, error) {
 	if err := s.again(ctx, r.g); err != nil {
 		if errors.Is(err, errRefusedAuthority) {
-			s.refusal(ctx, r, &receipts.Refused{Reason: receipts.RefusedTooLate})
 			s.count("too_late")
+			_ = s.refuse(ctx, r, &receipts.Refused{Reason: receipts.RefusedTooLate}, nil)
 			return nil, ErrTooLate
 		}
-		return nil, ErrUnavailable
+		return nil, s.refuse(ctx, r, &receipts.Refused{Reason: refusedUnavailable}, ErrUnavailable)
 	}
 	if err := s.writeReceipt(ctx, r.g.Account, rc, r.g.Expires()); err != nil {
 		s.count("receipt_failed")
@@ -233,17 +256,21 @@ func vendorMessage(mailbox string, dis *inbox.Disclosed, parts []contracts.Part,
 
 // Search implements API.
 func (s *Service) Search(ctx context.Context, g *oauth.Grant, in contracts.VendorSearch) (*contracts.VendorPage, Release, error) {
+	search, ferr := searchFormula(in.Query, g.Parts)
+	r, err := s.prepare(ctx, g, search)
+	if err != nil {
+		return nil, nil, err
+	}
+	refuse := func(reason receipts.RefusedReason, err error) (*contracts.VendorPage, Release, error) {
+		return nil, nil, s.refuse(ctx, r, &receipts.Refused{Reason: reason}, err)
+	}
 	limit := in.Limit
 	if limit == 0 {
 		limit = 20
 	}
 	if limit < 1 || limit > inbox.DiscloseMaxLimit {
-		return nil, nil, contracts.ErrInvalidLimit
-	}
-	search, ferr := searchFormula(in.Query, g.Parts)
-	r, err := s.prepare(ctx, g, search)
-	if err != nil {
-		return nil, nil, err
+		s.count("invalid_limit")
+		return refuse(refusedInvalidLimit, contracts.ErrInvalidLimit)
 	}
 	if ferr != nil {
 		reason := receipts.RefusedFormula
@@ -251,18 +278,18 @@ func (s *Service) Search(ctx context.Context, g *oauth.Grant, in contracts.Vendo
 		if errors.As(ferr, &p) && p.Reason == contracts.FormulaPartNotApproved {
 			reason = receipts.RefusedFormulaPart
 		}
-		s.refusal(ctx, r, &receipts.Refused{Reason: reason})
 		s.count("invalid_formula")
-		return nil, nil, ferr
+		return refuse(reason, ferr)
 	}
 	if !s.limits.allow("search "+g.Connection, SearchesPerMinute, time.Minute, s.now()) {
 		s.count("rate_limited")
-		return nil, nil, contracts.ErrTooManyRequests
+		return refuse(refusedRateLimited, contracts.ErrTooManyRequests)
 	}
 	index, before := 0, ""
 	if in.Cursor != "" {
 		if index, before, err = s.openCursor(r, in.Cursor); err != nil {
-			return nil, nil, err
+			s.count("invalid_cursor")
+			return refuse(refusedInvalidCursor, err)
 		}
 	}
 	// The receipt is built message by message as Write will store it, its
@@ -270,7 +297,7 @@ func (s *Service) Search(ctx context.Context, g *oauth.Grant, in contracts.Vendo
 	// finding 9): the page ends before the message that would pass its bound.
 	rp, err := receipts.NewPage(s.receipt(r, receipts.KindSearch))
 	if err != nil {
-		return nil, nil, ErrUnavailable
+		return refuse(refusedUnavailable, ErrUnavailable)
 	}
 	out := &contracts.VendorPage{Messages: []contracts.VendorMessage{}}
 	considered, modelShort := 0, false
@@ -284,11 +311,11 @@ pages:
 			continue
 		}
 		if err != nil {
-			return nil, nil, err
+			return refuse(refusedUnavailable, err)
 		}
 		page, err := s.cfg.Discloser.Page(ctx, box, r.d, before, limit-considered)
 		if err != nil {
-			return nil, nil, err
+			return refuse(refusedUnavailable, err)
 		}
 		if page.Model != "" && page.Model != contracts.MatchModelAsked {
 			modelShort = true
@@ -299,7 +326,7 @@ pages:
 			}
 			fit, err := rp.Add(mbx, r.d.Parts, it)
 			if err != nil {
-				return nil, nil, ErrUnavailable
+				return refuse(refusedUnavailable, ErrUnavailable)
 			}
 			if !fit {
 				// The page ends before the message that would take its
@@ -329,9 +356,11 @@ pages:
 		break
 	}
 	if len(out.Messages) == 0 && modelShort {
-		s.refusal(ctx, r, &receipts.Refused{Reason: receipts.RefusedModelUnavailable})
+		// The refusal keeps what the page held, with its evidence.
+		rc := rp.Receipt()
+		rc.Kind, rc.Refused = receipts.KindRefused, &receipts.Refused{Reason: receipts.RefusedModelUnavailable}
 		s.count("model_unavailable")
-		return nil, nil, contracts.ErrModelUnavailable
+		return nil, nil, s.refuseWith(ctx, r, rc, contracts.ErrModelUnavailable)
 	}
 	rel, err := s.release(ctx, r, rp.Receipt())
 	if err != nil {
@@ -354,28 +383,26 @@ func message(r *reading, id string) (string, string, bool) {
 func (s *Service) refuseRead(ctx context.Context, r *reading, mbx, msg string, o inbox.Outcome, err error) error {
 	switch {
 	case o.Withheld != nil:
-		s.refusal(ctx, r, receipts.RefusedHeldOf(mbx, o.Withheld))
-		return contracts.ErrNotFound
+		return s.refuse(ctx, r, receipts.RefusedHeldOf(mbx, o.Withheld), contracts.ErrNotFound)
 	case errors.Is(err, contracts.ErrNotFound) || err == nil:
-		s.refusal(ctx, r, &receipts.Refused{Reason: receipts.RefusedOutsideScope, Mailbox: mbx, Message: msg})
-		return contracts.ErrNotFound
+		return s.refuse(ctx, r, &receipts.Refused{Reason: receipts.RefusedOutsideScope, Mailbox: mbx, Message: msg}, contracts.ErrNotFound)
 	case errors.Is(err, contracts.ErrAttachmentTooLarge):
-		s.refusal(ctx, r, &receipts.Refused{Reason: receipts.RefusedTooLarge, Mailbox: mbx, Message: msg})
-		return err
+		return s.refuse(ctx, r, &receipts.Refused{Reason: receipts.RefusedTooLarge, Mailbox: mbx, Message: msg}, err)
 	case errors.Is(err, contracts.ErrPartNotApproved):
-		s.refusal(ctx, r, &receipts.Refused{Reason: receipts.RefusedPartNotGiven, Mailbox: mbx, Message: msg})
-		return err
+		return s.refuse(ctx, r, &receipts.Refused{Reason: receipts.RefusedPartNotGiven, Mailbox: mbx, Message: msg}, err)
+	case errors.Is(err, contracts.ErrModelUnavailable):
+		return s.refuse(ctx, r, &receipts.Refused{Reason: receipts.RefusedModelUnavailable, Mailbox: mbx, Message: msg}, err)
 	}
-	return err
+	return s.refuse(ctx, r, &receipts.Refused{Reason: refusedUnavailable, Mailbox: mbx, Message: msg}, err)
 }
 
 // open opens the mailbox of a read, as not found when it is no longer there.
 func (s *Service) open(ctx context.Context, r *reading, mbx, msg string) (inbox.Box, error) {
 	box, err := s.cfg.Mailboxes.OpenForConnection(ctx, r.g.Account, mbx)
-	if errors.Is(err, contracts.ErrNotFound) {
+	if err != nil {
 		return box, s.refuseRead(ctx, r, mbx, msg, inbox.Outcome{}, err)
 	}
-	return box, err
+	return box, nil
 }
 
 // Read implements API.
@@ -390,7 +417,7 @@ func (s *Service) Read(ctx context.Context, g *oauth.Grant, id string) (*contrac
 	}
 	if !s.limits.allow("read "+g.Connection, ReadsPerMinute, time.Minute, s.now()) {
 		s.count("rate_limited")
-		return nil, nil, contracts.ErrTooManyRequests
+		return nil, nil, s.refuse(ctx, r, &receipts.Refused{Reason: refusedRateLimited, Mailbox: mbx, Message: msg}, contracts.ErrTooManyRequests)
 	}
 	box, err := s.open(ctx, r, mbx, msg)
 	if err != nil {
@@ -425,7 +452,7 @@ func (s *Service) Attachment(ctx context.Context, g *oauth.Grant, id string, ind
 	}
 	if !s.limits.allow("read "+g.Connection, ReadsPerMinute, time.Minute, s.now()) {
 		s.count("rate_limited")
-		return nil, nil, contracts.ErrTooManyRequests
+		return nil, nil, s.refuse(ctx, r, &receipts.Refused{Reason: refusedRateLimited, Mailbox: mbx, Message: msg}, contracts.ErrTooManyRequests)
 	}
 	box, err := s.open(ctx, r, mbx, msg)
 	if err != nil {
@@ -440,7 +467,7 @@ func (s *Service) Attachment(ctx context.Context, g *oauth.Grant, id string, ind
 	}
 	if !s.limits.allowN("bytes "+g.Connection, len(att.Data), AttachmentBytesPerHour, time.Hour, s.now()) {
 		s.count("rate_limited")
-		return nil, nil, contracts.ErrTooManyRequests
+		return nil, nil, s.refuse(ctx, r, &receipts.Refused{Reason: refusedRateLimited, Mailbox: mbx, Message: msg}, contracts.ErrTooManyRequests)
 	}
 	rc := s.receipt(r, receipts.KindAttachment)
 	dl := receipts.DeliveredOf(mbx, o.Disclosed, r.d.Parts)
