@@ -306,6 +306,19 @@ func TestClientData(t *testing.T) {
 			}
 			return before(`,"type":` + string(members["type"]))(d)
 		}, why: "client data is not one JSON object"},
+		// encoding/json reads a name in any case, so a reader of the same bytes
+		// that uses it would take the last of these as the type or the origin.
+		{name: "a member twice in another case", edit: func(d []byte) []byte {
+			var members map[string]json.RawMessage
+			if err := json.Unmarshal(d, &members); err != nil {
+				panic(err)
+			}
+			return before(`,"TYPE":` + string(members["type"]))(d)
+		}, why: "client data is not one JSON object"},
+		{name: "the origin twice in another case", edit: before(`,"Origin":"https://evil.example.com"`), why: "client data is not one JSON object"},
+		// The long s is an s to encoding/json, and the Kelvin sign a k.
+		{name: "crossOrigin twice in other letters", edit: before(`,"croſsOrigin":true`), why: "client data is not one JSON object"},
+		{name: "tokenBinding twice in other letters", edit: before(`,"tokenBinding":{"status":"supported"},"toKenBinding":{"status":"present"}`), why: "client data is not one JSON object"},
 		{name: "two objects", edit: func(d []byte) []byte { return append(d, "{}"...) }, why: "client data is not one JSON object"},
 		{name: "text after the object", edit: func(d []byte) []byte { return append(d, " x"...) }, why: "client data is not one JSON object"},
 		{name: "bytes that are not UTF-8", edit: before(",\"x\":\"\xff\""), why: "client data is not one JSON object"},
