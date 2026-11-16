@@ -17,6 +17,7 @@
       "!spikes/**/testdata",
       "!pkg/provenance/testdata",
       "!internal/mailhtml/testdata",
+      "!internal/decide/testdata",
       "!pkg/provenance/sigstore_*.json",
       "!internal/domain/mail/templates",
       "!packages/mail/fixtures",

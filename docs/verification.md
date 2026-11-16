@@ -20,7 +20,9 @@ For each host, `permaily-verify`:
 5. Rejects all-zero PCR0-2 (debug mode).
 6. Compares PCR0, PCR1 and PCR2 with your reproduced build.
 7. Checks that the document's `user_data` equals `sha256(SubjectPublicKeyInfo)` of the TLS certificate presented on the same connection. This proves the TLS session ends inside the attested enclave.
-8. Reads `GET /status` over a connection with that same TLS key and checks the KMS key that locks the root secret everything stored is sealed under (below). When the enclave sends mail of its own, it also checks who else SES would give a copy to (below). When it has accounts, it prints what the operator did to them through the enclave, and fails on nothing (below).
+8. Reads `GET /status` over a connection with that same TLS key and checks the KMS key that locks the root secret everything stored is sealed under (below). When the enclave sends mail of its own, it also checks who else SES would give a copy to (below). When it has accounts, it prints what the operator did to them through the enclave, and fails on nothing (below). When it asks a model, it prints which one and how, fails when the provider's prompt cache is not off, and warns on its canary (below).
+
+The operator's scripts hold themselves to the same rule before they send the admin token or a secret (ADR 0029): each runs `permaily-verify -json` against the enclave first, in the same run, takes the attested key (`tls_spki_sha256` of the host) and sends every request only with that key (`curl --pinnedpubkey`), with the CA and hostname checks as well and no redirects. If the enclave does not verify, nothing is sent. A server with another valid certificate for the name gets no request. The verifier they run is the running release's, built when the release is named (`PERMAILY_RELEASE`, or `handoff.sh`'s `<running>`) from the commit that release's build provenance names, authenticated with `gh attestation verify` and matched with the release's tag at GitHub, never from a tag's name alone, fetched into a private repository and compiled in a fixed Go environment (ADR 0029); without `PERMAILY_PCRS`, the `pcrs.json` they authenticated is the file the verifier checks (`-pcrs`), not a second download: its Sigstore check compares the enclave's trust root with its own, and a later verifier would refuse an older release that is right.
 
 ## Who can read stored mail
 
@@ -68,6 +70,15 @@ It fails on nothing here: blocking an account or asking to delete one is the ope
 What the operator cannot do through the enclave is not counted because there is no way to do it: change an account's contact address, add or remove a way to sign in, turn "passkey only" off, or sign in as someone; read a mailbox, learn its address or label, disconnect it or delete its mail. Those would be ways into an account or its mail, and the image you verified has no route for them.
 
 What this does not show: which account, on purpose; anything from before the enclave started, since the count is in memory and a restart, which the operator can cause, starts it again (the start time is printed); and what is written to the storage by hand, which the enclave refuses where it would be a way in (ADR 0016, ADR 0017) and which can still delete an account.
+
+## The model the enclave asks
+
+From the release that composes it (ADR 0028), the enclave asks OpenAI's Decisions API what exact conditions cannot settle, and only for the people who agreed to the model's notice. `permaily-verify` prints what the image compiles in and what the enclave reports: the provider, the address (`https://api.openai.com/v1/decisions`), the model (`gpt-6-luna`), the prompt version, the prompt cache, the OpenAI organisation and project every request names, whether zero data retention is approved (what the notice says), the limits of the spend guard, whether a key is set and since when, the guard's state, the canary's, and the calls by kind since the enclave started.
+
+- It **fails** when `prompt_cache` is not `off`: a release that turned the cache on would keep copies of mail at OpenAI that the notice does not mention. This check, the section and its warnings run whatever else is skipped: `-skip-kms-policy` and `-skip-certificates`, alone or together, skip only what their names say, and `/status` is always read.
+- It **warns** when the canary is `changed`, `failed`, `stale`, `unreadable` or `none`, or when its `baseline` is not the SHA-256 of `internal/decide/canary.json` at the commit the enclave runs (the one its attestation and provenance name, never your checkout's or the latest release's): read from GitHub at that commit, or from your own checkout of it with `-canary <file>`. It also warns when the requests do not pin both an organisation and a project, and when the guard asks nothing new.
+
+What this proves: which model, address, organisation and project the measured code calls, that it turns the prompt cache off on every request, and the limits it holds itself. What it does not: what OpenAI keeps of what it is sent, whether the operator approved zero data retention or set the project's own spend limit, and whether the key is used elsewhere; those are OpenAI's and the operator's word. The canary is a sample of 156 fixed synthetic statements a day, not a proof that the model did not change between two checks. `/status` never holds the key, its fingerprint, an amount spent, an account, a topic, a message or a probability.
 
 ## How mail gets in
 
@@ -178,7 +189,23 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
   },
   "admin": {
     "since": "<when this enclave started counting: when it started>",
-    "actions": {"block": 0, "unblock": 0, "delete": 0, "delete_cancel": 0, "sessions_close": 0, "invitations_made": 0, "invitation_revoked": 0, "provider_app_set": 0, "provider_app_removed": 0, "admin_made": 0, "admin_removed": 0, "mailbox_paused": 0, "mailbox_resumed": 0}
+    "actions": {"block": 0, "unblock": 0, "delete": 0, "delete_cancel": 0, "sessions_close": 0, "invitations_made": 0, "invitation_revoked": 0, "provider_app_set": 0, "provider_app_removed": 0, "admin_made": 0, "admin_removed": 0, "mailbox_paused": 0, "mailbox_resumed": 0, "model_key_set": 0, "model_key_removed": 0}
+  },
+  "model": {
+    "provider": "openai",
+    "endpoint": "https://api.openai.com/v1/decisions",
+    "model": "gpt-6-luna",
+    "prompt_version": "p2-2026-11-15",
+    "prompt_cache": "off",
+    "organization": "<org-…, absent while the image pins none>",
+    "project": "<proj_…, absent while the image pins none>",
+    "zero_data_retention": false,
+    "month_limit_usd": 50, "day_alarm_usd": 10, "account_day_usd": 0.5,
+    "key_set": true, "key_set_at": "<when the operator gave it>",
+    "guard": "ok | month_limit | provider_limit | key_refused | unreadable",
+    "canary": {"baseline": "<hex SHA-256 of canary.json>", "checked_at": "<last completed check>", "state": "none | same | changed | failed | stale | unreadable", "change_seen_at": "<last day a check saw a change>"},
+    "since": "<when this enclave started counting>",
+    "calls": {"answered": 0, "kept": 0, "refusal": 0, "timeout": 0, "unavailable": 0, "key_refused": 0, "limit": 0, "request": 0, "invalid": 0, "other_model": 0, "held": 0, "canary": 0}
   },
   "anchors": {
     "bucket": "<S3 bucket with Object Lock that holds the commits>",
@@ -193,9 +220,9 @@ The commit is compiled into the image, so the PCRs identify a commit. Builds fro
 
 `anchors` lists the records the enclave refuses an earlier copy of (ADR 0016), as far as it read or wrote them since it started: the version of each, and until when S3 keeps its newest commit whatever anyone asks. The verifier fails when a commit is not locked, and when `regressions` is not empty: a commit the enclave had seen that the store stopped answering with. It warns when a lock ends within thirty days.
 
-`mail` says what SES would do with a message of the enclave besides delivering it, as the enclave read it: each identity is `no_configuration_set`, `configuration_set`, `not_verified` or `absent`. `failing` is true when the newest attempt got no answer to go by, and `state` and `checked_at` then describe the last one that did; `history_truncated` appears after more than 32 states. It is absent in an image that sends no mail. A regression of the record of an account is listed in `anchors.regressions` without the account's name. One of a mailbox's record or an account's list of mailboxes (strict records, ADR 0026) is listed under the name `mailbox`, with `fork: true` when the record has two commits of different digests at one version, `unlocked: true` when a commit has no copy S3 keeps locked as the enclave wrote it, and `lost: true` when its newest commit names a value the table no longer holds (whoever writes to the table deleted or changed it); the verifier fails on each, naming which. Pausing and resuming a mailbox is counted in `admin`, never a regression.
+`mail` says what SES would do with a message of the enclave besides delivering it, as the enclave read it: each identity is `no_configuration_set`, `configuration_set`, `not_verified` or `absent`. `failing` is true when the newest attempt got no answer to go by, and `state` and `checked_at` then describe the last one that did; `history_truncated` appears after more than 32 states. It is absent in an image that sends no mail. A regression of the record of an account is listed in `anchors.regressions` without the account's name. One of a mailbox's record or an account's list of mailboxes (strict records, ADR 0026) is listed under the name `mailbox`, with `fork: true` when the record has two commits of different digests at one version, `unlocked: true` when a commit has no copy S3 keeps locked as the enclave wrote it, and `lost: true` when its newest commit names a value the table no longer holds (whoever writes to the table deleted or changed it); the verifier fails on each, naming which. Pausing and resuming a mailbox is counted in `admin`, never a regression. A regression of one of the model's records (its key, a month's spend, the canary's state, the alarms: strict records, ADR 0028) is listed under the name `model`, with `fork`, `unlocked` or `lost` and without its versions, which for a month's spend would say how much was spent.
 
-`admin` counts what the operator did to accounts through this enclave since it started, by kind: an account blocked or unblocked, a deletion asked or cancelled, the devices of an account signed out, invitations made (one by one) and one revoked, the application of a provider set or removed, an admin made or removed, and a mailbox paused or resumed (`mailbox_paused`, `mailbox_resumed`, from the release that builds mailboxes per account, ADR 0026; never which mailbox: the operator cannot read, disconnect or empty one). It counts what the operator does with the token and what the admins do in the web app together. Every kind the enclave knows is there, also at zero; a later image may count more kinds, which the verifier prints by name. It never holds an account, an address or an identifier. It is absent in an image without accounts and in images up to v0.10.0. The verifier checks nothing of it.
+`admin` counts what the operator did to accounts through this enclave since it started, by kind: an account blocked or unblocked, a deletion asked or cancelled, the devices of an account signed out, invitations made (one by one) and one revoked, the application of a provider set or removed, an admin made or removed, and a mailbox paused or resumed (`mailbox_paused`, `mailbox_resumed`, from the release that builds mailboxes per account, ADR 0026; never which mailbox: the operator cannot read, disconnect or empty one), and the model's key set or removed (`model_key_set`, `model_key_removed`, ADR 0028; never the key or its fingerprint). It counts what the operator does with the token and what the admins do in the web app together. Every kind the enclave knows is there, also at zero; a later image may count more kinds, which the verifier prints by name. It never holds an account, an address or an identifier. It is absent in an image without accounts and in images up to v0.10.0. The verifier checks nothing of it.
 
 `root` is absent in an image that stores no mail. `from` is present when another release's enclave handed the root secret over. `history` and `gaps` are every state of the key's policy and grants the enclave has read since it started, and the periods in which it could not read. Releases up to v0.7.0 also report `kms`, the key they wrapped data keys with directly, with the same `history` and `gaps`. If KMS cannot be reached, or the image has no root secret yet, the endpoint answers 503.
 

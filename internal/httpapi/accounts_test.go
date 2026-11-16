@@ -48,6 +48,13 @@ type app struct {
 	// far the service's clock runs ahead of the real one.
 	mem   *store.Memory
 	ahead time.Duration
+	// keys plays the model's key service behind the operator's routes
+	// (model_test.go).
+	keys *keyFake
+	// commits and sealer are the service's store of commits and keys, for a
+	// test to start another enclave over the same storage (model_real_test.go).
+	commits *store.MemoryCommits
+	sealer  *keys.Local
 }
 
 func newApp(t *testing.T) *app {
@@ -57,11 +64,12 @@ func newApp(t *testing.T) *app {
 		t.Fatal(err)
 	}
 	mem := store.NewMemory()
-	a := &app{t: t, out: &accounts.Outbox{}, logs: &bytes.Buffer{}, mem: mem, idp: &providers{who: map[string]idp.Identity{}}}
+	a := &app{t: t, out: &accounts.Outbox{}, logs: &bytes.Buffer{}, mem: mem, idp: &providers{who: map[string]idp.Identity{}}, keys: &keyFake{},
+		commits: store.NewMemoryCommits(), sealer: k}
 	log := slog.New(slog.NewTextHandler(a.logs, nil))
 	a.svc, err = accounts.New(accounts.Config{
 		// As the enclave sets it up: only the newest version of a record is kept.
-		Records: &store.Anchored{Records: mem, Commits: store.NewMemoryCommits(), OnlyNewest: true}, Entries: mem,
+		Records: &store.Anchored{Records: mem, Commits: a.commits, OnlyNewest: true}, Entries: mem,
 		Keys: k, Mailer: a.out, Providers: a.idp, AppURL: appOrigin, SuperAdmin: superAdmin, Log: log,
 		Now: func() time.Time { return time.Now().Add(a.ahead) },
 	})

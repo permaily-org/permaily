@@ -34,6 +34,11 @@ export type Account = {
    * to none, as an account made before there were terms.
    */
   terms?: string
+  /**
+   * The version of the model's notice the person agreed to (ADR 0028): what is sent to OpenAI to decide the
+   * conditions a model decides, and what OpenAI may keep. Absent when they agreed to none.
+   */
+  model_notice?: string
 }
 
 export type Session = {
@@ -362,7 +367,15 @@ export type MatchPage = {
   unknown: string[]
   next?: string
   searched_to?: string
+  /**
+   * Only when the request asked the model (ADR 0028): `off` when the model has no key or the provider refused it,
+   * otherwise `limit` when a spend limit held some back, otherwise `asked`. Held messages stay in `needs_model`.
+   */
+  model?: MatchModel
 }
+
+/** What became of asking the model on a page of matches (ADR 0028). */
+export type MatchModel = 'asked' | 'limit' | 'off'
 
 /** The codes the server answers with, plus `network` for a request that got no answer. */
 export type ApiErrorCode =
@@ -395,6 +408,7 @@ export type ApiErrorCode =
   | 'not_cancellable'
   | 'invalid_provider_app'
   | 'terms_needed'
+  | 'model_notice_needed'
   | 'too_many_mailboxes'
   | 'invalid_label'
   | 'invalid_retention'
@@ -437,6 +451,7 @@ const known: ReadonlySet<string> = new Set([
   'not_cancellable',
   'invalid_provider_app',
   'terms_needed',
+  'model_notice_needed',
   'too_many_mailboxes',
   'invalid_label',
   'invalid_retention',
@@ -612,6 +627,15 @@ export function deleteAccount(): Promise<Account> {
 /** Agrees to the terms in force, by the version the person was shown. */
 export function agreeTerms(version: string): Promise<Account> {
   return account(request('POST', '/api/v1/account/terms', { version }))
+}
+
+/**
+ * Agrees to the model's notice in force (`MODEL_NOTICE_VERSION` in src/lib/model-notice.ts), by the version the
+ * person was shown (ADR 0028): what asking the model about their mail needs. Another version is
+ * `model_notice_needed`.
+ */
+export function agreeModelNotice(version: string): Promise<Account> {
+  return account(request('POST', '/api/v1/account/model-notice', { version }))
 }
 
 /** Keeps an account that was closing: it is active again, as it was. */
@@ -1056,12 +1080,14 @@ export async function checkQuery(formula: QueryFormula): Promise<FormulaCheck> {
 
 /**
  * A page of what a formula matches in one mailbox, newest first: the owner's own preview, never a vendor's result.
- * Read the page's `next` to go on, even when it holds no message.
+ * Read the page's `next` to go on, even when it holds no message. With `askModel` the server asks the model for the
+ * messages only a model can decide (ADR 0028), which needs the person's agreement to the model's notice
+ * (`model_notice_needed` without it), and the page says what became of it in `model`.
  */
 export async function matches(
   mailbox: string,
   formula: QueryFormula,
-  page: { after?: string; limit?: number } = {},
+  page: { after?: string; limit?: number; askModel?: boolean } = {},
 ): Promise<MatchPage> {
   const answer = await request<Partial<MatchPage> | null>(
     'POST',
@@ -1070,6 +1096,7 @@ export async function matches(
       formula,
       ...(page.after ? { after: page.after } : {}),
       limit: page.limit ?? messagesPerPage,
+      ...(page.askModel ? { ask_model: true } : {}),
     },
   )
   if (!Array.isArray(answer?.messages)) throw new ApiError('other')
@@ -1080,7 +1107,13 @@ export async function matches(
     unknown: list(answer.unknown),
     ...(typeof answer.next === 'string' && answer.next !== '' ? { next: answer.next } : {}),
     ...(typeof answer.searched_to === 'string' ? { searched_to: answer.searched_to } : {}),
+    ...(isMatchModel(answer.model) ? { model: answer.model } : {}),
   }
+}
+
+/** Whether a page's `model` is one of the three the server says; anything else is dropped. */
+function isMatchModel(value: unknown): value is MatchModel {
+  return value === 'asked' || value === 'limit' || value === 'off'
 }
 
 // ---------------------------------------------------------------------------------------------------------------

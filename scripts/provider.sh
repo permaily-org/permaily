@@ -2,8 +2,11 @@
 # Gives the enclave the application registered at Google, GitHub, Meta or
 # Microsoft, so people can sign in with it; takes one away; or lists which
 # are set. The secret goes to the enclave over TLS and is kept there sealed:
-# it is never answered back, and this script never prints it. Run
-# scripts/verify.sh first: the secret is sent to whoever answers.
+# it is never answered back, and this script never prints it. Before it sends
+# anything, it verifies the enclave with permaily-verify, and the token and the
+# secret then go only to the TLS key that verification attested
+# (scripts/attested.sh): never to another server, even one with a valid
+# certificate for the name. When the enclave does not verify, nothing is sent.
 #
 #   scripts/provider.sh                                   which are set, with their client ids
 #   scripts/provider.sh set google <client-id>            the secret is read from standard input
@@ -18,11 +21,19 @@
 #   PERMAILY_API          base URL of the enclave (default https://api.permaily.com)
 #   PERMAILY_ADMIN_TOKEN  admin token (default: ~/.config/permaily/admin-token)
 #   PERMAILY_CA_FILE      extra CA certificate, for a staging image
+#   PERMAILY_PCRS         pcrs.json of the release the enclave runs, and/or PERMAILY_RELEASE, its tag
+#                         (alone, the release's pcrs.json authenticated by its build provenance, that very file):
+#                         nothing is sent before permaily-verify attests the enclave against it
+#   PERMAILY_VERIFY       permaily-verify binary (default: built from the commit PERMAILY_RELEASE's build provenance
+#                         names, never from its tag, fetched into a private repository and built in a fixed Go
+#                         environment; or else from this checkout, trusted as the running release's)
+#   PERMAILY_DEV_UNVERIFIED=1  for an enclave in dev mode on this machine (scripts/attested.sh)
 #
-# Needs curl and jq.
+# Needs curl and jq; go and git 2.32 or later unless PERMAILY_VERIFY is set; gh with PERMAILY_RELEASE,
+# unless PERMAILY_VERIFY and PERMAILY_PCRS are both set.
 set -euo pipefail
 
-usage() { sed -n '2,23p' "$0"; exit 2; }
+usage() { sed -n '2,33p' "$0"; exit 2; }
 
 action=${1:-list}
 provider=${2:-}
@@ -38,27 +49,26 @@ if [[ $action != list && ! $provider =~ ^(google|github|meta|microsoft)$ ]]; the
 fi
 
 api=${PERMAILY_API:-https://api.permaily.com}
-if [[ $action == set && $api != https://* ]]; then
-  echo "a secret is sent only over TLS: PERMAILY_API must start with https://" >&2
-  exit 2
-fi
-token=${PERMAILY_ADMIN_TOKEN:-$(cat "${HOME}/.config/permaily/admin-token")}
 # What is written here holds the secret for a moment: nobody else reads it.
 umask 077
+# shellcheck source=scripts/attested.sh
+source "$(dirname "$0")/attested.sh"
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+trap attested_cleanup EXIT
+load_token
+attest
 
 # ask <method> <path> [file with the body] writes the answer to
 # $work/response.json and its status to $code.
 ask() {
-  code=$(curl -sS ${PERMAILY_CA_FILE:+--cacert "$PERMAILY_CA_FILE"} -o "$work/response.json" -w '%{http_code}' \
-    -X "$1" -H @<(printf 'Authorization: Bearer %s' "$token") \
-    ${3:+-H "Content-Type: application/json" --data-binary "@$3"} "$api$2")
+  code=$(enclave_curl --token -o "$work/response.json" -w '%{http_code}' -X "$1" \
+    ${3:+-H "Content-Type: application/json" --data-binary "@$3"} "$api$2") || exit 1
 }
 
-# refused prints why the enclave said no. Its answers never hold a secret.
+# refused prints why the enclave said no: its reason, and nothing else of the
+# answer, which is never printed whole after a request that held a secret.
 refused() {
-  jq -r '.error.message // .' "$work/response.json" >&2 2>/dev/null || cat "$work/response.json" >&2
+  enclave_error "$work/response.json"
   echo "the enclave at $api $1 (HTTP $code)" >&2
   exit 1
 }
@@ -81,11 +91,7 @@ case $action in
       [[ -r $secret_file ]] || { echo "cannot read $secret_file" >&2; exit 2; }
       cat -- "$secret_file" > "$work/secret"
     elif [[ -t 0 ]]; then
-      # read is a builtin, so the secret is in no process's arguments.
-      IFS= read -rs -p "Client secret of the $provider application: " secret
-      echo >&2
-      printf '%s' "$secret" > "$work/secret"
-      unset secret
+      read_secret "Client secret of the $provider application: " "$work/secret"
     else
       cat > "$work/secret"
     fi
@@ -96,7 +102,7 @@ case $action in
     ask PUT "/v1/admin/providers/$provider" "$work/body.json"
     rm -f "$work/body.json"
     [[ $code == 200 ]] || refused "did not take the application of $provider"
-    echo "$provider is on at $api, with client id $(jq -r .client_id "$work/response.json")." >&2
+    echo "$provider is on at $api, with client id $(jq -r '.client_id | strings | gsub("[[:cntrl:]]"; " ")' "$work/response.json")." >&2
     ;;
   remove)
     ask DELETE "/v1/admin/providers/$provider"

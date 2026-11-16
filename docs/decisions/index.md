@@ -24,7 +24,7 @@ Architecture Decision Records. Each one records the context, the options conside
 | [0017](0017-accounts-and-sign-in.md) | Accounts, sign-in and how account data is kept | Accepted, built in part |
 | [0018](0018-mailboxes-by-forwarding.md) | Mailboxes: forwarding only, several per account | Accepted, not built; how in 0026 |
 | [0019](0019-connections-queries-rules-and-receipts.md) | Connections, queries, rules and receipts | Accepted, not built |
-| [0020](0020-openai-models-for-meaning.md) | OpenAI's models for what depends on meaning | Accepted, not built |
+| [0020](0020-openai-models-for-meaning.md) | OpenAI's models for what depends on meaning | Accepted, not built; how in 0028, which amends it |
 | [0021](0021-watch-the-copies-of-outgoing-mail.md) | Watch who else gets a copy of the mail the enclave sends | Accepted |
 | [0022](0022-admins-and-confirming-again.md) | Admins, and confirming again before a sensitive change | Accepted, in production since v0.11.0 |
 | [0023](0023-releases-publish-the-measurements-not-the-image.md) | Releases publish the image's measurements, not the image | Accepted |
@@ -32,3 +32,5 @@ Architecture Decision Records. Each one records the context, the options conside
 | [0025](0025-mail-with-a-design-written-once.md) | Mail with a design, written once and sent as text and HTML | Accepted, not released |
 | [0026](0026-mailboxes-per-account-how.md) | Mailboxes per account: how they are built (records and their state machines, keys, delivery, the inbox and showing HTML safely, the test mailbox retired, the API, the seams); amends 0016 | Proposed, not built |
 | [0027](0027-the-query-language-how.md) | The query language: how it is built (variables and operators, the JSON vendors send, three values, simplification, containment, the sentence, evaluation over stored mail, the seams); amends 0019, 0020 and 0026 | Proposed, not built |
+| [0028](0028-the-model-how.md) | The model: how it is built (the spike's numbers, one interface, the request and its prompt, failures, the egress, the key, kept decisions, asking from the matcher, consent, spend limits and the alarm, the canary, the seams); amends 0020, 0026 and 0027 | Proposed, not built |
+| [0029](0029-operator-scripts-send-only-to-the-attested-key.md) | The operator's scripts send the admin token and secrets only to the TLS key verification attested in the same run | Accepted |

@@ -295,6 +295,18 @@ func TestTermsVersionMatchesTheWebApp(t *testing.T) {
 	}
 }
 
+// A29: the model's notice the app shows is the version the server records.
+func TestModelNoticeVersionMatchesTheWebApp(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "web", "src", "lib", "model-notice.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^export const MODEL_NOTICE_VERSION = '([^']+)'$`).FindStringSubmatch(string(src))
+	if m == nil || m[1] != ModelNoticeVersion {
+		t.Fatalf("web/src/lib/model-notice.ts says %v, the server %s", m, ModelNoticeVersion)
+	}
+}
+
 // The web app names a session's browser with the same tables, so the screen
 // and a notice say the same thing: they are read from its source and compared.
 func TestDeviceNameMatchesTheWebApp(t *testing.T) {

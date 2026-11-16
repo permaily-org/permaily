@@ -32,7 +32,7 @@ Then delete the key of the previous release (below), and open the pull request t
 - **The handoff is refused** (HTTP 422): the answer says why. Nothing was written and the running enclave keeps serving. The usual causes are a key that was not created yet, or files of the wrong release.
 - **The new image was started first**: it logs `waiting for the running release to hand over the root secret` and serves nothing. Start the old image again, run the handoff, start the new one.
 - **Step 2 can be repeated**; the second time it answers `"created": false`.
-- **Verify before step 2** when in doubt about what is answering on `api.permaily.com`: the admin token only lets someone ask for a handoff, which the enclave decides alone, but there is no reason to give it to an impostor.
+- **Step 2 verifies first.** `scripts/handoff.sh` runs `permaily-verify` against the `pcrs.json` of `$old` and sends the admin token only to the TLS key it attested ("The operator's scripts verify first", below). When what answers on `api.permaily.com` is not `$old`, it stops and nothing is sent.
 
 ## Roll back
 
@@ -64,7 +64,7 @@ go run ./cmd/permaily-verify -pcrs /tmp/stg-a/pcrs.json -ca-file letsencrypt-stg
 PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem scripts/handoff.sh /tmp/stg-a /tmp/stg-b    # to a second image, built later
 ```
 
-`letsencrypt-stg-root-x1.pem` is the root of Let's Encrypt staging, fetched with `curl -sO https://letsencrypt.org/certs/staging/letsencrypt-stg-root-x1.pem` (as in [verification.md](verification.md)). Every operator script needs it against a staging image, as `PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem`: `scripts/invite.sh`, `scripts/accounts.sh`, `scripts/provider.sh` and `scripts/handoff.sh` (which passes it on to `scripts/sigstore-trust-root.sh --send`).
+`letsencrypt-stg-root-x1.pem` is the root of Let's Encrypt staging, fetched with `curl -sO https://letsencrypt.org/certs/staging/letsencrypt-stg-root-x1.pem` (as in [verification.md](verification.md)). Every operator script needs it against a staging image, as `PERMAILY_CA_FILE=letsencrypt-stg-root-x1.pem`: `scripts/invite.sh`, `scripts/accounts.sh`, `scripts/provider.sh` and `scripts/handoff.sh` (which passes it on to `scripts/sigstore-trust-root.sh --send`). The first three also need `PERMAILY_PCRS=/tmp/stg-a/pcrs.json`, the staging image that runs, to verify it before they send anything; `scripts/handoff.sh` takes it from its first argument.
 
 The staging table keeps its root secret from one test to the next, and only the key of an image that holds it can open it. When the key of the last staging image that ran is gone (removed from `release_keys` and applied: it is disabled at once and deleted after seven days), nothing can open that secret again: start the staging table over as in "A new deployment, or losing everything", on `permaily-mail-staging`, before the next staging image.
 
@@ -219,6 +219,20 @@ Takes effect with v0.12.0, the release that builds ADR 0026, in production since
 - **Pausing a mailbox** for abuse: `scripts/accounts.sh mailbox find <address>`, then `mailbox pause <id>` and later `mailbox resume <id>`; ten changes of one mailbox in thirty days at most. Its person is told by mail; nothing is deleted. The operator cannot disconnect a mailbox or read mail ("See and manage the accounts", "Mailboxes").
 - **A regression marked `fork` in `/status`**, under the name `mailbox`, means two commits of different digests at one version of a mailbox's record or an account's list: someone wrote to the anchors bucket. That mailbox stops for good, for the lock period (ten years): it refuses mail, nobody opens it, its person sees "Can't be read" and cannot disconnect it, and it keeps its slot. Nothing makes it readable again; tell its person through support. One marked `lost` means the newest commit of a mailbox's record or an account's list names a value the table no longer holds: someone deleted or changed the item in DynamoDB. A lost mailbox refuses mail and nobody opens it; it shows as `unreadable` in `scripts/accounts.sh mailboxes` and in the admin panel, with its identifier and when it was added, and its person can disconnect it, which frees its slot. A lost account list stops delivery to every mailbox of that account. One marked `unlocked` means S3 holds a commit without the lock the enclave wrote it with: report it to AWS and look at the bucket's configuration. Accounts and the TLS identity are not strict records: a fork there shows as a regression without the mark, as before (ADR 0016), and the TLS identity's is handled as ADR 0024 says.
 
+## The operator's scripts verify first
+
+`scripts/invite.sh`, `scripts/accounts.sh`, `scripts/provider.sh`, `scripts/handoff.sh` and `scripts/sigstore-trust-root.sh --send` send the admin token, and `provider.sh set` a provider's secret. Before they send anything, each runs `permaily-verify` against the enclave, and then sends only on connections with the TLS key it attested (`curl --pinnedpubkey`, the CA and hostname checked too, no redirects; ADR 0029). A server with another valid certificate for `api.permaily.com` gets nothing. They need to know what the enclave must measure:
+
+```sh
+export PERMAILY_RELEASE=v0.14.0                        # the running release's tag: its verifier is built from the commit its provenance names
+export PERMAILY_PCRS=/tmp/permaily-v0.14.0/pcrs.json   # and its pcrs.json from scripts/release-image.sh <tag> <dir>;
+                                                       # without it, the release's, authenticated by its provenance (trusts CI)
+```
+
+The verifier must be the running release's: it checks the Sigstore trust root the enclave reports against the one compiled into itself, so one built from a later checkout refuses an older release, and above all during a trust-root update or a handoff. With `PERMAILY_RELEASE` (or `handoff.sh`'s `<running>` tag) the scripts never build from the tag's name: they authenticate the release's `pcrs.json` with `gh attestation verify` (the repository `permaily-org/permaily`, the release workflow, `main`), take the source commit from that attestation, check that the tag at `github.com/permaily-org/permaily` names the same commit, fetch that commit by its id from `github.com/permaily-org/permaily` into a private repository in the run's temporary directory (never from `origin` or the clone: its replacement refs, hooks, configuration and `GIT_*` variables are not used), and build it with go in a fixed environment (no `GOFLAGS`, `go.env` file or workspace, `go.mod`'s toolchain line, no cgo, `-trimpath`); the log names the commit. Without `PERMAILY_PCRS`, the `pcrs.json` whose provenance they verified is the very file the verifier checks, not a second download. A compromised go, git or computer is not defended against. That needs git 2.32 or later. That needs `gh` and GitHub: without them, or for a tag with no release, nothing is sent, and you set `PERMAILY_VERIFY=<permaily-verify binary>`, which is used as it is whenever it is set. With only `PERMAILY_PCRS`, as for a staging image, it is built from the checkout as it is, uncommitted changes included; the script says so. Nothing checks that the checkout is the running image's source: you trust it as such, as you would a `PERMAILY_VERIFY` you give. A trusted verifier of another release fails closed (it refuses, and nothing is sent); code you have not reviewed does not. When the enclave does not verify, or no measurements are given, the script says why and that nothing was sent. A failure unrelated to the token, such as the SES state, stops them too: read it as you would a failed `scripts/verify.sh`. What the enclave answers is printed field by field, never whole, and under `bash -x` neither the token nor a secret is traced.
+
+`PERMAILY_API` is an origin and nothing else: `https://<host>` or `https://<host>:<port>`, with or without a `/` at the end, in lowercase, with no user, password, path, query, fragment or percent-encoding; anything else is refused before anything runs. `PERMAILY_DEV_UNVERIFIED=1` (only `1`; any other value is refused) is for an enclave in dev mode on your machine: it skips the verification, is refused for any name but `localhost`, `127.0.0.1`, `[::1]`, a `.localhost` or a `.test` name, and connects to `127.0.0.1` whatever DNS or a proxy variable says.
+
 ## Invite someone
 
 Signing up needs an invitation: a code that works once, for thirty days, for one new account.
@@ -298,7 +312,7 @@ Every change in the panel asks the admin to confirm with a passkey when their la
 A provider is on once the enclave has been given the application registered there:
 
 ```sh
-scripts/verify.sh                                          # first: the secret goes to whoever answers
+export PERMAILY_PCRS=<dir>/pcrs.json                       # the running release: verified before the secret is sent
 scripts/provider.sh                                        # which are set, with their client ids
 scripts/provider.sh set google <client id>                 # asks for the secret without showing it
 pass show permaily/github | scripts/provider.sh set github <client id>
@@ -309,6 +323,49 @@ At each provider's console the application is a web application whose only redir
 
 - **A provider's sign-in fails for everyone.** The enclave's log says `provider` and a fixed reason: the secret or the redirect address is wrong at the provider (`invalid_provider_app`), or the provider cannot be reached (an old `permaily-host` without its hosts in the allowlist). Rotating a secret at the provider means setting it again here.
 - **Meta and Microsoft work accounts** always ask the person to confirm an address by mail the first time: neither vouches for the address (ADR 0017).
+
+## The model (OpenAI)
+
+From the release that composes it (ADR 0028), the enclave asks OpenAI's Decisions API (`gpt-6-luna` at `https://api.openai.com/v1/decisions`, prompt cache off on every request) what exact conditions cannot settle, for the owner's previews of a formula (`ask_model`), and only for an account that agreed to the model's notice. It needs a key, which only the operator gives; without one the model is off and what needs it stays in `needs_model`.
+
+**The OpenAI project.** The key is of a project of its own, `permaily-enclave`, in Permaily's OpenAI organisation, and of nothing else: give it to no other program, workstation or service. The eval of ADR 0028 (`go test -tags modeleval`) uses another key of another project, `permaily-eval`, on the owner's workstation. In OpenAI's dashboard, for `permaily-enclave`:
+
+1. Restrict the key to the Decisions endpoint where OpenAI's permissions allow it.
+2. Set the project's monthly budget to **50 USD** and turn its **hard enforcement** on, so OpenAI refuses calls past it (`project_spend_limit_exceeded`); set its notification at **25 USD**, which reaches the owner by OpenAI's mail. The enclave's own guard holds the same 50 USD for every enclave together, before any request leaves, and is what `/status` shows; the project's limit is the stop for what the enclave cannot count (the key used elsewhere, or a bug in its count). Neither the enclave nor a verifier can see whether this setting is on: record it, with a screenshot of the dashboard, in docs/acceptance.md (A35) whenever it changes.
+3. Put the organisation's identifier (`org-…`) and the project's (`proj_…`) in `deploy/enclave.json`, `model.organization` and `model.project`, before the release: the enclave sends them as `OpenAI-Organization` and `OpenAI-Project`, so a key of another organisation or project is refused by OpenAI rather than used. While they are empty the requests pin neither, `/status` leaves them out, and `permaily-verify` warns on every run. They are in the image (PCR0): changing them is a release.
+
+**Set, replace or remove the key**, over the connection pinned to the attested key ("The operator's scripts verify first"):
+
+```sh
+export PERMAILY_RELEASE=<running tag> PERMAILY_PCRS=<dir>/pcrs.json
+scripts/model-key.sh                             # whether a key is set, since when, and its fingerprint
+pass show permaily/openai | scripts/model-key.sh set   # or: scripts/model-key.sh set, which asks without showing it
+printf %s "$key" | sha256sum | cut -c1-16        # your copy's fingerprint, to compare
+scripts/model-key.sh remove                      # the model is off from then
+```
+
+The key is sealed in the record `model-key` and never answered back, logged or shown. A key set or removed through one enclave is used, or stops being used, by every other within a minute. To rotate it: make the new key in the project, `set` it, check the fingerprint, then revoke the old one in OpenAI's dashboard. After starting over (a new deployment) the key has to be set again.
+
+**The limits** are compiled into the image (`deploy/enclave.json`, `model`): 50 USD a month for every enclave together (`month_limit_usd`), an alarm when a day's reservations pass 10 USD (`day_alarm_usd`), and 0.50 USD a day for one account in one enclave (`account_day_usd`). A staging image (`.#eif-staging`) lowers the month's limit to 1 USD and the day's alarm to 0.20 USD (`staging.model`), so A35 can reach both. `/status` shows the limits and the guard's state (`ok`, `month_limit`, `provider_limit`, `key_refused`, `unreadable`), never an amount spent: the bill is at OpenAI.
+
+**The alarm** is mail through SES to the super admin's address (`super_admin`), at most once a day for each kind, sent by whichever enclave runs, and again every minute until SES takes it. Its words are fixed and hold no amount tied to an account and nothing of anyone's mail. What to do:
+
+- **The model's spend passed the day's alarm**: nothing is held back yet. Look at the project's usage at OpenAI and at `/status`'s `calls`: a person's previews are bounded by their share, so a jump means many accounts or a bug.
+- **The model's monthly limit was reached**: nothing new is asked until the month ends (UTC); kept answers are still used. Only a release changes the limit.
+- **OpenAI's limit was reached**: the project's budget or the organisation's credit ran out. The enclave probes every ten minutes and asks again once one is answered. If the enclave's own guard is not at its limit, someone used the key elsewhere, or OpenAI counts what the enclave does not: rotate the key and find out which.
+- **OpenAI refused the model's key**: it was revoked, belongs to another project than `model.project`, or the project was deleted. Set a key of `permaily-enclave`; the enclave tries a new key at once.
+- **The model's canary saw an answer move**: see "When the canary changes".
+- **No canary check completed for two days**: look at the enclave's logs for `canary` lines (`decisions: the canary's check did not complete`), at the guard on `/status` (a check is reserved like any call, and is not sent with no key or at a limit), and at whether the host still allows `api.openai.com:443`.
+
+The enclave's log says, by kind alone, when an alarm could not be added or sent (`decisions: an alarm could not be added; it is kept to add again`): the mail system's error is never logged, as it carries addresses. A lost or forked record of the model (`/status` `anchors.regressions` with the name `model`, without versions) stops what needs it: the spend's for the rest of the month, the key's until it is set again.
+
+**When the canary changes.** Once a day an enclave asks 156 fixed synthetic statements (`internal/decide/canary.json`) and compares the answers with what was measured for the prompt version in force. `changed` on `/status` (and a warning of `permaily-verify`) says an answer moved past 0.02, changed a classification, or another model answered; the service is not paused and kept answers do not change. Then:
+
+1. Run the eval on the whole corpus with the eval project's key, never the enclave's: `OPENAI_API_KEY=… PERMAILY_EVAL_ORG=org-… PERMAILY_EVAL_PROJECT=proj_… go test -tags modeleval -run TestA10 -v -timeout 30m ./internal/decide/openai/` (ADR 0028, A10; `eval_test.go` says the rest).
+2. If its thresholds still hold, re-measure the canary and release it as the new baseline (`canary.json`'s values, so its SHA-256 and the canary's state are new); if they do not, release a new prompt version, or an image without the model.
+3. Write down in ADR 0028 what the eval found and what was released.
+
+`permaily-verify` also warns when the canary's baseline is not the SHA-256 of the `canary.json` of the commit the enclave runs: the image compares answers with another release's.
 
 ## Outgoing mail
 

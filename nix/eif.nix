@@ -20,8 +20,14 @@ let
   # A staging image is a deployment of its own: the "staging" object replaces
   # the values that keep it apart from production (its storage, and which
   # builds may receive its root secret).
+  # Its "model" object holds only what it changes of the model's (the
+  # month's limit, the day's alarm and the evaluations' project), so the two
+  # are merged.
   base = builtins.fromJSON (builtins.readFile ../deploy/enclave.json);
-  config = base // lib.optionalAttrs staging base.staging;
+  config = base // lib.optionalAttrs staging (base.staging // {
+    model = base.model // (base.staging.model or { });
+  });
+  model = config.model;
   # An empty value is left out: AWS's init splits the entry point on newlines.
   flag = name: value: lib.optionals (value != "") [ name value ];
 
@@ -63,7 +69,17 @@ let
     ++ flag "-anchor-bucket" config.anchor_bucket
     ++ flag "-anchor-retention-days" (toString config.anchor_retention_days)
     ++ flag "-mail-from" (config.mail_from or "")
-    ++ flag "-super-admin" (config.super_admin or ""));
+    ++ flag "-super-admin" (config.super_admin or "")
+    # The model (ADR 0028): an empty organisation or project pins none; the
+    # boolean is one argument, as Go's flag package reads it.
+    ++ flag "-model-organization" model.organization
+    ++ flag "-model-project" model.project
+    ++ [
+      "-model-zero-data-retention=${lib.boolToString model.zero_data_retention}"
+      "-model-month-limit-usd" (toString model.month_limit_usd)
+      "-model-day-alarm-usd" (toString model.day_alarm_usd)
+      "-model-account-day-usd" (toString model.account_day_usd)
+    ]);
     env = "GOMEMLIMIT=${gomemlimit}";
   };
 in

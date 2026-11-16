@@ -30,7 +30,7 @@ func (a *app) admin() http.Handler {
 	mux := http.NewServeMux()
 	for prefix, h := range map[string]http.Handler{
 		"/v1/admin/accounts": httpapi.Accounts(a.svc, log), "/v1/admin/invitations": httpapi.Invitations(a.svc, log),
-		"/v1/admin/providers": httpapi.ProviderApps(a.svc, log),
+		"/v1/admin/providers": httpapi.ProviderApps(a.svc, log), "/v1/admin/model-key": httpapi.ModelKey(a.keys, a.svc, log),
 	} {
 		mux.Handle(prefix, httpapi.TokenAuth(tokenHash(), h))
 		mux.Handle(prefix+"/", httpapi.TokenAuth(tokenHash(), h))
@@ -889,7 +889,7 @@ func TestStatusSaysWhatTheOperatorDid(t *testing.T) {
 		return st, rec.Body.String()
 	}
 	st, _ := get()
-	if st.Admin.Since.IsZero() || len(st.Admin.Actions) != 13 || st.Admin.Actions["invitations_made"] != 1 || st.Admin.Actions["block"] != 0 {
+	if st.Admin.Since.IsZero() || len(st.Admin.Actions) != len(attestation.AdminActions) || st.Admin.Actions["invitations_made"] != 1 || st.Admin.Actions["block"] != 0 {
 		t.Fatalf("at the start: %+v", st.Admin)
 	}
 	one := "/v1/admin/accounts/" + me.Account.ID
@@ -901,6 +901,14 @@ func TestStatusSaysWhatTheOperatorDid(t *testing.T) {
 	do(h, "DELETE", "/v1/admin/invitations/"+made.IDs[0], token, "")
 	read(t, do(h, "PUT", "/v1/admin/providers/google", token, `{"client_id":"id","client_secret":"secret"}`), 200, nil)
 	do(h, "DELETE", "/v1/admin/providers/google", token, "")
+	// A30: the model's key set, then removed; a key refused is not counted.
+	const modelKey = "sk-proj-status-0123456789"
+	read(t, do(h, "PUT", "/v1/admin/model-key", token, `{"key":"`+modelKey+`"}`), 200, nil)
+	do(h, "PUT", "/v1/admin/model-key", token, `{"key":"not a key"}`)
+	do(h, "PUT", "/v1/admin/model-key", token, `{"key":"`+modelKey+`","more":1}`)
+	if rec := do(h, "DELETE", "/v1/admin/model-key", token, ""); rec.Code != 204 {
+		t.Fatalf("removing the model's key: %d %s", rec.Code, rec.Body)
+	}
 	// What was refused is not counted.
 	do(h, "POST", "/v1/admin/accounts/acc_"+strings.Repeat("a", 26)+"/block", token, "")
 	do(h, "POST", one+"/block", "not the token", "")
@@ -910,15 +918,19 @@ func TestStatusSaysWhatTheOperatorDid(t *testing.T) {
 		"block": 2, "unblock": 1, "delete": 1, "delete_cancel": 1, "sessions_close": 1,
 		"invitations_made": 5, "invitation_revoked": 1, "provider_app_set": 1, "provider_app_removed": 1,
 		"admin_made": 0, "admin_removed": 0, "mailbox_paused": 0, "mailbox_resumed": 0,
+		"model_key_set": 1, "model_key_removed": 1,
 	}
 	if !reflect.DeepEqual(st.Admin.Actions, want) {
 		t.Fatalf("what the operator did: %+v, want %+v", st.Admin.Actions, want)
 	}
 	// Kinds and counts only: no account, no address, no identifier.
-	for _, secret := range []string{"ana@", "example.org", me.Account.ID, "acc_", "inv_", made.IDs[0], me.Session.ID} {
+	for _, secret := range []string{"ana@", "example.org", me.Account.ID, "acc_", "inv_", made.IDs[0], me.Session.ID, modelKey, fingerprintOf(modelKey)} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("the status holds %q: %s", secret, body)
 		}
+	}
+	if out := a.logs.String(); strings.Contains(out, modelKey) || strings.Contains(out, fingerprintOf(modelKey)) || !strings.Contains(out, "kind=model_key_set") {
+		t.Fatalf("the log of the model's key:\n%s", out)
 	}
 	// The kinds are the ones the verifier knows by name.
 	if !slices.Equal(accounts.OperatorActionKinds, attestation.AdminActions) {

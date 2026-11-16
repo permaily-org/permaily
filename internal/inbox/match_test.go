@@ -135,6 +135,7 @@ func genFormulas(rng *rand.Rand, b inbox.Box, size bool) []*query.Canonical {
 // it) has its size known only in the whole read; then the staged listing is
 // the whole read's without that size.
 func TestQ27StagedEqualsWhole(t *testing.T) {
+	t.Parallel() // its own store, box and generator
 	st := newQStore()
 	b := qBox(t)
 	rng := rand.New(rand.NewPCG(27, 1))
@@ -220,6 +221,7 @@ func TestQ27TheExceptionOfOldMessages(t *testing.T) {
 // listed where the whole read lists it, none twice, and next is absent only
 // at the end.
 func TestQ28PagesSkipNothing(t *testing.T) {
+	t.Parallel() // its own stores, boxes and generator
 	rng := rand.New(rand.NewPCG(28, 1))
 	for _, n := range []int{0, 1, 7, 37, 260, 2000} {
 		st := newQStore()
