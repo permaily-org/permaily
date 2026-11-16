@@ -654,6 +654,8 @@ Pull request 2 made four choices this record had left open; its adversarial revi
 
 The canary's state keeps the latest 64 completed checks (`maxChecks`), not every one: what any completed check observed of a change stays in `changed` and `change_seen_at`, which no completion removes, and staleness is counted from the latest check.
 
+`/status` binds `stale` to its episode by date: an episode begins on its first stale day (two days after the latest completed check, or after `since` before any), and the enclave shows `stale` only when the latest day of a `canary_failed` alarm of this baseline it found in the record (by its own add or by `RunAlarms` adding a pending one) is on or after that day, so an older alarm, even one sent late, shows no later episode (`TestA20AnOldAlarmSentLateDoesNotShowALaterStaleEpisode`).
+
 ## What it rests on
 
 - ADR 0019 (when in doubt, nothing leaves; consent), 0020 (the model decision this builds on), 0026 (stored mail: the search entry with the first 16 KiB, raw reads under the read budget, a data key per mailbox, deletion, the partition swept at disconnect), 0027 (atoms, answers, `Classify`, the matcher's bounds, kept answers per message and atom), 0017 ("Two enclaves at once": what is stored, what is in memory, limits at most N times), 0016 and 0024 (anchored records and two enclaves), 0021 (mail through SES only while nobody else gets a copy).

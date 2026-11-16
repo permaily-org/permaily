@@ -86,16 +86,21 @@ func (d *canaryDoc) checkedOn(day string) bool {
 	return false
 }
 
-// stale reports whether no check completed for staleDays days (UTC),
-// counted from the last one, or before any from Since.
-func (d *canaryDoc) stale(now time.Time) bool {
+// staleFrom is the first day (UTC) of the state's stale episode: staleDays
+// days after the last completed check, or before any after Since.
+func (d *canaryDoc) staleFrom() string {
 	from := d.Since
 	if l := d.last(); l != nil {
 		from = l.At
 	}
 	fromDay, _ := time.Parse(time.DateOnly, dayOf(from))
-	today, _ := time.Parse(time.DateOnly, dayOf(now))
-	return today.Sub(fromDay) >= staleDays*24*time.Hour
+	return dayOf(fromDay.AddDate(0, 0, staleDays))
+}
+
+// stale reports whether no check completed for staleDays days (UTC),
+// counted from the last one, or before any from Since.
+func (d *canaryDoc) stale(now time.Time) bool {
+	return dayOf(now) >= d.staleFrom()
 }
 
 // canaryRun is this enclave's memory of the canary.
@@ -109,9 +114,12 @@ type canaryRun struct {
 	// failedDay is the day this enclave's latest run did not complete, ""
 	// when it did.
 	failedDay string
-	// staleSeen says canary_failed is in the record for the stale state
-	// this enclave read: /status says stale only then.
-	staleSeen bool
+	// staleAlarmDay is the latest day of a canary_failed alarm, of this
+	// baseline, this enclave found in the record, and never goes back: one
+	// is added each day the state is stale, so /status says stale only when
+	// it is on or after the episode's first day (staleFrom), and an older
+	// alarm, even one sent late, shows no later episode.
+	staleAlarmDay string
 	// lease is the lease entry this enclave holds, and until when.
 	lease      *store.Entry
 	leaseUntil time.Time
@@ -169,12 +177,6 @@ func (s *Service) readCanary(ctx context.Context, makeIt bool) (*canaryDoc, erro
 		return nil, nil // not made yet
 	}
 	s.doc, s.readAt = doc, now
-	// An alarm accepted for an earlier stale episode is not this one's: a
-	// read that finds the state no longer stale ends that episode, and a
-	// later one is shown only once its own alarm is in the record.
-	if !doc.stale(now) {
-		s.staleSeen = false
-	}
 	return doc, nil
 }
 
@@ -223,12 +225,8 @@ func (s *Service) RunCanary(ctx context.Context) error {
 		if err := s.addAlarm(ctx, AlarmCanaryFailed, today, s.canary.Baseline); err != nil {
 			s.logKind(slog.LevelWarn, "decisions: an alarm could not be added; it is kept to add again", string(AlarmCanaryFailed))
 		} else {
-			s.publishStale(alarmEntry{Kind: AlarmCanaryFailed, Baseline: s.canary.Baseline})
+			s.publishStale(alarmEntry{Kind: AlarmCanaryFailed, Day: today, Baseline: s.canary.Baseline})
 		}
-	} else {
-		s.canaryMu.Lock()
-		s.staleSeen = false
-		s.canaryMu.Unlock()
 	}
 	if doc.checkedOn(today) {
 		return nil
@@ -328,20 +326,22 @@ func (s *Service) check(ctx context.Context, today string) error {
 		return errCanaryFailed
 	}
 	s.canaryMu.Lock()
-	s.doc, s.readAt, s.canaryUnreadable, s.staleSeen = doc, now, false, false
+	s.doc, s.readAt, s.canaryUnreadable = doc, now, false
 	s.canaryMu.Unlock()
 	return nil
 }
 
-// publishStale says on /status that the canary is stale once its
-// canary_failed alarm, of this baseline, is in the record. s.canaryMu is
-// not held.
+// publishStale notes that e, a canary_failed alarm of this baseline, is in
+// the record: /status says stale for an episode whose first day is on or
+// before e's day. s.canaryMu is not held.
 func (s *Service) publishStale(e alarmEntry) {
 	if e.Kind != AlarmCanaryFailed || s.canary == nil || e.Baseline != s.canary.Baseline {
 		return
 	}
 	s.canaryMu.Lock()
-	s.staleSeen = true
+	if e.Day > s.staleAlarmDay {
+		s.staleAlarmDay = e.Day
+	}
 	s.canaryMu.Unlock()
 }
 
@@ -460,7 +460,7 @@ func (s *Service) canaryStatus(ctx context.Context) *attestation.CanaryStatus {
 		st.State = attestation.CanaryUnreadable
 	case doc == nil:
 		st.State = attestation.CanaryNone
-	case doc.stale(now) && s.staleSeen:
+	case doc.stale(now) && s.staleAlarmDay >= doc.staleFrom():
 		st.State = attestation.CanaryStale
 	case doc.Changed:
 		st.State = attestation.CanaryChanged
