@@ -770,3 +770,72 @@ func TestA20AnAlarmOfAnEarlierStaleEpisodeDoesNotShowALaterOne(t *testing.T) {
 		t.Fatalf("publishes a new stale episode before its alarm, reusing a prior episode's staleSeen: %+v", st)
 	}
 }
+
+// A20: an alarm of an earlier stale episode, sent late by RunAlarms after
+// another enclave's check ended that episode, does not let /status show a
+// later one whose own alarm is not in the record (the third review of pull
+// request 2, the remaining path of the second review's new finding 1).
+func TestA20AnOldAlarmSentLateDoesNotShowALaterStaleEpisode(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	a, b := w.keyed(), w.keyed()
+	answersAsMeasured(a, nil)
+	if err := a.RunCanary(ctx); err != nil {
+		t.Fatal(err)
+	}
+	w.advance(48 * time.Hour)
+	oldDay := dayOf(w.clock())
+	alarmOffline := func(name string) error {
+		if name == RecordAlarms {
+			return errors.New("alarm store offline")
+		}
+		return nil
+	}
+	a.records.onPut(alarmOffline)
+	a.model.onCall(func(context.Context, int, decide.Call) (*decide.Result, error) {
+		return nil, &decide.AttemptError{Err: decide.ErrRequest, Sent: true}
+	})
+	if err := a.RunCanary(ctx); err == nil {
+		t.Fatal("run should fail")
+	}
+	if len(a.alarmsPending) != 1 {
+		t.Fatal("the first stale alarm must be pending")
+	}
+	if st := a.Status(ctx).Canary; st.State == attestation.CanaryStale {
+		t.Fatalf("stale before its alarm is in the record: %+v", st)
+	}
+	w.advance(CanaryLease)
+	answersAsMeasured(b, nil)
+	if err := b.RunCanary(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st := a.Status(ctx).Canary; st.State != attestation.CanarySame {
+		t.Fatal(st)
+	}
+	// The old episode's alarm is added and sent only after the recovery.
+	a.records.onPut(nil)
+	if err := a.RunAlarms(ctx); err != nil {
+		t.Fatal(err)
+	}
+	oldAlarm, ok := w.alarms().has(AlarmCanaryFailed, oldDay)
+	if !ok || oldAlarm.SentAt.IsZero() {
+		t.Fatal("recovery dropped the old due alarm")
+	}
+	w.advance(48 * time.Hour)
+	a.records.onPut(alarmOffline)
+	_ = a.RunCanary(ctx)
+	if _, ok := w.alarms().has(AlarmCanaryFailed, dayOf(w.clock())); ok {
+		t.Fatal("the later alarm should not be in the record")
+	}
+	if st := a.Status(ctx).Canary; st.State == attestation.CanaryStale {
+		t.Fatalf("an old alarm sent after the recovery shows a later stale episode: %+v", st)
+	}
+	// Once the later episode's own alarm is in the record, it is shown.
+	a.records.onPut(nil)
+	if err := a.RunAlarms(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st := a.Status(ctx).Canary; st.State != attestation.CanaryStale {
+		t.Fatalf("the later episode's alarm is in the record: %+v", st)
+	}
+}
