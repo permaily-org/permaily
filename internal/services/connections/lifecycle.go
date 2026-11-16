@@ -73,18 +73,16 @@ func (s *Service) fenceMember(ctx context.Context, account string, m ListMember,
 	return s.endConnection(ctx, m.ID, reason, "", true)
 }
 
-// Reopen implements Lifecycle: whatever of the closing generation is
-// still active is ended first, and only then is the fence lifted, so a
-// cancelled deletion never brings a connection back.
+// Reopen implements Lifecycle: the list is fenced as EndAll fences it, also
+// when the deletion's own fence never committed (EndAll failed, or the
+// account has no list yet with an approval in flight), whatever of the
+// closing generation is still active is ended, and only then is the fence
+// lifted, so a cancelled deletion never brings a connection back (finding 4).
 func (s *Service) Reopen(ctx context.Context, account string) error {
-	l, _, err := s.readList(ctx, account)
-	if err != nil || l == nil || !l.Closing {
+	if err := s.EndAll(ctx, account); err != nil {
 		return err
 	}
-	if err := s.endGeneration(ctx, account, l.Generation); err != nil {
-		return err
-	}
-	_, err = s.updateList(ctx, account, func(l *ListState) error {
+	_, err := s.updateList(ctx, account, func(l *ListState) error {
 		for _, m := range l.Members {
 			if m.State != contracts.ConnectionEnded && m.Generation < l.Generation {
 				return errBusy // one made meanwhile: ended on the next try
