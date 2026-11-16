@@ -21,7 +21,8 @@ let
   # the values that keep it apart from production (its storage, and which
   # builds may receive its root secret).
   # Its "model" object holds only what it changes of the model's (the
-  # month's limit and the day's alarm), so the two are merged.
+  # month's limit, the day's alarm and the evaluations' project), so the two
+  # are merged.
   base = builtins.fromJSON (builtins.readFile ../deploy/enclave.json);
   config = base // lib.optionalAttrs staging (base.staging // {
     model = base.model // (base.staging.model or { });
