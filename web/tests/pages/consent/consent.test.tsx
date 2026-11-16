@@ -1,6 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { MODEL_NOTICE_VERSION, modelNotice } from '../../../src/lib/model-notice.ts'
+import reach from '../../formula/reach.json'
 import { current, expectNotKept, named, open, settle, watchLeaving } from '../../helpers/app.tsx'
 import { expectAccessible } from '../../helpers/axe.ts'
 import {
@@ -834,11 +835,33 @@ describe('V54: what a replacement reaches that the connection did not', () => {
     })
   }
 
-  /** Previews that answer each mailbox with its own messages, all replacing. */
-  function byMailbox(pages: Record<string, unknown[]>) {
+  /** Previews that answer each mailbox with its own messages, all replacing `connection` at `version`. */
+  function byMailbox(
+    pages: Record<string, unknown[]>,
+    replaced: { connection: string; version: number } = {
+      connection: 'con_claudecode',
+      version: 7,
+    },
+  ) {
     return (asked: Asked) => {
       const { mailbox } = asked.body as { mailbox: string }
-      return ok(previewOf(pages[mailbox] ?? [], { change: 'replace', draft_id: 'drf_wider' }))
+      const answer = previewOf(pages[mailbox] ?? [], { change: 'replace', draft_id: 'drf_wider' })
+      return ok({ ...answer, snapshot: { ...answer.snapshot, ...replaced } })
+    }
+  }
+
+  /**
+   * The matches route as the server parses a formula (internal/query, checkTime): a time is RFC 3339 with seconds
+   * and an offset and no fraction, or the whole formula is refused as `invalid_formula`.
+   */
+  function matchesAs(reply: Reply) {
+    const time = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}([Zz]|[+-]\d{2}:\d{2})$/
+    return (asked: Asked) => {
+      const { formula } = asked.body as {
+        formula: { all: { any: { var: string; value: string }[] }[] }
+      }
+      const times = formula.all.flatMap((g) => g.any.filter((c) => c.var === 'received'))
+      return times.every((c) => time.test(c.value)) ? reply : refused(400, 'invalid_formula')
     }
   }
 
@@ -917,7 +940,9 @@ describe('V54: what a replacement reaches that the connection did not', () => {
     }
     server.on(
       `POST /api/v1/mailboxes/${personal.id}/matches`,
-      ok({ messages: [received(1, '2026-11-10T09:00:00Z')], needs_model: [], unknown: [] }),
+      matchesAs(
+        ok({ messages: [received(1, '2026-11-10T09:00:00Z')], needs_model: [], unknown: [] }),
+      ),
     )
     await consent(
       replacing(
@@ -949,6 +974,8 @@ describe('V54: what a replacement reaches that the connection did not', () => {
       ['received since'],
       ['received before'],
     ])
+    // The formula as sent is the one web/tests/formula's Go test parses with internal/query: the two cannot drift.
+    expect(formula).toEqual(reach)
   })
 
   it('marks every one new when it cannot tell what the connection’s query matches', async () => {
@@ -1005,5 +1032,79 @@ describe('V54: what a replacement reaches that the connection did not', () => {
     await screen.findByText('Subject 1')
     expect(rows()).toEqual([['Subject 1', false]])
     expect(screen.getByRole('region', { name: 'Preview' }).textContent).not.toContain('marked new')
+  })
+
+  /**
+   * The request began naming connection A (MCP, both mailboxes); before its preview, another tab replaced A with B
+   * (the API, the personal mailbox only). The preview names B, and Allow sends B's snapshot: the marks compare with B.
+   */
+  function replacedInAnotherTab() {
+    return replacing(
+      { id: 'con_original', mailboxes: [personal.id, work.id], since: { new: false } },
+      {
+        resource: 'api',
+        draft: { mailboxes: [work.id], since: { new: false } },
+        snapshot: snapshotOf({ change: 'replace', connection: 'con_original', version: 7 }),
+      },
+    )
+  }
+  const replacement = connectionOf({
+    id: 'con_replacement',
+    resource: 'api',
+    mailboxes: [personal.id],
+    since: { new: false },
+    version: 1,
+  })
+  const replacementRoute = 'GET /api/v1/connections/con_replacement'
+
+  it('compares with the connection the preview’s snapshot names, not the one the request began with', async () => {
+    server
+      .on(replacementRoute, ok(replacement))
+      .on(decisionRoute, refused(409, 'too_many_connections'))
+    const { user } = await consent(
+      replacedInAnotherTab(),
+      byMailbox(
+        { [work.id]: [received(1, '2026-11-10T09:00:00Z')] },
+        { connection: 'con_replacement', version: 1 },
+      ),
+    )
+    await screen.findByText('Subject 1')
+    await settle()
+    // B cannot read the work mailbox: the message is new, and nothing is said of A's resource.
+    expect(rows()).toEqual([['Subject 1', true]])
+    const preview = screen.getByRole('region', { name: 'Preview' }).textContent
+    expect(preview).toContain("1 of them your connection doesn't read. They're marked new.")
+    expect(preview).not.toContain('already reads')
+    expect(preview).not.toContain('reads through MCP')
+    await user.click(allowButton())
+    await waitFor(() => expect(server.asked(decisionRoute)).toHaveLength(1))
+    expect(server.asked(decisionRoute)[0].body).toMatchObject({
+      snapshot: { connection: 'con_replacement', version: 1 },
+    })
+  })
+
+  it.each<[string, Reply]>([
+    [
+      'is not that version any more',
+      ok({ ...replacement, mailboxes: [personal.id, work.id], version: 2 }),
+    ],
+    ['cannot be had', refused(404, 'not_found')],
+  ])('marks every one new when the connection the snapshot names %s', async (_, reply) => {
+    server.on(replacementRoute, reply)
+    await consent(
+      replacedInAnotherTab(),
+      byMailbox(
+        { [work.id]: [received(1, '2026-11-10T09:00:00Z')] },
+        { connection: 'con_replacement', version: 1 },
+      ),
+    )
+    await screen.findByText('Subject 1')
+    await settle()
+    expect(rows()).toEqual([['Subject 1', true]])
+    const preview = screen.getByRole('region', { name: 'Preview' }).textContent
+    expect(preview).toContain(
+      'Your connection changed while this screen was open, so every one is marked new.',
+    )
+    expect(preview).not.toContain('reads through')
   })
 })
