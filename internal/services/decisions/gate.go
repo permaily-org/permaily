@@ -37,8 +37,11 @@ var probeAtom = query.Atom{Var: contracts.VarSubject, Op: contracts.OpAbout, Top
 //
 // A provider's stop is lifted only by an answer to a probe: when one is due
 // the gate sends it (a fixed subject, from the canary's share), at most one
-// every probeEvery between this and every other attempt, and opens only if
-// the provider answered it. The spend record the gate reads again itself,
+// every probeEvery between this and every other attempt, gates that find
+// the same probe due included, and opens only once the provider answered a
+// probe of that stop. After the probe it reads the stop as it is then
+// (afterProbe), lifting nothing: the key the probe was sent with may not
+// be the one the gate read, and a refusal of it stays. The spend record the gate reads again itself,
 // within gateRead, at most once every spendCheck, so a record that reads
 // again opens the gate without a restart, and one that does not keeps it
 // closed.
@@ -47,10 +50,10 @@ func (s *Service) Gate(ctx context.Context, account string) inbox.AskOutcome {
 	if s.model == nil || !k.set {
 		return inbox.AskOff
 	}
-	h, due := s.stopped(k.fp)
+	h, due, gen := s.stopped(k.fp)
 	if h != holdNone && due {
-		s.probe(ctx)
-		h, _ = s.stopped(k.fp)
+		s.probe(ctx, gen)
+		h = s.afterProbe()
 	}
 	switch h {
 	case holdOff:
@@ -77,8 +80,9 @@ func (s *Service) Gate(ctx context.Context, account string) inbox.AskOutcome {
 
 // stopped is what stops every attempt now, whether or not a probe is due
 // (held lets the probe through; the gate does not): the key in use refused,
-// the provider's limit, a forked month. due says a probe may be sent.
-func (s *Service) stopped(fp string) (h hold, due bool) {
+// the provider's limit, a forked month. due says a probe may be sent, and
+// gen is the stop it would be the probe of.
+func (s *Service) stopped(fp string) (h hold, due bool, gen uint64) {
 	g := &s.guard
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -86,28 +90,45 @@ func (s *Service) stopped(fp string) (h hold, due bool) {
 	if g.refusedStop && fp != g.refusedFP {
 		g.refusedStop, g.refused = false, false // a new key: try it
 	}
-	due = now.Sub(g.probeAt) >= probeEvery || now.Before(g.probeAt)
+	due = g.probeDue(now)
 	switch {
 	case g.refusedStop:
-		return holdOff, due
+		return holdOff, due, g.gen
 	case g.providerStop:
-		return holdLimit, due
+		return holdLimit, due, g.gen
 	case g.forkedMonth == monthOf(now):
-		return holdLimit, false
+		return holdLimit, false, g.gen
 	}
-	return holdNone, false
+	return holdNone, false, g.gen
 }
 
-// probe sends the gate's probe, within decide.MessageDeadline: reserved as
-// any attempt (reserve takes it as the stop's probe, or holds it when
-// another was let through within probeEvery), and its answer lifts the stop
-// (answered).
-func (s *Service) probe(ctx context.Context) {
+// afterProbe is what stops every attempt once the gate's probe ended,
+// read as it is and lifting nothing: only the answer to a probe of the
+// stop lifts it (answered), so a refusal recorded since the gate read the
+// key, of the key the probe was sent with or a later one, keeps the gate
+// closed. The next gate reads the key again.
+func (s *Service) afterProbe() hold {
+	g := &s.guard
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	switch {
+	case g.refusedStop:
+		return holdOff
+	case g.providerStop, g.forkedMonth == monthOf(s.now()):
+		return holdLimit
+	}
+	return holdNone
+}
+
+// probe sends the gate's probe of the stop gen, within
+// decide.MessageDeadline: only if it claims that stop's probe
+// (reserveProbe), and its answer lifts the stop (answered).
+func (s *Service) probe(ctx context.Context, gen uint64) {
 	ctx, cancel := context.WithTimeout(ctx, decide.MessageDeadline)
 	defer cancel()
 	calls, _ := decide.Plan([]query.Atom{probeAtom}, probeSubject, "", false)
 	for _, c := range calls {
-		s.call(ctx, c, "", false)
+		s.probeCall(ctx, c, gen)
 	}
 }
 

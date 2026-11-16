@@ -163,7 +163,7 @@ func (s *Service) held(fp string) hold {
 	if g.refusedStop && fp != g.refusedFP {
 		g.refusedStop, g.refused = false, false // a new key: try it
 	}
-	probeDue := now.Sub(g.probeAt) >= probeEvery || now.Before(g.probeAt)
+	probeDue := g.probeDue(now)
 	switch {
 	case g.refusedStop && !probeDue:
 		return holdOff
@@ -175,6 +175,12 @@ func (s *Service) held(fp string) hold {
 	return holdNone
 }
 
+// probeDue says a probe may be let through now: none was within
+// probeEvery. g.mu is held.
+func (g *guard) probeDue(now time.Time) bool {
+	return now.Sub(g.probeAt) >= probeEvery || now.Before(g.probeAt)
+}
+
 // reserve reserves an attempt's estimate before it is sent, or says why it
 // may not be sent. fp is the fingerprint of the key it would be sent with;
 // account is whose share it counts in ("" for the canary).
@@ -183,13 +189,12 @@ func (s *Service) reserve(ctx context.Context, est int64, account, fp string) (*
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := s.now()
-	day, month := dayOf(now), monthOf(now)
 	if g.refusedStop && fp != g.refusedFP {
 		g.refusedStop, g.refused = false, false
 	}
 	probe := false
 	if g.refusedStop || g.providerStop {
-		if now.Sub(g.probeAt) < probeEvery && !now.Before(g.probeAt) {
+		if !g.probeDue(now) {
 			if g.refusedStop {
 				return nil, holdOff
 			}
@@ -197,6 +202,34 @@ func (s *Service) reserve(ctx context.Context, est int64, account, fp string) (*
 		}
 		probe = true
 	}
+	return s.take(ctx, now, est, account, probe)
+}
+
+// reserveProbe reserves the gate's probe, only as the probe of the stop
+// the gate found (gen): still in place, its probe due, and claimed here,
+// under the guard's lock, so gates that find the same probe due send one
+// between them. It returns nil and holdNone when there is nothing to
+// claim (the stop was lifted or replaced, or another attempt took its
+// probe): nothing is sent, and the gate looks again. Unlike reserve, it
+// lifts no refusal for a new key: the probe is the stop's, whichever key
+// it is sent with, and only its answer lifts the stop (answered).
+func (s *Service) reserveProbe(ctx context.Context, est int64, gen uint64) (*reservation, hold) {
+	g := &s.guard
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	now := s.now()
+	if g.gen != gen || !g.refusedStop && !g.providerStop || !g.probeDue(now) {
+		return nil, holdNone
+	}
+	return s.take(ctx, now, est, "", true)
+}
+
+// take reserves an attempt's estimate from this enclave's grants, or a new
+// one, at now; probe is whether it is let through as the stop's probe.
+// g.mu is held.
+func (s *Service) take(ctx context.Context, now time.Time, est int64, account string, probe bool) (*reservation, hold) {
+	g := &s.guard
+	day, month := dayOf(now), monthOf(now)
 	if g.forkedMonth == month {
 		return nil, holdLimit
 	}
