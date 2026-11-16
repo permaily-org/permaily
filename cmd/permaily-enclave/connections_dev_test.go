@@ -723,8 +723,9 @@ func TestV46EveryConnectionsRouteIsOnItsHost(t *testing.T) {
 	// routes need a session.
 	// (The web app's index.html, or, in a test binary built without the web
 	// app, its fixed answer: the SPA's either way.)
-	if rec := ask(hosts.App, "GET", oauth.PathAuthorize+"?client_id=x", ""); rec.Header().Get("Cache-Control") != "no-cache" ||
-		!(rec.Code == 200 && strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") || strings.Contains(rec.Body.String(), "web UI not built")) {
+	rec := ask(hosts.App, "GET", oauth.PathAuthorize+"?client_id=x", "")
+	spa := rec.Code == 200 && strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") || strings.Contains(rec.Body.String(), "web UI not built")
+	if rec.Header().Get("Cache-Control") != "no-cache" || !spa {
 		t.Fatalf("the authorization page: %d %v %s", rec.Code, rec.Header(), rec.Body)
 	}
 	for _, r := range [][2]string{{"GET", "/api/v1/connections"}, {"POST", "/api/v1/oauth/requests"}} {
