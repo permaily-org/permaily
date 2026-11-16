@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -327,16 +328,16 @@ func TestV32Receipts(t *testing.T) {
 		tok := w.connectAll(s, w.person(accountA), x)
 		g := w.grant(s, x, tok.AccessToken)
 		w.disc.pause = func() { w.clock.add(6 * time.Second) }
-		reads := 0
+		var reads atomic.Int32 // the lease's watcher reads in its own goroutine
 		f.set(func(op, name string) error {
 			if op == "get" && strings.HasPrefix(name, RecordConnection) {
-				reads++
+				reads.Add(1)
 			}
 			return nil
 		})
 		_, rel, err := s.Search(ctx, g, contracts.VendorSearch{})
-		if err != nil || reads == 0 {
-			t.Fatal(err, reads)
+		if err != nil || reads.Load() == 0 {
+			t.Fatal(err, reads.Load())
 		}
 		if _, err := rel.Start(ctx); err != nil {
 			t.Fatal(err)
@@ -348,10 +349,10 @@ func TestV32Receipts(t *testing.T) {
 		w.grant(s, x, tok.AccessToken)
 		w.clock.add(4900 * time.Millisecond)
 		g = w.grant(s, x, tok.AccessToken)
-		reads = 0
+		reads.Store(0)
 		_, rel, err = s.Search(ctx, g, contracts.VendorSearch{})
-		if err != nil || reads == 0 {
-			t.Fatal(err, reads)
+		if err != nil || reads.Load() == 0 {
+			t.Fatal(err, reads.Load())
 		}
 		rel.Finish(true)
 
