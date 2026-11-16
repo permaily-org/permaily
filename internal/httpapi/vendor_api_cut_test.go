@@ -240,7 +240,7 @@ func TestV45TheCutNeverActsOnTheWriterAfterTheHandlerReturned(t *testing.T) {
 	prev := runtime.GOMAXPROCS(1)
 	defer runtime.GOMAXPROCS(prev)
 	lease := newLease()
-	h := attachmentAPI([]byte("x"), lease, io.Discard)
+	h := httpapi.Hooked(attachmentAPI([]byte("x"), lease, io.Discard))
 	lw := &lateWriter{ResponseRecorder: httptest.NewRecorder(), lease: lease}
 	r := httptest.NewRequest("GET", "https://"+apiHost+"/v1/messages/mbx_1.1/attachments/0", nil)
 	r.Header.Set("Authorization", "Bearer "+apiToken)

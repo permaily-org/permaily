@@ -122,7 +122,7 @@ func newConnApp(t *testing.T) *connApp {
 	})
 	httpapi.MountConnections(httpapi.ConnectionsMounts{App: app, API: api, MCP: mcp, SPA: spa}, cfg)
 	app.Handle("/", spa)
-	a.h = router.New(nil, map[string]http.Handler{appHost: httpapi.AppHost(app, nil), apiHost: httpapi.ResourceHost(api), mcpHost: httpapi.ResourceHost(mcp)})
+	a.h = httpapi.Hooked(router.New(nil, map[string]http.Handler{appHost: httpapi.AppHost(app, nil), apiHost: httpapi.ResourceHost(api), mcpHost: httpapi.ResourceHost(mcp)}))
 	return a
 }
 

@@ -100,8 +100,9 @@ const sendsMail = true
 
 // route answers method alone, and runs next with the grant of the request's
 // bearer token; name is the route in the request's line. A route that sends
-// mail (leased) is refused over HTTP/2 before the token is checked, so
-// nothing is prepared, recorded or sent (refusedOverHTTP2).
+// mail (leased) is refused over HTTP/2, or on a connection the server did
+// not keep, before the token is checked, so nothing is prepared, recorded or
+// sent (refusedWithoutAbort).
 func (v *vendorAPI) route(name, method string, leased bool, next func(http.ResponseWriter, *http.Request, *oauth.Grant)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		setRoute(r, name)
@@ -114,7 +115,7 @@ func (v *vendorAPI) route(name, method string, leased bool, next func(http.Respo
 			v.challenge(w, http.StatusUnauthorized, "", nil, "unauthorized", "a bearer token for this API is required")
 			return
 		}
-		if leased && refusedOverHTTP2(w, r) {
+		if leased && refusedWithoutAbort(w, r) {
 			return
 		}
 		g, err := v.cfg.Service.Check(r.Context(), contracts.ResourceAPI, token)
@@ -265,15 +266,19 @@ func (v *vendorAPI) sendJSON(w http.ResponseWriter, r *http.Request, rel connect
 	v.send(w, r, rel, "application/json", append(b, '\n'), nil)
 }
 
-// refusedOverHTTP2 answers a request for mail over HTTP/2: 503 with
-// Retry-After, logged no_abort, and true. Go's HTTP/2 server writes a
-// response's last bytes (its END_STREAM) after the handler returned, into a
-// buffer another goroutine flushes, so nothing in the handler can learn when
-// they reached the socket, and a lease could end while they wait there (ADR
-// 0030, "Changed after the second review of pull request 6"). Over HTTP/1.1
-// the last Flush returns once the socket took every byte.
-func refusedOverHTTP2(w http.ResponseWriter, r *http.Request) bool {
-	if r.ProtoMajor < 2 {
+// refusedWithoutAbort answers a request for mail that a cut could not
+// abort: 503 with Retry-After, logged no_abort, and true. Over HTTP/2: Go's
+// HTTP/2 server writes a response's last bytes (its END_STREAM) after the
+// handler returned, into a buffer another goroutine flushes, so nothing in
+// the handler can learn when they reached the socket, and a lease could end
+// while they wait there (ADR 0030, "Changed after the second review of pull
+// request 6"); over HTTP/1.1 the last Flush returns once the socket took
+// every byte. On a connection the server did not keep (ConnContext not set):
+// nothing could close it, and the response's deadlines alone do not end
+// every wait of its writer (ADR 0030, "Changed after the third review of
+// pull requests 6 and 7").
+func refusedWithoutAbort(w http.ResponseWriter, r *http.Request) bool {
+	if conn, _ := r.Context().Value(connKey{}).(net.Conn); r.ProtoMajor == 1 && conn != nil {
 		return false
 	}
 	setOutcome(r, outcomeNoAbort)
@@ -288,7 +293,8 @@ func refusedOverHTTP2(w http.ResponseWriter, r *http.Request) bool {
 // while Start's context lasts. Finish is called once, after the transfer,
 // sent only for an answer whose last byte the transport handed to the
 // socket while the lease was held; a transfer that did not end so aborts the
-// response, logged by why. Over HTTP/2 the route refused it before (route).
+// response, logged by why. Over HTTP/2, or without the connection's hook,
+// the route refused it before (route).
 func (v *vendorAPI) send(w http.ResponseWriter, r *http.Request, rel connections.Release, contentType string, body []byte, header func(http.Header)) {
 	if r.Context().Err() != nil {
 		rel.Finish(false) // the client left: nothing is started
@@ -402,10 +408,12 @@ func (a *admission) admit() bool {
 }
 
 // abort closes the admission and the connection, once; a second call
-// returns when the first completed. The socket's write deadline goes first:
-// a TLS Close waits for TLS's output lock, which a write blocked on the
-// socket (a KeyUpdate's reply among them) holds, and would hold the cut as
-// long as the peer reads nothing.
+// returns when the first completed. The socket's deadlines go first: a TLS
+// Close waits for TLS's output lock, which a write blocked on the socket (a
+// KeyUpdate's reply among them) holds, and would hold the cut as long as the
+// peer reads nothing. The read's deadline is set too, the response's as
+// well as the socket's: Go's HTTP/1.1 server drains a body nobody read as
+// the answer's header is first written, a read no write deadline ends.
 func (a *admission) abort() {
 	a.once.Do(func() {
 		defer close(a.done)
@@ -416,9 +424,10 @@ func (a *admission) abort() {
 		}
 		a.mu.Unlock()
 		if a.conn != nil {
-			_ = a.conn.SetWriteDeadline(time.Now())
+			_ = a.conn.SetDeadline(time.Now())
 			_ = a.conn.Close()
 		}
+		_ = a.rc.SetReadDeadline(time.Now())
 		_ = a.rc.SetWriteDeadline(time.Now())
 	})
 }
@@ -437,7 +446,8 @@ type connKey struct{}
 // each connection in its requests' context, so that a lease that ends while
 // its answer is sent closes the connection itself, the socket's deadline
 // set first, and nothing the server still holds of the response leaves when
-// it closes it. Without it the response's write deadline alone aborts it.
+// it closes it. Without it a route that sends mail is refused (503 no_abort)
+// before the token is checked.
 func ConnContext(ctx context.Context, c net.Conn) context.Context {
 	return context.WithValue(ctx, connKey{}, c)
 }

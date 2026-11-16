@@ -232,3 +232,13 @@ func (c *drainConn) Read(b []byte) (int, error) {
 	}
 	return c.Conn.Read(b)
 }
+
+// A transfer whose lease ended because its client left says so, whoever saw
+// the end first: the transfer or the context's callback.
+func TestATransferWhoseClientLeftSaysSo(t *testing.T) {
+	req, leave := context.WithCancel(context.Background())
+	leave()
+	if sent, ended := httpapi.Transfer(req, req, httptest.NewRecorder(), nil, []byte("private_marker")); sent || ended != "client_left" {
+		t.Fatalf("sent %v, ended %q", sent, ended)
+	}
+}

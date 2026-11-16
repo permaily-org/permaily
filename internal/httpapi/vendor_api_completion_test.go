@@ -439,7 +439,7 @@ func TestV45BTheAbortCompletesBeforeTheHandlerReturns(t *testing.T) {
 	prev := runtime.GOMAXPROCS(1) // the context's own watcher does not run first
 	defer runtime.GOMAXPROCS(prev)
 	lease := &chanLease{done: make(chan struct{})}
-	h := attachmentAPI(make([]byte, 3*sendChunk), lease, io.Discard)
+	h := httpapi.Hooked(attachmentAPI(make([]byte, 3*sendChunk), lease, io.Discard))
 	w := &cutWriter{ResponseRecorder: httptest.NewRecorder(), cut: lease.Cut}
 	r := httptest.NewRequest("GET", "https://"+apiHost+"/v1/messages/mbx_1.1/attachments/0", nil)
 	r.Header.Set("Authorization", "Bearer "+apiToken)

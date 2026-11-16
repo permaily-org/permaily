@@ -220,7 +220,7 @@ func TestV44NoAliasOfARouteRedirectsOrReflects(t *testing.T) {
 		Service: a.fake, OAuth: testOAuth, Metadata: testMetadata, ResourceMetadata: testResourceMetadata,
 		Challenge: testChallenge, Log: slog.New(slog.DiscardHandler),
 	}
-	for name, h := range map[string]http.Handler{"server": httpapi.AuthorizationServer(cfg), "api": httpapi.VendorAPI(cfg)} {
+	for name, h := range map[string]http.Handler{"server": httpapi.AuthorizationServer(cfg), "api": httpapi.Hooked(httpapi.VendorAPI(cfg))} {
 		for _, path := range aliases[apiHost] {
 			t.Run(name+" "+path, func(t *testing.T) {
 				rec := httptest.NewRecorder()

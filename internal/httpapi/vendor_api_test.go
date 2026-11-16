@@ -537,6 +537,7 @@ func TestV45ALeaseCutDuringABlockedTransfer(t *testing.T) {
 		api.ServeHTTP(w, r)
 	}))
 	srv.Listener = smallBuffers{srv.Listener}
+	srv.Config.ConnContext = httpapi.ConnContext
 	srv.Config.ErrorLog = nil
 	srv.Start()
 	defer srv.Close()
@@ -713,7 +714,7 @@ func TestV45ALeaseEndedWritesNothingMore(t *testing.T) {
 	fake.AttachmentFunc = func(context.Context, *oauth.Grant, string, int) (*inbox.Attachment, connections.Release, error) {
 		return &inbox.Attachment{Data: make([]byte, 100<<10)}, lease, nil
 	}
-	api := httpapi.VendorAPI(httpapi.ConnectionsConfig{Service: fake, OAuth: testOAuth, Challenge: testChallenge, Log: slog.New(slog.DiscardHandler)})
+	api := httpapi.Hooked(httpapi.VendorAPI(httpapi.ConnectionsConfig{Service: fake, OAuth: testOAuth, Challenge: testChallenge, Log: slog.New(slog.DiscardHandler)}))
 	request := func() *http.Request {
 		r := httptest.NewRequest("GET", "https://"+apiHost+"/v1/messages/mbx_1.1/attachments/0", nil)
 		r.Header.Set("Authorization", "Bearer "+apiToken)
