@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -133,7 +134,11 @@ func TestV56TheConnectionsOnStatus(t *testing.T) {
 	// permaily-verify's tests check this very section passes (V56): it is
 	// their testdata, which must say what the image says.
 	golden, err := os.ReadFile("../permaily-verify/testdata/connections-status.json")
-	if err != nil || strings.TrimSpace(string(golden)) != string(got) {
+	var compact bytes.Buffer
+	if err == nil {
+		err = json.Compact(&compact, golden)
+	}
+	if err != nil || compact.String() != string(got) {
 		t.Fatalf("permaily-verify's testdata/connections-status.json is not what the image says (%v): write it as\n%s", err, got)
 	}
 	if len(def.Formulas) != 3 || st.Since.IsZero() {

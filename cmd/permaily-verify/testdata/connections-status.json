@@ -1,1 +1,87 @@
-{"issuer":"https://api.permaily.com","authorization_endpoint":"https://app.permaily.com/oauth/authorize","token_endpoint":"https://api.permaily.com/oauth/token","revocation_endpoint":"https://api.permaily.com/oauth/revoke","pushed_endpoint":"https://api.permaily.com/oauth/par","resources":["https://api.permaily.com/v1","https://mcp.permaily.com/mcp"],"grants":["authorization_code","refresh_token"],"client_auth":["none","private_key_jwt"],"client_documents":true,"dynamic_registration":false,"access_token_seconds":3600,"refresh_token_seconds":2592000,"refresh_retry_seconds":30,"code_seconds":60,"code_reuse":"denied","revocation_seconds":5,"connection_default_days":90,"connection_max_days":365,"revocation_covers":"every_byte","assertion_replay":"strict","vendor_transport":"h2","devices_per_connection":16,"model_unavailable":"nothing_leaves","verified":[{"domain":"claude.ai","owner":"Anthropic"},{"domain":"chatgpt.com","owner":"OpenAI"}],"rules":[{"id":"default-sign-in-and-security","version":1,"formulas":["qry_ghi2xjhazzz25rgsy6arrif4ke","qry_dq33uknaplrglzyuws6gcb2uje","qry_lh52gob7oeycyjrkqg2lpn2lje"],"on":true}],"receipts":{"sealed":true,"chained":false,"decisions":"strict","decisions_per_day":28800},"since":"2026-11-16T12:00:00Z","refused":{"allowed":0,"assertion":0,"assertion_replay":0,"assertions_full":0,"client_document_invalid":0,"client_id_invalid":0,"consent_changed":0,"cut":0,"decisions_full":0,"denied":0,"insufficient_scope":0,"invalid_client":0,"invalid_cursor":0,"invalid_formula":0,"invalid_grant":0,"invalid_limit":0,"invalid_request":0,"invalid_scope":0,"invalid_target":0,"invalid_token":0,"model_notice_changed":0,"model_unavailable":0,"rate_limited":0,"receipt_failed":0,"redirect_uri_invalid":0,"refresh_retry":0,"request_too_large":0,"reuse":0,"revoked_person":0,"revoked_vendor":0,"token_issued":0,"too_late":0,"too_many_connections":0,"too_many_devices":0,"unsupported_grant_type":0,"vendor_unreachable":0,"wrong_resource":0}}
+{
+  "issuer": "https://api.permaily.com",
+  "authorization_endpoint": "https://app.permaily.com/oauth/authorize",
+  "token_endpoint": "https://api.permaily.com/oauth/token",
+  "revocation_endpoint": "https://api.permaily.com/oauth/revoke",
+  "pushed_endpoint": "https://api.permaily.com/oauth/par",
+  "resources": ["https://api.permaily.com/v1", "https://mcp.permaily.com/mcp"],
+  "grants": ["authorization_code", "refresh_token"],
+  "client_auth": ["none", "private_key_jwt"],
+  "client_documents": true,
+  "dynamic_registration": false,
+  "access_token_seconds": 3600,
+  "refresh_token_seconds": 2592000,
+  "refresh_retry_seconds": 30,
+  "code_seconds": 60,
+  "code_reuse": "denied",
+  "revocation_seconds": 5,
+  "connection_default_days": 90,
+  "connection_max_days": 365,
+  "revocation_covers": "every_byte",
+  "assertion_replay": "strict",
+  "vendor_transport": "h2",
+  "devices_per_connection": 16,
+  "model_unavailable": "nothing_leaves",
+  "verified": [
+    { "domain": "claude.ai", "owner": "Anthropic" },
+    { "domain": "chatgpt.com", "owner": "OpenAI" }
+  ],
+  "rules": [
+    {
+      "id": "default-sign-in-and-security",
+      "version": 1,
+      "formulas": [
+        "qry_ghi2xjhazzz25rgsy6arrif4ke",
+        "qry_dq33uknaplrglzyuws6gcb2uje",
+        "qry_lh52gob7oeycyjrkqg2lpn2lje"
+      ],
+      "on": true
+    }
+  ],
+  "receipts": {
+    "sealed": true,
+    "chained": false,
+    "decisions": "strict",
+    "decisions_per_day": 28800
+  },
+  "since": "2026-11-16T12:00:00Z",
+  "refused": {
+    "allowed": 0,
+    "assertion": 0,
+    "assertion_replay": 0,
+    "assertions_full": 0,
+    "client_document_invalid": 0,
+    "client_id_invalid": 0,
+    "consent_changed": 0,
+    "cut": 0,
+    "decisions_full": 0,
+    "denied": 0,
+    "insufficient_scope": 0,
+    "invalid_client": 0,
+    "invalid_cursor": 0,
+    "invalid_formula": 0,
+    "invalid_grant": 0,
+    "invalid_limit": 0,
+    "invalid_request": 0,
+    "invalid_scope": 0,
+    "invalid_target": 0,
+    "invalid_token": 0,
+    "model_notice_changed": 0,
+    "model_unavailable": 0,
+    "rate_limited": 0,
+    "receipt_failed": 0,
+    "redirect_uri_invalid": 0,
+    "refresh_retry": 0,
+    "request_too_large": 0,
+    "reuse": 0,
+    "revoked_person": 0,
+    "revoked_vendor": 0,
+    "token_issued": 0,
+    "too_late": 0,
+    "too_many_connections": 0,
+    "too_many_devices": 0,
+    "unsupported_grant_type": 0,
+    "vendor_unreachable": 0,
+    "wrong_resource": 0
+  }
+}

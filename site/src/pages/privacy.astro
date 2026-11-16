@@ -86,20 +86,28 @@ const soon = [
   {
     data: 'Your rules, your connections and the queries you approved',
     why: 'To give each connection only what you approved',
-    where: 'Sealed, except the app’s name, dates and state of each connection, which we can read',
-    kept: 'Until you delete them, the connection ends, or the account is removed',
+    where:
+      'Your connections’ list and each connection’s record, signed. We can read which app or agent each is (its web address and the name it gives itself), what it may read (the parts of your mail and the mailboxes), its devices, dates and state; the query you approved and what the consent screen showed you are sealed',
+    kept: 'Until it ends, and 30 days after so you can see it ended, or until the account is removed',
   },
   {
-    data: 'Receipts of what each connection received, and of what was refused',
+    data: 'Codes and tokens an app or agent holds for a connection',
+    why: 'To check, on every request, that the connection is still yours and still on',
+    where: 'Sealed, under a hash of each secret: never the secret itself',
+    kept: 'A code a minute, an access token an hour, a refresh token 30 days, none past its connection’s end',
+  },
+  {
+    data: 'Receipts of what each connection was given, and of what was refused, with the senders and subjects of what left (never its text)',
     why: 'So you can see what left',
-    where: 'Sealed, chained so that a missing one shows',
+    where:
+      'Sealed. Not chained yet: until a later release chains them, someone who can write to our database could delete one without it showing',
     kept: 'As long as your account, even after the mail they describe is gone',
   },
   {
-    data: 'What a model said about a message and a topic',
-    why: 'So the same question gets the same answer',
+    data: 'What a model said about a message and a topic, and whether the rule that holds back sign-in mail held a message',
+    why: 'So the same question gets the same answer, and a message held stays held',
     where: 'Sealed',
-    kept: 'As long as the message',
+    kept: 'As long as the message, and an hour more for what the rule decided',
   },
 ];
 
@@ -249,11 +257,23 @@ const providers = [
     <p>What OpenAI keeps: it doesn’t train on what its API receives. Its abuse-monitoring logs may hold the text it receives, and its answer, for up to 30 days, and it may keep flagged text and a sample of requests for automated safety review, for a time it doesn’t state (<a class="link" href="https://developers.openai.com/api/docs/guides/your-data">OpenAI, your data</a>). The part that turns a rule into conditions also keeps a request for 30 days unless the request asks it not to; the service is planned to ask it not to. We’ll ask OpenAI for zero data retention, which only OpenAI can approve, and we won’t wait for it: until it’s approved, your mail goes to OpenAI on the terms above, and the consent screen will say so. Zero data retention takes the text out of those logs, OpenAI says; its page doesn’t say whether it also ends the safety sample, and either way it’s OpenAI’s word, which we can’t check.</p>
     <p>None of this is running: mailboxes, rules and connections aren’t built yet.</p>
 
+    <h2>What a connection gives an app or an agent (planned)</h2>
+    <p>A connection is an app or an AI agent you allow to read some of your mail, on a screen that says who asks, what it asks for and what it would get. What it receives:</p>
+    <ul>
+      <li><b>Only what you approved.</b> The parts you allowed (the sender and the date always; the subject, the text and attachments only if allowed) of the mail the connection may read: the mailboxes you chose, since the date you chose, matching what it asked for, minus what a rule holds back. Nothing else of your mail, your account or your other connections.</li>
+      <li><b>Sign-in mail stays back.</b> Every account has a rule from the start that holds back sign-in codes and password resets. To decide mail its exact words don’t settle, the service asks OpenAI about each message a connection would read, under the model’s notice you agree to; an app or agent is never told a message was held. While the service can’t ask its model, no mail leaves for any connection.</li>
+      <li><b>Who asks.</b> To know who’s asking, the service fetches the app’s public description from the app’s own web address. The machine in front of the service sees which address is fetched and when, and nothing else of the request.</li>
+      <li><b>Another device.</b> The same app or agent on another of your devices is added to your connection only when you confirm it on the same screen.</li>
+      <li><b>It ends.</b> You can revoke a connection, or one of its devices, at any time in the app; it stops at once, and anything being sent stops within five seconds. Each connection also ends on its own, after 90 days unless you renew it. Mail it was already given can’t be recalled.</li>
+      <li><b>What the app does with it is the app’s.</b> Apps and agents are recipients you choose, not companies working for us: their own policies govern what they keep and share.</li>
+      <li><b>A record of what left.</b> Each request a connection makes leaves a receipt, sealed: what it was given, with the senders and subjects of what left and never its text, and what it was refused. Receipts are kept for as long as your account.</li>
+    </ul>
+
     <h2>Why we use your data</h2>
     <p>Only to run the service you asked for, to keep accounts safe, to answer you, and to do what the law requires. We don’t sell or share your data for advertising, build profiles, or send marketing.</p>
 
     <h2>Who else is involved</h2>
-    <p>AWS runs the hardware, storage and keys, serves this website, and carries the mail we send you; its terms let it store and scan that mail to block spam and abuse. Cloudflare answers DNS questions, including the ones the service asks to check where a message came from. If you sign in with a provider, it tells us it’s you. Your mail provider will forward your mail to us once mailboxes open. Connections you approve receive what you approved, under their own policies. The list, with what each one gets, is on <a class="link" href={LINKS.subprocessors}>Subprocessors</a>. No other company collects information about what you do on other sites through Permaily.</p>
+    <p>AWS runs the hardware, storage and keys, serves this website, and carries the mail we send you; its terms let it store and scan that mail to block spam and abuse. Cloudflare answers DNS questions, including the ones the service asks to check where a message came from. If you sign in with a provider, it tells us it’s you. Your mail provider will forward your mail to us once mailboxes open. Connections you approve receive what you approved, under their own policies: they’re recipients you choose, not companies working for us. The list, with what each one gets, is on <a class="link" href={LINKS.subprocessors}>Subprocessors</a>. No other company collects information about what you do on other sites through Permaily.</p>
 
     <h2>What we and the admins can see and do</h2>
     <p>We, and the admins, see each account’s contact address, name, state, dates, how many passkeys and sessions it has, which providers are linked, whether it’s blocked or closing, and the admin log. Through the service we and the admins can block an account and unblock it, sign all its devices out, ask to delete it (the same seven days as when you ask), cancel a deletion we asked for (not one you asked for), make and revoke invitations, and, for the super admin, make and remove admins. You’re told by mail of a block, an unblock, a deletion asked or cancelled, and becoming or no longer being an admin; not when your devices are signed out.</p>
@@ -304,7 +324,7 @@ const providers = [
       <li><b>See and change it.</b> Settings shows your account, your ways to sign in and your devices. You can change your name and contact address there.</li>
       <li><b>A copy.</b> There’s no export button yet. Until there is, write to us from your contact address and we’ll send your account data within 30 days. Mail we can’t read, so we can’t send it; once mailboxes open, you can read and delete it in the app.</li>
       <li><b>Delete it.</b> Delete your account in Settings. It closes at once, you can cancel for seven days, and then it’s removed. What’s removed, when, and what stays: <a class="link" href={LINKS.dataDeletion}>Deleting your data</a>.</li>
-      <li><b>Revoke access.</b> Once connections open, revoking one stops it at once. Mail a connection already received can’t be recalled.</li>
+      <li><b>Revoke access.</b> Once connections open, revoking one, or one of its devices, stops it at once, and anything being sent within five seconds. Mail a connection already received can’t be recalled.</li>
       <li><b>Unlink a provider.</b> Do it in Settings. You can also remove Permaily at the provider: {providers.map((p, i) => (<>{i > 0 && (i === providers.length - 1 ? ' or ' : ', ')}<a class="link" href={p.href}>{p.name}</a></>))}.</li>
     </ul>
     <p>If someone forwards mail you sent them to Permaily, it will be in their mailbox, sealed: we can’t search it or tell whose mail it is. Ask the person you wrote to.</p>

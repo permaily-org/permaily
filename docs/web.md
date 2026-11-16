@@ -286,7 +286,7 @@ What a person reads and agrees to before Permaily asks a model about their mail 
 
 ## TODO
 
-- [ ] Run the real-browser test of the consent screen (`web/tests/e2e`) against a dev enclave once ADR 0030's routes are composed (pull request 9), instead of the API it plays. It runs in CI (`web-e2e`) since pull request 8.
+- [ ] Run the real-browser test of the consent screen (`web/tests/e2e`) against a dev enclave, now that pull request 9 composes ADR 0030's routes (a played vendor through `-dev-vendors` and `-dev-vendors-ca`), instead of the API it plays. It runs in CI (`web-e2e`) since pull request 8.
 
 - [ ] Try signing in with the real Meta and Microsoft, and Meta's `#_=_`: every flow was run in Chromium against the providers that dev mode plays, and no application is registered at either. Google and GitHub were tried in production on 2026-11-12 (v0.10.0): sign-up with Google by invitation, linking GitHub from Settings, signing in with each to the same account, the Back button at Google's page, and opening a used answer again. Cancelling at GitHub could not be tried: GitHub sends a browser that authorized the application straight back.
 - [ ] Try passkeys on real authenticators and in Safari and Firefox: the flows were run in Chromium with a virtual authenticator. Safari may want the prompt opened straight from the click, before the request for the options: both prompts open after that request is awaited (`PasskeySignIn.tsx`, `AddPasskey` in `Passkeys.tsx`). The signals to authenticators (`signalUnknownCredential`, `signalAllAcceptedCredentials`) were tried only against a browser played by the tests.
