@@ -707,3 +707,177 @@ func TestV23ReplacementRacesAfterTheSnapshot(t *testing.T) {
 		})
 	}
 }
+
+// hookedEntries is the entries of one enclave with a test's hook before a
+// write.
+type hookedEntries struct {
+	store.Entries
+	mu     sync.Mutex
+	before func(e *store.Entry)
+}
+
+func (h *hookedEntries) PutEntry(ctx context.Context, e *store.Entry) error {
+	h.mu.Lock()
+	f := h.before
+	h.mu.Unlock()
+	if f != nil {
+		f(e)
+	}
+	return h.Entries.PutEntry(ctx, e)
+}
+
+// V21: the proof, or the request, ending during each write of an
+// approval's commit (the list's first write, the record, the list's last
+// write, the receipt, the code's entry; a device's record): Decide refuses,
+// hands out no code, leaves nothing of its own usable, and ends nothing
+// that was there before until its end was in time (finding 5).
+func TestV21ProofOrRequestEndsAtEachWriteOfTheCommit(t *testing.T) {
+	ctx := context.Background()
+	type barrier struct {
+		name     string
+		existing bool // a connection of the client, replaced or added to
+		device   bool // the draft adds a device to it
+		request  bool // the request ends, not the proof
+		at       func(w *world, f *failing, e *hookedEntries, jump func())
+		want     error
+		oldKept  bool // the connection there before still works
+	}
+	list := func(n int) func(w *world, f *failing, e *hookedEntries, jump func()) {
+		return func(w *world, f *failing, _ *hookedEntries, jump func()) {
+			seen := 0
+			f.set(func(op, name string) error {
+				if (op == "create" || op == "put") && strings.HasPrefix(name, RecordList) {
+					if seen++; seen == n {
+						jump()
+					}
+				}
+				return nil
+			})
+		}
+	}
+	record := func(op string) func(w *world, f *failing, e *hookedEntries, jump func()) {
+		return func(w *world, f *failing, _ *hookedEntries, jump func()) {
+			once := false
+			f.set(func(o, name string) error {
+				if !once && o == op && strings.HasPrefix(name, RecordConnection) {
+					once = true
+					jump()
+				}
+				return nil
+			})
+		}
+	}
+	receipt := func(w *world, _ *failing, _ *hookedEntries, jump func()) {
+		w.rcpt.mu.Lock()
+		w.rcpt.onWrite = func(r *receipts.Receipt) {
+			if r.Kind == receipts.KindConsent {
+				jump()
+			}
+		}
+		w.rcpt.mu.Unlock()
+	}
+	codeEntry := func(w *world, _ *failing, e *hookedEntries, jump func()) {
+		e.mu.Lock()
+		e.before = func(en *store.Entry) {
+			if strings.HasPrefix(en.Partition, PartitionCode) {
+				jump()
+			}
+		}
+		e.mu.Unlock()
+	}
+	for _, b := range []barrier{
+		{name: "the list's first write", at: list(1), want: contracts.ErrConfirmationNeeded},
+		{name: "the record", at: record("create"), want: contracts.ErrConfirmationNeeded},
+		{name: "the list's last write", at: list(2), want: contracts.ErrConfirmationNeeded},
+		{name: "the receipt", at: receipt, want: contracts.ErrConfirmationNeeded},
+		{name: "the code's entry", at: codeEntry, want: contracts.ErrConfirmationNeeded},
+		{name: "the request ends at the record", request: true, at: record("create"), want: contracts.ErrRequestEnded},
+		{name: "a replacement's new record", existing: true, at: record("create"), want: contracts.ErrConfirmationNeeded, oldKept: true},
+		{name: "a replacement's last list write", existing: true, at: list(2), want: contracts.ErrConfirmationNeeded},
+		{name: "a device's list write", existing: true, device: true, at: list(1), want: contracts.ErrConfirmationNeeded, oldKept: true},
+		{name: "a device's record", existing: true, device: true, at: record("put"), want: contracts.ErrConfirmationNeeded, oldKept: true},
+		{name: "a device's code", existing: true, device: true, at: codeEntry, want: contracts.ErrConfirmationNeeded, oldKept: true},
+	} {
+		t.Run(b.name, func(t *testing.T) {
+			w := newWorld(t)
+			f := &failing{Records: &store.Anchored{Records: w.mem, Commits: w.commits, Strict: true, Now: w.clock.now}}
+			e := &hookedEntries{Entries: w.mem}
+			cfg := w.config(f)
+			cfg.Entries = e
+			s, err := New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := w.person(accountA)
+			var old *TokenAnswer
+			x := w.ask(claudeCode)
+			if b.existing {
+				old, _ = w.connect(w.enclave(), w.person(accountA), x)
+			}
+			y := w.ask(claudeCode)
+			if b.existing && !b.device {
+				y.resource = apiResource
+			}
+			if b.request {
+				p.ConfirmedUntil = w.clock.now().Add(time.Hour)
+			} else {
+				p.ConfirmedUntil = w.clock.now().Add(time.Minute)
+			}
+			req := w.start(s, p, y)
+			if b.device != (req.Snapshot.Change == contracts.ChangeAddDevice) {
+				t.Fatal(req.Snapshot.Change)
+			}
+			jumped := false
+			b.at(w, f, e, func() {
+				if !jumped {
+					jumped = true
+					if b.request {
+						w.clock.add(oauth.RequestTTL)
+					} else {
+						w.clock.add(2 * time.Minute)
+					}
+				}
+			})
+			ans, err := s.Decide(ctx, p, req.ID, contracts.AuthorizationDecision{Allow: true, Draft: &req.Draft, Snapshot: &req.Snapshot, ModelNotice: notice})
+			f.set(nil)
+			e.mu.Lock()
+			e.before = nil
+			e.mu.Unlock()
+			w.rcpt.mu.Lock()
+			w.rcpt.onWrite = nil
+			w.rcpt.mu.Unlock()
+			if !jumped {
+				t.Fatal("the barrier was not reached")
+			}
+			if err == nil {
+				_, e := w.exchange(w.enclave(), y, codeOf(t, ans.Redirect))
+				t.Fatalf("a code was handed out after the deadline passed (its exchange: %v)", e)
+			}
+			if !errors.Is(err, b.want) {
+				t.Fatal(err)
+			}
+			// Nothing this approval made is usable: every device of the
+			// client's connections is the old one's, or ended.
+			l, _, err := w.enclave().readList(ctx, accountA)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, m := range l.Members {
+				d, _, err := w.enclave().readConn(ctx, m.ID)
+				if err != nil || d == nil {
+					continue
+				}
+				for _, dev := range d.Devices {
+					if dev.State == contracts.ConnectionActive && dev.Code.Status != oauth.CodeExchanged && d.State == contracts.ConnectionActive {
+						t.Fatalf("an unexchanged device of the refused approval is active: %+v", dev)
+					}
+				}
+			}
+			if old != nil && b.oldKept {
+				if _, err := w.check(w.enclave(), x, old.AccessToken); err != nil {
+					t.Fatalf("the connection there before was ended: %v", err)
+				}
+			}
+		})
+	}
+}

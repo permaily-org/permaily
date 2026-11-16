@@ -572,21 +572,39 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 	if err != nil {
 		return nil, err
 	}
-	// The proof must still be fresh now, after the document and the storage
-	// it waited for (choice 15); it is checked again by the commit's writes'
-	// own order, which follow at once.
-	if !s.now().Before(p.ConfirmedUntil) {
-		return nil, contracts.ErrConfirmationNeeded
+	// The proof and the request must still be fresh now, after the document
+	// and the storage it waited for (choice 15), and at every write of the
+	// commit, the one that makes it and after it, before a code is handed
+	// out (finding 5): however slow the storage, nothing is made usable
+	// past them, and what was made is ended.
+	inTime := func() error {
+		now := s.now()
+		switch {
+		case !now.Before(p.ConfirmedUntil):
+			return contracts.ErrConfirmationNeeded
+		case !now.Before(req.Expires):
+			return contracts.ErrRequestEnded
+		}
+		return nil
+	}
+	if err := inTime(); err != nil {
+		return nil, err
 	}
 	if !sameSnapshot(*in.Snapshot, snap) {
 		s.count("consent_changed")
 		return nil, contracts.ErrConsentChanged
 	}
+	until := p.ConfirmedUntil
+	if req.Expires.Before(until) {
+		until = req.Expires
+	}
+	ctx, cancel := context.WithDeadline(ctx, time.Now().Add(until.Sub(s.now())))
+	defer cancel()
 	var made *made
 	if snap.Change == contracts.ChangeAddDevice {
-		made, err = s.addDevice(ctx, req, reqHash, cur, snap, ds)
+		made, err = s.addDevice(ctx, req, reqHash, cur, snap, ds, inTime)
 	} else {
-		made, err = s.makeConnection(ctx, req, reqHash, snap, raw, ds, *in.Draft)
+		made, err = s.makeConnection(ctx, req, reqHash, snap, raw, ds, *in.Draft, inTime)
 	}
 	if err != nil {
 		if errors.Is(err, contracts.ErrConsentChanged) {
@@ -594,13 +612,26 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 		}
 		return nil, err
 	}
+	refuse := func(err error) (*contracts.AuthorizationAnswer, error) {
+		s.unmake(ctx, made)
+		return nil, err
+	}
+	if err := inTime(); err != nil {
+		return refuse(err)
+	}
 	_, _ = s.endOnce(ctx, partition, req.Expires)
 	if err := s.consentReceipt(ctx, req, made, *in.Draft, ds, true); err != nil {
 		return nil, err
 	}
+	if err := inTime(); err != nil {
+		return refuse(err)
+	}
 	code, err := s.issueCode(ctx, req, made)
 	if err != nil {
 		return nil, err
+	}
+	if err := inTime(); err != nil {
+		return refuse(err)
 	}
 	v := url.Values{"code": {code}}
 	if req.State != "" {
@@ -653,7 +684,7 @@ type made struct {
 // for none), and a replaced connection still at the version shown; anything
 // else is contracts.ErrConsentChanged, and only what this approval made is
 // fenced: a connection that changed since is never chased and ended.
-func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash string, snap contracts.ConsentSnapshot, raw string, ds scopeOf, draft contracts.ConsentDraft) (*made, error) {
+func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash string, snap contracts.ConsentSnapshot, raw string, ds scopeOf, draft contracts.ConsentDraft, inTime func() error) (*made, error) {
 	now := s.now()
 	id, err := s.newID("con")
 	if err != nil {
@@ -669,6 +700,9 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 	}
 	var generation uint64
 	if _, err := s.updateList(ctx, req.Account, func(l *ListState) error {
+		if err := inTime(); err != nil {
+			return err
+		}
 		if l.Current[req.ClientID] != raw {
 			return contracts.ErrConsentChanged
 		}
@@ -696,7 +730,13 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 		}},
 		private: &connPrivate{Query: req.Query, Since: since, Shown: s.shown(req)},
 	}
+	if err := inTime(); err != nil {
+		return abandon(err)
+	}
 	if err := s.writeConn(ctx, doc, store.Mark{}, true); err != nil {
+		return abandon(err)
+	}
+	if err := inTime(); err != nil {
 		return abandon(err)
 	}
 	switch {
@@ -713,6 +753,9 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 		}
 	}
 	_, err = s.updateList(ctx, req.Account, func(l *ListState) error {
+		if err := inTime(); err != nil {
+			return err
+		}
 		if l.Closing {
 			return contracts.ErrAccountClosing
 		}
@@ -744,7 +787,7 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 
 // addDevice adds the request to the client's connection as another device
 // (ADR 0030, "Adding a device").
-func (s *Service) addDevice(ctx context.Context, req *requestEntry, reqHash string, cur *connDoc, snap contracts.ConsentSnapshot, ds scopeOf) (*made, error) {
+func (s *Service) addDevice(ctx context.Context, req *requestEntry, reqHash string, cur *connDoc, snap contracts.ConsentSnapshot, ds scopeOf, inTime func() error) (*made, error) {
 	now := s.now()
 	d, at, err := s.readConn(ctx, cur.ID)
 	if err != nil || at.Version() != snap.Version || !d.live(now) {
@@ -759,6 +802,9 @@ func (s *Service) addDevice(ctx context.Context, req *requestEntry, reqHash stri
 		return nil, contracts.ErrTooManyDevices
 	}
 	if _, err := s.updateList(ctx, req.Account, func(l *ListState) error {
+		if err := inTime(); err != nil {
+			return err
+		}
 		if l.Current[req.ClientID] != cur.ID {
 			return contracts.ErrConsentChanged
 		}
@@ -792,6 +838,9 @@ func (s *Service) addDevice(ctx context.Context, req *requestEntry, reqHash stri
 		ID: family, State: contracts.ConnectionActive, MadeAt: now, Parts: slices.Clone(req.Parts), Scopes: slices.Clone(req.Scopes), ScopeID: sid,
 		Code: oauth.CodeState{Hash: hashOf(oauth.KindCode, code), Family: family, ExpiresAt: now.Add(oauth.CodeTTL), Status: oauth.CodeIssued},
 	})
+	if err := inTime(); err != nil {
+		return nil, err
+	}
 	if err := s.writeConn(ctx, d, at, false); err != nil {
 		if retry(err) {
 			return nil, contracts.ErrConsentChanged
@@ -800,6 +849,20 @@ func (s *Service) addDevice(ctx context.Context, req *requestEntry, reqHash stri
 	}
 	s.keepScope(sid, own)
 	return &made{conn: d, device: family, code: code, scopeID: sid, scope: own, change: contracts.ChangeAddDevice}, nil
+}
+
+// unmake ends what an approval made once its commit is refused after it
+// was written: the device it added, or the connection it made (finding 5).
+// A connection it replaced stays ended: no end is undone.
+func (s *Service) unmake(ctx context.Context, m *made) {
+	ctx = context.WithoutCancel(ctx)
+	if m.change == contracts.ChangeAddDevice {
+		if err := s.endDevice(ctx, m.conn.ID, m.device, contracts.EndedByTime); err != nil {
+			s.count("abandon_failed")
+		}
+		return
+	}
+	s.abandon(ctx, m.conn.Account, m.conn.ID, m.conn.ClientID, m.conn.MadeAt, m.conn.Generation)
 }
 
 // keepScope remembers a device's narrower formulas by their identifier.
