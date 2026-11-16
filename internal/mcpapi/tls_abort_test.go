@@ -23,9 +23,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/permaily-org/permaily/internal/mcpapi"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
+
+	"github.com/permaily-org/permaily/internal/mcpapi"
 )
 
 // keyUpdateConn pauses a wire write, with the same unblock-on-close and
@@ -70,7 +71,7 @@ func (c *keyUpdateConn) SetDeadline(d time.Time) error {
 	if e := c.SetWriteDeadline(d); e != nil {
 		return e
 	}
-	return c.Conn.SetReadDeadline(d)
+	return c.SetReadDeadline(d)
 }
 
 type keyUpdateListener struct {

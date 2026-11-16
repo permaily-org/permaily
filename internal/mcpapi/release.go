@@ -138,6 +138,10 @@ func send(ctx, req context.Context, w http.ResponseWriter, conn net.Conn, rec *r
 			why = "client_left"
 		}
 		if conn != nil {
+			// The socket's write first: a TLS Close waits for TLS's output
+			// lock, which a KeyUpdate reply blocked on the socket holds, and
+			// would hold the cut as long as the peer reads nothing.
+			_ = conn.SetWriteDeadline(time.Now())
 			_ = conn.Close()
 		}
 		_ = rc.SetWriteDeadline(time.Now())
