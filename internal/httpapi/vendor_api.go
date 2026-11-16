@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -335,3 +336,7 @@ func (v *vendorAPI) challenge(w http.ResponseWriter, status int, code oauth.Erro
 	w.Header().Set("WWW-Authenticate", v.cfg.Challenge(v.cfg.OAuth, contracts.ResourceAPI, code, scopes))
 	writeError(w, status, body, message)
 }
+
+// ConnContext is the enclosing http.Server's ConnContext hook (not yet
+// keeping the connection).
+func ConnContext(ctx context.Context, _ net.Conn) context.Context { return ctx }
