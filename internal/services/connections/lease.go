@@ -28,6 +28,10 @@ type lease struct {
 	finished bool
 	cancel   context.CancelFunc
 	timer    *time.Timer
+	// cutoff ends a started answer when its verified authority's freshness
+	// passes (PR #136's second review, finding 3): armed at Start, moved
+	// later only by a refresh that arrived before it fired.
+	cutoff *time.Timer
 }
 
 // errLeaseStarted is a second Start, or a Start after Finish.
@@ -80,20 +84,39 @@ func (l *lease) Start(ctx context.Context) (context.Context, error) {
 	if e := l.grant.Expires(); !e.IsZero() && e.Before(deadline) {
 		deadline = e
 	}
-	c, cancel := context.WithDeadline(ctx, time.Now().Add(deadline.Sub(s.now())))
+	now := s.now()
+	c, cancel := context.WithDeadline(ctx, time.Now().Add(deadline.Sub(now)))
 	l.started, l.cancel = true, cancel
+	l.cutoff = time.AfterFunc(l.grant.FreshUntil().Sub(now), cancel)
 	l.timer.Stop()
 	l.mu.Unlock()
 	go l.watch(c, deadline)
 	return c, nil
 }
 
+// refreshed extends a started answer's authority to a read that began at
+// checked, only while the answer is still within the authority it has: its
+// context not ended and its cutoff not fired. A read that returns after
+// the freshness passed revives nothing.
+func (l *lease) refreshed(c context.Context, checked time.Time) {
+	now := l.s.now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if c.Err() != nil || !checked.After(l.grant.CheckedAt) || !now.Before(l.grant.FreshUntil()) || l.cutoff == nil || !l.cutoff.Stop() {
+		return
+	}
+	l.grant.CheckedAt = checked
+	l.cutoff = time.AfterFunc(l.grant.FreshUntil().Sub(now), l.cancel)
+}
+
 // watch keeps a started answer within its verified authority (the owner's
 // decisions 6 and 14, N2): it reads the authority again leaseAhead before
-// its freshness passes, in a read of its own, and ends the answer's context
-// when the freshness passes before a newer verified read arrived, whatever
-// that read is doing, when a read no longer allows the grant or cannot be
-// made, or at the deadline, each by the service's clock.
+// its freshness passes, in a read of its own, from its first look on (an
+// answer started with less left reads it at once), and ends the answer's
+// context when a read no longer allows the grant or cannot be made. The
+// freshness passing before a newer verified read arrived, whatever that
+// read is doing, is ended by the lease's cutoff, and the deadline by the
+// context's; each tick looks at the service's clock too.
 func (l *lease) watch(c context.Context, deadline time.Time) {
 	t := time.NewTicker(leaseTick)
 	defer t.Stop()
@@ -110,7 +133,27 @@ func (l *lease) watch(c context.Context, deadline time.Time) {
 		}
 		l.mu.Unlock()
 	}
-	for {
+	// look ends the answer past its deadline or freshness, and begins a read
+	// leaseAhead before the freshness passes; false once it ended.
+	look := func() bool {
+		now := l.s.now()
+		l.mu.Lock()
+		g := l.grant
+		l.mu.Unlock()
+		if !now.Before(deadline) || !now.Before(g.FreshUntil()) {
+			end()
+			return false
+		}
+		if !reading && !now.Before(g.FreshUntil().Add(-leaseAhead)) {
+			reading = true
+			go func() {
+				checked, err := l.s.verify(c, &g)
+				done <- result{checked, err}
+			}()
+		}
+		return true
+	}
+	for look() {
 		select {
 		case <-c.Done():
 			return
@@ -120,27 +163,8 @@ func (l *lease) watch(c context.Context, deadline time.Time) {
 				end()
 				return
 			}
-			l.mu.Lock()
-			if r.checked.After(l.grant.CheckedAt) {
-				l.grant.CheckedAt = r.checked
-			}
-			l.mu.Unlock()
+			l.refreshed(c, r.checked)
 		case <-t.C:
-		}
-		now := l.s.now()
-		l.mu.Lock()
-		g := l.grant
-		l.mu.Unlock()
-		if !now.Before(deadline) || !now.Before(g.FreshUntil()) {
-			end()
-			return
-		}
-		if !reading && !now.Before(g.FreshUntil().Add(-leaseAhead)) {
-			reading = true
-			go func() {
-				checked, err := l.s.verify(c, &g)
-				done <- result{checked, err}
-			}()
 		}
 	}
 }
@@ -175,6 +199,9 @@ func (l *lease) Finish(sent bool) {
 	l.finished = true
 	if l.cancel != nil {
 		l.cancel()
+	}
+	if l.cutoff != nil {
+		l.cutoff.Stop()
 	}
 	l.timer.Stop()
 	if !sent || !l.started {
