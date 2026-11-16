@@ -3,6 +3,7 @@ package mcpapi
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -145,3 +146,6 @@ func copyHeader(dst, src http.Header) {
 		dst[k] = append([]string(nil), v...)
 	}
 }
+
+// ConnContext is the abort hook of the enclosing server (not wired yet).
+func ConnContext(ctx context.Context, _ net.Conn) context.Context { return ctx }

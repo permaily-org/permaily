@@ -93,6 +93,8 @@ type countingLease struct {
 	mu       sync.Mutex
 	finishes int
 	sentArg  []bool
+	// onFinish, when set, is called after each Finish.
+	onFinish func()
 }
 
 func (l *countingLease) Finish(sent bool) {
@@ -101,6 +103,9 @@ func (l *countingLease) Finish(sent bool) {
 	l.sentArg = append(l.sentArg, sent)
 	l.mu.Unlock()
 	l.Lease.Finish(sent)
+	if l.onFinish != nil {
+		l.onFinish()
+	}
 }
 
 func (l *countingLease) Finishes() (int, []bool) {
