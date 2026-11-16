@@ -62,7 +62,7 @@ const (
 
 var apiGrant = &oauth.Grant{
 	Connection: "con_1", Family: "fam_1", Account: "acc_1", ClientID: "https://vendor.example/c", Resource: contracts.ResourceAPI,
-	Parts:  []contracts.Part{contracts.PartSender, contracts.PartSubject, contracts.PartBody, contracts.PartAttachments},
+	Parts:            []contracts.Part{contracts.PartSender, contracts.PartSubject, contracts.PartBody, contracts.PartAttachments},
 	Scopes:           []string{oauth.ScopeSender, oauth.ScopeSubject, oauth.ScopeBody, oauth.ScopeAttachments},
 	ConnectionScopes: []string{oauth.ScopeSender, oauth.ScopeSubject, oauth.ScopeBody, oauth.ScopeAttachments},
 }

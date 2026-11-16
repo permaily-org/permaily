@@ -419,4 +419,3 @@ func (v *vendorAPI) challenge(w http.ResponseWriter, status int, code oauth.Erro
 	w.Header().Set("WWW-Authenticate", v.cfg.Challenge(v.cfg.OAuth, contracts.ResourceAPI, code, scopes))
 	writeError(w, status, body, message)
 }
-
