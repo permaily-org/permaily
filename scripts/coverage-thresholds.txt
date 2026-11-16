@@ -31,3 +31,4 @@ github.com/permaily-org/permaily/internal/query 99
 github.com/permaily-org/permaily/internal/decide 100
 github.com/permaily-org/permaily/internal/decide/openai 100
 github.com/permaily-org/permaily/internal/services/decisions 95
+github.com/permaily-org/permaily/internal/services/connections 89

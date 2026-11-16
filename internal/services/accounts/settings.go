@@ -109,6 +109,7 @@ func (s *Service) StartDeletion(ctx context.Context, who *Authenticated) (*contr
 	if changed {
 		s.cfg.Log.Info("accounts: account closing")
 	}
+	s.fenceConnections(ctx, who.AccountID)
 	// The record says they stand for nothing; their entries go too.
 	err = s.closeOthers(ctx, who)
 	if changed {
@@ -235,6 +236,12 @@ func (s *Service) keep(ctx context.Context, id, by string, guard func(*accountDo
 		if by == contracts.ClosingByOperator && doc.closingBy() != contracts.ClosingByOperator {
 			return contracts.ErrNotCancellable
 		}
+		// What of its connections was still active ends before the account
+		// is open again: a cancelled deletion brings none of them back. A
+		// cancellation whose Reopen fails is not done.
+		if err := s.reopenConnections(ctx, doc.ID); err != nil {
+			return err
+		}
 		// The entry is read before the record says the account is kept, and
 		// deleted below only as it was read: once the record says so, the
 		// person can ask to delete again, and the entry that is there then is
@@ -314,6 +321,12 @@ func (s *Service) removeAt(ctx context.Context, doc *accountDoc, at store.Mark) 
 // back. The entry in the list of closing accounts goes last, so the enclave
 // keeps finding the account until nothing of it is left.
 func (s *Service) removeLocked(ctx context.Context, doc *accountDoc) error {
+	// Its connections end first of all, their fence finished (ADR 0030).
+	if c := s.connectionsOf(); c != nil {
+		if err := c.EndAll(ctx, doc.ID); err != nil {
+			return err
+		}
+	}
 	// Its mailboxes end first, each in a terminal commit, and its list is
 	// left closed (ADR 0026): a failure fails the removal, tried again.
 	if m := s.mailboxesOf(); m != nil {
@@ -386,6 +399,9 @@ func (s *Service) unpoint(ctx context.Context, key []byte, partition, accountID 
 // led here. It is also what is left to do for an account whose record is
 // gone already, when an earlier removal failed after the commit.
 func (s *Service) clear(ctx context.Context, id, closing string) error {
+	if err := s.removeReceipts(ctx, id); err != nil {
+		return err
+	}
 	if err := s.cfg.Entries.DeletePartition(ctx, accountPartition(id)); err != nil {
 		return err
 	}
@@ -445,7 +461,18 @@ pages:
 				continue // not written by this deployment, or not here
 			}
 			if day.After(now) {
-				break pages // nor is any after it
+				if s.connectionsOf() == nil {
+					break pages // nor is any after it
+				}
+				// Not due yet: its connections are fenced again on every
+				// pass while it is closing, so an EndAll that failed when
+				// the deletion was asked is finished (ADR 0030, finding 6).
+				if err := s.fenceClosing(ctx, id, e.Key); err != nil {
+					if failed++; first == nil {
+						first = err
+					}
+				}
+				continue
 			}
 			if err := s.settle(ctx, id, e.Key); err != nil {
 				if failed++; first == nil {
@@ -455,6 +482,11 @@ pages:
 		}
 		if len(entries) < closingPage {
 			break
+		}
+	}
+	if err := s.removeReceiptsAgain(ctx, key, now); err != nil {
+		if failed++; first == nil {
+			first = err
 		}
 	}
 	if failed > 0 {

@@ -51,6 +51,11 @@ func (w *world) stored(words ...string) []string {
 		}
 	}
 	for _, e := range w.mem.AllEntries() {
+		// The entry that deletes the receipts once more is kept, by design,
+		// until receipts.RemoveAgainAfter has passed (connections_test.go).
+		if e.Partition == receiptsAgainPartition {
+			continue
+		}
 		if has(e.Partition, e.Key, string(e.Value)) {
 			out = append(out, "entry "+e.Partition+" "+e.Key)
 		}
