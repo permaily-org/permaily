@@ -1,6 +1,10 @@
 package httpapi
 
-import "net/http"
+import (
+	"context"
+	"net"
+	"net/http"
+)
 
 // APIState is what the tests read of the API's own state: the render slots
 // running, the bytes of the read budget held and the takes of it waiting.
@@ -36,4 +40,10 @@ func (s APIState) Documents() int {
 		n += w
 	}
 	return n
+}
+
+// Transfer is the API's transfer of an answer under ctx, the lease's (req
+// is the request's), for the tests.
+func Transfer(ctx, req context.Context, w http.ResponseWriter, conn net.Conn, body []byte) (sent bool, ended string) {
+	return transfer(ctx, req, w, conn, body)
 }
