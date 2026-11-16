@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"errors"
 )
 
 // A message's parts written and read one at a time (ADR 0026, "Delivery" and
@@ -15,7 +14,7 @@ import (
 
 // ErrTooLarge is returned by MessageParts.ReadRaw when the raw object holds
 // more than the caller allowed: nothing past the limit was kept.
-var ErrTooLarge = errors.New("store: larger than the caller allows")
+var ErrTooLarge error = &kind{msg: "store: larger than the caller allows"}
 
 // maxRawRead is the largest bound ReadRaw takes: the largest message the
 // service accepts (25 MiB, inbox.MaxMessageBytes) and its seal, rounded up.
