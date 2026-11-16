@@ -2,29 +2,57 @@ package decisions
 
 import (
 	"context"
+	"time"
 
+	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/decide"
 	"github.com/permaily-org/permaily/internal/inbox"
+	"github.com/permaily-org/permaily/internal/query"
 )
 
-// Gate says whether the model may be asked now for an account
-// (connections.ModelGate, ADR 0030's pull request 4), from the guard Ask
-// keeps, reading nothing Ask would not: AskOff when the image asks no
-// model, no key is set, or the provider refused the key and no probe is
-// due; AskLimit when the provider's limit stops every attempt and no probe
-// is due, the month's record is forked, a grant of this month did not fit
-// in its limit, or the account's share of the day in this enclave is spent;
-// AskAnswered otherwise. Anything but AskAnswered means nothing leaves for
-// the account's connections (the owner's decision 9). A probe due answers
-// AskAnswered, so the next request's ask is the probe that lifts the stop;
-// a month's record that could not be read is not a gate (the next ask reads
-// it again, and holds what it cannot ask), so a failed read never stops
-// connections until a restart.
+// gateRead bounds the gate's own read of the month's spend record.
+const gateRead = 5 * time.Second
+
+// The gate's probe: one statement on a fixed subject, which is nobody's
+// mail (decide.Content gets nothing else).
+const probeSubject = "Lunch on Friday"
+
+var probeAtom = query.Atom{Var: contracts.VarSubject, Op: contracts.OpAbout, Topic: "a meal"}
+
+// Gate says whether mail may leave now for an account's connections
+// (connections.ModelGate, ADR 0030's pull request 4; the owner's decision
+// 9). Anything but AskAnswered means nothing leaves, a message whose
+// decision is already a committed cleared included: such a message needs no
+// ask, so the gate is all that stands between it and a connection, and it
+// opens only on what it established itself, never on what the next ask
+// would find.
+//
+// AskOff when the image asks no model, no key is set, or the provider
+// refused the key in use; AskLimit while the provider's limit stops
+// attempts, the month's record is forked, a grant of this month did not fit
+// in its limit, the account's share of the day in this enclave is spent, or
+// the month's spend record has not been read whole within spendCheck (lost,
+// not opening, failing, or not read yet by this enclave); AskAnswered
+// otherwise.
+//
+// A provider's stop is lifted only by an answer to a probe: when one is due
+// the gate sends it (a fixed subject, from the canary's share), at most one
+// every probeEvery between this and every other attempt, and opens only if
+// the provider answered it. The spend record the gate reads again itself,
+// within gateRead, at most once every spendCheck, so a record that reads
+// again opens the gate without a restart, and one that does not keeps it
+// closed.
 func (s *Service) Gate(ctx context.Context, account string) inbox.AskOutcome {
 	k := s.keyState(ctx)
 	if s.model == nil || !k.set {
 		return inbox.AskOff
 	}
-	switch s.held(k.fp) {
+	h, due := s.stopped(k.fp)
+	if h != holdNone && due {
+		s.probe(ctx)
+		h, _ = s.stopped(k.fp)
+	}
+	switch h {
 	case holdOff:
 		return inbox.AskOff
 	case holdLimit:
@@ -34,11 +62,71 @@ func (s *Service) Gate(ctx context.Context, account string) inbox.AskOutcome {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := s.now()
-	if g.limitStop == monthOf(now) {
+	month := monthOf(now)
+	if g.limitStop == month {
 		return inbox.AskLimit
 	}
 	if account != "" && g.shares[dayOf(now)][account] >= s.cfg.Limits.AccountDay {
 		return inbox.AskLimit
 	}
+	if !s.spendKnown(ctx, month) {
+		return inbox.AskLimit
+	}
 	return inbox.AskAnswered
+}
+
+// stopped is what stops every attempt now, whether or not a probe is due
+// (held lets the probe through; the gate does not): the key in use refused,
+// the provider's limit, a forked month. due says a probe may be sent.
+func (s *Service) stopped(fp string) (h hold, due bool) {
+	g := &s.guard
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	now := s.now()
+	if g.refusedStop && fp != g.refusedFP {
+		g.refusedStop, g.refused = false, false // a new key: try it
+	}
+	due = now.Sub(g.probeAt) >= probeEvery || now.Before(g.probeAt)
+	switch {
+	case g.refusedStop:
+		return holdOff, due
+	case g.providerStop:
+		return holdLimit, due
+	case g.forkedMonth == monthOf(now):
+		return holdLimit, false
+	}
+	return holdNone, false
+}
+
+// probe sends the gate's probe, within decide.MessageDeadline: reserved as
+// any attempt (reserve takes it as the stop's probe, or holds it when
+// another was let through within probeEvery), and its answer lifts the stop
+// (answered).
+func (s *Service) probe(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, decide.MessageDeadline)
+	defer cancel()
+	calls, _ := decide.Plan([]query.Atom{probeAtom}, probeSubject, "", false)
+	for _, c := range calls {
+		s.call(ctx, c, "", false)
+	}
+}
+
+// spendKnown says the month's spend record was read whole within spendCheck
+// and found neither lost, forked nor unopenable, reading it again (within
+// gateRead) when not, at most once every spendCheck since the gate last
+// tried. g.mu is held.
+func (s *Service) spendKnown(ctx context.Context, month string) bool {
+	g := &s.guard
+	now := s.now()
+	fresh := func(t time.Time) bool { return now.Sub(t) < spendCheck && !now.Before(t) }
+	if g.checkedMonth == month && g.unreadableMonth != month && fresh(g.checkedAt) {
+		return true
+	}
+	if !g.gateReadAt.IsZero() && fresh(g.gateReadAt) {
+		return false
+	}
+	g.gateReadAt = now
+	ctx, cancel := context.WithTimeout(ctx, gateRead)
+	defer cancel()
+	return s.checkSpend(ctx, month)
 }

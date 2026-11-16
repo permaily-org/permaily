@@ -80,6 +80,9 @@ type guard struct {
 	// month.
 	checkedAt    time.Time
 	checkedMonth string
+	// gateReadAt is when Gate last read the month's record itself: it reads
+	// it again at most once every spendCheck.
+	gateReadAt time.Time
 	// forkedMonth is a month whose record is forked: nothing new is asked in
 	// it. unreadableMonth is one whose record was last found lost or not
 	// opening. limitStop is one a grant did not fit in, and limitMonth the
