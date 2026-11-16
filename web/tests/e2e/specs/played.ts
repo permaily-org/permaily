@@ -159,7 +159,7 @@ export class PlayedApi {
       ],
       change: 'new',
       snapshot: { change: 'new', ends_at: '2027-02-14T10:00:00Z', draft_id: 'drf_start' },
-      model_notice: '2026-11-15',
+      model_notice: '2026-11-16',
       expires_at: new Date(Date.now() + 900_000).toISOString(),
     }
   }
@@ -181,7 +181,7 @@ export class PlayedApi {
       devices: [
         { id: 'dev_one', made_at: '2026-11-01T10:00:00Z', state: 'active', parts: ['sender'] },
       ],
-      model_notice: '2026-11-15',
+      model_notice: '2026-11-16',
       delivery: 'delivering',
       version: 3,
     }

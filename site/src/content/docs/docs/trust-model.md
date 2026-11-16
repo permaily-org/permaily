@@ -8,7 +8,7 @@ The service handling your mail is running the public code, and that code only sh
 ## What verification proves
 
 - The enclave runs an image whose measurement matches a public build.
-- Stored data can only be decrypted by approved measurements.
+- Sealed data is decrypted by the approved service using protected keys. Some account and connection metadata is deliberately stored in readable, signed records; the privacy policy lists it.
 - Every approved release is publicly listed.
 
 ## What verification doesn't prove
@@ -73,19 +73,19 @@ Apple's [Private Cloud Compute](https://security.apple.com/blog/private-cloud-co
 | --- | --- |
 | Operator deploys altered code | Measurement-bound keys, public log, independent monitors |
 | Operator intercepts traffic before the enclave | TLS ends in the enclave, attested key, Certificate Transparency monitoring |
-| Database or backup stolen | Ciphertext only. Keys need an approved measurement |
-| Connection asks for too much | Preview at consent, the query in plain words, a cap on what it can fetch, fresh approval to widen, expiry, unused-access revocation |
-| Connection is compromised | Short-lived tokens, per-connection limits, instant revocation, unusual-activity alerts |
+| Database or backup stolen | Mail content and other sealed fields remain encrypted. Account contact details and other signed account, mailbox and connection metadata are readable to someone with database access. Decrypting the sealed fields requires the protected keys; backups can also contain wrapped mailbox keys from before deletion. The privacy policy describes those limits. |
+| Connection asks for too much | The consent screen shows the query, parts and expiry. Reads have limits, widening needs fresh approval, and the person can revoke access. Automatic unused-access revocation is not built. |
+| Connection is compromised | Short-lived tokens, per-connection limits and revocation, with in-progress delivery stopped within five seconds. Unusual-activity alerts are not built. |
 | Operator takes over an account | The code has no way for the operator to sign in as someone, change a contact address, or add or remove a way to sign in. The operator, and admins the operator names, can block and unblock an account, ask to delete it, which takes seven days, cancel a deletion they asked for (not one the person asked for), and sign its devices out: that keeps people out or lets them back, and lets nobody in. The person is told by mail of a block, an unblock or a deletion (not of being signed out), and each kind of action is counted on `/status` |
 | Someone else signs in to an account | A notice by mail of a sign-in from a device that hadn't signed in to the account before, of a change in how it's signed into, and of a change of its contact address, sent to the old address and the new one |
-| Password reset or login code exposed | Sign-in and security, a rule suggested on every new account that holds this mail back from every connection before any query runs. It uses exact conditions, not a topic. It only protects people who keep it |
-| A rule misses what it should catch | Preview on the person's own mail before saving, alerts on sudden match volume. A missed match is a leak, which is why rules written in words are previewed like any other |
+| Password reset or login code exposed | Sign-in and security, a rule on every account from the start that holds this mail back from every connection before any query runs. Exact checks hold matching messages, and a model decides the rest, holding a message unless it answers clearly no. It can't be turned off yet |
+| A rule misses what it should catch | The built-in Sign-in and security rule uses exact checks and then the model. Uncertain results are held, but a wrong confident answer can miss a message. User-authored rules and alerts about their match volume are planned. |
 | A connection learns what a rule protects | Held-back mail looks the same as mail its query didn't match, and no rule name or count leaves Permaily |
-| The model that checks rules leaks mail | Planned. The model runs at OpenAI, outside the enclave, so OpenAI sees the field a rule about meaning examines. The provider and the address it is reached at are compiled into the measured image, so mail can only go where the public code sends it; what OpenAI keeps is its own commitment, not something the enclave can prove |
+| The model that checks rules leaks mail | The model runs at OpenAI, outside the enclave, so OpenAI sees the field a rule about meaning examines. The provider and the address it is reached at are compiled into the measured image, so mail can only go where the public code sends it; what OpenAI keeps is its own commitment, not something the enclave can prove |
 | Spoofed sender enters a slice | Match on authenticated sender, not the `From:` header |
-| Mail sent straight to the inbound address | Secret per-account addresses, and checks that mail came through the provider |
+| Mail sent straight to the inbound address | Each mailbox has an unguessable forwarding address. Anyone who learns it can send mail to it; the service does not prove that every message passed through your provider. It records verified DKIM domains for conditions that require them. |
 | Malicious email attacks the parser | Memory-safe language, fuzz testing, resource limits |
-| Prompt injection reaches an agent | Untrusted-content markers, read-only by default, approval for send and delete |
+| Prompt injection reaches an agent | Mail is marked as untrusted content. The current API and MCP tools only read mail; they cannot send or delete it. These controls do not guarantee that a connected agent will ignore instructions inside a message. |
 | Malicious dependency in the build | Pinned dependencies, reproducible builds, a small trusted codebase, independent rebuilds |
 
 ## Try to break it
