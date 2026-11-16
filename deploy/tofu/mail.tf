@@ -37,8 +37,13 @@ resource "aws_dynamodb_table" "mail" {
     enabled        = true
   }
 
+  # One day, not DynamoDB's default 35: a copy of the table keeps the
+  # wrapped key of a mailbox from before it was disconnected, which with the
+  # root secret would open its mail outside the service's checks
+  # (docs/legal.md, item 8). One day still recovers from a bad write.
   point_in_time_recovery {
-    enabled = true
+    enabled                 = true
+    recovery_period_in_days = 1
   }
 
   deletion_protection_enabled = true
