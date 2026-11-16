@@ -360,7 +360,7 @@ func (s *Service) screen(ctx context.Context, id string, req *requestEntry) (*co
 	if len(out.Draft.Mailboxes) == 0 {
 		return out, nil // nothing to approve until the account has a mailbox
 	}
-	snap, cur, at, _, err := s.changeFor(ctx, req, out.Draft)
+	snap, cur, at, _, _, err := s.changeFor(ctx, req, out.Draft)
 	if err != nil {
 		return nil, err
 	}
@@ -425,32 +425,34 @@ func draftID(req *requestEntry, d contracts.ConsentDraft) (string, error) {
 }
 
 // changeFor is what approving draft does now (ADR 0030, "Asking again"),
-// as its snapshot, the client's connection it would change and the draft's
-// formulas.
-func (s *Service) changeFor(ctx context.Context, req *requestEntry, d contracts.ConsentDraft) (contracts.ConsentSnapshot, *connDoc, store.Mark, scopeOf, error) {
+// as its snapshot, the client's connection it would change, the draft's
+// formulas, and the client's current connection as the list names it (raw,
+// "" for none, also when it is no longer live): the commit is made only
+// over that very list entry and that version (finding 7).
+func (s *Service) changeFor(ctx context.Context, req *requestEntry, d contracts.ConsentDraft) (contracts.ConsentSnapshot, *connDoc, store.Mark, scopeOf, string, error) {
 	now := s.now()
 	did, err := draftID(req, d)
 	if err != nil {
-		return contracts.ConsentSnapshot{}, nil, store.Mark{}, scopeOf{}, ErrInvalidBody
+		return contracts.ConsentSnapshot{}, nil, store.Mark{}, scopeOf{}, "", ErrInvalidBody
 	}
 	ds, err := makeScope(req.Query, d.Mailboxes, d.Since, now)
 	if err != nil {
-		return contracts.ConsentSnapshot{}, nil, store.Mark{}, scopeOf{}, ErrInvalidBody
+		return contracts.ConsentSnapshot{}, nil, store.Mark{}, scopeOf{}, "", ErrInvalidBody
 	}
-	_, cur, at, err := s.current(ctx, req.Account, req.ClientID)
+	raw, cur, at, err := s.current(ctx, req.Account, req.ClientID)
 	if err != nil {
-		return contracts.ConsentSnapshot{}, nil, store.Mark{}, scopeOf{}, err
+		return contracts.ConsentSnapshot{}, nil, store.Mark{}, scopeOf{}, "", err
 	}
 	snap := contracts.ConsentSnapshot{Change: contracts.ChangeNew, EndsAt: endsAt(now, req.Days), DraftID: did}
 	if cur == nil {
-		return snap, nil, at, ds, nil
+		return snap, nil, at, ds, raw, nil
 	}
 	snap.Connection, snap.Version, snap.Change = cur.ID, at.Version(), contracts.ChangeReplace
 	cs, err := cur.scope()
 	if err == nil && cur.Resource == req.Resource && subset(cur.Parts, req.Parts) && contained(cs, ds) {
 		snap.Change, snap.EndsAt = contracts.ChangeAddDevice, cur.EndsAt
 	}
-	return snap, cur, at, ds, nil
+	return snap, cur, at, ds, raw, nil
 }
 
 func endsAt(now time.Time, days int) time.Time {
@@ -486,7 +488,7 @@ func (s *Service) Preview(ctx context.Context, p Person, id string, in contracts
 	if limit < 1 || limit > inbox.DiscloseMaxLimit {
 		return nil, contracts.ErrInvalidLimit
 	}
-	snap, _, _, ds, err := s.changeFor(ctx, req, in.Draft)
+	snap, _, _, ds, _, err := s.changeFor(ctx, req, in.Draft)
 	if err != nil {
 		return nil, err
 	}
@@ -566,7 +568,7 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 	if !redirectAllowed(client.Document.RedirectURIs, req.RedirectURI) {
 		return nil, &clientRefusal{contracts.RedirectURIInvalid}
 	}
-	snap, cur, _, ds, err := s.changeFor(ctx, req, *in.Draft)
+	snap, cur, _, ds, raw, err := s.changeFor(ctx, req, *in.Draft)
 	if err != nil {
 		return nil, err
 	}
@@ -584,7 +586,7 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 	if snap.Change == contracts.ChangeAddDevice {
 		made, err = s.addDevice(ctx, req, reqHash, cur, snap, ds)
 	} else {
-		made, err = s.makeConnection(ctx, req, reqHash, snap, ds, *in.Draft)
+		made, err = s.makeConnection(ctx, req, reqHash, snap, raw, ds, *in.Draft)
 	}
 	if err != nil {
 		if errors.Is(err, contracts.ErrConsentChanged) {
@@ -645,13 +647,13 @@ type made struct {
 	replaced string
 }
 
-// errRaced is the client's current connection changed since the list was
-// read: decided again.
-var errRaced = errors.New("connections: the client's current connection changed")
-
 // makeConnection makes a connection for the request, replacing the
-// client's (ADR 0030, "Making one").
-func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash string, snap contracts.ConsentSnapshot, ds scopeOf, draft contracts.ConsentDraft) (*made, error) {
+// client's (ADR 0030, "Making one"). It commits only over what the screen
+// showed (N5, finding 7): the list's entry for the client still raw (""
+// for none), and a replaced connection still at the version shown; anything
+// else is contracts.ErrConsentChanged, and only what this approval made is
+// fenced: a connection that changed since is never chased and ended.
+func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash string, snap contracts.ConsentSnapshot, raw string, ds scopeOf, draft contracts.ConsentDraft) (*made, error) {
 	now := s.now()
 	id, err := s.newID("con")
 	if err != nil {
@@ -665,11 +667,9 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 	if err != nil {
 		return nil, err
 	}
-	var curRaw string
 	var generation uint64
 	if _, err := s.updateList(ctx, req.Account, func(l *ListState) error {
-		curRaw = l.Current[req.ClientID]
-		if cur := snap.Connection; cur != "" && curRaw != cur {
+		if l.Current[req.ClientID] != raw {
 			return contracts.ErrConsentChanged
 		}
 		if err := l.Decide(reqHash, now); err != nil {
@@ -678,6 +678,10 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 		generation = l.Generation
 		return l.AddPending(id, req.ClientID, now)
 	}); err != nil {
+		return nil, err
+	}
+	abandon := func(err error) (*made, error) {
+		s.abandon(ctx, req.Account, id, req.ClientID, now, generation)
 		return nil, err
 	}
 	since := draft.Since
@@ -693,56 +697,49 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 		private: &connPrivate{Query: req.Query, Since: since, Shown: s.shown(req)},
 	}
 	if err := s.writeConn(ctx, doc, store.Mark{}, true); err != nil {
-		return nil, err
+		return abandon(err)
 	}
-	replaced := curRaw
-	for range RecordTries {
-		if curRaw != "" {
-			if err := s.endConnection(ctx, curRaw, contracts.EndedByReplaced, id, true); err != nil {
-				return nil, err
-			}
+	switch {
+	case raw != "" && raw == snap.Connection:
+		// The connection shown, at the version shown, or nothing of it ends.
+		if err := s.replaceConn(ctx, raw, snap.Version, id); err != nil {
+			return abandon(err)
 		}
-		_, err := s.updateList(ctx, req.Account, func(l *ListState) error {
-			if l.Closing {
-				return contracts.ErrAccountClosing
-			}
-			if l.Current[req.ClientID] != curRaw {
-				curRaw = l.Current[req.ClientID]
-				return errRaced
-			}
-			if curRaw != "" {
-				s.dropEnded(ctx, l, l.End(curRaw, now))
-			}
-			for i := range l.Members {
-				if l.Members[i].ID == id {
-					l.Members[i].Pending = false
-				}
-			}
-			l.Current[req.ClientID] = id
-			return nil
-		})
-		switch {
-		case errors.Is(err, errRaced):
-			continue
-		case errors.Is(err, contracts.ErrAccountClosing):
-			// The account began closing meanwhile: what was made is ended,
-			// and no code is issued.
-			_ = s.endConnection(ctx, id, contracts.EndedByAccount, "", true)
-			_, _ = s.updateList(ctx, req.Account, func(l *ListState) error {
-				s.dropEnded(ctx, l, l.End(id, now))
-				return nil
-			})
-			return nil, err
-		case err != nil:
-			return nil, err
+	case raw != "":
+		// The list's entry names one that was no longer live when the screen
+		// was worked out: ended or past its end, neither of which comes back.
+		if err := s.endConnection(ctx, raw, contracts.EndedByReplaced, id, true); err != nil {
+			return abandon(err)
 		}
-		change := contracts.ChangeNew
-		if replaced != "" {
-			change = contracts.ChangeReplace
-		}
-		return &made{conn: doc, device: family, code: code, change: change, replaced: replaced}, nil
 	}
-	return nil, errBusy
+	_, err = s.updateList(ctx, req.Account, func(l *ListState) error {
+		if l.Closing {
+			return contracts.ErrAccountClosing
+		}
+		if l.Current[req.ClientID] != raw {
+			return contracts.ErrConsentChanged
+		}
+		if raw != "" {
+			s.dropEnded(ctx, l, l.End(raw, now))
+		}
+		for i := range l.Members {
+			if l.Members[i].ID == id {
+				l.Members[i].Pending = false
+			}
+		}
+		l.Current[req.ClientID] = id
+		return nil
+	})
+	if err != nil {
+		// The account began closing meanwhile, or the client's entry changed:
+		// what was made is ended, and no code is issued.
+		return abandon(err)
+	}
+	change := contracts.ChangeNew
+	if raw != "" {
+		change = contracts.ChangeReplace
+	}
+	return &made{conn: doc, device: family, code: code, change: change, replaced: raw}, nil
 }
 
 // addDevice adds the request to the client's connection as another device

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
@@ -161,12 +162,26 @@ func (s *Service) Renew(ctx context.Context, p Person, id string, in contracts.C
 // enclave's memory and cuts every lease of it: from now nothing more of it
 // leaves this enclave, also when writing the record then fails.
 func (s *Service) revoke(connection, device string) {
+	s.revokeOnce(connection, device)
+}
+
+// revokeOnce is revoke, and answers what takes back this one mark (and only
+// it: another revocation of the same connection stands), for an end that
+// was refused by its record's version before it was written.
+func (s *Service) revokeOnce(connection, device string) (undo func()) {
 	s.mu.Lock()
 	key := connection
 	if device != "" {
 		key = connection + " " + device
 	}
-	s.revoked[key] = true
+	s.revoked[key]++
+	undo = sync.OnceFunc(func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.revoked[key]--; s.revoked[key] <= 0 {
+			delete(s.revoked, key)
+		}
+	})
 	delete(s.conns, connection)
 	var cut []*lease
 	for l := range s.leases[connection] {
@@ -178,13 +193,14 @@ func (s *Service) revoke(connection, device string) {
 	for _, l := range cut {
 		l.cut()
 	}
+	return undo
 }
 
 // revokedHere says this enclave revoked the connection or the device.
 func (s *Service) revokedHere(connection, device string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.revoked[connection] || s.revoked[connection+" "+device]
+	return s.revoked[connection] > 0 || s.revoked[connection+" "+device] > 0
 }
 
 // endConnection ends a connection: first in this enclave's memory and its
@@ -240,6 +256,58 @@ func (s *Service) endConnection(ctx context.Context, id string, reason contracts
 		}
 	}
 	return nil
+}
+
+// replaceConn ends the connection a replacement's screen showed, only at the
+// version it showed (N5, finding 7): contracts.ErrConsentChanged, with
+// nothing of it ended, when it is no longer that one. Like every end it is
+// revoked in this enclave's memory before its record is written; a write
+// that loses to another takes back only its own mark.
+func (s *Service) replaceConn(ctx context.Context, id string, version uint64, by string) error {
+	d, at, err := s.readConn(ctx, id)
+	if err != nil && !refusedRecord(err) {
+		return err
+	}
+	now := s.now()
+	if err != nil || d == nil || at.Version() != version || !d.live(now) {
+		return contracts.ErrConsentChanged
+	}
+	undo := s.revokeOnce(id, "")
+	d.end(contracts.EndedByReplaced, by, now)
+	if err := s.writeConn(ctx, d, at, false); err != nil {
+		if retry(err) {
+			undo()
+			return contracts.ErrConsentChanged
+		}
+		return err
+	}
+	for _, dev := range d.Devices {
+		if err := s.endFamily(ctx, dev.ID, contracts.EndedByReplaced); err != nil {
+			return err
+		}
+	}
+	s.endedReceipt(ctx, d, "", contracts.EndedByReplaced, by)
+	return nil
+}
+
+// abandon ends what an approval refused at its commit had made of its own
+// connection, and nothing else: its pending entry fenced (its record made
+// ended, or ended if it was made) and ended in the list. Sweep fences what
+// a failure here leaves.
+func (s *Service) abandon(ctx context.Context, account, id, client string, madeAt time.Time, generation uint64) {
+	ctx = context.WithoutCancel(ctx)
+	m := ListMember{ID: id, ClientID: client, State: contracts.ConnectionActive, Pending: true, MadeAt: madeAt, Generation: generation}
+	if err := s.fence(ctx, account, m, contracts.EndedByTime); err != nil {
+		s.count("abandon_failed")
+		return
+	}
+	now := s.now()
+	if _, err := s.updateList(ctx, account, func(l *ListState) error {
+		s.dropEnded(ctx, l, l.End(id, now))
+		return nil
+	}); err != nil {
+		s.count("abandon_failed")
+	}
 }
 
 // fence makes a pending connection that was never made ended, with

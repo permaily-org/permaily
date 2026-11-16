@@ -35,7 +35,7 @@ type Service struct {
 	mu sync.Mutex
 	// revoked are the connections and the devices (families) this enclave
 	// revoked since it started: refused here at once, whatever a cache says.
-	revoked map[string]bool
+	revoked map[string]int
 	conns   map[string]cachedConn
 	lists   map[string]cachedList
 	stand   map[string]cachedStanding
@@ -88,7 +88,7 @@ func New(cfg Config) (*Service, error) {
 		cfg.Random = randomBytes
 	}
 	s := &Service{
-		cfg: cfg, revoked: map[string]bool{}, conns: map[string]cachedConn{}, lists: map[string]cachedList{},
+		cfg: cfg, revoked: map[string]int{}, conns: map[string]cachedConn{}, lists: map[string]cachedList{},
 		stand: map[string]cachedStanding{}, epochs: map[string]uint64{}, scopes: map[string][]*query.Canonical{},
 		used: map[string]time.Time{}, refused: map[string]int64{}, leases: map[string]map[*lease]struct{}{},
 		limits: newLimits(),

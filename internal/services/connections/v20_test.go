@@ -527,22 +527,27 @@ func TestV22MakingAConnection(t *testing.T) {
 		wg.Wait()
 		fa.set(nil)
 		fb.set(nil)
-		if errs[0] != nil || errs[1] != nil {
+		// Each screen showed no connection: the second to commit would
+		// replace one its screen never showed, so it is consent_changed and
+		// only what it made is ended (N5, finding 7 of the review of pull
+		// request 136).
+		if (errs[0] == nil) == (errs[1] == nil) || !errors.Is(errors.Join(errs...), contracts.ErrConsentChanged) {
 			t.Fatal(errs)
 		}
 		l, _, _ := a.readList(ctx, accountA)
-		active, replaced := 0, 0
+		active, ended := 0, 0
 		for _, m := range l.Members {
 			c, _, _ := a.readConn(ctx, m.ID)
 			switch {
 			case c.State == contracts.ConnectionActive && l.Current[claudeCode] == c.ID:
 				active++
-			case c.EndReason == contracts.EndedByReplaced && c.ReplacedBy == l.Current[claudeCode]:
-				replaced++
+			case c.State == contracts.ConnectionEnded && m.State == contracts.ConnectionEnded && c.ReplacedBy == "":
+				ended++
 			}
 		}
-		if active != 1 || replaced != 1 {
-			t.Fatalf("%d current, %d replaced: %+v", active, replaced, l)
+		// What the second made, if it made anything before it was refused.
+		if active != 1 || active+ended != len(l.Members) {
+			t.Fatalf("%d current, %d ended: %+v", active, ended, l)
 		}
 	})
 }

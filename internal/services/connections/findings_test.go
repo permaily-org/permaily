@@ -623,3 +623,87 @@ func TestV27ReadsAreAsOldAsWhenTheyBegan(t *testing.T) {
 		}
 	})
 }
+
+// V23 (N5): more races after the screen's last read: a connection that
+// appears for a client whose screen showed none, a device added to the one
+// shown, and the shown one renewed while the new record is made. Each is
+// consent_changed, the connection there before as it was, and what the
+// approval made ended.
+func TestV23ReplacementRacesAfterTheSnapshot(t *testing.T) {
+	ctx := context.Background()
+	type race struct {
+		name    string
+		existed bool
+		at      func(op, name string) bool
+		do      func(t *testing.T, w *world, b *Service, p Person, shown string)
+	}
+	atList := func(op, name string) bool { return op == "put" && strings.HasPrefix(name, RecordList) }
+	atRecord := func(op, name string) bool { return op == "create" && strings.HasPrefix(name, RecordConnection) }
+	for _, r := range []race{
+		{name: "a connection appears where none was shown", existed: false, at: func(op, name string) bool {
+			return (op == "create" || op == "put") && strings.HasPrefix(name, RecordList)
+		}, do: func(t *testing.T, w *world, b *Service, p Person, _ string) {
+			_, _ = w.connect(b, p, w.ask(claudeCode))
+		}},
+		{name: "a device added to the one shown", existed: true, at: atList, do: func(t *testing.T, w *world, b *Service, p Person, _ string) {
+			_, _ = w.connect(b, p, w.ask(claudeCode))
+		}},
+		{name: "the one shown renewed as the new record is made", existed: true, at: atRecord, do: func(t *testing.T, w *world, b *Service, p Person, shown string) {
+			c, err := b.Get(ctx, p, shown)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if _, err = b.Renew(ctx, p, shown, contracts.ConnectionRenewal{Version: c.Version, ModelNotice: notice}); err != nil {
+				t.Error(err)
+			}
+		}},
+	} {
+		t.Run(r.name, func(t *testing.T) {
+			w := newWorld(t)
+			a, f := w.hooked()
+			b := w.enclave()
+			p := w.person(accountA)
+			p2 := p
+			p2.Session = "ses_other"
+			var before *TokenAnswer
+			x := w.ask(claudeCode)
+			if r.existed {
+				before, _ = w.connect(b, p2, x)
+			}
+			y := w.ask(claudeCode)
+			y.resource = apiResource
+			req := w.start(a, p, y)
+			once := false
+			f.set(func(op, name string) error {
+				if !once && r.at(op, name) {
+					once = true
+					r.do(t, w, b, p2, req.Snapshot.Connection)
+				}
+				return nil
+			})
+			_, err := a.Decide(ctx, p, req.ID, contracts.AuthorizationDecision{Allow: true, Draft: &req.Draft, Snapshot: &req.Snapshot, ModelNotice: notice})
+			f.set(nil)
+			if !errors.Is(err, contracts.ErrConsentChanged) {
+				t.Fatalf("committed over what the screen did not show: %v", err)
+			}
+			if before != nil {
+				if _, err := w.check(w.enclave(), x, before.AccessToken); err != nil {
+					t.Fatalf("the connection there before was ended: %v", err)
+				}
+				if _, err := w.check(a, x, before.AccessToken); err != nil {
+					t.Fatalf("the connection there before was ended in the approving enclave: %v", err)
+				}
+			}
+			l, _, err := b.readList(ctx, accountA)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, m := range l.Members {
+				if m.ID != l.Current[claudeCode] && m.State != contracts.ConnectionEnded {
+					t.Fatalf("what the refused approval made is not ended: %+v", l.Members)
+				}
+			}
+		})
+	}
+}
