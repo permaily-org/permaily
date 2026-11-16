@@ -1,0 +1,91 @@
+{
+  "v": 1,
+  "id": "rcp_18e87e30edfd0a0000000000000000000005",
+  "at": "2026-11-16T10:00:00.123456Z",
+  "kind": "consent",
+  "connection": "con_cccccccccccccccccccccccccc",
+  "device": "fam_dddddddddddddddddddddddddd",
+  "client_id": "https://claude.ai/oauth/claude-code-client-metadata",
+  "vendor": "claude.ai",
+  "resource": "mcp",
+  "formulas": [
+    {
+      "role": "consented",
+      "id": "qry_5lv6p6m7doyxgzx4d4lrv236by",
+      "formula": {
+        "v": 1,
+        "all": [
+          {
+            "any": [
+              {
+                "var": "subject",
+                "op": "contains",
+                "value": "invoice"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "role": "mailboxes",
+      "id": "qry_f7vo6neizayota4c2foqhdjltu",
+      "formula": {
+        "v": 1,
+        "all": [
+          {
+            "any": [
+              {
+                "var": "mailbox",
+                "op": "is",
+                "value": "mbx_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "role": "since",
+      "id": "qry_vxiyl7b5q4wypijlah3crpblse",
+      "formula": {
+        "v": 1,
+        "all": [
+          {
+            "any": [
+              {
+                "var": "received",
+                "op": "since",
+                "value": "2026-11-01T00:00:00Z"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "rules": [
+    {
+      "id": "default-sign-in-and-security",
+      "version": 1
+    }
+  ],
+  "consent": {
+    "allowed": true,
+    "change": "replace",
+    "sentences": [
+      "Mail whose subject contains \"invoice\".",
+      "Mail at mailbox A.",
+      "Mail received since 1 November 2026."
+    ],
+    "parts": ["sender", "subject", "body"],
+    "since": {
+      "new": false,
+      "at": "2026-11-01T00:00:00Z"
+    },
+    "ends_at": "2027-02-14T10:00:00.123456Z",
+    "mailboxes": ["mbx_aaaaaaaaaaaaaaaaaaaaaaaaaa"],
+    "model_notice": "2026-11-15",
+    "replaced": "con_bbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}
