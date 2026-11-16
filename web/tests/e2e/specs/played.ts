@@ -92,13 +92,12 @@ export class Vendor {
    * Opens the vendor's page and follows its link to the app, as a person does: a cross-site navigation (the vendor is
    * on 127.0.0.1, the app on localhost: two sites). Answers where the browser said the navigation came from.
    */
-  async connect(page: Page, app: string): Promise<string | undefined> {
-    const to = `${app}/oauth/authorize?${this.query()}`
+  async connect(page: Page, app: string, path = '/oauth/authorize'): Promise<string | undefined> {
+    const to = `${app}${path}?${this.query()}`
     await page.goto(`${this.origin}/?to=${encodeURIComponent(to)}`)
     const [navigation] = await Promise.all([
       page.waitForRequest(
-        (request) =>
-          request.isNavigationRequest() && new URL(request.url()).pathname === '/oauth/authorize',
+        (request) => request.isNavigationRequest() && new URL(request.url()).pathname === path,
       ),
       page.click('#connect'),
     ])
@@ -108,7 +107,10 @@ export class Vendor {
 
 type Reply = { status: number; body?: unknown }
 
-/** The app's API, played: a session, sign-in by code and by passkey, a fresh proof, and the consent routes. */
+/**
+ * The app's API, played: a session, sign-in by code and by passkey, a fresh proof, the consent routes and the list of
+ * connections.
+ */
 export class PlayedApi {
   signedIn = false
   confirmed = false
@@ -118,6 +120,8 @@ export class PlayedApi {
   readonly unexpected: string[] = []
   /** What the decision route answers instead of deciding, for a stale request. */
   decisionRefusal: string | null = null
+  /** The account's connections, as GET /api/v1/connections answers them. */
+  connections: unknown[] = []
   private decided = false
 
   constructor(private readonly vendor: Vendor) {}
@@ -160,6 +164,29 @@ export class PlayedApi {
     }
   }
 
+  /** Claude Code's connection, as the list of connections answers it. */
+  static connection(): Record<string, unknown> {
+    return {
+      id: 'con_played',
+      vendor: { domain: 'claude.ai', verified: 'Anthropic' },
+      client_id: 'https://claude.ai/oauth/claude-code-client-metadata',
+      client_name: 'Claude Code',
+      resource: 'mcp',
+      state: 'active',
+      parts: ['sender', 'subject', 'body'],
+      mailboxes: [mailbox.id],
+      since: { new: true, at: '2026-11-01T10:00:00Z' },
+      made_at: '2026-11-01T10:00:00Z',
+      ends_at: '2027-01-30T10:00:00Z',
+      devices: [
+        { id: 'dev_one', made_at: '2026-11-01T10:00:00Z', state: 'active', parts: ['sender'] },
+      ],
+      model_notice: '2026-11-15',
+      delivery: 'delivering',
+      version: 3,
+    }
+  }
+
   private reply(method: string, path: string, body: unknown): Reply {
     const ok = (b?: unknown): Reply => ({ status: b === undefined ? 204 : 200, body: b })
     const no = (status: number, code: string): Reply => ({
@@ -197,6 +224,8 @@ export class PlayedApi {
       case 'POST /api/v1/auth/confirm/email/finish':
         this.confirmed = true
         return ok(me(true))
+      case 'GET /api/v1/connections':
+        return ok({ connections: this.connections })
       case 'GET /api/v1/mailboxes':
         return ok({ mailboxes: [mailbox], limit: 5 })
       case 'POST /api/v1/oauth/requests':
