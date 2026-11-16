@@ -66,8 +66,9 @@ func (l *lifecycle) count(call string) int {
 // An account's connections are fenced and ended when its deletion is asked,
 // by its person or the operator, and on every pass while it is closing, so
 // an EndAll that failed (a crash between the account's closing and the
-// fence) is finished by the next pass; the removal ends them once more, and
-// fails while it cannot (ADR 0030, finding 6, V30).
+// fence) is finished by the next pass; the removal fences and removes them
+// once more (RemoveAll), and fails while it cannot (ADR 0030, finding 6,
+// V30, V65).
 func TestDeletionEndsTheConnections(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -94,16 +95,21 @@ func TestDeletionEndsTheConnections(t *testing.T) {
 	if err := w.svc.RemoveDue(ctx); err != nil || l.count("EndAll "+id) != 3 {
 		t.Fatal(err, l.calls)
 	}
-	// The removal ends them once more, first, and fails while it cannot.
+	// The removal fences and removes them once more, first, and fails
+	// while it cannot.
 	w.now = w.now.Add(domain.AccountClosing)
-	l.set(errors.New("down again"), nil)
+	l.mu.Lock()
+	l.removeAllErr = errors.New("down again")
+	l.mu.Unlock()
 	if err := w.svc.RemoveDue(ctx); err == nil {
 		t.Fatal("removed with its connections not ended")
 	}
 	if _, err := w.svc.AccountRecord(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	l.set(nil, nil)
+	l.mu.Lock()
+	l.removeAllErr = nil
+	l.mu.Unlock()
 	if err := w.svc.RemoveDue(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -162,10 +168,11 @@ func TestCancellingADeletionReopensTheConnectionsFirst(t *testing.T) {
 	}
 }
 
-// Removing an account removes what is stored of its connections, after
-// their fence and before the account's record: a removal that fails leaves
-// the account to the next pass, and one that stopped after the record went
-// removes them again (ADR 0030, "Changed while releasing step 5").
+// Removing an account removes what is stored of its connections first,
+// fenced by RemoveAll itself, before the account's record: a removal that
+// fails leaves the account to the next pass, and one that stopped after the
+// record went removes them again (ADR 0030, "Changed while releasing step
+// 5").
 func TestTheRemovalRemovesTheConnections(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -220,8 +227,10 @@ func TestTheRemovalRemovesTheConnections(t *testing.T) {
 			mine = append(mine, c)
 		}
 	}
-	// Each removal fences them before it removes them.
-	want := []string{"EndAll " + id, "EndAll " + id, "RemoveAll " + id, "EndAll " + id, "RemoveAll " + id, "RemoveAll " + id}
+	// Every pass enters through RemoveAll, which fences them itself while
+	// their list is whole and finishes what an earlier call left, also
+	// once the account's record is gone (V65).
+	want := []string{"EndAll " + id, "RemoveAll " + id, "RemoveAll " + id, "RemoveAll " + id}
 	if !slices.Equal(mine, want) {
 		t.Fatal(mine)
 	}

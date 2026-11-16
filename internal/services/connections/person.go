@@ -414,6 +414,24 @@ func (s *Service) removeConn(ctx context.Context, id string) error {
 	if err != nil && !refusedRecord(err) {
 		return err
 	}
+	return s.removeConnOf(ctx, id, d)
+}
+
+// removeConnStrict is removeConn for an account's removal (RemoveAll): a
+// connection that cannot be read (lost, put back, not signed) fails it,
+// since its families are known only from its record. One removed already,
+// or never made (a pending one, whose name the removal fences), has none.
+func (s *Service) removeConnStrict(ctx context.Context, id string) error {
+	d, _, err := s.readConn(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.removeConnOf(ctx, id, d)
+}
+
+// removeConnOf removes connection id, read as d (nil when it could not be
+// read), with its families' records.
+func (s *Service) removeConnOf(ctx context.Context, id string, d *connDoc) error {
 	if d != nil {
 		for _, dev := range d.Devices {
 			if err := s.removeFamily(ctx, dev.ID); err != nil {

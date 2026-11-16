@@ -99,83 +99,167 @@ func (s *Service) Reopen(ctx context.Context, account string) error {
 // step 5"). The list is fenced and ended first, as EndAll does, while it is
 // whole; then every connection its newest epoch names is removed with its
 // families' records, the account's entry in Sweep's index is deleted, and
-// every epoch of the list is removed, the newest first and epoch 0 last
-// (removed also when the account never had a list). What stays is the
+// every epoch of the list is removed (removeEpochs). What stays is the
 // commit of each removal (store.Anchored.RemoveRecord), which names the
 // record and holds nothing of it: no record removed can be read again,
 // whatever of it is put back, and none can be made again (CreateNew refuses
 // a name with any commit), so the fence outlives the list without its
-// history. A removal stopped anywhere is finished by the next call: epoch 0
-// goes last, so the epochs left are always the oldest ones, found from it.
+// history.
+//
+// It is what accounts calls when an account is removed, and again on every
+// pass until the account's removal is done: a call stopped anywhere, a
+// removal's commit landed and its values left included, is finished by the
+// next, through any enclave. A connection that cannot be read (lost, put
+// back, not signed) fails it and keeps the list and the index that find it:
+// its families are known only from its record, and a removal that went on
+// would leave them where nothing finds them.
 func (s *Service) RemoveAll(ctx context.Context, account string) error {
-	n, whole, err := s.listEpochs(ctx, account)
+	list := func(e uint64) string { return ListName(account, e) }
+	ended := false
+	for range RecordTries {
+		heads, err := s.epochHeads(ctx, list)
+		if err != nil {
+			return err
+		}
+		newest, removing := -1, false
+		for e, h := range heads {
+			if h.live {
+				newest = e
+			} else {
+				removing = true
+			}
+		}
+		if newest >= 0 {
+			var l ListState
+			_, found, err := s.readSigned(ctx, list(uint64(newest)), &l)
+			if err != nil {
+				return err
+			}
+			if !found {
+				continue // removed meanwhile, by another call
+			}
+			if l.Account != account || l.Epoch != uint64(newest) || l.V != 1 {
+				return errDocument
+			}
+			// A list no removal began on is fenced first. Once one has, its
+			// fence held when it began (the newest epoch named what is left).
+			if !l.Moved && !removing && !ended {
+				if err := s.EndAll(ctx, account); err != nil {
+					return err
+				}
+				ended = true
+				continue
+			}
+			for _, m := range l.Members {
+				if err := s.removeConnStrict(ctx, m.ID); err != nil {
+					return err
+				}
+			}
+		}
+		if err := s.cfg.Entries.DeleteEntry(ctx, partitionAccounts, account); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		if err := s.removeEpochs(ctx, list); err != nil {
+			return err
+		}
+		s.mu.Lock()
+		delete(s.epochs, "list "+account)
+		delete(s.lists, account)
+		s.mu.Unlock()
+		return nil
+	}
+	return errBusy
+}
+
+// epochHead is what the anchor says of one epoch of a record kept in
+// epochs: live, it has a value (readable or not); else it was removed, and
+// version is its removal's commit. A removal's commit at version 1 is a
+// fence: the name never had a value.
+type epochHead struct {
+	live    bool
+	version uint64
+}
+
+// epochHeads walks a record's epochs from 0 by their commits alone,
+// removed ones included, up to the first name that has none: an epoch's
+// content does not matter, and one removed whose values stayed is found.
+func (s *Service) epochHeads(ctx context.Context, name func(uint64) string) ([]epochHead, error) {
+	var heads []epochHead
+	for e := uint64(0); ; e++ {
+		_, at, err := s.cfg.Records.GetRecordAt(ctx, name(e))
+		switch {
+		case err == nil, errors.Is(err, store.ErrLost):
+			heads = append(heads, epochHead{live: true, version: at.Version()})
+		case !errors.Is(err, store.ErrNotFound):
+			return nil, err
+		case at.Version() == 0:
+			return heads, nil
+		default:
+			heads = append(heads, epochHead{version: at.Version()})
+		}
+	}
+}
+
+// fenced says the epochs walked end in a fence: none is live, and the last
+// was never made, so no writer can make an epoch after it (an epoch is
+// made only after the one before it was written moved, which a removed
+// one cannot be).
+func fenced(heads []epochHead) bool {
+	if len(heads) == 0 {
+		return false
+	}
+	for _, h := range heads {
+		if h.live {
+			return false
+		}
+	}
+	return heads[len(heads)-1].version == 1
+}
+
+// removeEpochs removes every epoch of a record kept in epochs, those whose
+// removal committed already included (RemoveRecord deletes what of them is
+// still stored), the newest first. The name after the last epoch with a
+// value is removed before it, a fence: a writer that wrote that epoch moved
+// before its removal, and has yet to make the next one, finds the name
+// taken (CreateNew), and a removal never leaves an epoch made after it.
+// The epochs are walked again until they end in a fence with nothing live.
+func (s *Service) removeEpochs(ctx context.Context, name func(uint64) string) error {
+	heads, err := s.epochHeads(ctx, name)
 	if err != nil {
 		return err
 	}
-	if whole {
-		if err := s.EndAll(ctx, account); err != nil {
-			return err
+	for range RecordTries {
+		done := fenced(heads)
+		n := uint64(len(heads))
+		if !done {
+			n++ // the fence
 		}
-		if n, _, err = s.listEpochs(ctx, account); err != nil {
-			return err
-		}
-	}
-	if n > 0 {
-		var l ListState
-		if _, _, err := s.readSigned(ctx, ListName(account, n-1), &l); err != nil {
-			return err
-		}
-		for _, m := range l.Members {
-			if err := s.removeConn(ctx, m.ID); err != nil {
+		for e := n; e > 0; e-- {
+			if err := s.cfg.Records.RemoveRecord(ctx, name(e-1)); err != nil {
 				return err
 			}
 		}
-	}
-	if err := s.cfg.Entries.DeleteEntry(ctx, partitionAccounts, account); err != nil && !errors.Is(err, store.ErrNotFound) {
-		return err
-	}
-	if err := s.removeEpochs(ctx, n, func(e uint64) string { return ListName(account, e) }); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	delete(s.epochs, "list "+account)
-	delete(s.lists, account)
-	s.mu.Unlock()
-	return nil
-}
-
-// listEpochs walks an account's list from epoch 0: n is how many epochs are
-// there (0 to n-1), whole that the last of them is not moved, so it is the
-// list as written (not one a removal or a crash stopped after).
-func (s *Service) listEpochs(ctx context.Context, account string) (n uint64, whole bool, err error) {
-	for e := uint64(0); ; e++ {
-		var l ListState
-		_, found, err := s.readSigned(ctx, ListName(account, e), &l)
-		if err != nil {
-			return 0, false, err
+		if done {
+			return nil
 		}
-		if !found {
-			return e, false, nil
-		}
-		if l.Account != account || l.Epoch != e || l.V != 1 {
-			return 0, false, errDocument
-		}
-		if !l.Moved {
-			return e + 1, true, nil
-		}
-	}
-}
-
-// removeEpochs removes epochs n-1 down to 0 of a record in epochs (epoch 0
-// alone when n is 0): the newest first, so a removal stopped halfway leaves
-// the oldest, which the next walk from epoch 0 finds.
-func (s *Service) removeEpochs(ctx context.Context, n uint64, name func(uint64) string) error {
-	for e := max(n, 1); e > 0; e-- {
-		if err := s.cfg.Records.RemoveRecord(ctx, name(e-1)); err != nil {
+		if heads, err = s.epochHeads(ctx, name); err != nil {
 			return err
 		}
 	}
-	return nil
+	return errBusy
+}
+
+// listRemoved says the account's list was removed: its epoch 0, which a
+// removal removes last, has a removal's commit.
+func (s *Service) listRemoved(ctx context.Context, account string) (bool, error) {
+	_, at, err := s.cfg.Records.GetRecordAt(ctx, ListName(account, 0))
+	switch {
+	case err == nil, errors.Is(err, store.ErrLost):
+		return false, nil
+	case errors.Is(err, store.ErrNotFound):
+		return at.Version() > 0, nil
+	}
+	return false, err
 }
 
 // pendingFenceAfter is how old a pending member must be before the sweep
@@ -230,7 +314,23 @@ func (s *Service) Sweep(ctx context.Context) error {
 // sweepAccount is one account's part of the pass.
 func (s *Service) sweepAccount(ctx context.Context, account string) error {
 	l, _, err := s.readList(ctx, account)
-	if err != nil || l == nil {
+	if l == nil {
+		// An entry of a removed list: written by a write of the list that
+		// committed before the removal and wrote the index after it, or put
+		// back by whoever writes the table. It goes on this pass.
+		if removed, rerr := s.listRemoved(ctx, account); rerr != nil || !removed {
+			return err
+		}
+		if err := s.cfg.Entries.DeleteEntry(ctx, partitionAccounts, account); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		s.mu.Lock()
+		delete(s.epochs, "list "+account)
+		delete(s.lists, account)
+		s.mu.Unlock()
+		return nil
+	}
+	if err != nil {
 		return err
 	}
 	if l.Closing {

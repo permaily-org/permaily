@@ -150,27 +150,13 @@ func (s *Service) endFamily(ctx context.Context, family string, reason contracts
 	return errBusy
 }
 
-// removeFamily removes every epoch of a family's records, the newest first
-// (removeEpochs), so a removal stopped halfway is finished by the next. An
-// epoch that cannot be read (lost, put back) is removed too, and the walk
-// goes on past it: the epoch after it is there only if it was moved.
+// removeFamily removes every epoch of a family's records (removeEpochs):
+// by their commits, so an epoch whose value is lost or put back goes too,
+// and one whose removal committed and left values has them deleted; a
+// removal stopped halfway is finished by the next, and a refresh rolling
+// the family meanwhile makes no epoch after it.
 func (s *Service) removeFamily(ctx context.Context, family string) error {
-	n := uint64(0)
-	for e := uint64(0); ; e++ {
-		var f oauth.FamilyState
-		_, found, err := s.readSealed(ctx, familyName(family, e), &f)
-		if err != nil && !refusedRecord(err) {
-			return err
-		}
-		if err == nil && !found {
-			break
-		}
-		n = e + 1
-		if err == nil && f.Status != oauth.FamilyMoved {
-			break
-		}
-	}
-	if err := s.removeEpochs(ctx, n, func(e uint64) string { return familyName(family, e) }); err != nil {
+	if err := s.removeEpochs(ctx, func(e uint64) string { return familyName(family, e) }); err != nil {
 		return err
 	}
 	s.mu.Lock()
