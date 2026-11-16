@@ -91,6 +91,45 @@ func TestV59LeaseEndsWhileTheFreshReadIsBlocked(t *testing.T) {
 	})
 }
 
+// V59: a read made before the freshness passes and returning in time keeps
+// the answer going past the freshness it began with.
+func TestV59LeaseReadInTimeKeepsTheAnswer(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	s := w.enclave()
+	x := w.ask(claudeCode)
+	tok := w.connectAll(s, w.person(accountA), x)
+	g := w.grant(s, x, tok.AccessToken)
+	_, rel, err := s.Search(ctx, g, contracts.VendorSearch{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rel.Finish(true)
+	c, err := rel.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := rel.(*lease)
+	checked := func() time.Time {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return l.grant.CheckedAt
+	}
+	first := checked()
+	w.clock.add(oauth.ConnectionFresh - time.Second)
+	for i := 0; !checked().After(first); i++ {
+		if i == 200 {
+			t.Fatal("the lease did not read its authority again before its freshness passed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	w.clock.add(2 * time.Second)
+	time.Sleep(3 * leaseTick)
+	if c.Err() != nil {
+		t.Fatal("an answer whose authority was read again in time ended")
+	}
+}
+
 // reviewAfterRead runs after a record's read returns, before the service
 // uses it: a read delayed after it was made.
 type reviewAfterRead struct {

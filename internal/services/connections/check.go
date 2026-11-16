@@ -149,21 +149,39 @@ func (s *Service) again(ctx context.Context, g *oauth.Grant) error {
 	if now.Before(g.FreshUntil()) {
 		return nil
 	}
-	_, checked, err := s.authority(ctx, g, true)
-	switch {
-	case errors.Is(err, ErrInvalidToken):
-		return errRefusedAuthority
-	case err != nil:
+	checked, err := s.verify(ctx, g)
+	if err != nil {
 		return err
-	}
-	// A read that took longer than the freshness renews nothing: what it
-	// read is already too old to release by (finding 2).
-	if !s.now().Before(checked.Add(oauthFresh)) {
-		s.count("authority_stale")
-		return ErrUnavailable
 	}
 	g.CheckedAt = checked
 	return nil
+}
+
+// verify reads the authority of g strictly and now, and answers when that
+// read began: errRefusedAuthority when it no longer allows g, ErrUnavailable
+// when it could not be read or returned older than its freshness.
+func (s *Service) verify(ctx context.Context, g *oauth.Grant) (time.Time, error) {
+	if s.revokedHere(g.Connection, g.Family) {
+		return time.Time{}, errRefusedAuthority
+	}
+	_, checked, err := s.authority(ctx, g, true)
+	switch {
+	case errors.Is(err, ErrInvalidToken):
+		return time.Time{}, errRefusedAuthority
+	case err != nil:
+		return time.Time{}, err
+	}
+	// A read that took longer than the freshness renews nothing: what it
+	// read is already too old to release by (finding 2).
+	now := s.now()
+	if !now.Before(checked.Add(oauthFresh)) {
+		s.count("authority_stale")
+		return time.Time{}, ErrUnavailable
+	}
+	if e := g.Expires(); !e.IsZero() && !now.Before(e) {
+		return time.Time{}, errRefusedAuthority
+	}
+	return checked, nil
 }
 
 // deviceScope is a device's own narrower formulas, from memory (by their
