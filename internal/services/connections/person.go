@@ -132,12 +132,10 @@ func (s *Service) Renew(ctx context.Context, p Person, id string, in contracts.C
 		return nil, contracts.ErrConfirmationNeeded
 	}
 	d.EndsAt, d.ModelNotice = endsAt(now, d.Days), s.cfg.ModelNotice
-	if err := s.writeConn(ctx, d, at, false); err != nil {
-		if retry(err) {
-			return nil, contracts.ErrConsentChanged
-		}
-		return nil, err
-	}
+	// A renewal is consent: it is recorded before it is made, and made only
+	// at the version the page showed (finding 6). A write that loses then
+	// leaves a receipt of a renewal that did not happen, which says more
+	// than happened; never one made and not recorded.
 	sc, _ := d.scope()
 	r := &receipts.Receipt{
 		V: receipts.Version, Kind: receipts.KindConsent, Connection: d.ID, ClientID: d.ClientID, Vendor: d.Vendor, Resource: d.Resource,
@@ -146,6 +144,12 @@ func (s *Service) Renew(ctx context.Context, p Person, id string, in contracts.C
 			EndsAt: d.EndsAt, Mailboxes: d.Mailboxes, ModelNotice: d.ModelNotice},
 	}
 	if err := s.writeReceipt(ctx, d.Account, r, time.Time{}); err != nil {
+		return nil, err
+	}
+	if err := s.writeConn(ctx, d, at, false); err != nil {
+		if retry(err) {
+			return nil, contracts.ErrConsentChanged
+		}
 		return nil, err
 	}
 	return s.Get(ctx, p, id)

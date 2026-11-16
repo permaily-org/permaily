@@ -50,6 +50,9 @@ func TestRenewRefusals(t *testing.T) {
 	if _, err := s.Renew(ctx, p, c.ID, contracts.ConnectionRenewal{ModelNotice: notice, Version: v.Version}); err == nil {
 		t.Fatal("renewed without its receipt")
 	}
+	if after, err := w.enclave().Get(ctx, p, c.ID); err != nil || after.Version != v.Version || !after.EndsAt.Equal(v.EndsAt) {
+		t.Fatal("a renewal without its receipt was made", err)
+	}
 	w.rcpt.mu.Lock()
 	w.rcpt.fail = nil
 	w.rcpt.mu.Unlock()

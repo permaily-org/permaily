@@ -335,31 +335,56 @@ func TestV21ProofExpiresDuringTheApprovalsWrites(t *testing.T) {
 	}
 }
 
-// V25: a renewal whose consent receipt could not be written renews nothing
-// (finding 6).
+// V25: a renewal whose consent receipt could not be written renews nothing:
+// neither its end nor the notice it delivers under (finding 6).
 func TestV25RenewalWhoseReceiptFailedRenewsNothing(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
+	w.notice = "2026-10-01" // approved under the notice before
 	s := w.enclave()
 	x := w.ask(claudeCode)
 	tok := w.connectAll(s, w.person(accountA), x)
 	g := w.grant(s, x, tok.AccessToken)
-	w.clock.add(time.Hour)
+	w.notice = notice
+	s = w.enclave()
+	w.clock.add(10 * time.Minute)
 	p := w.person(accountA)
 	before, err := s.Get(ctx, p, g.Connection)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if before.Delivery != contracts.DeliveryNoticeChanged {
+		t.Fatal(before.Delivery)
+	}
+	w.rcpt.mu.Lock()
 	w.rcpt.fail = errCrash
+	w.rcpt.mu.Unlock()
 	if _, err = s.Renew(ctx, p, g.Connection, contracts.ConnectionRenewal{Version: before.Version, ModelNotice: notice}); err == nil {
 		t.Fatal("wanted the receipt's failure")
 	}
+	w.rcpt.mu.Lock()
+	w.rcpt.fail = nil
+	w.rcpt.mu.Unlock()
 	after, err := w.enclave().Get(ctx, p, g.Connection)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.EndsAt.After(before.EndsAt) {
+	if after.EndsAt.After(before.EndsAt) || after.Version != before.Version {
 		t.Fatal("a failed renewal changed the connection's durable end without a consent receipt")
+	}
+	if after.ModelNotice != before.ModelNotice || after.Delivery != contracts.DeliveryNoticeChanged {
+		t.Fatal("a failed renewal made the connection deliver under the new notice")
+	}
+	if _, _, err := w.enclave().Search(ctx, w.grant(w.enclave(), x, tok.AccessToken), contracts.VendorSearch{}); !errors.Is(err, contracts.ErrModelUnavailable) {
+		t.Fatalf("a failed renewal delivers: %v", err)
+	}
+	// Its receipt written, the renewal is made.
+	if _, err = s.Renew(ctx, p, g.Connection, contracts.ConnectionRenewal{Version: before.Version, ModelNotice: notice}); err != nil {
+		t.Fatal(err)
+	}
+	after, err = w.enclave().Get(ctx, p, g.Connection)
+	if err != nil || !after.EndsAt.After(before.EndsAt) || after.Delivery != contracts.DeliveryOn {
+		t.Fatal(after, err)
 	}
 }
 
