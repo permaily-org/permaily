@@ -295,7 +295,19 @@ describe('legal pages', () => {
       const remove = body(lifecycle, /func \(s \*Service\) RemoveAll\(/);
       expect(remove).toMatch(/list := func\(e uint64\) string \{ return ListName\(account, e\) \}/);
       expect(remove).toMatch(/s\.removeConnStrict\(ctx, m\.ID, note\)/);
-      expect(lifecycle).toMatch(/RemoveAgainAfter = 30 \* time\.Minute/);
+      // The last pass comes after the longest a write of the connections stays under way, 30 minutes.
+      expect(lifecycle).toMatch(/WriteMax = 10 \* time\.Minute/);
+      expect(lifecycle).toMatch(/removeAgainMargin = 20 \* time\.Minute/);
+      expect(lifecycle).toMatch(/RemoveAgainAfter = WriteMax \+ removeAgainMargin/);
+      const service = go('internal/services/connections/service.go');
+      for (const write of [
+        /func \(s \*Service\) writeSigned\(/,
+        /func \(s \*Service\) writeSealed\(/,
+      ]) {
+        expect(body(service, write)).toMatch(/ctx = store\.WriteWithin\(ctx, WriteMax\)/);
+      }
+      // The removal's own fence notes what it trims.
+      expect(remove).toMatch(/s\.endAll\(ctx, account, note\)/);
       const again = body(lifecycle, /func \(s \*Service\) RemoveAgain\(/);
       expect(again).toMatch(/s\.RemoveAll\(ctx, account\)/);
       expect(again).toMatch(/s\.removeFamily\(ctx, e\.Key\)/);
@@ -344,6 +356,9 @@ describe('legal pages', () => {
         );
         expect(said, path).toContain(
           'a last cleanup pass at least 30 minutes after the removal deletes it',
+        );
+        expect(said, path).toContain(
+          'A copy stored the same way for a connection that had ended and was already removed during the seven-day window can stay; nothing reads it either.',
         );
         expect(said, path).not.toMatch(/within an hour/);
         expect(said, path).not.toMatch(/no automatic removal/i);
