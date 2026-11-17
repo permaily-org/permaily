@@ -252,23 +252,48 @@ aws lambda invoke --function-name permaily-drift --region us-east-2 /dev/stdout 
 
 Commit `drift_image_digest` in the pull request that follows. Rebuild the image (`scripts/drift-image.sh`, then the digest and an apply) only when `deploy/drift` changes, to move OpenTofu or the base image: the configuration it plans is fetched on each run, with the providers its lock file names. ECR expires only untagged images (a push that failed half way); every pushed image keeps its commit's tag, so the one the function runs never expires. To remove old images by hand, never the one in `drift_image_digest` nor the one the function runs (`aws lambda get-function --function-name permaily-drift --region us-east-2 --query Code.ResolvedImageUri`): list them with `aws ecr describe-images --repository-name permaily-drift --region us-east-2 --query 'imageDetails[].[imageDigest,imageTags[0],imagePushedAt]' --output table`, then `aws ecr batch-delete-image --repository-name permaily-drift --region us-east-2 --image-ids imageDigest=sha256:…` for each old one. To rotate the Cloudflare token, create the new one, put it with step 2, run it once, then delete the old one.
 
-## Port 25, from a server
+## Port 25, from its instance
 
-AWS blocks outbound port 25 from Lambda and from EC2, and GitHub's runners cannot use it, so the scheduled checks above skip the certificate the enclave presents on SMTP (they warn). The owner's Contabo server runs `scripts/verify-cron.sh` by cron every hour instead: `scripts/verify-production.sh -require-smtp`, the latest release's verifier and `pcrs.json` checked against their Sigstore provenance, and never run when either does not verify, which fails when port 25 cannot be reached. It needs no AWS credentials. On success it prints nothing; on failure it prints the report and exits 1, which cron mails where `MAILTO` and a mailer are set, and it runs `PERMAILY_ALERT_CMD` with the report on standard input when that is set. The alert command runs after the lock is released, and never holds it, with a deadline of its own of 2 minutes (`PERMAILY_ALERT_TIMEOUT`, in seconds; TERM, then KILL `PERMAILY_VERIFY_GRACE` later): a mailer that hangs cannot hold back the next verification. An alert that fails or is stopped is reported on standard error, and the exit is 1 either way. A run has a deadline of 50 minutes (`PERMAILY_VERIFY_TIMEOUT`, in seconds): past it the run and everything it started are stopped (TERM, then KILL 30 s later, `PERMAILY_VERIFY_GRACE`) and it is a failure, so a download or a verifier that hangs cannot stop the hourly checks. One run at a time: the next run leaves a run within its deadline be, and treats a lock still held past the deadline, or a lock it cannot take, as a failure. It does not tell when the server or cron itself stops: nothing mails then. The last report is in `~/.local/state/permaily-verify-cron/last.txt`.
+GitHub's runners and Lambda cannot connect out on port 25, so the scheduled checks above skip the certificate the enclave presents on SMTP (they warn). The hourly port 25 check does it instead (`deploy/tofu/port25.tf`, `deploy/port25/`, ADR 0038): a `t4g.nano` of its own in the account, `permaily-port25-check`, with nothing in, out only to 443 and 25, and a role that can only publish to the alarms' topic, read its GitHub token and use SSM. It reaches no key, bucket, table or log of production. A systemd timer starts `deploy/port25/run.sh` at minute 41 of every hour, which reads the token and runs `scripts/verify-cron.sh`: `scripts/verify-production.sh -require-smtp`, the latest release's verifier and `pcrs.json` checked against their Sigstore provenance and never run when either does not verify (the previous release's while the latest is not deployed), which fails when port 25 cannot be reached. A passing run sends nothing. EC2 blocks outbound port 25 until AWS lifts the account's block on request, and until then every run would fail, so the instance exists only once `port25_check` is true in `deploy/tofu/production.auto.tfvars`; its security group, role and secret exist before.
 
-Install it once, as an unprivileged user that has `gh` (signed in, or `GH_TOKEN` set to a fine-grained token with read access to public repositories only), `jq`, `flock` and the usual coreutils (`date`, `sleep`):
+A run has a deadline of 50 minutes (`PERMAILY_VERIFY_TIMEOUT`, in seconds): past it the run and everything it started are stopped (TERM, then KILL 30 s later, `PERMAILY_VERIFY_GRACE`) and it is a failure, so a download or a verifier that hangs cannot stop the hourly checks. One run at a time: the next run leaves a run within its deadline be, and treats a lock still held past the deadline, or a lock it cannot take, as a failure. The alert runs after the lock is released, and never holds it, with a deadline of its own of 2 minutes (`PERMAILY_ALERT_TIMEOUT`). systemd stops what is left of a run after 57 minutes. On the instance, the last report is in `/var/lib/permaily-port25/permaily-verify-cron/last.txt` and every run is in the journal of `permaily-port25.service`.
+
+What its mail means (the subscribers of `permaily-sigstore-deadline`, "Who is told about a Sigstore deadline"):
+
+- **"Permaily: the port 25 check failed"**, with the verifier's report: read it as a failed run of `verify-production`, an incident: which check failed and since when. A timeout or a refused connection on port 25 alone means AWS blocks port 25 again or the MX does not answer; check the second from a workstation (`scripts/verify.sh`, which warns when it cannot reach 25), and turn `port25_check` off if it is the block. `could not be read from Secrets Manager`, `does not hold a fine-grained GitHub token`, or GitHub answering 401 (`Bad credentials`) in the report: the token (below) is missing, of the wrong kind, expired or revoked. No verification ran in those.
+- **"Permaily: the port 25 check's run failed"**: the run failed without mailing its report (it crashed, systemd stopped it past 57 minutes, or SNS refused its alert), with the unit's journal of the last hour. No result is known for that hour.
+- **"Permaily: the port 25 check could not be set up"**: the first boot failed and nothing runs. Read `/var/log/cloud-init-output.log` over SSM, fix the cause in `deploy/port25`, and replace the instance: `tofu -chdir=deploy/tofu apply -replace='aws_instance.port25[0]'`.
+- **The alarm `permaily-port25-down`**: the instance failed its status checks or stopped reporting (stopped, terminated); no check runs. `aws ec2 describe-instance-status --region us-east-2 --include-all-instances --instance-ids "$(tofu -chdir=deploy/tofu output -raw port25_instance)"`; reboot it, or replace it as above. It mails OK when it clears. Right after the instance is created it can mail once before the first metrics arrive, then OK.
+
+Nothing mails when the timer stops firing on a healthy instance; `systemctl list-timers permaily-port25.timer` on it shows the last and next run. The operators other than the owner cannot open a session on it (their policy names the enclave host only).
+
+**Setting it up, once.** The GitHub token first, then the instance after AWS lifts the block:
 
 ```sh
-git clone https://github.com/permaily-org/permaily /opt/permaily      # or any directory the user owns
-nc -vz -w 5 inbox.permaily.com 25                                   # the provider lets port 25 out
-/opt/permaily/scripts/verify-cron.sh; echo "exit $?"                # a first run by hand: exit 0, nothing printed
-crontab -e
-#   MAILTO=<the address that is told>
-#   PERMAILY_ALERT_CMD='mail -s "Permaily: verification failed" <address>'   # optional, when cron cannot mail
-#   41 * * * * /opt/permaily/scripts/verify-cron.sh
+# 1. The security group, the role and the secret (no instance while port25_check is false).
+tofu -chdir=deploy/tofu apply
+# 2. The token gh signs in with. GitHub > Settings > Developer settings > Personal access tokens >
+#    Fine-grained tokens > Generate new token: an expiry, Repository access "Public repositories"
+#    (read-only), no permission added. Put it without showing it or putting it on a command line
+#    (never in the repository or the state):
+read -rsp 'GitHub token: ' token; echo
+printf %s "$token" | aws secretsmanager put-secret-value --region us-east-2 \
+  --secret-id permaily/port25/github-token --secret-string file:///dev/stdin; unset token
+# 3. Once AWS has lifted the account's block of outbound port 25 (us-east-2):
+#    deploy/tofu/production.auto.tfvars: port25_check = true, in a pull request, then
+tofu -chdir=deploy/tofu plan           # 2 to add: aws_instance.port25[0], aws_cloudwatch_metric_alarm.port25_down[0]
+tofu -chdir=deploy/tofu apply          # its first boot runs the check once; a failure mails within minutes
+# 4. A look at the first run (a session as ssm-user, which may sudo):
+aws ssm start-session --region us-east-2 --target "$(tofu -chdir=deploy/tofu output -raw port25_instance)"
+#   sudo systemctl status permaily-port25.service      # "Deactivated successfully", status 0
+#   sudo journalctl -u permaily-port25.service         # the run, empty of output when it passed
+#   systemctl list-timers permaily-port25.timer        # the next run at minute 41
 ```
 
-The scripts are run from that checkout: update it with `git -C /opt/permaily pull --ff-only` after reading what changed in `scripts/verify-production.sh` and `scripts/verify-cron.sh`; the verifier itself is always the release's, never the checkout's.
+- **The token again**: put a new one with step 2 before the old one expires (each run reads it), then revoke the old one on GitHub. Never a classic token: the run refuses one.
+- **Run it now**: in a session, `sudo systemctl start permaily-port25.service` (it waits for the run, a minute or two); or `aws ssm send-command --region us-east-2 --instance-ids "$(tofu -chdir=deploy/tofu output -raw port25_instance)" --document-name AWS-RunShellScript --parameters 'commands=["systemctl start --no-block permaily-port25.service"]'`.
+- **To silence it** for a planned change: `sudo systemctl stop permaily-port25.timer` in a session, and `start` afterwards (a reboot starts it again). For longer, or if AWS blocks port 25 again: `port25_check = false` and an apply, which removes the instance and its alarm.
+- **Updating it**: the instance runs `deploy/port25/` and `scripts/verify-cron.sh` and `scripts/verify-production.sh` as they were applied, written into its user data; an apply after any of them changes replaces the instance (and updates its alarm), and the drift check mails until that apply. `gh` is pinned in `port25.tf` by version and SHA-256: to update it, download the new `gh_<version>_linux_arm64.tar.gz`, check it against the release's checksums file and with `gh attestation verify <archive> --repo cli/cli`, and change both values together. A newer Amazon Linux image is taken only when the instance is replaced.
 
 ## Sigstore changed
 
@@ -291,7 +316,7 @@ aws sns subscribe --topic-arn "$(tofu -chdir=deploy/tofu output -raw sigstore_al
 aws sns list-subscriptions-by-topic --topic-arn "$(tofu -chdir=deploy/tofu output -raw sigstore_alarm_topic)"    # who is subscribed, and who has not confirmed
 ```
 
-The same topic carries the drift check's mail and its alarms ("The drift check"). The workflow publishes as the IAM user `permaily-sigstore-alarm`, which can publish to that topic and do nothing else. Its access key is in the repository secrets `SIGSTORE_ALARM_AWS_ACCESS_KEY_ID` and `SIGSTORE_ALARM_AWS_SECRET_ACCESS_KEY`, and the topic in the variable `SIGSTORE_ALARM_TOPIC_ARN`. To replace the key: `aws iam create-access-key --user-name permaily-sigstore-alarm`, set both secrets with `gh secret set`, then `aws iam delete-access-key` for the old one. GitHub's keyless sign-in is not used because the organization the AWS account belongs to forbids identity providers in it.
+The same topic carries the drift check's mail and its alarms ("The drift check"), and the port 25 check's ("Port 25, from its instance"). The workflow publishes as the IAM user `permaily-sigstore-alarm`, which can publish to that topic and do nothing else. Its access key is in the repository secrets `SIGSTORE_ALARM_AWS_ACCESS_KEY_ID` and `SIGSTORE_ALARM_AWS_SECRET_ACCESS_KEY`, and the topic in the variable `SIGSTORE_ALARM_TOPIC_ARN`. To replace the key: `aws iam create-access-key --user-name permaily-sigstore-alarm`, set both secrets with `gh secret set`, then `aws iam delete-access-key` for the old one. GitHub's keyless sign-in is not used because the organization the AWS account belongs to forbids identity providers in it.
 
 ## Rotate the GitHub dispatch token
 

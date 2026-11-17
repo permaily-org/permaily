@@ -1,0 +1,62 @@
+#!/bin/bash
+# First boot of the port 25 check's instance (Amazon Linux 2023, arm64;
+# deploy/tofu/port25.tf, ADR 0038). Everything it installs is in this file or
+# pinned by it: the scripts are the repository's as OpenTofu applied them
+# (full-line comments taken out, to fit in user data), and gh is pinned by
+# version and SHA-256. Nothing is fetched from a branch. Changing any of it
+# replaces the instance.
+set -euxo pipefail
+
+# A setup that fails would leave no timer, and nothing would mail: say so.
+trap 'aws sns publish --region ${region} --topic-arn ${topic_arn} --subject "Permaily: the port 25 check could not be set up" --message "The first boot of the port 25 check instance failed; nothing will run. See /var/log/cloud-init-output.log over SSM, then replace the instance (docs/operations.md, \"Port 25, from its instance\")." || true' ERR
+
+command -v aws curl flock tar sha256sum journalctl >/dev/null
+
+tmp=$(mktemp -d)
+curl -fsSL --proto '=https' --retry 5 -o "$tmp/gh.tar.gz" \
+  https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_arm64.tar.gz
+echo "${gh_sha256}  $tmp/gh.tar.gz" | sha256sum -c -
+tar -xzf "$tmp/gh.tar.gz" -C "$tmp"
+install -m 0755 "$tmp/gh_${gh_version}_linux_arm64/bin/gh" /usr/local/bin/gh
+rm -rf "$tmp"
+
+useradd --system --no-create-home --home-dir /var/lib/permaily-port25 --shell /sbin/nologin permaily-port25
+install -d -m 0755 /opt/permaily-port25
+
+cat >/opt/permaily-port25/verify-cron.sh <<'PERMAILY_EOF_VERIFY_CRON'
+${verify_cron}
+PERMAILY_EOF_VERIFY_CRON
+cat >/opt/permaily-port25/verify-production.sh <<'PERMAILY_EOF_VERIFY_PRODUCTION'
+${verify_production}
+PERMAILY_EOF_VERIFY_PRODUCTION
+cat >/opt/permaily-port25/run.sh <<'PERMAILY_EOF_RUN'
+${run}
+PERMAILY_EOF_RUN
+cat >/opt/permaily-port25/alert.sh <<'PERMAILY_EOF_ALERT'
+${alert}
+PERMAILY_EOF_ALERT
+cat >/opt/permaily-port25/on-failure.sh <<'PERMAILY_EOF_ON_FAILURE'
+${on_failure}
+PERMAILY_EOF_ON_FAILURE
+chmod 0755 /opt/permaily-port25/*.sh
+
+cat >/etc/permaily-port25.env <<'PERMAILY_EOF_ENV'
+AWS_REGION=${region}
+PERMAILY_TOPIC_ARN=${topic_arn}
+PERMAILY_TOKEN_SECRET=${token_secret}
+PERMAILY_EOF_ENV
+
+cat >/etc/systemd/system/permaily-port25.service <<'PERMAILY_EOF_SERVICE'
+${service_unit}
+PERMAILY_EOF_SERVICE
+cat >/etc/systemd/system/permaily-port25-failed.service <<'PERMAILY_EOF_FAILED'
+${failed_unit}
+PERMAILY_EOF_FAILED
+cat >/etc/systemd/system/permaily-port25.timer <<'PERMAILY_EOF_TIMER'
+${timer_unit}
+PERMAILY_EOF_TIMER
+
+systemctl daemon-reload
+systemctl enable --now permaily-port25.timer
+# A first run now, so that a check that cannot pass mails within minutes.
+systemctl start --no-block permaily-port25.service

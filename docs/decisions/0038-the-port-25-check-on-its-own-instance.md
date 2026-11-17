@@ -1,0 +1,38 @@
+# 0038 The hourly port 25 check on an instance of its own in the account
+
+Status: Accepted, built, off until AWS lifts the account's block of outbound port 25.
+Date: 2026-11-17
+
+## Context
+
+`permaily-verify -require-smtp` checks that port 25 of `inbox.permaily.com` answers STARTTLS with the attested key. GitHub's runners and Lambda cannot connect out on port 25, so the scheduled checks skip it (docs/threat-model.md, "Mail"). ADR 0035 ran it hourly by cron on a machine outside AWS (`scripts/verify-cron.sh`). The owner decided on 2026-11-17 that it runs on no machine outside the account but on a small instance of its own in it, once AWS lifts the account's block of outbound port 25 from EC2, which is asked of AWS separately. This decision replaces the port 25 part of ADR 0035; its drift check is unchanged.
+
+## Options
+
+1. **The production instance.** It already reaches port 25 once the block is lifted, but it is untrusted and holds the enclave: adding a check of the enclave there would make the watched host the watcher, and a GitHub token there is more than it needs (deploy/AGENTS.md).
+2. **Lambda or Fargate.** Lambda never opens port 25, whatever the account asks; Fargate costs more than a nano instance for a task that runs a minute an hour, and adds a cluster, a task definition and an image to keep.
+3. **A t4g.nano of its own**, with nothing of production: its own security group and role, no key, no bucket, no table.
+
+## Decision
+
+3, in `deploy/tofu/port25.tf`, with the scripts in `deploy/port25/`.
+
+- **Off by default.** `port25_check` (false) gives the instance and its alarm a count of 0. Before AWS lifts the block the check would fail and mail every hour, so the variable is turned on in the pull request that follows the lift (docs/operations.md, "Port 25, from its instance"). The security group, the role, the instance profile and the secret exist from the first apply, so that the token is put before the instance starts.
+- **The instance.** Amazon Linux 2023 on arm64 (the image the enclave host uses, from AWS's public SSM parameter), `t4g.nano` with standard CPU credits (no surplus billed), an 8 GiB encrypted gp3 root volume, IMDSv2 only with a hop limit of 1, a public IPv4 address (no NAT gateway, which costs more than the instance) in the existing public subnet. No SSH and no key pair: SSM only.
+- **Its network.** Nothing in. Out, TCP 443 (GitHub, Sigstore, AWS's endpoints, the enclave's HTTPS, the verifier's DNS over HTTPS for CAA) and 25 (the MX), nothing else. Amazon's DNS resolver, the metadata service and the time service are not filtered by security groups, so 53 is not opened.
+- **Its role.** `sns:Publish` on the alarms' topic, `secretsmanager:GetSecretValue` on its own secret, and `AmazonSSMManagedInstanceCore` for SSM, as on the enclave host; an explicit deny of every SSM parameter of the account, which that managed policy would otherwise let it read. It cannot read or write a bucket, a table, a key or a log of production.
+- **What it runs.** A systemd timer at minute 41 (away from 7, 23 and 37) starts `deploy/port25/run.sh` as an unprivileged system user, with the unit's sandboxing (`ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`). It reads the GitHub token from Secrets Manager into that run's environment, refuses anything but a fine-grained token, and hands over to `scripts/verify-cron.sh` unchanged: the latest release's `permaily-verify` and `pcrs.json`, each checked with `gh attestation verify` against the release workflow on `main` before anything of them runs, the previous release's while the latest is not deployed, a deadline of 50 minutes after which the run and its processes are stopped and it fails, one run at a time, and its alert command without the lock within a deadline of its own. The first boot also starts one run, so a check that cannot pass mails within minutes.
+- **How the code gets there.** Through user data, from the configuration OpenTofu applies: `run.sh`, `alert.sh`, `on-failure.sh`, the systemd units, and `scripts/verify-cron.sh` and `scripts/verify-production.sh` as they are in the applied commit, with their full-line comments taken out to fit in user data's 16 KiB (a precondition refuses the plan beyond it). `gh` comes from GitHub's release, pinned by version and SHA-256. Nothing is fetched from a branch, and nothing at boot but `gh`'s archive, which is checked. `user_data_replace_on_change` replaces the instance when any of it changes, so the instance runs what was applied, and the drift check (ADR 0035) mails when what runs differs from `develop`. Releases do not publish these scripts, and fetching them at a tag would need its own verification; the verifier itself is always the release's attested one, never the repository's.
+- **The token.** GitHub's CLI refuses to download releases or read attestations without one. A fine-grained personal access token with access to public repositories only (read-only) and no other permission, with an expiry, put by the operator into `permaily/port25/github-token` (docs/operations.md); it is in neither the repository nor the state, and never on a command line or a disk of the instance.
+- **Mail.** The alarms' SNS topic, whose subscribers are the maintainers, as for the drift check and Sigstore's deadlines. `alert.sh` publishes a failed run's report; a token that cannot be read, or is not fine-grained, is mailed with no verification run. When the unit fails without having mailed (a crash, systemd stopping it past its own limit, an alert SNS refused), `permaily-port25-failed.service` mails with the unit's journal of the last hour. A CloudWatch alarm on the instance's status checks, with missing data as breaching, mails when the instance fails or stops reporting (stopped or terminated), and again when it clears. A passing run sends nothing.
+
+## Consequences
+
+- With `port25_check` on, a certificate on port 25 that is not the attested one, or a port 25 that does not answer, is mailed within the hour, along with every other failure of the release's verifier.
+- The check runs in the account it watches. Whoever administers the account can stop, change or replace the instance, and so silence it or make it pass; disabling it outright mails through the alarm, a change made outside OpenTofu through the drift check, and anything subtler (a changed instance that still reports healthy) is not detected. It is a watch for the operators, not independent verification: anyone can still run `permaily-verify -require-smtp` from their own machine (docs/verification.md).
+- It depends on AWS keeping the account's port 25 unblocked. If AWS blocks it again, every run fails and mails; turn `port25_check` off until it is lifted.
+- A timer that stops firing while the instance stays healthy is not mailed: nothing reports a missing run. The timer has no other trigger, and the status alarm covers the instance.
+- Changing `scripts/verify-cron.sh`, `scripts/verify-production.sh` or `deploy/port25/` replaces the instance at the next apply; until that apply, the drift check mails.
+- Updating `gh` changes its version and SHA-256 in `port25.tf` together, after checking the archive's attestation.
+- The token expires (fine-grained tokens have an expiry): before it does, put a new one, or every run fails and mails.
+- Cost, us-east-2, on: the instance about 3.07 USD a month (0.0042 USD an hour), its public IPv4 address 3.65 USD (0.005 USD an hour), the 8 GiB gp3 volume 0.64 USD, the secret 0.40 USD, the alarm 0.10 USD, SNS mail within its free tier: about 7.90 USD a month. Off: the secret alone, 0.40 USD a month.
