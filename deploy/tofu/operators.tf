@@ -50,11 +50,19 @@ resource "aws_iam_user" "operator" {
   tags = contains(var.operators_enrolling, each.key) ? { (local.mfa_enrollment_tag) = "open" } : {}
 }
 
+# A user joins the group only once the MFA deny and the guard are attached, so
+# that a failed apply never leaves a member with the group's permissions and
+# without either.
 resource "aws_iam_user_group_membership" "operator" {
   for_each = var.operators
 
   user   = aws_iam_user.operator[each.key].name
   groups = [aws_iam_group.operators.name]
+
+  depends_on = [
+    aws_iam_group_policy_attachment.operators_mfa,
+    aws_iam_group_policy_attachment.operators_guard,
+  ]
 }
 
 data "aws_kms_alias" "operators_state" {
@@ -64,8 +72,15 @@ data "aws_kms_alias" "operators_state" {
 # The three policies are JSON templates in operators/, so that
 # scripts/operator-policies.test.ts evaluates them as IAM would: a long-term
 # key without MFA can enroll no device and do nothing, an open enrollment lets
-# the first device in and no access key, and the guard holds. Each operator's
-# one virtual MFA device is named after their user, mfa/${aws:username}.
+# the first device in and no access key, and the guard's denies hold against
+# any other attachment. Each operator's one virtual MFA device is named after
+# their user, mfa/${aws:username}.
+#
+# They are customer-managed policies attached to the group, not the group's
+# inline policies: IAM limits a group's inline policies to 5,120 characters
+# together (whitespace not counted), and these are over 6,000; a managed policy
+# may have 6,144 on its own. The test checks both limits on the rendered
+# documents.
 locals {
   mfa_enrollment_tag = "permaily-mfa-enrollment"
   operator_policy_vars = {
@@ -85,26 +100,47 @@ locals {
 # policy for users who manage their own MFA lets anyone without MFA add a
 # device, so a stolen access key could make its own second factor; here that
 # takes the owner opening the enrollment, which also refuses access keys.
-resource "aws_iam_group_policy" "operators_mfa" {
-  name   = "require-mfa"
-  group  = aws_iam_group.operators.name
-  policy = jsonencode(jsondecode(templatefile("${path.module}/operators/require-mfa.json.tftpl", local.operator_policy_vars)))
+resource "aws_iam_policy" "operators_mfa" {
+  name        = "permaily-operators-require-mfa"
+  description = "Operators (ADR 0036): nothing without MFA but their password and, while enrolling, their first MFA device."
+  policy      = jsonencode(jsondecode(templatefile("${path.module}/operators/require-mfa.json.tftpl", local.operator_policy_vars)))
 }
 
-# What deploying (scripts/deploy.sh) and operating (docs/operations.md) need.
-resource "aws_iam_group_policy" "operators_operate" {
-  name   = "operate"
-  group  = aws_iam_group.operators.name
-  policy = jsonencode(jsondecode(templatefile("${path.module}/operators/operate.json.tftpl", local.operator_policy_vars)))
+resource "aws_iam_group_policy_attachment" "operators_mfa" {
+  group      = aws_iam_group.operators.name
+  policy_arn = aws_iam_policy.operators_mfa.arn
 }
 
 # Holds whatever else is ever attached to an operator: no key or key policy
 # changed, no IAM but their own password, MFA and keys (not their tags, groups
-# or policies), no state written.
-resource "aws_iam_group_policy" "operators_guard" {
-  name   = "guard"
-  group  = aws_iam_group.operators.name
-  policy = jsonencode(jsondecode(templatefile("${path.module}/operators/guard.json.tftpl", local.operator_policy_vars)))
+# or policies, nor these policies), no state written, no DynamoDB.
+resource "aws_iam_policy" "operators_guard" {
+  name        = "permaily-operators-guard"
+  description = "Operators (ADR 0036): no KMS key change, no IAM beyond their own credentials, no state write, no DynamoDB."
+  policy      = jsonencode(jsondecode(templatefile("${path.module}/operators/guard.json.tftpl", local.operator_policy_vars)))
+}
+
+resource "aws_iam_group_policy_attachment" "operators_guard" {
+  group      = aws_iam_group.operators.name
+  policy_arn = aws_iam_policy.operators_guard.arn
+}
+
+# What deploying (scripts/deploy.sh) and operating (docs/operations.md) need.
+# Attached only after the MFA deny and the guard.
+resource "aws_iam_policy" "operators_operate" {
+  name        = "permaily-operators-operate"
+  description = "Operators (ADR 0036): what deploying and operating need."
+  policy      = jsonencode(jsondecode(templatefile("${path.module}/operators/operate.json.tftpl", local.operator_policy_vars)))
+}
+
+resource "aws_iam_group_policy_attachment" "operators_operate" {
+  group      = aws_iam_group.operators.name
+  policy_arn = aws_iam_policy.operators_operate.arn
+
+  depends_on = [
+    aws_iam_group_policy_attachment.operators_mfa,
+    aws_iam_group_policy_attachment.operators_guard,
+  ]
 }
 
 output "operators" {

@@ -54,6 +54,7 @@ The account's owner can do everything here. Other operators are IAM users `perma
 # 1. Add the next label to `operators` and to `operators_enrolling` in deploy/tofu/production.auto.tfvars,
 #    open the pull request, then:
 tofu -chdir=deploy/tofu apply            # the user, tagged permaily-mfa-enrollment=open, and its membership; no credential
+#    If the apply fails, make no credential: see what the group and the user have, fix it, and apply again (below).
 # 2. A one-time console password, that must be changed at first sign-in, kept off command lines.
 #    Give it through a secure channel (never chat or mail in the clear), and keep no copy.
 pw=$(openssl rand -base64 24)
@@ -61,6 +62,8 @@ printf '{"UserName":"permaily-operator-%s","Password":"%s","PasswordResetRequire
   aws iam create-login-profile --cli-input-json file:///dev/stdin --query LoginProfile.UserName
 printf %s "$pw" | wl-copy; unset pw      # or pbcopy: paste it into the secure channel, then clear the clipboard
 ```
+
+**An apply that fails part-way** leaves IAM as far as it got. The membership and the `operate` attachment wait for the MFA deny and the guard, so a member never has the group's permissions without both; check all the same before making any credential: `aws iam list-attached-group-policies --group-name permaily-operators` lists `permaily-operators-require-mfa`, `permaily-operators-guard` and `permaily-operators-operate` or fewer, never `operate` without the other two; `aws iam list-group-policies --group-name permaily-operators`, `aws iam list-user-policies` and `aws iam list-attached-user-policies --user-name permaily-operator-<label>` list nothing. Remove what should not be there (`aws iam detach-group-policy`, `aws iam remove-user-from-group`), fix the cause and apply again until `tofu plan` is clean. Make no password or access key for a user until the apply has succeeded.
 
 The operator then signs in at `https://<account id>.signin.aws.amazon.com/console` with the user and the one-time password, sets their own password, and, still without MFA, can only add an MFA device: Security credentials > Assign MFA device (a passkey, a security key, or an authenticator app whose device name is their user name, `permaily-operator-<label>`; another name is refused). Then they sign out and in again with it; everything else is refused until they do, and making an access key stays refused while the enrollment is open.
 
