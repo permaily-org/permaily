@@ -186,35 +186,89 @@ const sweepEvery = time.Hour
 // logged by its kind and the next tries again: nothing it does is what
 // refuses a token (a past-end connection is refused whether or not it ran).
 //
-// It also writes, every connections.RefusalWindow, the summaries of the
-// connections' refusals whose window closed (ADR 0031, "Refusals past a
-// window's bound"); stopConnections writes the rest at a stop.
-func runConnections(ctx context.Context, svc *connections.Service, log *slog.Logger, tick <-chan time.Time) {
+// It also runs the refusals' pass (ADR 0031, "Refusals past a window's
+// bound") refusalPassDelay after each minute of the clock ends, whenever
+// the enclave started: it writes the summaries of the windows that closed
+// and the writes due again. It returns what is closed once that pass has
+// stopped, which stopConnections waits for before the last writes.
+func runConnections(ctx context.Context, svc *connections.Service, log *slog.Logger, tick <-chan time.Time, clock refusalClock) <-chan struct{} {
 	go every(ctx, sweepEvery, tick, func() {
 		if err := svc.Sweep(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("connections: the hourly pass did not finish", "kind", "sweep")
 		}
 	})
-	go every(ctx, connections.RefusalWindow, nil, func() {
-		if err := svc.FlushRefusals(ctx, false); err != nil && ctx.Err() == nil {
-			log.Warn("connections: a summary of refusals was not written", "kind", "refusals")
+	if clock.now == nil {
+		clock.now = time.Now
+	}
+	if clock.after == nil {
+		clock.after = time.After
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-clock.after(untilRefusalPass(clock.now())):
+			}
+			if err := svc.FlushRefusals(ctx, false); err != nil && ctx.Err() == nil {
+				log.Warn("connections: a summary of refusals was not written", "kind", "refusals")
+			}
 		}
-	})
+	}()
+	return done
 }
 
-// stopFlushMax bounds the summaries of refusals written at a stop.
-const stopFlushMax = 10 * time.Second
+// refusalClock is the refusals' pass's clock: time.Now and time.After
+// unless a test gives its own.
+type refusalClock struct {
+	now   func() time.Time
+	after func(time.Duration) <-chan time.Time
+}
 
-// stopConnections writes, once the server has stopped taking requests,
-// every connection's summary of refusals still counted in memory, the open
-// windows' included, so a stop loses none of them (a crash loses the ones
-// not yet written).
-func stopConnections(svc *connections.Service, log *slog.Logger) {
-	ctx, cancel := context.WithTimeout(context.Background(), stopFlushMax)
-	defer cancel()
-	if err := svc.FlushRefusals(ctx, true); err != nil {
-		log.Warn("connections: a summary of refusals was not written at the stop", "kind", "refusals")
+// refusalPassDelay is how long after a minute of the clock ends the
+// refusals' pass runs: the window is closed on every enclave's clock by
+// then, and its summary is not left to wait for a pass a minute later.
+const refusalPassDelay = 2 * time.Second
+
+// untilRefusalPass is how long from now to the next refusals' pass:
+// refusalPassDelay after the end of the minute, this one's when that is
+// still ahead.
+func untilRefusalPass(now time.Time) time.Duration {
+	at := now.Truncate(connections.RefusalWindow).Add(refusalPassDelay)
+	if !now.Before(at) {
+		at = at.Add(connections.RefusalWindow)
 	}
+	return at.Sub(now)
+}
+
+// stopMax bounds a stop's last writes, once the server stopped taking
+// requests: the requests of connections still under way, the refusals'
+// pass, and every summary of refusals still in memory.
+const stopMax = 20 * time.Second
+
+// stopConnections ends the connections' work at a stop, after the server
+// stopped taking requests: it waits for the refusals' pass to stop (passed,
+// what runConnections returned), then for the attributed requests still
+// under way, admitting none more, and writes every connection's refusals
+// still counted in memory, the open windows' included (connections.Stop).
+// It returns an error when any of that did not finish within stopMax: a
+// stop that loses counts says so (a crash loses the ones not yet written).
+func stopConnections(svc *connections.Service, passed <-chan struct{}, log *slog.Logger) error {
+	ctx, cancel := context.WithTimeout(context.Background(), stopMax)
+	defer cancel()
+	select {
+	case <-passed:
+	case <-ctx.Done():
+		log.Error("connections: the refusals' pass did not stop", "kind", "refusals")
+		return errors.New("connections: the refusals' pass did not stop")
+	}
+	if err := svc.Stop(ctx); err != nil {
+		log.Error("connections: refusals were not written at the stop", "kind", "refusals")
+		return err
+	}
+	return nil
 }
 
 // mountConnections puts the connections' routes on their hosts (ADR 0030,
