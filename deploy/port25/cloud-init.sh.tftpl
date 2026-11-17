@@ -7,13 +7,21 @@
 # replaces the instance.
 set -euxo pipefail
 
-# A setup that fails would leave no timer, and nothing would mail: say so.
-trap 'aws sns publish --region ${region} --topic-arn ${topic_arn} --subject "Permaily: the port 25 check could not be set up" --message "The first boot of the port 25 check instance failed; nothing will run. See /var/log/cloud-init-output.log over SSM, then replace the instance (docs/operations.md, \"Port 25, from its instance\")." || true' ERR
+# A setup that fails would leave no timer, and nothing would mail: say so,
+# within a deadline of its own, so that a hung publish does not hold the boot.
+trap 'timeout --kill-after=5 ${alert_timeout} aws sns publish --region ${region} --topic-arn ${topic_arn} --cli-connect-timeout 10 --cli-read-timeout 30 --subject "Permaily: the port 25 check could not be set up" --message "The first boot of the port 25 check instance failed; nothing will run. See /var/log/cloud-init-output.log over SSM, then replace the instance (docs/operations.md, \"Port 25, from its instance\")." || true' ERR
 
-command -v aws curl flock tar sha256sum journalctl >/dev/null
+command -v aws curl flock tar sha256sum journalctl timeout >/dev/null
 
+# gh's archive, within ${download_timeout} s in all: curl gives up on an attempt
+# that connects in no 10 s, moves under 1 KB/s for 30 s or takes over 120 s,
+# retries within the deadline, and timeout stops whatever is left of it (a
+# transfer that never ends would otherwise hold the boot, and nothing would
+# mail). Past it, the trap mails; the archive is checked before it is opened.
 tmp=$(mktemp -d)
-curl -fsSL --proto '=https' --retry 5 -o "$tmp/gh.tar.gz" \
+timeout --kill-after=10 ${download_timeout} curl -fsSL --proto '=https' --connect-timeout 10 \
+  --speed-limit 1024 --speed-time 30 --max-time 120 \
+  --retry 5 --retry-delay 5 --retry-all-errors --retry-max-time ${download_timeout} -o "$tmp/gh.tar.gz" \
   https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_arm64.tar.gz
 echo "${gh_sha256}  $tmp/gh.tar.gz" | sha256sum -c -
 tar -xzf "$tmp/gh.tar.gz" -C "$tmp"

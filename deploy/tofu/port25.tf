@@ -1,8 +1,9 @@
 # The hourly port 25 check (ADR 0038): a t4g.nano of its own runs
 # `permaily-verify -require-smtp` against production every hour, at minute 41,
 # with the latest release's verifier and pcrs.json checked against their
-# provenance first (scripts/verify-cron.sh), and mails the subscribers of the
-# alarms' topic (alarms.tf) when it fails or cannot run.
+# provenance first (deploy/port25/verify-cron.sh, a copy of scripts/'s), and
+# mails the subscribers of the alarms' topic (alarms.tf) when it fails or
+# cannot run.
 #
 # It is not the production instance and reaches nothing of it: its own
 # security group (nothing in; out to 443 and 25 only), its own role (publish to
@@ -28,14 +29,22 @@ locals {
   # check the new archive the same way and change both together.
   port25_gh_version = "2.103.3"
   port25_gh_sha256  = "ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63"
+  # The first boot's download of gh, retries included, ends within this many
+  # seconds, or the boot fails and mails (cloud-init.sh.tftpl).
+  port25_download_timeout = 600
+  # And its mail that it failed, within this many.
+  port25_setup_alert_timeout = 60
 
   # The scripts the instance runs, as they are in this configuration. Their
   # full-line comments are taken out so that all of it fits in user data
   # (16 KiB); none of these scripts has a line starting with # inside a string.
+  # Everything read here is under deploy/: the drift check fetches only that
+  # (deploy/drift/drift.sh), so verify-cron.sh and verify-production.sh are
+  # copies of scripts/'s, which scripts/port25.test.ts keeps identical.
   port25_scripts = {
     for name, file_path in {
-      verify_cron       = "${path.module}/../../scripts/verify-cron.sh"
-      verify_production = "${path.module}/../../scripts/verify-production.sh"
+      verify_cron       = "${path.module}/../port25/verify-cron.sh"
+      verify_production = "${path.module}/../port25/verify-production.sh"
       run               = "${path.module}/../port25/run.sh"
       alert             = "${path.module}/../port25/alert.sh"
       on_failure        = "${path.module}/../port25/on-failure.sh"
@@ -44,14 +53,16 @@ locals {
   }
 
   port25_user_data = templatefile("${path.module}/../port25/cloud-init.sh.tftpl", merge(local.port25_scripts, {
-    region       = var.aws_region
-    topic_arn    = aws_sns_topic.sigstore_alarm.arn
-    token_secret = aws_secretsmanager_secret.port25_github.arn
-    gh_version   = local.port25_gh_version
-    gh_sha256    = local.port25_gh_sha256
-    service_unit = chomp(file("${path.module}/../port25/permaily-port25.service"))
-    failed_unit  = chomp(file("${path.module}/../port25/permaily-port25-failed.service"))
-    timer_unit   = chomp(file("${path.module}/../port25/permaily-port25.timer"))
+    region           = var.aws_region
+    topic_arn        = aws_sns_topic.sigstore_alarm.arn
+    token_secret     = aws_secretsmanager_secret.port25_github.arn
+    gh_version       = local.port25_gh_version
+    gh_sha256        = local.port25_gh_sha256
+    download_timeout = local.port25_download_timeout
+    alert_timeout    = local.port25_setup_alert_timeout
+    service_unit     = chomp(file("${path.module}/../port25/permaily-port25.service"))
+    failed_unit      = chomp(file("${path.module}/../port25/permaily-port25-failed.service"))
+    timer_unit       = chomp(file("${path.module}/../port25/permaily-port25.timer"))
   }))
 }
 
@@ -182,9 +193,11 @@ resource "aws_instance" "port25" {
     # on every plan (the drift check would mail each new image).
     ignore_changes = [ami]
 
+    # length() counts characters: with ASCII only, they are the bytes EC2
+    # counts.
     precondition {
-      condition     = length(local.port25_user_data) <= 16384
-      error_message = "The port 25 check's user data is over 16 KiB: shorten deploy/port25 or the scripts it carries."
+      condition     = length(local.port25_user_data) <= 16384 && can(regex("^[[:ascii:]]*$", local.port25_user_data))
+      error_message = "The port 25 check's user data is over 16 KiB or not ASCII: shorten deploy/port25 or the scripts it carries, and keep them ASCII."
     }
   }
 
