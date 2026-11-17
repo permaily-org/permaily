@@ -16,3 +16,6 @@ release_keys = {
 # Where senders send SMTP TLS reports: the "TLS reports" mailbox the super admin
 # made after v0.12.0 (docs/operations.md). Public on purpose.
 tls_rpt_address = "skr25i9u9s364ra7a6a9@inbox.permaily.com"
+
+# The drift check's image in ECR (docs/operations.md, "The drift check"). Public on purpose.
+drift_image_digest = "sha256:e827d6524fe50c94d08174a479d02b2de8fdef571b4debcb39f4a9a06a016106"
