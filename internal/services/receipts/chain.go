@@ -3,9 +3,11 @@ package receipts
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -33,7 +35,9 @@ import (
 // named by a catalogue, a numbered series of strict records of the same
 // kind, which an account's chain is entered in before its link 1 is made
 // (F2); the audit's finished passes are a third series, read by every
-// enclave for /status.
+// enclave for /status; and what any enclave found broken is a fourth, the
+// record of incidents, which only grows, so a finding outlives a clean pass,
+// a restart and the account (the second design review, R1).
 //
 // This file is the seam, committed with the design; ADR 0037's pull
 // request 1 writes the appender, the record table, the walk, the export and
@@ -44,12 +48,14 @@ import (
 const ChainPurpose = "permaily receipts chain v1"
 
 // LinkVersion is the version of a link's sealed document; CatalogueVersion,
-// AuditVersion and ExportVersion are those of the catalogue's entries, the
-// audit's passes and an export's pages.
+// AuditVersion, IncidentVersion and ExportVersion are those of the
+// catalogue's entries, the audit's passes, the record of incidents' entries
+// and an export's pages.
 const (
 	LinkVersion      = 1
 	CatalogueVersion = 1
 	AuditVersion     = 1
+	IncidentVersion  = 1
 	ExportVersion    = 1
 )
 
@@ -64,43 +70,71 @@ const (
 )
 
 // CatalogueAccountsMax bounds the accounts one entry of the catalogue
-// names, as LinkReceiptsMax bounds a link's receipts.
-const CatalogueAccountsMax = 64
+// names, as LinkReceiptsMax bounds a link's receipts; IncidentFindingsMax
+// the findings one entry of the record of incidents names.
+const (
+	CatalogueAccountsMax = 64
+	IncidentFindingsMax  = 64
+)
 
-// LinkBytesMax bounds one link's, one catalogue entry's and one audit
-// pass's JSON document before it is sealed; the largest of each is far
-// below it (TestTheLargestLinkFits).
+// LinkBytesMax bounds one link's, one catalogue entry's, one audit pass's
+// and one incident entry's JSON document before it is sealed; the largest
+// of each is far below it (TestTheLargestLinkFits).
 const LinkBytesMax = 16 << 10
 
 // A page of a walk or of an export is bounded by each of these, apart from
-// the receipts a walk asks for: WalkBytesMax of sealed entries read,
-// WalkLinksMax links visited (a link that cannot be read counts as one
-// that can), and WalkListedMax objects listed where the links' commits are
+// the receipts a walk asks for: WalkBytesMax of sealed entries read
+// (SealedBytes of each document it holds, at least), WalkLinksMax links
+// visited (a link that cannot be read counts as one that can), and
+// WalkListedMax objects listed where the links' commits are, in one try
 // (delete markers and objects that are not commits count). A page that
-// reaches a bound ends there, with Next, and is never Done.
+// reaches the bytes or the links ends there, with Next, and is never Done.
+// A page reports only links whose full history it listed: one whose
+// listing reaches WalkListedMax before the history of its top link is
+// complete lists again over half as many links, and one link whose history
+// alone passes it fails the page (ErrHistoryTooLarge), never a verdict
+// (ADR 0037, "The bounds of a page"; R4). Finding the head and the audit
+// list without that bound, within their deadlines.
 const (
 	WalkBytesMax  = 8 << 20
 	WalkLinksMax  = 256
 	WalkListedMax = 4000
 )
 
+// ErrHistoryTooLarge is a page whose one link has more objects listed
+// where its commits are than WalkListedMax: what was listed is not a
+// verdict, and the page fails, as a storage that cannot be read does.
+var ErrHistoryTooLarge = errors.New("receipts: a link's history is larger than a page lists")
+
+// SealedBytes is the size of a document of n bytes once sealed as text and
+// stored (envelope.SealText: its version byte, commitment, nonce and tag,
+// in base64 inside a JSON object): what a page charges for each document
+// it holds against WalkBytesMax, and what receiptstest.Fake charges too.
+func SealedBytes(n int) int {
+	return len(`{"sealed":""}`) + base64.StdEncoding.EncodedLen(1+sha256.Size+12+n+16)
+}
+
 // LinkPrefix starts the keys of an account's links in Partition(account),
 // apart from IDPrefix, so List never meets one and DeletePartition removes
-// them with the receipts. CatalogueKeyPrefix and AuditKeyPrefix start the
-// keys of the catalogue's entries in CataloguePartition and of the audit's
-// passes in AuditPartition.
+// them with the receipts. CatalogueKeyPrefix, AuditKeyPrefix and
+// IncidentKeyPrefix start the keys of the catalogue's entries in
+// CataloguePartition, of the audit's passes in AuditPartition and of the
+// record of incidents' entries in IncidentPartition.
 const (
 	LinkPrefix         = "lnk_"
 	CatalogueKeyPrefix = "cat_"
 	AuditKeyPrefix     = "pass_"
+	IncidentKeyPrefix  = "inc_"
 )
 
-// CataloguePartition and AuditPartition hold the values of the catalogue's
-// entries and of the audit's passes. Neither is an account's: removing an
-// account removes neither.
+// CataloguePartition, AuditPartition and IncidentPartition hold the values
+// of the catalogue's entries, of the audit's passes and of the record of
+// incidents' entries. None is an account's: removing an account removes
+// none.
 const (
 	CataloguePartition = "receipts-catalogue"
 	AuditPartition     = "receipts-audit"
+	IncidentPartition  = "receipts-incidents"
 )
 
 // LinkTries bounds how many link numbers an appender tries for one group
@@ -114,10 +148,33 @@ const LinkTries = 8
 // enclaves' clocks differ.
 const AdoptAfter = time.Minute
 
-// RecoverAfter is how old a receipt no link names must be before the audit
-// links it in a link of kind LinkRecovered: far longer than any write of a
-// receipt and its link may take, so no Write still waits for it.
-const RecoverAfter = 10 * time.Minute
+// RecoverAfter is how old a receipt no link names must be, by its
+// identifier's time, before the audit links it in a link of kind
+// LinkRecovered: far longer than any write of a receipt and its link may
+// take, so no Write still waits for it. RecoverWithin is how old it may be
+// at most: three daily passes, so a pass or two that did not finish lose
+// nothing. A receipt without a link older than that is counted unlinked by
+// the audit and never recovered (ADR 0037, "Receipts left without a
+// link"; R2), so the audit's memory of which receipts links name is
+// bounded by what an account wrote in RecoverWithin.
+const (
+	RecoverAfter  = 10 * time.Minute
+	RecoverWithin = 72 * time.Hour
+)
+
+// AuditWindowRefsMax bounds the refs the audit holds for one chain while it
+// joins links' refs with the stored receipts: those of links written within
+// RecoverWithin and AdoptAfter of the receipts it is reading. A chain that
+// needs more fails the pass, which then does not finish (R2, R6).
+const AuditWindowRefsMax = 1 << 16
+
+// AuditWriteAfterCheck bounds how long after the audit asked whether an
+// account is being removed it may begin a write for that account (a
+// recovered or adopted link, an entry of the catalogue, link 1): with the
+// write's own ReceiptWriteMax, far within the ten minutes between account
+// removal's two sweeps of the partition, so the second sweep removes any
+// value it stored (R3).
+const AuditWriteAfterCheck = time.Minute
 
 // AuditEvery is how often a pass of the audit begins, and AuditRunMax how
 // long one run of it may take; a pass not finished in a run begins again in
@@ -132,6 +189,7 @@ const (
 	linkNamePrefix    = "receipt-link-"
 	catalogueSeries   = "receipt-chains"
 	auditSeries       = "receipt-audit"
+	incidentSeries    = "receipt-incidents"
 	accountIDPrefix   = "acc_"
 	accountIDLength   = len(accountIDPrefix) + 26
 	accountIDAlphabet = "abcdefghijklmnopqrstuvwxyz234567"
@@ -149,6 +207,10 @@ func CatalogueName(k uint64) string { return catalogueSeries + "-" + strconv.For
 // AuditName is the strict anchored record of the audit's finished pass p,
 // from 1.
 func AuditName(p uint64) string { return auditSeries + "-" + strconv.FormatUint(p, 10) }
+
+// IncidentName is the strict anchored record of the record of incidents'
+// entry i, from 1.
+func IncidentName(i uint64) string { return incidentSeries + "-" + strconv.FormatUint(i, 10) }
 
 // ParseLinkName is LinkName's account and number; ok is false for a name
 // that is not a link's.
@@ -180,13 +242,14 @@ func splitNumber(name string) (series string, n uint64, ok bool) {
 }
 
 // numbered is the series and number of a plain record name of the chain's:
-// a link's (with its account), the catalogue's or the audit's.
+// a link's (with its account), the catalogue's, the audit's or the record
+// of incidents'.
 func numbered(name string) (group, account string, n uint64, ok bool) {
 	if account, n, ok := ParseLinkName(name); ok {
 		return linkNamePrefix + account, account, n, true
 	}
 	series, n, ok := splitNumber(name)
-	if !ok || (series != catalogueSeries && series != auditSeries) {
+	if !ok || (series != catalogueSeries && series != auditSeries && series != incidentSeries) {
 		return "", "", 0, false
 	}
 	return series, "", n, true
@@ -194,8 +257,9 @@ func numbered(name string) (group, account string, n uint64, ok bool) {
 
 // CommitGroup is where the commits of one of the chain's records are kept
 // together in the anchors bucket: group is the series (an account's links,
-// the catalogue, the audit's passes), and member the number in 16
-// hexadecimal digits, so the members' order is the numbers' and one listing
+// the catalogue, the audit's passes, the record of incidents), and member
+// the number in 16 hexadecimal digits, so the members' order is the
+// numbers' and one listing
 // of a group from a member reads the full history of every record above it
 // (ADR 0037, F1). ok is false for any other name, whose commits stay where
 // each record's own are.
@@ -212,8 +276,9 @@ func CommitGroup(name string) (group, member string, ok bool) {
 // gives each version ("@<version>-<hash>"). A link is kept in its account's
 // own partition under LinkKeyPrefix(n), the catalogue's entry k in
 // CataloguePartition under CatalogueKeyPrefix and k, the audit's pass p in
-// AuditPartition under AuditKeyPrefix and p, each number in 16 hexadecimal
-// digits so the keys' order is the numbers'. A plain name has no key (ok
+// AuditPartition under AuditKeyPrefix and p, the record of incidents' entry
+// i in IncidentPartition under IncidentKeyPrefix and i, each number in 16
+// hexadecimal digits so the keys' order is the numbers'. A plain name has no key (ok
 // false): these records are made with CreateNew and never stored under it,
 // so nothing anyone writes there is ever read, and junk under it cannot
 // stop one from being made.
@@ -230,8 +295,10 @@ func RecordKey(name string) (partition, key string, ok bool) {
 		return Partition(account), LinkKeyPrefix(n) + "@" + suffix, true
 	case group == catalogueSeries:
 		return CataloguePartition, CatalogueKeyPrefix + fmt.Sprintf("%016x", n) + "@" + suffix, true
-	default:
+	case group == auditSeries:
 		return AuditPartition, AuditKeyPrefix + fmt.Sprintf("%016x", n) + "@" + suffix, true
+	default:
+		return IncidentPartition, IncidentKeyPrefix + fmt.Sprintf("%016x", n) + "@" + suffix, true
 	}
 }
 
@@ -480,7 +547,7 @@ func (a *AuditPass) Check() error {
 		return errors.New("receipts: the audit's passes are numbered from 1")
 	case a.Audit.Began.IsZero() || a.Audit.Finished.Before(a.Audit.Began):
 		return errors.New("receipts: an audit pass says when it began and finished, in that order")
-	case a.Audit.Chains < 0 || a.Audit.Removed < 0 || a.Audit.Recovered < 0:
+	case a.Audit.Chains < 0 || a.Audit.Removed < 0 || a.Audit.Recovered < 0 || a.Audit.Unlinked < 0 || a.Audit.Expired < 0:
 		return errors.New("receipts: an audit pass counts nothing below zero")
 	case len(a.Audit.Broken) != len(attestation.ReceiptsBrokenKinds):
 		return errors.New("receipts: an audit pass counts every kind of break, and no other")
@@ -489,6 +556,93 @@ func (a *AuditPass) Check() error {
 		if n, ok := a.Audit.Broken[k]; !ok || n < 0 {
 			return fmt.Errorf("receipts: an audit pass counts %q, not below zero", k)
 		}
+	}
+	return nil
+}
+
+// Incident is one entry of the record of incidents, a strict record made
+// once (IncidentName), numbered from 1 without gap and naming the entry
+// before by digest as a catalogue's entry does: what an enclave found
+// broken, recorded before it reported it, so a finding outlives the pass
+// that found it, a clean pass after it, a restart, the other enclave and
+// the account (ADR 0037, "The record of incidents"; R1). Its head is found
+// by listing its commits, as a chain's: how many entries it has is what
+// /status reports, and an entry whose value is lost, forked or unreadable
+// still counts, since its commit is there.
+type Incident struct {
+	V  int       `json:"v"`
+	I  uint64    `json:"i"`
+	At time.Time `json:"at"`
+	// Prev is the digest of entry I-1's document, IncidentGenesis for entry
+	// 1; Break as a link's.
+	Prev     *Digest     `json:"prev,omitempty"`
+	Break    BreakReason `json:"break,omitempty"`
+	Findings []Finding   `json:"findings"`
+}
+
+// Finding is one thing an incident records: a kind of
+// attestation.ReceiptsBrokenKinds and where it was found. A receipt's kind
+// names its account, its link's number and its identifier; a link's its
+// account and number; the catalogue's the entry's number and no account.
+type Finding struct {
+	Kind    string `json:"kind"`
+	Account string `json:"account,omitempty"`
+	N       uint64 `json:"n"`
+	Receipt string `json:"receipt,omitempty"`
+}
+
+// IncidentGenesis is what the record of incidents' entry 1 names as the
+// entry before it: the SHA-256 of ChainPurpose, a byte 1 and "incidents",
+// which neither an account's Genesis nor CatalogueGenesis is.
+func IncidentGenesis() Digest {
+	return sha256.Sum256([]byte(ChainPurpose + "\x01incidents"))
+}
+
+// Check says whether i is an incident entry's document as one is written:
+// its version, number and time, the entry before named as a link names the
+// link before, and one to IncidentFindingsMax findings, each of a known
+// kind with where it was found in that kind's shape, none named twice.
+func (i *Incident) Check() error {
+	switch {
+	case i.V != IncidentVersion:
+		return fmt.Errorf("receipts: an incident entry of version %d", i.V)
+	case i.I == 0:
+		return errors.New("receipts: the record of incidents' entries are numbered from 1")
+	case i.At.IsZero():
+		return errors.New("receipts: an incident entry says when it was written")
+	}
+	if err := checkPrev(i.I, i.Prev, i.Break); err != nil {
+		return err
+	}
+	if len(i.Findings) == 0 || len(i.Findings) > IncidentFindingsMax {
+		return fmt.Errorf("receipts: an incident entry names 1 to %d findings, not %d", IncidentFindingsMax, len(i.Findings))
+	}
+	seen := make(map[Finding]bool, len(i.Findings))
+	for _, f := range i.Findings {
+		if err := f.check(); err != nil {
+			return err
+		}
+		if seen[f] {
+			return errors.New("receipts: an incident entry names a finding twice")
+		}
+		seen[f] = true
+	}
+	return nil
+}
+
+func (f Finding) check() error {
+	kind, _, _ := strings.Cut(f.Kind, "_")
+	switch {
+	case !slices.Contains(attestation.ReceiptsBrokenKinds, f.Kind):
+		return fmt.Errorf("receipts: a finding of kind %q", f.Kind)
+	case f.N == 0:
+		return errors.New("receipts: a finding says the number it was found at")
+	case kind == "catalogue" && (f.Account != "" || f.Receipt != ""):
+		return errors.New("receipts: a finding of the catalogue names no account")
+	case kind != "catalogue" && !validAccount(f.Account):
+		return errors.New("receipts: a finding of a chain names its account")
+	case (kind == "receipt") != ValidID(f.Receipt):
+		return errors.New("receipts: a finding names a receipt only when it is a receipt's")
 	}
 	return nil
 }
@@ -528,6 +682,13 @@ const (
 	LinkForked     LinkVerdict = "forked"     // two commits at its version
 	LinkUnreadable LinkVerdict = "unreadable" // its document does not open for its name, or is not a link (Check)
 	LinkPrev       LinkVerdict = "prev"       // its digest is not what the next link's Prev names
+	// LinkExpired: its history holds no commit any more (its lock ended and
+	// it was deleted), and its document is what the next link's Prev names.
+	// Its bytes are authenticated; that no other commit was ever made at its
+	// number is not, since the evidence of a fork may have expired with it.
+	// Not a break the storage made, and never LinkOK (ADR 0037, "The end of
+	// the lock"; R5).
+	LinkExpired LinkVerdict = "expired"
 )
 
 // ReceiptVerdict is what a walk found of one receipt a link names.
@@ -541,14 +702,20 @@ const (
 )
 
 // WalkedLink is one link a walk read, with what it found of it and of the
-// receipts of it the page holds; Link is nil unless Verdict is LinkOK or
-// LinkPrev, and Receipts is then empty: a link that cannot be read names
-// nothing anyone can check.
+// receipts of it the page holds; Link is nil unless Verdict is LinkOK,
+// LinkPrev or LinkExpired (Readable), and Receipts is then empty: a link
+// that cannot be read names nothing anyone can check.
 type WalkedLink struct {
 	N        uint64          `json:"n"`
 	Verdict  LinkVerdict     `json:"verdict"`
 	Link     *Link           `json:"link,omitempty"`
 	Receipts []WalkedReceipt `json:"receipts,omitempty"`
+}
+
+// Readable says whether a link of verdict v has a document a walk shows and
+// receipts it checks: LinkOK, LinkPrev and LinkExpired.
+func (v LinkVerdict) Readable() bool {
+	return v == LinkOK || v == LinkPrev || v == LinkExpired
 }
 
 // WalkedReceipt is one receipt a link names, at Index in its Receipts:
@@ -606,6 +773,67 @@ type ExportedReceipt struct {
 	Doc     []byte         `json:"doc,omitempty"`
 }
 
+// Bytes is what p's documents charge against WalkBytesMax: SealedBytes of
+// each document it holds. What the service read to make it is at least
+// that.
+func (p *ExportPage) Bytes() int {
+	total := 0
+	for _, l := range p.Links {
+		if l.Doc != nil {
+			total += SealedBytes(len(l.Doc))
+		}
+		for _, r := range l.Receipts {
+			if r.Doc != nil {
+				total += SealedBytes(len(r.Doc))
+			}
+		}
+	}
+	return total
+}
+
+// Check says whether p keeps the contract of a page, as every
+// implementation of Chain must and permaily-verify -receipts requires of a
+// file: its version; within WalkLinksMax links and WalkBytesMax; links in
+// descending number below the head, receipts in each in descending index;
+// a document only where its verdict says one was read; Next set only on a
+// page that is not Done, which holds a link, and no higher than where the
+// page's last receipt or link is. The fake and the service share it (R7).
+func (p *ExportPage) Check() error {
+	switch {
+	case p.V != ExportVersion:
+		return fmt.Errorf("receipts: an export's page of version %d", p.V)
+	case len(p.Links) > WalkLinksMax:
+		return fmt.Errorf("receipts: an export's page of %d links", len(p.Links))
+	case p.Bytes() > WalkBytesMax:
+		return fmt.Errorf("receipts: an export's page of %d bytes sealed", p.Bytes())
+	case p.Done != (p.Next == Position{}):
+		return errors.New("receipts: an export's page is done or says where the next begins, not both")
+	case !p.Done && len(p.Links) == 0:
+		return errors.New("receipts: an export's page that is not done holds a link, so the next moves on")
+	}
+	last := Position{N: p.Head.N + 1}
+	for _, l := range p.Links {
+		if l.N == 0 || l.N >= last.N || (l.Doc != nil) != l.Verdict.Readable() || (!l.Verdict.Readable() && len(l.Receipts) > 0) {
+			return fmt.Errorf("receipts: an export's link %d out of order or of a verdict it does not keep", l.N)
+		}
+		last = Position{N: l.N, Index: LinkReceiptsMax}
+		for _, r := range l.Receipts {
+			hasDoc := r.Verdict == ReceiptOK || r.Verdict == ReceiptChanged
+			if r.Index < 0 || r.Index >= last.Index || (r.Doc != nil) != hasDoc {
+				return fmt.Errorf("receipts: an export's receipt %d of link %d out of order or of a verdict it does not keep", r.Index, l.N)
+			}
+			last.Index = r.Index
+		}
+		if len(l.Receipts) == 0 {
+			last.Index = 0
+		}
+	}
+	if !p.Done && (p.Next.N > last.N || (p.Next.N == last.N && p.Next.Index > last.Index)) {
+		return errors.New("receipts: an export's page continues above where it ended")
+	}
+	return nil
+}
+
 // Chain is an account's chain of receipts (ADR 0037). The receipts service
 // is its one implementation, over the entries of Partition(account) and a
 // strict store.Anchored that reads and writes the chain's names and
@@ -619,7 +847,9 @@ type Chain interface {
 	// is unknown may name ref and still return an error: a receipt may
 	// record more than left, never less.
 	Link(ctx context.Context, account string, ref Ref) (Position, error)
-	// Head is account's head, found by listing its links' commits now.
+	// Head is account's head, found by listing its links' commits now,
+	// with no bound on the objects listed but ctx's deadline. A head that
+	// is not LinkOK is returned only once it is recorded as an incident.
 	Head(ctx context.Context, account string) (Head, error)
 	// Walk reads account's receipts before the position before (the zero
 	// Position for from the head), the newest first, up to limit receipts
@@ -628,29 +858,42 @@ type Chain interface {
 	// commits, a fork included), the page's top one against its commit and
 	// every other against the next one's Prev; every receipt against its
 	// Ref. A link or a receipt read and found wanting is a verdict, never
-	// left out; a storage that cannot be read now is an error. A page ends
-	// at a bound, inside a link or at one, and the next begins from Next:
-	// nothing is skipped.
+	// left out; a storage that cannot be read now is an error, and so is a
+	// link whose history alone passes WalkListedMax (ErrHistoryTooLarge). A
+	// page holding a verdict of a kind of attestation.ReceiptsBrokenKinds is
+	// returned only once an incident recording it is committed; a failure
+	// to record fails the page. A page ends at a bound, inside a link or at
+	// one, and the next begins from Next: nothing is skipped. What it says
+	// of a link is as of its history's listing: a commit that lands after
+	// it is seen by the next page or pass that lists it.
 	Walk(ctx context.Context, account string, before Position, limit int) (*Walked, error)
-	// Export is Walk's page as exact bytes, within the same bounds.
+	// Export is Walk's page as exact bytes, within the same bounds; every
+	// page it returns passes ExportPage.Check.
 	Export(ctx context.Context, account string, before Position) (*ExportPage, error)
 }
 
 // Auditor is the audit of every chain the catalogue names (ADR 0037, "The
-// audit"), which /status reports.
+// audit"), and the record of incidents, which /status reports.
 type Auditor interface {
 	// Audit runs the audit for at most AuditRunMax: it begins a pass when
 	// the newest finished one began AuditEvery ago or more, and returns the
 	// pass it finished, nil when none did. A pass that does not finish in a
 	// run begins again in the next; no pass is finished that did not read
 	// every entry of the catalogue up to the head it began with and every
-	// chain they name.
+	// chain they name, nor before every finding it counts as broken is
+	// recorded as an incident.
 	Audit(ctx context.Context) (*AuditPass, error)
 	// Audited is the deployment's newest finished pass, read strictly; nil
 	// before the first.
 	Audited(ctx context.Context) (*AuditPass, error)
+	// Incidents is the record of incidents' head, found by listing its
+	// commits now: how many entries any enclave of the deployment ever
+	// recorded, whatever became of their values, and when it was read.
+	Incidents(ctx context.Context) (attestation.ReceiptsIncidents, error)
 	// Broken is what this enclave found by its walks, exports, appends and
-	// audits since it started, by every kind of
-	// attestation.ReceiptsBrokenKinds.
+	// audits since it started and has not recorded as an incident yet (its
+	// record pending or failed), by every kind of
+	// attestation.ReceiptsBrokenKinds: what a restart would forget, so it
+	// is shown until it is recorded.
 	Broken() map[string]int64
 }

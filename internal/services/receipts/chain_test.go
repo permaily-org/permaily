@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/permaily-org/permaily/internal/envelope"
 	"github.com/permaily-org/permaily/pkg/attestation"
 )
 
@@ -176,6 +177,7 @@ func TestTheChainsRecordsAreGroupedAndKept(t *testing.T) {
 		{LinkName(b, 255), "receipt-link-" + b, "00000000000000ff", Partition(b), "lnk_00000000000000ff@v"},
 		{CatalogueName(16), "receipt-chains", "0000000000000010", CataloguePartition, "cat_0000000000000010@v"},
 		{AuditName(1<<64 - 1), "receipt-audit", "ffffffffffffffff", AuditPartition, "pass_ffffffffffffffff@v"},
+		{IncidentName(2), "receipt-incidents", "0000000000000002", IncidentPartition, "inc_0000000000000002@v"},
 	} {
 		group, member, ok := CommitGroup(c.name)
 		if !ok || group != c.group || member != c.member {
@@ -192,8 +194,13 @@ func TestTheChainsRecordsAreGroupedAndKept(t *testing.T) {
 			t.Fatalf("%q is kept at %q %q %t", c.name, partition, key, ok)
 		}
 	}
-	if Partition(a) == CataloguePartition || Partition(a) == AuditPartition || CataloguePartition == AuditPartition {
+	if Partition(a) == CataloguePartition || Partition(a) == AuditPartition || CataloguePartition == AuditPartition ||
+		IncidentPartition == CataloguePartition || IncidentPartition == AuditPartition || Partition(a) == IncidentPartition {
 		t.Fatal("two series share a partition")
+	}
+	if IncidentGenesis() == CatalogueGenesis() || IncidentGenesis() == Genesis("incidents") ||
+		IncidentGenesis() != Digest(sha256.Sum256([]byte("permaily receipts chain v1\x01incidents"))) {
+		t.Fatal("the record of incidents' genesis is not the design's")
 	}
 	if CatalogueGenesis() == Genesis("catalogue") || CatalogueGenesis() == Genesis("") {
 		t.Fatal("the catalogue's genesis is an account's")
@@ -201,7 +208,7 @@ func TestTheChainsRecordsAreGroupedAndKept(t *testing.T) {
 	if CatalogueGenesis() != Digest(sha256.Sum256([]byte("permaily receipts chain v1\x01catalogue"))) {
 		t.Fatal("the catalogue's genesis is not the design's")
 	}
-	for _, name := range []string{"receipt-chains-1-1", "receipt-audit", "receipt-chainsx-1", "x-receipt-chains-1", "receipt-chains-1x"} {
+	for _, name := range []string{"receipt-chains-1-1", "receipt-audit", "receipt-chainsx-1", "x-receipt-chains-1", "receipt-chains-1x", "receipt-incidents-0", "receipt-incident-1"} {
 		if _, _, ok := CommitGroup(name); ok {
 			t.Fatalf("%q has a group of commits", name)
 		}
@@ -308,6 +315,8 @@ func TestAnAuditPassIsChecked(t *testing.T) {
 		"chains":    func(p *AuditPass) { p.Audit.Chains = -1 },
 		"removed":   func(p *AuditPass) { p.Audit.Removed = -1 },
 		"recovered": func(p *AuditPass) { p.Audit.Recovered = -1 },
+		"unlinked":  func(p *AuditPass) { p.Audit.Unlinked = -1 },
+		"expired":   func(p *AuditPass) { p.Audit.Expired = -1 },
 		"missing":   func(p *AuditPass) { delete(p.Audit.Broken, "link_lost") },
 		"other":     func(p *AuditPass) { delete(p.Audit.Broken, "link_lost"); p.Audit.Broken["unlinked"] = 0 },
 		"negative":  func(p *AuditPass) { p.Audit.Broken["receipt_missing"] = -1 },
@@ -320,6 +329,7 @@ func TestAnAuditPassIsChecked(t *testing.T) {
 	}
 	largest := testPass()
 	largest.P, largest.Audit.Catalogue, largest.Audit.Chains, largest.Audit.Removed, largest.Audit.Recovered = 1<<64-1, 1<<64-1, 1<<63-1, 1<<63-1, 1<<63-1
+	largest.Audit.Unlinked, largest.Audit.Expired = 1<<63-1, 1<<63-1
 	for k := range largest.Audit.Broken {
 		largest.Audit.Broken[k] = 1<<63 - 1
 	}
@@ -338,5 +348,157 @@ func TestAHeadSaysWhatWasFound(t *testing.T) {
 	b, err = json.Marshal(Head{N: 3, Verdict: LinkForked})
 	if err != nil || string(b) != `{"n":3,"verdict":"forked"}` {
 		t.Fatalf("%s %v", b, err)
+	}
+}
+
+func testIncident(i uint64, findings int) Incident {
+	prev := IncidentGenesis()
+	in := Incident{V: IncidentVersion, I: i, At: time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC), Prev: &prev}
+	for j := range findings {
+		in.Findings = append(in.Findings, Finding{Kind: "receipt_missing", Account: testAccount, N: 1<<64 - 1, Receipt: fmt.Sprintf("rcp_%016x%020x", in.At.UnixNano(), j)})
+	}
+	return in
+}
+
+// L31 (R1): an entry of the record of incidents is checked as it is
+// written: its version, number and time, the entry before named as a link
+// names the link before, one to IncidentFindingsMax findings, each of a
+// known kind with where it was found in that kind's shape (a receipt's
+// with its account and identifier, a link's with its account, the
+// catalogue's with neither), none twice; the largest fits LinkBytesMax.
+func TestAnIncidentIsChecked(t *testing.T) {
+	ok := testIncident(2, 2)
+	ok.Findings = append(ok.Findings, Finding{Kind: "link_forked", Account: testAccount, N: 3}, Finding{Kind: "catalogue_lost", N: 9})
+	if err := ok.Check(); err != nil {
+		t.Fatal(err)
+	}
+	broken := testIncident(4, 1)
+	broken.Prev, broken.Break = nil, BreakLost
+	if err := broken.Check(); err != nil {
+		t.Fatal(err)
+	}
+	for name, edit := range map[string]func(*Incident){
+		"version":           func(i *Incident) { i.V = 2 },
+		"number":            func(i *Incident) { i.I = 0 },
+		"time":              func(i *Incident) { i.At = time.Time{} },
+		"neither":           func(i *Incident) { i.Prev = nil },
+		"entry 1 broken":    func(i *Incident) { i.I, i.Prev, i.Break = 1, nil, BreakLost },
+		"empty":             func(i *Incident) { i.Findings = nil },
+		"too many":          func(i *Incident) { *i = testIncident(i.I, IncidentFindingsMax+1) },
+		"twice":             func(i *Incident) { i.Findings[1] = i.Findings[0] },
+		"kind":              func(i *Incident) { i.Findings[0].Kind = "unlinked" },
+		"no number":         func(i *Incident) { i.Findings[0].N = 0 },
+		"no account":        func(i *Incident) { i.Findings[0].Account = "" },
+		"no receipt":        func(i *Incident) { i.Findings[0].Receipt = "" },
+		"link with receipt": func(i *Incident) { i.Findings[0].Kind = "link_lost" },
+		"catalogue account": func(i *Incident) { i.Findings[0] = Finding{Kind: "catalogue_prev", Account: testAccount, N: 1} },
+		"catalogue receipt": func(i *Incident) { i.Findings[0] = Finding{Kind: "catalogue_prev", N: 1, Receipt: "rcp_x"} },
+	} {
+		in := testIncident(3, 2)
+		edit(&in)
+		if in.Check() == nil {
+			t.Errorf("%s: an entry that is not one passed", name)
+		}
+	}
+	largest := testIncident(1<<64-1, IncidentFindingsMax)
+	largest.At = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+	if err := largest.Check(); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := json.Marshal(&largest); err != nil || len(b) > LinkBytesMax*3/4 {
+		t.Fatalf("the largest entry is %d bytes (%v)", len(b), err)
+	}
+}
+
+// R7: what a page charges for a document is its size sealed as text, as
+// the service stores it; a link is readable as a walk shows it only when
+// its bytes are authenticated.
+func TestAPageChargesWhatIsSealed(t *testing.T) {
+	key := make([]byte, 32)
+	for _, n := range []int{0, 1, 2, 3, 100, LinkBytesMax, MaxDocumentBytes} {
+		sealed, err := envelope.SealText(key, make([]byte, n), []byte("aad"))
+		if err != nil || len(sealed) != SealedBytes(n) {
+			t.Fatalf("%d bytes seal to %d, not %d (%v)", n, len(sealed), SealedBytes(n), err)
+		}
+	}
+	for v, want := range map[LinkVerdict]bool{LinkOK: true, LinkPrev: true, LinkExpired: true, LinkLost: false, LinkForked: false, LinkUnreadable: false} {
+		if v.Readable() != want {
+			t.Fatalf("%s readable %t", v, v.Readable())
+		}
+	}
+	if !strings.Contains(ErrHistoryTooLarge.Error(), "history") {
+		t.Fatal(ErrHistoryTooLarge)
+	}
+}
+
+// testPage is a page of a chain of two links, the head and link 1, as an
+// export holds it whole.
+func testPage() *ExportPage {
+	return &ExportPage{V: ExportVersion, Account: testAccount, Head: Head{N: 2, Verdict: LinkOK}, Done: true, Links: []ExportedLink{
+		{N: 2, Verdict: LinkOK, Doc: []byte(`{}`), Receipts: []ExportedReceipt{{Index: 0, ID: "rcp_c", Verdict: ReceiptOK, Doc: []byte(`{}`)}}},
+		{N: 1, Verdict: LinkExpired, Doc: []byte(`{}`), Receipts: []ExportedReceipt{
+			{Index: 2, ID: "rcp_b", Verdict: ReceiptChanged, Doc: []byte(`{}`)},
+			{Index: 1, ID: "rcp_a", Verdict: ReceiptMissing},
+			{Index: 0, ID: "rcp_9", Verdict: ReceiptUnreadable},
+		}},
+	}}
+}
+
+// L17, L24 (R7): the contract's check of an export's page, which the
+// service, the fake and permaily-verify -receipts share: its version,
+// within WalkLinksMax links and WalkBytesMax sealed, links in descending
+// number below the head and receipts in descending index, a document only
+// where its verdict says one was read, Done or a Next no higher than where
+// the page ended.
+func TestAnExportPageIsChecked(t *testing.T) {
+	if err := testPage().Check(); err != nil {
+		t.Fatal(err)
+	}
+	if b := testPage().Bytes(); b != 3*SealedBytes(2)+SealedBytes(2) {
+		t.Fatalf("a page of four documents charges %d", b)
+	}
+	for name, edit := range map[string]func(p *ExportPage){
+		"version":           func(p *ExportPage) { p.V = 2 },
+		"done and next":     func(p *ExportPage) { p.Next = Position{N: 1} },
+		"not done":          func(p *ExportPage) { p.Done = false },
+		"above head":        func(p *ExportPage) { p.Links[0].N = 3 },
+		"link 0":            func(p *ExportPage) { p.Links[1].N = 0 },
+		"order":             func(p *ExportPage) { p.Links[0], p.Links[1] = p.Links[1], p.Links[0] },
+		"no doc":            func(p *ExportPage) { p.Links[0].Doc = nil },
+		"lost doc":          func(p *ExportPage) { p.Links[0].Verdict = LinkLost },
+		"lost receipts":     func(p *ExportPage) { p.Links[1].Verdict, p.Links[1].Doc = LinkForked, nil },
+		"receipt order":     func(p *ExportPage) { p.Links[1].Receipts[1].Index = 2 },
+		"receipt below 0":   func(p *ExportPage) { p.Links[1].Receipts[2].Index = -1 },
+		"receipt too high":  func(p *ExportPage) { p.Links[0].Receipts[0].Index = LinkReceiptsMax },
+		"missing doc":       func(p *ExportPage) { p.Links[1].Receipts[1].Doc = []byte(`{}`) },
+		"ok without doc":    func(p *ExportPage) { p.Links[0].Receipts[0].Doc = nil },
+		"too many":          func(p *ExportPage) { p.Links = make([]ExportedLink, WalkLinksMax+1) },
+		"too large":         func(p *ExportPage) { p.Links[0].Receipts[0].Doc = make([]byte, WalkBytesMax) },
+		"next above a link": func(p *ExportPage) { p.Done, p.Next, p.Links = false, Position{N: 2, Index: 1}, p.Links[:1] },
+		"next inside above": func(p *ExportPage) { p.Done, p.Next = false, Position{N: 1, Index: 1} },
+		"no progress":       func(p *ExportPage) { p.Done, p.Next, p.Links = false, Position{N: 3}, nil },
+	} {
+		p := testPage()
+		edit(p)
+		if p.Check() == nil {
+			t.Errorf("%s: a page that is not one passed", name)
+		}
+	}
+	// A page ended inside a link, at a link and after a link that cannot be
+	// read, each with its Next, pass.
+	for name, edit := range map[string]func(p *ExportPage){
+		"inside": func(p *ExportPage) {
+			p.Done, p.Next, p.Links[1].Receipts = false, Position{N: 1, Index: 2}, p.Links[1].Receipts[:1]
+		},
+		"at a link": func(p *ExportPage) { p.Done, p.Next, p.Links = false, Position{N: 2}, p.Links[:1] },
+		"after lost": func(p *ExportPage) {
+			p.Done, p.Next, p.Links[1] = false, Position{N: 1}, ExportedLink{N: 1, Verdict: LinkLost}
+		},
+	} {
+		p := testPage()
+		edit(p)
+		if err := p.Check(); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

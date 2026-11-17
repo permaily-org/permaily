@@ -162,22 +162,26 @@ type RuleStatus struct {
 //
 // From the release that chains receipts (ADR 0037), Chained is true and
 // Chain is ReceiptsChainStrict: each account's receipts named by numbered
-// links, each a strict anchored record made once. Broken counts, by every
-// kind of ReceiptsBrokenKinds (also at zero), what this enclave found since
-// it started by its walks, exports, appends and audits: one enclave's
-// observation, never an account, a number or a digest, and zero since a
-// start means not seen, not checked. Audit is the deployment's newest
-// finished pass over every chain the catalogue names, read strictly from
-// its record, so both enclaves report the same one; nil before the first.
-// Check is what permaily-verify requires of them.
+// links, each a strict anchored record made once. Incidents is how many
+// entries the deployment's record of incidents holds: every finding of a
+// deletion or a change any enclave made, recorded before it was reported,
+// which a later clean pass, a restart, a release or the account's removal
+// never takes back. Broken counts, by every kind of ReceiptsBrokenKinds
+// (also at zero), what this enclave found and has not recorded yet: one
+// enclave's observation, never an account, a number or a digest. Audit is
+// the deployment's newest finished pass over every chain the catalogue
+// names, read strictly from its record, so both enclaves report the same
+// one; nil before the first. Check is what permaily-verify requires of
+// them.
 type ReceiptsStatus struct {
-	Sealed          bool             `json:"sealed"`
-	Chained         bool             `json:"chained"`
-	Chain           string           `json:"chain,omitempty"`
-	Broken          map[string]int64 `json:"broken,omitempty"`
-	Audit           *ReceiptsAudit   `json:"audit,omitempty"`
-	Decisions       string           `json:"decisions"`
-	DecisionsPerDay int              `json:"decisions_per_day"`
+	Sealed          bool               `json:"sealed"`
+	Chained         bool               `json:"chained"`
+	Chain           string             `json:"chain,omitempty"`
+	Incidents       *ReceiptsIncidents `json:"incidents,omitempty"`
+	Broken          map[string]int64   `json:"broken,omitempty"`
+	Audit           *ReceiptsAudit     `json:"audit,omitempty"`
+	Decisions       string             `json:"decisions"`
+	DecisionsPerDay int                `json:"decisions_per_day"`
 }
 
 // ReceiptsAudit is one finished pass of the audit of receipts' chains (ADR
@@ -188,7 +192,11 @@ type ReceiptsStatus struct {
 // kind of ReceiptsBrokenKinds (also at zero); Recovered, the receipts it
 // found without a link RecoverAfter after they were written and linked
 // then (a write that failed after its entry, or an earlier release's), which
-// is not a deletion.
+// is not a deletion; Unlinked, the receipts it found without a link older
+// than RecoverWithin, which it does not recover and which can be deleted
+// unseen; Expired, the links whose commits' lock ended and were deleted,
+// their bytes authenticated by the link after and a fork there no longer
+// shown. None of the three is a deletion the storage made.
 type ReceiptsAudit struct {
 	Began     time.Time        `json:"began"`
 	Finished  time.Time        `json:"finished"`
@@ -197,7 +205,22 @@ type ReceiptsAudit struct {
 	Removed   int64            `json:"removed"`
 	Broken    map[string]int64 `json:"broken"`
 	Recovered int64            `json:"recovered"`
+	Unlinked  int64            `json:"unlinked"`
+	Expired   int64            `json:"expired"`
 }
+
+// ReceiptsIncidents is the deployment's record of incidents as an enclave
+// last read it: Recorded, its head, found by listing its commits (an entry
+// whose value is gone still counts), and Read, when.
+type ReceiptsIncidents struct {
+	Recorded uint64    `json:"recorded"`
+	Read     time.Time `json:"read"`
+}
+
+// ReceiptsIncidentsStaleAfter is how long after an enclave read the record
+// of incidents permaily-verify still takes what it read: it is read every
+// ten minutes.
+const ReceiptsIncidentsStaleAfter = 30 * time.Minute
 
 // ReceiptsChainStrict: an account's receipts are chained by links that are
 // strict anchored records, each made once (ADR 0037).
@@ -222,25 +245,34 @@ var ReceiptsBrokenKinds = []string{
 }
 
 // Check says what permaily-verify requires of how receipts are kept, at
-// now by the verifier's clock: sealed and chained by strict links; a
+// now by the verifier's clock: sealed and chained by strict links; the
+// record of incidents read within ReceiptsIncidentsStaleAfter and empty,
+// so a deletion found once keeps failing it whatever a later pass found; a
 // finished pass of the audit, of every kind counted, none negative, that
 // finished no more than ReceiptsAuditStaleAfter before now and no later
 // than now; and nothing broken, by the audit or by the enclave that
-// answered. A kind this verifier does not know counts as broken. The
-// first error says why it fails.
+// answered. A kind this verifier does not know counts as broken. Unlinked
+// and Expired are not deletions: permaily-verify prints them. The first
+// error says why it fails.
 func (r *ReceiptsStatus) Check(now time.Time) error {
 	switch {
 	case !r.Sealed:
 		return errors.New("receipts of what left are not sealed")
 	case !r.Chained || r.Chain != ReceiptsChainStrict:
 		return errors.New("receipts of what left are not chained by strict records: whoever writes the storage could delete one unseen")
+	case r.Incidents == nil:
+		return errors.New("the record of incidents of receipts' chains could not be read")
+	case r.Incidents.Read.After(now) || now.Sub(r.Incidents.Read) > ReceiptsIncidentsStaleAfter:
+		return fmt.Errorf("the record of incidents of receipts' chains was not read in the %s before now", ReceiptsIncidentsStaleAfter)
+	case r.Incidents.Recorded > 0:
+		return fmt.Errorf("the record of incidents holds %d entries: the storage deleted or changed receipts or links of the record of what left, and a later clean pass does not take that back", r.Incidents.Recorded)
 	case r.Audit == nil:
 		return errors.New("no pass of the audit of receipts' chains has finished: nothing says the chains were checked")
 	case r.Audit.Finished.Before(r.Audit.Began) || r.Audit.Finished.After(now):
 		return errors.New("the audit of receipts' chains reports a pass that finished before it began or after now")
 	case now.Sub(r.Audit.Finished) > ReceiptsAuditStaleAfter:
 		return fmt.Errorf("the newest finished pass of the audit of receipts' chains is more than %s old", ReceiptsAuditStaleAfter)
-	case r.Audit.Chains < 0 || r.Audit.Removed < 0 || r.Audit.Recovered < 0:
+	case r.Audit.Chains < 0 || r.Audit.Removed < 0 || r.Audit.Recovered < 0 || r.Audit.Unlinked < 0 || r.Audit.Expired < 0:
 		return errors.New("the audit of receipts' chains counts below zero")
 	}
 	if err := checkBroken("the audit", r.Audit.Broken); err != nil {

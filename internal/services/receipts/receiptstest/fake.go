@@ -2,7 +2,10 @@
 // (ADR 0037), which the composition, the person's routes and their tests
 // are built against while the receipts service builds the real ones: its
 // pages follow the contract's (newest first, Next, Done, a link that cannot
-// be read holding no receipt), and its verdicts are what a test sets.
+// be read holding no receipt, the bounds of links and of bytes, each
+// document charged receipts.SealedBytes, a page ending inside a link), and
+// every export page it returns passes receipts.ExportPage.Check; its
+// verdicts are what a test sets.
 package receiptstest
 
 import (
@@ -23,15 +26,18 @@ import (
 var ErrBefore = errors.New("receiptstest: no such position")
 
 // Fake is a receipts.Chain and a receipts.Auditor in memory. The zero value
-// is usable. Every call answers Err when it is set.
+// is usable. Every call answers Err when it is set, and a call of the
+// chain's answers its context's error when it is done.
 type Fake struct {
 	// Now is the time links are written at; a fixed time when nil.
 	Now func() time.Time
 	Err error
 	// Pass is what Audit and Audited answer; Found what Broken counts,
-	// besides zero for every kind.
-	Pass  *receipts.AuditPass
-	Found map[string]int64
+	// besides zero for every kind; Recorded the record of incidents' head,
+	// which Incidents answers read at Now.
+	Pass     *receipts.AuditPass
+	Found    map[string]int64
+	Recorded uint64
 
 	mu     sync.Mutex
 	chains map[string][]*link
@@ -91,8 +97,8 @@ func (f *Fake) append(account string, refs []receipts.Ref, docs [][]byte) receip
 	return receipts.Position{N: n}
 }
 
-// SetLink sets what is found of account's link n: a verdict other than
-// receipts.LinkOK leaves nothing of it readable.
+// SetLink sets what is found of account's link n: a verdict that is not
+// Readable leaves nothing of it readable.
 func (f *Fake) SetLink(account string, n uint64, v receipts.LinkVerdict) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -106,23 +112,31 @@ func (f *Fake) SetReceipt(account string, p receipts.Position, v receipts.Receip
 	f.chains[account][p.N-1].verdicts[p.Index] = v
 }
 
-// Link implements receipts.Chain: the ref, in a link of its own.
-func (f *Fake) Link(ctx context.Context, account string, ref receipts.Ref) (receipts.Position, error) {
+// fail is what a call of the chain's answers before it does anything: Err,
+// or ctx's error.
+func (f *Fake) fail(ctx context.Context) error {
 	if f.Err != nil {
-		return receipts.Position{}, f.Err
+		return f.Err
 	}
-	if err := ctx.Err(); err != nil {
+	return ctx.Err()
+}
+
+// Link implements receipts.Chain: the ref, in a link of its own. The fake
+// is given the ref and not the receipt, so it holds the receipt as an empty
+// document.
+func (f *Fake) Link(ctx context.Context, account string, ref receipts.Ref) (receipts.Position, error) {
+	if err := f.fail(ctx); err != nil {
 		return receipts.Position{}, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.append(account, []receipts.Ref{ref}, [][]byte{nil}), nil
+	return f.append(account, []receipts.Ref{ref}, [][]byte{{}}), nil
 }
 
 // Head implements receipts.Chain.
-func (f *Fake) Head(_ context.Context, account string) (receipts.Head, error) {
-	if f.Err != nil {
-		return receipts.Head{}, f.Err
+func (f *Fake) Head(ctx context.Context, account string) (receipts.Head, error) {
+	if err := f.fail(ctx); err != nil {
+		return receipts.Head{}, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -148,8 +162,13 @@ func (f *Fake) head(account string) receipts.Head {
 }
 
 // page is the links and receipts of a page before the position before, as
-// the contract pages them: newest first, at most limit receipts and
-// receipts.WalkLinksMax links visited.
+// the contract pages them: newest first, at most limit receipts,
+// receipts.WalkLinksMax links visited and receipts.WalkBytesMax charged,
+// each link's and receipt's document receipts.SealedBytes of its length as
+// the service reads it (a link that is not Readable and a receipt that is
+// unreadable read, and not returned). A page holds at least one link and,
+// of a link it shows receipts of, at least one receipt, so it always
+// moves on; it ends inside a link when the next receipt passes a bound.
 func (f *Fake) page(account string, before receipts.Position, limit int) (receipts.Head, []receipts.ExportedLink, receipts.Position, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -166,25 +185,36 @@ func (f *Fake) page(account string, before receipts.Position, limit int) (receip
 		}
 	}
 	var out []receipts.ExportedLink
-	count, visited := 0, 0
+	count, visited, bytes := 0, 0, 0
+	fits := func(doc []byte) bool { return bytes+receipts.SealedBytes(len(doc)) <= receipts.WalkBytesMax }
 	for ; n >= 1; n-- {
-		if count == limit || visited == receipts.WalkLinksMax {
+		l := chain[n-1]
+		if count == limit || visited == receipts.WalkLinksMax || (visited > 0 && !fits(l.doc)) {
 			return head, out, receipts.Position{N: n + 1}, false, nil
 		}
 		visited++
-		l := chain[n-1]
+		bytes += receipts.SealedBytes(len(l.doc))
 		e := receipts.ExportedLink{N: n, Verdict: l.verdict}
-		if l.verdict == receipts.LinkOK || l.verdict == receipts.LinkPrev {
+		if l.verdict.Readable() {
 			e.Doc = l.doc
 			i := len(l.refs) - 1
 			if from >= 0 {
 				i = from - 1
 			}
 			for ; i >= 0; i-- {
-				if count == limit {
-					return head, append(out, e), receipts.Position{N: n, Index: i + 1}, false, nil
-				}
 				r := receipts.ExportedReceipt{Index: i, ID: l.refs[i].ID, Verdict: l.verdicts[i]}
+				read := r.Verdict != receipts.ReceiptMissing
+				switch {
+				case count == limit || (read && len(e.Receipts) > 0 && !fits(l.docs[i])):
+					return head, append(out, e), receipts.Position{N: n, Index: i + 1}, false, nil
+				case read && len(out) > 0 && !fits(l.docs[i]):
+					// Not one receipt of this link fits after the links
+					// before it: the next page begins at it.
+					return head, out, receipts.Position{N: n + 1}, false, nil
+				}
+				if read {
+					bytes += receipts.SealedBytes(len(l.docs[i]))
+				}
 				if r.Verdict == receipts.ReceiptOK || r.Verdict == receipts.ReceiptChanged {
 					r.Doc = l.docs[i]
 				}
@@ -199,9 +229,9 @@ func (f *Fake) page(account string, before receipts.Position, limit int) (receip
 }
 
 // Walk implements receipts.Chain.
-func (f *Fake) Walk(_ context.Context, account string, before receipts.Position, limit int) (*receipts.Walked, error) {
-	if f.Err != nil {
-		return nil, f.Err
+func (f *Fake) Walk(ctx context.Context, account string, before receipts.Position, limit int) (*receipts.Walked, error) {
+	if err := f.fail(ctx); err != nil {
+		return nil, err
 	}
 	if limit < 1 {
 		return nil, errors.New("receiptstest: a page of no receipt")
@@ -233,9 +263,9 @@ func (f *Fake) Walk(_ context.Context, account string, before receipts.Position,
 }
 
 // Export implements receipts.Chain.
-func (f *Fake) Export(_ context.Context, account string, before receipts.Position) (*receipts.ExportPage, error) {
-	if f.Err != nil {
-		return nil, f.Err
+func (f *Fake) Export(ctx context.Context, account string, before receipts.Position) (*receipts.ExportPage, error) {
+	if err := f.fail(ctx); err != nil {
+		return nil, err
 	}
 	head, links, next, done, err := f.page(account, before, receipts.WalkLinksMax*receipts.LinkReceiptsMax)
 	if err != nil {
@@ -252,6 +282,11 @@ func (f *Fake) Audit(context.Context) (*receipts.AuditPass, error) { return f.Pa
 
 // Audited implements receipts.Auditor: Pass.
 func (f *Fake) Audited(context.Context) (*receipts.AuditPass, error) { return f.Pass, f.Err }
+
+// Incidents implements receipts.Auditor: Recorded, read now.
+func (f *Fake) Incidents(context.Context) (attestation.ReceiptsIncidents, error) {
+	return attestation.ReceiptsIncidents{Recorded: f.Recorded, Read: f.now()}, f.Err
+}
 
 // Broken implements receipts.Auditor: every kind, at zero unless Found
 // says otherwise.

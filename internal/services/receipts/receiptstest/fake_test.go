@@ -1,6 +1,7 @@
 package receiptstest
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -87,6 +88,10 @@ func TestTheFakePagesAsTheContract(t *testing.T) {
 		t.Fatal("a page of no receipt")
 	}
 
+	f.SetLink(account, 2, receipts.LinkExpired)
+	if e, err := f.Export(ctx, account, receipts.Position{N: 3}); err != nil || e.Links[0].Doc == nil || e.Check() != nil {
+		t.Fatalf("an expired link's bytes are shown: %+v %v", e, err)
+	}
 	f.SetLink(account, 3, receipts.LinkForked)
 	if h, _ := f.Head(ctx, account); h.Digest != (receipts.Digest{}) || !h.At.IsZero() {
 		t.Fatalf("a forked head %+v", h)
@@ -109,6 +114,88 @@ func TestTheFakesPageIsBoundedByLinks(t *testing.T) {
 	}
 }
 
+// R7: a page is bounded by bytes as the contract says. Forty receipts of
+// just under MaxDocumentBytes in one link, and another link above them:
+// every page, through Walk and Export, ends within WalkBytesMax charged
+// sealed, inside the large link or before it, passes ExportPage.Check, and
+// together the pages hold every document once, newest first.
+func TestTheFakesPageIsBoundedByBytes(t *testing.T) {
+	ctx := context.Background()
+	f := &Fake{}
+	doc := append([]byte(`{"future":"`), bytes.Repeat([]byte("a"), receipts.MaxDocumentBytes-13)...)
+	doc = append(doc, `"}`...)
+	docs := make([][]byte, 40)
+	for i := range docs {
+		docs[i] = append([]byte{}, doc...)
+		docs[i][12] = byte('A' + i%26) // each its own digest
+	}
+	f.Append(account, docs...)
+	f.SetReceipt(account, receipts.Position{N: 1, Index: 3}, receipts.ReceiptUnreadable)
+	f.SetReceipt(account, receipts.Position{N: 1, Index: 4}, receipts.ReceiptMissing)
+	f.Append(account, []byte(`{"v":1}`))
+
+	type seenAt struct {
+		n uint64
+		i int
+	}
+	var exported, walked []seenAt
+	before, pages := receipts.Position{}, 0
+	for ; ; pages++ {
+		e, err := f.Export(ctx, account, before)
+		if err != nil || pages > 10 {
+			t.Fatalf("%v after %d pages", err, pages)
+		}
+		if err := e.Check(); err != nil {
+			t.Fatalf("page %d: %v", pages, err)
+		}
+		if e.Bytes() > receipts.WalkBytesMax {
+			t.Fatalf("page %d holds %d bytes sealed", pages, e.Bytes())
+		}
+		for _, l := range e.Links {
+			for _, r := range l.Receipts {
+				exported = append(exported, seenAt{l.N, r.Index})
+			}
+		}
+		w, err := f.Walk(ctx, account, before, 1000)
+		if err != nil || w.Next != e.Next || w.Done != e.Done {
+			t.Fatalf("the walk's page %d differs: %+v %v", pages, w, err)
+		}
+		for _, l := range w.Links {
+			for _, r := range l.Receipts {
+				walked = append(walked, seenAt{l.N, r.Index})
+			}
+		}
+		if e.Done {
+			break
+		}
+		before = e.Next
+	}
+	if pages < 1 {
+		t.Fatal("forty large receipts fit one page")
+	}
+	if len(exported) != 41 || len(walked) != 41 || exported[0] != (seenAt{2, 0}) {
+		t.Fatalf("exported %v, walked %v", exported, walked)
+	}
+	for i := 1; i < len(exported); i++ {
+		if exported[i] != walked[i] || exported[i] != (seenAt{1, 40 - i}) {
+			t.Fatalf("receipt %d: exported %v, walked %v", i, exported[i], walked[i])
+		}
+	}
+
+	// A link of large receipts below links that already fill most of a
+	// page begins the next page, whole.
+	g := &Fake{}
+	g.Append(account, docs[0])
+	for range 31 {
+		g.Append(account, docs[0])
+	}
+	g.Append(account, docs[1])
+	e, err := g.Export(ctx, account, receipts.Position{})
+	if err != nil || e.Check() != nil || e.Done || e.Next.Index != 0 {
+		t.Fatalf("%+v %v", e.Next, err)
+	}
+}
+
 // Err is every call's answer, and the auditor reports Pass and every kind.
 func TestTheFakeFailsAndAudits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -117,8 +204,20 @@ func TestTheFakeFailsAndAudits(t *testing.T) {
 	if _, err := f.Link(ctx, account, receipts.Ref{}); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
+	if _, err := f.Head(ctx, account); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if _, err := f.Walk(ctx, account, receipts.Position{}, 1); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if _, err := f.Export(ctx, account, receipts.Position{}); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
 	pass := &receipts.AuditPass{P: 1}
-	f.Pass, f.Found = pass, map[string]int64{"link_lost": 2}
+	f.Pass, f.Found, f.Recorded = pass, map[string]int64{"link_lost": 2}, 3
+	if i, err := f.Incidents(ctx); err != nil || i.Recorded != 3 || !i.Read.Equal(f.now()) {
+		t.Fatalf("%+v %v", i, err)
+	}
 	if p, err := f.Audit(ctx); p != pass || err != nil {
 		t.Fatal(err)
 	}
