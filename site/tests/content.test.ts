@@ -441,6 +441,30 @@ describe('legal pages', () => {
       );
     });
 
+    it('integrity records locked ten years from their write, as the image locks them', () => {
+      // The review of pull request 174, F2: S3Commits.Append locks each commit for Retention from the moment it writes
+      // it, the image's Retention is deploy/enclave.json's anchor_retention_days, and removing an account neither ends
+      // nor extends a lock. The catalogue's and the record of incidents' entries are sealed entries of the database,
+      // not locked themselves: their commits are.
+      expect(JSON.parse(go('deploy/enclave.json')).anchor_retention_days).toBe(3650);
+      expect(go('cmd/permaily-enclave/platform_enclave.go')).toMatch(
+        /Retention: time\.Duration\(retentionDays\) \* 24 \* time\.Hour/,
+      );
+      expect(go('internal/store/s3commits.go')).toMatch(
+        /c\.LockedUntil = s\.now\(\)\.Add\(s\.Retention\)/,
+      );
+      for (const path of ['privacy', 'data-deletion']) {
+        expect(text(path), path).toContain('locked for ten years from when it is written');
+        expect(text(path), path).toContain(
+          'Removing your account neither ends nor extends those locks',
+        );
+        expect(text(path), path).toContain('are not locked themselves');
+        expect(text(path), path).not.toMatch(
+          /ten years after your account is removed|locked for ten years as well/,
+        );
+      }
+    });
+
     it('pending sign-ins as stored, not as memory only', () => {
       // services/accounts keeps them sealed in DynamoDB (pending.go).
       expect(go('internal/services/accounts/pending.go')).toMatch(/pending#/);
