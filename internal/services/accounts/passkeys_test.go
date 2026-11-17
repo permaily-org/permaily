@@ -843,9 +843,6 @@ func TestRecovery(t *testing.T) {
 	if len(w.svc.recoveries) != 0 {
 		t.Fatalf("wrong codes kept after their hour: %v", w.svc.recoveries)
 	}
-	if len(w.svc.taken) != 0 {
-		t.Fatalf("codes taken kept after their hour: %d", len(w.svc.taken))
-	}
 	for i := range maxRecoveryCounts {
 		w.svc.recoveries[fmt.Sprint(i)] = []time.Time{w.now}
 	}
@@ -888,45 +885,102 @@ func TestRecovery(t *testing.T) {
 	}
 }
 
-// What one enclave remembers of the codes it took is bounded and lasts an
-// hour: past either, a code used again counts as a wrong one, as any code
-// that is not in the record does.
-func TestRecoveryCodeUsedAgainLater(t *testing.T) {
-	w := newWorld(t)
-	_, cookie := w.signUp("ana@example.org")
+// A used code stays in the account's record as used, by its hash, until the
+// codes are made again: used again, through any enclave and at any time, it is
+// refused as a wrong code is and not counted as one. The list holds no more
+// codes than were made, and a record written before it was kept has none.
+func TestUsedRecoveryCodesInTheRecord(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	me, cookie := w.signUp("ana@example.org")
+	id := me.Account.ID
 	who := w.who(cookie)
 	w.addPasskey(who, webauthntest.New(webauthntest.ES256), "key")
 	codes := w.passkeyOnly(who)
-	counted := func() int { return len(w.svc.recoveries["ana@example.org"]) }
+	hash := func(code string) []byte {
+		normalized, _ := domain.NormalizeRecoveryCode(code)
+		return recoveryHash(id, normalized)
+	}
+	// used is the used codes an enclave started now counts on, by its
+	// record alone.
+	used := func() [][]byte { return w.doc(id).UsedRecoveryCodes }
+	again := func(svc *Service, code string) int {
+		t.Helper()
+		if _, _, err := svc.Recover(ctx, contracts.Recovery{Address: "ana@example.org", Code: code}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
+			t.Fatalf("a code used before: %v", err)
+		}
+		return len(svc.recoveries["ana@example.org"])
+	}
 
 	if _, _, err := w.recover("ana@example.org", codes[0]); err != nil {
 		t.Fatal(err)
 	}
-	w.now = w.now.Add(59 * time.Minute)
-	if _, _, err := w.recover("ana@example.org", codes[0]); !errors.Is(err, contracts.ErrInvalidCode) || counted() != 0 {
-		t.Fatalf("the same code within the hour: %v, %d counted", err, counted())
+	doc := w.doc(id)
+	if len(doc.RecoveryCodes) != domain.RecoveryCodes-1 || doc.recoveryCode(hash(codes[0])) >= 0 || len(doc.UsedRecoveryCodes) != 1 || !bytes.Equal(doc.UsedRecoveryCodes[0], hash(codes[0])) {
+		t.Fatalf("after one use: %d left, used %x", len(doc.RecoveryCodes), doc.UsedRecoveryCodes)
 	}
-	w.now = w.now.Add(2 * time.Minute)
-	if _, _, err := w.recover("ana@example.org", codes[0]); !errors.Is(err, contracts.ErrInvalidCode) || counted() != 1 {
-		t.Fatalf("the same code after the hour: %v, %d counted", err, counted())
+	// A day later, and through an enclave started after the code was used.
+	w.now = w.now.Add(24 * time.Hour)
+	if n := again(w.svc, codes[0]); n != 0 {
+		t.Fatalf("the same code a day later: %d counted", n)
+	}
+	if n := again(w.enclave().svc, codes[0]); n != 0 {
+		t.Fatalf("the same code through another enclave: %d counted", n)
 	}
 
-	// Full, the memory takes no other code; one it holds is kept.
-	for i := range maxRecoveryCounts {
-		w.svc.taken[fmt.Sprint(i)] = []time.Time{w.now}
+	// Every code used: as many used as were made, none left.
+	for _, code := range codes[1:] {
+		if _, _, err := w.recover("ana@example.org", code); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, _, err := w.recover("ana@example.org", codes[1]); err != nil {
+	if doc := w.doc(id); len(doc.RecoveryCodes) != 0 || len(doc.UsedRecoveryCodes) != domain.RecoveryCodes {
+		t.Fatalf("every code used: %d left, %d used", len(doc.RecoveryCodes), len(doc.UsedRecoveryCodes))
+	}
+
+	// New codes drop the used ones: the old codes are wrong codes now.
+	fresh, err := w.svc.NewRecoveryCodes(ctx, w.fresh(who))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := w.recover("ana@example.org", codes[1]); !errors.Is(err, contracts.ErrInvalidCode) || counted() != 2 {
-		t.Fatalf("the same code with the memory full: %v, %d counted", err, counted())
+	if got := used(); got != nil {
+		t.Fatalf("used codes kept with new ones: %d", len(got))
 	}
-	if len(w.svc.taken) != maxRecoveryCounts {
-		t.Fatalf("codes taken: %d", len(w.svc.taken))
+	if n := again(w.svc, codes[1]); n != 1 {
+		t.Fatalf("an old code after new ones: %d counted", n)
 	}
-	w.svc.recoveryTaken([]byte("0"))
-	if got := w.svc.taken["0"]; len(got) != 1 || !got[0].Equal(w.now) {
-		t.Fatalf("a code held again: %v", got)
+
+	// Turning "passkey only" off drops them too.
+	if _, _, err := w.recover("ana@example.org", fresh.RecoveryCodes[0]); err != nil {
+		t.Fatal(err)
+	}
+	if len(used()) != 1 {
+		t.Fatalf("used: %d", len(used()))
+	}
+	if _, err := w.svc.SetPasskeyOnly(ctx, w.fresh(who), contracts.PasskeyOnly{On: false}); err != nil {
+		t.Fatal(err)
+	}
+	if got := used(); got != nil {
+		t.Fatalf("used codes kept with passkey only off: %d", len(got))
+	}
+
+	// A record written before the used codes were kept has no such member:
+	// read, it has none, and a code used then counts as any code not in it.
+	codes = w.passkeyOnly(who)
+	if _, _, err := w.recover("ana@example.org", codes[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.rewrite(ctx, id, func(doc *accountDoc) error {
+		doc.UsedRecoveryCodes = nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := w.record(w.newest(id)); bytes.Contains(rec.Value, []byte("used_recovery_codes")) {
+		t.Fatalf("an empty list is written: %s", rec.Value)
+	}
+	w.now = w.now.Add(2 * time.Hour)
+	if n := again(w.svc, codes[0]); n != 1 {
+		t.Fatalf("a code used before the list was kept: %d counted", n)
 	}
 }
 
@@ -1183,7 +1237,8 @@ func TestPasskeysWrittenByHand(t *testing.T) {
 }
 
 // What the storage holds of passkeys and recovery codes: the public key,
-// readable, and of each code its hash alone.
+// readable, and of each code its hash alone, of a used one until the codes
+// are made again.
 func TestWhatIsStoredOfPasskeys(t *testing.T) {
 	w, ctx := newWorld(t), context.Background()
 	me, cookie := w.signUp("ana@example.org")
@@ -1231,8 +1286,9 @@ func TestWhatIsStoredOfPasskeys(t *testing.T) {
 				CreatedAt time.Time `json:"created_at"`
 				Synced    bool      `json:"synced"`
 			} `json:"passkeys"`
-			PasskeyOnly   bool     `json:"passkey_only"`
-			RecoveryCodes [][]byte `json:"recovery_codes"`
+			PasskeyOnly       bool     `json:"passkey_only"`
+			RecoveryCodes     [][]byte `json:"recovery_codes"`
+			UsedRecoveryCodes [][]byte `json:"used_recovery_codes"`
 		} `json:"doc"`
 	}
 	if !rec.Plain || json.Unmarshal(rec.Value, &stored) != nil {
@@ -1245,9 +1301,14 @@ func TestWhatIsStoredOfPasskeys(t *testing.T) {
 	if strings.Contains(string(rec.Value), "counter") {
 		t.Fatalf("a signature counter is kept: %s", rec.Value)
 	}
-	// Nine hashes: of the nine new codes not used, and of nothing else.
+	// Nine hashes of the nine new codes not used, one of the new code used,
+	// and none of the codes made before.
 	if len(d.RecoveryCodes) != domain.RecoveryCodes-1 {
 		t.Fatalf("%d hashes kept", len(d.RecoveryCodes))
+	}
+	usedCode, _ := domain.NormalizeRecoveryCode(more.RecoveryCodes[0])
+	if len(d.UsedRecoveryCodes) != 1 || !bytes.Equal(d.UsedRecoveryCodes[0], recoveryHash(me.Account.ID, usedCode)) {
+		t.Fatalf("used: %x", d.UsedRecoveryCodes)
 	}
 	for i, c := range more.RecoveryCodes[1:] {
 		normalized, _ := domain.NormalizeRecoveryCode(c)
