@@ -469,19 +469,6 @@ func (b *bucket) hide(key string) {
 	b.versions = append(b.versions, bver{key: key, id: fmt.Sprintf("v%06d", b.next), marker: true})
 }
 
-// keyOf is the key of the newest version of a commit whose key ends with
-// suffix.
-func (b *bucket) keyOf(suffix string) string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for i := len(b.versions) - 1; i >= 0; i-- {
-		if strings.HasSuffix(b.versions[i].key, suffix) {
-			return b.versions[i].key
-		}
-	}
-	return ""
-}
-
 // expire deletes every version of the objects whose key ends with suffix,
 // as S3 lets anyone once their lock ended.
 func (b *bucket) expire(suffix string) {

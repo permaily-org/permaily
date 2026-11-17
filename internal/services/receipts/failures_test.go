@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -262,8 +263,7 @@ func TestTheChainsEdges(t *testing.T) {
 		rival := w.enclaveOver(w.mc)
 		h.before = func(c store.Commit) error {
 			if _, n, ok := strings.Cut(c.Name, "receipt-audit-"); ok && n != "" {
-				var p uint64
-				fmt.Sscan(n, &p)
+				p, _ := strconv.ParseUint(n, 10, 64)
 				doc := testPass()
 				doc.P = p
 				if _, _, err := rival.create(ctx, key, passSeriesOf, p, mustJSON(&doc)); err != nil {

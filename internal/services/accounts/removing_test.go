@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
 )
 
@@ -63,3 +64,6 @@ func TestRemovingAnswersFromTheRecord(t *testing.T) {
 		t.Fatalf("a lost record: %v", err)
 	}
 }
+
+// The accounts service is what the chain's audit asks (ADR 0037).
+var _ receipts.Accounts = (*Service)(nil)

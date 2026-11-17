@@ -236,7 +236,8 @@ func (l *linkAppender) add(ctx context.Context, ref Ref) (Position, error) {
 	l.waiting = append(l.waiting, w)
 	if !l.busy {
 		l.busy = true
-		go l.drive()
+		go l.drive() //nolint:gosec // a group outlives each of its waiters: drive bounds it by the latest waiter's deadline
+
 	}
 	l.mu.Unlock()
 	select {
