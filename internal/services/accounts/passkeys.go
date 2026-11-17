@@ -335,11 +335,17 @@ func (d *accountDoc) recoveryCode(hash []byte) int {
 	return slices.IndexFunc(d.RecoveryCodes, func(kept []byte) bool { return subtle.ConstantTimeCompare(kept, hash) == 1 })
 }
 
+// usedRecoveryCode reports whether the hash is of a recovery code that was
+// used since the codes were made.
+func (d *accountDoc) usedRecoveryCode(hash []byte) bool {
+	return slices.ContainsFunc(d.UsedRecoveryCodes, func(used []byte) bool { return subtle.ConstantTimeCompare(used, hash) == 1 })
+}
+
 // newRecoveryCodes puts new recovery codes in doc, in place of the ones it
 // had, and returns them as they are shown: this once.
 func newRecoveryCodes(doc *accountDoc) []string {
 	shown := make([]string, 0, domain.RecoveryCodes)
-	doc.RecoveryCodes = nil
+	doc.RecoveryCodes, doc.UsedRecoveryCodes = nil, nil
 	for range domain.RecoveryCodes {
 		code := randomString(domain.InvitationAlphabet, domain.RecoveryCodeLength)
 		doc.RecoveryCodes = append(doc.RecoveryCodes, recoveryHash(doc.ID, code))
@@ -367,7 +373,7 @@ func (s *Service) SetPasskeyOnly(ctx context.Context, who *Authenticated, in con
 			return errUnchanged
 		}
 		if doc.PasskeyOnly = in.On; !in.On {
-			doc.RecoveryCodes = nil
+			doc.RecoveryCodes, doc.UsedRecoveryCodes = nil, nil
 			return nil
 		}
 		if len(doc.Passkeys) == 0 {
@@ -413,9 +419,10 @@ func (s *Service) NewRecoveryCodes(ctx context.Context, who *Authenticated) (*co
 }
 
 // recoveryTry reports whether a recovery code may be tried for address now,
-// and counts the try when the code is wrong. Only addresses of accounts that
-// have recovery codes are counted, so nobody fills the memory with addresses.
-func (s *Service) recoveryTry(address string, right bool) bool {
+// and counts the try when the code is wrong: one the record has neither as
+// unused nor as used (known is false). Only addresses of accounts that have
+// recovery codes are counted, so nobody fills the memory with addresses.
+func (s *Service) recoveryTry(address string, known bool) bool {
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -424,7 +431,7 @@ func (s *Service) recoveryTry(address string, right bool) bool {
 	if len(list) >= domain.RecoveryTriesPerHour || (len(list) == 0 && len(s.recoveries) >= maxRecoveryCounts) {
 		return false
 	}
-	if !right {
+	if !known {
 		s.recoveries[address] = append(list, now)
 	}
 	return true
@@ -455,13 +462,21 @@ func (s *Service) Recover(ctx context.Context, in contracts.Recovery, from Brows
 	}
 	hash := recoveryHash(doc.ID, code)
 	right := doc.recoveryCode(hash) >= 0
-	if !doc.PasskeyOnly || !s.recoveryTry(address, right) || !right {
+	// A code the record has as used is refused as a wrong one is, but is not
+	// counted as one: it was right, and is the same code again or a use that
+	// lost to the one that took it, through this enclave or another, and read
+	// the record after the code was gone.
+	used := !right && doc.usedRecoveryCode(hash)
+	if !doc.PasskeyOnly || !s.recoveryTry(address, right || used) || !right {
 		return nil, "", contracts.ErrInvalidCode
 	}
 	// Of two uses of one code at the same time, here or in two enclaves, the
-	// second finds it gone. A closing account takes the code too: its person
-	// signs in to cancel. A blocked one takes none: the code was right, so
-	// its person is told, and the code stays for when the account is unblocked.
+	// second finds it gone: here, or in its lookup if it read the record after
+	// the first wrote it, where the record has it as used. The code moves to
+	// the used ones in the write that takes it out. A closing account takes
+	// the code too: its person signs in to cancel. A blocked one takes none:
+	// the code was right, so its person is told, and the code stays for when
+	// the account is unblocked.
 	doc, err = s.rewrite(ctx, doc.ID, func(doc *accountDoc) error {
 		i := doc.recoveryCode(hash)
 		if i < 0 || !doc.PasskeyOnly || !doc.has(address) {
@@ -471,6 +486,7 @@ func (s *Service) Recover(ctx context.Context, in contracts.Recovery, from Brows
 			return contracts.ErrAccountBlocked
 		}
 		doc.RecoveryCodes = slices.Delete(doc.RecoveryCodes, i, i+1)
+		doc.UsedRecoveryCodes = append(doc.UsedRecoveryCodes, hash)
 		return nil
 	})
 	if errors.Is(err, contracts.ErrAccountBlocked) {

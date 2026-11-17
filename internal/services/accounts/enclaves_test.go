@@ -282,6 +282,35 @@ func TestTwoEnclavesChangeOneAccount(t *testing.T) {
 		}
 	})
 
+	// The uses that lost read the record after the other enclave took the
+	// code out of it, so they find it gone in their first read: the record
+	// says it was used, and they are not counted as wrong codes there either.
+	// Counted, a browser that sent the code to both enclaves would fill the
+	// tries of the hour, and the right codes would be refused.
+	t.Run("one recovery code used through one, then again through the other", func(t *testing.T) {
+		w, who, one, two := setup(t)
+		w.addPasskey(who, webauthntest.New(webauthntest.ES256), "key")
+		codes := w.passkeyOnly(who)
+		in := contracts.Recovery{Address: "ana@example.org", Code: codes[0]}
+		if _, _, err := two.svc.Recover(ctx, in, Browser{UserAgent: ""}); err != nil {
+			t.Fatal(err)
+		}
+		for range domain.RecoveryTriesPerHour + 2 {
+			if _, _, err := one.svc.Recover(ctx, in, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
+				t.Fatalf("a code the other enclave took: %v", err)
+			}
+		}
+		if len(one.svc.recoveries) != 0 {
+			t.Fatalf("counted as wrong: %v", one.svc.recoveries)
+		}
+		if _, _, err := one.svc.Recover(ctx, contracts.Recovery{Address: "ana@example.org", Code: codes[1]}, Browser{UserAgent: ""}); err != nil {
+			t.Fatalf("the next code: %v", err)
+		}
+		if list, _ := w.svc.sessions(ctx, who.AccountID, nil); len(list) != 3 {
+			t.Fatalf("%d sessions", len(list))
+		}
+	})
+
 	t.Run("passkey only turned on through both", func(t *testing.T) {
 		w, who, one, two := setup(t)
 		w.addPasskey(who, webauthntest.New(webauthntest.ES256), "key")

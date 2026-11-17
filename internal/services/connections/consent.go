@@ -816,7 +816,7 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 			return contracts.ErrConsentChanged
 		}
 		if raw != "" {
-			s.dropEnded(ctx, l, l.End(raw, now))
+			s.dropEnded(ctx, l, l.End(raw, now), nil)
 		}
 		for i := range l.Members {
 			if l.Members[i].ID == id {

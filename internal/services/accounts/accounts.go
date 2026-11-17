@@ -135,8 +135,9 @@ type Config struct {
 	// account's connections are fenced and ended when its deletion is asked
 	// and on every pass while it is closing (EndAll), and a cancelled
 	// deletion is done only once what of them was still active has ended
-	// (Reopen). Nil when there are none; the composition may give it later,
-	// once, with SetConnections, as it does the mailboxes.
+	// (Reopen); when the account is removed, everything stored of them goes
+	// with it (RemoveAll). Nil when there are none; the composition may give
+	// it later, once, with SetConnections, as it does the mailboxes.
 	Connections connections.Lifecycle
 }
 
@@ -356,6 +357,12 @@ type accountDoc struct {
 	PasskeyOnly bool `json:"passkey_only,omitempty"`
 	// RecoveryCodes are the hashes of the recovery codes not used yet.
 	RecoveryCodes [][]byte `json:"recovery_codes,omitempty"`
+	// UsedRecoveryCodes are the hashes of the recovery codes used since they
+	// were made: a use takes a code out of RecoveryCodes and puts it here in
+	// the same write, so whichever enclave reads the record tells a code used
+	// again from a wrong one (Recover). Never more than were made; dropped
+	// with them. Absent in the records written before (2026-11-16): none.
+	UsedRecoveryCodes [][]byte `json:"used_recovery_codes,omitempty"`
 	// Providers are the provider accounts that sign in to the account. One
 	// that is not here signs nobody in, wherever its pointer leads.
 	Providers []providerDoc `json:"providers,omitempty"`
