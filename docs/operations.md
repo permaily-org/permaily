@@ -36,57 +36,90 @@ Then delete the key of the previous release (below), and open the pull request t
 
 ## Operators
 
-The account's owner can do everything here. Other operators are IAM users `permaily-operator-<label>` in the group `permaily-operators` (`operators` in `deploy/tofu/production.auto.tfvars`, `deploy/tofu/operators.tf`, ADR 0036), who can do nothing until they sign in with MFA, and then deploy and operate and nothing more. The label is generic (`2`, `3`), never a person's name: the repository is public. Without MFA an operator can add an MFA device only while the owner holds their enrollment open (`operators_enrolling`), and nobody makes an access key while it is open, so a stolen access key can never enroll a second factor of its own.
+The account's owner can do everything here. Other operators sign in through the organization's IAM Identity Center, which asks for MFA at every sign-in, with the permission set `permaily-operator`: it references this account's customer-managed policies `permaily-operators-operate` and `permaily-operators-guard` (path `/`, `deploy/tofu/operators.tf`, ADR 0036) and carries nothing else. The organization's service control policy denies IAM groups and console passwords for IAM users in this account, so operators have no IAM user here, and nothing of theirs is in the repository or the state. The repository never names an operator: it is public.
 
 | An operator can | An operator cannot |
 |---|---|
 | Deploy an image: `scripts/deploy.sh` (artifacts upload, SSM command to the instance), `--logs-only` too; read `tofu output` (the state, read-only) | `tofu apply` of anything: no write to the state, so no release key created (step 1 of "Deploy a release") and no old release's key deleted; the owner does those |
 | Run the handoff, the verifier and the operator's scripts (`handoff.sh`, `verify.sh`, `invite.sh`, `accounts.sh`, `provider.sh`, `model-key.sh`): these need the admin token or a secret, which the owner gives or not, not AWS | Create, delete, enable, disable or change any KMS key, its policy, its grants or its aliases (denied explicitly) |
-| Open an SSM session on the instance, and read the logs (`permaily-host`, `/aws/lambda/permaily-drift`) | Anything in IAM beyond their own password, MFA device and access keys (denied explicitly): not their tags, so not their own enrollment |
-| See the instance, the keys and their policies, the alarms, EventBridge's rules and metrics, SES's account and identity, CloudTrail's events, the versions in the anchors bucket; run the drift check now | Read or write DynamoDB directly (denied explicitly), read the mail bucket, read secrets, change DNS (Cloudflare is not in AWS) |
-| Look up and remove an address from SES's suppression list | Change alarms, rules, subscriptions, the site, or any other resource |
+| Open an SSM session on the instance, end or resume their own, and read the logs (`permaily-host`, `/aws/lambda/permaily-drift`) | Change anything in IAM: no user, role, policy, key or provider (denied explicitly) |
+| See the instance, the keys and their policies, the alarms, EventBridge's rules and metrics, SES's account and identity, CloudTrail's events, the versions in the anchors bucket; run the drift check now | Delete, reconfigure or unlock the anchors' two Object Lock buckets or their objects (denied explicitly) |
+| Look up and remove an address from SES's suppression list | Read or write DynamoDB directly (denied explicitly), read the mail bucket, read secrets, change DNS (Cloudflare is not in AWS), change alarms, rules, subscriptions, the site, or any other resource |
 
 **What SSM on the instance gives.** The instance is untrusted and its role is what the enclave uses for storage: a root shell there can read, write and delete the mail table's items (which include the readable account data: contact addresses, names, dates; never sealed content), read and delete the sealed objects of the mail bucket, write the anchors bucket, and send mail as the service through SES. Deploying needs that shell, so an operator has what the owner has there. What the enclave seals stays out of reach, and what it refuses to accept (an earlier copy of an anchored record) stays refused. Give the role to people the owner would give the instance to.
 
-**Onboarding** (the owner, once):
+**What the guard holds.** It holds against anything else the permission set ever carries (an AWS managed policy, an inline policy): an explicit deny wins. It does not hold against whoever administers the organization's IAM Identity Center, who can change the permission set, and who can already do anything in this account through the organization's management account. So the owner checks the role it makes here (below), and again whenever the administrator says the permission set changed.
+
+**Onboarding.** The owner applies `deploy/tofu` first, so that both policies exist as the repository has them; Identity Center refuses to provision a permission set whose customer-managed policy is not in the account. Then whoever administers the organization's IAM Identity Center, from the management account (a profile of theirs, here `org`; Identity Center's own region):
 
 ```sh
-# 1. Add the next label to `operators` and to `operators_enrolling` in deploy/tofu/production.auto.tfvars,
-#    open the pull request, then:
-tofu -chdir=deploy/tofu apply            # the user, tagged permaily-mfa-enrollment=open, and its membership; no credential
-#    If the apply fails, make no credential: see what the group and the user have, fix it, and apply again (below).
-# 2. A one-time console password, that must be changed at first sign-in, kept off command lines.
-#    Give it through a secure channel (never chat or mail in the clear), and keep no copy.
-pw=$(openssl rand -base64 24)
-printf '{"UserName":"permaily-operator-%s","Password":"%s","PasswordResetRequired":true}' <label> "$pw" |
-  aws iam create-login-profile --cli-input-json file:///dev/stdin --query LoginProfile.UserName
-printf %s "$pw" | wl-copy; unset pw      # or pbcopy: paste it into the secure channel, then clear the clipboard
+# 0. Identity Center > Settings > Authentication > Multi-factor authentication: "Every time they sign in",
+#    and users without a device must register one at sign-in. It applies to the whole organization.
+read -r instance store < <(aws sso-admin list-instances --profile org \
+  --query 'Instances[0].[InstanceArn,IdentityStoreId]' --output text)
+
+# 1. The permission set: one hour sessions, nothing but the two policies of this account.
+ps=$(aws sso-admin create-permission-set --profile org --instance-arn "$instance" \
+  --name permaily-operator --description 'Permaily operators (ADR 0036)' --session-duration PT1H \
+  --query PermissionSet.PermissionSetArn --output text)
+for name in permaily-operators-operate permaily-operators-guard; do
+  aws sso-admin attach-customer-managed-policy-reference-to-permission-set --profile org \
+    --instance-arn "$instance" --permission-set-arn "$ps" --customer-managed-policy-reference Name=$name,Path=/
+done
+#    No AWS managed policy, no inline policy, no permissions boundary.
+
+# 2. The assignment: the operator's own Identity Center user, on the permaily account only.
+user=$(aws identitystore get-user-id --profile org --identity-store-id "$store" \
+  --alternate-identifier '{"UniqueAttribute":{"AttributePath":"userName","AttributeValue":"<their user name>"}}' \
+  --query UserId --output text)
+aws sso-admin create-account-assignment --profile org --instance-arn "$instance" --permission-set-arn "$ps" \
+  --target-type AWS_ACCOUNT --target-id <permaily account id> --principal-type USER --principal-id "$user"
+#    It provisions the role AWSReservedSSO_permaily-operator_<suffix> in the permaily account;
+#    aws sso-admin describe-account-assignment-creation-status says when it is done, or why it failed.
 ```
 
-**An apply that fails part-way** leaves IAM as far as it got. The membership and the `operate` attachment wait for the MFA deny and the guard, so a member never has the group's permissions without both; check all the same before making any credential: `aws iam list-attached-group-policies --group-name permaily-operators` lists `permaily-operators-require-mfa`, `permaily-operators-guard` and `permaily-operators-operate` or fewer, never `operate` without the other two; `aws iam list-group-policies --group-name permaily-operators`, `aws iam list-user-policies` and `aws iam list-attached-user-policies --user-name permaily-operator-<label>` list nothing. Remove what should not be there (`aws iam detach-group-policy`, `aws iam remove-user-from-group`), fix the cause and apply again until `tofu plan` is clean. Make no password or access key for a user until the apply has succeeded.
-
-The operator then signs in at `https://<account id>.signin.aws.amazon.com/console` with the user and the one-time password, sets their own password, and, still without MFA, can only add an MFA device: Security credentials > Assign MFA device (a passkey, a security key, or an authenticator app whose device name is their user name, `permaily-operator-<label>`; another name is refused). Then they sign out and in again with it; everything else is refused until they do, and making an access key stays refused while the enrollment is open.
-
-Once they have signed in with MFA (the owner sees it in `aws iam list-mfa-devices --user-name permaily-operator-<label>`), the owner closes the enrollment: remove the label from `operators_enrolling`, open the pull request and `tofu apply` (it only removes the tag). From then on adding a device needs a session already signed in with MFA.
-
-**A lost device** goes through the owner, never through the operator alone: deactivate and delete it and every access key of the user (`aws iam list-mfa-devices` / `deactivate-mfa-device`, `aws iam delete-virtual-mfa-device --serial-number arn:aws:iam::<account id>:mfa/permaily-operator-<label>`, `aws iam list-access-keys` / `delete-access-key`), then open the enrollment again as above, and close it once they have signed in with the new one. Never open it while the user has an access key.
-
-**The CLI** (only if they need it, once the enrollment is closed): signed in with MFA, they make an access key under Security credentials (Command Line Interface), and keep it out of the repository. Every call needs an MFA session, made once a day at most:
+**The owner checks it** from this account (`AWS_PROFILE=permaily`), after the assignment and after any change to the permission set:
 
 ```sh
-aws configure --profile permaily-operator-<label>         # the access key, region us-east-2
-mfa=arn:aws:iam::<account id>:mfa/<their device's identifier>   # aws iam list-mfa-devices shows it
-read -rp 'MFA code: ' code
-read -r key secret token < <(aws sts get-session-token --profile permaily-operator-<label> --serial-number "$mfa" \
-  --token-code "$code" --duration-seconds 43200 --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)
-aws configure set aws_access_key_id "$key" --profile permaily
-aws configure set aws_secret_access_key "$secret" --profile permaily
-aws configure set aws_session_token "$token" --profile permaily
-aws configure set region us-east-2 --profile permaily
-export AWS_PROFILE=permaily                                # what the scripts expect; it expires after 12 hours
+aws iam list-roles --path-prefix /aws-reserved/sso.amazonaws.com/ --query 'Roles[].RoleName'   # every permission set that reaches this account
+role=$(aws iam list-roles --path-prefix /aws-reserved/sso.amazonaws.com/ \
+  --query "Roles[?starts_with(RoleName, 'AWSReservedSSO_permaily-operator_')].RoleName" --output text)
+aws iam list-attached-role-policies --role-name "$role"   # exactly permaily-operators-operate and permaily-operators-guard, path /
+aws iam list-role-policies --role-name "$role"            # nothing: no inline policy
+aws iam get-role --role-name "$role" --query 'Role.[MaxSessionDuration,PermissionsBoundary]'   # 3600 and null
+aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=AssumeRoleWithSAML \
+  --query 'Events[].[EventTime,Username]'                  # who signed in to a role here, and when
 ```
 
-**Offboarding**: remove the label from `operators` (and `operators_enrolling`) and apply. The user is deleted with its password, MFA devices and access keys (`force_destroy`). Then rotate what they held outside AWS: the admin token, if they had it, and any secret they were given.
+Who is assigned is visible only in the management account; the owner sees here which roles exist, what each carries, and who signed in. The drift check does not watch the role: it is not in the state.
+
+**The CLI** (the operator, once):
+
+```sh
+aws configure sso --profile permaily   # the organization's access portal URL and Identity Center's region,
+                                       # the permaily account, the role permaily-operator, region us-east-2
+aws sso login --profile permaily       # in the browser, with MFA; again when the session ends
+export AWS_PROFILE=permaily            # what the scripts expect; the role's credentials last one hour
+aws sts get-caller-identity            # assumed-role/AWSReservedSSO_permaily-operator_<suffix>/<their user name>
+```
+
+**Offboarding**: the Identity Center administrator deletes the operator's assignment (`aws sso-admin delete-account-assignment`, same arguments as creating it), and their Identity Center user if they no longer need it. Then the owner rotates what they held outside AWS: the admin token, if they had it, and any secret they were given.
+
+**Cutting every operator off at once** (the owner, from this account alone, when the administrator cannot act): make the guard's default version one that denies everything; the role carries the guard, so every operator's session is refused at its next call.
+
+```sh
+arn=arn:aws:iam::<account id>:policy/permaily-operators-guard
+aws iam create-policy-version --policy-arn "$arn" --set-as-default \
+  --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"*","Resource":"*"}]}'
+```
+
+The drift check reports the guard changed until the owner applies `deploy/tofu` again, which restores it (delete the extra version with `aws iam delete-policy-version` once it is not the default; a policy keeps five at most).
+
+**The first apply (2026-11-17)** made an IAM user, `permaily-operator-2`, before the service control policy stopped it; it has no password, key, MFA device or group. The apply that removes it forgets it rather than destroying it (destroying it would delete its login profile, which that policy denies); then the owner deletes it:
+
+```sh
+aws iam delete-user --user-name permaily-operator-2
+```
 
 ## Roll back
 

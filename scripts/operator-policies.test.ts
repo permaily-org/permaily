@@ -2,31 +2,33 @@ import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// The operators' three policies (deploy/tofu/operators/*.json.tftpl, ADR 0036)
+// The operators' two policies (deploy/tofu/operators/*.json.tftpl, ADR 0036)
 // rendered as OpenTofu renders them and evaluated as IAM evaluates identity
-// policies in one account: an explicit Deny wins, then an Allow, otherwise an
+// policies in one account, for the role session an IAM Identity Center
+// permission set gives: an explicit Deny wins, then an Allow, otherwise an
 // implicit deny. Only the condition operators the policies use are
 // implemented; an unknown one fails the test rather than being ignored.
 //
-// Three kinds of test: what the three policies allow by themselves (least
-// privilege); that each deny meant to hold whatever else is attached still
-// denies, by the statement meant to, next to a policy that allows everything;
-// and that weakening any of those denies (a statement removed, an action or a
-// resource dropped, a condition loosened, the whole guard deleted) fails the
-// second kind. Plus IAM's size limits on the rendered documents.
+// Three kinds of test: what the two policies allow by themselves (least
+// privilege); that each deny of the guard still denies, by the statement meant
+// to, next to a policy that allows everything (what else the permission set
+// may carry); and that weakening any of those denies (a statement removed or
+// made an Allow, an action or a resource dropped, the whole guard deleted)
+// fails the second kind. Plus that they fit a role session, and IAM's size
+// limit on the rendered documents.
 
 const dir = join(import.meta.dir, '../deploy/tofu')
 const account = '111122223333'
 const region = 'us-east-2'
-// Identifiers as long as the real ones, for the size limits: a KMS key id is a
+// Identifiers as long as the real ones, for the size limit: a KMS key id is a
 // UUID, an instance id 17 hexadecimal digits, the buckets carry the account id.
 const vars: Record<string, string> = {
   account_id: account,
   region,
-  mfa_enrollment_tag: 'permaily-mfa-enrollment',
   state_key_arn: `arn:aws:kms:${region}:${account}:key/0123abcd-45ef-6789-abcd-ef0123456789`,
   artifacts_arn: `arn:aws:s3:::permaily-artifacts-${account}`,
   anchors_arn: `arn:aws:s3:::permaily-anchors-${account}`,
+  anchors_staging_arn: `arn:aws:s3:::permaily-anchors-staging-${account}`,
   instance_arn: `arn:aws:ec2:${region}:${account}:instance/i-0123456789abcdef0`,
 }
 
@@ -40,12 +42,14 @@ type Statement = {
   Condition?: Record<string, Record<string, string>>
 }
 
+const templateText = (name: string) =>
+  readFileSync(join(dir, 'operators', `${name}.json.tftpl`), 'utf8')
+
 // renderText does what templatefile does with these templates: ${name} is a
 // variable, $${ is a literal ${. jsonencode(jsondecode(...)) then makes it
 // compact, as JSON.stringify(JSON.parse(...)) does.
 function renderText(name: string) {
-  const text = readFileSync(join(dir, 'operators', `${name}.json.tftpl`), 'utf8')
-  const out = text.replace(/\$\$\{|\$\{([a-z_]+)\}/g, (m, v: string | undefined) => {
+  const out = templateText(name).replace(/\$\$\{|\$\{([a-z_]+)\}/g, (m, v: string | undefined) => {
     if (m === '$${') return '${'
     const value = vars[v as string]
     if (value === undefined) throw new Error(`no variable ${v} for ${name}`)
@@ -56,33 +60,33 @@ function renderText(name: string) {
 const render = (name: string): Statement[] => JSON.parse(renderText(name)).Statement
 
 const policies = {
-  'require-mfa': render('require-mfa'),
   operate: render('operate'),
   guard: render('guard'),
 }
 const statements = Object.values(policies).flat()
 
+// The role session of the permission set: aws:userid is the role's id and the
+// session name, which IAM Identity Center sets to the user's sign-in name.
+const userid = 'AROA0123456789EXAMPLE:operator-2'
+const sessionRole = `arn:aws:iam::${account}:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_permaily-operator_0123456789abcdef`
+
 type Request = {
   action: string
   resource: string
-  // mfa is aws:MultiFactorAuthPresent: absent for a long-term access key.
-  mfa?: boolean
-  // enrolling sets the user's tag permaily-mfa-enrollment=open (the owner does).
-  enrolling?: boolean
+  // sessionId is the resource tag aws:ssmmessages:session-id of an SSM session.
+  sessionId?: string
 }
 
-const user = 'permaily-operator-2'
-const self = `arn:aws:iam::${account}:user/${user}`
-const ownDevice = `arn:aws:iam::${account}:mfa/${user}`
-const other = `arn:aws:iam::${account}:user/permaily-operator-3`
-const otherDevice = `arn:aws:iam::${account}:mfa/permaily-operator-3`
-const group = `arn:aws:iam::${account}:group/permaily-operators`
 const guardPolicy = `arn:aws:iam::${account}:policy/permaily-operators-guard`
-const role = `arn:aws:iam::${account}:role/permaily-enclave-host`
+const user = `arn:aws:iam::${account}:user/permaily-operator-9`
+const hostRole = `arn:aws:iam::${account}:role/permaily-enclave-host`
 const releaseKey = `arn:aws:kms:${region}:${account}:key/fedcba98-7654-3210-fedc-ba9876543210`
 const stateBucket = `arn:aws:s3:::permaily-tofu-state-${account}`
 const stateObject = `${stateBucket}/permaily/terraform.tfstate`
+const anchors = vars.anchors_arn as string
+const anchorsStaging = vars.anchors_staging_arn as string
 const table = `arn:aws:dynamodb:${region}:${account}:table/permaily-mail`
+const session = (id: string) => `arn:aws:ssm:${region}:${account}:session/${id}`
 
 const list = (v: string | string[] | undefined) =>
   v === undefined ? [] : Array.isArray(v) ? v : [v]
@@ -95,27 +99,24 @@ function glob(pattern: string, value: string, ignoreCase: boolean) {
   return new RegExp(`^${re}$`, ignoreCase ? 'i' : '').test(value)
 }
 
+// A role session has aws:userid and no aws:username; a policy variable that is
+// not in the context makes IAM skip the statement, as here.
 function substitute(pattern: string) {
-  // ${aws:username}, the policy variable, written so it is not a template string.
-  return pattern.replaceAll(`\${aws:username}`, user)
+  if (/\$\{(?!aws:userid\})/.test(pattern)) return undefined
+  // ${aws:userid}, the policy variable, written so it is not a template string.
+  return pattern.replaceAll(`\${aws:userid}`, userid)
 }
 
 function conditionHolds(op: string, key: string, want: string, req: Request) {
   const context: Record<string, string | undefined> = {
-    'aws:MultiFactorAuthPresent': req.mfa === undefined ? undefined : String(req.mfa),
-    'aws:PrincipalTag/permaily-mfa-enrollment': req.enrolling ? 'open' : undefined,
-    'aws:username': user,
+    'aws:userid': userid,
+    'ssm:resourceTag/aws:ssmmessages:session-id': req.sessionId,
   }
   const got = context[key]
+  const pattern = substitute(want)
   switch (op) {
-    case 'Bool':
-      return got !== undefined && got === want
-    case 'BoolIfExists':
-      return got === undefined || got === want
-    case 'StringEquals':
-      return got !== undefined && got === want
-    case 'StringNotEquals':
-      return got === undefined || got !== want
+    case 'StringLike':
+      return got !== undefined && pattern !== undefined && glob(pattern, got, false)
     default:
       throw new Error(`condition operator ${op} is not implemented here`)
   }
@@ -126,9 +127,11 @@ function applies(s: Statement, req: Request) {
     ? list(s.Action).some((a) => glob(a, req.action, true))
     : !list(s.NotAction).some((a) => glob(a, req.action, true))
   if (!action) return false
-  const resource = s.Resource
-    ? list(s.Resource).some((r) => glob(substitute(r), req.resource, false))
-    : !list(s.NotResource).some((r) => glob(substitute(r), req.resource, false))
+  const matches = (r: string) => {
+    const p = substitute(r)
+    return p !== undefined && glob(p, req.resource, false)
+  }
+  const resource = s.Resource ? list(s.Resource).some(matches) : !list(s.NotResource).some(matches)
   if (!resource) return false
   for (const [op, keys] of Object.entries(s.Condition ?? {})) {
     for (const [key, want] of Object.entries(keys)) {
@@ -152,115 +155,126 @@ function evaluate(req: Request, from: Statement[] = statements): Decision {
 
 const decide = (req: Request) => (evaluate(req).decision === 'allowed' ? 'allowed' : 'denied')
 
-// Another attachment that allows everything: what IAM would add to the three
-// policies if anything else were ever attached to the group or the user.
+// Another policy that allows everything: what IAM would add to the two if the
+// permission set ever carried anything else (an AWS managed policy, an inline
+// policy, another customer-managed one).
 const everything: Statement = {
-  Sid: 'AnotherAttachment',
+  Sid: 'AnotherPolicy',
   Effect: 'Allow',
   Action: '*',
   Resource: '*',
 }
 
-const contexts = [undefined, false, true].flatMap((mfa) =>
-  [false, true].map((enrolling) => ({ mfa, enrolling })),
-)
-const withoutMFA = contexts.filter((c) => c.mfa !== true)
+// Each deny of the guard, with requests it must deny. Written out by hand,
+// never derived from the policies, so that a weakened policy cannot weaken its
+// own test.
+type Case = { sid: string; action: string; resource: string }
+const held = (sid: string, requests: [action: string, resource: string][]): Case[] =>
+  requests.map(([action, resource]) => ({ sid, action, resource }))
+const onEach = (actions: string[], resources: string[]): [string, string][] =>
+  actions.flatMap((a) => resources.map((r): [string, string] => [a, r]))
 
-// Each deny meant to hold whatever else is attached, with requests it must deny
-// and the contexts it must deny them in. Written out by hand, never derived from
-// the policies, so that a weakened policy cannot weaken its own test.
-type Case = { sid: string; action: string; resource: string; in: typeof contexts }
-const held = (
-  sid: string,
-  inContexts: typeof contexts,
-  requests: [action: string, resource: string][],
-): Case[] => requests.map(([action, resource]) => ({ sid, action, resource, in: inContexts }))
-
-const guardCases: Case[] = [
+const heldCases: Case[] = [
   ...held(
     'NoKeyChanges',
-    contexts,
-    [
-      'kms:CreateKey',
-      'kms:PutKeyPolicy',
-      'kms:ScheduleKeyDeletion',
-      'kms:CancelKeyDeletion',
-      'kms:CreateGrant',
-      'kms:RetireGrant',
-      'kms:RevokeGrant',
-      'kms:EnableKey',
-      'kms:DisableKey',
-      'kms:CreateAlias',
-      'kms:UpdateAlias',
-      'kms:DeleteAlias',
-      'kms:ReplicateKey',
-      'kms:UpdateKeyDescription',
-      'kms:UpdatePrimaryRegion',
-      'kms:EnableKeyRotation',
-      'kms:DisableKeyRotation',
-      'kms:TagResource',
-      'kms:UntagResource',
-    ].map((a) => [a, releaseKey]),
+    onEach(
+      [
+        'kms:CreateKey',
+        'kms:PutKeyPolicy',
+        'kms:ScheduleKeyDeletion',
+        'kms:CancelKeyDeletion',
+        'kms:CreateGrant',
+        'kms:RetireGrant',
+        'kms:RevokeGrant',
+        'kms:EnableKey',
+        'kms:DisableKey',
+        'kms:CreateAlias',
+        'kms:UpdateAlias',
+        'kms:DeleteAlias',
+        'kms:ReplicateKey',
+        'kms:UpdateKeyDescription',
+        'kms:UpdatePrimaryRegion',
+        'kms:EnableKeyRotation',
+        'kms:DisableKeyRotation',
+        'kms:RotateKeyOnDemand',
+        'kms:ImportKeyMaterial',
+        'kms:DeleteImportedKeyMaterial',
+        'kms:TagResource',
+        'kms:UntagResource',
+      ],
+      [releaseKey],
+    ),
   ),
-  ...held('NoKeyChanges', contexts, [['kms:PutKeyPolicy', vars.state_key_arn as string]]),
-  ...held('NoIAMButTheirOwn', contexts, [
-    ['iam:AddUserToGroup', group],
-    ['iam:AttachGroupPolicy', group],
-    ['iam:ChangePassword', other],
-    ['iam:CreateUser', `arn:aws:iam::${account}:user/permaily-operator-9`],
-    ['iam:CreateAccessKey', other],
+  ...held('NoKeyChanges', [['kms:PutKeyPolicy', vars.state_key_arn as string]]),
+  // Nothing in IAM: not the session's own role (its policies, its trust, its
+  // boundary), not a user or a key of one, not the guard itself.
+  ...held('NoIAMChanges', [
+    ['iam:AddUserToGroup', `arn:aws:iam::${account}:group/any`],
+    ['iam:AttachRolePolicy', sessionRole],
+    ['iam:ChangePassword', user],
+    ['iam:CreateUser', user],
+    ['iam:CreateRole', `arn:aws:iam::${account}:role/any`],
+    ['iam:CreateAccessKey', user],
+    ['iam:CreateLoginProfile', user],
     ['iam:CreatePolicyVersion', guardPolicy],
-    ['iam:CreateVirtualMFADevice', otherDevice],
-    ['iam:DeactivateMFADevice', other],
-    ['iam:DeleteVirtualMFADevice', otherDevice],
+    ['iam:CreateOpenIDConnectProvider', `arn:aws:iam::${account}:oidc-provider/example.com`],
+    ['iam:DeactivateMFADevice', user],
     ['iam:DeletePolicy', guardPolicy],
-    ['iam:DetachGroupPolicy', group],
-    ['iam:EnableMFADevice', other],
-    ['iam:PassRole', role],
-    ['iam:PutGroupPolicy', group],
-    ['iam:RemoveUserFromGroup', group],
-    ['iam:ResyncMFADevice', other],
+    ['iam:DeleteRolePermissionsBoundary', sessionRole],
+    ['iam:DetachRolePolicy', sessionRole],
+    ['iam:DisableOrganizationsRootSessions', '*'],
+    ['iam:EnableMFADevice', user],
+    ['iam:PassRole', hostRole],
+    ['iam:PutRolePolicy', sessionRole],
+    ['iam:PutRolePermissionsBoundary', sessionRole],
+    ['iam:RemoveUserFromGroup', `arn:aws:iam::${account}:group/any`],
+    ['iam:ResetServiceSpecificCredential', user],
+    ['iam:ResyncMFADevice', user],
     ['iam:SetDefaultPolicyVersion', guardPolicy],
-    ['iam:TagUser', other],
-    ['iam:UntagUser', other],
-    ['iam:UpdateAssumeRolePolicy', role],
-    ['iam:UpdateLoginProfile', other],
-    ['iam:UploadSSHPublicKey', other],
+    ['iam:TagRole', sessionRole],
+    ['iam:UntagRole', sessionRole],
+    ['iam:UpdateAssumeRolePolicy', sessionRole],
+    ['iam:UpdateAssumeRolePolicy', hostRole],
+    ['iam:UploadSSHPublicKey', user],
   ]),
-  // On themselves, with MFA or without, the enrollment open or closed: their
-  // tags (the enrollment window), policies, groups and other credentials.
-  ...held('OnThemselvesOnlyTheirCredentials', contexts, [
-    ['iam:TagUser', self],
-    ['iam:UntagUser', self],
-    ['iam:PutUserPolicy', self],
-    ['iam:AttachUserPolicy', self],
-    ['iam:DeleteUserPolicy', self],
-    ['iam:DetachUserPolicy', self],
-    ['iam:PutUserPermissionsBoundary', self],
-    ['iam:DeleteUserPermissionsBoundary', self],
-    ['iam:CreateLoginProfile', self],
-    ['iam:UpdateLoginProfile', self],
-    ['iam:DeleteLoginProfile', self],
-    ['iam:UpdateUser', self],
-    ['iam:DeleteUser', self],
-    ['iam:UploadSSHPublicKey', self],
-    ['iam:UploadSigningCertificate', self],
-    ['iam:CreateServiceSpecificCredential', self],
-  ]),
-  ...held('OnTheirDeviceOnlyCreateAndDelete', contexts, [
-    ['iam:TagMFADevice', ownDevice],
-    ['iam:UntagMFADevice', ownDevice],
-  ]),
-  ...held('NoStateWrites', contexts, [
+  ...held('NoStateWrites', [
     ['s3:PutObject', stateObject],
     ['s3:PutObject', `${stateBucket}/another/key`],
     ['s3:DeleteObject', stateObject],
     ['s3:DeleteObjectVersion', stateObject],
+    ['s3:DeleteBucket', stateBucket],
+    ['s3:DeleteBucketPolicy', stateBucket],
     ['s3:PutBucketPolicy', stateBucket],
     ['s3:PutBucketVersioning', stateBucket],
     ['s3:PutLifecycleConfiguration', stateBucket],
   ]),
-  ...held('NoTable', contexts, [
+  // Both Object Lock buckets, production's and staging's: not deleted, not
+  // reconfigured (no default retention, no lifecycle, no versioning change),
+  // no object deleted or hidden behind a delete marker, no lock changed.
+  ...held('KeepTheAnchors', [
+    ...onEach(
+      [
+        's3:DeleteBucket',
+        's3:DeleteBucketPolicy',
+        's3:PutBucketObjectLockConfiguration',
+        's3:PutBucketVersioning',
+        's3:PutBucketPolicy',
+        's3:PutLifecycleConfiguration',
+      ],
+      [anchors, anchorsStaging],
+    ),
+    ...onEach(
+      [
+        's3:DeleteObject',
+        's3:DeleteObjectVersion',
+        's3:PutObjectRetention',
+        's3:PutObjectLegalHold',
+        's3:BypassGovernanceRetention',
+      ],
+      [`${anchors}/commits/x`, `${anchorsStaging}/commits/x`],
+    ),
+  ]),
+  ...held('NoTable', [
     ['dynamodb:GetItem', table],
     ['dynamodb:Query', table],
     ['dynamodb:Scan', table],
@@ -271,154 +285,96 @@ const guardCases: Case[] = [
   ]),
 ]
 
-const mfaCases: Case[] = [
-  // Without MFA, nothing but the password and (below) the first device.
-  ...held('NothingElseWithoutMFA', withoutMFA, [
-    ['ssm:SendCommand', vars.instance_arn as string],
-    ['ssm:StartSession', vars.instance_arn as string],
-    ['s3:GetObject', stateObject],
-    ['kms:Decrypt', vars.state_key_arn as string],
-    ['s3:PutObject', `${vars.artifacts_arn}/artifacts/x`],
-    ['lambda:InvokeFunction', `arn:aws:lambda:${region}:${account}:function:permaily-drift`],
-    ['ec2:TerminateInstances', vars.instance_arn as string],
-    ['iam:CreateAccessKey', self],
-    ['iam:DeactivateMFADevice', self],
-    ['iam:DeleteVirtualMFADevice', ownDevice],
-  ]),
-  // Without MFA and the enrollment closed: no device of their own.
-  ...held(
-    'NoEnrollmentWithoutMFAUnlessOpen',
-    withoutMFA.filter((c) => !c.enrolling),
-    [
-      ['iam:CreateVirtualMFADevice', ownDevice],
-      ['iam:EnableMFADevice', self],
-    ],
-  ),
-  // While enrolling, with MFA or without: no access key made or turned back on.
-  ...held(
-    'NoAccessKeyWhileEnrolling',
-    contexts.filter((c) => c.enrolling),
-    [
-      ['iam:CreateAccessKey', self],
-      ['iam:UpdateAccessKey', self],
-    ],
-  ),
-]
-
-const heldCases = [...guardCases, ...mfaCases]
-
-// violations lists every held case that the statements, next to an attachment
-// that allows everything, do not deny explicitly by the statement meant to.
+// violations lists every held case that the statements, next to a policy that
+// allows everything, do not deny explicitly by the statement meant to.
 function violations(from: Statement[]) {
   const out: string[] = []
   for (const c of heldCases) {
-    for (const ctx of c.in) {
-      const d = evaluate({ action: c.action, resource: c.resource, ...ctx }, [...from, everything])
-      if (d.decision !== 'explicit deny' || !d.denies.includes(c.sid)) {
-        out.push(`${c.sid}: ${c.action} ${c.resource} mfa=${ctx.mfa} enrolling=${ctx.enrolling}`)
-      }
+    const d = evaluate({ action: c.action, resource: c.resource }, [...from, everything])
+    if (d.decision !== 'explicit deny' || !d.denies.includes(c.sid)) {
+      out.push(`${c.sid}: ${c.action} ${c.resource}`)
     }
   }
   return out
 }
 
-describe('what the three policies allow by themselves', () => {
-  const enroll = [
-    { action: 'iam:CreateVirtualMFADevice', resource: ownDevice },
-    { action: 'iam:EnableMFADevice', resource: self },
-  ]
-  const operate = [
-    { action: 'ssm:SendCommand', resource: vars.instance_arn as string },
-    { action: 'ssm:StartSession', resource: vars.instance_arn as string },
-    { action: 's3:GetObject', resource: stateObject },
-    { action: 'kms:Decrypt', resource: vars.state_key_arn as string },
-  ]
-  const escalate = heldCases
-    .filter((c) => c.in === contexts)
-    .map((c) => ({ action: c.action, resource: c.resource }))
-
-  test('a long-term key without MFA, enrollment closed: no device of its own, nothing else', () => {
-    for (const r of enroll) {
-      expect([r.action, evaluate(r).decision]).toEqual([r.action, 'explicit deny'])
-    }
-    for (const r of [...operate, ...escalate, { action: 'iam:CreateAccessKey', resource: self }]) {
-      expect([r.action, r.resource, decide(r)]).toEqual([r.action, r.resource, 'denied'])
-    }
-  })
-  test('the same with aws:MultiFactorAuthPresent false (a session made without MFA)', () => {
-    for (const r of [...enroll, ...operate, { action: 'iam:CreateAccessKey', resource: self }]) {
-      expect([r.action, decide({ ...r, mfa: false })]).toEqual([r.action, 'denied'])
-    }
-  })
-  test('enrollment open, without MFA: the first device goes in, under their own name only', () => {
-    for (const r of enroll) {
-      expect([r.action, decide({ ...r, mfa: false, enrolling: true })]).toEqual([
-        r.action,
-        'allowed',
-      ])
-    }
-    expect(
-      decide({
-        action: 'iam:CreateVirtualMFADevice',
-        resource: `arn:aws:iam::${account}:mfa/other`,
-        mfa: false,
-        enrolling: true,
-      }),
-    ).toBe('denied')
-  })
-  test('enrollment open: no access key made or turned back on, nothing operated without MFA', () => {
-    for (const mfa of [undefined, false, true]) {
-      for (const action of ['iam:CreateAccessKey', 'iam:UpdateAccessKey']) {
-        expect([action, mfa, decide({ action, resource: self, mfa, enrolling: true })]).toEqual([
-          action,
-          mfa,
-          'denied',
-        ])
-      }
-    }
-    for (const r of [...escalate, ...operate]) {
-      expect([r.action, decide({ ...r, mfa: false, enrolling: true })]).toEqual([
-        r.action,
-        'denied',
-      ])
-    }
-  })
-  test('with MFA, enrollment closed: they operate and manage their own credentials', () => {
-    for (const r of operate) {
-      expect([r.action, decide({ ...r, mfa: true })]).toEqual([r.action, 'allowed'])
-    }
-    for (const action of [
-      'iam:CreateAccessKey',
-      'iam:DeleteAccessKey',
-      'iam:EnableMFADevice',
-      'iam:DeactivateMFADevice',
+describe('what the two policies allow by themselves', () => {
+  test('deploying and operating', () => {
+    for (const r of [
+      { action: 'ssm:SendCommand', resource: vars.instance_arn as string },
+      { action: 'ssm:StartSession', resource: vars.instance_arn as string },
+      { action: 's3:GetObject', resource: stateObject },
+      { action: 'kms:Decrypt', resource: vars.state_key_arn as string },
+      { action: 's3:PutObject', resource: `${vars.artifacts_arn}/artifacts/x` },
+      {
+        action: 'lambda:InvokeFunction',
+        resource: `arn:aws:lambda:${region}:${account}:function:permaily-drift`,
+      },
+      { action: 's3:ListBucketVersions', resource: anchors },
     ]) {
-      expect([action, decide({ action, resource: self, mfa: true })]).toEqual([action, 'allowed'])
+      expect([r.action, decide(r)]).toEqual([r.action, 'allowed'])
     }
-    expect(decide({ action: 'iam:CreateVirtualMFADevice', resource: ownDevice, mfa: true })).toBe(
+  })
+  test('ending or resuming only their own SSM sessions', () => {
+    for (const action of ['ssm:TerminateSession', 'ssm:ResumeSession']) {
+      const own = { action, resource: session(`${userid}-0123456789abcdef0`), sessionId: userid }
+      expect([action, decide(own)]).toEqual([action, 'allowed'])
+      const other = {
+        action,
+        resource: session('AROAOTHER:owner-0a'),
+        sessionId: 'AROAOTHER:owner',
+      }
+      expect([action, decide(other)]).toEqual([action, 'denied'])
+      expect([action, decide({ action, resource: own.resource })]).toEqual([action, 'denied'])
+    }
+  })
+  test('nothing the guard denies, nor writes elsewhere', () => {
+    for (const c of heldCases) {
+      expect([c.action, c.resource, decide(c)]).toEqual([c.action, c.resource, 'denied'])
+    }
+    for (const r of [
+      { action: 'ec2:TerminateInstances', resource: vars.instance_arn as string },
+      { action: 's3:GetObject', resource: `arn:aws:s3:::permaily-mail-${account}/x` },
+      { action: 's3:PutObject', resource: `${anchors}/commits/x` },
+      { action: 'secretsmanager:GetSecretValue', resource: '*' },
+      { action: 'sts:AssumeRole', resource: hostRole },
+    ]) {
+      expect([r.action, decide(r)]).toEqual([r.action, 'denied'])
+    }
+  })
+})
+
+describe('they fit a role session of IAM Identity Center', () => {
+  // A role session has no aws:username, so a statement that names it never
+  // applies; and IAM Identity Center checks MFA at sign-in without setting
+  // aws:MultiFactorAuthPresent in the session, so a deny without it would
+  // deny everything.
+  for (const name of Object.keys(policies)) {
+    test(`${name} uses no aws:username and no aws:MultiFactorAuthPresent`, () => {
+      expect(templateText(name)).not.toContain('aws:username')
+      expect(templateText(name)).not.toContain('MultiFactorAuthPresent')
+    })
+  }
+})
+
+describe('the guard holds next to a policy that allows everything', () => {
+  test('every held case is denied explicitly, by the statement meant to', () => {
+    expect(violations(statements)).toEqual([])
+  })
+  test('the allow-everything policy allows what no deny covers (the evaluator is not denying everything)', () => {
+    expect(
+      evaluate({ action: 'ssm:SendCommand', resource: vars.instance_arn as string }, [
+        ...statements,
+        everything,
+      ]).decision,
+    ).toBe('allowed')
+    expect(evaluate({ action: 'iam:TagRole', resource: sessionRole }, [everything]).decision).toBe(
       'allowed',
     )
   })
 })
 
-describe('the denies hold next to an attachment that allows everything', () => {
-  test('every held case is denied explicitly, by the statement meant to', () => {
-    expect(violations(statements)).toEqual([])
-  })
-  test('the allow-everything attachment allows what no deny covers (the evaluator is not denying everything)', () => {
-    expect(
-      evaluate({ action: 'ssm:SendCommand', resource: vars.instance_arn as string, mfa: true }, [
-        ...statements,
-        everything,
-      ]).decision,
-    ).toBe('allowed')
-    expect(
-      evaluate({ action: 'iam:TagUser', resource: self, mfa: true }, [everything]).decision,
-    ).toBe('allowed')
-  })
-})
-
-// mutants weakens the denies of the guard and of require-mfa one way at a time.
+// mutants weakens the guard's denies one way at a time.
 function mutants(): [string, Statement[]][] {
   const out: [string, Statement[]][] = []
   const base = structuredClone(statements)
@@ -441,57 +397,20 @@ function mutants(): [string, Statement[]][] {
         })
       })
     }
-    if (s.NotAction) {
-      const added = ['*', ...heldCases.filter((c) => c.sid === s.Sid).map((c) => c.action)]
-      for (const a of new Set(added)) {
-        mutate(`${s.Sid} with NotAction ${a}`, i, (m) => {
-          m.NotAction = [...list(m.NotAction), a]
-        })
-      }
-    }
-    if (s.NotResource) {
-      for (const r of ['*', `arn:aws:iam::${account}:user/*`, `arn:aws:iam::${account}:*`]) {
-        mutate(`${s.Sid} with NotResource ${r}`, i, (m) => {
-          m.NotResource = [...list(m.NotResource), r]
-        })
-      }
-    }
-    for (const [op, keys] of Object.entries(s.Condition ?? {})) {
-      for (const [key, want] of Object.entries(keys)) {
-        const loosened: Record<string, [string, string]> = {
-          BoolIfExists: ['Bool', want],
-          Bool: ['Bool', want === 'false' ? 'true' : 'false'],
-          StringNotEquals: ['StringEquals', want],
-          StringEquals: ['StringNotEquals', want],
-        }
-        const [to, value] = loosened[op] ?? []
-        if (!to) throw new Error(`no mutation for ${op}`)
-        mutate(`${s.Sid}: ${op} ${key} as ${to} ${value}`, i, (m) => {
-          const cond = m.Condition as Record<string, Record<string, string>>
-          const rest = { ...cond[op] }
-          delete rest[key]
-          if (Object.keys(rest).length) cond[op] = rest
-          else delete cond[op]
-          cond[to as string] = { ...(cond[to as string] ?? {}), [key]: value as string }
-        })
-        if (op === 'BoolIfExists') {
-          mutate(`${s.Sid}: ${op} ${key} flipped`, i, (m) => {
-            const cond = m.Condition as Record<string, Record<string, string>>
-            cond[op] = { ...cond[op], [key]: want === 'false' ? 'true' : 'false' }
-          })
-        }
-      }
+    if (s.NotAction || s.NotResource || s.Condition) {
+      throw new Error(`no mutation for ${s.Sid}'s NotAction, NotResource or Condition`)
     }
   })
   return out
 }
 
-describe('weakening any deny that must hold fails the test above', () => {
+describe('weakening any deny of the guard fails the test above', () => {
   const all = mutants()
-  test('there are mutants of every deny statement', () => {
+  test('there are mutants of every deny statement, and only the guard denies', () => {
     const sids = new Set(statements.filter((s) => s.Effect === 'Deny').map((s) => s.Sid))
+    expect([...sids].sort()).toEqual(policies.guard.map((s) => s.Sid).sort())
     for (const sid of sids) expect(all.some(([name]) => name.startsWith(sid))).toBe(true)
-    expect(all.length).toBeGreaterThan(80)
+    expect(all.length).toBeGreaterThan(60)
   })
   test('each mutant is caught', () => {
     const survivors = all.filter(([, s]) => violations(s).length === 0).map(([name]) => name)
@@ -499,42 +418,48 @@ describe('weakening any deny that must hold fails the test above', () => {
   })
 })
 
-// IAM counts a policy's size without whitespace: 6,144 characters for a
-// managed policy, 5,120 for all of a group's inline policies together.
-describe('IAM size limits', () => {
-  const size = (name: string) => renderText(name).replace(/\s/g, '').length
+// A permission set references a customer-managed policy by its name and path;
+// IAM counts a managed policy's size without whitespace, 6,144 characters.
+describe('installed as customer-managed policies a permission set can reference', () => {
   const tf = readFileSync(join(dir, 'operators.tf'), 'utf8')
   const resources = [
     ...tf.matchAll(/^resource "(aws_iam_[a-z_]+)" "([a-z_]+)" \{\n([\s\S]*?)^\}/gm),
   ].map(([, type, name, body]) => ({
     type,
     name,
+    policyName: /^\s*name\s*=\s*"([^"]+)"/m.exec(body as string)?.[1],
+    path: /^\s*path\s*=\s*"([^"]+)"/m.exec(body as string)?.[1],
     template: /operators\/([a-z-]+)\.json\.tftpl/.exec(body as string)?.[1],
   }))
+  const operations = readFileSync(join(dir, '../../docs/operations.md'), 'utf8')
 
-  test('every template is installed once, as a managed policy or a group inline policy', () => {
+  test('every template is installed once, as a managed policy with a fixed name and path /', () => {
     const templates = readdirSync(join(dir, 'operators'))
       .filter((f) => f.endsWith('.json.tftpl'))
       .map((f) => f.replace('.json.tftpl', ''))
       .sort()
-    const installed = resources.filter((r) => r.template).map((r) => r.template)
-    expect([...installed].sort()).toEqual(templates)
-    for (const r of resources.filter((x) => x.template)) {
-      expect([r.name, r.type]).toEqual([
+    expect(templates).toEqual(Object.keys(policies).sort())
+    const installed = resources.filter((r) => r.template)
+    expect(installed.map((r) => r.template).sort()).toEqual(templates)
+    for (const r of installed) {
+      expect([r.name, r.type, r.path, r.policyName]).toEqual([
         r.name,
-        expect.stringMatching(/^aws_iam_(policy|group_policy)$/),
+        'aws_iam_policy',
+        '/',
+        `permaily-operators-${r.template}`,
       ])
     }
   })
-  test('each managed policy is within 6,144 characters', () => {
-    for (const r of resources.filter((x) => x.type === 'aws_iam_policy' && x.template)) {
-      const n = size(r.template as string)
-      expect([r.template, n <= 6144, n]).toEqual([r.template, true, n])
-    }
+  test('nothing the service control policy denies, and no IAM user', () => {
+    expect(resources.map((r) => r.type).sort()).toEqual(['aws_iam_policy', 'aws_iam_policy'])
   })
-  test("the group's inline policies are within 5,120 characters together", () => {
-    const inline = resources.filter((x) => x.type === 'aws_iam_group_policy' && x.template)
-    const total = inline.reduce((t, r) => t + size(r.template as string), 0)
-    expect([total <= 5120, total]).toEqual([true, total])
+  test('the runbook names each policy the permission set references', () => {
+    for (const r of resources) expect(operations).toContain(`\`${r.policyName}\``)
+  })
+  test('each is within 6,144 characters', () => {
+    for (const name of Object.keys(policies)) {
+      const n = renderText(name).replace(/\s/g, '').length
+      expect([name, n <= 6144, n]).toEqual([name, true, n])
+    }
   })
 })

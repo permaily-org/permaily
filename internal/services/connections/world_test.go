@@ -399,6 +399,9 @@ type writer struct {
 	n     int
 	// onWrite runs before a receipt is kept, for a test's barrier.
 	onWrite func(r *receipts.Receipt)
+	// lose, when it says so of a receipt, keeps it and answers an error:
+	// the storage's answer lost.
+	lose func(r *receipts.Receipt) bool
 	// bounds are, by receipt, what its context's deadline left when its
 	// write began.
 	bounds map[string]time.Duration
@@ -439,14 +442,27 @@ func (w *writer) Write(ctx context.Context, account string, r *receipts.Receipt)
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.n++
-	r.ID = fmt.Sprintf("rcp_%06d", w.n)
+	// A receipt with its own identity is stored once, as the real writer
+	// stores it (receipts.Writer).
+	if r.ID != "" {
+		for _, old := range w.all {
+			if old.ID == r.ID {
+				return nil
+			}
+		}
+	} else {
+		w.n++
+		r.ID = fmt.Sprintf("rcp_%06d", w.n)
+	}
 	if w.bounds == nil {
 		w.bounds = map[string]time.Duration{}
 	}
 	w.bounds[r.ID] = bound
 	_ = account
 	w.all = append(w.all, *r)
+	if w.lose != nil && w.lose(r) {
+		return errors.New("the storage's answer was lost")
+	}
 	return nil
 }
 

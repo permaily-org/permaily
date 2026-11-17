@@ -13,7 +13,7 @@ export const TERMS_VERSION = '2026-11-16';
 
 // The date shown at the top of every legal page, which is also the date the
 // page takes effect.
-export const LEGAL_UPDATED = '16 November 2026';
+export const LEGAL_UPDATED = '17 November 2026';
 
 // Decided by the maintainers on 2026-11-12: one natural person operates the
 // service and is the contracting party. The licensors of the code
