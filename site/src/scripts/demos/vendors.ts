@@ -1,40 +1,105 @@
-import {
-  $,
-  $$,
-  bindToggle,
-  fmt,
-  lerp,
-  out3,
-  out4,
-  seg,
-  setPressed,
-  setVar,
-  Timeline,
-} from '../timeline';
+import { $, $$, lerp, out3, seg, setVar, Timeline } from '../timeline';
 
-const ALL_MAIL = 1200000;
+/** How a row looks: covered by a bar, and whether its cut is covered on its own. */
+interface Look {
+  bk: number;
+  cut: number;
+}
 
-/** Companies: every vendor's reach shrinks to its job. */
+/**
+ * Companies: the same company inbox, as each vendor sees it. With Permaily off, nothing is covered and every
+ * vendor can read all of it. With it on, each row moves to the chosen vendor's view.
+ */
 export function initVendors(root: HTMLElement) {
-  const rows = $$('.vrow', root);
-  const num = $('[data-count]', root);
-  const buttons = $$('.seg button', root);
-  const total = rows.reduce((sum, row) => sum + Number(row.dataset.n), 0);
-  const T = { flip: 1500, go: 1650, each: 230 };
-  const duration = T.go + (rows.length - 1) * T.each + 900;
+  const power = $('[data-switch]', root);
+  const vendors = $$('button[data-vendor]', root);
+  const T = { on: 150, onEach: 45, onDur: 380, flip: 2300, go: 2450, span: 500 };
+  const duration = T.go + T.span + 640;
 
-  const render = (t: number) => {
-    rows.forEach((row, i) => {
-      const s = T.go + i * T.each;
-      setVar($('.vbar', row), '--p', out3(seg(t, s, s + 700)));
-      $('.n', row).textContent = fmt(
-        lerp(ALL_MAIL, Number(row.dataset.n), out4(seg(t, s, s + 760))),
-      );
-    });
-    num.textContent = fmt(lerp(ALL_MAIL, total, out4(seg(t, T.go, duration - 200))));
-    setPressed(buttons, t >= T.flip);
+  const lines = $$('.vi-row', root).map((row) => {
+    const [date, sender, subject] = $$('.t', row);
+    return {
+      date: date!,
+      sender: sender!,
+      subject: subject!,
+      cut: row.querySelector<HTMLElement>('[data-cut]'),
+      apps: row.dataset.apps!.split(' '),
+    };
+  });
+
+  let vendor = vendors.find((b) => b.getAttribute('aria-pressed') === 'true')!.dataset.vendor!;
+  // Where the rows start from. Null is Permaily off, where nothing is covered.
+  let from: string | null = null;
+  // What the visitor set the switch to. Until they touch it, it follows the animation.
+  let chosen: boolean | null = null;
+  let plan: { a: Look; b: Look; s: number }[] = [];
+
+  const look = (line: (typeof lines)[number], id: string | null): Look => {
+    const shared = id === null || line.apps.includes(id);
+    return { bk: shared ? 0 : 1, cut: shared && line.cut?.dataset.cut === id ? 1 : 0 };
   };
 
-  const timeline = new Timeline({ name: 'vendors', root, duration, render, threshold: 0.2 });
-  bindToggle(timeline, buttons, T.flip, duration);
+  // The rows that change move one after another, over the same span however many there are.
+  const replan = () => {
+    const moves = lines.map((line) => {
+      const a = look(line, from);
+      const b = look(line, vendor);
+      // A bar over the whole row hides its cut, so the cut holds still while that bar moves.
+      if (a.bk) a.cut = b.cut;
+      if (b.bk) b.cut = a.cut;
+      return { a, b, moving: a.bk !== b.bk || a.cut !== b.cut };
+    });
+    const moving = moves.filter((m) => m.moving).length;
+    const each = moving > 1 ? Math.min(100, T.span / (moving - 1)) : 0;
+    let k = 0;
+    plan = moves.map(({ a, b, moving }) => ({ a, b, s: T.go + (moving ? k++ : 0) * each }));
+  };
+
+  const render = (t: number) => {
+    lines.forEach((line, i) => {
+      const start = T.on + i * T.onEach;
+      setVar(line.subject, '--hl', out3(seg(t, start, start + T.onDur)));
+      const { a, b, s } = plan[i]!;
+      setVar(line.date, '--bk', lerp(a.bk, b.bk, out3(seg(t, s, s + 160))));
+      setVar(line.sender, '--bk', lerp(a.bk, b.bk, out3(seg(t, s + 60, s + 280))));
+      setVar(line.subject, '--bk', lerp(a.bk, b.bk, out3(seg(t, s + 130, s + 550))));
+      if (line.cut) setVar(line.cut, '--cut', lerp(a.cut, b.cut, out3(seg(t, s + 130, s + 450))));
+    });
+    power.setAttribute('aria-checked', String(chosen ?? t >= T.flip));
+  };
+
+  replan();
+  const timeline = new Timeline({ name: 'vendors', root, duration, render, threshold: 0.15 });
+
+  // Off runs back to just before the bars. On runs forward to the end.
+  power.addEventListener('click', () => {
+    chosen = power.getAttribute('aria-checked') !== 'true';
+    from = null;
+    replan();
+    if (chosen) {
+      if (timeline.t < T.flip) timeline.seek(T.flip);
+      timeline.to(duration, 1);
+    } else {
+      timeline.to(T.flip - 40, 1.8);
+    }
+  });
+
+  // With Permaily on, a new vendor moves each row from the old vendor's view. With it off, nothing visible changes.
+  vendors.forEach((button) =>
+    button.addEventListener('click', () => {
+      const next = button.dataset.vendor!;
+      if (next === vendor) return;
+      const on = timeline.t >= T.flip;
+      from = on ? vendor : null;
+      vendor = next;
+      vendors.forEach((b) => b.setAttribute('aria-pressed', String(b === button)));
+      replan();
+      if (on) {
+        timeline.seek(T.go);
+        timeline.to(duration, 1);
+      } else {
+        timeline.seek(timeline.t);
+      }
+    }),
+  );
 }

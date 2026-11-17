@@ -1,10 +1,9 @@
 ---
 import Cta from '../components/Cta.astro';
-import AccessGridDemo from '../components/demos/AccessGridDemo.astro';
 import ChatDemo from '../components/demos/ChatDemo.astro';
-import FlowDemo from '../components/demos/FlowDemo.astro';
-import InboxDemo from '../components/demos/InboxDemo.astro';
-import ProofDemo from '../components/demos/ProofDemo.astro';
+import EmblemDemo from '../components/demos/EmblemDemo.astro';
+import LineDemo from '../components/demos/LineDemo.astro';
+import SeaDemo from '../components/demos/SeaDemo.astro';
 import { LINKS } from '../config/site';
 import Base from '../layouts/Base.astro';
 ---
@@ -12,95 +11,51 @@ import Base from '../layouts/Base.astro';
 <Base description="Share only the part of your email each app or AI agent needs, and check that we kept our word.">
   <section class="hero">
     <div class="wrap">
-      <div class="hero-top">
-        <h1 class="h-xl">Share <span class="mk">47</span> emails, <br />not 12,304</h1>
-        <div class="hero-side">
-          <p class="intro">When an app or AI agent connects to your email, it can read all of it. Permaily lets it read only what you approve.</p>
-          <div class="actions">
-            <a class="btn lg" href={LINKS.signup}>Sign up by invitation</a>
-            <span class="note">Free for personal use. No card needed.</span>
-          </div>
-        </div>
+      <div class="hero-say">
+        <h1>Stop giving away your inbox.</h1>
+        <p>Take back control and protect what matters to you.</p>
       </div>
-      <InboxDemo />
-      <p class="works">Connects to Gmail, Google Workspace, Outlook and Microsoft 365. Shares with Claude, ChatGPT and any app or agent you approve.</p>
+      <div class="actions hero-act">
+        <a class="btn lg" href={LINKS.signup}>Join the waitlist</a>
+      </div>
     </div>
+    <SeaDemo />
   </section>
 
   <section class="sec" id="how">
     <div class="wrap">
       <div class="sec-head">
-        <h2 class="h-l"><span class="dim">Gmail has no smaller option</span> <br />Permaily is the smaller option</h2>
-        <p class="intro">It sits between your inbox and everything that wants to read it.</p>
+        <h2 class="h-l">Keep using your favorite email <br /><span class="dim">We just sit between it and your other apps</span></h2>
       </div>
-      <FlowDemo />
+      <LineDemo />
     </div>
   </section>
 
   <section class="sec rule-top" id="agents">
     <div class="wrap two">
       <div class="stack">
-        <h2 class="h-l">Agents start with nothing. You choose what they see</h2>
-        <p class="intro">Add one address to Claude, ChatGPT or any AI agent. Connecting shares no mail, and it can’t send or delete anything without asking you.</p>
+        <h2 class="h-l">Ready for your AI agents</h2>
+        <p class="intro">Add one address to Claude, ChatGPT, Muse, Grok Bot or any other AI agent. Connecting shares no mail, and it can’t send or delete anything without asking you.</p>
+        <a class="link fine more" href={LINKS.remoteMcp}>See how to connect your tools with our MCP server and plugins</a>
       </div>
       <ChatDemo />
     </div>
   </section>
 
-  <section class="sec rule-top" id="control">
+  <section class="sec rule-top" id="security">
     <div class="wrap">
-      <div class="sec-head">
-        <h2 class="h-l">One page shows who can read what</h2>
-      </div>
-      <AccessGridDemo />
-      <div class="three facts">
-        <div class="fact">
-          <h3>Your rules run first</h3>
-          <p>They hold back emails, like password resets, or take out details, like your address. No app is told.</p>
-        </div>
-        <div class="fact">
-          <h3>Every email shared leaves a receipt</h3>
-          <p>See what left, when, and what each app asked for.</p>
-        </div>
-        <div class="fact">
-          <h3>What an app already has, it keeps</h3>
-          <p>Turning off access stops anything new. We can’t recall mail it already received, so we show you what each one holds.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="on-dark sec" id="proof">
-    <div class="wrap two">
-      <div class="stack">
-        <h2 class="h-l">Don’t take our word for it</h2>
-        <p class="intro">Permaily has to read your mail to apply your rules. It does that inside an isolated environment running public code, and that environment proves which code it’s running.</p>
-        <p class="fine">This doesn’t prove the code has no bugs, or control what an app does with mail it received. We list every limit.</p>
-        <a class="link fine limits" href="/security/">What this proves, and what it doesn’t</a>
-      </div>
-      <ProofDemo />
-    </div>
-  </section>
-
-  <section class="sec">
-    <div class="wrap routes">
-      <a class="route" href="/developers/">
-        <h3>Building an app that reads email?</h3>
-        <p>Ask for one kind of email instead of a whole inbox. Stop paying your LLM to read the rest, and get typed data back.</p>
-        <span class="go">For developers</span>
-      </a>
-      <a class="route" href="/companies/">
-        <h3>Have vendors in employee mailboxes?</h3>
-        <p>Give each one only what its job needs, and keep a record of what it received.</p>
-        <span class="go">For companies</span>
-      </a>
+      <EmblemDemo>
+        <h2 class="h-l">Security is our top priority</h2>
+        <p class="intro"><strong>Don’t take our word for it.</strong></p>
+        <a slot="more" class="link fine more" href="/security/">What this proves, and what it doesn’t</a>
+      </EmblemDemo>
     </div>
   </section>
 
   <Cta
-    title="Start with nothing"
-    body="Today you can make an account by invitation. Mailboxes and connections come next, and nothing is shared until you approve it."
-    primary={{ label: 'Sign up by invitation', href: LINKS.signup }}
+    title="You decide who reads your mail"
+    body="Approve what each app and AI agent can read, and take access back whenever you like. Free for personal use, no card required."
+    primary={{ label: 'Get started', href: LINKS.signup }}
     secondary={{ label: 'See pricing', href: '/pricing/' }}
   />
 </Base>
@@ -110,47 +65,66 @@ import Base from '../layouts/Base.astro';
     padding-block: clamp(36px, 3.4vw, 48px) 0;
   }
 
-  .hero-top {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
-    align-items: start;
-    gap: clamp(24px, 3.4vw, 48px);
-    margin-bottom: clamp(28px, 2.8vw, 40px);
+  /* The hero's words are sized from the width of this block, so it is named as the thing to measure. */
+  .hero > .wrap {
+    container-type: inline-size;
   }
 
-  .hero-side {
-    display: grid;
-    justify-items: start;
-    gap: var(--space-20);
-    padding-top: 10px;
+  /* Two lines across the page, in two tones: the headline in ink, and under it, dimmer, what to do about
+     it. On a phone the type holds its size and the sentences wrap. */
+  .hero-say {
+    font-size: min(7.6vw, 32px);
+    font-weight: 500;
+    letter-spacing: var(--tracking-l);
+    line-height: var(--leading-display);
+    text-wrap: balance;
   }
 
-  .note {
-    color: var(--ink-2);
-    font-size: var(--text-body);
+  /* On anything wider, each sentence keeps to one line. The longer one is 22.3 times the type's size, so the
+     type is set a little under that share of the block: 4.32 hundredths of its width. It is measured from the
+     block and not from the window, because a window's width counts its scrollbar and the block's does not,
+     and a scrollbar is wider than the room the line has to spare. */
+  @media (min-width: 761px) {
+    /* For a browser without container units: about the same size, from the window. */
+    .hero-say {
+      font-size: clamp(28px, 3.7vw, 54px);
+    }
+
+    @supports (width: 1cqw) {
+      .hero-say {
+        font-size: max(28px, 4.32cqw);
+      }
+    }
   }
 
-  .works {
-    margin-top: var(--space-20);
-    color: var(--ink-2);
-    font-size: var(--text-lead);
+  .hero-say h1,
+  .hero-say p {
+    font: inherit;
+    letter-spacing: inherit;
   }
 
-  .facts {
-    margin-top: clamp(40px, 4.4vw, 64px);
+  /* The headline is a size above the sentence under it. It is the shorter of the two, so it still keeps
+     to its line. */
+  .hero-say h1 {
+    font-size: 1.3em;
   }
 
-  .limits {
+  .hero-say p {
+    color: var(--ink-3);
+  }
+
+  .hero-act {
+    margin-top: clamp(24px, 2.6vw, 36px);
+  }
+
+  /* The link that closes a section's words: as wide as its text, so only the words can be clicked. */
+  .more {
     justify-self: start;
   }
 
-  @media (max-width: 1040px) {
-    .hero-top {
-      grid-template-columns: minmax(0, 1fr);
-    }
-
-    .hero-side {
-      padding-top: 0;
-    }
+  /* The opening words of a section's lead, in ink where the rest is dimmer. */
+  .intro strong {
+    color: var(--ink);
+    font-weight: 500;
   }
 </style>

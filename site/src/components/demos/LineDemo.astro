@@ -1,0 +1,380 @@
+---
+// Home, how it works: mail drifts from the inbox, through Permaily, towards the apps. Permaily is the stretch
+// in the middle, and what happens to the mail happens there: a bar wipes over each word of the mail that was
+// not asked for, one word here and one there, until all of it is covered, and it stops at the far side. What
+// an app asked for darkens as it enters, takes the highlight half-way, and goes on to the apps. Some of it
+// goes on with one detail covered, since an email can be shared without all that is in it.
+// The mail is drawn from attributes, not written as text, so it is not part of the page's own words.
+import { block, GAP, rowText, SEP } from '../../data/mail';
+
+const ROWS = 12;
+/** Each row holds its own six emails of the sample, so no email is on two rows at once. */
+const PER_ROW = 6;
+/** The stretch before the line is cut into this many steps. A word is covered from its own step on. */
+const STEPS = 6;
+
+/** A number from 0 to 1 that depends only on what it is given, so every build draws the same picture. */
+const scatter = (n: number) => {
+  const s = Math.sin(n * 127.1 + 11.7) * 43758.5453;
+  return s - Math.floor(s);
+};
+const blank = (text: string) => text.replace(/./g, ' ');
+
+const rows = Array.from({ length: ROWS }, (_, i) => {
+  const lines = block(i, PER_ROW);
+  const text = rowText(lines);
+  // The mail the app asked for, alone on the row, to darken it before the line.
+  let asked = '';
+  // One row for each step: an X for every character of the words covered by then, and nothing for the rest.
+  // X is the tall bar of the bars font, so the mail itself is not in these rows.
+  const steps = Array.from({ length: STEPS }, () => '');
+  let word = 0;
+  for (const line of lines) {
+    const mail = `${line.from}${GAP}${line.subject}`;
+    const parts = mail.split(/(\s+)/);
+    // The step each word is covered at. Mail that was asked for is never covered.
+    const at = parts.map((part) =>
+      line.asked || !/\S/.test(part) ? STEPS : Math.floor(scatter(i * 31 + word++ * 7.3) * STEPS),
+    );
+    asked += (line.asked ? mail : blank(mail)) + blank(SEP);
+    steps.forEach((_, k) => {
+      steps[k] +=
+        parts.map((part, j) => (at[j]! <= k ? part.replace(/\S/g, 'X') : blank(part))).join('') +
+        blank(SEP);
+    });
+  }
+  // What goes on to the apps: each email, and where the sample says so, with a detail left out. The detail
+  // belongs to the email, so the same email is never covered in one place and whole in another.
+  const out = lines.map((line) => {
+    const mail = `${line.from}${GAP}${line.subject}`;
+    const detail = line.asked ? line.detail : undefined;
+    const from = detail ? mail.indexOf(detail) : -1;
+    const to = from < 0 || !detail ? -1 : from + detail.length;
+    const chars = [...mail];
+    return {
+      asked: Boolean(line.asked),
+      // The email as it shows: without the detail.
+      text: chars.map((c, j) => (j >= from && j < to ? ' ' : c)).join(''),
+      // The bar over the detail: an X for each of its characters, set in the bars font.
+      cover: chars
+        .map((c, j) => (j >= from && j < to && c !== ' ' ? 'X' : ' '))
+        .join('')
+        .trimEnd(),
+    };
+  });
+  return {
+    lines,
+    out,
+    text,
+    asked,
+    steps,
+    n: text.length,
+    // Characters a second, and where the row starts. Each row has its own, so no two start alike.
+    v: 4.5 + scatter(i * 2.7) * 3,
+    o: Math.floor(scatter(i) * 300),
+  };
+});
+---
+
+<div>
+  <figure
+    class="line demo"
+    data-demo="line"
+    aria-label="Mail drifts from your inbox, through Permaily, towards other apps. Inside Permaily, the mail an app asked for is highlighted and goes on to the apps, some of it with one detail covered. Everything else is covered by black bars, word by word, and stops there."
+  >
+    <div class="ln-zone"></div>
+    <div class="ln-head">
+      <h3>Your inbox</h3>
+      <h3>Permaily</h3>
+      <h3>Other apps</h3>
+    </div>
+    <div class="ln-field" aria-hidden="true">
+      <div class="ln-in">
+        {
+          rows.map((row) => (
+            <div class="lr">
+              <span class="lx" data-t={row.text} data-n={row.n} data-v={row.v} data-o={row.o} />
+            </div>
+          ))
+        }
+      </div>
+      <div class="ln-near">
+        {
+          rows.map((row) => (
+            <div class="lr">
+              <span class="lx" data-t={row.asked} data-n={row.n} data-v={row.v} data-o={row.o} />
+            </div>
+          ))
+        }
+      </div>
+      {
+        Array.from({ length: STEPS }, (_, k) => (
+          <div class={`ln-bars s${k + 1}`}>
+            {rows.map((row) => (
+              <div class="lr">
+                <span class="lx" data-t={row.steps[k]} data-n={row.n} data-v={row.v} data-o={row.o} />
+              </div>
+            ))}
+          </div>
+        ))
+      }
+      <div class="ln-out">
+        {
+          rows.map((row) => (
+            <div class="lr">
+              <span class="lx" data-n={row.n} data-v={row.v} data-o={row.o}>
+                {[0, 1].map(() =>
+                  row.out.map((item) => (
+                    <i class:list={['e', item.asked ? 'ok' : 'gone']} data-t={item.text}>{item.cover && <b data-t={item.cover} />}</i>
+                  )),
+                )}
+              </span>
+            </div>
+          ))
+        }
+      </div>
+    </div>
+    <div class="ln-gate"></div>
+    <div class="ln-gate out"></div>
+  </figure>
+  <div class="demo-foot"><span></span><button class="demo-ctl">Replay</button></div>
+</div>
+
+<style is:global>
+  .line {
+    /* Permaily is the stretch between these two lines. */
+    --g1: 38%;
+    --g2: 62%;
+    --zone: calc(var(--g2) - var(--g1));
+    /* Inside it: where the bars start to come on, the stretch they come on over, and where the highlight
+       comes on. */
+    --bars-from: calc(var(--g1) + var(--zone) * 0.1);
+    --bars-span: calc(var(--zone) * 0.9);
+    --lit: calc(var(--g1) + var(--zone) * 0.45);
+    --lh: 24px;
+    position: relative;
+    border-block: var(--hair) solid var(--rule);
+  }
+
+  /* Permaily's stretch, a shade apart from the page on both sides of it. */
+  .ln-zone {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: var(--g1);
+    width: var(--zone);
+    background: var(--sunken);
+  }
+
+  /* A name over each stretch: where the mail is, where it is sorted, and where it goes. */
+  .ln-head {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--g1) var(--zone) minmax(0, 1fr);
+    align-items: baseline;
+    padding-block: var(--space-14) var(--space-12);
+  }
+
+  .ln-head h3 {
+    overflow: hidden;
+    font-size: var(--text-title);
+    font-weight: 500;
+    line-height: var(--leading-snug);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ln-head h3 + h3 {
+    padding-left: var(--space-14);
+  }
+
+  .ln-gate {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: var(--g1);
+    width: var(--hair);
+    background: var(--rule-strong);
+  }
+
+  .ln-gate.out {
+    left: var(--g2);
+  }
+
+  /* While the field is far from the window the browser does not draw it at all, so its rows cost the page
+     nothing until it comes near. It is told the field's height, twelve rows, so the page does not move. */
+  .ln-field {
+    position: relative;
+    overflow: hidden;
+    padding-bottom: var(--space-12);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: var(--lh);
+    user-select: none;
+    content-visibility: auto;
+    contain-intrinsic-block-size: calc(12 * var(--lh));
+  }
+
+  .ln-near,
+  .ln-bars,
+  .ln-out {
+    position: absolute;
+    inset: 0;
+  }
+
+  .line .lr {
+    overflow: hidden;
+    height: var(--lh);
+  }
+
+  /* Only the text itself keeps its spaces, so the markup's own line breaks never show. */
+  .line .lx {
+    display: inline-flex;
+    vertical-align: top;
+    white-space: pre;
+  }
+
+  .line[data-ready] .lx {
+    will-change: transform;
+  }
+
+  /* A row holds its mail twice, so it can move by one copy's length and look the same again. */
+  .ln-in .lx::before,
+  .ln-near .lx::before,
+  .ln-bars .lx::before {
+    content: attr(data-t) attr(data-t);
+  }
+
+  /* The inbox: every email, as far as the far side of Permaily. */
+  .ln-in {
+    color: color-mix(in srgb, var(--ink) 50%, transparent);
+    clip-path: inset(0 calc(100% - var(--g2)) 0 0);
+  }
+
+  /* What the app asked for darkens as it enters Permaily, until the highlight takes it. */
+  .ln-near {
+    color: var(--ink);
+    clip-path: inset(0 calc(100% - var(--lit)) 0 var(--g1));
+  }
+
+  /* The bars. Each step shows through its own slice of Permaily's stretch, and holds the words covered by
+     then, so a bar wipes over a word as the word crosses into the slice it is covered from. By the far side
+     every word is covered, and nothing of it goes further. The rows are written as X's and set in the bars
+     font. */
+  .ln-bars {
+    color: var(--bar);
+    font-family: 'Permaily Bars', var(--font-mono);
+    font-synthesis: none;
+    clip-path: inset(
+      0 calc(100% - var(--bars-from) - var(--bars-span) * var(--k) / 6) 0
+        calc(var(--bars-from) + var(--bars-span) * (var(--k) - 1) / 6)
+    );
+  }
+
+  .ln-bars.s1 {
+    --k: 1;
+  }
+
+  .ln-bars.s2 {
+    --k: 2;
+  }
+
+  .ln-bars.s3 {
+    --k: 3;
+  }
+
+  .ln-bars.s4 {
+    --k: 4;
+  }
+
+  .ln-bars.s5 {
+    --k: 5;
+  }
+
+  .ln-bars.s6 {
+    --k: 6;
+  }
+
+  .line i {
+    position: relative;
+    flex: none;
+    margin-right: 2ch;
+    font-style: normal;
+  }
+
+  .line i.e {
+    margin-right: 7ch;
+  }
+
+  .line i::before {
+    content: attr(data-t);
+  }
+
+  .line i.gone::before {
+    visibility: hidden;
+  }
+
+  /* From half-way through Permaily on: only what was asked for, highlighted, on its way to the apps. */
+  .ln-out {
+    color: var(--on-highlight);
+    clip-path: inset(0 0 0 var(--lit));
+  }
+
+  .ln-out i.ok {
+    z-index: 0;
+  }
+
+  .ln-out i.ok::after {
+    content: '';
+    position: absolute;
+    inset: 3px -0.6ch;
+    z-index: -1;
+    background: var(--highlight);
+  }
+
+  /* A detail left out of an email that goes on: a bar over where it was, on the highlight. It is written as
+     X's and set in the bars font, like every other bar. */
+  .ln-out b {
+    position: absolute;
+    inset: 0 auto 0 0;
+    color: var(--bar);
+    font-family: 'Permaily Bars', var(--font-mono);
+    font-synthesis: none;
+    font-weight: inherit;
+  }
+
+  .ln-out b::before {
+    content: attr(data-t);
+  }
+
+  @media (max-width: 760px) {
+    .line {
+      --g1: 33%;
+      --g2: 67%;
+      --lh: 22px;
+    }
+
+    .ln-head h3 {
+      font-size: var(--text-lead);
+    }
+
+    .ln-head h3 + h3 {
+      padding-left: var(--space-10);
+    }
+
+    .ln-field {
+      font-size: 11px;
+      contain-intrinsic-block-size: calc(9 * var(--lh));
+    }
+
+    .line .lr:nth-child(n + 10) {
+      display: none;
+    }
+  }
+</style>
+
+<script>
+  import { initLine } from '../../scripts/demos/line';
+
+  document.querySelectorAll<HTMLElement>('[data-demo="line"]').forEach(initLine);
+</script>
