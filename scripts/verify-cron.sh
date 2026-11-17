@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# The hourly verification with port 25 required, for cron on a server whose
-# provider lets it connect out on port 25 (the owner's Contabo server). AWS
-# blocks outbound 25 from Lambda and EC2, and GitHub's runners cannot reach it
-# either, so the scheduled checks elsewhere skip the SMTP certificate; this one
-# fails without it (docs/operations.md, "Port 25, from a server").
-#
-#   41 * * * * /opt/permaily/scripts/verify-cron.sh
+# The hourly verification with port 25 required. GitHub's runners and Lambda
+# cannot connect out on port 25, so the scheduled checks elsewhere skip the
+# SMTP certificate; this one fails without it. It runs on an instance of its
+# own in the account, once AWS has lifted the account's block of outbound port
+# 25: deploy/port25/run.sh, by a systemd timer at minute 41 (ADR 0038,
+# docs/operations.md, "Port 25, from its instance"). Any machine that can
+# reach port 25 can run it too, by cron or a timer.
 #
 # It runs scripts/verify-production.sh -require-smtp: the latest release's
 # permaily-verify and pcrs.json, downloaded and checked against their Sigstore
 # provenance (gh attestation verify) before the verifier runs, and the
-# previous release's while the latest is not deployed. No AWS credentials.
+# previous release's while the latest is not deployed. It uses no AWS credentials.
 #
 # A run has a deadline, PERMAILY_VERIFY_TIMEOUT seconds (default 3000, under
 # the hour): past it the run and every process it started are sent TERM, then
@@ -19,18 +19,18 @@
 # one leaves it be; a lock held past the deadline, or one that cannot be taken,
 # is a failure.
 #
-# On success it prints nothing. On failure it prints the report and exits 1
-# (cron mails it where MAILTO and a mailer are set), and when
-# PERMAILY_ALERT_CMD is set it runs it with the report on standard input, for
-# example: PERMAILY_ALERT_CMD='mail -s "Permaily: verification failed" ops@example.org'
+# On success it prints nothing. On failure it prints the report and exits 1,
+# and when PERMAILY_ALERT_CMD is set it runs it with the report on standard
+# input (on the instance, deploy/port25/alert.sh, which publishes to SNS).
 # The lock is released before the alert command runs, which never holds it,
 # and that command has its own deadline, PERMAILY_ALERT_TIMEOUT seconds
 # (default 120): past it, it and what it started are sent TERM, then KILL
 # PERMAILY_VERIFY_GRACE seconds later. An alert that fails or times out is
 # reported on standard error; the exit is 1 either way.
 #
-# Needs bash, gh (signed in for this user, or GH_TOKEN), jq and flock. The last
-# report is kept in ~/.local/state/permaily-verify-cron/last.txt.
+# Needs bash, gh (signed in for this user, or GH_TOKEN) and flock. The last
+# report is kept in $XDG_STATE_HOME/permaily-verify-cron/last.txt
+# (~/.local/state by default).
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
