@@ -43,8 +43,9 @@ var ErrTooLarge = errors.New("receipts: the receipt is larger than one entry hol
 
 // Version is the version of a receipt's sealed document. Step 8 reads every
 // version it finds; a new version is written only with a new field, never a
-// changed one.
-const Version = 1
+// changed one. Version 2 adds KindRefusals and its Refusals; a version 1
+// document reads as it was written.
+const Version = 2
 
 // Partition is where an account's receipts are: one partition per account,
 // deleted with it (store.Entries.DeletePartition, when the account is
@@ -64,6 +65,10 @@ const (
 	KindRefused    Kind = "refused"    // a request for mail that got none: a held message, one outside the scope, a part not approved, the model unavailable, too late to release
 	KindConsent    Kind = "consent"    // the person allowed or refused a request, or renewed a connection: a connection made or replaced, or a device added
 	KindEnded      Kind = "ended"      // a connection or one of its devices ended, and why
+	// KindRefusals counts, in one receipt for a connection's window, the
+	// refusals past the ones the window records each in its own refused
+	// receipt (Refusals; version 2).
+	KindRefusals Kind = "refusals"
 )
 
 // Receipt is one entry's sealed document. Everything a receipt names is as it
@@ -91,6 +96,7 @@ type Receipt struct {
 	Refused   *Refused    `json:"refused,omitempty"`
 	Consent   *Consent    `json:"consent,omitempty"`
 	Ended     *Ended      `json:"ended,omitempty"`
+	Refusals  *Refusals   `json:"refusals,omitempty"`
 	// A receipt holds nothing of its chain: the link that chains it names
 	// it by identifier and digest (ADR 0037), so a receipt's document is
 	// the same chained or not, and one written before the chain is adopted
@@ -230,6 +236,29 @@ type Refused struct {
 	Receipt string `json:"receipt,omitempty"`
 }
 
+// Refusals is a summary of one connection's refusals in one enclave (ADR
+// 0031, "Refusals past a window's bound"): of the refused requests of the
+// connection from From to Until, Recorded were written each in its own
+// refused receipt, and the others are only counted here, by operation and
+// reason. It names no message and no receipt, and no device: the requests it
+// counts may come from any of the connection's devices. It covers one
+// window, or more only when an earlier window's summary could not be
+// written and was carried into the next.
+type Refusals struct {
+	From     time.Time      `json:"from"`
+	Until    time.Time      `json:"until"`
+	Recorded int            `json:"recorded"`
+	Counts   []RefusalCount `json:"counts"`
+}
+
+// RefusalCount is how many refusals of one operation and reason a summary
+// counts. Operation is the request's: "search", "read" or "attachment".
+type RefusalCount struct {
+	Operation string        `json:"operation"`
+	Reason    RefusedReason `json:"reason"`
+	Count     int           `json:"count"`
+}
+
 // Consent is what the person was shown and decided (docs/legal.md,
 // engineering item 2): the sentences, parts, mail since and end shown, the
 // draft's mailboxes, the rules and the model's notice in force, what it did
@@ -261,7 +290,10 @@ type Ended struct {
 // leaves before it does, and a request whose receipt cannot be written is
 // answered 503 with nothing of the mail. It sets r.ID and r.At; it refuses
 // r past MaxDocumentBytes (ErrTooLarge) and honours ctx's deadline, which
-// the service sets to the grant's.
+// the service sets to the grant's. A receipt that comes with its identity
+// (r.ID from NewID, and r.At) is stored under it, and writing it again is
+// stored once: a caller that did not learn a write's outcome makes it again
+// rather than drawing a new receipt.
 type Writer interface {
 	Write(ctx context.Context, account string, r *Receipt) error
 }

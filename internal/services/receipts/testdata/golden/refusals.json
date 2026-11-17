@@ -1,0 +1,27 @@
+{
+  "v": 2,
+  "id": "rcp_18e87e30edfd0a0000000000000000000007",
+  "at": "2026-11-16T10:00:00.123456Z",
+  "kind": "refusals",
+  "connection": "con_cccccccccccccccccccccccccc",
+  "client_id": "https://claude.ai/oauth/claude-code-client-metadata",
+  "vendor": "claude.ai",
+  "resource": "mcp",
+  "refusals": {
+    "from": "2026-11-16T10:00:00Z",
+    "until": "2026-11-16T10:01:00Z",
+    "recorded": 30,
+    "counts": [
+      {
+        "operation": "read",
+        "reason": "rate_limited",
+        "count": 412
+      },
+      {
+        "operation": "search",
+        "reason": "invalid_body",
+        "count": 7
+      }
+    ]
+  }
+}

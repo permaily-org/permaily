@@ -456,7 +456,7 @@ func TestV32ReceiptBoundaryCutsThePage(t *testing.T) {
 	x := w.ask(claudeCode)
 	tok := w.connectAll(s, w.person(accountA), x)
 	g := w.grant(s, x, tok.AccessToken)
-	r, err := s.prepare(ctx, g, nil)
+	r, err := s.prepare(ctx, g, OperationRead, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1027,7 +1027,7 @@ func TestV32ReceiptBoundaryBelowAtAndAbove(t *testing.T) {
 				x := w.ask(claudeCode)
 				tok := w.connectAll(s, w.person(accountA), x)
 				g := w.grant(s, x, tok.AccessToken)
-				r, err := s.prepare(ctx, g, nil)
+				r, err := s.prepare(ctx, g, OperationRead, nil)
 				if err != nil {
 					t.Fatal(err)
 				}

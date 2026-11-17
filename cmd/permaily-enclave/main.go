@@ -87,6 +87,9 @@ type config struct {
 	// sweepTick, never a flag either, ticks the connections' hourly pass in
 	// place of its ticker: a test's.
 	sweepTick <-chan time.Time
+	// refusalClock, never a flag either, is the refusals' pass's clock in
+	// tests (runConnections); zero, time.Now and time.After.
+	refusalClock refusalClock
 	// clientPort, never a flag, is the port clients name in the
 	// authorization server's addresses when it is not port: a test's two
 	// dev enclaves behind one address, as the deployment's two are behind
@@ -222,10 +225,11 @@ func run(cfg config, log *slog.Logger) error {
 		// alarms any image left due (ADR 0028).
 		runModel(ctx, p.model, log, cfg.modelTicks)
 	}
+	var refusalsPassed <-chan struct{}
 	if p.connections != nil {
 		// Every enclave runs the connections' hourly pass (ADR 0030,
 		// "Revocation and two enclaves").
-		runConnections(ctx, p.connections.svc, log, cfg.sweepTick)
+		refusalsPassed = runConnections(ctx, p.connections.svc, log, cfg.sweepTick, cfg.refusalClock)
 	}
 	if p.smtpListener != nil {
 		var recipients smtpd.Recipients = nobody{}
@@ -257,16 +261,28 @@ func run(cfg config, log *slog.Logger) error {
 		IdleTimeout:       120 * time.Second,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelDebug),
 	}
+	stopped := make(chan struct{})
+	var stopErr error
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			// Connections still open; the connections' requests among them
+			// are waited for by stopConnections, which admits none more.
+			log.Warn("the server's connections did not all close at the stop", "kind", "shutdown")
+		}
+		if p.connections != nil {
+			// After the last request: what the refusals' windows counted.
+			stopErr = stopConnections(p.connections.svc, refusalsPassed, log)
+		}
 	}()
 	if err := srv.ServeTLS(p.listener, "", ""); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	return nil
+	<-stopped
+	return stopErr
 }
 
 // handler is every route the enclave serves, on every host: what run
