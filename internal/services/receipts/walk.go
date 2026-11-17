@@ -137,7 +137,7 @@ func (s *Service) page(ctx context.Context, account string, before Position, lim
 		if err != nil {
 			return nil, err
 		}
-		if len(out.links) > 0 && size+j.bytes > WalkBytesMax {
+		if len(out.links) > 0 && size+j.bytes > s.walkBytes {
 			out.next, ended = Position{N: n + 1}, true
 			break
 		}
@@ -173,7 +173,7 @@ func (s *Service) page(ctx context.Context, account string, before Position, lim
 			if err != nil {
 				return nil, err
 			}
-			if size+cost > WalkBytesMax {
+			if size+cost > s.walkBytes {
 				out.next, ended = Position{N: n, Index: i + 1}, true
 				if len(pl.receipts) == 0 {
 					out.next = Position{N: n + 1}

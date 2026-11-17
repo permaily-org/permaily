@@ -34,6 +34,8 @@ type Service struct {
 	// chain is nil for a Service made by New: it writes receipts unchained
 	// and says so (Chained).
 	chain *chainState
+	// walkBytes is WalkBytesMax, which tests lower.
+	walkBytes int
 }
 
 var _ Writer = (*Service)(nil)
@@ -51,7 +53,7 @@ func New(entries store.Entries, keys Keys, now func() time.Time, random func([]b
 			return err
 		}
 	}
-	return &Service{entries: entries, keys: keys, now: now, random: random}
+	return &Service{entries: entries, keys: keys, now: now, random: random, walkBytes: WalkBytesMax}
 }
 
 // IDPrefix starts every receipt's identifier and key.
