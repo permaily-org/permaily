@@ -811,9 +811,12 @@ func (p *ExportPage) Check() error {
 	case !p.Done && len(p.Links) == 0:
 		return errors.New("receipts: an export's page that is not done holds a link, so the next moves on")
 	}
-	last := Position{N: p.Head.N + 1}
-	for _, l := range p.Links {
-		if l.N == 0 || l.N >= last.N || (l.Doc != nil) != l.Verdict.Readable() || (!l.Verdict.Readable() && len(l.Receipts) > 0) {
+	// The first link is at most the head, every other below the one before;
+	// the head's number is never added to, so a head at the last number a
+	// chain can have does not wrap to 0.
+	last := Position{N: p.Head.N}
+	for i, l := range p.Links {
+		if l.N == 0 || l.N > last.N || (i > 0 && l.N == last.N) || (l.Doc != nil) != l.Verdict.Readable() || (!l.Verdict.Readable() && len(l.Receipts) > 0) {
 			return fmt.Errorf("receipts: an export's link %d out of order or of a verdict it does not keep", l.N)
 		}
 		last = Position{N: l.N, Index: LinkReceiptsMax}

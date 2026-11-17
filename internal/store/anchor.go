@@ -775,6 +775,10 @@ func (a *Anchored) Seen() []Commit {
 // copies of a commit, locked or not (Copy). Every commit Append or Fork makes
 // is locked, as Append's are in S3.
 type MemoryCommits struct {
+	// Group, when set, groups names as S3Commits.Group does, for
+	// HistoryRange.
+	Group func(name string) (group, member string, ok bool)
+
 	mu      sync.Mutex
 	commits map[string][]Commit
 	// taken are versions where something that is not a commit of this

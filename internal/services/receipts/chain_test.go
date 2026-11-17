@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -500,5 +501,21 @@ func TestAnExportPageIsChecked(t *testing.T) {
 		if err := p.Check(); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// The third design review's P2 for pull request 1: a page whose head is the
+// last number a chain can have is checked as any other, its head's number
+// never wrapping to 0; a link above it still fails.
+func TestAnExportPageAtTheLastNumberIsChecked(t *testing.T) {
+	p := &ExportPage{V: ExportVersion, Account: testAccount, Head: Head{N: math.MaxUint64, Verdict: LinkOK}, Next: Position{N: math.MaxUint64}, Links: []ExportedLink{
+		{N: math.MaxUint64, Verdict: LinkOK, Doc: []byte(`{}`), Receipts: []ExportedReceipt{{Index: 0, ID: "rcp_c", Verdict: ReceiptOK, Doc: []byte(`{}`)}}},
+	}}
+	if err := p.Check(); err != nil {
+		t.Fatal(err)
+	}
+	p.Head.N = math.MaxUint64 - 1
+	if p.Check() == nil {
+		t.Fatal("a link above the page's head passed")
 	}
 }
