@@ -3,7 +3,7 @@
 //
 // Two URL parameters help with review and screenshots:
 //   ?still            shows every demo's final state
-//   ?seek=hero:2700   freezes one demo at a moment
+//   ?seek=sea:2700    freezes one demo at a moment
 
 export const clamp = (x: number, a = 0, b = 1) => Math.min(b, Math.max(a, x));
 export const seg = (t: number, a: number, b: number) => clamp((t - a) / (b - a));
@@ -44,6 +44,10 @@ interface TimelineOptions {
   render: (t: number) => void;
   threshold?: number;
   control?: HTMLElement | null;
+  /** Keeps running after its opening has played, for motion with no end, such as drift. */
+  ambient?: boolean;
+  /** Told when the animation starts and stops moving, for motion that the browser runs by itself. */
+  watch?: (moving: boolean) => void;
 }
 
 export class Timeline {
@@ -52,21 +56,39 @@ export class Timeline {
   duration: number;
   render: (t: number) => void;
   control: HTMLElement | null;
+  ambient: boolean;
+  watch: ((moving: boolean) => void) | undefined;
   t: number;
   state: 'end' | 'idle' | 'playing' | 'paused' = 'end';
   started = false;
   private raf = 0;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  /** How long the drawing asked to rest, and how long the frame that comes next was put off for it. */
+  private wish = 0;
+  private rested = 0;
+  private moving = false;
   private last = 0;
   private target: number;
   private speed = 1;
   private resumeOnReturn = false;
 
-  constructor({ name, root, duration, render, threshold = 0.4, control = null }: TimelineOptions) {
+  constructor({
+    name,
+    root,
+    duration,
+    render,
+    threshold = 0.4,
+    control = null,
+    ambient = false,
+    watch,
+  }: TimelineOptions) {
     this.name = name;
     this.root = root;
     this.duration = duration;
     this.render = render;
     this.control = control;
+    this.ambient = ambient;
+    this.watch = watch;
     this.t = duration;
     this.target = duration;
     window.PermailyDemos[name] = this;
@@ -104,12 +126,13 @@ export class Timeline {
   }
 
   seek(t: number) {
-    this.t = clamp(t, 0, this.duration);
+    this.t = this.ambient ? Math.max(0, t) : clamp(t, 0, this.duration);
     this.render(this.t);
   }
 
   play() {
-    this.target = this.duration;
+    // Ambient motion has no end to reach, so it runs until it is paused or scrolled away.
+    this.target = this.ambient ? Number.POSITIVE_INFINITY : this.duration;
     this.speed = 1;
     this.run();
   }
@@ -123,7 +146,7 @@ export class Timeline {
   }
 
   pause() {
-    cancelAnimationFrame(this.raf);
+    this.halt();
     this.state = 'paused';
     this.updateControl();
   }
@@ -140,11 +163,27 @@ export class Timeline {
     }
   }
 
-  private run() {
+  /**
+   * For motion with no end, said while it draws: nothing it draws will change for this many milliseconds, so
+   * it need not be asked again until then, and the page is left alone in between. It counts for one frame.
+   */
+  rest(ms: number) {
+    this.wish = ms;
+  }
+
+  /** Drops the frame that was asked for, and the rest that leads to one. */
+  private halt() {
     cancelAnimationFrame(this.raf);
+    clearTimeout(this.timer);
+    this.rested = 0;
+  }
+
+  private run() {
+    this.halt();
     this.last = performance.now();
     const step = (now: number) => {
-      const dt = Math.min(now - this.last, 64);
+      // A rest is time that passed on purpose. Anything longer was a stall, and the clock does not jump over it.
+      const dt = Math.min(now - this.last, 64 + this.rested);
       this.last = now;
       const dir = this.target >= this.t ? 1 : -1;
       this.t += dir * dt * this.speed;
@@ -155,8 +194,19 @@ export class Timeline {
         this.updateControl();
         return;
       }
+      this.wish = 0;
       this.render(this.t);
-      this.raf = requestAnimationFrame(step);
+      // Only motion with no end can rest, and only once its opening has played.
+      this.rested = this.ambient && this.t >= this.duration ? this.wish : 0;
+      if (this.rested > 24) {
+        // The timer ends a little early, so that the next frame is the one the rest ends on.
+        this.timer = setTimeout(() => {
+          this.raf = requestAnimationFrame(step);
+        }, this.rested - 8);
+      } else {
+        this.rested = 0;
+        this.raf = requestAnimationFrame(step);
+      }
     };
     this.state = 'playing';
     this.updateControl();
@@ -164,6 +214,11 @@ export class Timeline {
   }
 
   private updateControl() {
+    const moving = this.state === 'playing';
+    if (moving !== this.moving) {
+      this.moving = moving;
+      this.watch?.(moving);
+    }
     if (!this.control) return;
     this.control.textContent =
       this.state === 'playing' ? 'Pause' : this.state === 'paused' ? 'Resume' : 'Replay';

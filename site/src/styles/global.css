@@ -355,6 +355,24 @@ textarea {
   position: relative;
 }
 
+/* A drawing that is out of the window is not drawn: its script says so on the element itself, which only
+   this can speak over. On paper nothing is out of the window, so all of them are drawn. */
+@media print {
+  .demo,
+  .ln-field {
+    content-visibility: visible !important;
+  }
+}
+
+/* The bars of the drawings on Home: one block for the letter x, as wide as a character of the mono face
+   (scripts/bars-font.py). A row of covered mail is written as x's, so each word comes out as a bar. */
+@font-face {
+  font-family: 'Permaily Bars';
+  src: url('../assets/fonts/permaily-bars.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: block;
+}
+
 .demo-ctl {
   color: var(--ink-2);
   font-family: var(--font-mono);
