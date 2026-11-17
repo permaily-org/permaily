@@ -32,6 +32,7 @@ import (
 	"github.com/permaily-org/permaily/internal/services/connections"
 	"github.com/permaily-org/permaily/internal/services/decisions"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
+	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/sesmail"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
@@ -76,6 +77,9 @@ type platform struct {
 	// one strict Anchored of its records.
 	connections       *composedConnections
 	connectionRecords *store.Anchored
+	// receipts is the record of what left, chained (ADR 0037), over its one
+	// strict Anchored; nil without the model.
+	receipts *composedReceipts
 }
 
 // devConfig is empty in the enclave: the image reaches vendors through the
@@ -163,10 +167,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			if cfg.anchorRetentionDays < 1 {
 				return nil, errors.New("-anchor-bucket needs -anchor-retention-days")
 			}
-			commits := &store.S3Commits{
-				S3: s3Client, Bucket: cfg.anchorBucket, Key: root.CommitKey,
-				Retention: time.Duration(cfg.anchorRetentionDays) * 24 * time.Hour,
-			}
+			commits := anchorCommits(s3Client, cfg.anchorBucket, root.CommitKey, cfg.anchorRetentionDays)
 			anchored := &store.Anchored{Records: awsStore, Commits: commits}
 			records = anchored
 			// Accounts keep their records apart: /status names the records it
@@ -174,7 +175,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			// Only the newest version of one is kept, so a name or a passkey
 			// that was removed does not stay in the table (ADR 0017); the TLS
 			// identity above keeps every version (ADR 0016).
-			var accountRecords, mailboxRecords, modelRecords, connectionRecords *store.Anchored
+			var accountRecords, mailboxRecords, modelRecords, connectionRecords, chainRecords *store.Anchored
 			if cfg.mailFrom != "" {
 				accountRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true}
 				sender, err := p.signIn(ctx, cfg, hosts, awsCfg, egress, accountRecords, awsStore, root, log)
@@ -214,12 +215,24 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 				// the host's vendor egress (port 8004) and nothing else.
 				connectionRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true, Strict: true}
 				p.connectionRecords = connectionRecords
+				// The record of what left, chained (ADR 0037): links, the
+				// catalogue of chains, the audit's passes and the record of
+				// incidents are strict records made once, read and written
+				// through this Anchored alone, which reads no other name; their
+				// values in the chain's table (a link's in its account's
+				// partition), their commits grouped under commits/g/.
+				chainRecords = &store.Anchored{Records: receipts.ChainTable{Entries: awsStore}, Commits: commits, Strict: true}
+				if p.receipts, err = composeReceipts(receiptsParts{chain: chainRecords, entries: awsStore, keys: root, accounts: p.accounts}); err != nil {
+					return nil, err
+				}
 				if p.connections, err = enclaveConnections(cfg, hosts, connectionRecords, awsStore, root, p); err != nil {
 					return nil, err
 				}
 			}
 			p.anchors = func() *attestation.AnchorStatus {
-				return anchorStatus(anchored, accountRecords, mailboxRecords, modelRecords, connectionRecords, cfg.anchorBucket, cfg.anchorRetentionDays)
+				st := anchorStatus(anchored, accountRecords, mailboxRecords, modelRecords, connectionRecords, cfg.anchorBucket, cfg.anchorRetentionDays)
+				st.Regressions = append(st.Regressions, receiptRegressions(chainRecords)...)
+				return st
 			}
 		} else if cfg.mailFrom != "" {
 			// An account's ways to sign in must not come back (ADR 0017).
@@ -302,7 +315,21 @@ func enclaveConnections(cfg config, hosts router.Hosts, records *store.Anchored,
 	return composeConnections(connectionsParts{
 		oauth: oauthConfig(hosts, cfg.oauthPort()), domain: cfg.domain, records: records, entries: table, keys: root,
 		vendorHTTP: vendorEgress(cfg.vendorEgressPort), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model,
+		receipts: p.receipts,
 	})
+}
+
+// anchorCommits is where every strict record's commits are, in the anchors
+// bucket: the chain's records grouped by receipts.CommitGroup (ADR 0037,
+// "Where a link is kept"), so a grouped name's commits are read and written
+// there and nowhere else, by any Anchored; every other name's where they
+// always were.
+func anchorCommits(api store.S3CommitsAPI, bucket string, key func(context.Context) ([]byte, error), retentionDays int) *store.S3Commits {
+	return &store.S3Commits{
+		S3: api, Bucket: bucket, Key: key,
+		Retention: time.Duration(retentionDays) * 24 * time.Hour,
+		Group:     receipts.CommitGroup,
+	}
 }
 
 // anchorStatus reports the records an enclave refuses an earlier copy of, as

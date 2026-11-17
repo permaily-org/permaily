@@ -90,6 +90,9 @@ type config struct {
 	// refusalClock, never a flag either, is the refusals' pass's clock in
 	// tests (runConnections); zero, time.Now and time.After.
 	refusalClock refusalClock
+	// receiptsTicks, never a flag either, tick the audit and the reads of
+	// the record of incidents in tests (runReceipts); zero, their tickers.
+	receiptsTicks receiptsTicks
 	// clientPort, never a flag, is the port clients name in the
 	// authorization server's addresses when it is not port: a test's two
 	// dev enclaves behind one address, as the deployment's two are behind
@@ -224,6 +227,11 @@ func run(cfg config, log *slog.Logger) error {
 		// Every enclave runs the day's canary, under its lease, and sends the
 		// alarms any image left due (ADR 0028).
 		runModel(ctx, p.model, log, cfg.modelTicks)
+	}
+	if p.receipts != nil {
+		// Every enclave reads the record of incidents and the newest pass
+		// for /status, and runs the daily audit under its lease (ADR 0037).
+		runReceipts(ctx, p.receipts, log, cfg.receiptsTicks)
 	}
 	var refusalsPassed <-chan struct{}
 	if p.connections != nil {

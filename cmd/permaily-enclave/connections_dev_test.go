@@ -38,6 +38,7 @@ import (
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/rules"
+	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/pkg/attestation"
 )
@@ -149,6 +150,9 @@ type e2eWorld struct {
 	mailbox, address string
 	// platforms are the two enclaves' platforms.
 	platforms []*platform
+	// auditTicks and incidentsTicks tick each enclave's audit and its reads
+	// of the record of incidents (runReceipts).
+	auditTicks, incidentsTicks []chan time.Time
 }
 
 // The clients the played vendor publishes: an app for the API and an agent
@@ -391,6 +395,108 @@ func connectionsEndToEnd(t *testing.T, w e2eWorld) []string {
 	if held.code != 404 || held.body != none.body || strings.Contains(held.body, "verification") {
 		t.Fatalf("the held message: %+v; one that does not exist: %+v", held, none)
 	}
+	// L21 (ADR 0037): every answer that gives mail or refuses it, every
+	// consent and every end waits for its receipt to be linked in Bea's
+	// chain. Behind a chain whose commits fail, nothing of the mail leaves;
+	// behind one whose commit is held, nothing is answered until it lands,
+	// and then the head of her chain has moved on.
+	var me contracts.Me
+	decode(w.call(w.bea, 0, "GET", "/api/v1/me", ""), 200, &me)
+	beaAccount := me.Account
+	secrets = append(secrets, beaAccount.ID, beaAccount.ID[len("acc_"):])
+	chainHead := func() uint64 {
+		t.Helper()
+		h, err := w.platforms[1].receipts.svc.Head(context.Background(), beaAccount.ID)
+		if err != nil || h.Verdict != receipts.LinkOK {
+			t.Fatalf("Bea's chain's head: %+v %v", h, err)
+		}
+		return h.N
+	}
+	// behindFailingChain runs do with every commit of the chain refused:
+	// what it answers holds none of leaks, and the head does not move.
+	behindFailingChain := func(what string, do func() vendorAnswer, leaks ...string) vendorAnswer {
+		t.Helper()
+		before := chainHead()
+		devChain.Store(&devChainHook{fail: true})
+		a := do()
+		devChain.Store(nil)
+		for _, leak := range leaks {
+			if strings.Contains(a.body, leak) {
+				t.Fatalf("%s behind a failing chain gave %q: %+v", what, leak, a)
+			}
+		}
+		if after := chainHead(); after != before {
+			t.Fatalf("%s behind a failing chain moved the head from %d to %d", what, before, after)
+		}
+		return a
+	}
+	// behindHeldChain runs do with the chain's commits held: it answers
+	// nothing until they are let go, and then the head has moved on.
+	behindHeldChain := func(what string, do func()) {
+		t.Helper()
+		before := chainHead()
+		hold, waiting, done := make(chan struct{}), make(chan struct{}, 1), make(chan struct{})
+		devChain.Store(&devChainHook{hold: hold, waiting: waiting})
+		go func() {
+			defer close(done)
+			do()
+		}()
+		select {
+		case <-waiting:
+		case <-done:
+			devChain.Store(nil)
+			t.Fatalf("%s answered and wrote no link", what)
+		case <-time.After(30 * time.Second):
+			t.Fatalf("%s wrote no link", what)
+		}
+		select {
+		case <-done:
+			t.Fatalf("%s answered before its receipt was linked", what)
+		case <-time.After(300 * time.Millisecond):
+		}
+		devChain.Store(nil)
+		close(hold)
+		<-done
+		if after := chainHead(); after <= before {
+			t.Fatalf("%s did not extend the chain: %d, then %d", what, before, after)
+		}
+	}
+	type released struct{ a vendorAnswer }
+	var got released
+	behindFailingChain("a search", func() vendorAnswer { return search(0, app.AccessToken) }, "penguin", "Quarterly")
+	behindHeldChain("a search", func() { got.a = search(1, app.AccessToken) })
+	if got.a.code != 200 || !strings.Contains(got.a.body, "penguin-7e21") {
+		t.Fatalf("a search behind a held chain: %+v", got.a)
+	}
+	readLunch := func() vendorAnswer {
+		return vendorDo(0, "GET", cfg.APIResource+"/messages/"+lunchID, app.AccessToken, "", "")
+	}
+	behindFailingChain("a read", readLunch, "pier", "penguin")
+	behindHeldChain("a read", func() { got.a = readLunch() })
+	if got.a.code != 200 || !strings.Contains(got.a.body, "pier penguin-7e21") {
+		t.Fatalf("a read behind a held chain: %+v", got.a)
+	}
+	// A refusal of the API's own (a limit it does not take) and a read of
+	// a message the default rule holds, each recorded before it is
+	// answered; behind a failing chain, answered 503 (and the refusals'
+	// lane tries its write again later, ADR 0031).
+	refused := func() vendorAnswer {
+		return vendorDo(0, "POST", cfg.APIResource+"/messages/search", app.AccessToken, "application/json", `{"limit":100000}`)
+	}
+	readHeld := func() vendorAnswer {
+		return vendorDo(0, "GET", cfg.APIResource+"/messages/"+heldID, app.AccessToken, "", "")
+	}
+	behindHeldChain("a refusal", func() { got.a = refused() })
+	if got.a.code != 400 {
+		t.Fatalf("a refusal behind a held chain: %+v", got.a)
+	}
+	behindHeldChain("a message the rule holds", func() { got.a = readHeld() })
+	if got.a.code != 404 || strings.Contains(got.a.body, "verification") {
+		t.Fatalf("a held message behind a held chain: %+v", got.a)
+	}
+	if a := behindFailingChain("a refusal", refused); a.code != 503 {
+		t.Fatalf("a refusal that cannot be recorded: %+v", a)
+	}
 	// The same token at the other resource is refused.
 	if a := vendorDo(1, "POST", cfg.MCPResource, app.AccessToken, "application/json", `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`); a.code != 401 || !strings.Contains(a.header.Get("WWW-Authenticate"), "invalid_token") {
 		t.Fatalf("the API's token at MCP: %+v", a)
@@ -398,7 +504,8 @@ func connectionsEndToEnd(t *testing.T, w e2eWorld) []string {
 
 	// A second device: the same client asks again for the same scope, and
 	// the person confirms it; both devices' tokens work.
-	second := connect(e2eAppClient, cfg.APIResource, contracts.ChangeAddDevice, false)
+	var second *connectionsTokens
+	behindHeldChain("a consent", func() { second = connect(e2eAppClient, cfg.APIResource, contracts.ChangeAddDevice, false) })
 	decode(w.call(w.bea, 0, "GET", "/api/v1/connections/"+connID, ""), 200, &conns.Connections[0])
 	if c := conns.Connections[0]; c.State != contracts.ConnectionActive || len(c.Devices) != 2 {
 		t.Fatalf("after the second device: %+v", c)
@@ -429,6 +536,11 @@ func connectionsEndToEnd(t *testing.T, w e2eWorld) []string {
 	}
 	if a := mcpCall(1, agent.AccessToken, "search_mail"); a.code != 200 || a.proto != "HTTP/1.1" || !strings.Contains(a.body, "Lunch plans penguin-7e21") || strings.Contains(a.body, "verification") {
 		t.Fatalf("search_mail: %+v", a)
+	}
+	behindFailingChain("search_mail", func() vendorAnswer { return mcpCall(0, agent.AccessToken, "search_mail") }, "penguin", "Quarterly")
+	behindHeldChain("search_mail", func() { got.a = mcpCall(1, agent.AccessToken, "search_mail") })
+	if got.a.code != 200 || !strings.Contains(got.a.body, "Lunch plans penguin-7e21") {
+		t.Fatalf("search_mail behind a held chain: %+v", got.a)
 	}
 
 	// A refresh, and its retry within 30 seconds: the same pair.
@@ -469,7 +581,9 @@ func connectionsEndToEnd(t *testing.T, w e2eWorld) []string {
 	// Revoked through the first enclave: refused there at once, and
 	// through the other once its read is five seconds old.
 	var revoked contracts.Connection
-	decode(w.call(w.bea, 0, "POST", "/api/v1/connections/"+connID+"/revoke", ""), 200, &revoked)
+	var revokedAnswer mailAnswer
+	behindHeldChain("an end", func() { revokedAnswer = w.call(w.bea, 0, "POST", "/api/v1/connections/"+connID+"/revoke", "") })
+	decode(revokedAnswer, 200, &revoked)
 	if revoked.State != contracts.ConnectionEnded || revoked.EndReason != contracts.EndedByPerson {
 		t.Fatalf("revoked: %+v", revoked)
 	}
@@ -502,10 +616,44 @@ func connectionsEndToEnd(t *testing.T, w e2eWorld) []string {
 		status.Connections.Refused["model_unavailable"] == 0 || status.Connections.Issuer != cfg.Issuer {
 		t.Fatalf("/status: %d %s", st.code, st.body)
 	}
-	for _, never := range []string{"vendor-e2e", connID, w.mailbox, app.AccessToken} {
+	for _, never := range []string{"vendor-e2e", connID, w.mailbox, app.AccessToken, beaAccount.ID, "receipt-"} {
 		if strings.Contains(st.body, never) {
 			t.Fatalf("/status holds %q", never)
 		}
+	}
+	// L19: a day later, each enclave, once it ran its audit and read the
+	// record of incidents on its ticks, reports receipts permaily-verify's
+	// check passes, with the deployment's one newest pass: it checked Bea's
+	// chain, found nothing broken, and linked late the receipts the failing
+	// chain left without a link (recovered, a warning).
+	devAhead.Add(int64(receipts.AuditEvery))
+	ticked := devClock()
+	var passes []attestation.ReceiptsAudit
+	for enclave := range 2 {
+		w.auditTicks[enclave] <- time.Now()
+		w.incidentsTicks[enclave] <- time.Now()
+		var last error
+		for i := 0; ; i++ {
+			st := w.call(w.newBrowser(), enclave, "GET", "/status", "")
+			if json.Unmarshal([]byte(st.body), &status) != nil || status.Connections == nil {
+				t.Fatalf("/status: %d %s", st.code, st.body)
+			}
+			rs := status.Connections.Receipts
+			if last = rs.Check(devClock()); last == nil && rs.Audit.Began.Before(ticked) {
+				last = errors.New("the newest pass is the one before the tick")
+			}
+			if last == nil {
+				passes = append(passes, *rs.Audit)
+				break
+			}
+			if i == 200 {
+				t.Fatalf("enclave %d's receipts: %v\n%s", enclave, last, st.body)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if !passes[0].Finished.Equal(passes[1].Finished) || passes[0].Chains < 1 || passes[0].Recovered < 3 || passes[0].Unlinked != 0 {
+		t.Fatalf("the enclaves report passes %+v and %+v", passes[0], passes[1])
 	}
 
 	// The played vendor was asked for the documents over HTTP/2, and the
@@ -513,6 +661,35 @@ func connectionsEndToEnd(t *testing.T, w e2eWorld) []string {
 	for _, got := range w.vendor.asked() {
 		if !strings.HasPrefix(got, "HTTP/2.0 ") || !strings.Contains(got, "vendor-e2e.org/") {
 			t.Fatalf("the played vendor was asked %q", got)
+		}
+	}
+	// Bea's chain, walked through either enclave from its head to its first
+	// link: every link and every receipt as it was written.
+	for _, p := range w.platforms {
+		links := 0
+		for before := (receipts.Position{}); ; {
+			page, err := p.receipts.svc.Walk(context.Background(), beaAccount.ID, before, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, l := range page.Links {
+				links++
+				if l.Verdict != receipts.LinkOK {
+					t.Fatalf("link %d: %s", l.N, l.Verdict)
+				}
+				for _, r := range l.Receipts {
+					if r.Verdict != receipts.ReceiptOK {
+						t.Fatalf("link %d's receipt %d: %s", l.N, r.Index, r.Verdict)
+					}
+				}
+			}
+			if page.Done {
+				break
+			}
+			before = page.Next
+		}
+		if links == 0 || uint64(links) != chainHead() {
+			t.Fatalf("the walk read %d links of %d", links, chainHead())
 		}
 	}
 	checkRecordsApart(t, w.platforms)
@@ -540,39 +717,61 @@ func randomURLSafe(t *testing.T) string {
 // connectionsPrefixes are the names of the connections' strict records.
 var connectionsPrefixes = []string{"connection-", "connections-", "oauth-family-", "oauth-assertions-"}
 
+// receiptsPrefixes are the names of the chain's strict records (ADR 0037).
+var receiptsPrefixes = []string{"receipt-link-", "receipt-chains-", "receipt-audit-", "receipt-incidents-"}
+
 // checkRecordsApart is V57's "one strict Anchored that no other reads the
-// names of": every record the connections' Anchored read or made is one of
-// theirs, and no other Anchored of the enclave (accounts', mailboxes',
-// the model's) read or made one of them.
+// names of", and L21's for the chain of receipts (ADR 0037): every record
+// the connections' Anchored read or made is one of theirs, every record
+// the chain's Anchored read or made is one of the chain's, and no other
+// Anchored of the enclave (accounts', mailboxes', the model's, each
+// other's) read or made one of them. The chain's commits are grouped as
+// receipts.CommitGroup says, in the one store of commits every Anchored
+// shares.
 func checkRecordsApart(t *testing.T, ps []*platform) {
 	t.Helper()
-	theirs := func(name string) bool {
-		for _, p := range connectionsPrefixes {
-			if strings.HasPrefix(name, p) {
-				return true
+	of := func(prefixes []string) func(string) bool {
+		return func(name string) bool {
+			for _, p := range prefixes {
+				if strings.HasPrefix(name, p) {
+					return true
+				}
 			}
+			return false
 		}
-		return false
 	}
+	own := map[string]func(string) bool{"connections": of(connectionsPrefixes), "receipts": of(receiptsPrefixes)}
 	for _, p := range ps {
-		seen := 0
+		seen := map[string]int{}
 		for kind, a := range p.records {
 			for _, c := range a.Seen() {
-				if kind == "connections" {
-					seen++
-					if !theirs(c.Name) {
-						t.Errorf("the connections' Anchored read %s", c.Name)
+				for owner, theirs := range own {
+					switch {
+					case kind == owner && !theirs(c.Name):
+						t.Errorf("the %s' Anchored read another's record", kind)
+					case kind == owner:
+						seen[kind]++
+					case theirs(c.Name):
+						t.Errorf("the %s' Anchored read a record of the %s", kind, owner)
 					}
-				} else if theirs(c.Name) {
-					t.Errorf("the %s' Anchored read a connections' record", kind)
 				}
 			}
 		}
-		if seen == 0 {
+		// The chain's Anchored forgets each link once the next is known
+		// (Anchored.Forget), so what it keeps proves nothing of what it
+		// read; the walk of Bea's chain does.
+		if seen["connections"] == 0 {
 			t.Errorf("the connections' Anchored read nothing")
 		}
 		if p.records["connections"] != p.connectionRecords || !p.connectionRecords.Strict || !p.connectionRecords.OnlyNewest {
 			t.Errorf("the connections' records are not their own strict Anchored")
+		}
+		chain := p.records["receipts"]
+		if chain == nil || chain != p.receipts.chain || !chain.Strict || !chainGrouped(chain.Commits) {
+			t.Errorf("the chain's records are not their own strict Anchored over grouped commits")
+		}
+		if _, ok := chain.Records.(receipts.ChainTable); !ok {
+			t.Errorf("the chain's records are not kept in the chain's table")
 		}
 	}
 }
