@@ -288,21 +288,32 @@ func (s *Service) listRemoved(ctx context.Context, account string) (bool, error)
 	return false, err
 }
 
+// WriteMax bounds every write of a value of the account's connections (a
+// list's epoch, a connection, a family's epoch: writeSigned, writeSealed)
+// from before the read of the record's commits it rests on, which tells it
+// whether the record was removed: the reads of a long history, their pages,
+// the credentials, the retries and the staging of the value all fall within
+// it, and a write past it stores nothing (store.WriteWithin; third review
+// of #152, finding 1). The enclave's AWS client gives up on a request after
+// 60 seconds and the SDK tries one at most 4 times, at most 20 seconds
+// apart: one operation lasts at most 5 minutes, and a write gets two.
+const WriteMax = 10 * time.Minute
+
+// removeAgainMargin is what RemoveAgainAfter leaves past WriteMax: for
+// scheduling and for two enclaves' clocks.
+const removeAgainMargin = 20 * time.Minute
+
 // RemoveAgainAfter is how long after RemoveAll succeeded accounts calls
-// RemoveAgain (second review of #152, finding 2): longer than a write to
-// the store stays under way. A write that passed CreateNew's or
-// PutRecordAt's check before the removal stages its value after it, and a
-// write whose answer is lost stays staged. The enclave's AWS client
-// (enclave.EgressClient) gives up on a request after 60 seconds, and the
-// SDK tries one at most 3 times (DynamoDB's 4 under the SDK's 2026
-// retries), at most 20 seconds apart: one operation lasts at most 300
-// seconds. A value is staged at most two operations after the check it
-// passed (CreateNew reads the plain name, then writes), so within 10
-// minutes; 30 minutes leaves the rest for scheduling and for two enclaves'
-// clocks (TestV65TheLastPassOutlastsAStoreWrite checks the client). A write held longer than that, by whoever runs the
-// host or writes the table, is not one this bounds: its value lands under a
-// name whose removal committed, which no read takes (docs/threat-model.md).
-const RemoveAgainAfter = 30 * time.Minute
+// RemoveAgain (second review of #152, finding 2): WriteMax and a margin, 30
+// minutes. A write that read the commits of its record before the removal
+// committed, and so did not see it, stages its value after it, and a write
+// whose answer is lost stays staged; such a value is stored within WriteMax
+// of that read, so before RemoveAgain runs, which deletes it
+// (TestV65TheLastPassOutlastsAStoreWrite checks the client). A write held
+// longer than that, by whoever runs the host or writes the table, is not
+// one this bounds: its value lands under a name whose removal committed,
+// which no read takes (docs/threat-model.md).
+const RemoveAgainAfter = WriteMax + removeAgainMargin
 
 // partitionRemoved is where RemoveAll notes, by account, the connections
 // and families it removes (signed, a key each), for RemoveAgain: once they

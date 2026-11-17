@@ -159,3 +159,60 @@ func TestV65AListOfLostMembersFailsClosed(t *testing.T) {
 		t.Fatal("the lost connection's token works")
 	}
 }
+
+// slowHistory is the world's commits, whose every read of a history takes
+// WriteMax on the world's clock once slow is set.
+type slowHistory struct {
+	*store.MemoryCommits
+	w    *world
+	slow bool
+}
+
+func (s *slowHistory) History(ctx context.Context, name string) (*store.History, error) {
+	if s.slow {
+		s.w.clock.add(WriteMax)
+	}
+	return s.MemoryCommits.History(ctx, name)
+}
+
+// TestV65AWriteOfTheConnectionsStoresNothingPastWriteMax: a write of a
+// connection, of the list and of a family whose read of the record's
+// commits outlasts WriteMax stores nothing (store.ErrTooLate), so no value
+// is staged later than RemoveAgainAfter allows for (review 3, finding 1).
+func TestV65AWriteOfTheConnectionsStoresNothingPastWriteMax(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	a := w.enclave()
+	p := w.person(accountA)
+	w.connect(a, p, w.ask(claudeCode))
+	c := w.connectionOf(a, accountA, claudeCode)
+	fam := c.Devices[0].ID
+	f, mark, err := a.readFamily(ctx, fam, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commits := &slowHistory{MemoryCommits: w.commits, w: w}
+	b, err := New(w.config(&store.Anchored{Records: w.mem, Commits: commits, Strict: true, OnlyNewest: true, Now: w.clock.now}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := len(w.mem.RecordNames())
+	commits.slow = true
+	for what, write := range map[string]func() error{
+		"a connection": func() error { _, err := b.Revoke(ctx, p, c.ID); return err },
+		"the list":     func() error { return b.EndAll(ctx, accountA) },
+		"a family":     func() error { return b.writeSealed(ctx, familyName(fam, 0), f, mark, false) },
+	} {
+		if err := write(); !errors.Is(err, store.ErrTooLate) {
+			t.Errorf("%s: %v", what, err)
+		}
+	}
+	commits.slow = false
+	if now := len(w.mem.RecordNames()); now != stored {
+		t.Fatalf("a write past WriteMax stored a value: %d names, %d before", now, stored)
+	}
+	d, _, err := w.enclave().readConn(ctx, c.ID)
+	if err != nil || d.State != contracts.ConnectionActive {
+		t.Fatalf("the connection changed: %v", err)
+	}
+}
