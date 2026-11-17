@@ -58,6 +58,24 @@
   opacity: 1;
 }
 
+/* The colours inside Google's "G", for the copy of it the public site draws on its "Sign up with Google"
+   button (site/src/components/brands): the values marks.tsx writes as attributes, so that the site writes none. */
+.provider-google-shape {
+  fill: #e94fff;
+}
+
+.provider-google-blue {
+  fill: #3186ff;
+}
+
+.provider-google-red {
+  fill: #ff4641;
+}
+
+.provider-google-pink {
+  fill: #ff5b8b;
+}
+
 /* Facebook: "Button colors are white and Facebook blue", in both themes. */
 .provider-facebook {
   border-color: #0866ff;
