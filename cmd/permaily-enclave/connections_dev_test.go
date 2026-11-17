@@ -692,6 +692,42 @@ func connectionsEndToEnd(t *testing.T, w e2eWorld) []string {
 			t.Fatalf("the walk read %d links of %d", links, chainHead())
 		}
 	}
+	// And by Bea herself, through the app's routes of either enclave (ADR
+	// 0037, pull request 3: L23, L24): the head she notes is the chain's,
+	// the walk and the export are whole, every export page in its contract.
+	for enclave := range w.platforms {
+		var walked contracts.ReceiptsPage
+		decode(w.call(w.bea, enclave, "GET", "/api/v1/receipts?limit=100", ""), 200, &walked)
+		head, err := w.platforms[enclave].receipts.svc.Head(context.Background(), beaAccount.ID)
+		if err != nil || walked.Head.N != chainHead() || walked.Head.Verdict != "ok" || walked.Head.SHA256 != head.Digest.String() {
+			t.Fatalf("Bea's head through enclave %d: %+v, the chain's %+v, %v", enclave, walked.Head, head, err)
+		}
+		exported := map[uint64]bool{}
+		for before, pages := "", 0; ; pages++ {
+			path := "/api/v1/receipts/export"
+			if before != "" {
+				path += "?before=" + before
+			}
+			var page receipts.ExportPage
+			decode(w.call(w.bea, enclave, "GET", path, ""), 200, &page)
+			if err := page.Check(); err != nil || page.Account != beaAccount.ID || page.Head.Digest != head.Digest {
+				t.Fatalf("Bea's export through enclave %d, page %d: %v", enclave, pages, err)
+			}
+			for _, l := range page.Links {
+				if l.Verdict != receipts.LinkOK || l.Doc == nil {
+					t.Fatalf("Bea's link %d exported %s", l.N, l.Verdict)
+				}
+				exported[l.N] = true
+			}
+			if page.Done {
+				break
+			}
+			before = contracts.ReceiptsPosition{N: page.Next.N, Index: page.Next.Index}.String()
+		}
+		if uint64(len(exported)) != chainHead() {
+			t.Fatalf("Bea's export through enclave %d holds %d links of %d", enclave, len(exported), chainHead())
+		}
+	}
 	checkRecordsApart(t, w.platforms)
 	return append(secrets, "vendor-e2e", e2eAppClient, e2eAgentClient, e2eRedirect, "49152/callback", "penguin", "heron", "482913", "carol@", "bank.example")
 }
