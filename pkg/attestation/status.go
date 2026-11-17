@@ -158,11 +158,40 @@ type RuleStatus struct {
 // evidence it rests on); DecisionsPerDay is the least number of
 // model-decided messages a mailbox's day holds before the rest is held,
 // undecided (the owner's decision 12).
+//
+// From the release that chains receipts (ADR 0034), Chained is true and
+// Chain is ReceiptsChainStrict: each account's receipts named by numbered
+// links, each a strict anchored record made once. Broken counts, by every
+// kind of ReceiptsBrokenKinds (also at zero), what this enclave found since
+// it started of a chain whose receipts or links the storage deleted or
+// changed: one enclave's observation, never an account, a number or a
+// digest; permaily-verify fails on any above zero. Audited is when this
+// enclave last finished a pass over every account's chain, zero before its
+// first.
 type ReceiptsStatus struct {
-	Sealed          bool   `json:"sealed"`
-	Chained         bool   `json:"chained"`
-	Decisions       string `json:"decisions"`
-	DecisionsPerDay int    `json:"decisions_per_day"`
+	Sealed          bool             `json:"sealed"`
+	Chained         bool             `json:"chained"`
+	Chain           string           `json:"chain,omitempty"`
+	Broken          map[string]int64 `json:"broken,omitempty"`
+	Audited         time.Time        `json:"audited,omitzero"`
+	Decisions       string           `json:"decisions"`
+	DecisionsPerDay int              `json:"decisions_per_day"`
+}
+
+// ReceiptsChainStrict: an account's receipts are chained by links that are
+// strict anchored records, each made once (ADR 0034).
+const ReceiptsChainStrict = "strict"
+
+// ReceiptsBrokenKinds are the kinds ReceiptsStatus.Broken counts: a receipt
+// a link names that is missing, does not open or is not what the link says;
+// a link whose commit is there and whose document is lost, forked, does not
+// open, or is not what the next link names; and a receipt no link names that
+// was written after its account's chain began (an earlier release's, or one
+// whose request gave nothing).
+var ReceiptsBrokenKinds = []string{
+	"receipt_missing", "receipt_unreadable", "receipt_changed",
+	"link_lost", "link_forked", "link_unreadable", "link_prev",
+	"unlinked",
 }
 
 // ModelStatus is what the enclave reports of the model it asks (ADR 0028,

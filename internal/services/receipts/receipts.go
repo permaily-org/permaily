@@ -2,10 +2,10 @@
 // how in ADR 0031): for every request of a connection that reads mail, and
 // for every refusal of one, an entry sealed under a key from the root secret,
 // bound to where it is stored, written once and before the answer, and kept
-// for as long as the account exists. Step 8 chains them by hash, anchors the
-// head and shows them on the activity screen, over these very entries in
-// their keys' order, without rewriting any (ADR 0031, "How step 8 extends
-// it").
+// for as long as the account exists. Each is then named by a link of its
+// account's chain (chain.go, ADR 0034, which brings step 8's chaining
+// forward), before Write returns, without rewriting any entry; the
+// activity screen of step 8 shows them in the chain's order.
 //
 // A receipt says what was prepared for a vendor and released to the
 // connection's answer: written before the answer starts, it records what was
@@ -91,8 +91,10 @@ type Receipt struct {
 	Refused   *Refused    `json:"refused,omitempty"`
 	Consent   *Consent    `json:"consent,omitempty"`
 	Ended     *Ended      `json:"ended,omitempty"`
-	// Chain is left for step 8: nothing writes it in step 5, and step 8
-	// chains these entries without it (ADR 0031).
+	// A receipt holds nothing of its chain: the link that chains it names
+	// it by identifier and digest (ADR 0034), so a receipt's document is
+	// the same chained or not, and one written before the chain is adopted
+	// as it is.
 }
 
 // FormulaRole says what a formula was to the request.
