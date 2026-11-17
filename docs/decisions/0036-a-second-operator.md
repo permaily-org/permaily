@@ -1,6 +1,6 @@
 # 0036 Operators other than the owner: IAM users with MFA that deploy and operate
 
-Status: Accepted.
+Status: Accepted; changed when applied (2026-11-17), below.
 Date: 2026-11-17
 
 ## Context
@@ -33,3 +33,18 @@ Only the account's owner could deploy and operate. The owner decided on 2026-11-
 - The repository names operators by label only; who they are is not in it. Their user names, tags and the enrollment window are in the state and in IAM.
 - Onboarding takes two applies by the owner: one that opens the enrollment, one that closes it.
 - A new script that calls AWS needs its actions in `operators_operate`.
+
+## Changed when applied (2026-11-17)
+
+The first apply stopped part-way. The organization's service control policy, set in its management account and not this account's to change, explicitly denies `iam:CreateGroup` and the actions on login profiles (console passwords for IAM users) in this account. The apply made the user `permaily-operator-2`, with no password, access key, MFA device or group, and the three policies; it failed on the group, its three attachments and the membership. Without a console password, the first MFA device of an IAM user could only be enrolled with an access key, which is what the enrollment window above exists to refuse.
+
+The owner decided the same day that operators sign in through the organization's IAM Identity Center. The context above was wrong about it: the organization forbids this account its own identity providers (no GitHub OIDC), not Identity Center giving access to it from the management account. What changes:
+
+- **Sign-in.** An operator is a user of the organization's IAM Identity Center, assigned on this account the permission set `permaily-operator`: one-hour sessions, and nothing but this account's two customer-managed policies, referenced by name and path. Identity Center asks for MFA at every sign-in, and the CLI signs in with `aws sso login`. No IAM user, group, password, MFA device or access key of an operator exists in this account, so the enrollment window (`operators`, `operators_enrolling`, the tag, the `require-mfa` policy, the guard's statements on one's own credentials) is gone. A deny without MFA could not stay: Identity Center does not set `aws:MultiFactorAuthPresent` in the role's sessions, so it would deny everything.
+- **Policies.** `permaily-operators-operate` and `permaily-operators-guard`, path `/`, written for a role session, which has no `aws:username`: an operator ends or resumes only the SSM sessions whose `aws:ssmmessages:session-id` tag is their `aws:userid`. The guard denies every IAM change (there are no credentials of their own left to keep), every KMS change, writes to the state bucket and DynamoDB as before, and now also deleting, reconfiguring or unlocking the two Object Lock buckets of the anchors or their objects.
+- **What the guard holds.** It holds against anything else the permission set ever carries. It does not hold against whoever administers the organization's Identity Center, who can change the permission set and can already do anything in this account through the management account. The owner checks the result from this account: the role `AWSReservedSSO_permaily-operator_<suffix>` that Identity Center provisions, its two attached policies, no inline policy, its session length and no boundary, and CloudTrail's sign-ins. The owner can also cut every operator off from this account alone, by making the guard's default version deny everything (docs/operations.md, "Operators").
+- **The partial apply** is cleaned up by the next one: the `require-mfa` policy is destroyed, `operate` is updated in place, and the guard is replaced (its description changes). The user is forgotten by a `removed` block and deleted by hand: it was made with `force_destroy`, which deletes its login profile when it is destroyed, and the service control policy denies that.
+- **Tests**, as before for a role session: each of the guard's denies holds next to a policy that allows everything, and each of its mutants fails that; neither policy uses `aws:username` or `aws:MultiFactorAuthPresent`; both are managed policies with a fixed name and path `/`, within IAM's size, and named in the runbook.
+- **Labels** stay a rule: the repository and the state name no operator. Who is assigned is in the management account.
+
+So the consequences change: onboarding takes one apply by the owner, before the permission set exists, and no credential at all in this account; offboarding is deleting the assignment in Identity Center, then rotating what the operator held outside AWS. Who is assigned is visible only in the management account, and the drift check does not watch the role, which is not in the state.
