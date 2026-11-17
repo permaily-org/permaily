@@ -26,3 +26,6 @@ operators = ["2"]
 # Operators who may add their first MFA device without MFA, and make no access
 # key meanwhile. Emptied once they have signed in with MFA.
 operators_enrolling = ["2"]
+
+# The drift check's image in ECR (docs/operations.md, "The drift check"). Public on purpose.
+drift_image_digest = "sha256:e827d6524fe50c94d08174a479d02b2de8fdef571b4debcb39f4a9a06a016106"
