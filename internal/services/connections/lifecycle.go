@@ -136,13 +136,18 @@ func (s *Service) RemoveAll(ctx context.Context, account string) error {
 		if err != nil {
 			return err
 		}
+		// A removal began when an epoch after the newest live one is
+		// removed (it removes the newest first, after a fence); the epochs
+		// before it that are removed are those a rotation closed
+		// (pruneList).
 		newest, removing := -1, false
 		for e, h := range heads {
 			if h.live {
 				newest = e
-			} else {
-				removing = true
 			}
+		}
+		for _, h := range heads[newest+1:] {
+			removing = removing || !h.live
 		}
 		if newest >= 0 {
 			var l ListState
@@ -275,17 +280,15 @@ func (s *Service) removeEpochs(ctx context.Context, name func(uint64) string) er
 	return errBusy
 }
 
-// listRemoved says the account's list was removed: its epoch 0, which a
-// removal removes last, has a removal's commit.
+// listRemoved says the account's list was removed: its epochs end in the
+// fence its removal leaves, and none has a value. Epoch 0 alone does not
+// tell, since a rotation removes it while the list lives on (pruneList).
 func (s *Service) listRemoved(ctx context.Context, account string) (bool, error) {
-	_, at, err := s.cfg.Records.GetRecordAt(ctx, ListName(account, 0))
-	switch {
-	case err == nil, errors.Is(err, store.ErrLost):
-		return false, nil
-	case errors.Is(err, store.ErrNotFound):
-		return at.Version() > 0, nil
+	heads, err := s.epochHeads(ctx, func(e uint64) string { return ListName(account, e) })
+	if err != nil {
+		return false, err
 	}
-	return false, err
+	return fenced(heads), nil
 }
 
 // WriteMax bounds every write of a value of the account's connections (a
@@ -453,6 +456,12 @@ func (s *Service) sweepAccount(ctx context.Context, account string) error {
 	}
 	if err != nil {
 		return err
+	}
+	// What a rotation stopped halfway left of the earlier epochs.
+	if l.Pruning {
+		if err := s.pruneList(ctx, account, l.Epoch); err != nil {
+			return err
+		}
 	}
 	if l.Closing {
 		if err := s.endGeneration(ctx, account, l.Generation, nil); err != nil {

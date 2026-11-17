@@ -331,6 +331,17 @@ describe('legal pages', () => {
       const removeConn = body(person, /func \(s \*Service\) removeConnOf\(/);
       expect(removeConn).toMatch(/s\.removeFamily\(/);
       expect(removeConn).toMatch(/Records\.RemoveRecord\(ctx, connName\(id\)\)/);
+      // A rotation of the list removes the epoch it closed once its successor is made; the next write or the hourly pass finishes one stopped halfway.
+      const lists = go('internal/services/connections/lists.go');
+      const writeOnce = body(lists, /func \(s \*Service\) writeListOnce\(/);
+      expect(writeOnce).toMatch(/s\.pruneList\(ctx, l\.Account, next\.Epoch\)/);
+      expect(writeOnce).toMatch(
+        /if l\.Pruning && s\.pruneList\(ctx, l\.Account, l\.Epoch\) == nil/,
+      );
+      expect(body(lists, /func \(s \*Service\) pruneList\(/)).toMatch(
+        /Records\.RemoveRecord\(ctx, ListName\(account, e\)\)/,
+      );
+      expect(sweep).toMatch(/s\.pruneList\(ctx, account, l\.Epoch\)/);
       // While the account lives, an ended connection's records go EndedKept after it ends.
       expect(go('internal/services/connections/connections.go')).toMatch(
         /EndedKept = 30 \* 24 \* time\.Hour/,
@@ -346,8 +357,9 @@ describe('legal pages', () => {
           'The tokens’ lookup entries expire within 30 days and are refused from the removal on.',
         );
         expect(said, path).toContain(
-          'Until the account is removed, an earlier closed part of the list can still hold the connections it held then',
+          'the part a new one replaces is removed as soon as the new one is stored, leaving only the integrity record of its removal, and if that is interrupted the next change to the list or the next successful hourly cleanup pass removes it.',
         );
+        expect(said, path).not.toMatch(/earlier closed part of the list can still hold/);
         expect(said, path).toContain(
           'Database backups can keep removed records for a further day.',
         );

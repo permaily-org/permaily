@@ -21,7 +21,11 @@ import (
 // replay of a decision, the fence and the cleanup all read the newest epoch
 // alone. A reader follows Moved to the newest epoch (an enclave remembers the
 // newest it read; epochs only go forward) and makes an epoch a crash left
-// unmade again from the one before. Its document is bounded by count
+// unmade again from the one before. Once epoch n+1 is committed, epoch n is
+// removed (RemoveRecord), its removal's commit staying as its fence, so only
+// the current epoch keeps content (the owner's decision 2 of 2026-11-17):
+// Next marks the new epoch Pruning, and its next write removes what of the
+// earlier epochs is still stored before it clears the mark. Its document is bounded by count
 // (ListActiveMax, ListEndedMax, ListDecidedMax) and bytes (ListBytesMax),
 // each checked by every write. The pure transitions are here, committed with
 // the design, so pull request 3 and its tests share them.
@@ -82,6 +86,9 @@ type ListState struct {
 	Epoch   uint64 `json:"epoch"`
 	// Moved: this epoch is closed; the list goes on in Epoch+1.
 	Moved bool `json:"moved,omitzero"`
+	// Pruning: an earlier epoch may still hold content, to be removed by
+	// the next write of this one, which then clears it.
+	Pruning bool `json:"pruning,omitzero"`
 	// Closing is the deletion's fence, and Generation the closing
 	// generation EndAll ends through (finding 6).
 	Closing    bool              `json:"closing,omitzero"`
@@ -180,11 +187,12 @@ func (l *ListState) Fits() bool {
 // this epoch: it is then written Moved, and Next made with CreateNew.
 func (l *ListState) Rotate(versions uint64) bool { return versions+1 >= ListEpochVersions }
 
-// Next is the next epoch of a list written Moved: the same document.
+// Next is the next epoch of a list written Moved: the same document,
+// Pruning until the epoch it closes is removed.
 func (l *ListState) Next() ListState {
 	b, _ := json.Marshal(l)
 	var n ListState
 	_ = json.Unmarshal(b, &n)
-	n.Epoch, n.Moved = l.Epoch+1, false
+	n.Epoch, n.Moved, n.Pruning = l.Epoch+1, false, true
 	return n
 }

@@ -38,7 +38,10 @@ func (s *Service) sawListEpoch(account string, e uint64) {
 }
 
 // readList is the newest epoch of an account's list, read strictly and
-// now, and its mark: nil when the account has none.
+// now, and its mark: nil when the account has none. An epoch removed after
+// its successor was committed (pruneList) is passed over to the next; the
+// fence a removal of the account leaves after its last epoch (a removal's
+// commit on a name that never had a value) reads as no list.
 func (s *Service) readList(ctx context.Context, account string) (*ListState, store.Mark, error) {
 	began := s.now()
 	e := s.listEpoch(account)
@@ -49,7 +52,11 @@ func (s *Service) readList(ctx context.Context, account string) (*ListState, sto
 			return nil, at, err
 		}
 		if !found {
-			if e == 0 {
+			switch {
+			case at.Version() > 1: // removed once its successor was committed
+				e++
+				continue
+			case at.Version() == 1 || e == 0: // the account's fence, or no list
 				s.cacheList(account, false, began)
 				return nil, at, nil
 			}
@@ -77,7 +84,7 @@ func (s *Service) readList(ctx context.Context, account string) (*ListState, sto
 }
 
 // remakeEpoch makes epoch e of a list again from e-1, written Moved by a
-// writer that crashed before it made e.
+// writer that crashed before it made e, and removes e-1.
 func (s *Service) remakeEpoch(ctx context.Context, account string, e uint64) error {
 	var prev ListState
 	_, found, err := s.readSigned(ctx, ListName(account, e-1), &prev)
@@ -88,7 +95,47 @@ func (s *Service) remakeEpoch(ctx context.Context, account string, e uint64) err
 		return store.ErrRolledBack
 	}
 	next := prev.Next()
-	return s.writeSigned(ctx, ListName(account, e), &next, store.Mark{}, true)
+	if err := s.writeSigned(ctx, ListName(account, e), &next, store.Mark{}, true); err != nil {
+		return err
+	}
+	_ = s.pruneList(ctx, account, e) // or the next write of e does
+	return nil
+}
+
+// pruneList removes every epoch of account's list before current that
+// still has a value, the oldest first, once current is committed: what an
+// earlier epoch held then goes, and its removal's commit stays as its fence
+// (a removed record never reads again, whatever of it is put back, and
+// CreateNew refuses its name). Removing the oldest first keeps the epochs
+// that still have a value a run just below current, so the walk down stops
+// at the first removed one, whose removal it finishes.
+func (s *Service) pruneList(ctx context.Context, account string, current uint64) error {
+	from := current
+	for from > 0 {
+		_, at, err := s.cfg.Records.GetRecordAt(ctx, ListName(account, from-1))
+		if errors.Is(err, store.ErrNotFound) && !errors.Is(err, store.ErrLost) {
+			if at.Version() == 0 {
+				return store.ErrRolledBack // an epoch below a committed one was never made
+			}
+			// The last removed one again: a removal whose commit landed and
+			// whose values stayed is finished (RemoveRecord deletes them,
+			// and adds no commit to a removed record).
+			if err := s.cfg.Records.RemoveRecord(ctx, ListName(account, from-1)); err != nil {
+				return err
+			}
+			break
+		}
+		if err != nil && !errors.Is(err, store.ErrLost) {
+			return err
+		}
+		from--
+	}
+	for e := from; e < current; e++ {
+		if err := s.cfg.Records.RemoveRecord(ctx, ListName(account, e)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // writeList writes l at the mark it was read at (made with CreateNew when
@@ -118,6 +165,11 @@ func (s *Service) writeListOnce(ctx context.Context, l *ListState, at store.Mark
 		s.cacheList(l.Account, l.Closing, began)
 		return nil
 	}
+	// What an earlier rotation left of the epochs before this one goes
+	// first; the mark is cleared only once it has.
+	if l.Pruning && s.pruneList(ctx, l.Account, l.Epoch) == nil {
+		l.Pruning = false
+	}
 	if l.Rotate(at.Version()) {
 		l.Moved = true
 		if err := s.writeSigned(ctx, name, l, at, false); err != nil {
@@ -131,6 +183,10 @@ func (s *Service) writeListOnce(ctx context.Context, l *ListState, at store.Mark
 		if err := s.writeSigned(ctx, ListName(l.Account, next.Epoch), &next, store.Mark{}, true); err != nil && !errors.Is(err, store.ErrExists) {
 			return err
 		}
+		// The successor is committed: the closed epoch goes, its removal's
+		// commit its fence. A crash or a failure here leaves it to the next
+		// write of the successor (Pruning) or the sweep.
+		_ = s.pruneList(ctx, l.Account, next.Epoch)
 		s.cacheList(l.Account, l.Closing, began)
 		return nil
 	}
