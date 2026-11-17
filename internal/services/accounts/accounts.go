@@ -357,6 +357,12 @@ type accountDoc struct {
 	PasskeyOnly bool `json:"passkey_only,omitempty"`
 	// RecoveryCodes are the hashes of the recovery codes not used yet.
 	RecoveryCodes [][]byte `json:"recovery_codes,omitempty"`
+	// UsedRecoveryCodes are the hashes of the recovery codes used since they
+	// were made: a use takes a code out of RecoveryCodes and puts it here in
+	// the same write, so whichever enclave reads the record tells a code used
+	// again from a wrong one (Recover). Never more than were made; dropped
+	// with them. Absent in the records written before (2026-11-16): none.
+	UsedRecoveryCodes [][]byte `json:"used_recovery_codes,omitempty"`
 	// Providers are the provider accounts that sign in to the account. One
 	// that is not here signs nobody in, wherever its pointer leads.
 	Providers []providerDoc `json:"providers,omitempty"`
