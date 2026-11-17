@@ -47,8 +47,8 @@ let
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
     outputHash = {
-      x86_64-linux = "sha256-Er2BRc0ZiucXN1IrPeysAkiZqptfvDunB3Xxz0/hmMk=";
-      aarch64-linux = "sha256-EonO5ePUi7fhkipe2TPJQs0pJlxjALRpGdRwcx5BJLI=";
+      x86_64-linux = "sha256-LH5Z74QzNveaB4TR264vNDQ21k7/q4wlYYU+eTT6MLo=";
+      aarch64-linux = "sha256-yd9rTgv9gsxx1yL9FMAsrvPxzqmee1M/zKThTRL43m4=";
     }.${stdenv.hostPlatform.system};
   };
 in
