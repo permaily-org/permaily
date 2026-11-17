@@ -630,6 +630,8 @@ export type ApiErrorCode =
   | 'too_many_devices'
   | 'too_many_connections'
   | 'invalid_cursor'
+  | 'invalid_before'
+  | 'receipts_unreadable'
   | 'network'
   | 'other'
 
@@ -683,6 +685,8 @@ const known: ReadonlySet<string> = new Set([
   'too_many_devices',
   'too_many_connections',
   'invalid_cursor',
+  'invalid_before',
+  'receipts_unreadable',
 ])
 
 export class ApiError extends Error {
@@ -1759,4 +1763,124 @@ export async function adminMailboxAction(
     await request('POST', `/api/v1/admin/mailboxes/${encodeURIComponent(id)}/${action}`),
   ) as MailboxRecord & { changed?: unknown }
   return typeof changed === 'boolean' ? { ...record, changed } : record
+}
+
+/*
+  Receipts (ADR 0037, pull request 3). The shapes of internal/contracts/receipts.go: the head of the account's chain and
+  the walk's pages, with what was found of each link and receipt, and the export that permaily-verify -receipts checks
+  offline. The Activity screen that shows them is step 8's.
+*/
+
+/** Where a receipt is on its account's chain: its link's number and its index in that link. */
+export type ReceiptsPosition = { n: number; index: number }
+
+/** What was found of a link: `ok`, `prev`, `expired` (read, and checked), or `lost`, `forked`, `unreadable`. */
+export type LinkVerdict = 'ok' | 'prev' | 'expired' | 'lost' | 'forked' | 'unreadable'
+
+/** What was found of a receipt a link names. */
+export type ReceiptVerdict = 'ok' | 'missing' | 'unreadable' | 'changed'
+
+/**
+ * The newest link of the account's chain. When it is `ok`, its number and `sha256` are what the person notes, to check
+ * an export later with `permaily-verify -receipts-head <n>:<sha256>`.
+ */
+export type ReceiptsHead = { n: number; verdict?: LinkVerdict; sha256?: string; at?: string }
+
+/** One receipt a link names: the receipt itself only when it is `ok`. */
+export type ReceiptsEntry = {
+  index: number
+  id: string
+  sha256: string
+  verdict: ReceiptVerdict
+  receipt?: unknown
+}
+
+/** One link of a page: what it says only when it could be read; `recovered` receipts were linked late. */
+export type ReceiptsLink = {
+  n: number
+  verdict: LinkVerdict
+  kind?: 'receipts' | 'adopted' | 'recovered'
+  at?: string
+  prev?: string
+  break?: string
+  before?: string
+  more?: boolean
+  receipts: ReceiptsEntry[]
+}
+
+/** A page of the account's receipts, the newest first. Ask the next from `next` until `done`. */
+export type ReceiptsPage = {
+  head: ReceiptsHead
+  links: ReceiptsLink[]
+  next: ReceiptsPosition
+  done: boolean
+}
+
+function isPosition(p: unknown): p is ReceiptsPosition {
+  return (
+    typeof (p as ReceiptsPosition)?.n === 'number' &&
+    typeof (p as ReceiptsPosition)?.index === 'number'
+  )
+}
+
+function isHead(h: unknown): h is ReceiptsHead {
+  return typeof (h as ReceiptsHead)?.n === 'number'
+}
+
+function receiptsQuery(before?: ReceiptsPosition, limit?: number): string {
+  const query = new URLSearchParams()
+  if (before) query.set('before', `${before.n}.${before.index}`)
+  if (limit !== undefined) query.set('limit', String(limit))
+  const s = query.toString()
+  return s === '' ? '' : `?${s}`
+}
+
+/** A page of the account's receipts: from the head, or `before` where the page before ended; at most `limit`. */
+export async function receipts(
+  page: { before?: ReceiptsPosition; limit?: number } = {},
+): Promise<ReceiptsPage> {
+  const answer = await request<Partial<ReceiptsPage> | null>(
+    'GET',
+    `/api/v1/receipts${receiptsQuery(page.before, page.limit)}`,
+  )
+  if (!Array.isArray(answer?.links) || !isHead(answer.head) || !isPosition(answer.next))
+    throw new ApiError('other')
+  return {
+    head: answer.head,
+    links: answer.links.map((l) => ({ ...l, receipts: l.receipts ?? [] })),
+    next: answer.next,
+    done: answer.done === true,
+  }
+}
+
+/** A page of an export as the server answers it: what permaily-verify -receipts reads, one a line. */
+type ExportPage = { head: ReceiptsHead; links: unknown[]; next: ReceiptsPosition; done?: boolean }
+
+/** Says whether a is strictly before b on the chain, as the next page's start always is. */
+function below(a: ReceiptsPosition, b: ReceiptsPosition): boolean {
+  return a.n < b.n || (a.n === b.n && a.index < b.index)
+}
+
+/**
+ * Every page of the account's export, in order, one JSON object a line: the file `permaily-verify -receipts` checks.
+ * `head` is the chain's head when it began, for the person to note beside the file, never in it.
+ */
+export async function exportReceipts(): Promise<{ file: string; head: ReceiptsHead }> {
+  const lines: string[] = []
+  let head: ReceiptsHead | undefined
+  let before: ReceiptsPosition | undefined
+  for (;;) {
+    const page = await request<Partial<ExportPage> | null>(
+      'GET',
+      `/api/v1/receipts/export${receiptsQuery(before)}`,
+    )
+    if (!Array.isArray(page?.links) || !isHead(page.head) || !isPosition(page.next))
+      throw new ApiError('other')
+    head ??= page.head
+    lines.push(`${JSON.stringify(page)}\n`)
+    if (page.done === true) return { file: lines.join(''), head }
+    // A page that does not move on would be asked for ever.
+    if (before && !below(page.next, before)) throw new ApiError('other')
+    before = page.next
+  }
 }

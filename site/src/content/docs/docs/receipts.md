@@ -3,7 +3,7 @@ title: Receipts
 description: The record of mail prepared for a connection's request, or of why the request was refused.
 ---
 
-A receipt records mail prepared and made available for a connection's authenticated mail request, or why that request was refused. Receipts are stored now; a screen for viewing them and an export are not built yet.
+A receipt records mail prepared and made available for a connection's authenticated mail request, or why that request was refused. Receipts are stored and chained, and a person can export theirs and check the export themselves; the screen for viewing them is not built yet.
 
 ## What a receipt records
 
@@ -17,7 +17,17 @@ Receipts are kept for the person, not handed to your app. Planned, not built yet
 
 ## The ledger
 
-Together, receipts form the ledger a person will see as Activity. Planned, not built yet: the Activity screen, chaining receipts by hash so that a missing one shows, and exporting them for an audit. Until receipts are chained, someone who can write to the database could delete one without it showing.
+Together, receipts form the ledger a person will see as Activity. Each account's receipts are chained: every receipt is named, by its hash, in a numbered link that also names the link before it, and each link is recorded once in storage that nobody, Permaily included, can rewrite or delete for ten years. So a receipt or a link deleted or changed in the database shows wherever the chain is read, and the service reads every chain once a day; what it found stays on record, and [the verifier](/docs/verifying-the-build/) fails while it holds anything. The Activity screen, which shows them and downloads the export, is not built yet.
+
+## Checking your own
+
+The chain's head is its newest link: its number and its hash. The export is every link and receipt as stored, one page a line, from the head down to the first link (`GET /api/v1/receipts/export` on the app, page by page, until the Activity screen downloads it for you). Note the head when you export, apart from the file, then check the file on your own computer:
+
+```sh
+permaily-verify -receipts receipts.jsonl -receipts-head 1234:<sha256>
+```
+
+It recomputes every hash: each link against the one above it, every receipt against its link, the first link against your account. A file alone proves only that it is consistent with itself, since whoever edits it can recompute every hash; the head you noted from the app is what proves it is the chain the service keeps. Links above the newest head you noted, and below a break, are reported as not checked against it. A receipt or a link the storage deleted or changed is reported by its number, not as a fault of the file; a file that was edited, cut short or has pages missing fails.
 
 ## How they're kept
 

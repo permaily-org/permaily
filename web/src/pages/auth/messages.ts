@@ -73,6 +73,9 @@ const messages: Record<ApiErrorCode, string> = {
   too_many_connections:
     'You have as many connections as an account can have. Revoke one you no longer use first.',
   invalid_cursor: 'The preview changed since that page. Start it again from the newest.',
+  invalid_before: 'Your receipts changed since that page. Start again from the newest.',
+  receipts_unreadable:
+    "Your receipts can't be read now: what Permaily stores for them was changed by someone else. Write to support@permaily.com.",
   other: 'Something went wrong on our side. Try again in a moment.',
 }
 

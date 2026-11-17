@@ -99,6 +99,37 @@ describe('home page', () => {
   });
 });
 
+describe('the receipts page', () => {
+  const go = (path: string) => readFileSync(join(import.meta.dirname, '../..', path), 'utf8');
+  const text = () =>
+    (all.length ? load(join(dist, 'docs/receipts/index.html')) : parse('')).text.replace(
+      /\s+/g,
+      ' ',
+    );
+
+  it('says receipts are chained, and how a person checks theirs, as the code does it', () => {
+    // ADR 0037: the chain (pull requests 1 and 2), the person's routes and the offline check (pull request 3).
+    expect(go('cmd/permaily-enclave/main.go')).toMatch(/httpapi\.ReceiptsAPI\(/);
+    expect(go('internal/httpapi/receipts.go')).toContain('mux.HandleFunc("GET "+path+"/export"');
+    const verify = go('cmd/permaily-verify/receipts.go');
+    expect(verify).toMatch(/fs\.StringVar\(&o\.file, "receipts",/);
+    expect(verify).toMatch(/fs\.Var\(o\.heads, "receipts-head",/);
+    const page = text();
+    expect(page).not.toMatch(
+      /chaining receipts by hash|Until receipts are chained|an export are not built/,
+    );
+    // The command is in a code block, whose markup the parser keeps as text: read it in the page's source.
+    expect(go('site/src/content/docs/docs/receipts.md')).toContain(
+      'permaily-verify -receipts receipts.jsonl -receipts-head 1234:<sha256>',
+    );
+    expect(page).toContain('-receipts-head');
+    expect(page).toContain('GET /api/v1/receipts/export');
+    expect(page).toContain(
+      'The Activity screen, which shows them and downloads the export, is not built yet',
+    );
+  });
+});
+
 describe('legal pages', () => {
   const page = (path: string) => (all.length ? load(join(dist, path, 'index.html')) : parse(''));
 

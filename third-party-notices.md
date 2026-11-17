@@ -81,6 +81,20 @@ The verifier CLI.
 | Component | License |
 |---|---|
 | Go standard library and runtime | BSD-3-Clause |
+| github.com/aws/aws-sdk-go-v2 | Apache-2.0 |
+| github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream | Apache-2.0 |
+| github.com/aws/aws-sdk-go-v2/internal/configsources | Apache-2.0 |
+| github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 | Apache-2.0 |
+| github.com/aws/aws-sdk-go-v2/internal/v4a | Apache-2.0 |
+| github.com/aws/aws-sdk-go-v2/service/dynamodb | Apache-2.0 |
+| github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding | Apache-2.0 |
+| github.com/aws/aws-sdk-go-v2/service/internal/checksum | Apache-2.0 |
+| github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery | Apache-2.0 |
+| github.com/aws/aws-sdk-go-v2/service/internal/presigned-url | Apache-2.0 |
+| github.com/aws/aws-sdk-go-v2/service/internal/s3shared | Apache-2.0 |
+| github.com/aws/aws-sdk-go-v2/service/s3 | Apache-2.0 |
+| github.com/aws/smithy-go | Apache-2.0 |
+| github.com/emersion/go-message | MIT |
 | github.com/fxamacker/cbor/v2 | MIT |
 | github.com/x448/float16 | MIT |
 | golang.org/x/net | BSD-3-Clause |

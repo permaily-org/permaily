@@ -342,6 +342,12 @@ func handler(cfg config, hosts router.Hosts, p *platform, log *slog.Logger) http
 			// and the API on the api host, MCP on the mcp host.
 			mountConnections(p.connections, app, api, mcp, webui.Handler(), p.accounts, log)
 		}
+		if p.receipts != nil {
+			// The person's receipts and their export (ADR 0037, pull request 3).
+			receiptsRoutes := httpapi.ReceiptsAPI(httpapi.ReceiptsConfig{Chain: p.receipts.svc, Sessions: p.accounts, Log: log})
+			app.Handle("/api/v1/receipts", receiptsRoutes)
+			app.Handle("/api/v1/receipts/", receiptsRoutes)
+		}
 		for path, h := range p.devRoutes {
 			app.Handle(path, h)
 		}
