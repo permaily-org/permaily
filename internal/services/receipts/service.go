@@ -94,7 +94,7 @@ func (s *Service) Write(ctx context.Context, account string, r *Receipt) error {
 	}
 	partition := Partition(account)
 	if r.ID != "" {
-		return s.writeAs(ctx, partition, r)
+		return s.writeAs(ctx, account, r)
 	}
 	var key []byte
 	for range writeTries {
@@ -128,10 +128,8 @@ func (s *Service) Write(ctx context.Context, account string, r *Receipt) error {
 		case err != nil:
 			return fmt.Errorf("receipts: write: %w", err)
 		}
-		if s.chain != nil {
-			if _, err := s.Link(ctx, account, Ref{ID: id, Digest: DigestOf(raw)}); err != nil {
-				return fmt.Errorf("receipts: link: %w", err)
-			}
+		if err := s.linkStored(ctx, account, id, raw); err != nil {
+			return err
 		}
 		r.V, r.ID, r.At = Version, id, at
 		return nil
@@ -145,7 +143,8 @@ func (s *Service) Write(ctx context.Context, account string, r *Receipt) error {
 // "Refusals past a window's bound"): when the entry is already there, it is
 // this receipt if it opens to the very document, and Write succeeds;
 // anything else there is ErrIdentityTaken, and nothing is stored.
-func (s *Service) writeAs(ctx context.Context, partition string, r *Receipt) error {
+func (s *Service) writeAs(ctx context.Context, account string, r *Receipt) error {
+	partition := Partition(account)
 	if !ValidID(r.ID) || r.At.IsZero() {
 		return errors.New("receipts: a receipt's own identity needs its identifier and its time")
 	}
@@ -180,7 +179,24 @@ func (s *Service) writeAs(ctx context.Context, partition string, r *Receipt) err
 	case err != nil:
 		return fmt.Errorf("receipts: write: %w", err)
 	}
+	// Linked whether this call stored it or an earlier one did: a write made
+	// again because its outcome was not known may have stopped before its
+	// link, and a receipt may be named twice, never left out (ADR 0037).
+	if err := s.linkStored(ctx, account, doc.ID, raw); err != nil {
+		return err
+	}
 	r.V, r.At = doc.V, doc.At
+	return nil
+}
+
+// linkStored links a receipt Write stored, on a chained Service.
+func (s *Service) linkStored(ctx context.Context, account, id string, raw []byte) error {
+	if s.chain == nil {
+		return nil
+	}
+	if _, err := s.Link(ctx, account, Ref{ID: id, Digest: DigestOf(raw)}); err != nil {
+		return fmt.Errorf("receipts: link: %w", err)
+	}
 	return nil
 }
 

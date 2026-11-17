@@ -83,8 +83,13 @@ func TestL3WriteReturnsOnlyOnceItsLinkIsCommitted(t *testing.T) {
 		}
 	}
 	links := walkAll(t, chained, account, 100)
-	if len(links) != 6 || shape(links) != "6:ok[ok] 5:ok[ok] 4:ok[ok] 3:ok[ok] 2:ok[ok] 1:ok[ok]" {
+	if len(links) != len(samples(t)) {
 		t.Fatalf("%s", shape(links))
+	}
+	for _, l := range links {
+		if l.Verdict != LinkOK || len(l.Receipts) != 1 || l.Receipts[0].Verdict != ReceiptOK {
+			t.Fatalf("%s", shape(links))
+		}
 	}
 
 	failing := map[string]func(w *chainWorld, h *hookedCommits){
@@ -597,6 +602,42 @@ func TestL7ACommitWhoseOutcomeIsUnknown(t *testing.T) {
 	id := w.write(s, account)
 	h.after = nil
 	links = walkAll(t, w.enclave(), account, 10)
+	if shape(links) != "2:ok[ok] 1:ok[ok]" || links[0].Link.Receipts[0].ID != id {
+		t.Fatal(shape(links))
+	}
+}
+
+// L3 with #161's receipts that come with their own identity (a refusal
+// window's summary): Write links them too before it returns, and a write
+// made again after its link failed links it then.
+func TestL3AReceiptWithItsOwnIdentityIsLinked(t *testing.T) {
+	ctx := context.Background()
+	w := newChainWorld(t)
+	h := w.hooked()
+	s := w.enclave()
+	w.write(s, account)
+	id, err := NewID(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := receipt()
+	r.ID, r.At = id, start
+	h.before = func(c store.Commit) error {
+		if c.Name == LinkName(account, 2) {
+			return errBoom
+		}
+		return nil
+	}
+	if err := s.Write(ctx, account, r); !errors.Is(err, errBoom) {
+		t.Fatalf("a receipt with its identity written and not linked: %v", err)
+	}
+	h.before = nil
+	again := receipt()
+	again.ID, again.At = id, start
+	if err := s.Write(ctx, account, again); err != nil {
+		t.Fatal(err)
+	}
+	links := walkAll(t, w.enclave(), account, 10)
 	if shape(links) != "2:ok[ok] 1:ok[ok]" || links[0].Link.Receipts[0].ID != id {
 		t.Fatal(shape(links))
 	}
