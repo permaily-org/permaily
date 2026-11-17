@@ -9,7 +9,7 @@ A receipt records mail prepared and made available for a connection's authentica
 
 Which messages were prepared for which connection, which parts, when, for which query, which messages a rule held back, and whether a model decided. Only the person will see what was held back, once the Activity screen is built.
 
-A refused request has its own receipt up to 30 a connection in a minute on each of the service's servers; past them, that minute's refusals there are counted together in one receipt, by kind of request and reason, naming no message.
+A refused request has its own receipt up to 30 a connection in a minute on each of the service's servers; past them, that minute's refusals there are counted together in one receipt, by kind of request and reason, naming no message. Until that receipt is stored, the count is only in that server's memory, normally for a few seconds after the minute ends, and longer while the database refuses it: if the server stops unexpectedly, every count it has not yet stored is lost. The refused requests themselves got no mail. A server that stops normally stores them first.
 
 ## Where you meet them
 
