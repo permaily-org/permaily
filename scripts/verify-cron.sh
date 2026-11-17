@@ -23,6 +23,11 @@
 # (cron mails it where MAILTO and a mailer are set), and when
 # PERMAILY_ALERT_CMD is set it runs it with the report on standard input, for
 # example: PERMAILY_ALERT_CMD='mail -s "Permaily: verification failed" ops@example.org'
+# The lock is released before the alert command runs, which never holds it,
+# and that command has its own deadline, PERMAILY_ALERT_TIMEOUT seconds
+# (default 120): past it, it and what it started are sent TERM, then KILL
+# PERMAILY_VERIFY_GRACE seconds later. An alert that fails or times out is
+# reported on standard error; the exit is 1 either way.
 #
 # Needs bash, gh (signed in for this user, or GH_TOKEN), jq and flock. The last
 # report is kept in ~/.local/state/permaily-verify-cron/last.txt.
@@ -32,21 +37,52 @@ here=$(cd "$(dirname "$0")" && pwd)
 state=${XDG_STATE_HOME:-$HOME/.local/state}/permaily-verify-cron
 limit=${PERMAILY_VERIFY_TIMEOUT:-3000}
 grace=${PERMAILY_VERIFY_GRACE:-30}
+alert_limit=${PERMAILY_ALERT_TIMEOUT:-120}
 report=$state/last.txt
 
-# alert TEXT prints the report, runs the alert command with it on standard
-# input, and exits 1. Never in a pipeline: its exit would leave only the
-# pipeline's subshell.
+# supervise PID LIMIT GRACE waits for PID, the leader of a process group of its
+# own; past LIMIT seconds it sends the group TERM, then KILL GRACE seconds
+# later. It returns PID's exit status, or 124 when PID was stopped.
+supervise() {
+  local pid=$1 end=$((SECONDS + $2))
+  while kill -0 "$pid" 2>/dev/null && ((SECONDS < end)); do sleep 1; done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM -- "-$pid" 2>/dev/null
+    end=$((SECONDS + $3))
+    while kill -0 "$pid" 2>/dev/null && ((SECONDS < end)); do sleep 1; done
+    kill -KILL -- "-$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    return 124
+  fi
+  wait "$pid"
+}
+
+# alert TEXT prints the report, releases the lock, runs the alert command with
+# the report on standard input within its deadline, and exits 1. Never in a
+# pipeline: its exit would leave only the pipeline's subshell.
 alert() {
   printf '%s\n' "$1"
+  exec 9>&-
   if [[ -n ${PERMAILY_ALERT_CMD:-} ]]; then
-    printf '%s\n' "$1" | bash -c "$PERMAILY_ALERT_CMD" || echo "permaily-verify-cron: the alert command failed" >&2
+    set -m
+    bash -c "$PERMAILY_ALERT_CMD" <<<"$1" &
+    local pid=$!
+    set +m
+    supervise "$pid" "$alert_limit" "$grace"
+    case $? in
+      0) ;;
+      124) echo "permaily-verify-cron: the alert command did not finish within $alert_limit s and was stopped" >&2 ;;
+      *) echo "permaily-verify-cron: the alert command failed" >&2 ;;
+    esac
   fi
   exit 1
 }
 
-[[ $limit =~ ^[1-9][0-9]*$ && $grace =~ ^[1-9][0-9]*$ ]] ||
-  alert "permaily-verify-cron: PERMAILY_VERIFY_TIMEOUT and PERMAILY_VERIFY_GRACE must be whole seconds"
+if ! [[ $limit =~ ^[1-9][0-9]*$ && $grace =~ ^[1-9][0-9]*$ && $alert_limit =~ ^[1-9][0-9]*$ ]]; then
+  [[ $grace =~ ^[1-9][0-9]*$ ]] || grace=30
+  [[ $alert_limit =~ ^[1-9][0-9]*$ ]] || alert_limit=120
+  alert "permaily-verify-cron: PERMAILY_VERIFY_TIMEOUT, PERMAILY_VERIFY_GRACE and PERMAILY_ALERT_TIMEOUT must be whole seconds"
+fi
 mkdir -p "$state" || alert "permaily-verify-cron: cannot create $state"
 
 # flock -n exits 75 (-E) only when another process holds the lock.
@@ -72,17 +108,11 @@ set -m
 "$here/verify-production.sh" -require-smtp >"$report" 2>&1 &
 run=$!
 set +m
-deadline=$((SECONDS + limit))
-while kill -0 "$run" 2>/dev/null && ((SECONDS < deadline)); do sleep 1; done
-if kill -0 "$run" 2>/dev/null; then
-  kill -TERM -- "-$run" 2>/dev/null
-  deadline=$((SECONDS + grace))
-  while kill -0 "$run" 2>/dev/null && ((SECONDS < deadline)); do sleep 1; done
-  kill -KILL -- "-$run" 2>/dev/null
-  wait "$run" 2>/dev/null
-  alert "$(cat "$report")
+supervise "$run" "$limit" "$grace"
+case $? in
+  0) exit 0 ;;
+  124) alert "$(cat "$report")
 
-RESULT: the verification did not finish within $limit s and was stopped."
-fi
-wait "$run" && exit 0
-alert "$(cat "$report")"
+RESULT: the verification did not finish within $limit s and was stopped." ;;
+  *) alert "$(cat "$report")" ;;
+esac
