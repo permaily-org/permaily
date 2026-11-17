@@ -9,6 +9,7 @@ import (
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain"
+	"github.com/permaily-org/permaily/internal/services/connections"
 	"github.com/permaily-org/permaily/internal/store"
 )
 
@@ -308,9 +309,10 @@ func (s *Service) removeAt(ctx context.Context, doc *accountDoc, at store.Mark) 
 }
 
 // removeLocked removes an account that is due, with changing held. It goes
-// in this order: the pointers from its address and from its provider
-// accounts, its entry in the list of accounts, its sessions, its record, its
-// entry in the list of closing accounts.
+// in this order: its connections, its mailboxes, the pointers from its
+// address and from its provider accounts, its entry in the list of
+// accounts, its receipts, its sessions, its record, its entry in the list
+// of closing accounts.
 //
 // The record goes after everything that is found through it: it says the
 // address and the times the other entries are stored under, and while it is
@@ -321,11 +323,9 @@ func (s *Service) removeAt(ctx context.Context, doc *accountDoc, at store.Mark) 
 // back. The entry in the list of closing accounts goes last, so the enclave
 // keeps finding the account until nothing of it is left.
 func (s *Service) removeLocked(ctx context.Context, doc *accountDoc) error {
-	// Its connections end first of all, their fence finished (ADR 0030).
-	if c := s.connectionsOf(); c != nil {
-		if err := c.EndAll(ctx, doc.ID); err != nil {
-			return err
-		}
+	// Its connections go first of all, fenced and ended before (ADR 0030).
+	if err := s.removeConnections(ctx, doc.ID); err != nil {
+		return err
 	}
 	// Its mailboxes end first, each in a terminal commit, and its list is
 	// left closed (ADR 0026): a failure fails the removal, tried again.
@@ -394,10 +394,34 @@ func (s *Service) unpoint(ctx context.Context, key []byte, partition, accountID 
 	return nil
 }
 
-// clear removes what is stored under an account's identifier: its sessions
-// and its record, and then the entry of the list of closing accounts that
-// led here. It is also what is left to do for an account whose record is
-// gone already, when an earlier removal failed after the commit.
+// removeConnections removes everything stored of an account's connections
+// (ADR 0030, "Changed while releasing step 5"): RemoveAll fences and ends
+// them first while their list is whole, and their fence is kept by the
+// commits of their removal. It is the first thing a removal does, and it
+// is done again by every pass that tries the removal again, also once the
+// account's record is gone: RemoveAll finishes what an earlier call left,
+// and does nothing more when nothing is left. Once it succeeded, the
+// account is listed to have them removed once more
+// connections.RemoveAgainAfter from now (removeConnectionsAgain), for a
+// value a write under way at that moment stages after it.
+func (s *Service) removeConnections(ctx context.Context, id string) error {
+	c := s.connectionsOf()
+	if c == nil {
+		return nil
+	}
+	if err := c.RemoveAll(ctx, id); err != nil {
+		return err
+	}
+	key := timedKey(s.now().Add(connections.RemoveAgainAfter), id)
+	if err := s.point(ctx, connectionsAgainPartition, key, id, 0); err != nil && !errors.Is(err, store.ErrExists) {
+		return err
+	}
+	return nil
+}
+
+// clear removes what is stored under an account's identifier once its
+// connections went: its receipts, its sessions and its record, and then
+// the entry of the list of closing accounts that led here.
 func (s *Service) clear(ctx context.Context, id, closing string) error {
 	if err := s.removeReceipts(ctx, id); err != nil {
 		return err
@@ -489,6 +513,11 @@ pages:
 			first = err
 		}
 	}
+	if err := s.removeConnectionsAgain(ctx, key, now); err != nil {
+		if failed++; first == nil {
+			first = err
+		}
+	}
 	if failed > 0 {
 		return fmt.Errorf("accounts: %d accounts that are due were not removed, the first because: %w", failed, first)
 	}
@@ -508,6 +537,9 @@ func (s *Service) settle(ctx context.Context, id, entry string) error {
 		case doc == nil:
 			// Removed already. A removal that failed after the record was
 			// committed as gone left the rest for now.
+			if err := s.removeConnections(ctx, id); err != nil {
+				return err
+			}
 			return s.clear(ctx, id, entry)
 		case doc.State != contracts.AccountClosing || closingKey(doc) != entry:
 			// The person cancelled, or asked again later: the entry is of no day.

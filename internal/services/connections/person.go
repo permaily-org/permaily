@@ -276,7 +276,7 @@ func (s *Service) endConnection(ctx context.Context, id string, reason contracts
 	if !listed {
 		now := s.now()
 		if _, err := s.updateList(ctx, ended.Account, func(l *ListState) error {
-			s.dropEnded(ctx, l, l.End(id, now))
+			s.dropEnded(ctx, l, l.End(id, now), nil)
 			return nil
 		}); err != nil {
 			return err
@@ -330,7 +330,7 @@ func (s *Service) abandon(ctx context.Context, account, id, client string, madeA
 	}
 	now := s.now()
 	if _, err := s.updateList(ctx, account, func(l *ListState) error {
-		s.dropEnded(ctx, l, l.End(id, now))
+		s.dropEnded(ctx, l, l.End(id, now), nil)
 		return nil
 	}); err != nil {
 		s.count("abandon_failed")
@@ -398,22 +398,91 @@ func (s *Service) endDevice(ctx context.Context, id, device string, reason contr
 // dropEnded removes the records and families of the ended members the
 // list drops past ListEndedMax, then their entries: the record first, so
 // nothing is left that the list no longer names.
-func (s *Service) dropEnded(ctx context.Context, l *ListState, remove []string) {
+//
+// While the list is closing (the account's deletion asked, or its removal
+// under way) a connection that cannot be read is kept (removeConnStrict):
+// its families are known only from its record, and the account's removal
+// must find them, or fail (second review of #152, finding 1). The oldest
+// ended member that can be removed goes in its place, so the list stays
+// within its bounds. One that fails otherwise stays, as before, until the
+// list's next write. With note (the account's final removal, endAll),
+// each one removed is noted first, with its families (removeConnStrict).
+func (s *Service) dropEnded(ctx context.Context, l *ListState, remove []string, note func(id string) error) {
 	var gone []string
-	for _, id := range remove {
-		if err := s.removeConn(ctx, id); err == nil {
-			gone = append(gone, id)
+	if !l.Closing {
+		for _, id := range remove {
+			if err := s.removeConn(ctx, id); err == nil {
+				gone = append(gone, id)
+			}
+		}
+		l.RemoveEnded(gone)
+		return
+	}
+	var ended []ListMember
+	for _, m := range l.Members {
+		if m.State == contracts.ConnectionEnded {
+			ended = append(ended, m)
+		}
+	}
+	slices.SortStableFunc(ended, func(a, b ListMember) int { return a.EndedAt.Compare(b.EndedAt) })
+	for _, m := range ended {
+		if len(gone) == len(remove) {
+			break
+		}
+		err := s.removeConnStrict(ctx, m.ID, note)
+		if err == nil {
+			gone = append(gone, m.ID)
+		} else if !refusedRecord(err) {
+			break
 		}
 	}
 	l.RemoveEnded(gone)
 }
 
-// removeConn removes an ended connection's record with its families'.
+// removeConn removes an ended connection's record with its families'. A
+// connection that cannot be read is removed without them; only while its
+// list is not closing (dropEnded, sweepAccount), when nothing says that
+// what is left of the account is gone.
 func (s *Service) removeConn(ctx context.Context, id string) error {
 	d, _, err := s.readConn(ctx, id)
 	if err != nil && !refusedRecord(err) {
 		return err
 	}
+	return s.removeConnOf(ctx, id, d)
+}
+
+// removeConnStrict is removeConn for an account's removal (RemoveAll) and
+// for every removal of a closing list's member (dropEnded, sweepAccount):
+// a connection that cannot be read (lost, put back, not signed) fails it,
+// since its families are known only from its record. One removed already,
+// or never made (a pending one, whose name the removal fences), has none.
+//
+// With note (RemoveAll, and the trimming its EndAll does), the
+// connection's identifier and its families' are noted first, for
+// RemoveAgain to find their names once nothing else does.
+func (s *Service) removeConnStrict(ctx context.Context, id string, note func(id string) error) error {
+	d, _, err := s.readConn(ctx, id)
+	if err != nil {
+		return err
+	}
+	if note != nil {
+		if err := note(id); err != nil {
+			return err
+		}
+		if d != nil {
+			for _, dev := range d.Devices {
+				if err := note(dev.ID); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return s.removeConnOf(ctx, id, d)
+}
+
+// removeConnOf removes connection id, read as d (nil when it could not be
+// read), with its families' records.
+func (s *Service) removeConnOf(ctx context.Context, id string, d *connDoc) error {
 	if d != nil {
 		for _, dev := range d.Devices {
 			if err := s.removeFamily(ctx, dev.ID); err != nil {

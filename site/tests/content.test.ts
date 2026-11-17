@@ -249,28 +249,123 @@ describe('legal pages', () => {
       );
     });
 
-    it('how long connection records stay, and that their lists are not removed', () => {
-      // services/connections: an ended connection's records go EndedKept after it ends; nothing removes an
-      // account's lists (ListName) or their index, also when the account is removed (docs/legal.md, item 15).
-      // The pull request that removes them changes this test and the pages together.
+    it('connections removed with the account, as services/accounts and services/connections do it', () => {
+      // docs/legal.md, item 15 (pull request 152): removing an account calls connections.Lifecycle.RemoveAll first of
+      // all (removeConnections, in removeLocked, and again in settle once the account's record is gone), and RemoveAll
+      // removes every connection the list names, the account's index entry and every epoch of its list (ListName);
+      // the hourly pass deletes the index entry of a removed list; once RemoveAll succeeded the account is listed for
+      // RemoveAgain, connections.RemoveAgainAfter later, for a value a write under way staged after the removal. A
+      // change there fails here until the pages change with it.
+      const body = (source: string, signature: RegExp) => {
+        const at = source.search(signature);
+        expect(at, String(signature)).toBeGreaterThanOrEqual(0);
+        return source.slice(at, source.indexOf('\n}\n', at));
+      };
+      const settings = go('internal/services/accounts/settings.go');
+      const removeConnections = body(settings, /func \(s \*Service\) removeConnections\(/);
+      expect(removeConnections).toMatch(/\.RemoveAll\(ctx, id\)/);
+      expect(
+        removeConnections.search(/\.RemoveAll\(ctx, id\)/),
+        'the last pass is listed once RemoveAll succeeded',
+      ).toBeLessThan(removeConnections.search(/connections\.RemoveAgainAfter/));
+      expect(removeConnections).toMatch(/s\.point\(ctx, connectionsAgainPartition, key, id, 0\)/);
+      expect(body(settings, /func \(s \*Service\) RemoveDue\(/)).toMatch(
+        /s\.removeConnectionsAgain\(ctx, key, now\)/,
+      );
+      expect(
+        body(
+          go('internal/services/accounts/connections.go'),
+          /func \(s \*Service\) removeConnectionsAgain\(/,
+        ),
+      ).toMatch(/c\.RemoveAgain\(ctx, id\)/);
+      const removeLocked = body(settings, /func \(s \*Service\) removeLocked\(/);
+      const first = removeLocked.search(/s\.removeConnections\(ctx, doc\.ID\)/);
+      expect(first, 'the removal removes the connections').toBeGreaterThanOrEqual(0);
+      expect(first, 'before anything else').toBeLessThan(removeLocked.search(/mailboxesOf\(\)/));
+      expect(first, 'before the account’s record goes').toBeLessThan(
+        removeLocked.search(/s\.clear\(/),
+      );
+      const settle = body(settings, /func \(s \*Service\) settle\(/);
+      expect(
+        settle.search(/s\.removeConnections\(ctx, id\)/),
+        'again once the record is gone',
+      ).toBeLessThan(settle.search(/s\.clear\(ctx, id, entry\)/));
+      expect(settle).toMatch(/s\.removeConnections\(ctx, id\)/);
+      const lifecycle = go('internal/services/connections/lifecycle.go');
+      const remove = body(lifecycle, /func \(s \*Service\) RemoveAll\(/);
+      expect(remove).toMatch(/list := func\(e uint64\) string \{ return ListName\(account, e\) \}/);
+      expect(remove).toMatch(/s\.removeConnStrict\(ctx, m\.ID, note\)/);
+      // The last pass comes after the longest a write of the connections stays under way, 30 minutes.
+      expect(lifecycle).toMatch(/WriteMax = 10 \* time\.Minute/);
+      expect(lifecycle).toMatch(/removeAgainMargin = 20 \* time\.Minute/);
+      expect(lifecycle).toMatch(/RemoveAgainAfter = WriteMax \+ removeAgainMargin/);
+      const service = go('internal/services/connections/service.go');
+      for (const write of [
+        /func \(s \*Service\) writeSigned\(/,
+        /func \(s \*Service\) writeSealed\(/,
+      ]) {
+        expect(body(service, write)).toMatch(/ctx = store\.WriteWithin\(ctx, WriteMax\)/);
+      }
+      // The removal's own fence notes what it trims.
+      expect(remove).toMatch(/s\.endAll\(ctx, account, note\)/);
+      const again = body(lifecycle, /func \(s \*Service\) RemoveAgain\(/);
+      expect(again).toMatch(/s\.RemoveAll\(ctx, account\)/);
+      expect(again).toMatch(/s\.removeFamily\(ctx, e\.Key\)/);
+      expect(again).toMatch(/Records\.RemoveRecord\(ctx, connName\(e\.Key\)\)/);
+      expect(again).toMatch(/DeletePartition\(ctx, partition\)/);
+      expect(remove).toMatch(/DeleteEntry\(ctx, partitionAccounts, account\)/);
+      expect(remove).toMatch(/s\.removeEpochs\(ctx, list\)/);
+      expect(body(lifecycle, /func \(s \*Service\) removeEpochs\(/)).toMatch(
+        /Records\.RemoveRecord\(/,
+      );
+      // The hourly pass deletes an index entry written again, or put back, after the list was removed.
+      const sweep = body(lifecycle, /func \(s \*Service\) sweepAccount\(/);
+      expect(sweep).toMatch(/s\.listRemoved\(ctx, account\)/);
+      expect(sweep).toMatch(/return rerr/);
+      expect(sweep).toMatch(/DeleteEntry\(ctx, partitionAccounts, account\)/);
+      expect(go('cmd/permaily-enclave/connections.go')).toMatch(/sweepEvery = time\.Hour/);
+      const person = go('internal/services/connections/person.go');
+      expect(body(person, /func \(s \*Service\) removeConnStrict\(/)).toMatch(
+        /s\.removeConnOf\(ctx, id, d\)/,
+      );
+      const removeConn = body(person, /func \(s \*Service\) removeConnOf\(/);
+      expect(removeConn).toMatch(/s\.removeFamily\(/);
+      expect(removeConn).toMatch(/Records\.RemoveRecord\(ctx, connName\(id\)\)/);
+      // While the account lives, an ended connection's records go EndedKept after it ends.
       expect(go('internal/services/connections/connections.go')).toMatch(
         /EndedKept = 30 \* 24 \* time\.Hour/,
       );
-      const dir = join(import.meta.dirname, '../../internal/services/connections');
-      const source = readdirSync(dir)
-        .filter((f) => f.endsWith('.go') && !f.endsWith('_test.go'))
-        .map((f) => readFileSync(join(dir, f), 'utf8'))
-        .join('\n');
-      expect(source).not.toMatch(/RemoveRecord\([^)]*ListName\(/);
+      // The tokens' lookup entries are found only by their hash and expire on their own: a refresh token in 30 days.
+      expect(go('internal/oauth/oauth.go')).toMatch(/RefreshTokenTTL = 30 \* 24 \* time\.Hour/);
       for (const path of ['privacy', 'data-deletion']) {
-        expect(text(path), path).toContain(
-          'records are scheduled for removal 30 days after the connection ends, including when the account itself has already been removed',
+        const said = text(path);
+        expect(said, path).toContain(
+          'When the account is removed, after the seven-day cancellation window, we remove your connections with it: the list of your connections, each connection’s record and its devices’ token records.',
         );
-        expect(text(path), path).toContain(
-          'Our connection-list records and their account index currently have no automatic removal',
+        expect(said, path).toContain(
+          'The tokens’ lookup entries expire within 30 days and are refused from the removal on.',
         );
+        expect(said, path).toContain(
+          'Until the account is removed, an earlier closed part of the list can still hold the connections it held then',
+        );
+        expect(said, path).toContain(
+          'Database backups can keep removed records for a further day.',
+        );
+        expect(said, path).toContain(
+          'it can write your account’s identifier into our index of accounts with connections again; we remove that entry on the next successful hourly cleanup pass.',
+        );
+        expect(said, path).toContain(
+          'a last cleanup pass at least 30 minutes after the removal deletes it',
+        );
+        expect(said, path).toContain(
+          'A copy stored the same way for a connection that had ended and was already removed during the seven-day window can stay; nothing reads it either.',
+        );
+        expect(said, path).not.toMatch(/within an hour/);
+        expect(said, path).not.toMatch(/no automatic removal/i);
       }
-      expect(text('data-deletion')).not.toMatch(/the devices that signed in, your connections,/);
+      expect(text('data-deletion')).toContain(
+        'the devices that signed in, your connections, your receipts',
+      );
     });
 
     it('the vendor documents’ cache, as internal/vendors bounds it', () => {
