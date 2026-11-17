@@ -3,7 +3,7 @@
 // for every refusal of one, an entry sealed under a key from the root secret,
 // bound to where it is stored, written once and before the answer, and kept
 // for as long as the account exists. Each is then named by a link of its
-// account's chain (chain.go, ADR 0034, which brings step 8's chaining
+// account's chain (chain.go, ADR 0037, which brings step 8's chaining
 // forward), before Write returns, without rewriting any entry; the
 // activity screen of step 8 shows them in the chain's order.
 //
@@ -92,7 +92,7 @@ type Receipt struct {
 	Consent   *Consent    `json:"consent,omitempty"`
 	Ended     *Ended      `json:"ended,omitempty"`
 	// A receipt holds nothing of its chain: the link that chains it names
-	// it by identifier and digest (ADR 0034), so a receipt's document is
+	// it by identifier and digest (ADR 0037), so a receipt's document is
 	// the same chained or not, and one written before the chain is adopted
 	// as it is.
 }
