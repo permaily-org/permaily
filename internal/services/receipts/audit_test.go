@@ -259,6 +259,33 @@ func TestL26TheCatalogue(t *testing.T) {
 		t.Fatal(shape(links))
 	}
 
+	// An account entered whose receipts are all gone is not entered again
+	// by every pass.
+	w = newChainWorld(t)
+	h = w.hooked()
+	h.before = func(c store.Commit) error {
+		if c.Name == LinkName(account, 1) {
+			return errBoom
+		}
+		return nil
+	}
+	lost := receipt()
+	if err := w.enclave().Write(ctx, account, lost); !errors.Is(err, errBoom) {
+		t.Fatal(err)
+	}
+	h.before = nil
+	for _, e := range w.mem.AllEntries() {
+		if e.Partition == Partition(account) {
+			w.deleteReceipt(account, e.Key)
+		}
+	}
+	for d := 1; d <= 2; d++ {
+		w.clock.set(day(d))
+		if p := w.audit(w.enclave()); p.Audit.Catalogue != 1 || p.Audit.Chains != 1 {
+			t.Fatalf("%+v", p.Audit)
+		}
+	}
+
 	// Two enclaves entering at once.
 	w = newChainWorld(t)
 	a, b := w.enclave(), w.enclave()

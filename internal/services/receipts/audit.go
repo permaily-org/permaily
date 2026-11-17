@@ -215,6 +215,10 @@ func (r *auditRun) chain(ctx context.Context, account string) error {
 		return err
 	}
 	if adopting(head) {
+		// The catalogue names it: adopting does not enter it again.
+		r.s.chain.mu.Lock()
+		r.s.chain.entered[account] = true
+		r.s.chain.mu.Unlock()
 		if err := r.adopt(ctx, account); err != nil {
 			return err
 		}
