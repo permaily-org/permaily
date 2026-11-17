@@ -18,3 +18,8 @@ release_keys = {
 # Where senders send SMTP TLS reports: the "TLS reports" mailbox the super admin
 # made after v0.12.0 (docs/operations.md). Public on purpose.
 tls_rpt_address = "skr25i9u9s364ra7a6a9@inbox.permaily.com"
+
+# Operators other than the owner, each the IAM user permaily-operator-<name>,
+# who can deploy and operate after signing in with MFA (deploy/tofu/operators.tf,
+# docs/operations.md, "Operators"). No credential is in the state.
+operators = ["tony"]
