@@ -32,5 +32,5 @@ Architecture Decision Records. Each one records the context, the options conside
 | [0025](0025-mail-with-a-design-written-once.md) | Mail with a design, written once and sent as text and HTML | Accepted, not released |
 | [0026](0026-mailboxes-per-account-how.md) | Mailboxes per account: how they are built (records and their state machines, keys, delivery, the inbox and showing HTML safely, the test mailbox retired, the API, the seams); amends 0016 | Proposed, not built |
 | [0027](0027-the-query-language-how.md) | The query language: how it is built (variables and operators, the JSON vendors send, three values, simplification, containment, the sentence, evaluation over stored mail, the seams); amends 0019, 0020 and 0026 | Proposed, not built |
-| [0028](0028-drawings-made-of-sample-mail.md) | Drawings made of sample mail on the public site, and motion that keeps running | Accepted, built, not released |
-| [0029](0029-sign-up-with-google-on-the-site.md) | "Sign up with Google" on the public site's hero, with Google's colours kept in the web app's folder | Accepted, built, not in use |
+| [0032](0032-drawings-made-of-sample-mail.md) | Drawings made of sample mail on the public site, and motion that keeps running | Accepted, built, not released |
+| [0033](0033-sign-up-with-google-on-the-site.md) | "Sign up with Google" on the public site's hero, with Google's colours kept in the web app's folder | Accepted, built, not in use |

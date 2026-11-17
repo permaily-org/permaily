@@ -1,4 +1,4 @@
-# 0029 "Sign up with Google" on the public site
+# 0033 "Sign up with Google" on the public site
 
 Status: Accepted, built, not in use.
 Date: 2026-11-14
