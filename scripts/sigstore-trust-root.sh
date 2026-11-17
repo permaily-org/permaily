@@ -9,7 +9,11 @@
 #                                             published a newer one, or one the
 #                                             verifier refuses
 #   scripts/sigstore-trust-root.sh --send     give the newer one to the running
-#                                             enclave, which checks it again
+#                                             enclave, which checks it again; it
+#                                             verifies the enclave first, and the
+#                                             token goes only to the TLS key that
+#                                             verification attested
+#                                             (scripts/attested.sh)
 #   scripts/sigstore-trust-root.sh --update   replace the files compiled into
 #                                             pkg/provenance, for the next release
 #   scripts/sigstore-trust-root.sh --fetch DIR   only download into DIR
@@ -21,21 +25,39 @@
 #
 # Environment:
 #   PERMAILY_VERIFY       the verifier to decide with (default: go run
-#                         ./cmd/permaily-verify, the one of this checkout)
+#                         ./cmd/permaily-verify, the one of this checkout; with
+#                         --send, the one that attested the enclave, built from
+#                         the commit PERMAILY_RELEASE's build provenance names
+#                         when it is set, in a private repository and a fixed
+#                         Go environment)
 #   PERMAILY_API          base URL of the enclave (default https://api.permaily.com)
 #   PERMAILY_ADMIN_TOKEN  admin token (default: ~/.config/permaily/admin-token)
 #   PERMAILY_CA_FILE      extra CA certificate, for a staging image
+#   PERMAILY_PCRS         with --send: pcrs.json of the release the enclave runs
+#                         and/or PERMAILY_RELEASE, its tag, to verify it against
+#                         (alone, the release's pcrs.json authenticated by its
+#                         build provenance; scripts/attested.sh)
 #
-# Needs curl and jq, and go unless PERMAILY_VERIFY is set (--send works
-# without either: the enclave checks what it is sent).
+# Needs curl and jq, and go unless PERMAILY_VERIFY is set; with --send and
+# PERMAILY_RELEASE, gh, and git 2.32 or later unless PERMAILY_VERIFY is set.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
 repository=https://tuf-repo-cdn.sigstore.dev
 compiled=pkg/provenance
 mode=${1:-compare}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+# The admin token goes to the enclave only after it is verified, and only to
+# the key that verification attested; nothing is fetched before that either.
+if [[ $mode == --send ]]; then
+  api=${PERMAILY_API:-https://api.permaily.com}
+  # shellcheck source=scripts/attested.sh
+  source "$(dirname "$0")/attested.sh"
+  trap attested_cleanup EXIT
+  load_token
+  attest
+fi
+cd "$(dirname "$0")/.."
 dir=$work/tuf
 [[ $mode == --fetch ]] && dir=${2:?--fetch needs a directory}
 mkdir -p "$dir"
@@ -56,8 +78,7 @@ get "targets/$hash.trusted_root.json" "$dir/trusted_root.json"
 # running enclave may have been built with an older one: then from that one.
 version=$(jq -r '.signed.version' "$compiled/sigstore_tuf_root.json")
 if [[ $mode == --send ]]; then
-  api=${PERMAILY_API:-https://api.permaily.com}
-  running=$(curl -sS ${PERMAILY_CA_FILE:+--cacert "$PERMAILY_CA_FILE"} "$api/status" | jq -r '.sigstore.tuf_root_version // empty')
+  running=$(enclave_curl "$api/status" | jq -r '.sigstore.tuf_root_version // empty | numbers')
   if [[ -z $running ]]; then
     echo "The enclave at $api reports no Sigstore trust root: its release is older, and uses the one compiled into it. Nothing to send."
     exit 0
@@ -70,16 +91,24 @@ done
 rm -f "$dir/$((version + 1)).root.json"
 [[ $mode == --fetch ]] && { echo "Fetched TUF targets $targets and TUF roots up to $version into $dir."; exit 0; }
 
-verify=${PERMAILY_VERIFY:-go run ./cmd/permaily-verify}
-if [[ -n ${PERMAILY_VERIFY:-} ]] || command -v go >/dev/null; then
+# With --send, the verifier that attested the enclave: the running release's.
+decide=() decider=""
+if [[ $mode == --send && -n ${verifier:-} ]]; then
+  decide=("$verifier") decider=1
+elif [[ -n ${PERMAILY_VERIFY:-} ]]; then
+  decide=("$PERMAILY_VERIFY") decider=1
+elif command -v go >/dev/null; then
+  decide=(go run ./cmd/permaily-verify) decider=1
+fi
+if [[ -n $decider ]]; then
   status=0
-  $verify -trust-update "$dir" -json > "$work/result.json" || status=$?
+  "${decide[@]}" -trust-update "$dir" -json > "$work/result.json" || status=$?
   if [[ $status -ne 0 ]]; then
-    $verify -trust-update "$dir" || true
+    "${decide[@]}" -trust-update "$dir" || true
     echo "::error::pkg/provenance refuses the trust root Sigstore publishes today. See \"Sigstore changed\" in docs/operations.md."
     exit 1
   fi
-  $verify -trust-update "$dir"
+  "${decide[@]}" -trust-update "$dir"
   if [[ $(jq -r .newer "$work/result.json") != true && $mode != --send ]]; then
     exit 0
   fi
@@ -107,30 +136,36 @@ case $mode in
     echo "Replaced the files compiled into $compiled. Run the tests, and release."
     ;;
   --send)
-    token=${PERMAILY_ADMIN_TOKEN:-$(cat "${HOME}/.config/permaily/admin-token")}
-    # Each file as it was served, in base64; the roots in order.
-    roots=$(for f in $(find "$dir" -name '*.root.json' | sort -V); do base64 -w0 "$f"; echo; done | jq -R . | jq -s .)
-    base64 -w0 "$dir/targets.json" > "$work/targets.b64"
-    base64 -w0 "$dir/trusted_root.json" > "$work/trusted.b64"
+    # Each file as it was served, in base64 without line breaks (GNU's or
+    # macOS's base64); the roots in order.
+    roots=$(for f in $(find "$dir" -name '*.root.json' | sort -V); do base64 < "$f" | tr -d '\n'; echo; done | jq -R . | jq -s .)
+    base64 < "$dir/targets.json" | tr -d '\n' > "$work/targets.b64"
+    base64 < "$dir/trusted_root.json" | tr -d '\n' > "$work/trusted.b64"
     jq -n --argjson roots "$roots" --rawfile targets "$work/targets.b64" --rawfile trusted "$work/trusted.b64" \
       '{roots: $roots, targets: $targets, trusted_root: $trusted}' > "$work/request.json"
-    code=$(curl -sS ${PERMAILY_CA_FILE:+--cacert "$PERMAILY_CA_FILE"} -o "$work/response.json" -w '%{http_code}' \
-      -X POST -H "Content-Type: application/json" -H @<(printf 'Authorization: Bearer %s' "$token") \
-      --data-binary @"$work/request.json" "$api/v1/admin/trust-root")
-    jq . "$work/response.json" 2>/dev/null || cat "$work/response.json"
+    code=$(enclave_curl --token -o "$work/response.json" -w '%{http_code}' \
+      -X POST -H "Content-Type: application/json" \
+      --data-binary @"$work/request.json" "$api/v1/admin/trust-root") || exit 1
     case $code in
       200)
+        # What the enclave answers, field by field: nothing else of the answer is printed.
+        jq -r 'def clean: tostring | gsub("[[:cntrl:]]"; " ");
+          "trusted_root.json sha256 \(.trusted_root_sha256 | clean), TUF root \(.tuf_root_version | clean), TUF targets \(.tuf_targets_version | clean)"' "$work/response.json"
         if [[ $(jq -r '.updated_at // empty' "$work/response.json") == "" ]]; then
           echo "The enclave at $api already uses that trust root: it is the one compiled into it."
         else
           echo "The enclave at $api checks releases against that trust root now, until it restarts."
         fi
         ;;
-      *) echo "the enclave refused the trust root, or the request failed (HTTP $code)" >&2; exit 1 ;;
+      *)
+        enclave_error "$work/response.json"
+        echo "the enclave refused the trust root, or the request failed (HTTP $code)" >&2
+        exit 1
+        ;;
     esac
     ;;
   *)
-    sed -n '2,29p' "$0"
+    sed -n '2,41p' "$0"
     exit 2
     ;;
 esac

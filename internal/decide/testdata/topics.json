@@ -1,0 +1,15 @@
+{
+ "inv": "invoices",
+ "fact": "facturas",
+ "ship": "package delivery",
+ "pwd": "password reset",
+ "code": "sign-in code",
+ "mkt": "marketing promotions",
+ "bank": "bank account activity",
+ "job": "job offers",
+ "med": "medical appointments",
+ "trav": "travel bookings",
+ "addr": "a home address",
+ "phone": "a phone number",
+ "pers": "a personal message from family or friends"
+}

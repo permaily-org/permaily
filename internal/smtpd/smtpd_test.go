@@ -237,6 +237,61 @@ func (c *client) data(body string) (int, string) {
 	return c.answer()
 }
 
+// dataLarge sends a whole message with DATA and reads the answer, bounded by
+// the server's progress rather than by the clock: under -race on a loaded
+// machine 20 MiB through TLS takes longer than any fixed deadline (the
+// client's own 10 seconds ran out in the middle of the write and failed D2 in
+// CI with no answer at all). It fails when the server reads nothing from its
+// connections for idle and has not answered.
+func (f *fixture) dataLarge(t *testing.T, c *client, body string, idle time.Duration) (int, string) {
+	t.Helper()
+	c.do("DATA", 354)
+	_ = c.conn.SetDeadline(time.Time{})
+	type answer struct {
+		code int
+		msg  string
+		err  error
+	}
+	done := make(chan answer, 1)
+	go func() {
+		w := c.tp.DotWriter()
+		_, err := io.WriteString(w, body)
+		if cerr := w.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			// A server that refused before the end answered and closed:
+			// its answer, if it came, says more than the failed write.
+			_ = c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		}
+		code, msg, rerr := c.tp.ReadResponse(0)
+		if err == nil {
+			err = rerr
+		}
+		done <- answer{code, msg, err}
+	}()
+	last, moved := f.ln.read.Load(), time.Now()
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case a := <-done:
+			if a.code == 0 {
+				t.Fatalf("DATA: %v", a.err)
+			}
+			return a.code, a.msg
+		case <-tick.C:
+			if n := f.ln.read.Load(); n != last {
+				last, moved = n, time.Now()
+			} else if time.Since(moved) > idle {
+				_ = c.conn.Close()
+				a := <-done
+				t.Fatalf("the server read nothing for %v and did not answer: %v", idle, a.err)
+			}
+		}
+	}
+}
+
 func eventually(t *testing.T, what string, ok func() bool) {
 	t.Helper()
 	for range 400 {
@@ -331,7 +386,9 @@ func TestD1MailFromHoldsNothing(t *testing.T) {
 }
 
 // D2: a declared SIZE over 25 MiB is refused at MAIL FROM; a SIZE of 1 is a
-// hint, and 20 MiB of DATA after it is stored.
+// hint, and 20 MiB of DATA after it is stored. The 20 MiB are bounded by the
+// server reading them (dataLarge), not by a clock: how long they take depends
+// on the machine, and what D2 shows does not.
 func TestD2SizeIsAHint(t *testing.T) {
 	f := start(t, Limits{})
 	c := f.open(t, true)
@@ -341,7 +398,7 @@ func TestD2SizeIsAHint(t *testing.T) {
 	c.do("MAIL FROM:<a@example.org> SIZE=1", 250)
 	c.do("RCPT TO:<u@inbox.test>", 250)
 	big := message + strings.Repeat(strings.Repeat("x", 998)+"\r\n", 20<<20/1000+1)
-	if code, msg := c.data(big); code != 250 {
+	if code, msg := f.dataLarge(t, c, big, 10*time.Second); code != 250 {
 		t.Fatalf("%d %s", code, msg)
 	}
 	if f.in.count() != 1 || len(f.in.delivered[0]) < 20<<20 {

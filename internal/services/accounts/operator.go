@@ -48,6 +48,13 @@ const (
 	// refuse new mail, or to take it again (mailbox_admin.go, ADR 0026).
 	ActionMailboxPaused  = "mailbox_paused"
 	ActionMailboxResumed = "mailbox_resumed"
+	// ActionModelKeySet and ActionModelKeyRemoved: the model's key was given
+	// to the enclave, or taken away (ADR 0028, "The key"); counted through
+	// ModelKeyChanged by the operator's key routes, once for each request
+	// that succeeded: a removal when no key was set counts, as a key set
+	// again does. They count requests, not changes from one key to none.
+	ActionModelKeySet     = "model_key_set"
+	ActionModelKeyRemoved = "model_key_removed"
 )
 
 // OperatorActionKinds lists every kind, in the order they are shown.
@@ -55,6 +62,20 @@ var OperatorActionKinds = []string{
 	ActionBlock, ActionUnblock, ActionDelete, ActionDeleteCancel, ActionSessionsClose,
 	ActionInvitationsMade, ActionInvitationRevoked, ActionProviderAppSet, ActionProviderAppRemove,
 	ActionAdminMade, ActionAdminRemoved, ActionMailboxPaused, ActionMailboxResumed,
+	ActionModelKeySet, ActionModelKeyRemoved,
+}
+
+// ModelKeyChanged counts that the operator set the model's key (set) or
+// removed it, through the enclave: the key is kept by the model's service
+// (internal/services/decisions), and what the operator does is counted here
+// with everything else they do, for /status. Never the key, nor anything of
+// it.
+func (s *Service) ModelKeyChanged(set bool) {
+	if set {
+		s.acted(ActionModelKeySet, 1)
+		return
+	}
+	s.acted(ActionModelKeyRemoved, 1)
 }
 
 // acted counts n actions of a kind and logs the kind. Never whose account it
@@ -222,6 +243,7 @@ func (s *Service) deleteAccount(ctx context.Context, by *acting, id string) (*co
 		s.cfg.Log.Info("accounts: account closing")
 		s.notify(ctx, noticeDeletionAsked, deletionAskedMail(doc, s.rp.ID, s.now()))
 	}
+	s.fenceConnections(ctx, doc.ID)
 	return s.record(ctx, doc)
 }
 

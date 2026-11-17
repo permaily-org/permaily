@@ -92,6 +92,9 @@ type AccountsService interface {
 	StartAddressChange(ctx context.Context, who *accounts.Authenticated, in contracts.AddressStart) (*contracts.EmailStarted, error)
 	FinishAddressChange(ctx context.Context, who *accounts.Authenticated, in contracts.AddressFinish) (*contracts.Account, error)
 	AgreeTerms(ctx context.Context, who *accounts.Authenticated, in contracts.TermsAgree) (*contracts.Account, error)
+	// AgreeModelNotice records the agreement to the model's notice in force
+	// (ADR 0028, "Consent"), by the version the person was shown.
+	AgreeModelNotice(ctx context.Context, who *accounts.Authenticated, in contracts.TermsAgree) (*contracts.Account, error)
 
 	ProvidersOn(ctx context.Context) (*contracts.ProvidersOn, error)
 	StartProvider(ctx context.Context, who *accounts.Authenticated, in contracts.ProviderStart) (*contracts.ProviderStarted, string, error)
@@ -447,6 +450,17 @@ func AccountsAPI(svc AccountsService, log *slog.Logger) http.Handler {
 			return
 		}
 		out, err := svc.AgreeTerms(r.Context(), who, in)
+		answer(w, r, out, err)
+	}))
+	// Agreeing to the model's notice in force (ADR 0028, "Consent"), by the
+	// version the person was shown: what asking the model about their mail
+	// needs (model_notice_needed until then).
+	mux.HandleFunc("POST /api/v1/account/model-notice", signedIn(func(w http.ResponseWriter, r *http.Request, who *accounts.Authenticated) {
+		var in contracts.TermsAgree
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := svc.AgreeModelNotice(r.Context(), who, in)
 		answer(w, r, out, err)
 	}))
 	// Changing the contact address: a code goes to the new one, and proves it.

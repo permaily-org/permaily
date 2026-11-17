@@ -20,6 +20,13 @@
 // TLS, the DNS must point senders at it, and the MX on port 25 must answer
 // STARTTLS with the attested key.
 //
+// When the enclave asks a model (ADR 0028), it prints which one, at which
+// address, for which OpenAI organisation and project, with which limits, and
+// what its canary found; it fails when the provider's prompt cache is not
+// off, and warns when the canary is not "same" or its baseline is not the
+// canary.json of the commit the enclave runs (-canary, or GitHub at that
+// commit), or when the organisation or the project is not pinned.
+//
 // And it looks for certificates the enclave does not hold: the CAA records
 // must let only the enclave's ACME account issue for its hosts and forbid
 // wildcards for the domain, and Certificate Transparency must show no
@@ -101,6 +108,15 @@ type hostResult struct {
 	// through it: reported as it is, and checked against nothing. Nil when
 	// the image is older or has no accounts.
 	Admin *attestation.AdminStatus `json:"admin,omitempty"`
+	// Model is what the enclave reports of the model it asks (ADR 0028),
+	// after it passed checkModel, with what the verifier warns of; nil when
+	// the image is older or asks no model.
+	Model *modelResult `json:"model,omitempty"`
+	// Connections is what the enclave reports of the authorization server,
+	// the default rule and the record of what left (ADR 0030), after it
+	// passed checkConnections, with what the verifier warns of; nil when the
+	// image is older or has no connections.
+	Connections *connectionsResult `json:"connections,omitempty"`
 }
 
 // rootResult is what the verified enclave reported about the KMS key that
@@ -198,55 +214,68 @@ type kmsResult struct {
 	Gaps []attestation.KMSGap `json:"gaps,omitempty"`
 }
 
-func main() {
+func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, nil)) }
+
+// run is the command: it parses args, checks what they ask and returns the
+// exit status. nsmRoot is the root an attestation must chain to; nil is
+// AWS's, and only tests give another, for a played enclave.
+func run(args []string, stdout, stderr io.Writer, nsmRoot *x509.Certificate) int {
+	fs := flag.NewFlagSet("permaily-verify", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	var (
-		pcrsFile = flag.String("pcrs", "", "pcrs.json from your own reproducible build (recommended)")
-		release  = flag.String("release", "", "use pcrs.json published in this GitHub release instead of a local build (weaker: trusts CI)")
-		domain   = flag.String("domain", "permaily.com", "parent domain; checks app., api., mcp., inbox. and mta-sts.inbox., and the mail transport, when no URLs are given")
-		asJSON   = flag.Bool("json", false, "print machine-readable JSON")
-		timeout  = flag.Duration("timeout", 30*time.Second, "per-host timeout")
-		caFile   = flag.String("ca-file", "", "extra PEM root CAs to trust for TLS (e.g. Let's Encrypt staging roots for test deployments)")
-		kmsAllow = flag.String("kms-also-allow", "", "comma-separated PCR0 values of other images you accept in the KMS key policy (e.g. the previous release during an upgrade)")
-		skipKMS  = flag.Bool("skip-kms-policy", false, "do not check the KMS key policy (releases before v0.3.0 do not report it)")
-		skipMail = flag.Bool("skip-mail", false, "do not check how mail gets in (MTA-STS, DNS and SMTP on port 25)")
-		needSMTP = flag.Bool("require-smtp", false, "fail when port 25 cannot be reached from this network, instead of warning")
-		skipCert = flag.Bool("skip-certificates", false, "do not check CAA records and Certificate Transparency (releases before v0.4.0 do not report their TLS key)")
-		resolver = flag.String("doh-resolver", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS resolver (JSON API) for CAA records")
-		ctAPI    = flag.String("ct-api", "https://api.certspotter.com/v1/issuances", "Certificate Transparency search API (Cert Spotter compatible)")
+		pcrsFile = fs.String("pcrs", "", "pcrs.json from your own reproducible build (recommended)")
+		release  = fs.String("release", "", "use pcrs.json published in this GitHub release instead of a local build (weaker: trusts CI)")
+		domain   = fs.String("domain", "permaily.com", "parent domain; checks app., api., mcp., inbox. and mta-sts.inbox., and the mail transport, when no URLs are given")
+		asJSON   = fs.Bool("json", false, "print machine-readable JSON")
+		timeout  = fs.Duration("timeout", 30*time.Second, "per-host timeout")
+		caFile   = fs.String("ca-file", "", "extra PEM root CAs to trust for TLS (e.g. Let's Encrypt staging roots for test deployments)")
+		kmsAllow = fs.String("kms-also-allow", "", "comma-separated PCR0 values of other images you accept in the KMS key policy (e.g. the previous release during an upgrade)")
+		skipKMS  = fs.Bool("skip-kms-policy", false, "do not check the KMS key policy (releases before v0.3.0 do not report it)")
+		skipMail = fs.Bool("skip-mail", false, "do not check how mail gets in (MTA-STS, DNS and SMTP on port 25)")
+		needSMTP = fs.Bool("require-smtp", false, "fail when port 25 cannot be reached from this network, instead of warning")
+		skipCert = fs.Bool("skip-certificates", false, "do not check CAA records and Certificate Transparency (releases before v0.4.0 do not report their TLS key)")
+		resolver = fs.String("doh-resolver", "https://cloudflare-dns.com/dns-query", "DNS-over-HTTPS resolver (JSON API) for CAA records")
+		ctAPI    = fs.String("ct-api", "https://api.certspotter.com/v1/issuances", "Certificate Transparency search API (Cert Spotter compatible)")
+		canary   = fs.String("canary", "", "internal/decide/canary.json of the commit the enclave runs, from your checkout (default: read from GitHub at that commit)")
 	)
-	prov := provenanceFlags(flag.CommandLine)
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "usage: permaily-verify (-pcrs FILE | -release TAG) [flags] [https://host ...]\n       permaily-verify -provenance BUNDLE -pcrs FILE [-release-... flags]\n       permaily-verify -trust-update DIR\n")
-		flag.PrintDefaults()
+	prov := provenanceFlags(fs)
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "usage: permaily-verify (-pcrs FILE | -release TAG) [flags] [https://host ...]\n       permaily-verify -provenance BUNDLE -pcrs FILE [-release-... flags]\n       permaily-verify -trust-update DIR\n")
+		fs.PrintDefaults()
 	}
-	flag.Parse()
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0 // -h and --help, as flag.ExitOnError did
+		}
+		return 2
+	}
 
 	if prov.bundle != "" {
-		if !checkProvenance(os.Stdout, prov, *pcrsFile, *asJSON) {
-			os.Exit(1)
+		if !checkProvenance(stdout, prov, *pcrsFile, *asJSON) {
+			return 1
 		}
-		return
+		return 0
 	}
 	// Sigstore's trust root as compiled into this binary: what an enclave of the
 	// same release starts with.
 	trust, err := provenance.PublicGood()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(2)
+		fmt.Fprintln(stderr, "error:", err)
+		return 2
 	}
 	if prov.trustUpdate != "" {
-		if !checkTrustUpdate(os.Stdout, trust, prov.trustUpdate, time.Now(), *asJSON) {
-			os.Exit(1)
+		if !checkTrustUpdate(stdout, trust, prov.trustUpdate, time.Now(), *asJSON) {
+			return 1
 		}
-		return
+		return 0
 	}
 
 	expected, source, err := loadPCRs(*pcrsFile, *release)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(2)
+		fmt.Fprintln(stderr, "error:", err)
+		return 2
 	}
-	urls := flag.Args()
+	urls := fs.Args()
 	wholeDomain := len(urls) == 0
 	if wholeDomain {
 		for _, sub := range []string{"app", "api", "mcp", "inbox", "mta-sts.inbox"} {
@@ -256,14 +285,17 @@ func main() {
 
 	client, roots, err := httpClient(*caFile, *timeout)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(2)
+		fmt.Fprintln(stderr, "error:", err)
+		return 2
 	}
 	results := make([]hostResult, 0, len(urls))
 	allOK := true
 	for _, u := range urls {
 		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-		r := verify(ctx, client, u, expected, kmsOptions{skip: *skipKMS, noStatus: *skipKMS && *skipCert, alsoAllow: splitList(*kmsAllow), now: time.Now(), trust: trust})
+		r := verify(ctx, client, u, expected, kmsOptions{
+			skip: *skipKMS, alsoAllow: splitList(*kmsAllow), now: time.Now(), trust: trust,
+			canary: canaryOf(&http.Client{Timeout: *timeout}, *canary), root: nsmRoot,
+		})
 		cancel()
 		allOK = allOK && r.OK
 		results = append(results, r)
@@ -295,31 +327,44 @@ func main() {
 	}
 
 	if *asJSON {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(map[string]any{"ok": allOK, "expected_pcrs_source": source, "expected_pcrs": hexPCRs(expected), "hosts": results, "mail": mail, "certificates": certs})
 	} else {
-		printHuman(os.Stdout, source, expected, results)
-		printMail(os.Stdout, mail)
-		printCertificates(os.Stdout, certs)
+		printHuman(stdout, source, expected, results)
+		printMail(stdout, mail)
+		printCertificates(stdout, certs)
 	}
 	if !allOK {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 type kmsOptions struct {
-	skip      bool // do not check the KMS key policy
-	noStatus  bool // do not read /status at all
+	// skip does not check the KMS key policy, nor what an image reports on
+	// /status besides its TLS key and its model, and accepts an image
+	// without /status. /status is always read: what the model is sent is
+	// checked whatever is skipped (ADR 0028).
+	skip      bool
 	alsoAllow []string
 	now       time.Time
 	// trust is Sigstore's trust root compiled into this binary, which the one
 	// the enclave reports is compared with; nil skips that.
 	trust *provenance.TrustRoot
+	// canary returns the SHA-256 of the canary.json of the commit the
+	// enclave runs (canaryOf), read only when the enclave reports a model;
+	// nil compares nothing. expectedCanary and canaryErr are what it
+	// returned for the host being checked.
+	canary         func(ctx context.Context, commit string) (string, error)
+	expectedCanary string
+	canaryErr      error
+	// root is the root an attestation must chain to; nil is AWS's.
+	root *x509.Certificate
 }
 
 func verify(ctx context.Context, client *http.Client, url string, expected map[uint][]byte, kms kmsOptions) hostResult {
-	res, err := attestation.VerifyRemote(ctx, client, url, attestation.Options{ExpectedPCRs: expected})
+	res, err := attestation.VerifyRemote(ctx, client, url, attestation.Options{ExpectedPCRs: expected, Root: kms.root})
 	if err != nil {
 		return hostResult{URL: url, Error: err.Error()}
 	}
@@ -335,10 +380,6 @@ func verify(ctx context.Context, client *http.Client, url string, expected map[u
 	if kms.skip {
 		r.KMSSkipped = "not checked (-skip-kms-policy)"
 	}
-	if kms.noStatus {
-		r.OK = true
-		return r
-	}
 	st, err := attestation.FetchStatus(ctx, client, url, res.SPKIHash)
 	if err != nil {
 		if kms.skip && strings.Contains(err.Error(), "HTTP 404") {
@@ -350,6 +391,9 @@ func verify(ctx context.Context, client *http.Client, url string, expected map[u
 			r.Error += " (this image does not report it; releases before v0.3.0 need -skip-kms-policy)"
 		}
 		return r
+	}
+	if st.Model != nil && kms.canary != nil {
+		kms.expectedCanary, kms.canaryErr = kms.canary(ctx, r.Commit)
 	}
 	return checkStatus(st, r, hex.EncodeToString(expected[0]), kms)
 }
@@ -366,6 +410,22 @@ func checkStatus(st *attestation.Status, r hostResult, pcr0 string, kms kmsOptio
 			return r
 		}
 		r.TLS = st.TLS
+	}
+	if st.Model != nil {
+		if r.Model, err = checkModel(st.Model, kms.expectedCanary, kms.canaryErr); err != nil {
+			r.Model = nil
+			r.Error = "model: " + err.Error()
+			return r
+		}
+	}
+	if st.Connections != nil {
+		// What connections may get is checked whatever is skipped, as the
+		// model's is.
+		if r.Connections, err = checkConnections(st.Connections, deploymentOf(r.URL)); err != nil {
+			r.Connections = nil
+			r.Error = "connections: " + err.Error()
+			return r
+		}
 	}
 	if kms.skip {
 		r.OK = true
@@ -861,6 +921,8 @@ func printHuman(w io.Writer, source string, expected map[uint][]byte, results []
 		printAnchors(w, r.Anchors, time.Now())
 		printSentMail(w, r.SentMail)
 		printAdmin(w, r.Admin)
+		printModel(w, r.Model)
+		printConnections(w, r.Connections)
 		if r.TLS != nil && r.TLS.Sealed {
 			fmt.Fprintf(w, "      TLS key created %s, kept sealed with KMS across restarts\n", r.TLS.KeyCreatedAt.UTC().Format(time.RFC3339))
 		}

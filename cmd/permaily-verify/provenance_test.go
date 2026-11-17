@@ -169,6 +169,43 @@ func TestCheckSigstore(t *testing.T) {
 	}
 }
 
+// The verifier that checks an enclave must be built from the source of the
+// release it runs (scripts/attested.sh builds the one of PERMAILY_RELEASE):
+// one built from a later source, with a later trust root compiled in, takes
+// the older release's trust root for a mismatch, before and after the
+// enclave was given that later one in place.
+func TestTheVerifierMustBeTheRunningRelease(t *testing.T) {
+	read := func(name string) []byte {
+		b, err := os.ReadFile(fixtures + "tuf/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	older, err := provenance.FromTUF(read("12.root.json"), read("12.targets.json"), read("trusted_root.12.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	later, err := provenance.PublicGood()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if later.Publication.TargetsVersion <= older.Publication.TargetsVersion {
+		t.Fatalf("the compiled trust root, TUF targets %d, is not later than the fixture's %d", later.Publication.TargetsVersion, older.Publication.TargetsVersion)
+	}
+	o, l := older.Publication, later.Publication
+	compiledIn := &attestation.SigstoreStatus{TrustedRootSHA256: o.SHA256, TUFRootVersion: o.RootVersion, TUFTargetsVersion: o.TargetsVersion}
+	updated := &attestation.SigstoreStatus{TrustedRootSHA256: l.SHA256, TUFRootVersion: l.RootVersion, TUFTargetsVersion: l.TargetsVersion, UpdatedAt: time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)}
+	for name, st := range map[string]*attestation.SigstoreStatus{"with its own trust root": compiledIn, "after the later one was given to it": updated} {
+		if err := checkSigstore(st, older); err != nil {
+			t.Errorf("%s: the running release's verifier refused it: %v", name, err)
+		}
+		if err := checkSigstore(st, later); err == nil {
+			t.Errorf("%s: a later release's verifier took it, and the scripts would not need the running one's", name)
+		}
+	}
+}
+
 // The directory scripts/sigstore-trust-root.sh fetches, checked the way an
 // enclave decides.
 func TestTrustUpdate(t *testing.T) {

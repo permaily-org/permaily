@@ -1,0 +1,9 @@
+Subject: Permaily: the model's canary saw an answer move
+
+The daily canary saw an answer of the model move from what was measured for the prompt version in force, or another model answer.
+
+    Day (UTC): 2026-11-16
+
+The service goes on, and answers already kept do not change. Run the eval on the whole corpus: if the thresholds still hold, a release takes the new answers as the canary's; if not, a release with a new prompt version, or without the model, follows.
+
+This message is sent by the enclave. It holds no amount tied to an account and nothing of anyone's mail.

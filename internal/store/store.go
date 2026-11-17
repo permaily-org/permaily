@@ -5,19 +5,18 @@ package store
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"time"
 )
 
 // ErrNotFound is returned when a mailbox, message or record does not exist (or has expired).
-var ErrNotFound = errors.New("store: not found")
+var ErrNotFound error = &kind{msg: "store: not found"}
 
 // ErrExists is returned by PutRecord when the record must be new and is not.
-var ErrExists = errors.New("store: already exists")
+var ErrExists error = &kind{msg: "store: already exists"}
 
 // ErrConflict is returned by PutEntry when the entry changed since it was read.
-var ErrConflict = errors.New("store: changed since it was read")
+var ErrConflict error = &kind{msg: "store: changed since it was read"}
 
 // RetentionDays are the supported retention periods. S3 has one lifecycle rule
 // per value, so a message is deleted after its mailbox's period at the time it

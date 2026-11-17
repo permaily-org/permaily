@@ -105,6 +105,43 @@ func TestStatus(t *testing.T) {
 		}
 	})
 
+	t.Run("the model", func(t *testing.T) {
+		model := &attestation.ModelStatus{Provider: "openai", PromptCache: "off", Guard: attestation.ModelGuardOK, Calls: map[string]int{attestation.ModelCallAnswered: 0}}
+		var asked context.Context
+		rec := call(httpapi.Status(httpapi.StatusSources{Model: func(ctx context.Context) *attestation.ModelStatus { asked = ctx; return model }}), http.MethodGet)
+		var got attestation.Status
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || !reflect.DeepEqual(got.Model, model) || asked == nil {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body)
+		}
+		// An image that asks no model has no section, not an empty one.
+		for name, src := range map[string]httpapi.StatusSources{
+			"no source":      {},
+			"nothing to say": {Model: func(context.Context) *attestation.ModelStatus { return nil }},
+		} {
+			if rec := call(httpapi.Status(src), http.MethodGet); rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"model"`) {
+				t.Fatalf("%s: status %d: %s", name, rec.Code, rec.Body)
+			}
+		}
+	})
+
+	t.Run("the connections", func(t *testing.T) {
+		conns := &attestation.ConnectionsStatus{Issuer: "https://api.permaily.test", ClientDocuments: true, CodeReuse: "denied", Refused: map[string]int64{"invalid_token": 2}}
+		rec := call(httpapi.Status(httpapi.StatusSources{Connections: func() *attestation.ConnectionsStatus { return conns }}), http.MethodGet)
+		var got attestation.Status
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || !reflect.DeepEqual(got.Connections, conns) {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body)
+		}
+		// An image without connections has no section, not an empty one.
+		for name, src := range map[string]httpapi.StatusSources{
+			"no source":      {},
+			"nothing to say": {Connections: func() *attestation.ConnectionsStatus { return nil }},
+		} {
+			if rec := call(httpapi.Status(src), http.MethodGet); rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"connections"`) {
+				t.Fatalf("%s: status %d: %s", name, rec.Code, rec.Body)
+			}
+		}
+	})
+
 	t.Run("other methods", func(t *testing.T) {
 		if rec := call(httpapi.Status(httpapi.StatusSources{}), http.MethodPost); rec.Code != http.StatusMethodNotAllowed {
 			t.Fatalf("status %d", rec.Code)

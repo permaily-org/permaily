@@ -18,7 +18,7 @@ const processors = [
     name: 'Cloudflare',
     where: 'Worldwide',
     what: 'DNS for permaily.com, and the DNS lookups the service makes to check where a message came from.',
-    data: 'Host names, and, once mailboxes open, the domains of the senders of mail you receive. Never mail.',
+    data: 'Host names, and the domains of the senders of mail you receive. Never mail.',
     since: 'In use',
   },
   {
@@ -31,9 +31,9 @@ const processors = [
   {
     name: 'OpenAI',
     where: 'United States',
-    what: 'Deciding whether text is about a topic, for rules and requests that depend on meaning, and turning a rule written in plain words into conditions.',
-    data: 'The subject, the body text or sentences of a message, only when exact conditions can’t settle it and you turned such a rule or request on; the text of a rule. OpenAI doesn’t train on it. Until it approves zero data retention for us, which we’ll ask for, its abuse-monitoring logs may hold that text for up to 30 days, and it may keep flagged text and a sample of requests for automated safety review, for a time its page doesn’t state.',
-    since: 'Planned, not used yet',
+    what: 'Deciding whether text is about a topic, when exact conditions can’t settle a condition that depends on meaning: in a preview you ask for, in a connection’s request, and for the rule that holds back sign-in mail from connections. Planned, not used yet: turning a rule written in plain words into conditions, and removing what talks about a topic.',
+    data: 'The topic, and the subject of a message, or its subject and text (up to 256 KiB), only after you agreed to the model’s notice. We do not add sender or recipient header fields, account identifiers or attachment files to the model request. The topic, subject and message text are not anonymised or redacted: they may themselves contain names, email addresses, sign-in information, information about children or other sensitive information. OpenAI receives that content even if the decision is to hold the message back from the app or agent. OpenAI doesn’t train on it. We asked it for zero data retention on 15 November 2026, and it hasn’t approved it yet: until it does, its abuse-monitoring logs may hold that text for up to 30 days, and it may keep flagged text and a sample of requests for automated safety review, for a time its page doesn’t state.',
+    since: 'In use',
   },
 ];
 
@@ -45,12 +45,12 @@ const chosen = [
   },
   {
     name: 'Your mail provider',
-    what: 'Will forward your mail to us, once mailboxes open.',
+    what: 'Forwards your mail to us, if you set it to.',
     data: 'It already holds your mail; it learns your Permaily forwarding address.',
   },
   {
     name: 'Apps and agents you connect',
-    what: 'Will receive what you approve, once connections open.',
+    what: 'Receive what you approve.',
     data: 'Only the part of your mail you approved, under their own policies.',
   },
 ];

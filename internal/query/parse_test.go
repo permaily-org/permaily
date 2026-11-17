@@ -201,6 +201,10 @@ func TestQ3Strictness(t *testing.T) {
 		{"a member twice", `{"v":1,"v":2,"all":[]}`, "v", contracts.FormulaDuplicateField},
 		{"a member twice, spelled with an escape", `{"v":1,"v":1,"all":[]}`, "v", contracts.FormulaDuplicateField},
 		{"all twice", `{"v":1,"all":[],"all":[]}`, "all", contracts.FormulaDuplicateField},
+		// encoding/json reads a name in any case; a name is matched exactly, so
+		// one in another case is not one of the formula's.
+		{"a member twice in another case", `{"v":1,"V":2,"all":[]}`, "", contracts.FormulaUnknownField},
+		{"a member of a condition twice in another case", `{"v":1,"all":[{"any":[{"var":"subject","VAR":"body","op":"contains","value":"x"}]}]}`, "all[0].any[0]", contracts.FormulaUnknownField},
 		{"any twice", `{"v":1,"all":[{"any":[{"var":"subject","op":"contains","value":"x"}],"any":[]}]}`, "all[0].any", contracts.FormulaDuplicateField},
 		{"an unknown member", `{"v":1,"all":[],"x":1}`, "", contracts.FormulaUnknownField},
 		{"an unknown member of a group", `{"v":1,"all":[{"any":[],"x":1}]}`, "all[0].any", contracts.FormulaEmptyGroup},

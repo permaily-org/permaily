@@ -40,6 +40,12 @@ func TestPrintAdmin(t *testing.T) {
 	if !strings.Contains(out.String(), "since 2026-11-11T08:00:00Z: paused a mailbox 2 times; resumed a mailbox 1 time\n") {
 		t.Fatalf("mailboxes:\n%s", out.String())
 	}
+	// The model's key set and removed (ADR 0028): by kind, never the key.
+	out.Reset()
+	printAdmin(&out, &attestation.AdminStatus{Since: at, Actions: map[string]int{attestation.AdminModelKeySet: 2, attestation.AdminModelKeyRemoved: 1}})
+	if !strings.Contains(out.String(), "since 2026-11-11T08:00:00Z: set the model's key 2 times; removed the model's key 1 time\n") {
+		t.Fatalf("the model's key:\n%s", out.String())
+	}
 	// Every kind has its words.
 	out.Reset()
 	all := map[string]int{}

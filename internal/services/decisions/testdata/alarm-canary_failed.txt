@@ -1,0 +1,9 @@
+Subject: Permaily: no canary check completed for two days
+
+No check of the model's daily canary completed for two days (UTC).
+
+    Day (UTC): 2026-11-16
+
+Without a check, a change of the model under its name would not be seen. Look at the enclaves' logs for the canary's failures, and at the guard on /status.
+
+This message is sent by the enclave. It holds no amount tied to an account and nothing of anyone's mail.

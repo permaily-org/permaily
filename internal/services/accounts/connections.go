@@ -1,0 +1,120 @@
+package accounts
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/services/connections"
+	"github.com/permaily-org/permaily/internal/services/receipts"
+	"github.com/permaily-org/permaily/internal/store"
+)
+
+// What accounts does of the connections service (ADR 0030, "Revocation and
+// two enclaves", finding 6; the receipts' partition, ADR 0031): an account
+// being deleted has its list of connections fenced and every connection
+// ended, when the deletion is asked and again on every pass while it is
+// closing; a cancelled deletion is done only once Reopen has ended what of
+// them was still active; the removal ends them once more, and deletes the
+// account's receipts, then again receipts.RemoveAgainAfter later, for a
+// receipt whose write began before the removal and ended after it.
+
+type connectionsHolder struct{ c connections.Lifecycle }
+
+// SetConnections gives the service the connections of accounts, once, before
+// it serves: the connections service is made with this one as its accounts,
+// so Config.Connections cannot hold it when this one is made.
+func (s *Service) SetConnections(c connections.Lifecycle) {
+	s.connections.Store(&connectionsHolder{c: c})
+}
+
+// connectionsOf is what SetConnections gave, else Config.Connections; nil
+// for none.
+func (s *Service) connectionsOf() connections.Lifecycle {
+	if h := s.connections.Load(); h != nil {
+		return h.c
+	}
+	return s.cfg.Connections
+}
+
+// fenceConnections fences and ends an account's connections when its
+// deletion is asked. A failure is logged by its kind: the deletion stands,
+// the account's tokens are refused while it is closing whatever the list
+// says (its standing), and the next pass over the closing accounts tries
+// again.
+func (s *Service) fenceConnections(ctx context.Context, id string) {
+	c := s.connectionsOf()
+	if c == nil {
+		return
+	}
+	if err := c.EndAll(ctx, id); err != nil {
+		s.cfg.Log.Warn("accounts: the connections of a closing account are not all ended yet", "err", scrub(err))
+	}
+}
+
+// fenceClosing fences again the connections of an account the list of
+// closing accounts names under entry, if its record bears it out.
+func (s *Service) fenceClosing(ctx context.Context, id, entry string) error {
+	doc, err := s.read(ctx, id)
+	if err != nil || doc == nil || doc.State != contracts.AccountClosing || closingKey(doc) != entry {
+		return err
+	}
+	return s.connectionsOf().EndAll(ctx, id)
+}
+
+// reopenConnections is what a cancellation does first.
+func (s *Service) reopenConnections(ctx context.Context, id string) error {
+	if c := s.connectionsOf(); c != nil {
+		return c.Reopen(ctx, id)
+	}
+	return nil
+}
+
+// receiptsAgainPartition lists the accounts whose receipts are deleted once
+// more, by when.
+const receiptsAgainPartition = "receipts-again"
+
+// removeReceipts deletes an account's receipts, having first listed it to
+// delete them again receipts.RemoveAgainAfter from now.
+func (s *Service) removeReceipts(ctx context.Context, id string) error {
+	key := timedKey(s.now().Add(receipts.RemoveAgainAfter), id)
+	if err := s.point(ctx, receiptsAgainPartition, key, id, 0); err != nil && !errors.Is(err, store.ErrExists) {
+		return err
+	}
+	return s.cfg.Entries.DeletePartition(ctx, receipts.Partition(id))
+}
+
+// removeReceiptsAgain deletes the receipts of the accounts whose time has
+// come in the list, then their entries. An entry that is not this
+// deployment's deletes nothing.
+func (s *Service) removeReceiptsAgain(ctx context.Context, key []byte, now time.Time) error {
+	after := ""
+	for range maxClosingPages {
+		entries, err := s.cfg.Entries.ListEntries(ctx, receiptsAgainPartition, "", after, closingPage)
+		if err != nil {
+			return err
+		}
+		for i := range entries {
+			e := &entries[i]
+			after = e.Key
+			day, id, ok := parseTimedKey(e.Key)
+			if !ok || pointed(key, e) != id {
+				continue
+			}
+			if day.After(now) {
+				return nil
+			}
+			if err := s.cfg.Entries.DeletePartition(ctx, receipts.Partition(id)); err != nil {
+				return err
+			}
+			if err := s.forget(ctx, receiptsAgainPartition, e.Key); err != nil {
+				return err
+			}
+		}
+		if len(entries) < closingPage {
+			break
+		}
+	}
+	return nil
+}

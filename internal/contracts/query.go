@@ -138,6 +138,7 @@ const (
 	FormulaConfusableValue    FormulaReason = "confusable_value"     // a word, an address's local part or a domain's label that mixes Latin, Greek and Cyrillic letters
 	FormulaUnknownMailbox     FormulaReason = "unknown_mailbox"      // a mailbox that is not the account's
 	FormulaNeverMatches       FormulaReason = "never_matches"        // a formula that no message can match
+	FormulaPartNotApproved    FormulaReason = "part_not_approved"    // a vendor's search condition on what the request's parts do not give (ADR 0030)
 )
 
 // FormulaCheck is what the system says of a formula it accepted: its
@@ -183,10 +184,17 @@ type SentencePart struct {
 // MatchRequest asks for a page of what a formula matches in one mailbox,
 // newest first, below After (a message identifier; "" for the newest), of at
 // most Limit messages (1 to 100; 50 when 0).
+//
+// AskModel asks the model for the messages whose value depends only on
+// conditions a model decides (ADR 0028): their text goes to the model's
+// provider, so the route refuses it with ErrModelNoticeNeeded to an account
+// that did not agree to the model's notice in force. Without it, those
+// messages are listed in NeedsModel, as before.
 type MatchRequest struct {
-	Formula Formula `json:"formula"`
-	After   string  `json:"after,omitempty"`
-	Limit   int     `json:"limit,omitempty"`
+	Formula  Formula `json:"formula"`
+	After    string  `json:"after,omitempty"`
+	Limit    int     `json:"limit,omitempty"`
+	AskModel bool    `json:"ask_model,omitempty"`
 }
 
 // MatchPage is a page of a formula's matches over stored mail (ADR 0027,
@@ -203,10 +211,33 @@ type MatchRequest struct {
 // the last message the page considered, matched or not, to go on below it;
 // absent when nothing older can match. SearchedTo is when that message
 // arrived.
+//
+// With AskModel (ADR 0028), a message the model answered for is a match,
+// nothing, or Unknown (an answer in the band of doubt, a refusal, a timeout,
+// a failure); NeedsModel then holds only the messages it was not asked about,
+// and Model says why: MatchModelAsked when every message that needed it was
+// asked, MatchModelLimit when the spend guard or the account's share held
+// some back, MatchModelOff when no key is set or the provider refused it.
+// Model is absent without AskModel.
+//
+// Held (ADR 0030, the consent screen's preview with AskModel) lists the
+// messages the formulas match that a rule holds back, the default rule
+// included: they are not in Messages. Absent on every other page.
 type MatchPage struct {
 	Messages   []MessageSummary `json:"messages"`
 	NeedsModel []string         `json:"needs_model"`
 	Unknown    []string         `json:"unknown"`
+	Held       []string         `json:"held,omitempty"`
 	Next       string           `json:"next,omitempty"`
 	SearchedTo time.Time        `json:"searched_to,omitzero"`
+	Model      MatchModel       `json:"model,omitempty"`
 }
+
+// MatchModel says what became of asking the model on a page of matches.
+type MatchModel string
+
+const (
+	MatchModelAsked MatchModel = "asked"
+	MatchModelLimit MatchModel = "limit"
+	MatchModelOff   MatchModel = "off"
+)

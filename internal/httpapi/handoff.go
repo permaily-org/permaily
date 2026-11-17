@@ -61,7 +61,8 @@ func Handoff(hand func(context.Context, keys.Handoff) (*keys.HandoffResult, erro
 		case errors.Is(err, keys.ErrDebugMode), errors.Is(err, keys.ErrAwaitingHandoff), errors.Is(err, keys.ErrRootRecord):
 			writeError(w, http.StatusServiceUnavailable, "no_root_secret", "this enclave holds no root secret to hand over")
 		default:
-			// A failure of KMS or the store, reached through the host: keep the cause in the log.
+			// A failure of KMS or the store, reached through the host: logged by its
+			// kind (domain.Redacted), never its text.
 			log.Error("handoff failed", "err", domain.Redacted(err))
 			writeError(w, http.StatusBadGateway, "failed", "the handoff failed; see the enclave log")
 		}

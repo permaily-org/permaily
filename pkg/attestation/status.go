@@ -47,6 +47,227 @@ type Status struct {
 	// Admin counts what the operator did to accounts through the enclave; nil
 	// in images older than this field or without accounts.
 	Admin *AdminStatus `json:"admin,omitempty"`
+	// Model describes the model the enclave asks about what depends on
+	// meaning (ADR 0028); nil in images older than this field or that ask
+	// none.
+	Model *ModelStatus `json:"model,omitempty"`
+	// Connections describes the authorization server of the API and MCP,
+	// the vendors it marks verified, the rule every connection's reads apply
+	// first and the record of what left (ADR 0030, ADR 0031); nil in images
+	// older than this field or without connections.
+	Connections *ConnectionsStatus `json:"connections,omitempty"`
+}
+
+// ConnectionsStatus is what the enclave reports of connections (ADR 0030,
+// "What /status and permaily-verify show"). Everything but Refused and Since
+// is compiled into the image, so it is what the measured code does. It never
+// holds a token, a code, a client's identifier other than the verified
+// vendors' domains, an account, a connection or a count of either.
+type ConnectionsStatus struct {
+	Issuer                string   `json:"issuer"`
+	AuthorizationEndpoint string   `json:"authorization_endpoint"`
+	TokenEndpoint         string   `json:"token_endpoint"`
+	RevocationEndpoint    string   `json:"revocation_endpoint"`
+	PushedEndpoint        string   `json:"pushed_endpoint"`
+	Resources             []string `json:"resources"`
+	// Grants are the grant types the token endpoint takes; ClientAuth the
+	// ways a client proves itself there ("none", "private_key_jwt").
+	Grants     []string `json:"grants"`
+	ClientAuth []string `json:"client_auth"`
+	// ClientDocuments is true: clients are identified by their metadata
+	// document's URL. DynamicRegistration is false: there is no
+	// registration endpoint. permaily-verify fails on any other value.
+	ClientDocuments     bool `json:"client_documents"`
+	DynamicRegistration bool `json:"dynamic_registration"`
+	// The lifetimes, in seconds, and the connection's default and longest
+	// life, in days; RevocationSeconds is how long another enclave may take
+	// a revoked connection's tokens.
+	// RefreshRetrySeconds is how long a refresh token used again for the
+	// same scope answers the same pair; a code has no such time (CodeReuse
+	// is "denied"). RevocationSeconds bounds when another enclave stops
+	// releasing a revoked connection's mail: no byte of any answer leaves
+	// later (ADR 0030, finding 5, the owner's decision 14).
+	AccessTokenSeconds    int    `json:"access_token_seconds"`
+	RefreshTokenSeconds   int    `json:"refresh_token_seconds"`
+	RefreshRetrySeconds   int    `json:"refresh_retry_seconds"`
+	CodeSeconds           int    `json:"code_seconds"`
+	CodeReuse             string `json:"code_reuse"`
+	RevocationSeconds     int    `json:"revocation_seconds"`
+	ConnectionDefaultDays int    `json:"connection_default_days"`
+	ConnectionMaxDays     int    `json:"connection_max_days"`
+	// RevocationCovers is RevocationEveryByte: the bound holds for every
+	// byte of an answer, an answer already being sent included, which is
+	// cut (the owner's decision 14); permaily-verify fails on any other
+	// value.
+	RevocationCovers string `json:"revocation_covers"`
+	// AssertionReplay is "strict": a client assertion's jti is decided by
+	// a strict anchored record, not a mark (ADR 0030, C1); permaily-verify
+	// fails on any other value.
+	AssertionReplay string `json:"assertion_replay"`
+	// VendorTransport is "h2": vendors' documents and key sets are fetched
+	// over HTTP/2 only (the owner's decision 11).
+	VendorTransport string `json:"vendor_transport"`
+	// DevicesPerConnection bounds a connection's active devices (token
+	// families, the owner's decisions 10 and 13).
+	DevicesPerConnection int `json:"devices_per_connection"`
+	// ModelUnavailable is what connections get while the model cannot be
+	// asked: ModelUnavailableNothingLeaves (the owner's decision 9);
+	// permaily-verify fails on any other value.
+	ModelUnavailable string `json:"model_unavailable"`
+	// Verified is the image's list of verified vendors.
+	Verified []VerifiedVendor `json:"verified"`
+	// Rules are the rules every connection's reads apply first: in step 5
+	// the default rule, with the canonical identifiers of its formulas.
+	Rules []RuleStatus `json:"rules"`
+	// Receipts says how the record of what left is kept: sealed, and, from
+	// step 8, chained with its head anchored.
+	Receipts ReceiptsStatus `json:"receipts"`
+	// Since is when this enclave started counting; Refused counts, by fixed
+	// reason (a key of the image, never one derived from what was sent),
+	// the requests this enclave refused since then (every reason, also at
+	// zero): one enclave's observation, not the deployment's.
+	Since   time.Time        `json:"since"`
+	Refused map[string]int64 `json:"refused"`
+}
+
+// ModelUnavailableNothingLeaves: while the model cannot be asked, no
+// connection is given any mail.
+const ModelUnavailableNothingLeaves = "nothing_leaves"
+
+// RevocationEveryByte: a revocation's bound holds for every byte, not only
+// an answer's first.
+const RevocationEveryByte = "every_byte"
+
+// VerifiedVendor is a domain of the image's list and whose it is.
+type VerifiedVendor struct {
+	Domain string `json:"domain"`
+	Owner  string `json:"owner"`
+}
+
+// RuleStatus is a rule compiled into the image.
+type RuleStatus struct {
+	ID       string   `json:"id"`
+	Version  int      `json:"version"`
+	Formulas []string `json:"formulas"`
+	On       bool     `json:"on"`
+}
+
+// ReceiptsStatus is how receipts are kept, and how the decisions of the
+// rules that protect are (ADR 0031): Decisions is "strict" (strict anchored
+// records, begun before the model is asked, each final one with the
+// evidence it rests on); DecisionsPerDay is the least number of
+// model-decided messages a mailbox's day holds before the rest is held,
+// undecided (the owner's decision 12).
+type ReceiptsStatus struct {
+	Sealed          bool   `json:"sealed"`
+	Chained         bool   `json:"chained"`
+	Decisions       string `json:"decisions"`
+	DecisionsPerDay int    `json:"decisions_per_day"`
+}
+
+// ModelStatus is what the enclave reports of the model it asks (ADR 0028,
+// "What /status and permaily-verify show"). Provider, Endpoint, Model,
+// PromptVersion, the pinned organization and project, the limits and the
+// retention the notice states are compiled into the image, so they are what
+// the measured code does; the rest is this enclave's state since it started.
+// It never holds a key, an amount of money spent, an account, a topic or
+// anything of a message.
+type ModelStatus struct {
+	Provider      string `json:"provider"`       // "openai"
+	Endpoint      string `json:"endpoint"`       // "https://api.openai.com/v1/decisions"
+	Model         string `json:"model"`          // "gpt-6-luna"
+	PromptVersion string `json:"prompt_version"` // "p2-2026-11-15"
+	// PromptCache is "off": every request turns the provider's prompt cache
+	// off, so no copy of the input is kept as cache state.
+	PromptCache  string `json:"prompt_cache"`
+	Organization string `json:"organization,omitempty"`
+	Project      string `json:"project,omitempty"`
+	// ZeroDataRetention is what the image says of the provider's retention,
+	// and so what the notice a person agrees to says: false until the
+	// provider approves zero data retention and a release says so.
+	ZeroDataRetention bool `json:"zero_data_retention"`
+	// The spend guard's limits, in US dollars: the month's stop, the day's
+	// alarm, and one account's share of a day in one enclave.
+	MonthLimitUSD float64 `json:"month_limit_usd"`
+	DayAlarmUSD   float64 `json:"day_alarm_usd"`
+	AccountDayUSD float64 `json:"account_day_usd"`
+	// KeySet says whether the operator gave the enclave a key, and when.
+	KeySet   bool      `json:"key_set"`
+	KeySetAt time.Time `json:"key_set_at,omitzero"`
+	// Guard is ModelGuardOK, or why nothing new is asked.
+	Guard  string         `json:"guard"`
+	Canary *CanaryStatus  `json:"canary,omitempty"`
+	Since  time.Time      `json:"since"`
+	Calls  map[string]int `json:"calls"` // by ModelCall kind, since Since; every kind is there, also at zero
+}
+
+// What the spend guard says (ModelStatus.Guard).
+const (
+	ModelGuardOK            = "ok"
+	ModelGuardMonthLimit    = "month_limit"    // the month's limit is reached: nothing new is asked until the next month (UTC)
+	ModelGuardProviderLimit = "provider_limit" // the provider said its own spend or credit limit is reached
+	ModelGuardKeyRefused    = "key_refused"    // no key is set, or the provider refused it
+	ModelGuardUnreadable    = "unreadable"     // the month's spend record cannot be read (lost, forked, or does not open): nothing new is asked this month
+)
+
+// CanaryStatus is what the daily canary last found: a heuristic sample of
+// fixed synthetic statements, compared with the answers measured for this
+// prompt version (ADR 0028, "The canary"). It says what a check observed,
+// never when the model changed or how it reads other mail.
+type CanaryStatus struct {
+	// Baseline is the hex SHA-256 of the canary compiled into the image
+	// (decide.Canary.Baseline); the state below is for it, this model and
+	// this prompt version, kept apart from any other's.
+	Baseline string `json:"baseline"`
+	// CheckedAt is when the last check completed; zero before one did.
+	CheckedAt time.Time `json:"checked_at,omitzero"`
+	// State is the first that applies of: CanaryUnreadable when the state's
+	// record cannot be read; CanaryStale when no check completed in the
+	// last two days (UTC), counted from the last completed check or, before
+	// one, from when the first enclave of this baseline started;
+	// CanaryChanged when any completed check of this baseline observed a
+	// change (it stays until a release takes new answers as expected, a new
+	// baseline); CanaryFailed when this enclave's latest run did not
+	// complete and no check completed today; CanarySame when the last
+	// completed check found none; CanaryNone before any completed.
+	State string `json:"state"`
+	// ChangeSeenAt is the last day a check observed an answer that moved,
+	// or another model answer; it never goes back.
+	ChangeSeenAt time.Time `json:"change_seen_at,omitzero"`
+}
+
+// What the canary found (CanaryStatus.State).
+const (
+	CanaryNone       = "none"
+	CanarySame       = "same"
+	CanaryChanged    = "changed"
+	CanaryFailed     = "failed"
+	CanaryStale      = "stale"
+	CanaryUnreadable = "unreadable"
+)
+
+// The kinds of calls the enclave counts (ModelStatus.Calls). A later image
+// may count kinds that are not here.
+const (
+	ModelCallAnswered    = "answered"    // a 200 that checked
+	ModelCallKept        = "kept"        // an atom answered from what was kept, with no call
+	ModelCallRefusal     = "refusal"     // a statement the model refused
+	ModelCallTimeout     = "timeout"     // no answer within the deadline, retries included
+	ModelCallUnavailable = "unavailable" // 5xx or 429 slow_down after the retries
+	ModelCallKeyRefused  = "key_refused" // 401 or 403
+	ModelCallLimit       = "limit"       // the provider's spend or credit limit
+	ModelCallRequest     = "request"     // 400, 404, 422 or a redirect, never followed: the enclave's own mistake
+	ModelCallInvalid     = "invalid"     // a 200 that did not read as an answer to the call
+	ModelCallOtherModel  = "other_model" // a 200 that named another model: none of its answers is used
+	ModelCallHeld        = "held"        // not asked: the guard or the account's share held it
+	ModelCallCanary      = "canary"      // a call of the canary
+)
+
+// ModelCalls lists the kinds this package knows, in the order they are shown.
+var ModelCalls = []string{
+	ModelCallAnswered, ModelCallKept, ModelCallRefusal, ModelCallTimeout, ModelCallUnavailable,
+	ModelCallKeyRefused, ModelCallLimit, ModelCallRequest, ModelCallInvalid, ModelCallOtherModel, ModelCallHeld,
+	ModelCallCanary,
 }
 
 // AdminStatus is what the enclave reports of what its operator did to
@@ -99,6 +320,12 @@ const (
 	// which mailbox: the operator cannot read, disconnect or delete one.
 	AdminMailboxPaused  = "mailbox_paused"
 	AdminMailboxResumed = "mailbox_resumed"
+	// AdminModelKeySet and AdminModelKeyRemoved: the model's API key was
+	// given to the enclave, or taken away (ADR 0028). Each counts the
+	// operator's requests that succeeded, not changes of the key: a removal
+	// when none was set counts, as a key set again does. Never the key.
+	AdminModelKeySet     = "model_key_set"
+	AdminModelKeyRemoved = "model_key_removed"
 )
 
 // AdminActions lists the kinds this package knows, in the order they are shown.
@@ -106,6 +333,7 @@ var AdminActions = []string{
 	AdminBlock, AdminUnblock, AdminDelete, AdminDeleteCancel, AdminSessionsClose,
 	AdminInvitationsMade, AdminInvitationRevoked, AdminProviderAppSet, AdminProviderAppRemoved,
 	AdminMade, AdminRemoved, AdminMailboxPaused, AdminMailboxResumed,
+	AdminModelKeySet, AdminModelKeyRemoved,
 }
 
 // What SES says about an identity, a domain or an address mail is sent from

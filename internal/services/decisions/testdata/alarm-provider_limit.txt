@@ -1,0 +1,9 @@
+Subject: Permaily: OpenAI's limit was reached
+
+OpenAI answered that a spend, credit or usage limit of the project was reached. Nothing new is asked of the model.
+
+    Day (UTC): 2026-11-16
+
+The enclave tries one call every ten minutes and asks again once one is answered. Look at the OpenAI project's limits and billing.
+
+This message is sent by the enclave. It holds no amount tied to an account and nothing of anyone's mail.
