@@ -21,17 +21,26 @@ esac
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# check TAG [flags]: runs that release's verifier against production.
+# check TAG [flags]: runs that release's verifier against production, once
+# both of its files verify against their provenance. It is called as the test
+# of an `if`, where bash ignores `set -e` inside it: every step returns on its
+# own failure, so a verifier whose provenance does not verify never runs.
 check() {
   local tag=$1; shift
-  local dir=$work/$tag verifier=permaily-verify-linux-$arch
-  mkdir -p "$dir"
-  gh release download "$tag" --repo "$repo" --dir "$dir" --pattern pcrs.json --pattern "$verifier"
+  local dir=$work/$tag verifier=permaily-verify-linux-$arch f
+  mkdir -p "$dir" || return 1
+  gh release download "$tag" --repo "$repo" --dir "$dir" --pattern pcrs.json --pattern "$verifier" || {
+    echo "could not download $tag's pcrs.json and $verifier" >&2
+    return 1
+  }
   for f in pcrs.json "$verifier"; do
     gh attestation verify "$dir/$f" --repo "$repo" \
-      --signer-workflow "$repo/.github/workflows/release.yml" --source-ref refs/heads/main >/dev/null
+      --signer-workflow "$repo/.github/workflows/release.yml" --source-ref refs/heads/main >/dev/null || {
+      echo "the provenance of $tag's $f does not verify: not running it" >&2
+      return 1
+    }
   done
-  chmod +x "$dir/$verifier"
+  chmod +x "$dir/$verifier" || return 1
   echo "== permaily-verify $tag =="
   "$dir/$verifier" -pcrs "$dir/pcrs.json" "$@"
 }

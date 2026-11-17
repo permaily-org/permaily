@@ -29,6 +29,7 @@ make check                  # every gate; must pass before a change is done
 make fuzz                   # every fuzz target with CI's executions (scripts/fuzz.sh; CI runs one group a leg)
 nix build .#eif             # enclave image + pcrs.json (x86_64 or arm64 Linux)
 scripts/release-image.sh <tag> <dir>  # build a release's image (releases do not publish it) and check it against its attested pcrs.json
+scripts/drift-image.sh      # build and push the hourly drift check's image (docs/operations.md, "The drift check")
 bun run format              # Biome, whole repo
 cd packages/mail && bun run build  # write the mail's templates into internal/domain/mail/templates (bun run dev previews every message)
 ```
