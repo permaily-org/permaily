@@ -1,6 +1,7 @@
 package receipts
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -77,7 +78,8 @@ var ErrUnreadable = errors.New("receipts: a stored receipt does not open")
 // a new entry before Write returns. A document past MaxDocumentBytes is
 // ErrTooLarge and nothing is stored; an error of the storage, or ctx ending
 // first, is returned and the caller gives nothing of its request. r's V, ID
-// and At are set only when it is stored.
+// and At are set only when it is stored. A receipt that comes with its
+// identity (NewID, and its At) is stored under it, once: see writeAs.
 func (s *Service) Write(ctx context.Context, account string, r *Receipt) error {
 	if account == "" || r == nil {
 		return errors.New("receipts: a receipt needs an account")
@@ -86,6 +88,9 @@ func (s *Service) Write(ctx context.Context, account string, r *Receipt) error {
 		return err
 	}
 	partition := Partition(account)
+	if r.ID != "" {
+		return s.writeAs(ctx, partition, r)
+	}
 	var key []byte
 	for range writeTries {
 		at := s.now().UTC()
@@ -122,6 +127,67 @@ func (s *Service) Write(ctx context.Context, account string, r *Receipt) error {
 		return nil
 	}
 	return errors.New("receipts: no identifier was free")
+}
+
+// writeAs stores r under the identity it comes with, so a write whose
+// outcome was not known (the storage's answer lost, ctx ending while it was
+// under way) is made again as the same receipt and stored once (ADR 0031,
+// "Refusals past a window's bound"): when the entry is already there, it is
+// this receipt if it opens to the very document, and Write succeeds;
+// anything else there is ErrIdentityTaken, and nothing is stored.
+func (s *Service) writeAs(ctx context.Context, partition string, r *Receipt) error {
+	if !ValidID(r.ID) || r.At.IsZero() {
+		return errors.New("receipts: a receipt's own identity needs its identifier and its time")
+	}
+	doc := *r
+	doc.V, doc.At = Version, r.At.UTC()
+	raw, err := json.Marshal(&doc)
+	if err != nil {
+		return fmt.Errorf("receipts: %w", err)
+	}
+	if len(raw) > MaxDocumentBytes {
+		return ErrTooLarge
+	}
+	key, err := s.keys.Derive(ctx, Purpose)
+	if err != nil {
+		return fmt.Errorf("receipts: the key: %w", err)
+	}
+	sealed, err := envelope.SealText(key, raw, aad(partition, doc.ID))
+	if err != nil {
+		return fmt.Errorf("receipts: %w", err)
+	}
+	e := &store.Entry{Partition: partition, Key: doc.ID, Value: sealed, UpdatedAt: doc.At}
+	switch err := s.entries.PutEntry(ctx, e); {
+	case errors.Is(err, store.ErrExists):
+		got, gerr := s.entries.GetEntry(ctx, partition, doc.ID)
+		if gerr != nil {
+			return fmt.Errorf("receipts: write: %w", gerr)
+		}
+		stored, oerr := envelope.OpenText(key, got.Value, aad(partition, doc.ID))
+		if oerr != nil || !bytes.Equal(stored, raw) {
+			return ErrIdentityTaken
+		}
+	case err != nil:
+		return fmt.Errorf("receipts: write: %w", err)
+	}
+	r.V, r.At = doc.V, doc.At
+	return nil
+}
+
+// ErrIdentityTaken is a receipt written with its own identity where another
+// document is stored: whoever writes the table put it there, or the
+// identity was drawn twice.
+var ErrIdentityTaken = errors.New("receipts: another receipt has this identifier")
+
+// NewID draws a receipt's identity for at: a write that takes it (Write with
+// r.ID and r.At set) can be made again and is stored once. Its random bytes
+// are crypto/rand's, so two enclaves, or two receipts of one, never draw
+// the same.
+func NewID(at time.Time) (string, error) {
+	return (&Service{random: func(b []byte) error {
+		_, err := rand.Read(b)
+		return err
+	}}).newID(at.UTC())
 }
 
 // List returns up to limit of account's receipts whose identifiers come

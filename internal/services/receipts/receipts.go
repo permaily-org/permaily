@@ -288,7 +288,10 @@ type Ended struct {
 // leaves before it does, and a request whose receipt cannot be written is
 // answered 503 with nothing of the mail. It sets r.ID and r.At; it refuses
 // r past MaxDocumentBytes (ErrTooLarge) and honours ctx's deadline, which
-// the service sets to the grant's.
+// the service sets to the grant's. A receipt that comes with its identity
+// (r.ID from NewID, and r.At) is stored under it, and writing it again is
+// stored once: a caller that did not learn a write's outcome makes it again
+// rather than drawing a new receipt.
 type Writer interface {
 	Write(ctx context.Context, account string, r *Receipt) error
 }
