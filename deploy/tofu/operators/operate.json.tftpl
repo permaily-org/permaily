@@ -1,0 +1,148 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadTheStateForOutputs",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::permaily-tofu-state-${account_id}"
+    },
+    {
+      "Sid": "ReadTheStateObject",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::permaily-tofu-state-${account_id}/permaily/terraform.tfstate"
+    },
+    {
+      "Sid": "DecryptTheState",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:GenerateDataKey",
+        "kms:DescribeKey"
+      ],
+      "Resource": "${state_key_arn}"
+    },
+    {
+      "Sid": "UploadArtifacts",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject"
+      ],
+      "Resource": "${artifacts_arn}/artifacts/*"
+    },
+    {
+      "Sid": "ListArtifacts",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "${artifacts_arn}"
+    },
+    {
+      "Sid": "RunOnTheInstance",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": [
+        "${instance_arn}",
+        "arn:aws:ssm:${region}::document/AWS-RunShellScript"
+      ]
+    },
+    {
+      "Sid": "SessionOnTheInstance",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": [
+        "${instance_arn}",
+        "arn:aws:ssm:${region}:${account_id}:document/SSM-SessionManagerRunShell"
+      ]
+    },
+    {
+      "Sid": "OwnSessions",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:TerminateSession",
+        "ssm:ResumeSession"
+      ],
+      "Resource": "arn:aws:ssm:${region}:${account_id}:session/$${aws:username}-*"
+    },
+    {
+      "Sid": "SeeCommandsAndSessions",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetCommandInvocation",
+        "ssm:ListCommandInvocations",
+        "ssm:ListCommands",
+        "ssm:CancelCommand",
+        "ssm:DescribeInstanceInformation",
+        "ssm:DescribeSessions",
+        "ssm:GetConnectionStatus"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents",
+        "logs:DescribeLogStreams",
+        "logs:StartLiveTail"
+      ],
+      "Resource": [
+        "arn:aws:logs:${region}:${account_id}:log-group:permaily-host:*",
+        "arn:aws:logs:${region}:${account_id}:log-group:/aws/lambda/permaily-drift:*"
+      ]
+    },
+    {
+      "Sid": "RunTheDriftCheck",
+      "Effect": "Allow",
+      "Action": "lambda:InvokeFunction",
+      "Resource": "arn:aws:lambda:${region}:${account_id}:function:permaily-drift"
+    },
+    {
+      "Sid": "ListAnchorVersions",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:ListBucketVersions"
+      ],
+      "Resource": "${anchors_arn}"
+    },
+    {
+      "Sid": "SeeHowThingsAre",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceStatus",
+        "kms:DescribeKey",
+        "kms:GetKeyPolicy",
+        "kms:GetKeyRotationStatus",
+        "kms:ListAliases",
+        "kms:ListKeys",
+        "kms:ListResourceTags",
+        "kms:ListGrants",
+        "logs:DescribeLogGroups",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "events:DescribeRule",
+        "events:ListRules",
+        "events:ListTargetsByRule",
+        "ses:GetAccount",
+        "ses:GetEmailIdentity",
+        "cloudtrail:LookupEvents"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SuppressedAddresses",
+      "Effect": "Allow",
+      "Action": [
+        "ses:GetSuppressedDestination",
+        "ses:DeleteSuppressedDestination"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
