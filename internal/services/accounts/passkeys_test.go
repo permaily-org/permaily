@@ -715,17 +715,26 @@ func TestPasskeyOnly(t *testing.T) {
 type counting struct {
 	Records
 	store.Entries
-	mu       sync.Mutex
-	gets     int
-	getDelay time.Duration
+	mu   sync.Mutex
+	gets int
+	// around, when set, runs every read of a record (GetRecord, what a
+	// lookup reads; a change reads with GetRecordAt), so a test puts reads
+	// in the order it means.
+	around func(ctx context.Context, read func())
 }
 
 func (c *counting) GetRecord(ctx context.Context, name string) (*store.Record, error) {
 	c.mu.Lock()
 	c.gets++
 	c.mu.Unlock()
-	rec, err := c.Records.GetRecord(ctx, name)
-	time.Sleep(c.getDelay)
+	var rec *store.Record
+	var err error
+	read := func() { rec, err = c.Records.GetRecord(ctx, name) }
+	if c.around == nil {
+		read()
+	} else {
+		c.around(ctx, read)
+	}
 	return rec, err
 }
 
@@ -870,45 +879,100 @@ func TestRecovery(t *testing.T) {
 	}
 }
 
-// Two uses of one recovery code at the same time: one signs in.
-func TestRecoveryCodeUsedTwiceAtOnce(t *testing.T) {
-	w := newWorld(t)
-	_, cookie := w.signUp("ana@example.org")
-	who := w.who(cookie)
-	w.addPasskey(who, webauthntest.New(webauthntest.ES256), "key")
-	codes := w.passkeyOnly(who)
-	// A storage slow enough for every use to read the record before any of
-	// them writes it.
-	c := &counting{Records: w.svc.cfg.Records, Entries: w.svc.cfg.Entries, getDelay: 5 * time.Millisecond}
-	w.svc.cfg.Records = c
+// useKey marks the context of each use in TestRecoveryCodeUsedTwiceAtOnce.
+type useKey struct{}
 
-	var wg sync.WaitGroup
-	results := make([]error, 8)
-	for i := range results {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, _, results[i] = w.recover("ana@example.org", codes[0])
-		}()
-	}
-	wg.Wait()
-	won := 0
-	for _, err := range results {
-		switch {
-		case err == nil:
-			won++
-		case !errors.Is(err, contracts.ErrInvalidCode):
-			t.Errorf("a use that lost: %v", err)
-		}
-	}
-	if won != 1 {
-		t.Fatalf("one code signed in %d times", won)
-	}
-	if list, _ := w.svc.Passkeys(context.Background(), who); list.RecoveryCodesLeft != domain.RecoveryCodes-1 {
-		t.Fatalf("codes left: %d", list.RecoveryCodesLeft)
-	}
-	if len(w.svc.recoveries) != 0 {
-		t.Fatalf("the uses that lost were counted as wrong codes: %v", w.svc.recoveries)
+// Two uses of one recovery code at the same time: one signs in, and the ones
+// that lost are refused as a wrong code is, without being counted as one,
+// whether they read the record before the one that won took the code out of
+// it or after. Counted, a person whose browser sent the code twice would be
+// a wrong code nearer to being refused the right ones. The order is made,
+// never left to the scheduler: a use's first read of the record (its lookup)
+// waits for what the case says.
+func TestRecoveryCodeUsedTwiceAtOnce(t *testing.T) {
+	const uses = 8
+	for _, tc := range []struct {
+		name string
+		// around gets the use and its first read; done is closed when the
+		// use that won has returned, arrived when every use has read.
+		around func(use int, read func(), arrived, done <-chan struct{}, arrive func())
+	}{
+		{"every use reads before any takes the code", func(_ int, read func(), arrived, _ <-chan struct{}, arrive func()) {
+			read()
+			arrive()
+			<-arrived
+		}},
+		{"the others read after the first took it", func(use int, read func(), _, done <-chan struct{}, _ func()) {
+			if use != 0 {
+				<-done
+			}
+			read()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			_, cookie := w.signUp("ana@example.org")
+			who := w.who(cookie)
+			w.addPasskey(who, webauthntest.New(webauthntest.ES256), "key")
+			codes := w.passkeyOnly(who)
+
+			var mu sync.Mutex
+			first := map[int]bool{}
+			reads := 0
+			arrived, done := make(chan struct{}), make(chan struct{})
+			arrive := func() {
+				mu.Lock()
+				defer mu.Unlock()
+				if reads++; reads == uses {
+					close(arrived)
+				}
+			}
+			c := &counting{Records: w.svc.cfg.Records, Entries: w.svc.cfg.Entries}
+			c.around = func(ctx context.Context, read func()) {
+				use, ok := ctx.Value(useKey{}).(int)
+				mu.Lock()
+				firstRead := ok && !first[use]
+				first[use] = true
+				mu.Unlock()
+				if !firstRead {
+					read()
+					return
+				}
+				tc.around(use, read, arrived, done, arrive)
+			}
+			w.svc.cfg.Records = c
+
+			var wg sync.WaitGroup
+			results := make([]error, uses)
+			for i := range results {
+				wg.Go(func() {
+					ctx := context.WithValue(context.Background(), useKey{}, i)
+					_, _, results[i] = w.svc.Recover(ctx, contracts.Recovery{Address: "ana@example.org", Code: codes[0]}, Browser{UserAgent: "recovered device"})
+					if i == 0 {
+						close(done)
+					}
+				})
+			}
+			wg.Wait()
+			won := 0
+			for _, err := range results {
+				switch {
+				case err == nil:
+					won++
+				case !errors.Is(err, contracts.ErrInvalidCode):
+					t.Errorf("a use that lost: %v", err)
+				}
+			}
+			if won != 1 {
+				t.Fatalf("one code signed in %d times", won)
+			}
+			if list, _ := w.svc.Passkeys(context.Background(), who); list.RecoveryCodesLeft != domain.RecoveryCodes-1 {
+				t.Fatalf("codes left: %d", list.RecoveryCodesLeft)
+			}
+			if len(w.svc.recoveries) != 0 {
+				t.Fatalf("the uses that lost were counted as wrong codes: %v", w.svc.recoveries)
+			}
+		})
 	}
 }
 
