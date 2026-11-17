@@ -341,7 +341,55 @@ describe('legal pages', () => {
       expect(body(lists, /func \(s \*Service\) pruneList\(/)).toMatch(
         /Records\.RemoveRecord\(ctx, ListName\(account, e\)\)/,
       );
-      expect(sweep).toMatch(/s\.pruneList\(ctx, account, l\.Epoch\)/);
+      // A change under way at that removal can store a copy after it: a last removal of every epoch rotations closed
+      // (from Settled, which Next carries, so a later rotation forgets none) runs RemoveAgainAfter after they were
+      // last known removed (PrunedAt, set by the write that clears Pruning), by the hourly pass or the next write; a
+      // pass that cannot fails, so the next tries again.
+      expect(writeOnce).toMatch(/l\.Pruned\(s\.now\(\)\)/);
+      expect(writeOnce).toMatch(
+        /if l\.RemoveAgainDue\(s\.now\(\)\) && s\.removeListAgain\(ctx, l\.Account, l\.Settled, l\.Epoch\) == nil \{\s*l\.RemovedAgain\(\)/,
+      );
+      expect(body(lists, /func \(s \*Service\) removeListAgain\(/)).toMatch(
+        /for e := from; e < current; e\+\+ \{\s*if err := s\.cfg\.Records\.RemoveRecord\(ctx, ListName\(account, e\)\)/,
+      );
+      const list = go('internal/services/connections/list.go');
+      expect(body(list, /func \(l \*ListState\) RemoveAgainDue\(/)).toMatch(
+        /!now\.Before\(l\.PrunedAt\.Add\(RemoveAgainAfter\)\)/,
+      );
+      expect(list).toMatch(
+        /func \(l \*ListState\) Pruned\(now time\.Time\) \{ l\.Pruning, l\.PrunedAt = false, now \}/,
+      );
+      expect(
+        body(list, /func \(l \*ListState\) Next\(/),
+        'a rotation keeps the earlier epochs waiting',
+      ).not.toMatch(/Settled|PrunedAt/);
+      expect(sweep).toMatch(/if l\.Pruning \|\| l\.RemoveAgainDue\(s\.now\(\)\) \{/);
+      expect(sweep).toMatch(/return errUnpruned/);
+      // What the pages say is the outcome the tests check: after the value a late write staged lands, only the
+      // current epoch is stored once RemoveAgainAfter passed and the hourly pass or the next write ran (V70), also
+      // after several rotations (V71); a reader that remakes a successor removes the epoch before it (V68); every
+      // earlier epoch reads as removed, whatever is put back (V66).
+      const retired = go('internal/services/connections/list_retired_test.go');
+      const v70 = body(
+        retired,
+        /func TestV70AValueStagedAfterARotationsRemovalGoesWithTheLastRemoval\(/,
+      );
+      expect(v70).toMatch(
+        /w\.clock\.add\(RemoveAgainAfter\)[\s\S]*Sweep\(ctx\)[\s\S]*onlyCurrent\(t, w, accountA, 1\)/,
+      );
+      expect(v70).toMatch(/"the next write"/);
+      const v71 = body(retired, /func TestV71SeveralRotationsBeforeTheLateValueLands\(/);
+      expect(v71).toMatch(
+        /rotateTo\(t, a, accountA, 3\)[\s\S]*Sweep\(ctx\)[\s\S]*onlyCurrent\(t, w, accountA, 3\)/,
+      );
+      expect(body(retired, /func lateOnEpoch0\(/)).toMatch(
+        /lateTable\{RecordTable: w\.mem, target: ListName\(accountA, 0\)\}/,
+      );
+      const epochs = go('internal/services/connections/list_epochs_test.go');
+      expect(body(epochs, /func TestV68AFreshEnclaveFinishesARotation\(/)).toMatch(
+        /fresh\.readList\(ctx, accountA\)[\s\S]*if op == "create" \{[\s\S]*onlyCurrent\(t, w, accountA, 1\)[\s\S]*fresh\.updateList/,
+      );
+      expect(body(epochs, /func onlyCurrent\(/)).toMatch(/at\.Version\(\) < 2/);
       // While the account lives, an ended connection's records go EndedKept after it ends.
       expect(go('internal/services/connections/connections.go')).toMatch(
         /EndedKept = 30 \* 24 \* time\.Hour/,
@@ -357,7 +405,10 @@ describe('legal pages', () => {
           'The tokens’ lookup entries expire within 30 days and are refused from the removal on.',
         );
         expect(said, path).toContain(
-          'the part a new one replaces is removed as soon as the new one is stored, leaving only the integrity record of its removal, and if that is interrupted the next change to the list or the next successful hourly cleanup pass removes it.',
+          'the part a new one replaces is removed as soon as the new one is stored, and if that is interrupted the next change to the list or the next successful hourly cleanup pass removes it. A change to the list under way at that moment can store a copy of the replaced part after its removal; nothing reads it, and a last cleanup pass at least 30 minutes after the removal deletes it, leaving only the integrity record of its removal.',
+        );
+        expect(said, path).not.toMatch(
+          /replaces is removed as soon as the new one is stored, leaving only/,
         );
         expect(said, path).not.toMatch(/earlier closed part of the list can still hold/);
         expect(said, path).toContain(

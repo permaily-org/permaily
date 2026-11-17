@@ -43,7 +43,7 @@ func onlyCurrent(t *testing.T, w *world, account string, current uint64) {
 	t.Helper()
 	for e, n := range epochsStored(w, account) {
 		if e != current {
-			t.Fatalf("epoch %d keeps %d stored versions; only %d should", e, n, current)
+			t.Fatalf("epoch %d keeps %d stored versions; only epoch %d should", e, n, current)
 		}
 	}
 	a := &store.Anchored{Records: w.mem, Commits: w.commits, Strict: true, Now: w.clock.now}
@@ -235,8 +235,10 @@ func TestV67ARotationInterruptedAtEachWrite(t *testing.T) {
 
 // V68: a fresh enclave, after a rotation stopped before its successor was
 // made or before the closed epoch was removed, reads the list whole and
-// finishes the rotation: it makes the successor, and removes the closed
-// epoch on its read or its first write.
+// finishes the rotation: a stop before the successor was made is finished
+// by its read alone, which makes the successor and removes the closed epoch
+// (checked right after the read); a stop before the removal, by its first
+// write.
 func TestV68AFreshEnclaveFinishesARotation(t *testing.T) {
 	ctx := context.Background()
 	for _, op := range []string{"create", "remove"} {
@@ -257,6 +259,11 @@ func TestV68AFreshEnclaveFinishesARotation(t *testing.T) {
 			n, _, err := fresh.readList(ctx, accountA)
 			if err != nil || n.Epoch != 1 || len(n.Members) != 1 {
 				t.Fatalf("%+v %v", n, err)
+			}
+			if op == "create" {
+				// The reader that made the successor removed the closed
+				// epoch itself, before any write (remakeEpoch).
+				onlyCurrent(t, w, accountA, 1)
 			}
 			if _, err := fresh.updateList(ctx, accountA, func(l *ListState) error { return l.Decide("next", w.clock.now()) }); err != nil {
 				t.Fatal(err)

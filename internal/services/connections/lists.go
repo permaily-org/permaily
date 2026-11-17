@@ -138,6 +138,23 @@ func (s *Service) pruneList(ctx context.Context, account string, current uint64)
 	return nil
 }
 
+// removeListAgain removes once more the epochs of account's list from
+// from to current, RemoveAgainAfter after they were removed (RemoveAgainDue):
+// a write that passed its check on one before its removal staged its value
+// within WriteMax of that check, and a write whose answer was lost left it
+// stored; RemoveRecord deletes every stored version of a removed record and
+// adds no commit. A write held longer than that, by whoever runs the host
+// or writes the table, is not one this bounds: its value lands under a name
+// whose removal committed, which no read takes (docs/threat-model.md).
+func (s *Service) removeListAgain(ctx context.Context, account string, from, current uint64) error {
+	for e := from; e < current; e++ {
+		if err := s.cfg.Records.RemoveRecord(ctx, ListName(account, e)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // writeList writes l at the mark it was read at (made with CreateNew when
 // there was none), checked against its bounds, and rolls it to its next
 // epoch when this write reaches ListEpochVersions. Every write it makes
@@ -166,9 +183,14 @@ func (s *Service) writeListOnce(ctx context.Context, l *ListState, at store.Mark
 		return nil
 	}
 	// What an earlier rotation left of the epochs before this one goes
-	// first; the mark is cleared only once it has.
+	// first; the mark is cleared only once it has. Once RemoveAgainAfter
+	// has passed since, they are removed once more, for what a write under
+	// way at their removal staged after it.
 	if l.Pruning && s.pruneList(ctx, l.Account, l.Epoch) == nil {
-		l.Pruning = false
+		l.Pruned(s.now())
+	}
+	if l.RemoveAgainDue(s.now()) && s.removeListAgain(ctx, l.Account, l.Settled, l.Epoch) == nil {
+		l.RemovedAgain()
 	}
 	if l.Rotate(at.Version()) {
 		l.Moved = true

@@ -381,6 +381,10 @@ func (s *Service) RemoveAgain(ctx context.Context, account string) error {
 	return s.cfg.Entries.DeletePartition(ctx, partition)
 }
 
+// errUnpruned is a pass that could not remove what rotations left of the
+// earlier epochs of an account's list.
+var errUnpruned error = &kind{"connections: an earlier epoch of the account's list is still to remove"}
+
 // pendingFenceAfter is how old a pending member must be before the sweep
 // fences it: its maker is then long done, or crashed.
 const pendingFenceAfter = oauth.RequestTTL
@@ -457,10 +461,17 @@ func (s *Service) sweepAccount(ctx context.Context, account string) error {
 	if err != nil {
 		return err
 	}
-	// What a rotation stopped halfway left of the earlier epochs.
-	if l.Pruning {
-		if err := s.pruneList(ctx, account, l.Epoch); err != nil {
+	// What rotations left of the earlier epochs: removed and the mark
+	// cleared (Pruning), or removed once more RemoveAgainAfter after
+	// (RemoveAgainDue), by a write of the list (writeListOnce); a pass that
+	// could not leaves it to the next and fails.
+	if l.Pruning || l.RemoveAgainDue(s.now()) {
+		n, err := s.updateList(ctx, account, func(*ListState) error { return nil })
+		if err != nil {
 			return err
+		}
+		if n.Pruning || n.RemoveAgainDue(s.now()) {
+			return errUnpruned
 		}
 	}
 	if l.Closing {
