@@ -257,15 +257,22 @@ func run(cfg config, log *slog.Logger) error {
 		IdleTimeout:       120 * time.Second,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelDebug),
 	}
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
+		if p.connections != nil {
+			// After the last request: what the refusals' windows counted.
+			stopConnections(p.connections.svc, log)
+		}
 	}()
 	if err := srv.ServeTLS(p.listener, "", ""); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	<-stopped
 	return nil
 }
 

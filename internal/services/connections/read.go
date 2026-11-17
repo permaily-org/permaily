@@ -26,6 +26,7 @@ import (
 // reading is one vendor request being prepared.
 type reading struct {
 	g        *oauth.Grant
+	op       Operation // what the vendor asked, which a summary of refusals counts by
 	conn     *connDoc
 	d        inbox.Disclosure
 	formulas []receipts.Formula
@@ -33,12 +34,12 @@ type reading struct {
 
 // prepare checks the gates of a read and makes its disclosure, the search's
 // formula (nil for none) evaluated with the connection's.
-func (s *Service) prepare(ctx context.Context, g *oauth.Grant, search *query.Canonical) (*reading, error) {
+func (s *Service) prepare(ctx context.Context, g *oauth.Grant, op Operation, search *query.Canonical) (*reading, error) {
 	// The grant is Check's: the request is attributed from here, so every
 	// refusal is recorded, those before its disclosure too, with the
 	// grant's attribution alone and a fixed reason (PR #136's second
 	// review, finding 4).
-	r := &reading{g: g, conn: &connDoc{}}
+	r := &reading{g: g, op: op, conn: &connDoc{}}
 	refused := func(err error) (*reading, error) {
 		if errors.Is(err, ErrUnavailable) {
 			return nil, s.refuse(ctx, r, &receipts.Refused{Reason: receipts.RefusedUnavailable}, ErrUnavailable)
@@ -127,13 +128,35 @@ func (s *Service) refuse(ctx context.Context, r *reading, why *receipts.Refused,
 // nothing, so it is written under a fresh ReceiptWriteMax alone, not the
 // grant's hard end nor the request's context: a refusal after the hard end
 // or of a request whose client went away is still recorded, with the
-// grant's attribution (ruling 6 on PR #136's second review).
+// grant's attribution (ruling 6 on PR #136's second review). Past
+// RefusalsPerWindow of its connection's window it is counted instead, and
+// answered err all the same; a summary of the connection's earlier windows
+// still to write is written first (refusals.go). A too_late refusal is
+// always written.
 func (s *Service) refuseWith(ctx context.Context, r *reading, rc *receipts.Receipt, err error) error {
-	if werr := s.writeReceipt(context.WithoutCancel(ctx), r.g.Account, rc, time.Time{}); werr != nil {
+	ctx = context.WithoutCancel(ctx)
+	if rc.Refused == nil || rc.Refused.Reason != receipts.RefusedTooLate {
+		own, due := s.admitRefusal(r, refusedReason(rc))
+		if due != nil {
+			_ = s.writeSummary(ctx, due) // kept for the next try when it fails
+		}
+		if !own {
+			return err
+		}
+	}
+	if werr := s.writeReceipt(ctx, r.g.Account, rc, time.Time{}); werr != nil {
 		s.count("receipt_failed")
 		return ErrUnavailable
 	}
 	return err
+}
+
+// refusedReason is rc's reason; a refusal without one is unavailable.
+func refusedReason(rc *receipts.Receipt) receipts.RefusedReason {
+	if rc.Refused == nil {
+		return receipts.RefusedUnavailable
+	}
+	return rc.Refused.Reason
 }
 
 // release is steps 3 to 5 of "Release": the authority again when the
@@ -276,7 +299,7 @@ func vendorMessage(mailbox string, dis *inbox.Disclosed, parts []contracts.Part,
 // Search implements API.
 func (s *Service) Search(ctx context.Context, g *oauth.Grant, in contracts.VendorSearch) (*contracts.VendorPage, Release, error) {
 	search, ferr := searchFormula(in.Query, g.Parts)
-	r, err := s.prepare(ctx, g, search)
+	r, err := s.prepare(ctx, g, OperationSearch, search)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -426,7 +449,7 @@ func (s *Service) open(ctx context.Context, r *reading, mbx, msg string) (inbox.
 
 // Read implements API.
 func (s *Service) Read(ctx context.Context, g *oauth.Grant, id string) (*contracts.VendorMessage, Release, error) {
-	r, err := s.prepare(ctx, g, nil)
+	r, err := s.prepare(ctx, g, OperationRead, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -458,7 +481,7 @@ func (s *Service) Read(ctx context.Context, g *oauth.Grant, id string) (*contrac
 
 // Attachment implements API.
 func (s *Service) Attachment(ctx context.Context, g *oauth.Grant, id string, index int) (*inbox.Attachment, Release, error) {
-	r, err := s.prepare(ctx, g, nil)
+	r, err := s.prepare(ctx, g, OperationAttachment, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -514,7 +537,7 @@ func (s *Service) Refuse(ctx context.Context, g *oauth.Grant, rf Refusal) error 
 		return ErrInvalidRefusal
 	}
 	ctx = context.WithoutCancel(ctx)
-	r := &reading{g: g, conn: &connDoc{}}
+	r := &reading{g: g, op: rf.Operation, conn: &connDoc{}}
 	if rf.Message != "" {
 		rctx, cancel := context.WithTimeout(ctx, ReceiptWriteMax)
 		d, _, err := s.connFresh(rctx, g.Connection)

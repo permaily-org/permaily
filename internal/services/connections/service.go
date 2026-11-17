@@ -54,6 +54,8 @@ type Service struct {
 	refused map[string]int64
 	leases  map[string]map[*lease]struct{}
 	limits  limits
+	// refusals are each connection's window of refusals (refusals.go).
+	refusals refusalWindows
 }
 
 type cachedConn struct {

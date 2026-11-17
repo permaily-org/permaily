@@ -185,12 +185,36 @@ const sweepEvery = time.Hour
 // gives one), once when it starts, until ctx ends. A pass that fails is
 // logged by its kind and the next tries again: nothing it does is what
 // refuses a token (a past-end connection is refused whether or not it ran).
+//
+// It also writes, every connections.RefusalWindow, the summaries of the
+// connections' refusals whose window closed (ADR 0031, "Refusals past a
+// window's bound"); stopConnections writes the rest at a stop.
 func runConnections(ctx context.Context, svc *connections.Service, log *slog.Logger, tick <-chan time.Time) {
 	go every(ctx, sweepEvery, tick, func() {
 		if err := svc.Sweep(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("connections: the hourly pass did not finish", "kind", "sweep")
 		}
 	})
+	go every(ctx, connections.RefusalWindow, nil, func() {
+		if err := svc.FlushRefusals(ctx, false); err != nil && ctx.Err() == nil {
+			log.Warn("connections: a summary of refusals was not written", "kind", "refusals")
+		}
+	})
+}
+
+// stopFlushMax bounds the summaries of refusals written at a stop.
+const stopFlushMax = 10 * time.Second
+
+// stopConnections writes, once the server has stopped taking requests,
+// every connection's summary of refusals still counted in memory, the open
+// windows' included, so a stop loses none of them (a crash loses the ones
+// not yet written).
+func stopConnections(svc *connections.Service, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), stopFlushMax)
+	defer cancel()
+	if err := svc.FlushRefusals(ctx, true); err != nil {
+		log.Warn("connections: a summary of refusals was not written at the stop", "kind", "refusals")
+	}
 }
 
 // mountConnections puts the connections' routes on their hosts (ADR 0030,

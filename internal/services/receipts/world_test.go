@@ -222,6 +222,14 @@ func samples(t testing.TB) map[Kind]*Receipt {
 	r.Ended = &Ended{Reason: contracts.EndedByReplaced, ReplacedBy: "con_eeeeeeeeeeeeeeeeeeeeeeeeee"}
 	out[KindEnded] = r
 
+	r = fresh()
+	r.Kind, r.Device = KindRefusals, ""
+	r.Refusals = &Refusals{
+		From: start.Truncate(time.Minute), Until: start.Truncate(time.Minute).Add(time.Minute), Recorded: 30,
+		Counts: []RefusalCount{{Operation: "read", Reason: RefusedRateLimited, Count: 412}, {Operation: "search", Reason: RefusedInvalidBody, Count: 7}},
+	}
+	out[KindRefusals] = r
+
 	return out
 }
 
