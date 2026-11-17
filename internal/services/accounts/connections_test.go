@@ -22,6 +22,7 @@ type lifecycle struct {
 	endAllErr    error
 	reopenErr    error
 	removeAllErr error
+	againErr     error
 }
 
 func (l *lifecycle) EndAll(_ context.Context, account string) error {
@@ -43,6 +44,13 @@ func (l *lifecycle) RemoveAll(_ context.Context, account string) error {
 	defer l.mu.Unlock()
 	l.calls = append(l.calls, "RemoveAll "+account)
 	return l.removeAllErr
+}
+
+func (l *lifecycle) RemoveAgain(_ context.Context, account string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.calls = append(l.calls, "RemoveAgain "+account)
+	return l.againErr
 }
 
 func (l *lifecycle) set(endAll, reopen error) {

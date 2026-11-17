@@ -168,10 +168,14 @@ func (r Refusal) ValidOn(res contracts.Resource) bool {
 // every connection's and token family's record, leaving only the commits
 // that say each was removed, which keep the old tokens dead and the list
 // from being made again (ADR 0030, "Changed while releasing step 5").
+// RemoveAgain is called RemoveAgainAfter after RemoveAll succeeded, and
+// again until it succeeds: it removes those names once more, for a value a
+// write under way at the removal staged after it, and then forgets them.
 type Lifecycle interface {
 	EndAll(ctx context.Context, account string) error
 	Reopen(ctx context.Context, account string) error
 	RemoveAll(ctx context.Context, account string) error
+	RemoveAgain(ctx context.Context, account string) error
 }
 
 // Person is who acts in the app: the account, the session that opened a

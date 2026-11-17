@@ -118,3 +118,50 @@ func (s *Service) removeReceiptsAgain(ctx context.Context, key []byte, now time.
 	}
 	return nil
 }
+
+// connectionsAgainPartition lists the removed accounts whose connections
+// are removed once more, by when (removeConnections).
+const connectionsAgainPartition = "connections-again"
+
+// removeConnectionsAgain removes once more the connections of the accounts
+// whose time has come in the list (connections.Lifecycle.RemoveAgain),
+// then their entries: a value that a write under way at the removal staged
+// after it goes too (second review of #152, finding 2). An entry that is
+// not this deployment's removes nothing; one that fails stays for the next
+// pass, and the others go on.
+func (s *Service) removeConnectionsAgain(ctx context.Context, key []byte, now time.Time) error {
+	c := s.connectionsOf()
+	if c == nil {
+		return nil
+	}
+	after := ""
+	var first error
+	for range maxClosingPages {
+		entries, err := s.cfg.Entries.ListEntries(ctx, connectionsAgainPartition, "", after, closingPage)
+		if err != nil {
+			return err
+		}
+		for i := range entries {
+			e := &entries[i]
+			after = e.Key
+			day, id, ok := parseTimedKey(e.Key)
+			if !ok || pointed(key, e) != id {
+				continue
+			}
+			if day.After(now) {
+				return first
+			}
+			err := c.RemoveAgain(ctx, id)
+			if err == nil {
+				err = s.forget(ctx, connectionsAgainPartition, e.Key)
+			}
+			if err != nil && first == nil {
+				first = err
+			}
+		}
+		if len(entries) < closingPage {
+			break
+		}
+	}
+	return first
+}

@@ -428,7 +428,7 @@ func (s *Service) dropEnded(ctx context.Context, l *ListState, remove []string) 
 		if len(gone) == len(remove) {
 			break
 		}
-		err := s.removeConnStrict(ctx, m.ID)
+		err := s.removeConnStrict(ctx, m.ID, nil)
 		if err == nil {
 			gone = append(gone, m.ID)
 		} else if !refusedRecord(err) {
@@ -455,10 +455,25 @@ func (s *Service) removeConn(ctx context.Context, id string) error {
 // a connection that cannot be read (lost, put back, not signed) fails it,
 // since its families are known only from its record. One removed already,
 // or never made (a pending one, whose name the removal fences), has none.
-func (s *Service) removeConnStrict(ctx context.Context, id string) error {
+//
+// With note (RemoveAll), the connection's identifier and its families' are
+// noted first, for RemoveAgain to find their names once nothing else does.
+func (s *Service) removeConnStrict(ctx context.Context, id string, note func(id string) error) error {
 	d, _, err := s.readConn(ctx, id)
 	if err != nil {
 		return err
+	}
+	if note != nil {
+		if err := note(id); err != nil {
+			return err
+		}
+		if d != nil {
+			for _, dev := range d.Devices {
+				if err := note(dev.ID); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return s.removeConnOf(ctx, id, d)
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -112,9 +113,12 @@ func (s *Service) Reopen(ctx context.Context, account string) error {
 // next, through any enclave. A connection that cannot be read (lost, put
 // back, not signed) fails it and keeps the list and the index that find it:
 // its families are known only from its record, and a removal that went on
-// would leave them where nothing finds them.
+// would leave them where nothing finds them. Each connection, and each of
+// its families, is noted before it is removed (noteRemoved), so that
+// RemoveAgain finds their names once nothing else does.
 func (s *Service) RemoveAll(ctx context.Context, account string) error {
 	list := func(e uint64) string { return ListName(account, e) }
+	note := func(id string) error { return s.noteRemoved(ctx, account, id) }
 	ended := false
 	for range RecordTries {
 		heads, err := s.epochHeads(ctx, list)
@@ -151,7 +155,7 @@ func (s *Service) RemoveAll(ctx context.Context, account string) error {
 				continue
 			}
 			for _, m := range l.Members {
-				if err := s.removeConnStrict(ctx, m.ID); err != nil {
+				if err := s.removeConnStrict(ctx, m.ID, note); err != nil {
 					return err
 				}
 			}
@@ -273,6 +277,85 @@ func (s *Service) listRemoved(ctx context.Context, account string) (bool, error)
 	return false, err
 }
 
+// RemoveAgainAfter is how long after RemoveAll succeeded accounts calls
+// RemoveAgain (second review of #152, finding 2): longer than a write to
+// the store stays under way. A write that passed CreateNew's or
+// PutRecordAt's check before the removal stages its value after it, and a
+// write whose answer is lost stays staged. The enclave's AWS client
+// (enclave.EgressClient) gives up on a request after 60 seconds, and the
+// SDK tries one at most 3 times (DynamoDB's 4 under the SDK's 2026
+// retries), at most 20 seconds apart: one operation lasts at most 300
+// seconds. A value is staged at most two operations after the check it
+// passed (CreateNew reads the plain name, then writes), so within 10
+// minutes; 30 minutes leaves the rest for scheduling and for two enclaves'
+// clocks (TestV65TheLastPassOutlastsAStoreWrite checks the client). A write held longer than that, by whoever runs the
+// host or writes the table, is not one this bounds: its value lands under a
+// name whose removal committed, which no read takes (docs/threat-model.md).
+const RemoveAgainAfter = 30 * time.Minute
+
+// partitionRemoved is where RemoveAll notes, by account, the connections
+// and families it removes (signed, a key each), for RemoveAgain: once they
+// are gone, nothing else names them.
+const partitionRemoved = "connections#removed#"
+
+// noteRemoved notes id (a connection's or a family's) in the account's
+// removed names. One noted already stays as it is.
+func (s *Service) noteRemoved(ctx context.Context, account, id string) error {
+	partition := partitionRemoved + account
+	value, err := envelope.Sign(s.signKey, []byte(strconv.Quote(id)), entryAAD(partition, id))
+	if err != nil {
+		return err
+	}
+	err = s.cfg.Entries.PutEntry(ctx, &store.Entry{Partition: partition, Key: id, Value: value, UpdatedAt: s.now()})
+	if errors.Is(err, store.ErrExists) {
+		return nil
+	}
+	return err
+}
+
+// RemoveAgain implements Lifecycle: RemoveAgainAfter after RemoveAll
+// succeeded, it removes once more every name RemoveAll removed: the list's
+// epochs and the fence after them (RemoveAll again, which also deletes the
+// index entry), and each connection and family it noted, every epoch with
+// its fence, so that what a write under way at the removal staged after it
+// is deleted (RemoveRecord deletes every stored version of a removed
+// record); then the notes go. It is called until it succeeds; once it did,
+// nothing of the account's connections is stored but the commits of their
+// removal.
+func (s *Service) RemoveAgain(ctx context.Context, account string) error {
+	if err := s.RemoveAll(ctx, account); err != nil {
+		return err
+	}
+	partition := partitionRemoved + account
+	after := ""
+	for {
+		entries, err := s.cfg.Entries.ListEntries(ctx, partition, "", after, sweepPage)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			after = e.Key
+			raw, err := envelope.Verified(s.signKey, e.Value, entryAAD(partition, e.Key))
+			if err != nil || string(raw) != strconv.Quote(e.Key) {
+				continue // not written by this deployment
+			}
+			switch {
+			case strings.HasPrefix(e.Key, "con_"):
+				err = s.cfg.Records.RemoveRecord(ctx, connName(e.Key))
+			case strings.HasPrefix(e.Key, "fam_"):
+				err = s.removeFamily(ctx, e.Key)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		if len(entries) < sweepPage {
+			break
+		}
+	}
+	return s.cfg.Entries.DeletePartition(ctx, partition)
+}
+
 // pendingFenceAfter is how old a pending member must be before the sweep
 // fences it: its maker is then long done, or crashed.
 const pendingFenceAfter = oauth.RequestTTL
@@ -365,7 +448,7 @@ func (s *Service) sweepAccount(ctx context.Context, account string) error {
 		case m.State == contracts.ConnectionEnded && now.Sub(m.EndedAt) >= EndedKept:
 			remove := s.removeConn
 			if l.Closing {
-				remove = s.removeConnStrict
+				remove = func(ctx context.Context, id string) error { return s.removeConnStrict(ctx, id, nil) }
 			}
 			if err := remove(ctx, m.ID); err != nil {
 				if !l.Closing || !refusedRecord(err) {

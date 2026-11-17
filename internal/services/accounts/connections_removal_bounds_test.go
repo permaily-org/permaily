@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/domain"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/services/connections"
 	"github.com/permaily-org/permaily/internal/store"
@@ -150,12 +151,83 @@ func TestV65AValueStagedAfterTheRemovalGoesWithTheLastPass(t *testing.T) {
 	if err := a.Sweep(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// Until connections.RemoveAgainAfter has passed, the account keeps its
+	// entry for the last pass, and the value may still be landing.
+	w.now = w.now.Add(connections.RemoveAgainAfter - time.Second)
 	if err := w.svc.RemoveDue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	w.now = w.now.Add(time.Hour)
+	if again, err := w.mem.ListEntries(ctx, connectionsAgainPartition, "", "", 10); err != nil || len(again) != 1 {
+		t.Fatalf("the last pass is not listed: %d %v", len(again), err)
+	}
+	if left := connectionRecords(w); len(left) == 0 {
+		t.Fatal("the late value went before the last pass")
+	}
+	w.now = w.now.Add(RemoveEvery)
 	if err := w.svc.RemoveDue(ctx); err != nil {
 		t.Fatal(err)
 	}
 	removedWhole(t, w, id)
+	if again, err := w.mem.ListEntries(ctx, connectionsAgainPartition, "", "", 10); err != nil || len(again) != 0 {
+		t.Fatalf("the last pass stays listed: %d %v", len(again), err)
+	}
+	if notes, err := w.mem.ListEntries(ctx, removedNotes+id, "", "", 10); err != nil || len(notes) != 0 {
+		t.Fatalf("the notes of what was removed stay: %d %v", len(notes), err)
+	}
+}
+
+// removedNotes is where the connections service notes, by account, what
+// RemoveAll removed, for RemoveAgain.
+const removedNotes = "connections#removed#"
+
+// TestV65TheLastPassComesAfterTheLongestWrite: once RemoveAll succeeded,
+// the account is listed for RemoveAgain connections.RemoveAgainAfter later,
+// longer than a write to the store stays under way; it is called then and
+// not before, again while it fails, and then the entry goes (review 2,
+// finding 2).
+func TestV65TheLastPassComesAfterTheLongestWrite(t *testing.T) {
+	ctx := context.Background()
+	if connections.RemoveAgainAfter < 2*(4*time.Minute+3*20*time.Second) {
+		t.Fatal("the last pass comes before a write two operations long can land")
+	}
+	w := newWorld(t)
+	l := &lifecycle{}
+	w.svc.SetConnections(l)
+	me, cookie := w.signUp("ana@example.org")
+	id := me.Account.ID
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(w.who(cookie))); err != nil {
+		t.Fatal(err)
+	}
+	w.now = w.now.Add(domain.AccountClosing)
+	if err := w.svc.RemoveDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.AccountRecord(ctx, id); !errors.Is(err, contracts.ErrNotFound) {
+		t.Fatal(err)
+	}
+	w.now = w.now.Add(connections.RemoveAgainAfter - time.Second)
+	if err := w.svc.RemoveDue(ctx); err != nil || l.count("RemoveAgain "+id) != 0 {
+		t.Fatal("the last pass came early:", err, l.calls)
+	}
+	w.now = w.now.Add(time.Second)
+	l.mu.Lock()
+	l.againErr = errors.New("down")
+	l.mu.Unlock()
+	if err := w.svc.RemoveDue(ctx); err == nil || l.count("RemoveAgain "+id) != 1 {
+		t.Fatal("a failed last pass was not reported:", err, l.calls)
+	}
+	l.mu.Lock()
+	l.againErr = nil
+	l.mu.Unlock()
+	for range 2 {
+		if err := w.svc.RemoveDue(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := l.count("RemoveAgain " + id); n != 2 {
+		t.Fatalf("RemoveAgain called %d times, not twice", n)
+	}
+	if again, err := w.mem.ListEntries(ctx, connectionsAgainPartition, "", "", 10); err != nil || len(again) != 0 {
+		t.Fatalf("the last pass stays listed: %d %v", len(again), err)
+	}
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/domain"
+	"github.com/permaily-org/permaily/internal/services/connections"
 	"github.com/permaily-org/permaily/internal/store"
 )
 
@@ -399,10 +400,21 @@ func (s *Service) unpoint(ctx context.Context, key []byte, partition, accountID 
 // commits of their removal. It is the first thing a removal does, and it
 // is done again by every pass that tries the removal again, also once the
 // account's record is gone: RemoveAll finishes what an earlier call left,
-// and does nothing more when nothing is left.
+// and does nothing more when nothing is left. Once it succeeded, the
+// account is listed to have them removed once more
+// connections.RemoveAgainAfter from now (removeConnectionsAgain), for a
+// value a write under way at that moment stages after it.
 func (s *Service) removeConnections(ctx context.Context, id string) error {
-	if c := s.connectionsOf(); c != nil {
-		return c.RemoveAll(ctx, id)
+	c := s.connectionsOf()
+	if c == nil {
+		return nil
+	}
+	if err := c.RemoveAll(ctx, id); err != nil {
+		return err
+	}
+	key := timedKey(s.now().Add(connections.RemoveAgainAfter), id)
+	if err := s.point(ctx, connectionsAgainPartition, key, id, 0); err != nil && !errors.Is(err, store.ErrExists) {
+		return err
 	}
 	return nil
 }
@@ -497,6 +509,11 @@ pages:
 		}
 	}
 	if err := s.removeReceiptsAgain(ctx, key, now); err != nil {
+		if failed++; first == nil {
+			first = err
+		}
+	}
+	if err := s.removeConnectionsAgain(ctx, key, now); err != nil {
 		if failed++; first == nil {
 			first = err
 		}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/store"
 )
 
@@ -318,5 +319,143 @@ func TestV65RetriesAddNoFence(t *testing.T) {
 				r.nothingLeft(t)
 			})
 		}
+	}
+}
+
+// lateTable is the world's table, whose first write of a value under
+// target's name runs before, then stores the value and answers an error, as
+// a write whose answer was lost: what a writer that passed CreateNew's or
+// PutRecordAt's check before the removal stages after it.
+type lateTable struct {
+	store.RecordTable
+	mu     sync.Mutex
+	target string
+	before func()
+	landed bool
+}
+
+func (l *lateTable) PutRecord(ctx context.Context, rec *store.Record, create bool) error {
+	l.mu.Lock()
+	f := l.before
+	if !strings.HasPrefix(rec.Name, l.target+"@") {
+		f = nil
+	}
+	if f != nil {
+		l.before = nil
+	}
+	l.mu.Unlock()
+	if f == nil {
+		return l.RecordTable.PutRecord(ctx, rec, create)
+	}
+	f()
+	if err := l.RecordTable.PutRecord(ctx, rec, create); err != nil {
+		return err
+	}
+	l.mu.Lock()
+	l.landed = true
+	l.mu.Unlock()
+	return errCrash
+}
+
+// TestV65AValueStagedAfterTheRemovalGoesWithRemoveAgain: a write of the
+// list, of a family or of a connection, made with CreateNew (the next
+// epoch) or PutRecordAt (the epoch or the record as read), passes its
+// check, and a whole RemoveAll runs before its value lands; the value
+// lands, its answer lost. No read takes it, and RemoveAgain deletes it,
+// with the notes of what was removed (review 2, finding 2).
+func TestV65AValueStagedAfterTheRemovalGoesWithRemoveAgain(t *testing.T) {
+	type schedule struct {
+		target string
+		write  func(b *Service) error
+	}
+	cases := map[string]func(t *testing.T) (*world, *Service, schedule){
+		"the list's next epoch, by CreateNew": func(t *testing.T) (*world, *Service, schedule) {
+			w, a := closingAtTheLastVersion(t)
+			return w, a, schedule{ListName(accountA, 1), func(b *Service) error { return b.EndAll(context.Background(), accountA) }}
+		},
+		"the list's epoch, by PutRecordAt": func(t *testing.T) (*world, *Service, schedule) {
+			w := newWorld(t)
+			a := w.enclave()
+			w.connect(a, w.person(accountA), w.ask(claudeCode))
+			if err := a.EndAll(context.Background(), accountA); err != nil {
+				t.Fatal(err)
+			}
+			return w, a, schedule{ListName(accountA, 0), func(b *Service) error { return b.EndAll(context.Background(), accountA) }}
+		},
+		"a family's next epoch, by CreateNew": func(t *testing.T) (*world, *Service, schedule) {
+			ctx := context.Background()
+			w := newWorld(t)
+			a := w.enclave()
+			y := w.ask(claudeCode)
+			w.connect(a, w.person(accountA), y)
+			c := w.connectionOf(a, accountA, claudeCode)
+			fam := c.Devices[0].ID
+			f, mark, _ := a.readFamily(ctx, fam, 0)
+			f.Generation = oauth.FamilyEpochRotations - 1
+			if err := a.writeSealed(ctx, familyName(fam, 0), f, mark, false); err != nil {
+				t.Fatal(err)
+			}
+			last := oauth.FamilySecret(a.familyKey, oauth.KindRefresh, fam, f.Generation)
+			if err := a.putEntry(ctx, PartitionRefresh+oauth.Hash(oauth.KindRefresh, last), refreshEntry{Connection: c.ID, Family: fam, Generation: f.Generation, Account: accountA, Expires: w.clock.now().Add(time.Hour)}, w.clock.now().Add(time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			return w, a, schedule{familyName(fam, 1), func(b *Service) error { _, err := w.refresh(b, y, last); return err }}
+		},
+		"a connection, by PutRecordAt": func(t *testing.T) (*world, *Service, schedule) {
+			w := newWorld(t)
+			a := w.enclave()
+			p := w.person(accountA)
+			w.connect(a, p, w.ask(claudeCode))
+			c := w.connectionOf(a, accountA, claudeCode)
+			return w, a, schedule{connName(c.ID), func(b *Service) error { _, err := b.Revoke(context.Background(), p, c.ID); return err }}
+		},
+	}
+	for what, setUp := range cases {
+		t.Run(what, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			w, a, at := setUp(t)
+			table := &lateTable{RecordTable: w.mem, target: at.target}
+			table.before = func() {
+				w.accts.set(accountA, StandingGone)
+				if err := a.RemoveAll(ctx, accountA); err != nil {
+					t.Error(err)
+				}
+			}
+			b, err := New(w.config(&store.Anchored{Records: table, Commits: w.commits, Strict: true, OnlyNewest: true, Now: w.clock.now}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = at.write(b)
+			table.mu.Lock()
+			landed := table.landed
+			table.mu.Unlock()
+			if !landed {
+				t.Fatal("the late value did not land")
+			}
+			late := false
+			for _, name := range w.mem.RecordNames() {
+				late = late || strings.HasPrefix(name, at.target+"@")
+			}
+			if !late {
+				t.Fatal("the late value is not stored")
+			}
+			if _, _, err := w.enclave().cfg.Records.GetRecordAt(ctx, at.target); !errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrLost) {
+				t.Fatalf("a read takes the late value: %v", err)
+			}
+			if err := w.enclave().Sweep(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.enclave().RemoveAgain(ctx, accountA); err != nil {
+				t.Fatal(err)
+			}
+			nothingOfAccountA(t, w)
+			if notes, err := w.mem.ListEntries(ctx, partitionRemoved+accountA, "", "", 10); err != nil || len(notes) != 0 {
+				t.Fatalf("the notes of what was removed stay: %d %v", len(notes), err)
+			}
+			if err := w.enclave().RemoveAgain(ctx, accountA); err != nil {
+				t.Fatalf("a second RemoveAgain: %v", err)
+			}
+		})
 	}
 }
