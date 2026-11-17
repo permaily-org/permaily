@@ -377,7 +377,7 @@ func (s *Service) refuseCounted(ctx context.Context, r *reading, rc *receipts.Re
 		if on != nil {
 			on.waiting--
 			ws.bytes -= held
-			on, held = nil, 0
+			on = nil
 		}
 		l := s.lane(r, now)
 		if l == nil {
