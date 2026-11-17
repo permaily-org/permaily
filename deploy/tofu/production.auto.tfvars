@@ -19,7 +19,12 @@ release_keys = {
 # made after v0.12.0 (docs/operations.md). Public on purpose.
 tls_rpt_address = "skr25i9u9s364ra7a6a9@inbox.permaily.com"
 
-# Operators other than the owner, each the IAM user permaily-operator-<name>,
+# Operators other than the owner, each the IAM user permaily-operator-<label>,
 # who can deploy and operate after signing in with MFA (deploy/tofu/operators.tf,
-# docs/operations.md, "Operators"). No credential is in the state.
-operators = ["tony"]
+# docs/operations.md, "Operators"). Labels, never people's names: this file is
+# public. No credential is in the state.
+operators = ["2"]
+
+# Operators who may add their first MFA device without MFA, and make no access
+# key meanwhile. Emptied once they have signed in with MFA.
+operators_enrolling = ["2"]
