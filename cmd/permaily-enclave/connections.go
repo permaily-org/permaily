@@ -25,7 +25,6 @@ import (
 	"github.com/permaily-org/permaily/internal/services/connections"
 	"github.com/permaily-org/permaily/internal/services/decisions"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
-	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/vendors"
 	"github.com/permaily-org/permaily/internal/vendors/cimd"
@@ -65,7 +64,10 @@ type connectionsParts struct {
 	accounts   *accounts.Service
 	mailboxes  *mailboxes.Service
 	model      *decisions.Service
-	now        func() time.Time
+	// receipts writes the record of what left, each receipt linked in its
+	// account's chain before Write returns (ADR 0037).
+	receipts *composedReceipts
+	now      func() time.Time
 }
 
 // connectionsStore is where the connections' entries are, and the mail
@@ -82,6 +84,8 @@ type composedConnections struct {
 	// day (inbox.DecisionsFullCounter): /status's decisions_full.
 	full inbox.DecisionsFullCounter
 	cfg  oauth.Config
+	// receipts is the chained record of what left, which /status reports.
+	receipts *composedReceipts
 	// since is when this enclave started counting.
 	since time.Time
 }
@@ -95,14 +99,17 @@ var errConnectionsRecords = errors.New("the connections' records need a strict A
 // egress (cimd), the account's standing and its deletion's fence from
 // accounts (which it is given back to), what a connection reads through
 // inbox's Discloser over the mailboxes' decisions, with the default rule
-// first, the model's gate and Asker, and a receipt written before anything
-// leaves.
+// first, the model's gate and Asker, and a receipt written and linked in its
+// account's chain before anything leaves (ADR 0037).
 func composeConnections(c connectionsParts) (*composedConnections, error) {
 	if c.records == nil || !c.records.Strict || !c.records.OnlyNewest {
 		return nil, errConnectionsRecords
 	}
 	if c.vendorHTTP == nil || c.accounts == nil || c.mailboxes == nil || c.model == nil {
 		return nil, errors.New("the connections need the vendor egress, accounts, mailboxes and the model")
+	}
+	if c.receipts == nil || !c.receipts.svc.Chained() {
+		return nil, errors.New("the connections need receipts linked in their accounts' chains (ADR 0037)")
 	}
 	now := c.now
 	if now == nil {
@@ -123,7 +130,7 @@ func composeConnections(c connectionsParts) (*composedConnections, error) {
 		Model:       c.model,
 		ModelNotice: domain.ModelNoticeVersion,
 		Rules:       []rules.Rule{rules.Default()},
-		Receipts:    receipts.New(c.entries, c.keys, now, nil),
+		Receipts:    c.receipts.svc,
 		Now:         now,
 	})
 	if err != nil {
@@ -132,7 +139,7 @@ func composeConnections(c connectionsParts) (*composedConnections, error) {
 	// An account being deleted fences and ends its connections, and a
 	// cancelled deletion reopens them (ADR 0030, finding 6).
 	c.accounts.SetConnections(svc)
-	return &composedConnections{svc: svc, full: full, cfg: c.oauth, since: now()}, nil
+	return &composedConnections{svc: svc, full: full, cfg: c.oauth, receipts: c.receipts, since: now()}, nil
 }
 
 // connectionMailboxes is what the connections service reads of mailboxes
@@ -289,9 +296,11 @@ func mountConnections(c *composedConnections, app *httpapi.AppMux, api, mcp *htt
 
 // connectionsStatus is /status's connections (ADR 0030, "What /status and
 // permaily-verify show"): what the image compiles in, and this enclave's
-// refusals by fixed reason since it started, never a token, a client that
-// is not verified, an account, a connection, or a count of connections or
-// consents.
+// refusals by fixed reason since it started, and how its receipts are kept
+// (ADR 0037: chained, the record of incidents, the newest pass of the
+// audit, what this enclave found and has not recorded yet), never a token,
+// a client that is not verified, an account, a connection, or a count of
+// connections or consents.
 func connectionsStatus(c *composedConnections) func() *attestation.ConnectionsStatus {
 	return func() *attestation.ConnectionsStatus {
 		md := oauth.Metadata(c.cfg)
@@ -321,11 +330,9 @@ func connectionsStatus(c *composedConnections) func() *attestation.ConnectionsSt
 			VendorTransport:       "h2",
 			DevicesPerConnection:  oauth.FamiliesMax,
 			ModelUnavailable:      attestation.ModelUnavailableNothingLeaves,
-			Receipts: attestation.ReceiptsStatus{
-				Sealed: true, Chained: false, Decisions: "strict", DecisionsPerDay: inbox.DecisionsPerDay,
-			},
-			Since:   c.since,
-			Refused: map[string]int64{},
+			Receipts:              c.receipts.status(),
+			Since:                 c.since,
+			Refused:               map[string]int64{},
 		}
 		for _, v := range vendors.List() {
 			st.Verified = append(st.Verified, attestation.VerifiedVendor{Domain: v.Domain, Owner: v.Name})

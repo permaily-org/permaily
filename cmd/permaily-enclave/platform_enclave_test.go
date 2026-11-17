@@ -73,7 +73,7 @@ func TestV57TheVendorsAreFetchedThroughTheVendorEgress(t *testing.T) {
 	if err := fs.Parse(nil); err != nil {
 		t.Fatal(err)
 	}
-	p := &platform{accounts: w.parts.accounts, mailboxes: w.parts.mailboxes, model: w.parts.model}
+	p := &platform{accounts: w.parts.accounts, mailboxes: w.parts.mailboxes, model: w.parts.model, receipts: w.parts.receipts}
 	c, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p)
 	if err != nil || c == nil {
 		t.Fatal(err)
@@ -173,5 +173,40 @@ func TestAnchorStatusSaysTheConnectionsRecordsWentBackWithoutTheirVersions(t *te
 	}
 	if r := st.Regressions[0]; r.Name != connectionRecord || !r.Lost || r.Had != 0 || r.Found != 0 || r.At.IsZero() || strings.Contains(r.Name, "con_") {
 		t.Fatalf("%+v", r)
+	}
+}
+
+// L21 (ADR 0037, "Where a link is kept"): the image's commits in the
+// anchors bucket group the chain's records as receipts.CommitGroup says
+// and no other name, so the chain's strict Anchored can list an account's
+// links together and no Anchored reads a grouped name's commits anywhere
+// else; every commit is kept for the image's retention; and newPlatform
+// builds the one store of commits it shares with anchorCommits and gives
+// the chain's records their own strict Anchored over the chain's table.
+func TestL21TheImagesCommitsGroupTheChain(t *testing.T) {
+	key := func(context.Context) ([]byte, error) { return []byte("k"), nil }
+	c := anchorCommits(nil, "anchors", key, 3650)
+	if c.Bucket != "anchors" || c.Retention.Hours() != 3650*24 || !chainGrouped(c) {
+		t.Fatalf("%+v", c)
+	}
+	if _, _, ok := c.Group("account-acc_bbbbbbbbbbbbbbbbbbbbbbbbbb"); ok {
+		t.Fatal("an account's record is grouped")
+	}
+	src, err := os.ReadFile("platform_enclave.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"commits := anchorCommits(s3Client, cfg.anchorBucket, root.CommitKey, cfg.anchorRetentionDays)",
+		"chainRecords = &store.Anchored{Records: receipts.ChainTable{Entries: awsStore}, Commits: commits, Strict: true}",
+		"composeReceipts(receiptsParts{chain: chainRecords,",
+		"st.Regressions = append(st.Regressions, receiptRegressions(chainRecords)...)",
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("newPlatform does not say %q", want)
+		}
+	}
+	if strings.Count(string(src), "&store.S3Commits{") != 1 {
+		t.Error("the image makes more than one store of commits")
 	}
 }

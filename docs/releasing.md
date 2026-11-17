@@ -13,6 +13,12 @@
 
 Opening the pull request by hand works too; it just needs auto-merge or a manual merge.
 
+## Gates a release waits for
+
+A design can name what must be done before the release that carries it is cut. While `develop` holds such a change and its gate is open, nobody runs release-pr: the release pull request auto-merges once CI passes, and CI cannot see these.
+
+- **The chain of receipts (ADR 0037).** From pull request 2 (#<this one>), `develop` composes every receipt linked in its account's chain, the daily audit and `/status`'s receipts, and `permaily-verify` fails without them. Before the release that first carries it: pull request 3 (the person's route and export) is merged; L22, the staging check, is run and its measurements are in ADR 0037's "Cost" ([operations.md](operations.md), "The chain of receipts", "Before the release that chains receipts"); the histories of the accounts' records are measured to fit the strict reader's limits (same section); and the release notes say that `permaily-verify` from this release fails on a deployment whose audit has not finished a pass, minutes after the deployment starts. Once the release is deployed and verified, the keys of every earlier release are deleted as soon as the rollback window allows, since an earlier release writes receipts without a link.
+
 ## What a release does
 
 On every push to `main`, `.github/workflows/release.yml`:

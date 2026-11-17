@@ -421,7 +421,7 @@ func checkStatus(st *attestation.Status, r hostResult, pcr0 string, kms kmsOptio
 	if st.Connections != nil {
 		// What connections may get is checked whatever is skipped, as the
 		// model's is.
-		if r.Connections, err = checkConnections(st.Connections, deploymentOf(r.URL)); err != nil {
+		if r.Connections, err = checkConnections(st.Connections, deploymentOf(r.URL), kms.now); err != nil {
 			r.Connections = nil
 			r.Error = "connections: " + err.Error()
 			return r

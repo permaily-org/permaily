@@ -39,6 +39,7 @@ import (
 	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/services/decisions"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
+	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
 	"github.com/permaily-org/permaily/pkg/attestation"
@@ -82,6 +83,9 @@ type platform struct {
 	// one strict Anchored of its records.
 	connections       *composedConnections
 	connectionRecords *store.Anchored
+	// receipts is the record of what left, chained (ADR 0037), over its one
+	// strict Anchored.
+	receipts *composedReceipts
 	// records are the Anchored of each kind of record, by kind, for the
 	// test that no name is read through two (dev mode only).
 	records map[string]*store.Anchored
@@ -139,7 +143,10 @@ func newDevStorage() (*devStorage, error) {
 	}
 	mem := store.NewMemory()
 	mem.Now = devClock
-	return &devStorage{mem: mem, commits: store.NewMemoryCommits(), keys: local}, nil
+	commits := store.NewMemoryCommits()
+	// The chain's records' commits grouped, as the image's (anchorCommits).
+	commits.Group = receipts.CommitGroup
+	return &devStorage{mem: mem, commits: commits, keys: local}, nil
 }
 
 // devConfig is what dev mode alone reads: where the played vendors are.
@@ -391,13 +398,21 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	// Connections, as in the enclave: their records strict in one Anchored
 	// of their own, and vendors played, never a real one (devVendorHTTP).
 	p.connectionRecords = &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock}
+	// The record of what left, chained, as in the enclave: the chain's
+	// records strict in one Anchored of their own over the chain's table,
+	// their commits grouped (devStorage), the chain blocked or failed when
+	// a test says so (devChain).
+	chainRecords := &store.Anchored{Records: receipts.ChainTable{Entries: mem}, Commits: devChainCommits{storage.commits}, Strict: true, Now: devClock}
+	if p.receipts, err = composeReceipts(receiptsParts{chain: chainRecords, entries: mem, keys: local, accounts: p.accounts, now: devClock}); err != nil {
+		return nil, err
+	}
 	if p.connections, err = composeConnections(connectionsParts{
 		oauth: oauthConfig(hosts, cfg.oauthPort()), domain: cfg.domain, records: p.connectionRecords, entries: mem, keys: local,
-		vendorHTTP: devVendorHTTP(cfg.dev), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model, now: devClock,
+		vendorHTTP: devVendorHTTP(cfg.dev), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model, receipts: p.receipts, now: devClock,
 	}); err != nil {
 		return nil, err
 	}
-	p.records = map[string]*store.Anchored{"accounts": accountRecords, "mailboxes": mailboxRecords, "model": modelRecords, "connections": p.connectionRecords}
+	p.records = map[string]*store.Anchored{"accounts": accountRecords, "mailboxes": mailboxRecords, "model": modelRecords, "connections": p.connectionRecords, "receipts": chainRecords}
 	devPlatforms.add(p)
 	port := cfg.smtpPort
 	if port == 25 {
@@ -407,4 +422,52 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 		return nil, err
 	}
 	return p, nil
+}
+
+// devChain, when a test sets it, blocks or fails every commit of the
+// chain's records (ADR 0037, L21): the test of the whole service sees that
+// nothing of a connection's answer leaves before its receipt's link is
+// committed, and nothing at all when it cannot be.
+var devChain atomic.Pointer[devChainHook]
+
+// devChainHook is what devChain does to a commit of the chain: with fail,
+// it is refused; with hold, it waits for hold to close, saying on waiting
+// (when set) that one waits.
+type devChainHook struct {
+	fail    bool
+	hold    chan struct{}
+	waiting chan struct{}
+}
+
+// errDevChain is a commit of the chain that devChain refused.
+var errDevChain = errors.New("dev mode: the chain's storage is failing")
+
+// devChainCommits is the chain's commits in dev mode: the deployment's,
+// with devChain's hook before each commit.
+type devChainCommits struct{ *store.MemoryCommits }
+
+// Unwrap is the deployment's commits under the hook.
+func (c devChainCommits) Unwrap() store.Commits { return c.MemoryCommits }
+
+// Append implements store.Commits.
+func (c devChainCommits) Append(ctx context.Context, cm store.Commit) (*store.Commit, error) {
+	if h := devChain.Load(); h != nil {
+		if h.waiting != nil {
+			select {
+			case h.waiting <- struct{}{}:
+			default:
+			}
+		}
+		if h.hold != nil {
+			select {
+			case <-h.hold:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		if h.fail {
+			return nil, errDevChain
+		}
+	}
+	return c.MemoryCommits.Append(ctx, cm)
 }

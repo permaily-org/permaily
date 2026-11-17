@@ -30,7 +30,9 @@ import (
 	"github.com/permaily-org/permaily/internal/rules"
 	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
+	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
+	"github.com/permaily-org/permaily/pkg/attestation"
 )
 
 // countingEntries is the deployment's table, counting the pages of the
@@ -54,12 +56,16 @@ type connectionsWorld struct {
 	*modelWorld
 	table   *countingEntries
 	records *store.Anchored
-	parts   connectionsParts
+	// chain is the one strict Anchored of the chain of receipts.
+	chain *store.Anchored
+	parts connectionsParts
 }
 
 func newConnectionsWorld(t *testing.T) *connectionsWorld {
 	t.Helper()
 	w := newModelWorld(t)
+	// The chain's records' commits grouped, as the image's (anchorCommits).
+	w.commits.Group = receipts.CommitGroup
 	table := &countingEntries{Memory: w.mem}
 	acc, err := accounts.New(accounts.Config{
 		Records: &store.Anchored{Records: w.mem, Commits: w.commits, OnlyNewest: true, Now: w.now}, Entries: w.mem, Keys: w.keys,
@@ -78,9 +84,14 @@ func newConnectionsWorld(t *testing.T) *connectionsWorld {
 	acc.SetMailboxes(mb)
 	model, _ := w.enclave()
 	records := &store.Anchored{Records: w.mem, Commits: w.commits, OnlyNewest: true, Strict: true, Now: w.now}
-	return &connectionsWorld{modelWorld: w, table: table, records: records, parts: connectionsParts{
+	chain := &store.Anchored{Records: receipts.ChainTable{Entries: w.mem}, Commits: w.commits, Strict: true, Now: w.now}
+	rc, err := composeReceipts(receiptsParts{chain: chain, entries: w.mem, keys: w.keys, accounts: acc, now: w.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &connectionsWorld{modelWorld: w, table: table, records: records, chain: chain, parts: connectionsParts{
 		oauth: oauthConfig(router.HostsForDomain("permaily.com"), 443), domain: "permaily.com", records: records, entries: table, keys: w.keys,
-		vendorHTTP: &http.Client{}, accounts: acc, mailboxes: mb, model: model, now: w.now,
+		vendorHTTP: &http.Client{}, accounts: acc, mailboxes: mb, model: model, receipts: rc, now: w.now,
 	}}
 }
 
@@ -92,12 +103,19 @@ func newConnectionsWorld(t *testing.T) *connectionsWorld {
 // byte, assertions decided strictly, vendors over HTTP/2, 16 devices,
 // nothing leaving while the model cannot be asked, the verified list, the
 // default rule by the canonical identifiers of its formulas, receipts
-// sealed and not yet chained, decisions strict with 28,800 a mailbox's day,
+// sealed and chained by strict links with the record of incidents read and
+// empty, a first pass of the audit and nothing broken by any kind (ADR
+// 0037, L19), decisions strict with 28,800 a mailbox's day,
 // and every reason at zero; never a client, an account or a connection.
 func TestV56TheConnectionsOnStatus(t *testing.T) {
 	w := newConnectionsWorld(t)
 	c, err := composeConnections(w.parts)
 	if err != nil {
+		t.Fatal(err)
+	}
+	// Receipts as an enclave reports them once it has read the record of
+	// incidents and finished a first pass of the audit (ADR 0037, L19).
+	if err := c.receipts.auditOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	st := connectionsStatus(c)()
@@ -116,6 +134,13 @@ func TestV56TheConnectionsOnStatus(t *testing.T) {
 	for _, r := range reasons {
 		zero = append(zero, fmt.Sprintf("%q:0", r))
 	}
+	kinds := slices.Clone(attestation.ReceiptsBrokenKinds)
+	slices.Sort(kinds)
+	var brokenKinds []string
+	for _, k := range kinds {
+		brokenKinds = append(brokenKinds, fmt.Sprintf("%q:0", k))
+	}
+	brokenZero := strings.Join(brokenKinds, ",")
 	want := `{"issuer":"https://api.permaily.com","authorization_endpoint":"https://app.permaily.com/oauth/authorize",` +
 		`"token_endpoint":"https://api.permaily.com/oauth/token","revocation_endpoint":"https://api.permaily.com/oauth/revoke",` +
 		`"pushed_endpoint":"https://api.permaily.com/oauth/par","resources":["https://api.permaily.com/v1","https://mcp.permaily.com/mcp"],` +
@@ -125,7 +150,9 @@ func TestV56TheConnectionsOnStatus(t *testing.T) {
 		`"vendor_transport":"h2","devices_per_connection":16,"model_unavailable":"nothing_leaves",` +
 		`"verified":[{"domain":"claude.ai","owner":"Anthropic"},{"domain":"chatgpt.com","owner":"OpenAI"}],` +
 		`"rules":[{"id":"default-sign-in-and-security","version":1,"formulas":[` + strings.Join(ids, ",") + `],"on":true}],` +
-		`"receipts":{"sealed":true,"chained":false,"decisions":"strict","decisions_per_day":28800},` +
+		`"receipts":{"sealed":true,"chained":true,"chain":"strict","incidents":{"recorded":0,"read":"2026-11-16T12:00:00Z"},` +
+		`"broken":{` + brokenZero + `},"audit":{"began":"2026-11-16T12:00:00Z","finished":"2026-11-16T12:00:00Z","catalogue":0,` +
+		`"chains":0,"removed":0,"broken":{` + brokenZero + `},"recovered":0,"unlinked":0,"expired":0},"decisions":"strict","decisions_per_day":28800},` +
 		`"since":"` + st.Since.Format(time.RFC3339Nano) + `","refused":{` + strings.Join(zero, ",") + `}}`
 	if string(got) != want {
 		t.Fatalf("/status's connections:\n got %s\nwant %s", got, want)
@@ -178,6 +205,7 @@ func TestV57TheCompositionRefuses(t *testing.T) {
 		func(p *connectionsParts) { p.accounts = nil },
 		func(p *connectionsParts) { p.mailboxes = nil },
 		func(p *connectionsParts) { p.model = nil },
+		func(p *connectionsParts) { p.receipts = nil },
 	} {
 		p := w.parts
 		drop(&p)
