@@ -26,4 +26,4 @@ Option 2.
 
 - The operator can read why an enclave fails, with `journalctl -u permaily-host`.
 - A log line is now a way for data to leave the enclave, so each new log statement needs the same care as an API response. Errors from libraries are logged; today they name AWS resources and hosts, never mail.
-- The journal lives on the instance and is lost with it. Shipping it elsewhere is not done yet.
+- The journal lives on the instance and is lost with it. Since ADR 0034 the CloudWatch agent ships it to CloudWatch Logs, kept 90 days.
