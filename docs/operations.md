@@ -27,12 +27,99 @@ scripts/deploy.sh $dir $dir/permaily-host-linux-arm64
 scripts/verify.sh $new                 # from a server with outbound port 25, add -require-smtp
 ```
 
-Then delete the key of the previous release (below), and open the pull request that commits `production.auto.tfvars`.
+Then delete the key of the previous release (below), and open the pull request that commits `production.auto.tfvars`. Step 1 and deleting a key need `tofu apply`, which only the owner can run; the other operators do the rest ("Operators").
 
 - **The handoff is refused** (HTTP 422): the answer says why. Nothing was written and the running enclave keeps serving. The usual causes are a key that was not created yet, or files of the wrong release.
 - **The new image was started first**: it logs `waiting for the running release to hand over the root secret` and serves nothing. Start the old image again, run the handoff, start the new one.
 - **Step 2 can be repeated**; the second time it answers `"created": false`.
 - **Step 2 verifies first.** `scripts/handoff.sh` runs `permaily-verify` against the `pcrs.json` of `$old` and sends the admin token only to the TLS key it attested ("The operator's scripts verify first", below). When what answers on `api.permaily.com` is not `$old`, it stops and nothing is sent.
+
+## Operators
+
+The account's owner can do everything here. Other operators sign in through the organization's IAM Identity Center, which asks for MFA at every sign-in, with the permission set `permaily-operator`: it references this account's customer-managed policies `permaily-operators-operate` and `permaily-operators-guard` (path `/`, `deploy/tofu/operators.tf`, ADR 0036) and carries nothing else. The organization's service control policy denies IAM groups and console passwords for IAM users in this account, so operators have no IAM user here, and nothing of theirs is in the repository or the state. The repository never names an operator: it is public.
+
+| An operator can | An operator cannot |
+|---|---|
+| Deploy an image: `scripts/deploy.sh` (artifacts upload, SSM command to the instance), `--logs-only` too; read `tofu output` (the state, read-only) | `tofu apply` of anything: no write to the state, so no release key created (step 1 of "Deploy a release") and no old release's key deleted; the owner does those |
+| Run the handoff, the verifier and the operator's scripts (`handoff.sh`, `verify.sh`, `invite.sh`, `accounts.sh`, `provider.sh`, `model-key.sh`): these need the admin token or a secret, which the owner gives or not, not AWS | Create, delete, enable, disable or change any KMS key, its policy, its grants or its aliases (denied explicitly) |
+| Open an SSM session on the instance, end or resume their own, and read the logs (`permaily-host`, `/aws/lambda/permaily-drift`) | Change anything in IAM: no user, role, policy, key or provider (denied explicitly) |
+| See the instance, the keys and their policies, the alarms, EventBridge's rules and metrics, SES's account and identity, CloudTrail's events, the versions in the anchors bucket; run the drift check now | Delete, reconfigure or unlock the anchors' two Object Lock buckets or their objects (denied explicitly) |
+| Look up and remove an address from SES's suppression list | Read or write DynamoDB directly (denied explicitly), read the mail bucket, read secrets, change DNS (Cloudflare is not in AWS), change alarms, rules, subscriptions, the site, or any other resource |
+
+**What SSM on the instance gives.** The instance is untrusted and its role is what the enclave uses for storage: a root shell there can read, write and delete the mail table's items (which include the readable account data: contact addresses, names, dates; never sealed content), read and delete the sealed objects of the mail bucket, write the anchors bucket, and send mail as the service through SES. Deploying needs that shell, so an operator has what the owner has there. What the enclave seals stays out of reach, and what it refuses to accept (an earlier copy of an anchored record) stays refused. Give the role to people the owner would give the instance to.
+
+**What the guard holds.** It holds against anything else the permission set ever carries (an AWS managed policy, an inline policy): an explicit deny wins. It does not hold against whoever administers the organization's IAM Identity Center, who can change the permission set, and who can already do anything in this account through the organization's management account. So the owner checks the role it makes here (below), and again whenever the administrator says the permission set changed.
+
+**Onboarding.** The owner applies `deploy/tofu` first, so that both policies exist as the repository has them; Identity Center refuses to provision a permission set whose customer-managed policy is not in the account. Then whoever administers the organization's IAM Identity Center, from the management account (a profile of theirs, here `org`; Identity Center's own region):
+
+```sh
+# 0. Identity Center > Settings > Authentication > Multi-factor authentication: "Every time they sign in",
+#    and users without a device must register one at sign-in. It applies to the whole organization.
+read -r instance store < <(aws sso-admin list-instances --profile org \
+  --query 'Instances[0].[InstanceArn,IdentityStoreId]' --output text)
+
+# 1. The permission set: one hour sessions, nothing but the two policies of this account.
+ps=$(aws sso-admin create-permission-set --profile org --instance-arn "$instance" \
+  --name permaily-operator --description 'Permaily operators (ADR 0036)' --session-duration PT1H \
+  --query PermissionSet.PermissionSetArn --output text)
+for name in permaily-operators-operate permaily-operators-guard; do
+  aws sso-admin attach-customer-managed-policy-reference-to-permission-set --profile org \
+    --instance-arn "$instance" --permission-set-arn "$ps" --customer-managed-policy-reference Name=$name,Path=/
+done
+#    No AWS managed policy, no inline policy, no permissions boundary.
+
+# 2. The assignment: the operator's own Identity Center user, on the permaily account only.
+user=$(aws identitystore get-user-id --profile org --identity-store-id "$store" \
+  --alternate-identifier '{"UniqueAttribute":{"AttributePath":"userName","AttributeValue":"<their user name>"}}' \
+  --query UserId --output text)
+aws sso-admin create-account-assignment --profile org --instance-arn "$instance" --permission-set-arn "$ps" \
+  --target-type AWS_ACCOUNT --target-id <permaily account id> --principal-type USER --principal-id "$user"
+#    It provisions the role AWSReservedSSO_permaily-operator_<suffix> in the permaily account;
+#    aws sso-admin describe-account-assignment-creation-status says when it is done, or why it failed.
+```
+
+**The owner checks it** from this account (`AWS_PROFILE=permaily`), after the assignment and after any change to the permission set:
+
+```sh
+aws iam list-roles --path-prefix /aws-reserved/sso.amazonaws.com/ --query 'Roles[].RoleName'   # every permission set that reaches this account
+role=$(aws iam list-roles --path-prefix /aws-reserved/sso.amazonaws.com/ \
+  --query "Roles[?starts_with(RoleName, 'AWSReservedSSO_permaily-operator_')].RoleName" --output text)
+aws iam list-attached-role-policies --role-name "$role"   # exactly permaily-operators-operate and permaily-operators-guard, path /
+aws iam list-role-policies --role-name "$role"            # nothing: no inline policy
+aws iam get-role --role-name "$role" --query 'Role.[MaxSessionDuration,PermissionsBoundary]'   # 3600 and null
+aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=AssumeRoleWithSAML \
+  --query 'Events[].[EventTime,Username]'                  # who signed in to a role here, and when
+```
+
+Who is assigned is visible only in the management account; the owner sees here which roles exist, what each carries, and who signed in. The drift check does not watch the role: it is not in the state.
+
+**The CLI** (the operator, once):
+
+```sh
+aws configure sso --profile permaily   # the organization's access portal URL and Identity Center's region,
+                                       # the permaily account, the role permaily-operator, region us-east-2
+aws sso login --profile permaily       # in the browser, with MFA; again when the session ends
+export AWS_PROFILE=permaily            # what the scripts expect; the role's credentials last one hour
+aws sts get-caller-identity            # assumed-role/AWSReservedSSO_permaily-operator_<suffix>/<their user name>
+```
+
+**Offboarding**: the Identity Center administrator deletes the operator's assignment (`aws sso-admin delete-account-assignment`, same arguments as creating it), and their Identity Center user if they no longer need it. Then the owner rotates what they held outside AWS: the admin token, if they had it, and any secret they were given.
+
+**Cutting every operator off at once** (the owner, from this account alone, when the administrator cannot act): make the guard's default version one that denies everything; the role carries the guard, so every operator's session is refused at its next call.
+
+```sh
+arn=arn:aws:iam::<account id>:policy/permaily-operators-guard
+aws iam create-policy-version --policy-arn "$arn" --set-as-default \
+  --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"*","Resource":"*"}]}'
+```
+
+The drift check reports the guard changed until the owner applies `deploy/tofu` again, which restores it (delete the extra version with `aws iam delete-policy-version` once it is not the default; a policy keeps five at most).
+
+**The first apply (2026-11-17)** made an IAM user, `permaily-operator-2`, before the service control policy stopped it; it has no password, key, MFA device or group. The apply that removes it forgets it rather than destroying it (destroying it would delete its login profile, which that policy denies); then the owner deletes it:
+
+```sh
+aws iam delete-user --user-name permaily-operator-2
+```
 
 ## Roll back
 
@@ -106,14 +193,25 @@ Still needed before two run:
 
 ## Look at enclave logs
 
-The enclave sends its log lines to the host, which keeps them in the journal with the prefix `enclave:` (since v0.5.0):
+The enclave sends its log lines to the host, which keeps them in the journal with the prefix `enclave:` (since v0.5.0). The CloudWatch agent on the instance ships the journal of `permaily-host` and `permaily-enclave` to the CloudWatch Logs group `permaily-host`, one stream per instance, kept 90 days (ADR 0034), so the lines outlive the instance:
+
+```sh
+aws logs tail permaily-host --region us-east-2 --since 1h --filter-pattern '"enclave:"'   # each event is the journal entry as JSON; the line is its MESSAGE
+aws logs tail permaily-host --region us-east-2 --follow
+```
+
+On the instance itself, for the last minutes or when the agent is not running:
 
 ```sh
 aws ssm start-session --target "$(tofu -chdir=deploy/tofu output -raw instance_id)"
 sudo journalctl -u permaily-host --since "1 hour ago" | grep "enclave:"
 ```
 
-A line `log lines dropped` means the host was not reading for a while. The journal is lost if the instance is replaced.
+A line `log lines dropped` means the host was not reading for a while. The lines hold kinds only, never content (docs/threat-model.md, "Logging"); in CloudWatch they are readable by whoever has CloudWatch Logs read permissions in the account, and the instance can add lines and cannot read or delete them.
+
+- **The agent.** `scripts/deploy.sh` installs it on every deploy (`deploy/host/install-logs.sh`: the RPM pinned by version and SHA-256, configured by `deploy/host/cloudwatch-agent.json`), before it restarts anything, so a new instance ships from its first deploy. `scripts/deploy.sh --logs-only` installs it alone and restarts nothing else, for an instance that runs already. A failed install prints `WARNING: the CloudWatch agent was not installed` and does not stop the deploy: the journal keeps the lines, and the next deploy or `--logs-only` tries again.
+- **Nothing arrives.** On the instance, `systemctl status amazon-cloudwatch-agent` and `/opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log` say why: usually the role's policy (`host-logs` in `deploy/tofu/logs.tf`) or the group missing (the agent cannot create it). The agent does not send what the journal held before it started.
+- **Updating the agent.** Change `version` and `sha256` in `deploy/host/install-logs.sh` together, from the RPM of `amazon_linux/arm64/<version>/` in AWS's bucket, then deploy or run `--logs-only`.
 
 For an enclave that does not even start, deploy the same image with `--debug` (`scripts/deploy.sh eif host --debug`) and read its console:
 
@@ -156,6 +254,80 @@ Two things start it:
 
 If the runs stop: check the rule (`aws events describe-rule --name permaily-verify-production`) and its failed invocations in CloudWatch (`AWS/Events`, `FailedInvocations`), then the token below. `gh workflow run verify-production` starts one by hand. GitHub disables scheduled workflows after 60 days without activity in the repository; re-enable it under Actions if that happens.
 
+## The drift check
+
+Once an hour, at minute 23, the Lambda function `permaily-drift` runs `tofu plan -detailed-exitcode` of `deploy/tofu` as it is at the newest commit of `develop` against production (`deploy/tofu/drift.tf`, ADR 0035). When the plan is not clean, or cannot be made, it mails the subscribers of the SNS topic `permaily-sigstore-deadline` (below, "Who is told about a Sigstore deadline"): "production drifted from deploy/tofu" with the resources the plan would change, or "the drift check failed" with the end of its output. A clean plan sends nothing. It only reads: its role can change nothing in the account, it plans without taking the state's lock, its Cloudflare token can only read, and nothing in it applies. Its whole output is in CloudWatch Logs, `/aws/lambda/permaily-drift`, 90 days.
+
+Two CloudWatch alarms mail the same topic when the check cannot: `permaily-drift-errors` (it crashed, timed out, or SNS refused its mail) and `permaily-drift-stopped` (no run for three hours); each mails again when it clears.
+
+- **Production drifted.** Someone or something changed the account or the zone outside OpenTofu, or a change was applied from a branch that is not on `develop` yet. Right after a release's `tofu apply`, the plan differs until the pull request that commits `production.auto.tfvars` is merged: merge it promptly, and expect one or two mails meanwhile. Otherwise read the plan in the log, find out who changed what (CloudTrail), and either apply to restore it or commit the change; never leave it. A CAA record that differs is urgent (deploy/AGENTS.md: a half-applied CAA change stops certificate issuance).
+- **The check failed.** The mail ends with the error. `AccessDenied` on a refresh means a resource type was added to `deploy/tofu` without its read permission: add the action to `aws_iam_role_policy.drift_refresh` (read actions only, never one that reads data). `the Cloudflare token could not be read` or `has no value`: the secret below. Errors from GitHub or the registry are transient; the next hour tries again.
+- **To silence it** for a planned change: `aws events disable-rule --name permaily-drift --region us-east-2`, and `enable-rule` afterwards.
+- **Run it now:** `aws lambda invoke --function-name permaily-drift --region us-east-2 --invocation-type Event /dev/null`.
+
+**Setting it up, once** (and the token again before it expires):
+
+```sh
+# 1. The ECR repository, the secret, the role and the log group (the function waits for an image).
+tofu -chdir=deploy/tofu apply
+# 2. A Cloudflare token that can only read: My Profile > API Tokens > Create, permissions
+#    Zone > Zone > Read and Zone > DNS > Read, zone resources: permaily.com only, with an expiry.
+#    Put it in the secret without showing it or putting it on a command line (never in the repository or the state):
+read -rsp 'Cloudflare token: ' token; echo
+printf %s "$token" | aws secretsmanager put-secret-value --region us-east-2 \
+  --secret-id permaily/drift/cloudflare-token --secret-string file:///dev/stdin; unset token
+# 3. The image: builds deploy/drift and pushes it, then prints its digest.
+scripts/drift-image.sh
+# 4. deploy/tofu/production.auto.tfvars: drift_image_digest = "sha256:…" (public), then
+tofu -chdir=deploy/tofu apply          # creates the function, its schedule and its two alarms
+aws lambda invoke --function-name permaily-drift --region us-east-2 /dev/stdout   # a first run: {"result":"done"}, and no mail when production matches
+```
+
+Commit `drift_image_digest` in the pull request that follows. Rebuild the image (`scripts/drift-image.sh`, then the digest and an apply) only when `deploy/drift` changes, to move OpenTofu or the base image: the configuration it plans is fetched on each run, with the providers its lock file names. ECR expires only untagged images (a push that failed half way); every pushed image keeps its commit's tag, so the one the function runs never expires. To remove old images by hand, never the one in `drift_image_digest` nor the one the function runs (`aws lambda get-function --function-name permaily-drift --region us-east-2 --query Code.ResolvedImageUri`): list them with `aws ecr describe-images --repository-name permaily-drift --region us-east-2 --query 'imageDetails[].[imageDigest,imageTags[0],imagePushedAt]' --output table`, then `aws ecr batch-delete-image --repository-name permaily-drift --region us-east-2 --image-ids imageDigest=sha256:…` for each old one. To rotate the Cloudflare token, create the new one, put it with step 2, run it once, then delete the old one.
+
+## Port 25, from its instance
+
+GitHub's runners and Lambda cannot connect out on port 25, so the scheduled checks above skip the certificate the enclave presents on SMTP (they warn). The hourly port 25 check does it instead (`deploy/tofu/port25.tf`, `deploy/port25/`, ADR 0038): a `t4g.nano` of its own in the account, `permaily-port25-check`, with nothing in, out only to 443 and 25, and a role that can only publish to the alarms' topic, read its GitHub token and be an SSM node (the managed policy `AmazonSSMManagedInstanceCore`, every SSM parameter of the account denied). It reaches no key, bucket, table or log of production. A systemd timer starts `deploy/port25/run.sh` at minute 41 of every hour, which reads the token and runs `verify-cron.sh`: `verify-production.sh -require-smtp` (copies in `deploy/port25/` of those in `scripts/`, since the drift check fetches only `deploy/`), the latest release's verifier and `pcrs.json` checked against their Sigstore provenance and never run when either does not verify (the previous release's while the latest is not deployed), which fails when port 25 cannot be reached. A passing run sends nothing. EC2 blocks outbound port 25 until AWS lifts the account's block on request, and until then every run would fail, so the instance exists only once `port25_check` is true in `deploy/tofu/production.auto.tfvars`; its security group, role and secret exist before.
+
+A run has a deadline of 50 minutes (`PERMAILY_VERIFY_TIMEOUT`, in seconds): past it the run and everything it started are stopped (TERM, then KILL 30 s later, `PERMAILY_VERIFY_GRACE`) and it is a failure, so a download or a verifier that hangs cannot stop the hourly checks. One run at a time: the next run leaves a run within its deadline be, and treats a lock still held past the deadline, or a lock it cannot take, as a failure. The alert runs after the lock is released, and never holds it, with a deadline of its own of 2 minutes (`PERMAILY_ALERT_TIMEOUT`). systemd stops what is left of a run after 57 minutes. On the instance, the last report is in `/var/lib/permaily-port25/permaily-verify-cron/last.txt` and every run is in the journal of `permaily-port25.service`.
+
+What its mail means (the subscribers of `permaily-sigstore-deadline`, "Who is told about a Sigstore deadline"):
+
+- **"Permaily: the port 25 check failed"**, with the verifier's report: read it as a failed run of `verify-production`, an incident: which check failed and since when. A timeout or a refused connection on port 25 alone means AWS blocks port 25 again or the MX does not answer; check the second from a workstation (`scripts/verify.sh`, which warns when it cannot reach 25), and turn `port25_check` off if it is the block. `could not be read from Secrets Manager`, `does not hold a fine-grained GitHub token`, or GitHub answering 401 (`Bad credentials`) in the report: the token (below) is missing, of the wrong kind, expired or revoked. No verification ran in those.
+- **"Permaily: the port 25 check's run failed"**: the run failed without mailing its report (it crashed, systemd stopped it past 57 minutes, or SNS refused its alert), with the unit's journal of the last hour. No result is known for that hour.
+- **"Permaily: the port 25 check could not be set up"**: the first boot failed and nothing runs; a download of `gh` that did not end within 10 minutes is one such failure (GitHub slow or down: replace the instance once it answers). Read `/var/log/cloud-init-output.log` over SSM, fix the cause in `deploy/port25`, and replace the instance: `tofu -chdir=deploy/tofu apply -replace='aws_instance.port25[0]'`.
+- **The alarm `permaily-port25-down`**: the instance failed its status checks or stopped reporting (stopped, terminated); no check runs. `aws ec2 describe-instance-status --region us-east-2 --include-all-instances --instance-ids "$(tofu -chdir=deploy/tofu output -raw port25_instance)"`; reboot it, or replace it as above. It mails OK when it clears. Right after the instance is created it can mail once before the first metrics arrive, then OK.
+
+Nothing mails when the timer stops firing on a healthy instance, or when SNS refuses both a run's alert and the failure unit's; `systemctl list-timers permaily-port25.timer` on it shows the last and next run. The operators other than the owner cannot open a session on it (their policy names the enclave host only).
+
+**Setting it up, once.** The GitHub token first, then the instance after AWS lifts the block:
+
+```sh
+# 1. The security group, the role and the secret (no instance while port25_check is false).
+tofu -chdir=deploy/tofu apply
+# 2. The token gh signs in with. GitHub > Settings > Developer settings > Personal access tokens >
+#    Fine-grained tokens > Generate new token: an expiry, Repository access "Public repositories"
+#    (read-only), no permission added. Put it without showing it or putting it on a command line
+#    (never in the repository or the state):
+read -rsp 'GitHub token: ' token; echo
+printf %s "$token" | aws secretsmanager put-secret-value --region us-east-2 \
+  --secret-id permaily/port25/github-token --secret-string file:///dev/stdin; unset token
+# 3. Once AWS has lifted the account's block of outbound port 25 (us-east-2):
+#    deploy/tofu/production.auto.tfvars: port25_check = true, in a pull request, then
+tofu -chdir=deploy/tofu plan           # 2 to add: aws_instance.port25[0], aws_cloudwatch_metric_alarm.port25_down[0]
+tofu -chdir=deploy/tofu apply          # its first boot runs the check once; a failure mails within minutes
+# 4. A look at the first run (a session as ssm-user, which may sudo):
+aws ssm start-session --region us-east-2 --target "$(tofu -chdir=deploy/tofu output -raw port25_instance)"
+#   sudo systemctl status permaily-port25.service      # "Deactivated successfully", status 0
+#   sudo journalctl -u permaily-port25.service         # the run, empty of output when it passed
+#   systemctl list-timers permaily-port25.timer        # the next run at minute 41
+```
+
+- **The token again**: put a new one with step 2 before the old one expires (each run reads it), then revoke the old one on GitHub. Never a classic token: the run refuses one.
+- **Run it now**: in a session, `sudo systemctl start permaily-port25.service` (it waits for the run, a minute or two); or `aws ssm send-command --region us-east-2 --instance-ids "$(tofu -chdir=deploy/tofu output -raw port25_instance)" --document-name AWS-RunShellScript --parameters 'commands=["systemctl start --no-block permaily-port25.service"]'`.
+- **To silence it** for a planned change: `sudo systemctl stop permaily-port25.timer` in a session, and `start` afterwards (a reboot starts it again). For longer, or if AWS blocks port 25 again: `port25_check = false` and an apply, which removes the instance and its alarm.
+- **Updating it**: the instance runs `deploy/port25/` as it was applied, written into its user data, with its copies of `scripts/verify-cron.sh` and `scripts/verify-production.sh`: change a script in `scripts/` and copy it there in the same commit (`cp scripts/verify-cron.sh scripts/verify-production.sh deploy/port25/`; `scripts/port25.test.ts` fails until they are identical, and `scripts/tofu-validate.sh` checks the configuration in the drift check's layout). An apply after any of them changes replaces the instance (and updates its alarm), and the drift check mails until that apply. `gh` is pinned in `port25.tf` by version and SHA-256: to update it, download the new `gh_<version>_linux_arm64.tar.gz`, check it against the release's checksums file and with `gh attestation verify <archive> --repo cli/cli`, and change both values together. A newer Amazon Linux image is taken only when the instance is replaced.
+
 ## Sigstore changed
 
 A running enclave hands the root secret to a release only if the release's Sigstore bundle verifies with the trust root the enclave uses (the one compiled in, or a later one it was given), in the format `pkg/provenance` reads. If that stops being true and nobody notices in time, no release can be deployed without losing everything stored. The workflow `sigstore-watch` checks both things every day, for the first Rekor and for Rekor v2, (started by EventBridge at 06:53 UTC, and by GitHub's schedule when it fires), and `release.yml` checks each release before it cuts it. A failed run is a deadline, not an incident in production: the enclave that is running keeps working. So that it is not one more red mark, a failed run opens an issue with the label `sigstore-deadline`, assigned to the logins in `.github/sigstore-maintainers`, and every daily run adds a comment that names them again and sends mail to the subscribers of the SNS topic `permaily-sigstore-deadline`, until everything passes, when the issue is closed (`scripts/sigstore-alarm.sh`). When the change is urgent (a new issuer of signing certificates) the issue also gets the label `sigstore-urgent`: pull requests into `develop` fail their `go` check meanwhile, except the one that compiles in the new trust root (`scripts/check-sigstore-deadline.sh`), and the issue stays open after the checks pass, until production runs a release with the new trust root compiled in. Removing that label from the issue lets pull requests through.
@@ -177,7 +349,7 @@ aws sns subscribe --topic-arn "$(tofu -chdir=deploy/tofu output -raw sigstore_al
 aws sns list-subscriptions-by-topic --topic-arn "$(tofu -chdir=deploy/tofu output -raw sigstore_alarm_topic)"    # who is subscribed, and who has not confirmed
 ```
 
-The workflow publishes as the IAM user `permaily-sigstore-alarm`, which can publish to that topic and do nothing else. Its access key is in the repository secrets `SIGSTORE_ALARM_AWS_ACCESS_KEY_ID` and `SIGSTORE_ALARM_AWS_SECRET_ACCESS_KEY`, and the topic in the variable `SIGSTORE_ALARM_TOPIC_ARN`. To replace the key: `aws iam create-access-key --user-name permaily-sigstore-alarm`, set both secrets with `gh secret set`, then `aws iam delete-access-key` for the old one. GitHub's keyless sign-in is not used because the organization the AWS account belongs to forbids identity providers in it.
+The same topic carries the drift check's mail and its alarms ("The drift check"), and the port 25 check's ("Port 25, from its instance"). The workflow publishes as the IAM user `permaily-sigstore-alarm`, which can publish to that topic and do nothing else. Its access key is in the repository secrets `SIGSTORE_ALARM_AWS_ACCESS_KEY_ID` and `SIGSTORE_ALARM_AWS_SECRET_ACCESS_KEY`, and the topic in the variable `SIGSTORE_ALARM_TOPIC_ARN`. To replace the key: `aws iam create-access-key --user-name permaily-sigstore-alarm`, set both secrets with `gh secret set`, then `aws iam delete-access-key` for the old one. GitHub's keyless sign-in is not used because the organization the AWS account belongs to forbids identity providers in it.
 
 ## Rotate the GitHub dispatch token
 
@@ -194,7 +366,7 @@ Check that the next run starts, then delete the old token. Other applies run wit
 
 ## Read the test mailbox
 
-Retired by v0.12.0, the release that builds mailboxes per account (ADR 0026), in production since 2026-11-14: see the next section. That release has no `/v1/mailbox` and no `-mailbox-*` flags; what follows works only against v0.11.0 and before, as after a rollback to it.
+Retired by v0.12.0, the release that builds mailboxes per account (ADR 0026), in production since 2026-11-14: see the next section. That release has no `/v1/mailbox` and no `-mailbox-*` flags; what follows worked only against v0.11.0 and before, as after a rollback to it. Since 2026-11-17 there is none: F1's items are deleted and the keys of v0.10.0 and v0.11.0 are scheduled for deletion on 2026-11-24.
 
 ```sh
 token=$(cat ~/.config/permaily/test-mailbox-token)
@@ -214,7 +386,7 @@ Takes effect with v0.12.0, the release that builds ADR 0026, in production since
 
 - **The test mailbox is retired.** The release reads nothing of it: `/v1/mailbox` answers 404, the token reads nothing, and `u-9b393600758a2985dae3@inbox.permaily.com` refuses mail like any unknown address. Turn off any Gmail forwarding to it. Mail is read in the app, by the account that owns the mailbox; the operator's token reads nobody's.
 - **TLS-RPT.** The release removes the `_smtp._tls.inbox` record (`tls_rpt_address` is empty by default in `deploy/tofu`). After it is verified: sign in as the super admin, make a mailbox labelled "TLS reports", then set `tls_rpt_address` to its address and apply. Reports arrive there as attachments, read with "Download". This is the one mailbox whose address is public, by design: anyone can send to it, and only its account reads it. Done on 2026-11-14: `tls_rpt_address` is `skr25i9u9s364ra7a6a9@inbox.permaily.com` in `deploy/tofu/production.auto.tfvars`, and the record is published again.
-- **Deleting F1's items, and the keys of the releases before**, once the release is verified and a rollback to v0.11.0 is no longer wanted (after it, v0.11.0 would start with a new, empty test mailbox): in the table every item with `pk=mailbox#test` (`sk=mailbox` and every `sk=msg#…`), and in the mail bucket every object under `raw/test/`. Then remove v0.11.0 and older releases from `release_keys` ("Delete the key of an old release"): until their keys are gone they can still open the root secret, and the test mailbox's mail was readable by them and by the token. This step is required, not tidying: the guarantees of mailboxes assume that releases from before them no longer run against the data (ADR 0026, "The store"). Until it is done, a rollback is possible and those guarantees hold only while this release or a later one runs.
+- **Deleting F1's items, and the keys of the releases before**, once the release is verified and a rollback to v0.11.0 is no longer wanted (after it, v0.11.0 would start with a new, empty test mailbox): in the table every item with `pk=mailbox#test` (`sk=mailbox` and every `sk=msg#…`), and in the mail bucket every object under `raw/test/`. Then remove v0.11.0 and older releases from `release_keys` ("Delete the key of an old release"): until their keys are gone they can still open the root secret, and the test mailbox's mail was readable by them and by the token. This step is required, not tidying: the guarantees of mailboxes assume that releases from before them no longer run against the data (ADR 0026, "The store"). Until it is done, a rollback is possible and those guarantees hold only while this release or a later one runs. Done on 2026-11-17: 4 items and 3 objects deleted, none left, and the keys of v0.10.0 and v0.11.0 scheduled for deletion on 2026-11-24; a rollback to v0.11.0 or before is no longer possible.
 - **Staging rehearsals** read mail through a mailbox of a signed-in account: sign in to the staging app with an invitation, make one or two mailboxes, send to them from a server with STARTTLS, and read them in the app or with the session's cookie under `/api/v1/mailboxes`.
 - **Pausing a mailbox** for abuse: `scripts/accounts.sh mailbox find <address>`, then `mailbox pause <id>` and later `mailbox resume <id>`; ten changes of one mailbox in thirty days at most. Its person is told by mail; nothing is deleted. The operator cannot disconnect a mailbox or read mail ("See and manage the accounts", "Mailboxes").
 - **A regression marked `fork` in `/status`**, under the name `mailbox`, means two commits of different digests at one version of a mailbox's record or an account's list: someone wrote to the anchors bucket. That mailbox stops for good, for the lock period (ten years): it refuses mail, nobody opens it, its person sees "Can't be read" and cannot disconnect it, and it keeps its slot. Nothing makes it readable again; tell its person through support. One marked `lost` means the newest commit of a mailbox's record or an account's list names a value the table no longer holds: someone deleted or changed the item in DynamoDB. A lost mailbox refuses mail and nobody opens it; it shows as `unreadable` in `scripts/accounts.sh mailboxes` and in the admin panel, with its identifier and when it was added, and its person can disconnect it, which frees its slot. A lost account list stops delivery to every mailbox of that account. One marked `unlocked` means S3 holds a commit without the lock the enclave wrote it with: report it to AWS and look at the bucket's configuration. Accounts and the TLS identity are not strict records: a fork there shows as a regression without the mark, as before (ADR 0016), and the TLS identity's is handled as ADR 0024 says.

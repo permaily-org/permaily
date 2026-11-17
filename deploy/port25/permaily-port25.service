@@ -1,0 +1,30 @@
+[Unit]
+Description=Permaily: permaily-verify -require-smtp against production (ADR 0038)
+Wants=network-online.target
+After=network-online.target
+OnFailure=permaily-port25-failed.service
+
+[Service]
+Type=oneshot
+User=permaily-port25
+Group=permaily-port25
+EnvironmentFile=/etc/permaily-port25.env
+Environment=HOME=/var/lib/permaily-port25
+StateDirectory=permaily-port25
+StateDirectoryMode=0700
+ExecStart=/opt/permaily-port25/run.sh
+# verify-cron.sh stops a run past 3000 s and 30 s of grace, and its alert within
+# 120 s more; systemd stops what is left past this, and on-failure.sh mails.
+TimeoutStartSec=3420
+KillMode=control-group
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX

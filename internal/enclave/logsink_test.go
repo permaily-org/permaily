@@ -153,33 +153,79 @@ func TestLogSinkStops(t *testing.T) {
 }
 
 // A host that accepts the connection and closes it at once (its log reader
-// crashed): the line being written is lost and counted, the others wait in the
-// queue, and the sink pauses between attempts instead of spinning.
+// crashed): the line being written is lost and counted once, the others wait
+// in the queue, and the sink pauses between attempts instead of spinning.
+//
+// The counter is read only while the sink waits in dial, where the drain of
+// the previous connection has returned. While a drain runs, the count is taken
+// to report it and put back when the report fails, so a read from outside at
+// any other moment can see 0 (it once did in CI after a sleep).
 func TestLogSinkCountsFailedWrites(t *testing.T) {
-	var healthy atomic.Bool
-	var attempts atomic.Int32
-	dial, lines, _ := reader(t)
+	type attempt struct {
+		at   time.Time
+		conn chan net.Conn
+	}
+	attempts := make(chan attempt)
+	realDial, lines, _ := reader(t)
 	s := newLogSink(t.Context(), func(ctx context.Context) (net.Conn, error) {
-		if healthy.Load() {
-			return dial(ctx)
+		a := attempt{at: time.Now(), conn: make(chan net.Conn, 1)}
+		select {
+		case attempts <- a:
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
-		attempts.Add(1)
+		select {
+		case c := <-a.conn:
+			return c, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, 20*time.Millisecond)
+	nextAttempt := func() attempt {
+		t.Helper()
+		select {
+		case a := <-attempts:
+			return a
+		case <-time.After(5 * time.Second):
+			t.Fatal("the sink did not connect again")
+			return attempt{}
+		}
+	}
+	broken := func() net.Conn {
 		a, b := net.Pipe()
 		_ = b.Close()
-		return a, nil
-	}, 20*time.Millisecond)
+		return a
+	}
 
+	first := nextAttempt()
 	for range 3 {
 		_, _ = s.Write([]byte("queued\n"))
 	}
-	time.Sleep(300 * time.Millisecond)
-	if n := attempts.Load(); n < 2 || n > 6 {
-		t.Fatalf("%d connection attempts in 300 ms with a 20 ms backoff that doubles: want a few, not a busy loop", n)
-	}
+	first.conn <- broken() // the first queued line is lost
+
+	second := nextAttempt()
 	if got := s.dropped.Load(); got != 1 {
-		t.Fatalf("dropped = %d, want 1 (only the line that was being written)", got)
+		t.Fatalf("dropped = %d after the first broken connection, want 1 (only the line that was being written)", got)
 	}
-	healthy.Store(true)
+	second.conn <- broken() // the report of the lost line fails too
+
+	third := nextAttempt()
+	if got := s.dropped.Load(); got != 1 {
+		t.Fatalf("dropped = %d after the report failed, want 1 (the count put back, not added again)", got)
+	}
+	// time.After fires no sooner than asked, so these bounds hold on any machine.
+	if gap := second.at.Sub(first.at); gap < 20*time.Millisecond {
+		t.Fatalf("second attempt %v after the first, want at least the 20 ms backoff", gap)
+	}
+	if gap := third.at.Sub(second.at); gap < 40*time.Millisecond {
+		t.Fatalf("third attempt %v after the second, want at least the doubled 40 ms backoff", gap)
+	}
+	c, err := realDial(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	third.conn <- c // the host reads again
+
 	if got := next(t, lines); got != `{"level":"WARN","msg":"log lines dropped","count":1}` {
 		t.Fatalf("first line once the host reads again: %q", got)
 	}

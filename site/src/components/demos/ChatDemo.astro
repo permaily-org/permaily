@@ -1,4 +1,6 @@
 ---
+import { logos } from '../../data/vendors';
+
 const firstAnswer = 'Saturday 14 March at 09:40, from Madrid. Your booking reference is KX72QM.';
 const secondAnswer = 'I can’t see that. Your bank emails aren’t part of what you shared with me.';
 ---
@@ -10,12 +12,12 @@ const secondAnswer = 'I can’t see that. Your bank emails aren’t part of what
   aria-label="A conversation with Claude. Asked about a flight, it gets one email through Permaily and answers. Asked about a bank statement, Permaily shares nothing, and Claude says it can't see that."
 >
   <div class="panel">
-    <div class="chat-head">
-      <span class="who"><span class="tile">CL</span>Claude</span>
-      <span class="small">Shared</span>
-      <span class="chip s">Flights and hotels</span>
-      <span class="small">Withheld</span>
-      <span class="chip w">Everything else</span>
+    <div class="win-bar" aria-hidden="true">
+      <span class="win-dots"><i></i><i></i><i></i></span>
+      <span class="win-title">
+        <svg viewBox={logos.claude.viewBox}><path d={logos.claude.d}></path></svg>
+        Claude
+      </span>
     </div>
     <div class="chat-body" aria-hidden="true">
       <p class="msg you" data-at="300">When does my Lisbon flight leave?</p>
@@ -25,46 +27,53 @@ const secondAnswer = 'I can’t see that. Your bank emails aren’t part of what
       <p class="tool" data-at="4150">Asked Permaily <span class="res w" data-at="4600">0 emails shared</span></p>
       <p class="msg bot" data-at="5100" data-stream={secondAnswer}><span class="vis">{secondAnswer}</span><span class="inv"></span></p>
     </div>
+    <div class="chat-box" aria-hidden="true">
+      <span>Ask anything</span>
+      <span class="send"><svg viewBox="0 0 16 16"><path d="M8 13V3.5M3.5 8 8 3.5 12.5 8"></path></svg></span>
+    </div>
   </div>
   <div class="demo-foot"><span></span><button class="demo-ctl">Replay</button></div>
 </figure>
 
 <style is:global>
-  .chat-head {
-    display: flex;
-    flex-wrap: wrap;
+  /* The conversation sits in an app's window: a bar with the window's three buttons and the app's name in
+     the middle. */
+  .win-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
-    gap: var(--space-8) var(--space-12);
-    padding: var(--space-14) var(--space-20);
+    height: 38px;
+    padding-inline: var(--space-14);
     border-bottom: var(--hair) solid var(--rule);
+    background: var(--sunken);
   }
 
-  .chat-head .who {
+  .win-dots {
+    display: flex;
+    gap: 7px;
+  }
+
+  .win-dots i {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--ink) 22%, transparent);
+  }
+
+  .win-title {
     display: flex;
     align-items: center;
-    gap: var(--space-10);
-    margin-right: auto;
-    font-size: var(--text-lead);
+    gap: var(--space-8);
+    color: var(--ink-2);
+    font-size: var(--text-small);
     font-weight: 500;
   }
 
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    padding: 3px 8px;
-    border-radius: var(--r);
-    font-size: var(--text-small);
-    white-space: nowrap;
-  }
-
-  .chip.s {
-    background: var(--highlight);
-    color: var(--on-highlight);
-  }
-
-  .chip.w {
-    background: var(--bar);
-    color: var(--on-bar);
+  .win-title svg {
+    display: block;
+    width: 13px;
+    height: 13px;
+    fill: currentColor;
   }
 
   .chat-body {
@@ -128,10 +137,40 @@ const secondAnswer = 'I can’t see that. Your bank emails aren’t part of what
     color: var(--on-bar);
   }
 
-  @media (max-width: 520px) {
-    .chat-head .who {
-      flex-basis: 100%;
-    }
+  /* Where the next question would be typed. It is there to make the window read as an app: it is not a
+     field, and nothing can be typed in it. */
+  .chat-box {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-12);
+    margin: 0 var(--space-20) var(--space-20);
+    padding: var(--space-8) var(--space-8) var(--space-8) var(--space-14);
+    border: var(--hair) solid var(--rule);
+    border-radius: var(--r);
+    color: var(--ink-3);
+    font-size: var(--text-lead);
+  }
+
+  .chat-box .send {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--r);
+    background: var(--ink);
+    color: var(--paper);
+  }
+
+  .chat-box .send svg {
+    display: block;
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
   }
 </style>
 

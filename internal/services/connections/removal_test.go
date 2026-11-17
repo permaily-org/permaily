@@ -91,6 +91,11 @@ func newRemovalWorld(t *testing.T) *removalWorld {
 			t.Fatal(err)
 		}
 	}
+	// One more write finishes the last rotation (Pruning), as the next
+	// write of a list does.
+	if l, err := r.a.updateList(ctx, accountA, func(*ListState) error { return nil }); err != nil || l.Pruning {
+		t.Fatal(l, err)
+	}
 	r.listEpochTop = 2
 	// b remembers the newest epoch.
 	if l, _, err := r.b.readList(ctx, accountA); err != nil || l.Epoch != 2 {
@@ -207,8 +212,11 @@ func TestV65RemovingAnAccountRemovesItsConnections(t *testing.T) {
 			families++
 		}
 	}
-	if moved < 2 || families < 1 {
-		t.Fatalf("the world does not have moved epochs: %d %d", moved, families)
+	// The list's moved epochs were removed by its rotations (V66): only
+	// their fences are left of them; a family's moved epoch stays until the
+	// removal.
+	if moved != 0 || families < 1 {
+		t.Fatalf("the world's moved epochs: %d of the list's stored, %d of a family's", moved, families)
 	}
 	index, err := r.mem.GetEntry(ctx, partitionAccounts, accountA)
 	if err != nil {

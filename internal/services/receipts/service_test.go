@@ -43,7 +43,7 @@ func stored(t *testing.T, w *world, r *Receipt) []byte {
 func TestH13AReceiptOfEachKindIsItsGoldenDocument(t *testing.T) {
 	w := newWorld()
 	s := w.enclave()
-	kinds := []Kind{KindSearch, KindRead, KindAttachment, KindRefused, KindConsent, KindEnded}
+	kinds := []Kind{KindSearch, KindRead, KindAttachment, KindRefused, KindConsent, KindEnded, KindRefusals}
 	all := samples(t)
 	if len(all) != len(kinds) {
 		t.Fatalf("%d kinds sampled", len(all))

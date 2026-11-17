@@ -1,0 +1,10 @@
+[Unit]
+Description=Permaily: the port 25 check, hourly at minute 41 (away from 7, 23 and 37)
+
+[Timer]
+OnCalendar=*-*-* *:41:00 UTC
+AccuracySec=1s
+Unit=permaily-port25.service
+
+[Install]
+WantedBy=timers.target

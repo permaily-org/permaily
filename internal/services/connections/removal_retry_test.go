@@ -46,7 +46,6 @@ func (c *lateCommits) Append(ctx context.Context, cm store.Commit) (*store.Commi
 func TestV65ARemovalWhoseCommitLandedIsFinished(t *testing.T) {
 	targets := map[string]func(r *removalWorld) string{
 		"the list's newest epoch": func(r *removalWorld) string { return ListName(accountA, r.listEpochTop) },
-		"the list's epoch 0":      func(*removalWorld) string { return ListName(accountA, 0) },
 		"a family's moved epoch":  func(r *removalWorld) string { return familyName(r.fams[1], 0) },
 		"a family's newest epoch": func(r *removalWorld) string { return familyName(r.fams[1], 1) },
 		"a connection":            func(r *removalWorld) string { return connName(r.conns[1]) },

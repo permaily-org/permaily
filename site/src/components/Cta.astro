@@ -30,11 +30,15 @@ const { title, body, primary, secondary } = Astro.props;
     padding-block: clamp(64px, 6.67vw, 96px);
   }
 
+  /* A title that takes two lines splits evenly, so no word is left alone on the second. */
   .cta .h-xl {
     margin-bottom: var(--space-20);
+    text-wrap: balance;
   }
 
+  /* The sentences under it break so that no word is left alone on the last line, where the browser can. */
   .cta .intro {
     margin-bottom: var(--space-32);
+    text-wrap: pretty;
   }
 </style>

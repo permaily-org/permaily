@@ -1,0 +1,341 @@
+---
+// Home's hero: the logo's iceberg in a sea of sample mail. The picture is built from the mail's own characters.
+// A character is highlighted, covered or left in the sea according to where it is, so the outline steps along
+// the letters and moves with them as the mail drifts.
+// The mail is drawn from attributes, not written as text, so it is not part of the page's own words.
+import { type Line, rowOf, rowText, sharedOf } from '../../data/mail';
+import WorksWith from '../WorksWith.astro';
+
+const PER_ROW = 8;
+const SEA_ROWS = 29;
+const MASS_ROWS = 26;
+const TIP_ROWS = 14;
+
+/** Characters a second. Each row drifts at its own pace. */
+const pace = (row: number) => 0.45 + ((((row * 37 + 11) % 10) + 10) % 10) / 10;
+/** Characters a row is ahead by when it starts. Each row has its own, so no two start alike. */
+const ahead = (row: number) => {
+  const s = Math.sin(row * 127.1 + 11.7) * 43758.5453;
+  return Math.floor((s - Math.floor(s)) * 200);
+};
+const make = (row: number, lines: Line[]) => {
+  const text = rowText(lines);
+  // The same row with every character covered. The bars are set from this, so the mail is not in them.
+  return { text, covered: text.replace(/\S/g, 'x'), n: text.length, v: pace(row), o: ahead(row) };
+};
+const sea = Array.from({ length: SEA_ROWS }, (_, i) => make(i, rowOf(i, PER_ROW)));
+// Counted up from the waterline. The tip is what an app can read, so it holds only mail an app asked for.
+const tip = Array.from({ length: TIP_ROWS }, (_, i) => make(-1 - i, sharedOf(i, PER_ROW)));
+/** Deeper rows are darker, in five steps. The script sets them again for the size on screen. */
+const depth = (i: number) => Math.min(4, Math.round(Math.min(1, (i + 1) * 0.036) * 4.2));
+---
+
+<div class="sea-wrap">
+  <figure
+    class="sea demo"
+    data-demo="sea"
+    aria-label="Lines of mail drift past an iceberg. Its small tip, above the waterline, stays readable and highlighted: that is what an app can read. Its large mass, below, is covered by black bars: that is what stays withheld."
+  >
+    <div class="sea-tip" aria-hidden="true">
+      {
+        tip.map((row) => (
+          <div class="sea-row">
+            <span class="sx pl" data-t={row.text} data-n={row.n} data-v={row.v} data-o={row.o} />
+            <span class="sx hl" data-t={row.text} data-n={row.n} data-v={row.v} data-o={row.o} />
+          </div>
+        ))
+      }
+    </div>
+    <div class="sea-water" aria-hidden="true">
+      {
+        sea.map((row, i) => (
+          <div class="sea-row" data-d={depth(i)}>
+            <span class="sx" data-t={row.text} data-n={row.n} data-v={row.v} data-o={row.o} />
+          </div>
+        ))
+      }
+    </div>
+    <div class="sea-shafts" aria-hidden="true"><i></i><i></i></div>
+    <div class="sea-mass" aria-hidden="true">
+      {
+        sea.slice(0, MASS_ROWS).map((row) => (
+          <div class="sea-row">
+            <span class="sx pl" data-t={row.text} data-n={row.n} data-v={row.v} data-o={row.o} />
+            <span class="sx br" data-t={row.covered} data-n={row.n} data-v={row.v} data-o={row.o} />
+          </div>
+        ))
+      }
+    </div>
+  </figure>
+  <div class="wrap demo-foot"><span></span><button class="demo-ctl">Replay</button></div>
+  <WorksWith />
+</div>
+
+<style is:global>
+  .sea {
+    /* One unit of the logo's iceberg. The tip is 10 wide and 7 high, the mass 24 wide and 14 deep. */
+    --u: clamp(12px, 1.82vw, 26px);
+    /* One row of mail. */
+    --lh: 15px;
+    /* From the waterline to the foot of the tip, and to the top of the mass: half the logo's gap. */
+    --gap: calc(0.8235 * var(--u));
+    --sky: calc(9.2 * var(--u));
+    --deep: calc(16.2 * var(--u));
+    position: relative;
+    overflow: hidden;
+    /* While the drawing is far from the window the browser does not draw it at all, so its rows cost the
+       page nothing once it has been scrolled past. Its height is set here, so the page does not move. */
+    content-visibility: auto;
+    height: calc(var(--sky) + var(--deep));
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    line-height: var(--lh);
+    user-select: none;
+  }
+
+  .sea-row {
+    position: relative;
+    flex: none;
+    overflow: hidden;
+    height: var(--lh);
+  }
+
+  /* One run of mail. It holds its text three times, so it never runs out as it drifts round. */
+  .sea .sx {
+    position: absolute;
+    inset: 0 auto 0 0;
+    white-space: pre;
+  }
+
+  .sea .sx::before {
+    content: attr(data-t) attr(data-t) attr(data-t);
+  }
+
+  /* With the script, the browser moves the mail by itself. A row of the sea moves as it is. A row of the
+     tip or the mass is cut to a window as well, so it rides on a run: the run moves and the row is cut,
+     and neither gets in the other's way. */
+  .sea-run {
+    position: absolute;
+    inset: 0 auto 0 0;
+  }
+
+  .sea[data-ready] .sea-water .sx,
+  .sea-run {
+    will-change: transform;
+  }
+
+  /* The mail inside the iceberg before the opening reaches it: readable, and darker than the sea.
+     Only the script shows it, so without the script the drawing is in its final state. */
+  .sea .pl {
+    display: none;
+    color: color-mix(in srgb, var(--ink) 82%, transparent);
+  }
+
+  .sea[data-ready] .pl {
+    display: block;
+  }
+
+  /* The tip: rows stacked up from the waterline. */
+  .sea-tip {
+    --foot: calc(100% - var(--gap) + var(--lh) / 2);
+    position: absolute;
+    inset: 0 0 auto;
+    display: flex;
+    flex-direction: column-reverse;
+    overflow: hidden;
+    height: calc(var(--sky) - var(--lh) / 2);
+    clip-path: polygon(
+      calc(50% - 5 * var(--u)) var(--foot),
+      calc(50% - 2.5 * var(--u)) calc(var(--foot) - 4 * var(--u)),
+      calc(50% - 1 * var(--u)) calc(var(--foot) - 2.5 * var(--u)),
+      calc(50% + 1.5 * var(--u)) calc(var(--foot) - 7 * var(--u)),
+      calc(50% + 5 * var(--u)) var(--foot)
+    );
+  }
+
+  /* Shared mail: the highlight, a hair short of the row so the rows read as lines, with its own dark text. */
+  .sea-tip .hl {
+    background: linear-gradient(var(--highlight), var(--highlight)) 0 1px / 100% calc(100% - 2px) no-repeat;
+    color: var(--on-highlight);
+  }
+
+  /* The sea: every row below the waterline, darker with depth. */
+  .sea-water,
+  .sea-shafts,
+  .sea-mass {
+    position: absolute;
+    inset: calc(var(--sky) + var(--lh) / 2) 0 0;
+    overflow: hidden;
+  }
+
+  .sea-water .sea-row {
+    color: color-mix(in srgb, var(--ink) 16%, transparent);
+  }
+
+  .sea-water [data-d='1'] {
+    color: color-mix(in srgb, var(--ink) 22%, transparent);
+  }
+
+  .sea-water [data-d='2'] {
+    color: color-mix(in srgb, var(--ink) 28%, transparent);
+  }
+
+  .sea-water [data-d='3'] {
+    color: color-mix(in srgb, var(--ink) 35%, transparent);
+  }
+
+  .sea-water [data-d='4'] {
+    color: color-mix(in srgb, var(--ink) 43%, transparent);
+  }
+
+  /* The sea answers the pointer: a word it passed over is covered by a bar for a moment, on paper that hides
+     the word, and then comes back. The script adds the bar to the row's mail, so it drifts with its word. */
+  .sea-water .sx b {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: var(--paper);
+    color: var(--bar);
+    font-family: 'Permaily Bars', var(--font-mono);
+    font-synthesis: none;
+    font-weight: inherit;
+    animation: sea-cover 2600ms linear both;
+  }
+
+  @keyframes sea-cover {
+    0% {
+      opacity: 0;
+    }
+
+    6%,
+    76% {
+      opacity: 1;
+    }
+
+    100% {
+      opacity: 0;
+    }
+  }
+
+  /* Without motion the bar comes and goes at once. */
+  @media (prefers-reduced-motion: reduce) {
+    .sea-water .sx b {
+      animation-timing-function: step-end;
+    }
+  }
+
+  /* Light in the water: slanted bands of paper over the sea, strongest a little under the surface.
+     The mail under a band reads a step lighter. */
+  .sea-shafts {
+    pointer-events: none;
+    mask-image: linear-gradient(to bottom, transparent 5%, black 16%, black 60%, transparent 84%);
+  }
+
+  .sea-shafts i {
+    --shaft: color-mix(in srgb, var(--paper) 26%, transparent);
+    position: absolute;
+    inset: 0 -20%;
+    opacity: 0.6;
+    will-change: transform, opacity;
+  }
+
+  .sea-shafts i:first-child {
+    background: linear-gradient(
+      112.8deg,
+      transparent 8%,
+      var(--shaft) 8% 13%,
+      transparent 13% 22%,
+      var(--shaft) 22% 25%,
+      transparent 25% 41%,
+      var(--shaft) 41% 49%,
+      transparent 49% 63%,
+      var(--shaft) 63% 67%,
+      transparent 67% 78%,
+      var(--shaft) 78% 85%,
+      transparent 85%
+    );
+  }
+
+  .sea-shafts i:last-child {
+    background: linear-gradient(
+      112.8deg,
+      transparent 3%,
+      var(--shaft) 3% 6%,
+      transparent 6% 17%,
+      var(--shaft) 17% 24%,
+      transparent 24% 33%,
+      var(--shaft) 33% 37%,
+      transparent 37% 54%,
+      var(--shaft) 54% 60%,
+      transparent 60% 71%,
+      var(--shaft) 71% 74%,
+      transparent 74% 90%,
+      var(--shaft) 90% 96%,
+      transparent 96%
+    );
+  }
+
+  /* The mass: the same rows on paper that hides the sea under them. */
+  .sea-mass {
+    --top: calc(var(--gap) - var(--lh) / 2);
+    clip-path: polygon(
+      calc(50% - 11 * var(--u)) var(--top),
+      calc(50% + 11 * var(--u)) var(--top),
+      calc(50% + 12 * var(--u)) calc(var(--top) + 4 * var(--u)),
+      calc(50% + 7.5 * var(--u)) calc(var(--top) + 9 * var(--u)),
+      calc(50% + 5 * var(--u)) calc(var(--top) + 8 * var(--u)),
+      calc(50% + 2.5 * var(--u)) calc(var(--top) + 14 * var(--u)),
+      calc(50% - 4.5 * var(--u)) calc(var(--top) + 9 * var(--u)),
+      calc(50% - 9.5 * var(--u)) calc(var(--top) + 7 * var(--u)),
+      calc(50% - 12 * var(--u)) calc(var(--top) + 3.5 * var(--u))
+    );
+  }
+
+  .sea-mass .sx {
+    background: var(--paper);
+  }
+
+  /* Withheld mail: every word a bar. The row is written as x's and set in the bars font. */
+  .sea-mass .br {
+    color: var(--bar);
+    font-family: 'Permaily Bars', var(--font-mono);
+    font-synthesis: none;
+  }
+
+  /* With the script, each row is cut to whole characters instead, so these outlines step aside. */
+  .sea[data-ready] .sea-tip,
+  .sea[data-ready] .sea-mass {
+    clip-path: none;
+  }
+
+  /* Where the browser can round, the foot of the tip and the top of the mass land on the edge of a row,
+     so no row is cut along its length. Without it they sit where the logo puts them. */
+  @supports (top: round(up, 1px, 1px)) {
+    .sea-tip {
+      --foot: calc(100% - round(up, var(--gap) - var(--lh) / 2, var(--lh)));
+    }
+
+    .sea-mass {
+      --top: round(up, var(--gap) - var(--lh) / 2, var(--lh));
+    }
+  }
+
+  /* The one control that stops everything that moves in the hero: the drawing, and the row of logos under it. */
+  .sea-wrap .demo-foot {
+    margin-top: var(--space-10);
+  }
+
+  @media (max-width: 760px) {
+    .sea {
+      --lh: 12px;
+      font-size: 8.5px;
+    }
+  }
+</style>
+
+<script>
+  import { initSea } from '../../scripts/demos/sea';
+
+  document.querySelectorAll<HTMLElement>('[data-demo="sea"]').forEach(initSea);
+</script>

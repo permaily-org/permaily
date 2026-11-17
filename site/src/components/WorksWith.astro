@@ -1,0 +1,142 @@
+---
+// The band under Home's hero: what Permaily connects to and shares with, as a row of logos moving slowly from
+// right to left under its label. The names are real text and are read once: the second copy only fills the
+// row as it comes round, so it is hidden from screen readers. Without motion, or without the script, the row
+// wraps and shows every logo. The hero's script moves it, so the hero's Pause control stops it too.
+import { INTEGRATIONS } from '../data/integrations';
+import logos from '../data/logos.json';
+---
+
+<div class="wrap">
+  <div class="works">
+    <p class="works-label" id="works-label">Works with</p>
+    <div class="works-strip">
+      <div class="works-track">
+        {
+          [false, true].map((copy) => (
+            <ul
+              class="works-list"
+              aria-labelledby={copy ? undefined : 'works-label'}
+              aria-hidden={copy ? 'true' : undefined}
+            >
+              {INTEGRATIONS.map((item) => (
+                <li>
+                  <svg viewBox={logos[item.logo].viewBox} aria-hidden="true">
+                    <path d={logos[item.logo].d} />
+                  </svg>
+                  {item.name}
+                </li>
+              ))}
+            </ul>
+          ))
+        }
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  /* A band of its own, set apart from the drawing above it by space and a hairline on each side. */
+  .works {
+    --gap: var(--space-64);
+    display: grid;
+    gap: var(--space-20);
+    margin-top: clamp(40px, 4.4vw, 64px);
+    padding-block: var(--space-24) var(--space-32);
+    border-block: var(--hair) solid var(--rule);
+  }
+
+  .works-label {
+    color: var(--ink-2);
+    font-size: var(--text-body);
+  }
+
+  /* The row fades out at both ends, so a logo never ends on a hard edge. */
+  .works-strip {
+    overflow: hidden;
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      black var(--space-48),
+      black calc(100% - var(--space-48)),
+      transparent
+    );
+  }
+
+  /* The row starts clear of the fade on its left, so the first logo is whole before anything moves. */
+  .works-track {
+    display: flex;
+    width: max-content;
+    padding-left: var(--space-48);
+    will-change: transform;
+  }
+
+  /* Each copy ends with the same gap that separates its logos, so the second follows the first evenly. */
+  .works-list {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--gap);
+    padding-right: var(--gap);
+  }
+
+  /* A logo: the mark, then the name set large beside it, both in one colour. */
+  .works-list li {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-12);
+    font-size: 21px;
+    font-weight: 500;
+    letter-spacing: var(--tracking-h);
+    line-height: var(--space-40);
+    white-space: nowrap;
+  }
+
+  .works-list svg {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    fill: currentColor;
+  }
+
+  /* Nothing moves, so every logo is shown at once. */
+  @media (prefers-reduced-motion: reduce), (scripting: none) {
+    .works-strip {
+      mask-image: none;
+    }
+
+    .works-track {
+      width: auto;
+      padding-left: 0;
+    }
+
+    .works-list {
+      flex: 1;
+      flex-wrap: wrap;
+      row-gap: var(--space-12);
+      padding-right: 0;
+    }
+
+    .works-list[aria-hidden] {
+      display: none;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .works {
+      --gap: var(--space-40);
+      gap: var(--space-14);
+      padding-block: var(--space-20) var(--space-24);
+    }
+
+    .works-list li {
+      gap: var(--space-10);
+      font-size: 18px;
+    }
+
+    .works-list svg {
+      width: 24px;
+      height: 24px;
+    }
+  }
+</style>
