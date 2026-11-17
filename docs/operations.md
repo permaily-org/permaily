@@ -27,12 +27,66 @@ scripts/deploy.sh $dir $dir/permaily-host-linux-arm64
 scripts/verify.sh $new                 # from a server with outbound port 25, add -require-smtp
 ```
 
-Then delete the key of the previous release (below), and open the pull request that commits `production.auto.tfvars`.
+Then delete the key of the previous release (below), and open the pull request that commits `production.auto.tfvars`. Step 1 and deleting a key need `tofu apply`, which only the owner can run; the other operators do the rest ("Operators").
 
 - **The handoff is refused** (HTTP 422): the answer says why. Nothing was written and the running enclave keeps serving. The usual causes are a key that was not created yet, or files of the wrong release.
 - **The new image was started first**: it logs `waiting for the running release to hand over the root secret` and serves nothing. Start the old image again, run the handoff, start the new one.
 - **Step 2 can be repeated**; the second time it answers `"created": false`.
 - **Step 2 verifies first.** `scripts/handoff.sh` runs `permaily-verify` against the `pcrs.json` of `$old` and sends the admin token only to the TLS key it attested ("The operator's scripts verify first", below). When what answers on `api.permaily.com` is not `$old`, it stops and nothing is sent.
+
+## Operators
+
+The account's owner can do everything here. Other operators are IAM users `permaily-operator-<label>` in the group `permaily-operators` (`operators` in `deploy/tofu/production.auto.tfvars`, `deploy/tofu/operators.tf`, ADR 0036), who can do nothing until they sign in with MFA, and then deploy and operate and nothing more. The label is generic (`2`, `3`), never a person's name: the repository is public. Without MFA an operator can add an MFA device only while the owner holds their enrollment open (`operators_enrolling`), and nobody makes an access key while it is open, so a stolen access key can never enroll a second factor of its own.
+
+| An operator can | An operator cannot |
+|---|---|
+| Deploy an image: `scripts/deploy.sh` (artifacts upload, SSM command to the instance), `--logs-only` too; read `tofu output` (the state, read-only) | `tofu apply` of anything: no write to the state, so no release key created (step 1 of "Deploy a release") and no old release's key deleted; the owner does those |
+| Run the handoff, the verifier and the operator's scripts (`handoff.sh`, `verify.sh`, `invite.sh`, `accounts.sh`, `provider.sh`, `model-key.sh`): these need the admin token or a secret, which the owner gives or not, not AWS | Create, delete, enable, disable or change any KMS key, its policy, its grants or its aliases (denied explicitly) |
+| Open an SSM session on the instance, and read the logs (`permaily-host`, `/aws/lambda/permaily-drift`) | Anything in IAM beyond their own password, MFA device and access keys (denied explicitly): not their tags, so not their own enrollment |
+| See the instance, the keys and their policies, the alarms, EventBridge's rules and metrics, SES's account and identity, CloudTrail's events, the versions in the anchors bucket; run the drift check now | Read or write DynamoDB directly (denied explicitly), read the mail bucket, read secrets, change DNS (Cloudflare is not in AWS) |
+| Look up and remove an address from SES's suppression list | Change alarms, rules, subscriptions, the site, or any other resource |
+
+**What SSM on the instance gives.** The instance is untrusted and its role is what the enclave uses for storage: a root shell there can read, write and delete the mail table's items (which include the readable account data: contact addresses, names, dates; never sealed content), read and delete the sealed objects of the mail bucket, write the anchors bucket, and send mail as the service through SES. Deploying needs that shell, so an operator has what the owner has there. What the enclave seals stays out of reach, and what it refuses to accept (an earlier copy of an anchored record) stays refused. Give the role to people the owner would give the instance to.
+
+**Onboarding** (the owner, once):
+
+```sh
+# 1. Add the next label to `operators` and to `operators_enrolling` in deploy/tofu/production.auto.tfvars,
+#    open the pull request, then:
+tofu -chdir=deploy/tofu apply            # the user, tagged permaily-mfa-enrollment=open, and its membership; no credential
+#    If the apply fails, make no credential: see what the group and the user have, fix it, and apply again (below).
+# 2. A one-time console password, that must be changed at first sign-in, kept off command lines.
+#    Give it through a secure channel (never chat or mail in the clear), and keep no copy.
+pw=$(openssl rand -base64 24)
+printf '{"UserName":"permaily-operator-%s","Password":"%s","PasswordResetRequired":true}' <label> "$pw" |
+  aws iam create-login-profile --cli-input-json file:///dev/stdin --query LoginProfile.UserName
+printf %s "$pw" | wl-copy; unset pw      # or pbcopy: paste it into the secure channel, then clear the clipboard
+```
+
+**An apply that fails part-way** leaves IAM as far as it got. The membership and the `operate` attachment wait for the MFA deny and the guard, so a member never has the group's permissions without both; check all the same before making any credential: `aws iam list-attached-group-policies --group-name permaily-operators` lists `permaily-operators-require-mfa`, `permaily-operators-guard` and `permaily-operators-operate` or fewer, never `operate` without the other two; `aws iam list-group-policies --group-name permaily-operators`, `aws iam list-user-policies` and `aws iam list-attached-user-policies --user-name permaily-operator-<label>` list nothing. Remove what should not be there (`aws iam detach-group-policy`, `aws iam remove-user-from-group`), fix the cause and apply again until `tofu plan` is clean. Make no password or access key for a user until the apply has succeeded.
+
+The operator then signs in at `https://<account id>.signin.aws.amazon.com/console` with the user and the one-time password, sets their own password, and, still without MFA, can only add an MFA device: Security credentials > Assign MFA device (a passkey, a security key, or an authenticator app whose device name is their user name, `permaily-operator-<label>`; another name is refused). Then they sign out and in again with it; everything else is refused until they do, and making an access key stays refused while the enrollment is open.
+
+Once they have signed in with MFA (the owner sees it in `aws iam list-mfa-devices --user-name permaily-operator-<label>`), the owner closes the enrollment: remove the label from `operators_enrolling`, open the pull request and `tofu apply` (it only removes the tag). From then on adding a device needs a session already signed in with MFA.
+
+**A lost device** goes through the owner, never through the operator alone: deactivate and delete it and every access key of the user (`aws iam list-mfa-devices` / `deactivate-mfa-device`, `aws iam delete-virtual-mfa-device --serial-number arn:aws:iam::<account id>:mfa/permaily-operator-<label>`, `aws iam list-access-keys` / `delete-access-key`), then open the enrollment again as above, and close it once they have signed in with the new one. Never open it while the user has an access key.
+
+**The CLI** (only if they need it, once the enrollment is closed): signed in with MFA, they make an access key under Security credentials (Command Line Interface), and keep it out of the repository. Every call needs an MFA session, made once a day at most:
+
+```sh
+aws configure --profile permaily-operator-<label>         # the access key, region us-east-2
+mfa=arn:aws:iam::<account id>:mfa/<their device's identifier>   # aws iam list-mfa-devices shows it
+read -rp 'MFA code: ' code
+read -r key secret token < <(aws sts get-session-token --profile permaily-operator-<label> --serial-number "$mfa" \
+  --token-code "$code" --duration-seconds 43200 --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)
+aws configure set aws_access_key_id "$key" --profile permaily
+aws configure set aws_secret_access_key "$secret" --profile permaily
+aws configure set aws_session_token "$token" --profile permaily
+aws configure set region us-east-2 --profile permaily
+export AWS_PROFILE=permaily                                # what the scripts expect; it expires after 12 hours
+```
+
+**Offboarding**: remove the label from `operators` (and `operators_enrolling`) and apply. The user is deleted with its password, MFA devices and access keys (`force_destroy`). Then rotate what they held outside AWS: the admin token, if they had it, and any secret they were given.
 
 ## Roll back
 

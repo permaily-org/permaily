@@ -16,7 +16,7 @@ That the service answering on the Permaily hosts runs an enclave image built fro
 
 ## Not trusted
 
-- **The parent EC2 instance and its operator.** It sees only ciphertext and destination hostnames. It can drop, delay or replay traffic, and stop the service; it cannot read or alter content without the verifier detecting it.
+- **The parent EC2 instance and its operator.** It sees only ciphertext and destination hostnames. It can drop, delay or replay traffic, and stop the service; it cannot read or alter content without the verifier detecting it. The operators are the account's owner and the IAM users of `permaily-operators` (ADR 0036): those can open a shell on the instance, and so use its role (the table's readable account data, the sealed objects, sending mail as the service), only after signing in with MFA, and cannot apply OpenTofu, change a KMS key or its policy, or change IAM. A stolen operator's access key enrolls no MFA device of its own: without MFA a device is added only while the owner holds that operator's enrollment open, and no access key can be made meanwhile (`scripts/operator-policies.test.ts`).
 - **DNS (Cloudflare) and the network.** A hijacked record points clients elsewhere; the verifier detects it because no other server can present a TLS key bound into a valid attestation. The zone is signed with DNSSEC, so a resolver that validates refuses records forged on the way; whoever controls the Cloudflare account controls the zone all the same.
 - **Anything the parent supplies at runtime.** The enclave takes no configuration from the parent; hosts and the ACME directory are compiled into the image.
 
