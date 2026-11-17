@@ -370,8 +370,9 @@ func (s *Service) enter(ctx context.Context, key []byte, account string) error {
 // in links of kind LinkRecovered (ADR 0037, "Receipts left without a
 // link"): only over a head whose every link above from, the head the pass
 // read the chain at, is read and names none of them; a ref such a link
-// names is dropped, and a link above from that cannot be read stops it. It
-// returns how many it linked.
+// names is dropped, and a link above from that cannot be read stops it.
+// They go in links of LinkReceiptsMax at most. It returns how many it
+// linked.
 func (s *Service) recover(ctx context.Context, key []byte, account string, from uint64, refs []Ref) (int, error) {
 	l := s.chain.appender(s, account)
 	l.write.Lock()
@@ -409,17 +410,21 @@ func (s *Service) recover(ctx context.Context, key []byte, account string, from 
 			return 0, nil
 		}
 	}
-	if len(refs) == 0 {
-		return 0, nil
+	total := 0
+	for len(refs) > 0 {
+		var group []Ref
+		_, err := l.putLocked(ctx, key, func(n uint64, at time.Time, prev *Digest, br BreakReason) []byte {
+			group = slices.Clone(refs[:min(len(refs), LinkReceiptsMax)])
+			return mustJSON(&Link{V: LinkVersion, N: n, Kind: LinkRecovered, At: at, Prev: prev, Break: br, Receipts: group})
+		}, func(j judged) bool { return drop(j) && len(refs) > 0 })
+		if errors.Is(err, errStopped) {
+			return total, nil
+		}
+		if err != nil {
+			return total, err
+		}
+		total += len(group)
+		refs = refs[len(group):]
 	}
-	_, err = l.putLocked(ctx, key, func(n uint64, at time.Time, prev *Digest, br BreakReason) []byte {
-		return mustJSON(&Link{V: LinkVersion, N: n, Kind: LinkRecovered, At: at, Prev: prev, Break: br, Receipts: refs})
-	}, func(j judged) bool { return drop(j) && len(refs) > 0 })
-	if errors.Is(err, errStopped) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	return len(refs), nil
+	return total, nil
 }

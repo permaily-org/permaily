@@ -63,10 +63,12 @@ func TestL30ActivationNeedsAStrictChain(t *testing.T) {
 	plainAnchored := &store.Anchored{Records: ChainTable{Entries: w.mem}, Commits: w.mc}
 	notListing := &store.Anchored{Records: ChainTable{Entries: w.mem}, Commits: headOnly{w.mc}, Strict: true}
 	for what, make := range map[string]func() (*Service, error){
-		"nil":           func() (*Service, error) { return NewChained(w.mem, testKeys{}, nil, nil, w.accounts) },
-		"plain":         func() (*Service, error) { return NewChained(w.mem, testKeys{}, nil, plainAnchored, w.accounts) },
-		"no accounts":   func() (*Service, error) { return NewChained(w.mem, testKeys{}, nil, w.anchored(), nil) },
-		"no scans":      func() (*Service, error) { return NewChained(entriesOnly{w.mem}, testKeys{}, nil, w.anchored(), w.accounts) },
+		"nil":         func() (*Service, error) { return NewChained(w.mem, testKeys{}, nil, nil, w.accounts) },
+		"plain":       func() (*Service, error) { return NewChained(w.mem, testKeys{}, nil, plainAnchored, w.accounts) },
+		"no accounts": func() (*Service, error) { return NewChained(w.mem, testKeys{}, nil, w.anchored(), nil) },
+		"no scans": func() (*Service, error) {
+			return NewChained(entriesOnly{w.mem}, testKeys{}, nil, w.anchored(), w.accounts)
+		},
 		"no group list": func() (*Service, error) { return NewChained(w.mem, testKeys{}, nil, notListing, w.accounts) },
 	} {
 		if s, err := make(); err == nil || s != nil {

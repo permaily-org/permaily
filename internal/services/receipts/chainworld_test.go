@@ -284,6 +284,20 @@ func (w *chainWorld) findings() []Finding {
 	return out
 }
 
+// uniq is findings without repeats: a finding found by several enclaves,
+// or by one restarted, is recorded by each.
+func uniq(fs []Finding) []Finding {
+	seen := map[Finding]bool{}
+	var out []Finding
+	for _, f := range fs {
+		if !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // kinds counts findings by kind: "link_lost:1 receipt_missing:2".
 func kinds(fs []Finding) string {
 	counts := map[string]int{}
