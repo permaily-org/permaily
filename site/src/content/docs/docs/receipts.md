@@ -9,6 +9,8 @@ A receipt records mail prepared and made available for a connection's authentica
 
 Which messages were prepared for which connection, which parts, when, for which query, which messages a rule held back, and whether a model decided. Only the person will see what was held back, once the Activity screen is built.
 
+A refused request has its own receipt up to 30 a connection in a minute on each of the service's servers; past them, that minute's refusals there are counted together in one receipt, by kind of request and reason, naming no message.
+
 ## Where you meet them
 
 Receipts are kept for the person, not handed to your app. Planned, not built yet: a receipt id on every message you read, as `message.receipt` in the SDK, and on every webhook.
