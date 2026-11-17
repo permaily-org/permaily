@@ -356,11 +356,25 @@ func (s *Service) sweepAccount(ctx context.Context, account string) error {
 	}
 	now := s.now()
 	var ended, removed []string
+	// A closing list's connection that cannot be read stays in it, and
+	// fails the pass: the account's removal must find its families
+	// (removeConnStrict; second review of #152, finding 1).
+	var kept error
 	for _, m := range l.Members {
 		switch {
 		case m.State == contracts.ConnectionEnded && now.Sub(m.EndedAt) >= EndedKept:
-			if err := s.removeConn(ctx, m.ID); err != nil {
-				return err
+			remove := s.removeConn
+			if l.Closing {
+				remove = s.removeConnStrict
+			}
+			if err := remove(ctx, m.ID); err != nil {
+				if !l.Closing || !refusedRecord(err) {
+					return err
+				}
+				if kept == nil {
+					kept = err
+				}
+				continue
 			}
 			removed = append(removed, m.ID)
 		case m.State == contracts.ConnectionEnded:
@@ -391,7 +405,7 @@ func (s *Service) sweepAccount(ctx context.Context, account string) error {
 		}
 	}
 	if len(ended) == 0 && len(removed) == 0 {
-		return nil
+		return kept
 	}
 	_, err = s.updateList(ctx, account, func(l *ListState) error {
 		for _, id := range ended {
@@ -400,7 +414,10 @@ func (s *Service) sweepAccount(ctx context.Context, account string) error {
 		l.RemoveEnded(removed)
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return kept
 }
 
 // tidyConn ends the devices of an active connection whose codes can no

@@ -142,6 +142,9 @@ func TestV65TrimmingAClosingListKeepsALostConnection(t *testing.T) {
 			t.Fatal("the next oldest ended member was not dropped in the lost one's place")
 		}
 	}
+	if err := w.enclave().Reopen(ctx, accountA); err != nil {
+		t.Fatalf("a lost connection stopped a cancellation: %v", err)
+	}
 	w.accts.set(accountA, StandingGone)
 	if err := w.enclave().RemoveAll(ctx, accountA); !errors.Is(err, store.ErrLost) {
 		t.Fatalf("the removal went on past the lost connection: %v", err)
