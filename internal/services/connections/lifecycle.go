@@ -200,12 +200,18 @@ func (s *Service) epochHeads(ctx context.Context, name func(uint64) string) ([]e
 	}
 }
 
-// fenced says the epochs walked end in a fence: none is live, and the last
-// was never made, so no writer can make an epoch after it (an epoch is
-// made only after the one before it was written moved, which a removed
-// one cannot be).
+// endsInFence says the epochs walked end in a fence: the last was never
+// made, so no writer can make an epoch after it (an epoch is made only
+// after the one before it was written moved, and CreateNew refuses a name
+// with a commit). Epochs before it may still be live.
+func endsInFence(heads []epochHead) bool {
+	return len(heads) > 0 && !heads[len(heads)-1].live && heads[len(heads)-1].version == 1
+}
+
+// fenced says the epochs walked end in a fence and none is live: the
+// removal is done once what is stored of them is deleted.
 func fenced(heads []epochHead) bool {
-	if len(heads) == 0 {
+	if !endsInFence(heads) {
 		return false
 	}
 	for _, h := range heads {
@@ -213,7 +219,7 @@ func fenced(heads []epochHead) bool {
 			return false
 		}
 	}
-	return heads[len(heads)-1].version == 1
+	return true
 }
 
 // removeEpochs removes every epoch of a record kept in epochs, those whose
@@ -223,6 +229,11 @@ func fenced(heads []epochHead) bool {
 // before its removal, and has yet to make the next one, finds the name
 // taken (CreateNew), and a removal never leaves an epoch made after it.
 // The epochs are walked again until they end in a fence with nothing live.
+// A fence already there is kept, also while an epoch before it is still
+// live (a try that failed on it): another is added only after an epoch
+// whose removal is not a fence, one a writer made before the fence landed
+// on its name, so a retry adds no commit (second review of #152, finding
+// 3).
 func (s *Service) removeEpochs(ctx context.Context, name func(uint64) string) error {
 	heads, err := s.epochHeads(ctx, name)
 	if err != nil {
@@ -231,7 +242,7 @@ func (s *Service) removeEpochs(ctx context.Context, name func(uint64) string) er
 	for range RecordTries {
 		done := fenced(heads)
 		n := uint64(len(heads))
-		if !done {
+		if !endsInFence(heads) {
 			n++ // the fence
 		}
 		for e := n; e > 0; e-- {
