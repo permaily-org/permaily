@@ -15,16 +15,16 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@astrojs/sitemap": "^3.7.4",
-    "@astrojs/starlight": "^0.42.10",
+    "@astrojs/sitemap": "^3.7.5",
+    "@astrojs/starlight": "^0.43.1",
     "@fontsource-variable/instrument-sans": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
-    "astro": "^7.4.7"
+    "astro": "^7.4.12"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.12",
     "@axe-core/playwright": "^4.14.0",
-    "@playwright/test": "~1.65.0",
+    "@playwright/test": "~1.65.1",
     "node-html-parser": "^9.0.7",
     "typescript": "^5.9.3",
     "vitest": "^5.1.0"

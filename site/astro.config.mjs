@@ -20,6 +20,8 @@ const codeTheme = (name, type, background, ink, comment) =>
 
 export default defineConfig({
   site: 'https://permaily.com',
+  // Scoped styles as :where(.astro-HASH), which Starlight forced before 0.43; Astro's default attribute selectors would change the specificity of the site's styles.
+  scopedStyleStrategy: 'where',
   // Signing up and signing in moved to the web app. Old links to the site's own pages land there.
   redirects: {
     '/signup': LINKS.signup,

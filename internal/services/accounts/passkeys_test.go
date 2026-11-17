@@ -715,17 +715,26 @@ func TestPasskeyOnly(t *testing.T) {
 type counting struct {
 	Records
 	store.Entries
-	mu       sync.Mutex
-	gets     int
-	getDelay time.Duration
+	mu   sync.Mutex
+	gets int
+	// around, when set, runs every read of a record (GetRecord, what a
+	// lookup reads; a change reads with GetRecordAt), so a test puts reads
+	// in the order it means.
+	around func(ctx context.Context, read func())
 }
 
 func (c *counting) GetRecord(ctx context.Context, name string) (*store.Record, error) {
 	c.mu.Lock()
 	c.gets++
 	c.mu.Unlock()
-	rec, err := c.Records.GetRecord(ctx, name)
-	time.Sleep(c.getDelay)
+	var rec *store.Record
+	var err error
+	read := func() { rec, err = c.Records.GetRecord(ctx, name) }
+	if c.around == nil {
+		read()
+	} else {
+		c.around(ctx, read)
+	}
 	return rec, err
 }
 
@@ -793,15 +802,21 @@ func TestRecovery(t *testing.T) {
 	if list, _ := w.svc.Passkeys(ctx, who); list.RecoveryCodesLeft != domain.RecoveryCodes-1 || !list.PasskeyOnly {
 		t.Fatalf("after one recovery: %+v", list)
 	}
+	// The same code again is refused as a wrong one is, and is not counted as
+	// one: it was right, and a person whose browser sent it twice is not
+	// nearer to being refused.
 	if _, _, err := w.recover("ana@example.org", codes[0]); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("the same code again: %v", err)
+	}
+	if got := len(w.svc.recoveries["ana@example.org"]); got != 2 {
+		t.Fatalf("the same code again counted: %d wrong codes", got)
 	}
 	// The one recovered can make a passkey and stay in.
 	w.addPasskey(w.who(recovered), webauthntest.New(webauthntest.ES256), "new")
 
-	// Five wrong codes in an hour (three so far), and the right one is
+	// Five wrong codes in an hour (two so far), and the right one is
 	// refused too, for that address alone.
-	for range 2 {
+	for range 3 {
 		_, _, _ = w.recover("ana@example.org", wrongCode)
 	}
 	if _, _, err := w.recover("ana@example.org", codes[1]); !errors.Is(err, contracts.ErrInvalidCode) {
@@ -870,45 +885,199 @@ func TestRecovery(t *testing.T) {
 	}
 }
 
-// Two uses of one recovery code at the same time: one signs in.
-func TestRecoveryCodeUsedTwiceAtOnce(t *testing.T) {
-	w := newWorld(t)
-	_, cookie := w.signUp("ana@example.org")
+// A used code stays in the account's record as used, by its hash, until the
+// codes are made again: used again, through any enclave and at any time, it is
+// refused as a wrong code is and not counted as one. The list holds no more
+// codes than were made, and a record written before it was kept has none.
+func TestUsedRecoveryCodesInTheRecord(t *testing.T) {
+	w, ctx := newWorld(t), context.Background()
+	me, cookie := w.signUp("ana@example.org")
+	id := me.Account.ID
 	who := w.who(cookie)
 	w.addPasskey(who, webauthntest.New(webauthntest.ES256), "key")
 	codes := w.passkeyOnly(who)
-	// A storage slow enough for every use to read the record before any of
-	// them writes it.
-	c := &counting{Records: w.svc.cfg.Records, Entries: w.svc.cfg.Entries, getDelay: 5 * time.Millisecond}
-	w.svc.cfg.Records = c
-
-	var wg sync.WaitGroup
-	results := make([]error, 8)
-	for i := range results {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, _, results[i] = w.recover("ana@example.org", codes[0])
-		}()
+	hash := func(code string) []byte {
+		normalized, _ := domain.NormalizeRecoveryCode(code)
+		return recoveryHash(id, normalized)
 	}
-	wg.Wait()
-	won := 0
-	for _, err := range results {
-		switch {
-		case err == nil:
-			won++
-		case !errors.Is(err, contracts.ErrInvalidCode):
-			t.Errorf("a use that lost: %v", err)
+	// used is the used codes an enclave started now counts on, by its
+	// record alone.
+	used := func() [][]byte { return w.doc(id).UsedRecoveryCodes }
+	again := func(svc *Service, code string) int {
+		t.Helper()
+		if _, _, err := svc.Recover(ctx, contracts.Recovery{Address: "ana@example.org", Code: code}, Browser{UserAgent: ""}); !errors.Is(err, contracts.ErrInvalidCode) {
+			t.Fatalf("a code used before: %v", err)
+		}
+		return len(svc.recoveries["ana@example.org"])
+	}
+
+	if _, _, err := w.recover("ana@example.org", codes[0]); err != nil {
+		t.Fatal(err)
+	}
+	doc := w.doc(id)
+	if len(doc.RecoveryCodes) != domain.RecoveryCodes-1 || doc.recoveryCode(hash(codes[0])) >= 0 || len(doc.UsedRecoveryCodes) != 1 || !bytes.Equal(doc.UsedRecoveryCodes[0], hash(codes[0])) {
+		t.Fatalf("after one use: %d left, used %x", len(doc.RecoveryCodes), doc.UsedRecoveryCodes)
+	}
+	// A day later, and through an enclave started after the code was used.
+	w.now = w.now.Add(24 * time.Hour)
+	if n := again(w.svc, codes[0]); n != 0 {
+		t.Fatalf("the same code a day later: %d counted", n)
+	}
+	if n := again(w.enclave().svc, codes[0]); n != 0 {
+		t.Fatalf("the same code through another enclave: %d counted", n)
+	}
+
+	// Every code used: as many used as were made, none left.
+	for _, code := range codes[1:] {
+		if _, _, err := w.recover("ana@example.org", code); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if won != 1 {
-		t.Fatalf("one code signed in %d times", won)
+	if doc := w.doc(id); len(doc.RecoveryCodes) != 0 || len(doc.UsedRecoveryCodes) != domain.RecoveryCodes {
+		t.Fatalf("every code used: %d left, %d used", len(doc.RecoveryCodes), len(doc.UsedRecoveryCodes))
 	}
-	if list, _ := w.svc.Passkeys(context.Background(), who); list.RecoveryCodesLeft != domain.RecoveryCodes-1 {
-		t.Fatalf("codes left: %d", list.RecoveryCodesLeft)
+
+	// New codes drop the used ones: the old codes are wrong codes now.
+	fresh, err := w.svc.NewRecoveryCodes(ctx, w.fresh(who))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(w.svc.recoveries) != 0 {
-		t.Fatalf("the uses that lost were counted as wrong codes: %v", w.svc.recoveries)
+	if got := used(); got != nil {
+		t.Fatalf("used codes kept with new ones: %d", len(got))
+	}
+	if n := again(w.svc, codes[1]); n != 1 {
+		t.Fatalf("an old code after new ones: %d counted", n)
+	}
+
+	// Turning "passkey only" off drops them too.
+	if _, _, err := w.recover("ana@example.org", fresh.RecoveryCodes[0]); err != nil {
+		t.Fatal(err)
+	}
+	if len(used()) != 1 {
+		t.Fatalf("used: %d", len(used()))
+	}
+	if _, err := w.svc.SetPasskeyOnly(ctx, w.fresh(who), contracts.PasskeyOnly{On: false}); err != nil {
+		t.Fatal(err)
+	}
+	if got := used(); got != nil {
+		t.Fatalf("used codes kept with passkey only off: %d", len(got))
+	}
+
+	// A record written before the used codes were kept has no such member:
+	// read, it has none, and a code used then counts as any code not in it.
+	codes = w.passkeyOnly(who)
+	if _, _, err := w.recover("ana@example.org", codes[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.rewrite(ctx, id, func(doc *accountDoc) error {
+		doc.UsedRecoveryCodes = nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := w.record(w.newest(id)); bytes.Contains(rec.Value, []byte("used_recovery_codes")) {
+		t.Fatalf("an empty list is written: %s", rec.Value)
+	}
+	w.now = w.now.Add(2 * time.Hour)
+	if n := again(w.svc, codes[0]); n != 1 {
+		t.Fatalf("a code used before the list was kept: %d counted", n)
+	}
+}
+
+// useKey marks the context of each use in TestRecoveryCodeUsedTwiceAtOnce.
+type useKey struct{}
+
+// Two uses of one recovery code at the same time: one signs in, and the ones
+// that lost are refused as a wrong code is, without being counted as one,
+// whether they read the record before the one that won took the code out of
+// it or after. Counted, a person whose browser sent the code twice would be
+// a wrong code nearer to being refused the right ones. The order is made,
+// never left to the scheduler: a use's first read of the record (its lookup)
+// waits for what the case says.
+func TestRecoveryCodeUsedTwiceAtOnce(t *testing.T) {
+	const uses = 8
+	for _, tc := range []struct {
+		name string
+		// around gets the use and its first read; done is closed when the
+		// use that won has returned, arrived when every use has read.
+		around func(use int, read func(), arrived, done <-chan struct{}, arrive func())
+	}{
+		{"every use reads before any takes the code", func(_ int, read func(), arrived, _ <-chan struct{}, arrive func()) {
+			read()
+			arrive()
+			<-arrived
+		}},
+		{"the others read after the first took it", func(use int, read func(), _, done <-chan struct{}, _ func()) {
+			if use != 0 {
+				<-done
+			}
+			read()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			_, cookie := w.signUp("ana@example.org")
+			who := w.who(cookie)
+			w.addPasskey(who, webauthntest.New(webauthntest.ES256), "key")
+			codes := w.passkeyOnly(who)
+
+			var mu sync.Mutex
+			first := map[int]bool{}
+			reads := 0
+			arrived, done := make(chan struct{}), make(chan struct{})
+			arrive := func() {
+				mu.Lock()
+				defer mu.Unlock()
+				if reads++; reads == uses {
+					close(arrived)
+				}
+			}
+			c := &counting{Records: w.svc.cfg.Records, Entries: w.svc.cfg.Entries}
+			c.around = func(ctx context.Context, read func()) {
+				use, ok := ctx.Value(useKey{}).(int)
+				mu.Lock()
+				firstRead := ok && !first[use]
+				first[use] = true
+				mu.Unlock()
+				if !firstRead {
+					read()
+					return
+				}
+				tc.around(use, read, arrived, done, arrive)
+			}
+			w.svc.cfg.Records = c
+
+			var wg sync.WaitGroup
+			results := make([]error, uses)
+			for i := range results {
+				wg.Go(func() {
+					ctx := context.WithValue(context.Background(), useKey{}, i)
+					_, _, results[i] = w.svc.Recover(ctx, contracts.Recovery{Address: "ana@example.org", Code: codes[0]}, Browser{UserAgent: "recovered device"})
+					if i == 0 {
+						close(done)
+					}
+				})
+			}
+			wg.Wait()
+			won := 0
+			for _, err := range results {
+				switch {
+				case err == nil:
+					won++
+				case !errors.Is(err, contracts.ErrInvalidCode):
+					t.Errorf("a use that lost: %v", err)
+				}
+			}
+			if won != 1 {
+				t.Fatalf("one code signed in %d times", won)
+			}
+			if list, _ := w.svc.Passkeys(context.Background(), who); list.RecoveryCodesLeft != domain.RecoveryCodes-1 {
+				t.Fatalf("codes left: %d", list.RecoveryCodesLeft)
+			}
+			if len(w.svc.recoveries) != 0 {
+				t.Fatalf("the uses that lost were counted as wrong codes: %v", w.svc.recoveries)
+			}
+		})
 	}
 }
 
@@ -1068,7 +1237,8 @@ func TestPasskeysWrittenByHand(t *testing.T) {
 }
 
 // What the storage holds of passkeys and recovery codes: the public key,
-// readable, and of each code its hash alone.
+// readable, and of each code its hash alone, of a used one until the codes
+// are made again.
 func TestWhatIsStoredOfPasskeys(t *testing.T) {
 	w, ctx := newWorld(t), context.Background()
 	me, cookie := w.signUp("ana@example.org")
@@ -1116,8 +1286,9 @@ func TestWhatIsStoredOfPasskeys(t *testing.T) {
 				CreatedAt time.Time `json:"created_at"`
 				Synced    bool      `json:"synced"`
 			} `json:"passkeys"`
-			PasskeyOnly   bool     `json:"passkey_only"`
-			RecoveryCodes [][]byte `json:"recovery_codes"`
+			PasskeyOnly       bool     `json:"passkey_only"`
+			RecoveryCodes     [][]byte `json:"recovery_codes"`
+			UsedRecoveryCodes [][]byte `json:"used_recovery_codes"`
 		} `json:"doc"`
 	}
 	if !rec.Plain || json.Unmarshal(rec.Value, &stored) != nil {
@@ -1130,9 +1301,14 @@ func TestWhatIsStoredOfPasskeys(t *testing.T) {
 	if strings.Contains(string(rec.Value), "counter") {
 		t.Fatalf("a signature counter is kept: %s", rec.Value)
 	}
-	// Nine hashes: of the nine new codes not used, and of nothing else.
+	// Nine hashes of the nine new codes not used, one of the new code used,
+	// and none of the codes made before.
 	if len(d.RecoveryCodes) != domain.RecoveryCodes-1 {
 		t.Fatalf("%d hashes kept", len(d.RecoveryCodes))
+	}
+	usedCode, _ := domain.NormalizeRecoveryCode(more.RecoveryCodes[0])
+	if len(d.UsedRecoveryCodes) != 1 || !bytes.Equal(d.UsedRecoveryCodes[0], recoveryHash(me.Account.ID, usedCode)) {
+		t.Fatalf("used: %x", d.UsedRecoveryCodes)
 	}
 	for i, c := range more.RecoveryCodes[1:] {
 		normalized, _ := domain.NormalizeRecoveryCode(c)
