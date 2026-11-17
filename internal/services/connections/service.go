@@ -54,8 +54,10 @@ type Service struct {
 	refused map[string]int64
 	leases  map[string]map[*lease]struct{}
 	limits  limits
-	// refusals are each connection's window of refusals (refusals.go).
-	refusals refusalWindows
+	// refusals are each connection's lane of refusals (refusals.go), and
+	// adm the attributed work Stop waits for.
+	refusals refusalLanes
+	adm      admission
 }
 
 type cachedConn struct {
@@ -96,7 +98,8 @@ func New(cfg Config) (*Service, error) {
 		cfg: cfg, revoked: map[string]int{}, conns: map[string]cachedConn{}, lists: map[string]cachedList{},
 		stand: map[string]cachedStanding{}, epochs: map[string]uint64{}, scopes: map[string][]*query.Canonical{},
 		used: map[string]time.Time{}, refused: map[string]int64{}, leases: map[string]map[*lease]struct{}{},
-		limits: newLimits(),
+		limits:   newLimits(),
+		refusals: refusalLanes{by: map[string]*refusalLane{}, lanesMax: RefusalLanesMax, bytesMax: RefusalBytesMax, waitMax: refusalWaitMax},
 	}
 	ctx := context.Background()
 	for _, k := range []struct {

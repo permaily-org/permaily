@@ -200,7 +200,7 @@ func TestV57TheHourlyPassRunsOnItsTicker(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	tick := make(chan time.Time)
-	runConnections(ctx, c.svc, slog.New(slog.DiscardHandler), tick)
+	runConnections(ctx, c.svc, slog.New(slog.DiscardHandler), tick, refusalClock{})
 	waitFor := func(n int64) {
 		t.Helper()
 		for i := 0; w.table.swept.Load() < n; i++ {

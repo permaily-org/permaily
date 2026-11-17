@@ -13,6 +13,7 @@ Fonts are Instrument Sans for text and JetBrains Mono for machine facts, both bu
 - Black means withheld, and the highlight color means shared. Nothing else uses either.
 - Monospace is for machine facts, such as addresses, hashes and timestamps.
 - Hairline rules instead of cards, 2px corners, and no shadows or gradients.
+- The public site has three drawings made of sample mail, on Home: the hero, How it works, and the emblem of the security section (ADR 0032). The two meanings hold inside them: readable on the highlight is shared, and under a bar is withheld.
 - No explanatory text on the page. A fact worth keeping but not worth the space goes behind an info icon (`InfoTip`), and only when people may need it.
 - Everything a person can click shows the hand cursor, and a disabled control (`disabled` or `aria-disabled="true"`) shows not-allowed; text fields keep the text cursor. One rule says it for the web app and the site, `packages/ui/interaction.css`, with no specificity, so a component that needs another cursor sets it itself. Something clickable gets a proper element or role, never a cursor alone; `scripts/interaction.test.ts` checks the rule.
 - Every screen works from a 375px phone up, and nothing scrolls sideways. Below 768px the sidebar becomes a top bar with a drawer, and below 1024px an icon rail. Pages use `pagePadding` from `web/src/lib/styles.ts`. Tables drop their secondary columns before they would overflow, by the width they get rather than the window's, and hide a column in every row so the rest stay aligned.
@@ -43,7 +44,7 @@ The components are in `packages/mail`, and the templates they make are in `inter
 
 ## Providers' marks
 
-The one exception to the tokens. A button that signs in with a provider shows the provider's mark in the provider's own colours, and Google's and Facebook's buttons take the colours their guidelines fix ([web.md](web.md), "Each provider's mark"). Those colours are written only in the files directly in `web/src/components/brands/` (`marks.tsx` and `brands.css`): they are not tokens, and nothing else uses them. The marks are the providers' artwork, never redrawn or recoloured, and appear only on the provider's sign-in button. Inside a mark, black and the highlight mean nothing of ours: GitHub's Invertocat is black in the light theme because GitHub asks for it.
+The one exception to the tokens. A button that signs in with a provider shows the provider's mark in the provider's own colours, and Google's and Facebook's buttons take the colours their guidelines fix ([web.md](web.md), "Each provider's mark"). Those colours are written only in the files directly in `web/src/components/brands/` (`marks.tsx` and `brands.css`): they are not tokens, and nothing else uses them. The marks are the providers' artwork, never redrawn or recoloured, and appear only on the provider's sign-in button. The public site has one such button, "Sign up with Google" on Home ([site.md](site.md), "Sign up and log in"): it draws Google's "G" from a copy of the paths and takes every colour from these same files, so the site writes none. Inside a mark, black and the highlight mean nothing of ours: GitHub's Invertocat is black in the light theme because GitHub asks for it.
 
 ## Checks
 

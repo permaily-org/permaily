@@ -241,11 +241,12 @@ func TestH33TwoEnclavesEachKeepTheBound(t *testing.T) {
 }
 
 // H34: a crash between windows. What a closed window counted is written at
-// its close, so a crash after it loses nothing of it; a crash loses only
-// the counts of the window still open, and those of a closed window whose
-// summary the storage refused until then (carried into the next summary
-// meanwhile); a stop, as the composition makes at shutdown, writes the open
-// window too. The enclave that starts again keeps its own bound.
+// its close, so a crash after it loses nothing of it; a crash loses the
+// counts not yet stored: the window still open, and a closed window's
+// whose summary the storage refused until then (kept, and tried again on
+// its schedule); a stop writes them all, the open window up to then. The
+// enclave that starts again keeps its own bound. The composition's pass and
+// stop are cmd/permaily-enclave's H34.
 func TestH34ACrashBetweenWindows(t *testing.T) {
 	w, s, g := refusalsWorld(t)
 	ctx := context.Background()
@@ -283,26 +284,23 @@ func TestH34ACrashBetweenWindows(t *testing.T) {
 		t.Fatalf("%d refused receipts, want %d", got, 3*RefusalsPerWindow)
 	}
 
-	// A summary the storage refuses is kept, not lost: the connection's
-	// next refusal writes it, before its own receipt.
+	// A summary the storage refuses is kept, not lost, and tried again on
+	// its schedule; the refusals after it are counted meanwhile, never
+	// written before it (H37).
 	for range 35 {
 		refuseOnce(t, again, g, OperationRead, receipts.RefusedInvalidBody)
 	}
 	from := w.clock.now().Truncate(RefusalWindow)
 	toTheNextWindow(w)
-	w.rcpt.mu.Lock()
-	w.rcpt.fail = errors.New("the storage refuses")
-	w.rcpt.mu.Unlock()
+	w.failing(errors.New("the storage refuses"))
 	if err := again.FlushRefusals(ctx, false); err == nil {
 		t.Fatal("a flush the storage refused reported success")
 	}
-	w.rcpt.mu.Lock()
-	w.rcpt.fail = nil
-	w.rcpt.mu.Unlock()
+	w.failing(nil)
 	for range 33 {
 		refuseOnce(t, again, g, OperationSearch, receipts.RefusedInvalidBody)
 	}
-	// A stop writes the open window, up to when it stops.
+	// A stop writes it, and the open window, up to when it stops.
 	w.clock.add(10 * time.Second)
 	stopped := w.clock.now()
 	if err := again.FlushRefusals(ctx, true); err != nil {
@@ -310,20 +308,20 @@ func TestH34ACrashBetweenWindows(t *testing.T) {
 	}
 	sum = w.rcpt.of(receipts.KindRefusals)
 	if len(sum) != 4 {
-		t.Fatalf("%d summaries, want the carried one and the stop's", len(sum))
+		t.Fatalf("%d summaries, want the refused one and the stop's", len(sum))
 	}
-	carried, last := sum[2], sum[3]
-	if !carried.Refusals.From.Equal(from) || carried.Refusals.Recorded != RefusalsPerWindow {
-		t.Fatalf("the carried summary: %+v", *carried.Refusals)
+	kept, last := sum[2], sum[3]
+	if !kept.Refusals.From.Equal(from) || !kept.Refusals.Until.Equal(from.Add(RefusalWindow)) || kept.Refusals.Recorded != RefusalsPerWindow {
+		t.Fatalf("the summary kept: %+v", *kept.Refusals)
 	}
-	if n, _ := counted([]receipts.Receipt{carried}); n != 5 {
-		t.Fatalf("the carried summary counts %d, want 5", n)
+	if n, _ := counted([]receipts.Receipt{kept}); n != 5 {
+		t.Fatalf("the summary kept counts %d, want 5", n)
 	}
-	if !last.Refusals.Until.Equal(stopped) || last.Refusals.Recorded != RefusalsPerWindow {
+	if !last.Refusals.Until.Equal(stopped) || last.Refusals.Recorded != 0 {
 		t.Fatalf("the stop's summary: %+v", *last.Refusals)
 	}
-	if n, _ := counted([]receipts.Receipt{last}); n != 3 {
-		t.Fatalf("the stop's summary counts %d, want 3", n)
+	if n, _ := counted([]receipts.Receipt{last}); n != 33 {
+		t.Fatalf("the stop's summary counts %d, want 33", n)
 	}
 	// Nothing is left after a stop.
 	if err := again.FlushRefusals(ctx, true); err != nil {
@@ -331,5 +329,23 @@ func TestH34ACrashBetweenWindows(t *testing.T) {
 	}
 	if got := len(w.rcpt.of(receipts.KindRefusals)); got != 4 {
 		t.Fatalf("%d summaries after a second stop", got)
+	}
+}
+
+// H32 (the review of pull request 161): a too_late refusal is written in
+// its own receipt, naming the one it follows, also past the bound.
+func TestH32ATooLateRefusalIsAlwaysItsOwnReceipt(t *testing.T) {
+	w, s, g := refusalsWorld(t)
+	for range 100 {
+		refuseOnce(t, s, g, OperationRead, receipts.RefusedInvalidBody)
+	}
+	before := len(w.rcpt.of(receipts.KindRefused))
+	r := &reading{g: g, op: OperationRead, conn: &connDoc{}}
+	if err := s.refuse(context.Background(), r, &receipts.Refused{Reason: receipts.RefusedTooLate, Receipt: "rcp_earlier"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	rs := w.rcpt.of(receipts.KindRefused)
+	if len(rs) != before+1 || rs[len(rs)-1].Refused.Reason != receipts.RefusedTooLate || rs[len(rs)-1].Refused.Receipt != "rcp_earlier" {
+		t.Fatal("a too_late refusal was counted")
 	}
 }

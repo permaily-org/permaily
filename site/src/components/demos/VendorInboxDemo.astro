@@ -1,0 +1,329 @@
+---
+import { COMPANY_MAIL, logos, reads, VENDORS } from '../../data/vendors';
+import Redact from '../Redact.astro';
+
+// The HTML shows the first vendor with Permaily on, which is where the animation ends.
+const first = VENDORS[0]!;
+const names = VENDORS.map((vendor) => vendor.name).join(', ');
+---
+
+<figure
+  class="panel demo vi"
+  data-demo="vendors"
+  aria-label={`The same company inbox, as each of ${VENDORS.length} vendors sees it: ${names}. With Permaily off, every vendor can read all of the company’s mail, including payslips and password resets. With Permaily on, each vendor reads only what its job needs, and your policy removes a card number from a receipt. Everything else is covered by black bars.`}
+>
+  <div class="vi-head">
+    <p class="vi-title">What each vendor can read</p>
+    <button class="switch" type="button" role="switch" aria-checked="true" data-switch>
+      <span class="switch-track"><i></i></span>
+      <span>Permaily</span>
+    </button>
+  </div>
+  <div class="vi-body">
+    <div class="vi-list" role="group" aria-label="Choose a vendor">
+      {
+        VENDORS.map((vendor) => (
+          <button
+            class="vi-vendor"
+            type="button"
+            data-vendor={vendor.logo}
+            aria-pressed={vendor.logo === first.logo ? 'true' : 'false'}
+          >
+            <span class="tile logo">
+              <svg viewBox={logos[vendor.logo].viewBox} aria-hidden="true">
+                <path d={logos[vendor.logo].d} />
+              </svg>
+            </span>
+            <span class="who">
+              <b>{vendor.name}</b>
+              <small>{vendor.intent}</small>
+            </span>
+          </button>
+        ))
+      }
+    </div>
+    <ol class="vi-rows" aria-hidden="true">
+      {
+        COMPANY_MAIL.map((mail) => {
+          const shared = reads(mail, first.logo);
+          const cut = mail.cut && { ...mail.cut, on: shared && mail.cut.app === first.logo };
+          return (
+            <li class="vi-row" data-apps={mail.vendors.join(' ')}>
+              <span class="c-date">
+                <Redact text={mail.date} withheld={!shared} />
+              </span>
+              <span class="c-from">
+                <Redact text={mail.from} withheld={!shared} />
+              </span>
+              <span class="c-subj">
+                <Redact text={mail.subject} snippet={mail.snippet} cut={cut} highlighted withheld={!shared} pad subject />
+              </span>
+            </li>
+          );
+        })
+      }
+    </ol>
+  </div>
+</figure>
+
+<style is:global>
+  .vi-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-12) var(--space-24);
+    padding: var(--space-20) var(--space-24);
+    border-bottom: var(--hair) solid var(--rule-strong);
+  }
+
+  .vi-title {
+    font-size: var(--fs-d);
+    font-weight: 500;
+    letter-spacing: var(--tracking-d);
+    line-height: var(--leading-display);
+  }
+
+  /* A switch: off is an empty track, on is a filled one. */
+  .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-10);
+    font-size: var(--text-lead);
+    font-weight: 500;
+  }
+
+  .switch-track {
+    position: relative;
+    flex: none;
+    width: 42px;
+    height: 24px;
+    border: var(--hair) solid var(--ink);
+    border-radius: var(--r);
+    transition: background 0.2s;
+  }
+
+  .switch-track i {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 1px;
+    background: var(--ink);
+    transition:
+      transform 0.2s,
+      background 0.2s;
+  }
+
+  .switch[aria-checked='true'] .switch-track {
+    background: var(--ink);
+  }
+
+  .switch[aria-checked='true'] .switch-track i {
+    background: var(--paper);
+    transform: translateX(18px);
+  }
+
+  .vi-body {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+  }
+
+  .vi-list {
+    display: grid;
+    align-content: start;
+    border-right: var(--hair) solid var(--rule);
+  }
+
+  .vi-vendor {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-10);
+    min-height: 60px;
+    padding: var(--space-8) var(--space-16) var(--space-8) var(--space-24);
+    border-bottom: var(--hair) solid var(--rule);
+    text-align: left;
+  }
+
+  .vi-vendor[aria-pressed='true'] {
+    background: var(--sunken);
+  }
+
+  .vi-vendor .tile.logo {
+    width: 36px;
+    height: 36px;
+  }
+
+  .vi-vendor .tile.logo svg {
+    display: block;
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+  }
+
+  .vi-vendor .who {
+    min-width: 0;
+  }
+
+  .vi-vendor .who b {
+    display: block;
+    font-size: var(--text-lead);
+    font-weight: 500;
+    line-height: 1.2;
+  }
+
+  .vi-vendor .who small {
+    display: block;
+    color: var(--ink-2);
+    font-size: var(--text-small);
+    line-height: 1.2;
+  }
+
+  .vi-row {
+    --bar-h: 15px;
+    display: grid;
+    grid-template-columns: 64px 150px minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-16);
+    height: 52px;
+    padding-inline: var(--space-24);
+    border-bottom: var(--hair) solid var(--rule);
+  }
+
+  .vi-row:last-child {
+    border-bottom: 0;
+  }
+
+  .vi-row .c-date {
+    --bar-h: 12px;
+    color: var(--ink-2);
+    font-family: var(--font-mono);
+    font-size: var(--text-mono);
+  }
+
+  .vi-row .c-from {
+    overflow: hidden;
+    font-size: var(--text-lead);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .vi-row .c-subj {
+    overflow: hidden;
+    padding-block: 6px;
+    font-size: var(--text-lead);
+    white-space: nowrap;
+  }
+
+  .vi-row .c-subj .t {
+    max-width: none;
+  }
+
+  @media (max-width: 1040px) {
+    .vi-body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    /* The vendors sit above the inbox, three to a row, with only their names. */
+    .vi-list {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border-right: 0;
+      border-bottom: var(--hair) solid var(--rule-strong);
+    }
+
+    .vi-vendor {
+      min-height: 52px;
+      padding: var(--space-8) var(--space-12);
+      border-right: var(--hair) solid var(--rule);
+    }
+
+    .vi-vendor:nth-child(3n) {
+      border-right: 0;
+    }
+
+    .vi-vendor:nth-last-child(-n + 3) {
+      border-bottom: 0;
+    }
+
+    .vi-vendor .who small {
+      display: none;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .vi-head {
+      padding: var(--space-16);
+    }
+
+    .vi-list {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .vi-vendor:nth-child(3n) {
+      border-right: var(--hair) solid var(--rule);
+    }
+
+    .vi-vendor:nth-child(2n) {
+      border-right: 0;
+    }
+
+    .vi-vendor:nth-last-child(-n + 3) {
+      border-bottom: var(--hair) solid var(--rule);
+    }
+
+    .vi-vendor:nth-last-child(-n + 2) {
+      border-bottom: 0;
+    }
+
+    .vi-vendor .tile.logo {
+      width: 28px;
+      height: 28px;
+    }
+
+    .vi-vendor .tile.logo svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .vi-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: 'from date' 'subj subj';
+      gap: 2px var(--space-10);
+      height: auto;
+      padding: var(--space-10) var(--space-16);
+    }
+
+    .vi-row .c-date {
+      grid-area: date;
+    }
+
+    .vi-row .c-from {
+      grid-area: from;
+    }
+
+    .vi-row .c-subj {
+      grid-area: subj;
+      font-size: var(--text-body);
+    }
+
+    .vi-row .snip {
+      display: none;
+    }
+
+    .vi-row:nth-child(n + 8) {
+      display: none;
+    }
+
+    .vi-row:nth-child(7) {
+      border-bottom: 0;
+    }
+  }
+</style>
+
+<script>
+  import { initVendors } from '../../scripts/demos/vendors';
+
+  document.querySelectorAll<HTMLElement>('[data-demo="vendors"]').forEach(initVendors);
+</script>

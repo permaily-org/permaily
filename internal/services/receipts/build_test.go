@@ -537,6 +537,16 @@ func TestSizeCountsTheLargestIdentifierAndTime(t *testing.T) {
 	if m, _ := Size(r); m != n {
 		t.Fatalf("%d, then %d", n, m)
 	}
+	// Stored with the identity it comes with (NewID), or one Write draws.
+	id, err := NewID(r.At)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.ID = id
+	if _, doc := written(t, r); len(doc) > n {
+		t.Fatalf("%d bytes stored, counted %d", len(doc), n)
+	}
+	r.ID = ""
 	if _, doc := written(t, r); len(doc) > n {
 		t.Fatalf("%d bytes stored, counted %d", len(doc), n)
 	}

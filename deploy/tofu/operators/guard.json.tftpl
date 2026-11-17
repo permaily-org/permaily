@@ -1,0 +1,106 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "NoKeyChanges",
+      "Effect": "Deny",
+      "Action": [
+        "kms:CreateKey",
+        "kms:PutKeyPolicy",
+        "kms:ScheduleKeyDeletion",
+        "kms:CancelKeyDeletion",
+        "kms:CreateGrant",
+        "kms:RetireGrant",
+        "kms:RevokeGrant",
+        "kms:EnableKey",
+        "kms:DisableKey",
+        "kms:CreateAlias",
+        "kms:UpdateAlias",
+        "kms:DeleteAlias",
+        "kms:ReplicateKey",
+        "kms:UpdateKeyDescription",
+        "kms:UpdatePrimaryRegion",
+        "kms:EnableKeyRotation",
+        "kms:DisableKeyRotation",
+        "kms:TagResource",
+        "kms:UntagResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "NoIAMButTheirOwn",
+      "Effect": "Deny",
+      "Action": [
+        "iam:Add*",
+        "iam:Attach*",
+        "iam:Change*",
+        "iam:Create*",
+        "iam:Deactivate*",
+        "iam:Delete*",
+        "iam:Detach*",
+        "iam:Enable*",
+        "iam:PassRole",
+        "iam:Put*",
+        "iam:Remove*",
+        "iam:Resync*",
+        "iam:Set*",
+        "iam:Tag*",
+        "iam:Untag*",
+        "iam:Update*",
+        "iam:Upload*"
+      ],
+      "NotResource": [
+        "arn:aws:iam::${account_id}:user/$${aws:username}",
+        "arn:aws:iam::${account_id}:mfa/$${aws:username}"
+      ]
+    },
+    {
+      "Sid": "OnThemselvesOnlyTheirCredentials",
+      "Effect": "Deny",
+      "NotAction": [
+        "iam:Get*",
+        "iam:List*",
+        "iam:ChangePassword",
+        "iam:EnableMFADevice",
+        "iam:ResyncMFADevice",
+        "iam:DeactivateMFADevice",
+        "iam:CreateAccessKey",
+        "iam:UpdateAccessKey",
+        "iam:DeleteAccessKey"
+      ],
+      "Resource": "arn:aws:iam::${account_id}:user/$${aws:username}"
+    },
+    {
+      "Sid": "OnTheirDeviceOnlyCreateAndDelete",
+      "Effect": "Deny",
+      "NotAction": [
+        "iam:CreateVirtualMFADevice",
+        "iam:DeleteVirtualMFADevice",
+        "iam:Get*",
+        "iam:List*"
+      ],
+      "Resource": "arn:aws:iam::${account_id}:mfa/$${aws:username}"
+    },
+    {
+      "Sid": "NoStateWrites",
+      "Effect": "Deny",
+      "Action": [
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:PutBucket*",
+        "s3:PutLifecycleConfiguration"
+      ],
+      "Resource": [
+        "arn:aws:s3:::permaily-tofu-state-${account_id}",
+        "arn:aws:s3:::permaily-tofu-state-${account_id}/*"
+      ]
+    },
+    {
+      "Sid": "NoTable",
+      "Effect": "Deny",
+      "Action": "dynamodb:*",
+      "Resource": "*"
+    }
+  ]
+}

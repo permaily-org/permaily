@@ -129,20 +129,15 @@ func (s *Service) refuse(ctx context.Context, r *reading, why *receipts.Refused,
 // grant's hard end nor the request's context: a refusal after the hard end
 // or of a request whose client went away is still recorded, with the
 // grant's attribution (ruling 6 on PR #136's second review). Past
-// RefusalsPerWindow of its connection's window it is counted instead, and
-// answered err all the same; a summary of the connection's earlier windows
-// still to write is written first (refusals.go). A too_late refusal is
-// always written.
+// RefusalsPerWindow of its connection's window, or while an earlier write
+// of the connection's refusals is not stored, it is counted instead and
+// answered err all the same; the connection's earlier writes due are
+// written first (refusals.go). A too_late refusal is always written, in
+// its own receipt.
 func (s *Service) refuseWith(ctx context.Context, r *reading, rc *receipts.Receipt, err error) error {
 	ctx = context.WithoutCancel(ctx)
 	if rc.Refused == nil || rc.Refused.Reason != receipts.RefusedTooLate {
-		own, due := s.admitRefusal(r, refusedReason(rc))
-		if due != nil {
-			_ = s.writeSummary(ctx, due) // kept for the next try when it fails
-		}
-		if !own {
-			return err
-		}
+		return s.refuseCounted(ctx, r, rc, err)
 	}
 	if werr := s.writeReceipt(ctx, r.g.Account, rc, time.Time{}); werr != nil {
 		s.count("receipt_failed")
@@ -298,6 +293,10 @@ func vendorMessage(mailbox string, dis *inbox.Disclosed, parts []contracts.Part,
 
 // Search implements API.
 func (s *Service) Search(ctx context.Context, g *oauth.Grant, in contracts.VendorSearch) (*contracts.VendorPage, Release, error) {
+	if !s.adm.enter() {
+		return nil, nil, ErrUnavailable // stopping (Stop): not attributed, nothing recorded
+	}
+	defer s.adm.leave()
 	search, ferr := searchFormula(in.Query, g.Parts)
 	r, err := s.prepare(ctx, g, OperationSearch, search)
 	if err != nil {
@@ -449,6 +448,10 @@ func (s *Service) open(ctx context.Context, r *reading, mbx, msg string) (inbox.
 
 // Read implements API.
 func (s *Service) Read(ctx context.Context, g *oauth.Grant, id string) (*contracts.VendorMessage, Release, error) {
+	if !s.adm.enter() {
+		return nil, nil, ErrUnavailable // stopping (Stop): not attributed, nothing recorded
+	}
+	defer s.adm.leave()
 	r, err := s.prepare(ctx, g, OperationRead, nil)
 	if err != nil {
 		return nil, nil, err
@@ -481,6 +484,10 @@ func (s *Service) Read(ctx context.Context, g *oauth.Grant, id string) (*contrac
 
 // Attachment implements API.
 func (s *Service) Attachment(ctx context.Context, g *oauth.Grant, id string, index int) (*inbox.Attachment, Release, error) {
+	if !s.adm.enter() {
+		return nil, nil, ErrUnavailable // stopping (Stop): not attributed, nothing recorded
+	}
+	defer s.adm.leave()
 	r, err := s.prepare(ctx, g, OperationAttachment, nil)
 	if err != nil {
 		return nil, nil, err
@@ -536,6 +543,10 @@ func (s *Service) Refuse(ctx context.Context, g *oauth.Grant, rf Refusal) error 
 	if g == nil || !rf.ValidOn(g.Resource) {
 		return ErrInvalidRefusal
 	}
+	if !s.adm.enter() {
+		return ErrUnavailable // stopping (Stop): not attributed, nothing recorded
+	}
+	defer s.adm.leave()
 	ctx = context.WithoutCancel(ctx)
 	r := &reading{g: g, op: rf.Operation, conn: &connDoc{}}
 	if rf.Message != "" {

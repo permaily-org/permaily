@@ -1,0 +1,21 @@
+#!/bin/bash
+# Lambda's custom runtime for the drift check: each invocation runs drift.sh
+# once. drift.sh mails the alarm itself when the plan is not clean or fails;
+# it exits non-zero only when it could not, and then the invocation is
+# reported as an error, which the CloudWatch alarm on Errors mails instead.
+set -uo pipefail
+
+api="http://$AWS_LAMBDA_RUNTIME_API/2018-06-01/runtime"
+while true; do
+  headers=$(mktemp)
+  curl -sS -D "$headers" -o /dev/null "$api/invocation/next"
+  id=$(sed -n 's/^lambda-runtime-aws-request-id:[[:space:]]*\([^[:space:]]*\).*/\1/Ip' "$headers")
+  rm -f "$headers"
+  if /var/task/drift.sh; then
+    curl -sS -o /dev/null -X POST "$api/invocation/$id/response" -d '{"result":"done"}'
+  else
+    curl -sS -o /dev/null -X POST "$api/invocation/$id/error" \
+      -H 'Lambda-Runtime-Function-Error-Type: Unhandled' \
+      -d '{"errorType":"DriftCheckFailed","errorMessage":"the drift check could not mail its result; see the log"}'
+  fi
+done

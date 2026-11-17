@@ -7,8 +7,6 @@
 # before handing it the root secret; remove one to delete its key once no
 # rollback to it is planned. Never remove the release that is running.
 release_keys = {
-  "v0.10.0" = "c2999bd871d98ddd75e2c505b5e15cf6d978c227aa9fde535568641026149d5982b4200af66191d5759dffc25d2a5bbb"
-  "v0.11.0" = "d8572f3a6bfb12162e89aac19d2609cb53992da8d898b28c7a5dbd5519f8d55a29f9eb03abe3e92cabbe619e777f304d"
   "v0.14.0" = "1bf650c9ad46c00be881ec1066f7cdee150fc9ad6ce846cc95409cf009b39e2d496ae2b4053b5ec0cf859232f4b961e2"
   "v0.15.0" = "bde3304bc04ab6aa46fa80b0b0748907efea1f9083455c211f769f27cd9db11e2134861d710097dfce20412dfa7bf0d7"
   "v0.16.0" = "faacaecf08d792555c553ae74350f9bd5604fc323fe177548b8c0a6fb1af3ece6b513729741e64e8172e825d0c199aa5"
@@ -18,3 +16,13 @@ release_keys = {
 # Where senders send SMTP TLS reports: the "TLS reports" mailbox the super admin
 # made after v0.12.0 (docs/operations.md). Public on purpose.
 tls_rpt_address = "skr25i9u9s364ra7a6a9@inbox.permaily.com"
+
+# Operators other than the owner, each the IAM user permaily-operator-<label>,
+# who can deploy and operate after signing in with MFA (deploy/tofu/operators.tf,
+# docs/operations.md, "Operators"). Labels, never people's names: this file is
+# public. No credential is in the state.
+operators = ["2"]
+
+# Operators who may add their first MFA device without MFA, and make no access
+# key meanwhile. Emptied once they have signed in with MFA.
+operators_enrolling = ["2"]
