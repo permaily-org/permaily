@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -482,5 +483,145 @@ func TestL20TheReceiptsLogKindsAlone(t *testing.T) {
 	}
 	if st := r.status(); st.Check(w.now()) != nil {
 		t.Fatal(st.Check(w.now()))
+	}
+}
+
+// slowRefresh marks the context of a refresh the test holds back.
+type slowRefresh struct{}
+
+// L19, two refreshes overlapping (the review of #174, F1): one that read
+// the record of incidents at zero and is held back, then a receipt
+// deleted, a walk of another enclave that records it, the receipt put
+// back and a due pass that finishes clean, whose own refresh reads the
+// incident. Whatever order they end in, the incident this enclave read is
+// never taken back by what it read before.
+func TestL19AnOlderRefreshDoesNotTakeAnIncidentBack(t *testing.T) {
+	w := newReceiptsWorld(t)
+	r := w.enclave()
+	ctx := context.Background()
+	w.write(r)
+	if err := r.auditOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	w.advance(receipts.AuditEvery)
+	entered, resume := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	w.mem.Interrupt = func(ctx context.Context, _ store.Step, partition, _ string) error {
+		if partition == receipts.AuditPartition && ctx.Value(slowRefresh{}) != nil {
+			once.Do(func() { close(entered); <-resume })
+		}
+		return nil
+	}
+	older := make(chan error, 1)
+	go func() { older <- r.refresh(context.WithValue(ctx, slowRefresh{}, true)) }()
+	<-entered // It read the record of incidents, empty, and reads the pass.
+	gone := w.receiptEntries()[0]
+	if err := w.mem.DeleteEntry(ctx, gone.Partition, gone.Key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.enclave().svc.Walk(ctx, receiptsAccount, receipts.Position{}, 10); err != nil {
+		t.Fatal(err)
+	}
+	gone.Version = 0
+	if err := w.mem.PutEntry(ctx, &gone); err != nil {
+		t.Fatal(err)
+	}
+	// The due pass, clean, and its refresh: it ends first, or it waits for
+	// the older one.
+	waits := make(chan struct{})
+	var waited sync.Once
+	r.refreshWaits = func() { waited.Do(func() { close(waits) }) }
+	audited := make(chan error, 1)
+	go func() { audited <- r.auditOnce(ctx) }()
+	var auditErr error
+	select {
+	case auditErr = <-audited:
+		st := r.status()
+		if auditErr != nil || st.Incidents.Recorded != 1 || st.Check(w.now()) == nil {
+			t.Fatalf("the incident was not read: %+v %v", st.Incidents, auditErr)
+		}
+		close(resume)
+	case <-waits:
+		close(resume)
+		auditErr = <-audited
+	}
+	if err := <-older; err != nil || auditErr != nil {
+		t.Fatal(err, auditErr)
+	}
+	st := r.status()
+	if err := st.Check(w.now()); st.Incidents.Recorded != 1 || err == nil || !strings.Contains(err.Error(), "holds 1 entries") {
+		t.Fatalf("an incident read was taken back: %+v %v", st.Incidents, err)
+	}
+	if st.Audit.Began != w.now() {
+		t.Fatalf("not the newest pass: %+v", st.Audit)
+	}
+}
+
+// L19, an older pass read after a newer one (the review of #174, F1): the
+// newest pass's value deleted, the audit's record gives the one before
+// (L29), and this enclave keeps reporting the newer pass it read, with
+// the pass lost among the chain's regressions.
+func TestL19AnOlderPassDoesNotReplaceANewerOne(t *testing.T) {
+	w := newReceiptsWorld(t)
+	r := w.enclave()
+	ctx := context.Background()
+	w.write(r)
+	if err := r.auditOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	w.advance(receipts.AuditEvery)
+	if err := r.auditOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	newer := r.status().Audit
+	if newer == nil || newer.Began != w.now() {
+		t.Fatalf("the second pass: %+v", newer)
+	}
+	es, err := w.mem.ListEntries(ctx, receipts.AuditPartition, fmt.Sprintf("%s%016x@", receipts.AuditKeyPrefix, 2), "", 10)
+	if err != nil || len(es) != 1 {
+		t.Fatal(es, err)
+	}
+	if err := w.mem.DeleteEntry(ctx, es[0].Partition, es[0].Key); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := w.enclave().svc.Audited(ctx); err != nil || got == nil || got.P != 1 {
+		t.Fatalf("the record does not give the pass before: %+v %v", got, err)
+	}
+	if err := r.refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.status().Audit; got == nil || got.Began != newer.Began || got.Finished != newer.Finished {
+		t.Fatalf("an older pass replaced a newer one: %+v, had %+v", got, newer)
+	}
+	lost := false
+	for _, reg := range receiptRegressions(r.chain) {
+		lost = lost || reg.Lost
+	}
+	if !lost {
+		t.Fatal("the pass lost is not among the regressions")
+	}
+}
+
+// L19, what is published (the review of #174, F1): an incident head read
+// lower than one already read keeps the higher, with the newer read time;
+// a pass numbered lower than the one held is not taken.
+func TestL19WhatIsReadOnlyGoesForward(t *testing.T) {
+	w := newReceiptsWorld(t)
+	r := w.enclave()
+	at := w.now()
+	pass := func(p uint64, began time.Time) *receipts.AuditPass {
+		return &receipts.AuditPass{P: p, Audit: attestation.ReceiptsAudit{Began: began, Finished: began.Add(time.Minute)}}
+	}
+	r.publish(&attestation.ReceiptsIncidents{Recorded: 2, Read: at}, pass(3, at))
+	r.publish(&attestation.ReceiptsIncidents{Recorded: 1, Read: at.Add(time.Minute)}, pass(2, at.Add(time.Hour)))
+	st := r.status()
+	if st.Incidents.Recorded != 2 || !st.Incidents.Read.Equal(at.Add(time.Minute)) || !st.Audit.Began.Equal(at) {
+		t.Fatalf("%+v %+v", st.Incidents, st.Audit)
+	}
+	r.publish(nil, nil)
+	r.publish(&attestation.ReceiptsIncidents{Recorded: 3, Read: at.Add(2 * time.Minute)}, pass(4, at.Add(24*time.Hour)))
+	st = r.status()
+	if st.Incidents.Recorded != 3 || !st.Audit.Began.Equal(at.Add(24*time.Hour)) {
+		t.Fatalf("%+v %+v", st.Incidents, st.Audit)
 	}
 }

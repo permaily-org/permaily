@@ -84,11 +84,21 @@ type composedReceipts struct {
 	// holder is this enclave's name in the audit's lease.
 	holder string
 
+	// refreshing lets one refresh read at a time, so what one read is
+	// never published after what a later one read; status never waits for
+	// it.
+	refreshing sync.Mutex
+	// refreshWaits, when set, is called by a refresh that waits for another
+	// one: a test's. The image sets none.
+	refreshWaits func()
+
 	mu sync.Mutex
 	// incidents and audit are what the enclave last read of the record of
-	// incidents and of the newest finished pass; nil until read.
+	// incidents and of the newest finished pass, auditN that pass's number;
+	// nil until read. They only go forward (publish).
 	incidents *attestation.ReceiptsIncidents
 	audit     *attestation.ReceiptsAudit
+	auditN    uint64
 }
 
 // composeReceipts is the receipts service with every receipt linked in its
@@ -180,20 +190,52 @@ func runReceipts(ctx context.Context, r *composedReceipts, log *slog.Logger, tic
 
 // refresh reads the record of incidents and the newest finished pass. What
 // fails to be read keeps what was read before, with when, so /status shows
-// it growing old and permaily-verify fails once it is.
+// it growing old and permaily-verify fails once it is. One refresh reads at
+// a time (the ticker's and a finished pass's), so an older read is never
+// published over a newer one (the review of #174, F1); status does not wait
+// for the reads.
 func (r *composedReceipts) refresh(ctx context.Context) error {
+	if !r.refreshing.TryLock() {
+		if r.refreshWaits != nil {
+			r.refreshWaits()
+		}
+		r.refreshing.Lock()
+	}
+	defer r.refreshing.Unlock()
 	inc, ierr := r.svc.Incidents(ctx)
 	pass, perr := r.svc.Audited(ctx)
+	var read *attestation.ReceiptsIncidents
+	if ierr == nil {
+		read = &inc
+	}
+	if perr != nil {
+		pass = nil
+	}
+	r.publish(read, pass)
+	return errors.Join(ierr, perr)
+}
+
+// publish keeps what a refresh read, nil for what it did not, and only
+// goes forward: the record of incidents only grows, so a head read lower
+// than one this enclave read (a read from before, or the head's commit
+// deleted at the end of its lock) keeps the higher, with the newer read
+// time; and a pass numbered below the one held (its value deleted, so the
+// audit's record gives the one before, L29) leaves the newer one, whose
+// loss the chain's regressions report.
+func (r *composedReceipts) publish(inc *attestation.ReceiptsIncidents, pass *receipts.AuditPass) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if ierr == nil {
-		r.incidents = &inc
+	if inc != nil {
+		read := *inc
+		if r.incidents != nil && read.Recorded < r.incidents.Recorded {
+			read.Recorded = r.incidents.Recorded
+		}
+		r.incidents = &read
 	}
-	if perr == nil && pass != nil {
+	if pass != nil && (r.audit == nil || pass.P >= r.auditN) {
 		a := pass.Audit
-		r.audit = &a
+		r.audit, r.auditN = &a, pass.P
 	}
-	return errors.Join(ierr, perr)
 }
 
 // auditOnce runs a pass of the audit when one is due and this enclave
