@@ -63,7 +63,12 @@
         "ssm:TerminateSession",
         "ssm:ResumeSession"
       ],
-      "Resource": "arn:aws:ssm:${region}:${account_id}:session/$${aws:username}-*"
+      "Resource": "arn:aws:ssm:${region}:${account_id}:session/*",
+      "Condition": {
+        "StringLike": {
+          "ssm:resourceTag/aws:ssmmessages:session-id": "$${aws:userid}"
+        }
+      }
     },
     {
       "Sid": "SeeCommandsAndSessions",
