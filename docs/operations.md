@@ -167,6 +167,55 @@ Two things start it:
 
 If the runs stop: check the rule (`aws events describe-rule --name permaily-verify-production`) and its failed invocations in CloudWatch (`AWS/Events`, `FailedInvocations`), then the token below. `gh workflow run verify-production` starts one by hand. GitHub disables scheduled workflows after 60 days without activity in the repository; re-enable it under Actions if that happens.
 
+## The drift check
+
+Once an hour, at minute 23, the Lambda function `permaily-drift` runs `tofu plan -detailed-exitcode` of `deploy/tofu` as it is at the newest commit of `develop` against production (`deploy/tofu/drift.tf`, ADR 0035). When the plan is not clean, or cannot be made, it mails the subscribers of the SNS topic `permaily-sigstore-deadline` (below, "Who is told about a Sigstore deadline"): "production drifted from deploy/tofu" with the resources the plan would change, or "the drift check failed" with the end of its output. A clean plan sends nothing. It only reads: its role can change nothing in the account, it plans without taking the state's lock, its Cloudflare token can only read, and nothing in it applies. Its whole output is in CloudWatch Logs, `/aws/lambda/permaily-drift`, 90 days.
+
+Two CloudWatch alarms mail the same topic when the check cannot: `permaily-drift-errors` (it crashed, timed out, or SNS refused its mail) and `permaily-drift-stopped` (no run for three hours); each mails again when it clears.
+
+- **Production drifted.** Someone or something changed the account or the zone outside OpenTofu, or a change was applied from a branch that is not on `develop` yet. Right after a release's `tofu apply`, the plan differs until the pull request that commits `production.auto.tfvars` is merged: merge it promptly, and expect one or two mails meanwhile. Otherwise read the plan in the log, find out who changed what (CloudTrail), and either apply to restore it or commit the change; never leave it. A CAA record that differs is urgent (deploy/AGENTS.md: a half-applied CAA change stops certificate issuance).
+- **The check failed.** The mail ends with the error. `AccessDenied` on a refresh means a resource type was added to `deploy/tofu` without its read permission: add the action to `aws_iam_role_policy.drift_refresh` (read actions only, never one that reads data). `the Cloudflare token could not be read` or `has no value`: the secret below. Errors from GitHub or the registry are transient; the next hour tries again.
+- **To silence it** for a planned change: `aws events disable-rule --name permaily-drift --region us-east-2`, and `enable-rule` afterwards.
+- **Run it now:** `aws lambda invoke --function-name permaily-drift --region us-east-2 --invocation-type Event /dev/null`.
+
+**Setting it up, once** (and the token again before it expires):
+
+```sh
+# 1. The ECR repository, the secret, the role and the log group (the function waits for an image).
+tofu -chdir=deploy/tofu apply
+# 2. A Cloudflare token that can only read: My Profile > API Tokens > Create, permissions
+#    Zone > Zone > Read and Zone > DNS > Read, zone resources: permaily.com only, with an expiry.
+#    Put it in the secret without showing it or putting it on a command line (never in the repository or the state):
+read -rsp 'Cloudflare token: ' token; echo
+printf %s "$token" | aws secretsmanager put-secret-value --region us-east-2 \
+  --secret-id permaily/drift/cloudflare-token --secret-string file:///dev/stdin; unset token
+# 3. The image: builds deploy/drift and pushes it, then prints its digest.
+scripts/drift-image.sh
+# 4. deploy/tofu/production.auto.tfvars: drift_image_digest = "sha256:…" (public), then
+tofu -chdir=deploy/tofu apply          # creates the function, its schedule and its two alarms
+aws lambda invoke --function-name permaily-drift --region us-east-2 /dev/stdout   # a first run: {"result":"done"}, and no mail when production matches
+```
+
+Commit `drift_image_digest` in the pull request that follows. Rebuild the image (`scripts/drift-image.sh`, then the digest and an apply) only when `deploy/drift` changes, to move OpenTofu or the base image: the configuration it plans is fetched on each run, with the providers its lock file names. ECR expires only untagged images (a push that failed half way); every pushed image keeps its commit's tag, so the one the function runs never expires. To remove old images by hand, never the one in `drift_image_digest` nor the one the function runs (`aws lambda get-function --function-name permaily-drift --region us-east-2 --query Code.ResolvedImageUri`): list them with `aws ecr describe-images --repository-name permaily-drift --region us-east-2 --query 'imageDetails[].[imageDigest,imageTags[0],imagePushedAt]' --output table`, then `aws ecr batch-delete-image --repository-name permaily-drift --region us-east-2 --image-ids imageDigest=sha256:…` for each old one. To rotate the Cloudflare token, create the new one, put it with step 2, run it once, then delete the old one.
+
+## Port 25, from a server
+
+AWS blocks outbound port 25 from Lambda and from EC2, and GitHub's runners cannot use it, so the scheduled checks above skip the certificate the enclave presents on SMTP (they warn). The owner's Contabo server runs `scripts/verify-cron.sh` by cron every hour instead: `scripts/verify-production.sh -require-smtp`, the latest release's verifier and `pcrs.json` checked against their Sigstore provenance, and never run when either does not verify, which fails when port 25 cannot be reached. It needs no AWS credentials. On success it prints nothing; on failure it prints the report and exits 1, which cron mails where `MAILTO` and a mailer are set, and it runs `PERMAILY_ALERT_CMD` with the report on standard input when that is set. The alert command runs after the lock is released, and never holds it, with a deadline of its own of 2 minutes (`PERMAILY_ALERT_TIMEOUT`, in seconds; TERM, then KILL `PERMAILY_VERIFY_GRACE` later): a mailer that hangs cannot hold back the next verification. An alert that fails or is stopped is reported on standard error, and the exit is 1 either way. A run has a deadline of 50 minutes (`PERMAILY_VERIFY_TIMEOUT`, in seconds): past it the run and everything it started are stopped (TERM, then KILL 30 s later, `PERMAILY_VERIFY_GRACE`) and it is a failure, so a download or a verifier that hangs cannot stop the hourly checks. One run at a time: the next run leaves a run within its deadline be, and treats a lock still held past the deadline, or a lock it cannot take, as a failure. It does not tell when the server or cron itself stops: nothing mails then. The last report is in `~/.local/state/permaily-verify-cron/last.txt`.
+
+Install it once, as an unprivileged user that has `gh` (signed in, or `GH_TOKEN` set to a fine-grained token with read access to public repositories only), `jq`, `flock` and the usual coreutils (`date`, `sleep`):
+
+```sh
+git clone https://github.com/permaily-org/permaily /opt/permaily      # or any directory the user owns
+nc -vz -w 5 inbox.permaily.com 25                                   # the provider lets port 25 out
+/opt/permaily/scripts/verify-cron.sh; echo "exit $?"                # a first run by hand: exit 0, nothing printed
+crontab -e
+#   MAILTO=<the address that is told>
+#   PERMAILY_ALERT_CMD='mail -s "Permaily: verification failed" <address>'   # optional, when cron cannot mail
+#   41 * * * * /opt/permaily/scripts/verify-cron.sh
+```
+
+The scripts are run from that checkout: update it with `git -C /opt/permaily pull --ff-only` after reading what changed in `scripts/verify-production.sh` and `scripts/verify-cron.sh`; the verifier itself is always the release's, never the checkout's.
+
 ## Sigstore changed
 
 A running enclave hands the root secret to a release only if the release's Sigstore bundle verifies with the trust root the enclave uses (the one compiled in, or a later one it was given), in the format `pkg/provenance` reads. If that stops being true and nobody notices in time, no release can be deployed without losing everything stored. The workflow `sigstore-watch` checks both things every day, for the first Rekor and for Rekor v2, (started by EventBridge at 06:53 UTC, and by GitHub's schedule when it fires), and `release.yml` checks each release before it cuts it. A failed run is a deadline, not an incident in production: the enclave that is running keeps working. So that it is not one more red mark, a failed run opens an issue with the label `sigstore-deadline`, assigned to the logins in `.github/sigstore-maintainers`, and every daily run adds a comment that names them again and sends mail to the subscribers of the SNS topic `permaily-sigstore-deadline`, until everything passes, when the issue is closed (`scripts/sigstore-alarm.sh`). When the change is urgent (a new issuer of signing certificates) the issue also gets the label `sigstore-urgent`: pull requests into `develop` fail their `go` check meanwhile, except the one that compiles in the new trust root (`scripts/check-sigstore-deadline.sh`), and the issue stays open after the checks pass, until production runs a release with the new trust root compiled in. Removing that label from the issue lets pull requests through.
@@ -188,7 +237,7 @@ aws sns subscribe --topic-arn "$(tofu -chdir=deploy/tofu output -raw sigstore_al
 aws sns list-subscriptions-by-topic --topic-arn "$(tofu -chdir=deploy/tofu output -raw sigstore_alarm_topic)"    # who is subscribed, and who has not confirmed
 ```
 
-The workflow publishes as the IAM user `permaily-sigstore-alarm`, which can publish to that topic and do nothing else. Its access key is in the repository secrets `SIGSTORE_ALARM_AWS_ACCESS_KEY_ID` and `SIGSTORE_ALARM_AWS_SECRET_ACCESS_KEY`, and the topic in the variable `SIGSTORE_ALARM_TOPIC_ARN`. To replace the key: `aws iam create-access-key --user-name permaily-sigstore-alarm`, set both secrets with `gh secret set`, then `aws iam delete-access-key` for the old one. GitHub's keyless sign-in is not used because the organization the AWS account belongs to forbids identity providers in it.
+The same topic carries the drift check's mail and its alarms ("The drift check"). The workflow publishes as the IAM user `permaily-sigstore-alarm`, which can publish to that topic and do nothing else. Its access key is in the repository secrets `SIGSTORE_ALARM_AWS_ACCESS_KEY_ID` and `SIGSTORE_ALARM_AWS_SECRET_ACCESS_KEY`, and the topic in the variable `SIGSTORE_ALARM_TOPIC_ARN`. To replace the key: `aws iam create-access-key --user-name permaily-sigstore-alarm`, set both secrets with `gh secret set`, then `aws iam delete-access-key` for the old one. GitHub's keyless sign-in is not used because the organization the AWS account belongs to forbids identity providers in it.
 
 ## Rotate the GitHub dispatch token
 
