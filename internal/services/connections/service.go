@@ -177,7 +177,7 @@ func (s *Service) readSigned(ctx context.Context, name string, v any) (store.Mar
 }
 
 // writeSigned writes v signed: made with CreateNew when create, else at the
-// mark it was read at.
+// mark it was read at, within WriteMax.
 func (s *Service) writeSigned(ctx context.Context, name string, v any, at store.Mark, create bool) error {
 	raw, err := json.Marshal(v)
 	if err != nil {
@@ -188,6 +188,7 @@ func (s *Service) writeSigned(ctx context.Context, name string, v any, at store.
 		return err
 	}
 	r := &store.Record{Name: name, Value: value, Plain: true, UpdatedAt: s.now()}
+	ctx = store.WriteWithin(ctx, WriteMax)
 	if create {
 		return s.cfg.Records.CreateNew(ctx, r)
 	}
@@ -223,6 +224,7 @@ func (s *Service) writeSealed(ctx context.Context, name string, v any, at store.
 		return err
 	}
 	r := &store.Record{Name: name, Value: value, UpdatedAt: s.now()}
+	ctx = store.WriteWithin(ctx, WriteMax)
 	if create {
 		return s.cfg.Records.CreateNew(ctx, r)
 	}

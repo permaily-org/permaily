@@ -460,11 +460,46 @@ func (a *Anchored) uncommitted(ctx context.Context, name string) error {
 	return err
 }
 
+// ErrTooLate is a write made with WriteWithin whose time ran out before it
+// stored its value: nothing of it was stored. It is a
+// context.DeadlineExceeded.
+var ErrTooLate error = &kind{msg: "store: the write's time ran out before it stored its value", wraps: context.DeadlineExceeded}
+
+type writeWithinKey struct{}
+
+type stageByKey struct{}
+
+// WriteWithin bounds each write made with the context it returns
+// (PutRecordAt, PutRecord, CreateNew) to d from when it begins, before its
+// first read of the record's commits: past d by the Anchored's clock it
+// stores no value (ErrTooLate), and every request it makes ends at d. So
+// whatever the reads of a long history, their pages, the credentials or the
+// retries take, no value of such a write is stored later than d after the
+// read of the commits it rests on began (third review of #152, finding 1).
+func WriteWithin(ctx context.Context, d time.Duration) context.Context {
+	return context.WithValue(ctx, writeWithinKey{}, d)
+}
+
+// bound starts the time of a write made with WriteWithin.
+func (a *Anchored) bound(ctx context.Context) (context.Context, context.CancelFunc) {
+	d, _ := ctx.Value(writeWithinKey{}).(time.Duration)
+	if d <= 0 {
+		return ctx, func() {}
+	}
+	by := a.now().Add(d)
+	ctx, cancel := context.WithTimeout(ctx, d)
+	return context.WithValue(ctx, stageByKey{}, by), cancel
+}
+
 // commit stores r as a version of its own and appends the commit that makes
 // it the newest. The value goes first: a commit never names a value that was
 // not stored, and a value without a commit is nothing. It returns the commit
-// it tried to make, also when another one took its version (ErrExists).
+// it tried to make, also when another one took its version (ErrExists). A
+// write whose time ran out (WriteWithin) stores nothing.
 func (a *Anchored) commit(ctx context.Context, r *Record, version uint64) (*Commit, error) {
+	if by, ok := ctx.Value(stageByKey{}).(time.Time); ok && (!a.now().Before(by) || errors.Is(ctx.Err(), context.DeadlineExceeded)) {
+		return nil, ErrTooLate
+	}
 	c := Commit{Name: r.Name, Version: version, Digest: r.digest(), At: a.now().UTC().Truncate(time.Second)}
 	value := *r
 	value.Name = versioned(&c)
@@ -492,6 +527,8 @@ func (a *Anchored) commit(ctx context.Context, r *Record, version uint64) (*Comm
 // later would take too. PutRecord and RemoveRecord are not held back by it:
 // they write whatever the record is.
 func (a *Anchored) PutRecordAt(ctx context.Context, r *Record, at Mark) error {
+	ctx, cancel := a.bound(ctx)
+	defer cancel()
 	if at.next == 0 || at.name != r.Name {
 		return errors.New("store: a record is stored at the mark it was read at")
 	}
@@ -552,6 +589,8 @@ func (a *Anchored) discard(ctx context.Context, c *Commit) error {
 // there; a record that was lost or removed can be created again, as a later
 // version.
 func (a *Anchored) PutRecord(ctx context.Context, r *Record, create bool) error {
+	ctx, cancel := a.bound(ctx)
+	defer cancel()
 	for range maxChanges {
 		head, next, err := a.head(ctx, r.Name)
 		if err != nil {
@@ -611,6 +650,8 @@ func (a *Anchored) CreateNew(ctx context.Context, r *Record) error {
 	if !a.Strict {
 		return errors.New("store: CreateNew is for strict records")
 	}
+	ctx, cancel := a.bound(ctx)
+	defer cancel()
 	for range maxChanges {
 		head, next, err := a.head(ctx, r.Name)
 		if err != nil {

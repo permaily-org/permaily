@@ -150,21 +150,19 @@ func (s *Service) endFamily(ctx context.Context, family string, reason contracts
 	return errBusy
 }
 
-// removeFamily removes every epoch of a family's records, oldest first.
+// removeFamily removes every epoch of a family's records (removeEpochs):
+// by their commits, so an epoch whose value is lost or put back goes too,
+// and one whose removal committed and left values has them deleted; a
+// removal stopped halfway is finished by the next, and a refresh rolling
+// the family meanwhile makes no epoch after it.
 func (s *Service) removeFamily(ctx context.Context, family string) error {
-	for e := uint64(0); ; e++ {
-		var f oauth.FamilyState
-		_, found, err := s.readSealed(ctx, familyName(family, e), &f)
-		if err != nil && !refusedRecord(err) {
-			return err
-		}
-		if err := s.cfg.Records.RemoveRecord(ctx, familyName(family, e)); err != nil {
-			return err
-		}
-		if !found || f.Status != oauth.FamilyMoved {
-			return nil
-		}
+	if err := s.removeEpochs(ctx, func(e uint64) string { return familyName(family, e) }); err != nil {
+		return err
 	}
+	s.mu.Lock()
+	delete(s.epochs, "family "+family)
+	s.mu.Unlock()
+	return nil
 }
 
 // accessEntry is an access token's sealed entry.
