@@ -36,13 +36,19 @@ resource "aws_ecr_repository" "drift" {
   }
 }
 
+# Only untagged images expire (a push that failed half way). Every image
+# scripts/drift-image.sh pushes has its commit's tag, which is immutable, so the
+# image the function runs (drift_image_digest) is tagged and never expires,
+# however many images are pushed after it. Old tagged images are removed by
+# hand, never the one in drift_image_digest (docs/operations.md, "The drift
+# check").
 resource "aws_ecr_lifecycle_policy" "drift" {
   repository = aws_ecr_repository.drift.name
   policy = jsonencode({
     rules = [{
       rulePriority = 1
-      description  = "Keep the ten newest images"
-      selection    = { tagStatus = "any", countType = "imageCountMoreThan", countNumber = 10 }
+      description  = "Expire untagged images after a day; tagged ones, the deployed one among them, never expire"
+      selection    = { tagStatus = "untagged", countType = "sinceImagePushed", countUnit = "days", countNumber = 1 }
       action       = { type = "expire" }
     }]
   })
