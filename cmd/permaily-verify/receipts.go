@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/permaily-org/permaily/internal/services/receipts"
+	receipts "github.com/permaily-org/permaily/pkg/receiptchain"
 )
 
 // permaily-verify -receipts checks, offline, an export of a person's
@@ -22,20 +22,31 @@ import (
 // link's against what the link above names (the first against the head the
 // page says), every receipt against the digest its link names, link 1
 // against the account's genesis. It requires the export to be whole: every
-// page passes receipts.ExportPage.Check, and besides, each begins exactly
-// where the one before ended, no link or receipt is left out, and only the
-// last says it is done, after link 1.
+// page passes receiptchain.ExportPage.Check and its head
+// receiptchain.Head.CheckShown, and besides, each begins exactly where the
+// one before ended, no link or receipt is left out, and only the last says
+// it is done, after link 1. Its checks are pkg/receiptchain's, the
+// protocol the service uses, which links no storage.
 //
-// An export checked alone proves only that it is consistent with itself:
-// whoever edits the file can recompute every digest. What authenticates it
-// is a head the person noted from the app (-receipts-head <n>:<sha256>,
-// once or more): link n must have that digest, and every link below it down
-// to the first break is then authenticated with every receipt it names. A
-// noted head above the export's own fails the check (the file was cut
-// short). The breaks the enclave found (a receipt or a link deleted or
-// changed by the storage) are printed, with the links linked late and
-// adopted and each page's head; they are what the storage did, not a fault
-// of the file, and do not fail it.
+// It says three things apart. Consistent: the file is a whole export whose
+// digests hold, and every noted head is in it. Intact: consistent, and it
+// reports no link or receipt broken (a verdict other than ok, expired, or a
+// receipt's ok) and no link naming no link before it. Authenticated: the
+// links a head the person noted (-receipts-head <n>:<sha256>, once or
+// more) vouches for: link n must have that digest, and every link below it
+// down to the first break is then authenticated with every receipt it
+// names. A noted head above the export's own fails the check (the file was
+// cut short). An export checked alone proves only that it is consistent
+// with itself: whoever edits the file can recompute every digest.
+//
+// It passes (exit 0) only an export both consistent and intact; it fails
+// (exit 1) one that is not consistent, and one that reports a break, after
+// printing every finding and what is authenticated. A verdict is the
+// export's word, not covered by any digest a head vouches for: whoever
+// edits the file can remove a receipt and call it missing, as the storage
+// would have left it. So a break fails the check whoever made it, and the
+// check cannot say which: whether the deployment recorded it as an
+// incident is what permaily-verify against the deployment checks.
 
 // maxExportLine bounds one line, a page: WalkBytesMax of documents sealed,
 // in base64, with the JSON around them.
@@ -97,25 +108,38 @@ type headOut struct {
 }
 
 type receiptsResult struct {
-	OK      bool   `json:"ok"`
-	Error   string `json:"error,omitempty"`
-	Account string `json:"account,omitempty"`
+	// OK is the exit status: consistent and intact.
+	OK bool `json:"ok"`
+	// Consistent says the file is a whole export whose digests hold, with
+	// every noted head in it; Error says why it is not. Intact says it is
+	// consistent and reports no break (Broken and Breaks empty).
+	Consistent bool   `json:"consistent"`
+	Intact     bool   `json:"intact"`
+	Error      string `json:"error,omitempty"`
+	// Authentication is "whole" when a noted head authenticates every link
+	// of a consistent export, "partial" when it authenticates some, "none"
+	// otherwise (no head noted, an empty chain, or a file not consistent).
+	Authentication string `json:"authentication"`
+	Account        string `json:"account,omitempty"`
 	// Links and Receipts are how many the export holds.
 	Links    uint64 `json:"links"`
 	Receipts int    `json:"receipts"`
 	// Authenticated are the links a noted head authenticates, the newest
 	// first; NotAuthenticated the others.
-	Authenticated    []span      `json:"authenticated"`
-	NotAuthenticated []span      `json:"not_authenticated"`
-	Broken           []brokenOut `json:"broken"`
-	Breaks           []brokenOut `json:"breaks"`
-	Recovered        []span      `json:"recovered"`
-	Adopted          []span      `json:"adopted"`
-	Expired          []span      `json:"expired"`
-	Heads            []headOut   `json:"heads"`
+	Authenticated    []span `json:"authenticated"`
+	NotAuthenticated []span `json:"not_authenticated"`
+	// Broken are the links and receipts the export reports broken; Breaks
+	// the links whose document names no link before it.
+	Broken    []brokenOut `json:"broken"`
+	Breaks    []brokenOut `json:"breaks"`
+	Recovered []span      `json:"recovered"`
+	Adopted   []span      `json:"adopted"`
+	Expired   []span      `json:"expired"`
+	Heads     []headOut   `json:"heads"`
 }
 
-// checkReceipts runs -receipts and prints what it found.
+// checkReceipts runs -receipts and prints what it found; it returns
+// whether the export is consistent and intact.
 func checkReceipts(w io.Writer, o *receiptsOptions, asJSON bool) bool {
 	res := &receiptsResult{}
 	f, err := os.Open(o.file) //nolint:gosec // path given by the user on purpose
@@ -124,23 +148,28 @@ func checkReceipts(w io.Writer, o *receiptsOptions, asJSON bool) bool {
 		_ = f.Close()
 	}
 	if err != nil {
-		res.OK, res.Error = false, err.Error()
+		res.Consistent, res.Error = false, err.Error()
 	}
+	res.judge()
 	if asJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(res)
 		return res.OK
 	}
-	if !res.OK {
-		fmt.Fprintf(w, "FAIL  receipts\n      %s\n", res.Error)
+	if !res.Consistent {
+		fmt.Fprintf(w, "FAIL  receipts: not a consistent export\n      %s\n", res.Error)
 		return false
 	}
-	if res.Links == 0 {
+	breaks := len(res.Broken) + len(res.Breaks)
+	switch {
+	case res.Links == 0:
 		fmt.Fprintf(w, "PASS  receipts of %s: an empty chain, no link\n", res.Account)
-		return true
+	case breaks == 0:
+		fmt.Fprintf(w, "PASS  receipts of %s: an export of %d links and %d receipts, consistent and intact from link %d to the account's genesis\n", res.Account, res.Links, res.Receipts, res.Links)
+	default:
+		fmt.Fprintf(w, "FAIL  receipts of %s: an export of %d links and %d receipts, consistent with itself and not intact: it reports %d %s\n", res.Account, res.Links, res.Receipts, breaks, plural(breaks, "break", "breaks"))
 	}
-	fmt.Fprintf(w, "PASS  receipts of %s: an export of %d links and %d receipts, consistent from link %d to the account's genesis\n", res.Account, res.Links, res.Receipts, res.Links)
 	if len(res.Authenticated) > 0 {
 		fmt.Fprintf(w, "      authenticated by a noted head: links %s\n", spans(res.Authenticated))
 	}
@@ -151,14 +180,19 @@ func checkReceipts(w io.Writer, o *receiptsOptions, asJSON bool) bool {
 		fmt.Fprintln(w, "WARN  no head noted: whoever has the file could have recomputed all of it; note the head the app shows when you export, and pass it with -receipts-head <n>:<sha256>")
 	}
 	for _, b := range res.Broken {
-		if b.Index == nil {
-			fmt.Fprintf(w, "BREAK link %d %s: the storage deleted or changed it; which receipts it named is not known\n", b.N, b.Verdict)
-			continue
+		switch {
+		case b.Index != nil && b.Verdict == string(receipts.ReceiptChanged):
+			fmt.Fprintf(w, "BREAK receipt %d.%d %s changed: the export reports it, and its document is not what link %d names\n", b.N, *b.Index, b.ID, b.N)
+		case b.Index != nil:
+			fmt.Fprintf(w, "BREAK receipt %d.%d %s %s: the export reports it, and has no document of it\n", b.N, *b.Index, b.ID, b.Verdict)
+		case b.Verdict == string(receipts.LinkPrev):
+			fmt.Fprintf(w, "BREAK link %d prev: the export reports it, and its document is not what link %d names\n", b.N, b.N+1)
+		default:
+			fmt.Fprintf(w, "BREAK link %d %s: the export reports it, and has no document of it; which receipts it named is not known\n", b.N, b.Verdict)
 		}
-		fmt.Fprintf(w, "BREAK receipt %d.%d %s %s: the storage deleted or changed it\n", b.N, *b.Index, b.ID, b.Verdict)
 	}
 	for _, b := range res.Breaks {
-		fmt.Fprintf(w, "NOTE  link %d names no link before it (%s): the link below it is checked by its own commit, not by this chain\n", b.N, b.Verdict)
+		fmt.Fprintf(w, "BREAK link %d names no link before it (%s): the link below it is not checked by this chain\n", b.N, b.Verdict)
 	}
 	for _, s := range res.Recovered {
 		fmt.Fprintf(w, "NOTE  %s recovered: its receipts were found without a link and linked late, so whether their answers left is not known\n", linksWord(s))
@@ -172,7 +206,31 @@ func checkReceipts(w io.Writer, o *receiptsOptions, asJSON bool) bool {
 	for _, h := range res.Heads {
 		fmt.Fprintf(w, "      head %d %s sha256 %s on pages %d to %d\n", h.N, h.Verdict, h.SHA256, h.Pages.From, h.Pages.To)
 	}
-	return true
+	if breaks > 0 {
+		fmt.Fprintln(w, "      a break is the export's word, which no head vouches for: the storage made it (then the deployment recorded it as an incident, which permaily-verify against it shows) or whoever edited the file did; this check cannot tell which")
+	}
+	return res.OK
+}
+
+// judge sets what the result says as a whole from what was found.
+func (r *receiptsResult) judge() {
+	r.Intact = r.Consistent && len(r.Broken) == 0 && len(r.Breaks) == 0
+	r.OK = r.Intact
+	switch {
+	case !r.Consistent || len(r.Authenticated) == 0:
+		r.Authentication = "none"
+	case len(r.NotAuthenticated) == 0:
+		r.Authentication = "whole"
+	default:
+		r.Authentication = "partial"
+	}
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func spans(s []span) string {
@@ -253,7 +311,7 @@ func checkExport(r io.Reader, noted notedHeads) (*receiptsResult, error) {
 	case !c.done:
 		return c.res, errors.New("the export ends before its last page: no page says it is done; pages or links left out")
 	}
-	c.res.OK = true
+	c.res.Consistent = true
 	return c.res, nil
 }
 
@@ -270,6 +328,9 @@ func readPage(line []byte) (*receipts.ExportPage, error) {
 		return nil, errors.New("not a page of an export: more after it on its line")
 	}
 	if err := p.Check(); err != nil {
+		return nil, err
+	}
+	if err := p.Head.CheckShown(); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -408,10 +469,8 @@ func (c *exportCheck) judge(l *receipts.ExportedLink) error {
 		c.above, c.authed = nil, false
 		return nil
 	}
-	dec := json.NewDecoder(bytes.NewReader(l.Doc))
-	dec.DisallowUnknownFields()
-	doc := &receipts.Link{}
-	if err := dec.Decode(doc); err != nil || doc.Check() != nil || doc.N != l.N || dec.More() {
+	doc, err := receipts.ParseLink(l.Doc, l.N)
+	if err != nil {
 		return fmt.Errorf("link %d's document is not a link of number %d", l.N, l.N)
 	}
 	d := receipts.DigestOf(l.Doc)

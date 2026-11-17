@@ -280,8 +280,16 @@ func TestL24AnUntouchedExportPasses(t *testing.T) {
 		t.Fatalf("-json: %d %s", code, stderr.String())
 	}
 	var res receiptsResult
-	if err := json.Unmarshal(stdout.Bytes(), &res); err != nil || !res.OK || res.Links != 20 || res.Receipts != 20 || len(res.Authenticated) != 1 || res.Authenticated[0] != (span{From: 20, To: 1}) || len(res.Heads) != 1 || res.Heads[0].SHA256 != head.SHA256 {
+	if err := json.Unmarshal(stdout.Bytes(), &res); err != nil || !res.OK || !res.Consistent || !res.Intact || res.Authentication != "whole" || res.Links != 20 || res.Receipts != 20 || len(res.Authenticated) != 1 || res.Authenticated[0] != (span{From: 20, To: 1}) || len(res.Heads) != 1 || res.Heads[0].SHA256 != head.SHA256 {
 		t.Fatalf("-json: %v %s", err, stdout.String())
+	}
+	stdout.Reset()
+	if code := run([]string{"-json", "-receipts", path}, &stdout, &stderr, nil); code != 0 {
+		t.Fatalf("-json, no head noted: %d %s", code, stderr.String())
+	}
+	res = receiptsResult{}
+	if err := json.Unmarshal(stdout.Bytes(), &res); err != nil || !res.OK || !res.Intact || res.Authentication != "none" || len(res.NotAuthenticated) != 1 {
+		t.Fatalf("-json, no head noted: %v %s", err, stdout.String())
 	}
 	// An empty chain is an export too.
 	code, out = verifyReceipts(t, fileOf(t, []*receipts.ExportPage{{V: receipts.ExportVersion, Account: exportAccount, Links: []receipts.ExportedLink{}, Done: true}}))
@@ -315,7 +323,7 @@ func TestL24AByteChangedFails(t *testing.T) {
 		pages := pagesOf(t, file)
 		change(pages)
 		for _, heads := range [][]string{{noted(head)}, nil} {
-			if code, out := verifyReceipts(t, fileOf(t, pages), heads...); code != 1 || !strings.Contains(out, "FAIL  receipts") {
+			if code, out := verifyReceipts(t, fileOf(t, pages), heads...); code != 1 || !strings.Contains(out, "FAIL  receipts: not a consistent export") {
 				t.Errorf("%s changed, heads %v: %d\n%s", name, heads, code, out)
 			}
 		}
@@ -395,33 +403,35 @@ func TestL24ANotedHeadAboveTheExports(t *testing.T) {
 }
 
 // L24: links below a break are printed as not authenticated, down to the
-// next noted head.
+// next noted head; the export reports a break, so it is not intact and
+// fails, consistent with itself.
 func TestL24BelowABreakNothingIsAuthenticated(t *testing.T) {
 	c := newChained(t)
 	c.write(20)
 	c.deleteEntry(receipts.LinkKeyPrefix(8))
 	file, head := c.export()
 	code, out := verifyReceipts(t, file, noted(head))
-	if code != 0 || !strings.Contains(out, "authenticated by a noted head: links 20 to 9") || !strings.Contains(out, "not authenticated by a noted head: links 8 to 1") || !strings.Contains(out, "BREAK link 8 lost") {
+	if code != 1 || !strings.Contains(out, "consistent with itself and not intact: it reports 1 break") || !strings.Contains(out, "authenticated by a noted head: links 20 to 9") || !strings.Contains(out, "not authenticated by a noted head: links 8 to 1") || !strings.Contains(out, "BREAK link 8 lost") {
 		t.Fatalf("a break: %d\n%s", code, out)
 	}
 	pages := pagesOf(t, file)
 	five := receipts.DigestOf(exported(pages, 5)[0].Doc)
 	code, out = verifyReceipts(t, file, noted(head), "5:"+five.String())
-	if code != 0 || !strings.Contains(out, "not authenticated by a noted head: links 8 to 6") || !strings.Contains(out, "authenticated by a noted head: links 20 to 9, 5 to 1") {
+	if code != 1 || !strings.Contains(out, "not authenticated by a noted head: links 8 to 6") || !strings.Contains(out, "authenticated by a noted head: links 20 to 9, 5 to 1") {
 		t.Fatalf("a break and a head noted below it: %d\n%s", code, out)
 	}
 	// A head noted at the break has nothing to match.
-	if code, out := verifyReceipts(t, file, "8:"+five.String()); code != 1 || !strings.Contains(out, "link 8") {
+	if code, out := verifyReceipts(t, file, "8:"+five.String()); code != 1 || !strings.Contains(out, "not a consistent export") || !strings.Contains(out, "link 8") {
 		t.Fatalf("a head noted at a lost link: %d\n%s", code, out)
 	}
 }
 
 // L25's offline half: one receipt deleted from the table between two
-// exports. The second's walk names it missing, its offline check prints it,
-// and the first's head is on the second, since deleting adds no link. The
-// same with a link's value deleted, and with both: the broken number is
-// printed, and no receipt's identifier is invented from a digest.
+// exports. The second's walk names it missing, its offline check prints it
+// and fails, and the first's head is on the second, since deleting adds no
+// link. The same with a link's value deleted, and with both: the broken
+// number is printed, and no receipt's identifier is invented from a
+// digest.
 func TestL25ADeletionBetweenTwoExports(t *testing.T) {
 	for name, del := range map[string][]string{
 		"a receipt": {"receipt"},
@@ -448,7 +458,7 @@ func TestL25ADeletionBetweenTwoExports(t *testing.T) {
 				t.Fatalf("the head moved: %+v, %+v", again, head)
 			}
 			code, out := verifyReceipts(t, second, noted(head))
-			if code != 0 || !strings.Contains(out, "authenticated by a noted head: links 12 to") {
+			if code != 1 || !strings.Contains(out, "not intact") || !strings.Contains(out, "authenticated by a noted head: links 12 to") {
 				t.Fatalf("the second export with the first's head: %d\n%s", code, out)
 			}
 			for _, d := range del {
@@ -631,9 +641,11 @@ func shapes() []synthLink {
 	}
 }
 
-// L24: exports of every shape pass at every page size, and say what they
-// hold: the breaks, the recovered and adopted links, every page's head.
-func TestL24ExportsOfEveryShapePass(t *testing.T) {
+// L24: exports of every shape are read whole at every page size, and say
+// what they hold: the breaks, the recovered and adopted links, every page's
+// head. One that reports a break fails, consistent and not intact; one of
+// links adopted, expired and recovered and no break passes.
+func TestL24ExportsOfEveryShapeAreChecked(t *testing.T) {
 	links := shapes()
 	digests := synth(t, links)
 	top := fmt.Sprintf("%d:%s", len(links), receipts.DigestOf(digests[len(digests)-1]))
@@ -641,12 +653,13 @@ func TestL24ExportsOfEveryShapePass(t *testing.T) {
 		pages := paginate(t, links, per)
 		code, out := verifyReceipts(t, fileOf(t, pages), top)
 		for _, want := range []string{
-			"PASS  receipts", "authenticated by a noted head: links 9 to 6", "not authenticated by a noted head: links 5 to 1",
+			"FAIL  receipts of " + exportAccount + ": an export of 9 links and 25 receipts, consistent with itself and not intact: it reports 4 breaks",
+			"authenticated by a noted head: links 9 to 6", "not authenticated by a noted head: links 5 to 1",
 			"BREAK link 5 lost", "BREAK receipt 8.1", "missing", "BREAK receipt 8.2", "unreadable",
-			"NOTE  link 7 recovered", "NOTE  links 2 to 1 adopted", "NOTE  link 3 expired", "NOTE  link 6 names no link before it (lost)",
-			fmt.Sprintf("head 9 ok sha256 %s", receipts.DigestOf(digests[8])),
+			"NOTE  link 7 recovered", "NOTE  links 2 to 1 adopted", "NOTE  link 3 expired", "BREAK link 6 names no link before it (lost)",
+			fmt.Sprintf("head 9 ok sha256 %s", receipts.DigestOf(digests[8])), "this check cannot tell which",
 		} {
-			if code != 0 || !strings.Contains(out, want) {
+			if code != 1 || !strings.Contains(out, want) {
 				t.Fatalf("%d a page: %d, no %q in\n%s", per, code, want, out)
 			}
 		}
@@ -662,7 +675,7 @@ func TestL24ExportsOfEveryShapePass(t *testing.T) {
 			}
 		}
 	}
-	if code, out := verifyReceipts(t, fileOf(t, pages), top); code != 0 || !strings.Contains(out, "BREAK receipt 4.2") || !strings.Contains(out, "changed") {
+	if code, out := verifyReceipts(t, fileOf(t, pages), top); code != 1 || !strings.Contains(out, "BREAK receipt 4.2") || !strings.Contains(out, "is not what link 4 names") {
 		t.Fatalf("a changed receipt: %d\n%s", code, out)
 	}
 	for _, l := range exported(pages, 4) {
@@ -672,7 +685,7 @@ func TestL24ExportsOfEveryShapePass(t *testing.T) {
 			}
 		}
 	}
-	if code, out := verifyReceipts(t, fileOf(t, pages), top); code != 1 {
+	if code, out := verifyReceipts(t, fileOf(t, pages), top); code != 1 || !strings.Contains(out, "not a consistent export") {
 		t.Fatalf("a receipt said changed that is not: %d\n%s", code, out)
 	}
 	// A link the enclave found replaced by another that opens (prev) is a
@@ -682,14 +695,32 @@ func TestL24ExportsOfEveryShapePass(t *testing.T) {
 	for _, l := range exported(pages, 2) {
 		l.Verdict, l.Doc = receipts.LinkPrev, bytes.Replace(l.Doc, []byte(`"n":2`), []byte(`"n":2 `), 1)
 	}
-	if code, out := verifyReceipts(t, fileOf(t, pages), top); code != 0 || !strings.Contains(out, "BREAK link 2 prev") {
+	if code, out := verifyReceipts(t, fileOf(t, pages), top); code != 1 || !strings.Contains(out, "BREAK link 2 prev: the export reports it, and its document is not what link 3 names") {
 		t.Fatalf("a link replaced: %d\n%s", code, out)
+	}
+	// Adopted, expired and recovered links are qualified, not broken: an
+	// export of them and no break passes, whole and authenticated.
+	healthy := []synthLink{
+		{kind: receipts.LinkAdopted, docs: docs(3, "adopted")},
+		{verdict: receipts.LinkExpired, docs: docs(1, "expired")},
+		{kind: receipts.LinkRecovered, docs: docs(2, "recovered")},
+		{docs: docs(2, "last")},
+	}
+	top = fmt.Sprintf("4:%s", receipts.DigestOf(synth(t, healthy)[3]))
+	for _, per := range []int{1, 100} {
+		code, out := verifyReceipts(t, fileOf(t, paginate(t, healthy, per)), top)
+		for _, want := range []string{"PASS  receipts", "consistent and intact from link 4", "authenticated by a noted head: links 4 to 1", "NOTE  link 1 adopted", "NOTE  link 2 expired", "NOTE  link 3 recovered"} {
+			if code != 0 || !strings.Contains(out, want) || strings.Contains(out, "BREAK") {
+				t.Fatalf("%d a page: %d, no %q in\n%s", per, code, want, out)
+			}
+		}
 	}
 }
 
 // A noted head authenticates down to the first break only: a link that
 // names no link before it, or one found replaced (prev), ends what it
-// authenticates, even when the links below it read well.
+// authenticates, even when the links below it read well. Either is a
+// break, so the export is not intact and fails.
 func TestL24ANotedHeadStopsAtABreak(t *testing.T) {
 	for name, c := range map[string]struct {
 		links  []synthLink
@@ -698,7 +729,7 @@ func TestL24ANotedHeadStopsAtABreak(t *testing.T) {
 	}{
 		"a link naming no link before it": {
 			links: []synthLink{{docs: docs(1, "a")}, {docs: docs(1, "b")}, {br: receipts.BreakForked, docs: docs(1, "c")}, {docs: docs(1, "d")}},
-			want:  []string{"authenticated by a noted head: links 4 to 3", "not authenticated by a noted head: links 2 to 1", "NOTE  link 3 names no link before it (forked)"},
+			want:  []string{"authenticated by a noted head: links 4 to 3", "not authenticated by a noted head: links 2 to 1", "BREAK link 3 names no link before it (forked)"},
 		},
 		"a link replaced": {
 			links: []synthLink{{docs: docs(1, "a")}, {docs: docs(1, "b")}, {docs: docs(1, "c")}, {docs: docs(1, "d")}},
@@ -719,7 +750,7 @@ func TestL24ANotedHeadStopsAtABreak(t *testing.T) {
 			}
 			code, out := verifyReceipts(t, fileOf(t, pages), top)
 			for _, want := range c.want {
-				if code != 0 || !strings.Contains(out, want) {
+				if code != 1 || !strings.Contains(out, want) || !strings.Contains(out, "not intact") {
 					t.Fatalf("%s, %d a page: %d, no %q in\n%s", name, per, code, want, out)
 				}
 			}
@@ -731,7 +762,7 @@ func TestL24ANotedHeadStopsAtABreak(t *testing.T) {
 func TestL24AnExportReadHalfFails(t *testing.T) {
 	first, _, _ := strings.Cut(fileOf(t, paginate(t, shapes(), 3)), "\n")
 	r := io.MultiReader(strings.NewReader(first+"\n"), iotest.ErrReader(errors.New("the disk failed")))
-	if res, err := checkExport(r, notedHeads{}); err == nil || err.Error() != "the disk failed" || res.OK {
+	if res, err := checkExport(r, notedHeads{}); err == nil || err.Error() != "the disk failed" || res.Consistent {
 		t.Fatalf("%+v, %v", res, err)
 	}
 }
@@ -801,13 +832,13 @@ func TestL24TheWholeExportIsComplete(t *testing.T) {
 			return p
 		}, "changed between"},
 		"the head going back": {func(p []*receipts.ExportPage) []*receipts.ExportPage {
-			p[2].Head = receipts.Head{N: 8, Verdict: receipts.LinkOK, Digest: receipts.DigestOf(digests[7])}
+			p[2].Head = receipts.Head{N: 8, Verdict: receipts.LinkOK, Digest: receipts.DigestOf(digests[7]), At: p[2].Head.At}
 			return p
-		}, "head"},
+		}, "the head went back"},
 		"the head of a page changed": {func(p []*receipts.ExportPage) []*receipts.ExportPage {
 			p[2].Head.Digest[0] ^= 1
 			return p
-		}, "head"},
+		}, "the head of this page says another link 9"},
 		"a link said prev that is not": {func(p []*receipts.ExportPage) []*receipts.ExportPage {
 			exported(p, 4)[0].Verdict = receipts.LinkPrev
 			return p
@@ -832,7 +863,7 @@ func TestL24TheWholeExportIsComplete(t *testing.T) {
 		}, "not a link"},
 	} {
 		pages := c.change(paginate(t, links, 3))
-		if code, out := verifyReceipts(t, fileOf(t, pages), top); code != 1 || !strings.Contains(out, "FAIL  receipts") || !strings.Contains(out, c.says) {
+		if code, out := verifyReceipts(t, fileOf(t, pages), top); code != 1 || !strings.Contains(out, "FAIL  receipts: not a consistent export") || !strings.Contains(out, c.says) {
 			t.Errorf("%s: %d, want %q in\n%s", name, code, c.says, out)
 		}
 	}
@@ -857,7 +888,7 @@ func TestL24AMalformedExportFails(t *testing.T) {
 		"a page past its bounds":   fileOf(t, tooMany),
 		"a line past a page":       `{"v":1,"account":"` + strings.Repeat("a", maxExportLine) + `"}` + "\n",
 	} {
-		if code, out := verifyReceipts(t, file); code != 1 || !strings.Contains(out, "FAIL  receipts") {
+		if code, out := verifyReceipts(t, file); code != 1 || !strings.Contains(out, "FAIL  receipts: not a consistent export") {
 			t.Errorf("%s: %d\n%s", name, code, out)
 		}
 	}
@@ -876,5 +907,147 @@ func TestL24AMalformedExportFails(t *testing.T) {
 	}
 	if code := run([]string{"-receipts", filepath.Join(t.TempDir(), "none")}, &stdout, &stderr, nil); code != 1 {
 		t.Errorf("a file that is not there: %d", code)
+	}
+}
+
+// L24 (the review of pull request 3, F1): the verdicts an export reports are
+// not covered by a noted head, so whoever edits the file can relabel what
+// they changed or removed as what the storage did. A file that reports a
+// link or a receipt broken is never a pass: it fails (exit 1), consistent
+// and not intact, and still says what the noted head authenticates and
+// every finding.
+func TestL24ARelabelledExportIsNotIntact(t *testing.T) {
+	links := []synthLink{{docs: docs(1, "first")}, {docs: docs(2, "second")}, {docs: docs(1, "third")}}
+	head := fmt.Sprintf("3:%s", paginate(t, links, 100)[0].Head.Digest)
+	if code, out := verifyReceipts(t, fileOf(t, paginate(t, links, 1)), head); code != 0 || strings.Contains(out, "BREAK") || !strings.Contains(out, "links 3 to 1") {
+		t.Fatalf("the untouched export: %d\n%s", code, out)
+	}
+	for name, c := range map[string]struct {
+		edit func(l *receipts.ExportedLink)
+		want []string
+		auth string
+	}{
+		"a receipt changed and said changed": {func(l *receipts.ExportedLink) {
+			l.Receipts[0].Doc, l.Receipts[0].Verdict = []byte(`{"attacker":"replacement"}`), receipts.ReceiptChanged
+		}, []string{"authenticated by a noted head: links 3 to 1", "BREAK receipt 2.1"}, "whole"},
+		"a receipt removed and said missing": {func(l *receipts.ExportedLink) {
+			l.Receipts[0].Doc, l.Receipts[0].Verdict = nil, receipts.ReceiptMissing
+		}, []string{"authenticated by a noted head: links 3 to 1", "BREAK receipt 2.1"}, "whole"},
+		"a link and its receipts removed and said lost": {func(l *receipts.ExportedLink) {
+			l.Doc, l.Receipts, l.Verdict = nil, nil, receipts.LinkLost
+		}, []string{"authenticated by a noted head: links 3 to 3", "not authenticated by a noted head: links 2 to 1", "BREAK link 2 lost"}, "partial"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			pages := paginate(t, links, 100)
+			c.edit(exported(pages, 2)[0])
+			code, out := verifyReceipts(t, fileOf(t, pages), head)
+			if code != 1 {
+				t.Fatalf("an edited export with its genuine head noted: %d\n%s", code, out)
+			}
+			for _, want := range append(c.want, "not intact", "this check cannot tell which") {
+				if !strings.Contains(out, want) {
+					t.Fatalf("no %q in\n%s", want, out)
+				}
+			}
+			// The JSON says consistency, intactness and authentication apart.
+			res := verifyReceiptsJSON(t, fileOf(t, pages), head)
+			if res.OK || !res.Consistent || res.Intact || res.Authentication != c.auth || len(res.Broken) != 1 {
+				t.Fatalf("-json: %+v", res)
+			}
+		})
+	}
+	// A file that does not hold is neither consistent nor authenticated.
+	pages := paginate(t, links, 100)
+	pages[0].Links[0].Doc = append(pages[0].Links[0].Doc, ' ')
+	if res := verifyReceiptsJSON(t, fileOf(t, pages), head); res.OK || res.Consistent || res.Intact || res.Authentication != "none" || res.Error == "" {
+		t.Fatalf("-json of a file that does not hold: %+v", res)
+	}
+}
+
+// verifyReceiptsJSON runs permaily-verify -json -receipts on file with the
+// noted heads, and reads what it printed; its exit status is 0 exactly
+// when it says ok.
+func verifyReceiptsJSON(t *testing.T, file string, heads ...string) receiptsResult {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "receipts.jsonl")
+	if err := os.WriteFile(path, []byte(file), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"-json", "-receipts", path}
+	for _, h := range heads {
+		args = append(args, "-receipts-head", h)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr, nil)
+	var res receiptsResult
+	if err := json.Unmarshal(stdout.Bytes(), &res); err != nil || (code == 0) != res.OK {
+		t.Fatalf("-json: %d %v %s %s", code, err, stdout.String(), stderr.String())
+	}
+	return res
+}
+
+// L24 (the review of pull request 3, F2): a verdict the export's protocol
+// does not have, of a link, a receipt or the head, is a malformed file,
+// never a break.
+func TestL24UnknownVerdictsAreMalformed(t *testing.T) {
+	links := []synthLink{{docs: docs(1, "first")}, {docs: docs(1, "second")}}
+	for name, edit := range map[string]func(p *receipts.ExportPage){
+		"a link's": func(p *receipts.ExportPage) {
+			p.Links[1].Verdict, p.Links[1].Doc, p.Links[1].Receipts = "NOT_A_VERDICT", nil, nil
+		},
+		"a receipt's": func(p *receipts.ExportPage) {
+			p.Links[1].Receipts[0].Verdict, p.Links[1].Receipts[0].Doc = "NOT_A_VERDICT", nil
+		},
+		"the head's":                func(p *receipts.ExportPage) { p.Head.Verdict = "NOT_A_VERDICT" },
+		"the head's, empty":         func(p *receipts.ExportPage) { p.Head.Verdict = "" },
+		"the head said prev":        func(p *receipts.ExportPage) { p.Head.Verdict = receipts.LinkPrev },
+		"the head said expired":     func(p *receipts.ExportPage) { p.Head.Verdict = receipts.LinkExpired },
+		"a healthy head, no digest": func(p *receipts.ExportPage) { p.Head.Digest = receipts.Digest{} },
+		"a healthy head, no time":   func(p *receipts.ExportPage) { p.Head.At = time.Time{} },
+		"a lost head with a digest": func(p *receipts.ExportPage) {
+			p.Head.Verdict, p.Links[0].Verdict, p.Links[0].Doc, p.Links[0].Receipts = receipts.LinkLost, receipts.LinkLost, nil, nil
+		},
+		"a lost head with a time": func(p *receipts.ExportPage) { p.Head.Verdict, p.Head.Digest = receipts.LinkLost, receipts.Digest{} },
+		"an empty chain's head said": func(p *receipts.ExportPage) {
+			p.Head.N, p.Links, p.Head.Digest, p.Head.At = 0, nil, receipts.Digest{}, time.Time{}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			pages := paginate(t, links, 100)
+			edit(pages[0])
+			if code, out := verifyReceipts(t, fileOf(t, pages)); code != 1 || !strings.Contains(out, "not a consistent export") {
+				t.Fatalf("a malformed verdict: %d\n%s", code, out)
+			}
+		})
+	}
+	// A head lost, with its link, is a verdict the protocol has: the export
+	// is consistent, and reports the break.
+	pages := paginate(t, links, 100)
+	pages[0].Head = receipts.Head{N: 2, Verdict: receipts.LinkLost}
+	pages[0].Links[0] = receipts.ExportedLink{N: 2, Verdict: receipts.LinkLost}
+	if code, out := verifyReceipts(t, fileOf(t, pages)); code != 1 || !strings.Contains(out, "consistent with itself and not intact") || !strings.Contains(out, "head 2 lost sha256  on pages 1 to 1") {
+		t.Fatalf("a head lost: %d\n%s", code, out)
+	}
+}
+
+// L24 (the review of pull request 3, F3): a link's document is one JSON
+// object and nothing after it, even with its digest recomputed.
+func TestL24ALinkDocumentEndsAtItsEnd(t *testing.T) {
+	for name, tail := range map[string]string{
+		"a bracket":       "]",
+		"a brace":         "}",
+		"a token cut":     `{"v`,
+		"an open brace":   "{",
+		"another value":   "{}",
+		"another literal": " true",
+	} {
+		t.Run(name, func(t *testing.T) {
+			pages := paginate(t, []synthLink{{docs: docs(1, "first")}}, 100)
+			pages[0].Links[0].Doc = append(pages[0].Links[0].Doc, tail...)
+			pages[0].Head.Digest = receipts.DigestOf(pages[0].Links[0].Doc)
+			if code, out := verifyReceipts(t, fileOf(t, pages)); code != 1 || !strings.Contains(out, "not a link") {
+				t.Fatalf("a link's document with %q after it: %d\n%s", tail, code, out)
+			}
+		})
 	}
 }

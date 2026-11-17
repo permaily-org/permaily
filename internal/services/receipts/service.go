@@ -8,11 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/envelope"
 	"github.com/permaily-org/permaily/internal/store"
+	"github.com/permaily-org/permaily/pkg/receiptchain"
 )
 
 // Keys derives the key that seals receipts from the root secret
@@ -57,17 +57,17 @@ func New(entries store.Entries, keys Keys, now func() time.Time, random func([]b
 }
 
 // IDPrefix starts every receipt's identifier and key.
-const IDPrefix = "rcp_"
+const IDPrefix = receiptchain.IDPrefix
 
 // idRandomBytes is how many random bytes follow the time in an identifier:
 // two enclaves writing at the same nanosecond never collide (ADR 0031,
 // "When a receipt is written").
-const idRandomBytes = 10
+const idRandomBytes = receiptchain.IDRandomBytes
 
 // IDLength is the length of a receipt's identifier: the prefix, the time in
 // nanoseconds as 16 hexadecimal digits, then the random bytes in hexadecimal.
 // Hexadecimal keeps the order of the bytes, so the keys' order is the time's.
-const IDLength = len(IDPrefix) + 16 + 2*idRandomBytes
+const IDLength = receiptchain.IDLength
 
 // writeTries bounds how many identifiers Write tries when one is taken (two
 // writers at the same nanosecond drawing the same random bytes, which a
@@ -280,18 +280,7 @@ func (s *Service) newID(at time.Time) (string, error) {
 }
 
 // ValidID says whether id has a receipt identifier's shape.
-func ValidID(id string) bool {
-	rest, ok := strings.CutPrefix(id, IDPrefix)
-	if !ok || len(id) != IDLength {
-		return false
-	}
-	for _, c := range rest {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
-}
+func ValidID(id string) bool { return receiptchain.ValidID(id) }
 
 // aad binds a sealed receipt to its partition and key.
 func aad(partition, key string) []byte { return envelope.AAD(Purpose, partition, key) }

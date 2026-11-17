@@ -127,6 +127,16 @@ describe('the receipts page', () => {
     expect(page).toContain(
       'The Activity screen, which shows them and downloads the export, is not built yet',
     );
+    // A break the file reports fails the check, as the verifier does it (the review of pull request 3, F1).
+    expect(verify).toMatch(
+      /r\.Intact = r\.Consistent && len\(r\.Broken\) == 0 && len\(r\.Breaks\) == 0/,
+    );
+    expect(verify).toMatch(/r\.OK = r\.Intact/);
+    expect(page).toContain('It passes only a file that holds together and reports no break.');
+    expect(page).toContain(
+      'the check cannot tell whether the storage broke it or someone edited the file',
+    );
+    expect(page).not.toMatch(/not as a fault of the file/);
   });
 });
 

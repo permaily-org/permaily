@@ -27,7 +27,9 @@ The chain's head is its newest link: its number and its hash. The export is ever
 permaily-verify -receipts receipts.jsonl -receipts-head 1234:<sha256>
 ```
 
-It recomputes every hash: each link against the one above it, every receipt against its link, the first link against your account. A file alone proves only that it is consistent with itself, since whoever edits it can recompute every hash; the head you noted from the app is what proves it is the chain the service keeps. Links above the newest head you noted, and below a break, are reported as not checked against it. A receipt or a link the storage deleted or changed is reported by its number, not as a fault of the file; a file that was edited, cut short or has pages missing fails.
+It recomputes every hash: each link against the one above it, every receipt against its link, the first link against your account. A file alone proves only that it is consistent with itself, since whoever edits it can recompute every hash; the head you noted from the app is what proves it is the chain the service keeps. Links above the newest head you noted, and below a break, are reported as not checked against it.
+
+It passes only a file that holds together and reports no break. It fails a file that was edited without recomputing, cut short or has pages missing, and a file that reports a receipt or a link missing, unreadable or not what its link names, or a link that names no link before it: it still lists every one, by its number, and which links your head checks. The file's word for what is broken is not covered by any hash, so the check cannot tell whether the storage broke it or someone edited the file to look that way; the service records every break it finds, and [the verifier](/docs/verifying-the-build/) fails against it while any is recorded. With `-json` it says apart whether the file is consistent, whether it is intact, and how much of it your head checks.
 
 ## How they're kept
 

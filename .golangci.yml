@@ -20,6 +20,34 @@ linters:
           deny:
             - pkg: github.com/permaily-org/permaily/internal
               desc: pkg/ must not depend on internal/
+        receipt-chain-is-pure:
+          # The protocol of the chain of receipts a person checks offline (ADR 0037): digests, a link's document,
+          # verdicts and an export's page. Pure: no storage, no keys, no network, so permaily-verify links no cloud.
+          files: ["**/pkg/receiptchain/**", "!$test"]
+          list-mode: strict
+          allow:
+            - bytes
+            - crypto/sha256
+            - encoding/base64
+            - encoding/hex
+            - encoding/json
+            - errors
+            - fmt
+            - io
+            - strings
+            - time
+        verifier-links-no-service:
+          # permaily-verify checks what the service says from the outside: it links the protocol (pkg/), never the
+          # service, its storage or a cloud SDK.
+          files: ["**/cmd/permaily-verify/**", "!$test"]
+          list-mode: lax
+          deny:
+            - pkg: github.com/permaily-org/permaily/internal/services
+              desc: the verifier uses pkg/receiptchain, not the receipts service
+            - pkg: github.com/permaily-org/permaily/internal/store
+              desc: the verifier reads no storage
+            - pkg: github.com/aws/aws-sdk-go-v2
+              desc: the verifier links no AWS SDK
         host-is-untrusted:
           # The parent instance only moves bytes: it must not link enclave code.
           files: ["**/cmd/permaily-host/**", "**/internal/hostproxy/**"]
