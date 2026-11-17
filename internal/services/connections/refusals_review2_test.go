@@ -86,14 +86,26 @@ func waiting(s *Service, conn string) (n, bytes int) {
 	return n, s.refusals.bytes
 }
 
-// eventually waits for ok, failing t when it is not within ten seconds.
-func eventually(t *testing.T, ok func() bool) {
-	t.Helper()
-	for end := time.Now().Add(10 * time.Second); !ok(); runtime.Gosched() {
-		if time.Now().After(end) {
-			t.Fatal("not within ten seconds")
-		}
+// eventually waits until ok, which reads a state that stays once it is
+// reached. It has no bound of its own: under -race on a loaded runner the
+// time a few thousand requests take to reach their lanes has none worth
+// writing (a ten-second bound failed CI after 12.8 s), and a state never
+// reached is a test that runs out of go test's -timeout, which shows every
+// goroutine. It sleeps between reads so that it does not take the lanes'
+// lock from the requests it waits for.
+func eventually(ok func() bool) {
+	for !ok() {
+		time.Sleep(time.Millisecond)
 	}
+}
+
+// waitForRelease makes the requests that wait on s's lanes wait until the
+// test releases their writers, however long it takes them all to arrive,
+// so that what a test reads of them while they wait stays as it is.
+func waitForRelease(s *Service) {
+	s.refusals.mu.Lock()
+	s.refusals.waitMax = time.Hour
+	s.refusals.mu.Unlock()
 }
 
 // pausing makes w's writer hold the first refused receipt of conn until
@@ -166,6 +178,7 @@ func TestH42AStoredReceiptIsLetGoAtOnce(t *testing.T) {
 func TestH43WaitersAreBoundedAndHeldOfTheBudget(t *testing.T) {
 	t.Run("a flood behind one write", func(t *testing.T) {
 		w, s, g := refusalsWorld(t)
+		waitForRelease(s)
 		entered, release := pausing(w, g.Connection)
 		defer release()
 		first := make(chan error, 1)
@@ -189,7 +202,7 @@ func TestH43WaitersAreBoundedAndHeldOfTheBudget(t *testing.T) {
 				done.Add(1)
 			})
 		}
-		eventually(t, func() bool {
+		eventually(func() bool {
 			n, _ := waiting(s, g.Connection)
 			return int(done.Load())+n == requests
 		})
@@ -219,6 +232,10 @@ func TestH43WaitersAreBoundedAndHeldOfTheBudget(t *testing.T) {
 	})
 	t.Run("many lanes behind their writes", func(t *testing.T) {
 		w, s, g := refusalsWorld(t)
+		// Every request either waits, holding its part of the budget, or
+		// is answered 503: none is counted while it waits, so the state
+		// read below is the one the budget bounds, whatever the runner.
+		waitForRelease(s)
 		release := make(chan struct{})
 		var entered sync.WaitGroup
 		const conns = 3500
@@ -249,9 +266,12 @@ func TestH43WaitersAreBoundedAndHeldOfTheBudget(t *testing.T) {
 				done.Add(1)
 			})
 		}
-		eventually(t, func() bool {
+		// Each request has returned or waits on its lane, and none leaves
+		// before release: what is read here stays as it is.
+		var n int
+		eventually(func() bool {
 			s.refusals.mu.Lock()
-			n := 0
+			n = 0
 			for _, l := range s.refusals.by {
 				n += l.waiting
 			}
@@ -260,11 +280,15 @@ func TestH43WaitersAreBoundedAndHeldOfTheBudget(t *testing.T) {
 		})
 		grown := heap() - before
 		_, bytes := waiting(s, "")
-		t.Logf("%d requests waiting, %d answered 503: %d bytes of the heap, %d of the budget", conns-int(refused.Load())-int(done.Load()-refused.Load()), refused.Load(), grown, bytes)
+		answered := int(done.Load())
+		t.Logf("%d requests waiting, %d answered 503: %d bytes of the heap, %d of the budget", n, refused.Load(), grown, bytes)
 		close(release)
 		wg.Wait()
+		if answered != int(refused.Load()) {
+			t.Errorf("%d requests returned while their lanes were being written, %d of them answered 503: the others were not held", answered, refused.Load())
+		}
 		if grown > RefusalBytesMax {
-			t.Errorf("%d requests waiting on their connections hold %d bytes of the heap, past RefusalBytesMax", conns-int(refused.Load()), grown)
+			t.Errorf("%d requests waiting on their connections hold %d bytes of the heap, past RefusalBytesMax", n, grown)
 		}
 		if bytes > RefusalBytesMax {
 			t.Errorf("the lanes and their waiting requests hold %d bytes of the budget", bytes)
@@ -303,7 +327,7 @@ func TestH43WaitersAreBoundedAndHeldOfTheBudget(t *testing.T) {
 				}
 			})
 		}
-		eventually(t, func() bool { n, _ := waiting(s, g.Connection); return n == 2 })
+		eventually(func() bool { n, _ := waiting(s, g.Connection); return n == 2 })
 		if _, b := waiting(s, g.Connection); b != held+2*size {
 			t.Fatalf("two waiting requests hold %d bytes, want %d", b-held, 2*size)
 		}
@@ -423,7 +447,7 @@ func TestH44AQueuedRefusalReadsTheStandingBeforeItsWrite(t *testing.T) {
 				done.Add(1)
 			})
 		}
-		eventually(t, func() bool {
+		eventually(func() bool {
 			n, _ := waiting(s, g.Connection)
 			return int(done.Load())+n == queued
 		})
@@ -474,7 +498,7 @@ func TestH44AQueuedRefusalReadsTheStandingBeforeItsWrite(t *testing.T) {
 		for range 3 {
 			wg.Go(func() { refuseOnce(t, s, g, OperationSearch, receipts.RefusedInvalidBody) })
 		}
-		eventually(t, func() bool { n, _ := waiting(s, g.Connection); return n == 3 })
+		eventually(func() bool { n, _ := waiting(s, g.Connection); return n == 3 })
 		w.accts.mu.Lock()
 		w.accts.fail = errors.New("the accounts cannot be read")
 		w.accts.mu.Unlock()
@@ -514,7 +538,7 @@ func TestH44AQueuedRefusalReadsTheStandingBeforeItsWrite(t *testing.T) {
 		for range 3 {
 			wg.Go(func() { refuseOnce(t, s, g, OperationSearch, receipts.RefusedInvalidBody) })
 		}
-		eventually(t, func() bool { n, _ := waiting(s, g.Connection); return n == 3 })
+		eventually(func() bool { n, _ := waiting(s, g.Connection); return n == 3 })
 		release()
 		wg.Wait()
 		if err := <-first; err != nil {
