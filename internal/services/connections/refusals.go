@@ -79,6 +79,11 @@ const (
 	// refusalCountsMax is the bytes of a summary's counts at their largest:
 	// every operation with every reason (receipts' H24), with room.
 	refusalCountsMax = 4 << 10
+	// refusalWaitSize is what a request waiting for its lane holds of the
+	// budget besides its receipt.
+	refusalWaitSize = 16 << 10
+	// refusalWaitMax is how long a request waits for its lane's writer.
+	refusalWaitMax = ReceiptWriteMax
 )
 
 // refusalKey is what a summary counts by.
@@ -119,6 +124,8 @@ type refusalLane struct {
 	// busy is closed when the goroutine writing the lane's receipts is done;
 	// nil when none is.
 	busy chan struct{}
+	// waiting is how many requests wait for busy.
+	waiting int
 }
 
 // refusalLanes are this enclave's lanes, by connection, within its budget.
@@ -128,6 +135,9 @@ type refusalLanes struct {
 	bytes int
 	// The budget: RefusalLanesMax and RefusalBytesMax, smaller in tests.
 	lanesMax, bytesMax int
+	// waitMax is how long a request waits for its lane's writer:
+	// refusalWaitMax, smaller in tests.
+	waitMax time.Duration
 }
 
 // admission is the attributed work under way: Stop closes it and waits for
@@ -337,6 +347,14 @@ func (l *refusalLane) release() {
 // refuseCounted is refuseWith for a refusal that may be counted: its own
 // refused receipt when its window has room and its lane's earlier writes
 // are stored, otherwise counted.
+//
+// While another request or the pass writes its lane, it waits, holding its
+// part of the budget (its receipt and refusalWaitSize), so what waits is
+// bounded with the rest: with no room, it is answered ErrUnavailable and
+// counted nowhere. A lane has no more waiting than its window has refused
+// receipts left; the others are counted at once. It waits at most waitMax
+// in all, then is counted: its context no longer bounds it (refuseWith),
+// so the service does.
 func (s *Service) refuseCounted(ctx context.Context, r *reading, rc *receipts.Receipt, err error) error {
 	ws := &s.refusals
 	key := refusalKey{r.op, refusedReason(rc)}
@@ -347,9 +365,20 @@ func (s *Service) refuseCounted(ctx context.Context, r *reading, rc *receipts.Re
 		l.counts[key]++
 		return err
 	}
+	var (
+		queued, late bool
+		on           *refusalLane // the lane it waited on
+		held         int          // what it holds of the budget while it waits
+		deadline     <-chan time.Time
+	)
 	for {
 		now := s.now()
 		ws.mu.Lock()
+		if on != nil {
+			on.waiting--
+			ws.bytes -= held
+			on, held = nil, 0
+		}
 		l := s.lane(r, now)
 		if l == nil {
 			ws.mu.Unlock()
@@ -361,12 +390,40 @@ func (s *Service) refuseCounted(ctx context.Context, r *reading, rc *receipts.Re
 		case l.reserved >= RefusalsPerWindow:
 			defer ws.mu.Unlock()
 			return count(l)
+		case l.busy != nil && (late || l.waiting >= RefusalsPerWindow-l.reserved):
+			// Waited its time, or its window has no refused receipt left
+			// for it: counted.
+			defer ws.mu.Unlock()
+			return count(l)
 		case l.busy != nil:
 			// Another request or the pass is writing the lane: this one's
 			// receipt comes after what it writes.
+			n, serr := receipts.Size(rc)
+			if serr != nil {
+				defer ws.mu.Unlock()
+				return count(l)
+			}
+			n += refusalWaitSize
+			if ws.bytes+n > ws.bytesMax {
+				ws.mu.Unlock()
+				s.count("receipt_failed")
+				return ErrUnavailable
+			}
+			ws.bytes += n
+			l.waiting++
+			on, held, queued = l, n, true
 			busy := l.busy
+			if deadline == nil {
+				t := time.NewTimer(ws.waitMax)
+				defer t.Stop()
+				deadline = t.C
+			}
 			ws.mu.Unlock()
-			<-busy
+			select {
+			case <-busy:
+			case <-deadline:
+				late = true
+			}
 			continue
 		case len(l.queue) > 0 && now.Before(l.retry):
 			// An earlier write is not stored, and is not due again yet.
@@ -375,16 +432,24 @@ func (s *Service) refuseCounted(ctx context.Context, r *reading, rc *receipts.Re
 		}
 		l.busy = make(chan struct{})
 		ws.mu.Unlock()
-		return s.refuseOwn(ctx, r.g.Connection, l, rc, err, count)
+		return s.refuseOwn(ctx, r.g.Connection, l, rc, err, count, queued)
 	}
 }
 
 // refuseOwn writes the lane's earlier writes, and then, when they are
 // stored and the window still has room, the refusal's own receipt under
-// its identity. The caller is writing l.
-func (s *Service) refuseOwn(ctx context.Context, conn string, l *refusalLane, rc *receipts.Receipt, err error, count func(*refusalLane) error) error {
+// its identity. The caller is writing l. A refusal that waited (queued)
+// was attributed before it waited: its account's standing is read now
+// first, and it writes nothing unless the account is still there.
+func (s *Service) refuseOwn(ctx context.Context, conn string, l *refusalLane, rc *receipts.Receipt, err error, count func(*refusalLane) error, queued bool) error {
 	ws := &s.refusals
-	empty := s.writeLane(ctx, conn, l, false)
+	empty := true
+	if queued {
+		empty = s.writable(ctx, conn, l)
+	}
+	if empty {
+		empty = s.writeLane(ctx, conn, l, false, queued)
+	}
 	now := s.now()
 	ws.mu.Lock()
 	if ws.by[conn] != l {
@@ -431,13 +496,41 @@ func (s *Service) refuseOwn(ctx context.Context, conn string, l *refusalLane, rc
 	return err
 }
 
+// writable reads l's account's standing now, before a write: whether it may
+// be written. Gone, its lane is dropped (its receipts go with it); when the
+// standing cannot be read, the lane is tried again later and nothing is
+// written: it fails closed. The caller is writing l.
+func (s *Service) writable(ctx context.Context, conn string, l *refusalLane) bool {
+	ws := &s.refusals
+	sctx, cancel := context.WithTimeout(ctx, ReceiptWriteMax)
+	st, _, err := s.standing(sctx, l.account, true)
+	cancel()
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	switch {
+	case err != nil:
+		l.retry = s.now().Add(RefusalRetry)
+		return false
+	case st == StandingGone:
+		ws.drop(conn, l)
+		return false
+	}
+	return true
+}
+
 // settle records the outcome of a try of w, l's first write. ws.mu is held.
 func (s *Service) settle(l *refusalLane, w *refusalWrite, err error) {
 	if err != nil {
 		l.retry = s.now().Add(RefusalRetry)
 		return
 	}
+	// Let go of it before its bytes: what the queue's array still points to
+	// is held, whatever the budget says.
+	l.queue[0] = nil
 	l.queue = l.queue[1:]
+	if len(l.queue) == 0 {
+		l.queue = nil
+	}
 	l.retry = time.Time{}
 	s.refusals.bytes -= w.size
 	if w.single {
@@ -447,11 +540,11 @@ func (s *Service) settle(l *refusalLane, w *refusalWrite, err error) {
 
 // writeLane writes l's writes in order, those due (all of them, final),
 // until one fails; whether none is left. The caller is writing l. Before
-// the first, the account's standing is read now: a gone account's lane is
-// dropped, and one that cannot be read is not written.
-func (s *Service) writeLane(ctx context.Context, conn string, l *refusalLane, final bool) bool {
+// the first, unless checked, the account's standing is read now
+// (writable): a gone account's lane is dropped, and one that cannot be
+// read is not written.
+func (s *Service) writeLane(ctx context.Context, conn string, l *refusalLane, final, checked bool) bool {
 	ws := &s.refusals
-	checked := false
 	for {
 		now := s.now()
 		ws.mu.Lock()
@@ -466,22 +559,12 @@ func (s *Service) writeLane(ctx context.Context, conn string, l *refusalLane, fi
 		w := l.queue[0]
 		ws.mu.Unlock()
 		if !checked {
-			sctx, cancel := context.WithTimeout(ctx, ReceiptWriteMax)
-			st, _, err := s.standing(sctx, l.account, true)
-			cancel()
-			ws.mu.Lock()
-			switch {
-			case err != nil:
-				l.retry = s.now().Add(RefusalRetry)
+			if !s.writable(ctx, conn, l) {
+				ws.mu.Lock()
+				gone := ws.by[conn] != l
 				ws.mu.Unlock()
-				return false
-			case st == StandingGone:
-				// Its receipts go with it: nothing is left to write.
-				ws.drop(conn, l)
-				ws.mu.Unlock()
-				return true
+				return gone
 			}
-			ws.mu.Unlock()
 			checked = true
 		}
 		if !w.tried {
@@ -552,7 +635,7 @@ func (s *Service) FlushRefusals(ctx context.Context, final bool) error {
 					l.roll(s.now(), true)
 					ws.mu.Unlock()
 				}
-				ok := s.writeLane(ctx, conn, l, final)
+				ok := s.writeLane(ctx, conn, l, final, false)
 				ws.mu.Lock()
 				l.release()
 				ws.mu.Unlock()

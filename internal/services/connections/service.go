@@ -99,7 +99,7 @@ func New(cfg Config) (*Service, error) {
 		stand: map[string]cachedStanding{}, epochs: map[string]uint64{}, scopes: map[string][]*query.Canonical{},
 		used: map[string]time.Time{}, refused: map[string]int64{}, leases: map[string]map[*lease]struct{}{},
 		limits:   newLimits(),
-		refusals: refusalLanes{by: map[string]*refusalLane{}, lanesMax: RefusalLanesMax, bytesMax: RefusalBytesMax},
+		refusals: refusalLanes{by: map[string]*refusalLane{}, lanesMax: RefusalLanesMax, bytesMax: RefusalBytesMax, waitMax: refusalWaitMax},
 	}
 	ctx := context.Background()
 	for _, k := range []struct {
