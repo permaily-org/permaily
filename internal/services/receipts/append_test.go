@@ -348,7 +348,9 @@ func TestL4ACancelledWaiterFailsAlone(t *testing.T) {
 }
 
 // L5: two enclaves over one table and one store of commits, 2,000
-// interleaved writes of one account: every receipt in at most one link,
+// interleaved writes of one account through Write: every receipt in at most
+// one link (only a receipt written again with its own identity, after an
+// outcome that was not known, may be named again; #161),
 // numbers without gap, no fork, each race lost rebuilt on the next number.
 // A write whose group lost LinkTries races fails closed (its answer is a
 // 503), and its receipt is in no link.

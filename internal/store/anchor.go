@@ -173,6 +173,11 @@ func (a *Anchored) now() time.Time {
 // of the same record, at once) is not the store going back: it is asked again,
 // and the enclave never goes on from less than it knows.
 func (a *Anchored) head(ctx context.Context, name string) (*Commit, uint64, error) {
+	return a.headAs(ctx, name, a.Strict)
+}
+
+// headAs is head, reading the whole history when strict.
+func (a *Anchored) headAs(ctx context.Context, name string, strict bool) (*Commit, uint64, error) {
 	for range maxChanges {
 		had, known := a.known(name)
 		var (
@@ -180,7 +185,7 @@ func (a *Anchored) head(ctx context.Context, name string) (*Commit, uint64, erro
 			next uint64
 			err  error
 		)
-		if a.Strict {
+		if strict {
 			head, next, err = a.strictHead(ctx, name, had, known)
 		} else {
 			head, next, err = a.plainHead(ctx, name, had, known)
@@ -189,7 +194,7 @@ func (a *Anchored) head(ctx context.Context, name string) (*Commit, uint64, erro
 			return head, next, err
 		}
 	}
-	return nil, 0, a.changing(name)
+	return nil, 0, a.changingAs(name, strict)
 }
 
 // errOvertaken is head's answer that arrived after a newer commit of the
@@ -338,7 +343,12 @@ const maxChanges = 3
 // changing is the error of a read or a write that started over maxChanges
 // times. A strict record's does not hold its name, as strictHead's do not.
 func (a *Anchored) changing(name string) error {
-	if a.Strict {
+	return a.changingAs(name, a.Strict)
+}
+
+// changingAs is changing for a record read strictly or not.
+func (a *Anchored) changingAs(name string, strict bool) error {
+	if strict {
 		return errors.New("store: the commits of a strict record keep changing")
 	}
 	return fmt.Errorf("store: the commits of %s keep changing", name)
@@ -480,14 +490,36 @@ func WriteWithin(ctx context.Context, d time.Duration) context.Context {
 	return context.WithValue(ctx, writeWithinKey{}, d)
 }
 
-// bound starts the time of a write made with WriteWithin.
+type writeByKey struct{}
+
+// WriteBy bounds each write made with the context it returns (PutRecordAt,
+// PutRecord, CreateNew) to an instant by the Anchored's clock, whenever the
+// write begins: past by it stores no value (ErrTooLate), and every request
+// it makes ends at by. With WriteWithin too, the earlier of the two holds.
+// It carries an authority's own deadline into the store: a caller that
+// decided to write at some instant, on what it read then, cannot have the
+// write begin later and still be given WriteWithin's whole time (the review
+// of #170, finding 1).
+func WriteBy(ctx context.Context, by time.Time) context.Context {
+	if had, ok := ctx.Value(writeByKey{}).(time.Time); ok && had.Before(by) {
+		return ctx
+	}
+	return context.WithValue(ctx, writeByKey{}, by)
+}
+
+// bound starts the time of a write made with WriteWithin or WriteBy.
 func (a *Anchored) bound(ctx context.Context) (context.Context, context.CancelFunc) {
-	d, _ := ctx.Value(writeWithinKey{}).(time.Duration)
-	if d <= 0 {
+	d, within := ctx.Value(writeWithinKey{}).(time.Duration)
+	by, fixed := ctx.Value(writeByKey{}).(time.Time)
+	within = within && d > 0
+	if !within && !fixed {
 		return ctx, func() {}
 	}
-	by := a.now().Add(d)
-	ctx, cancel := context.WithTimeout(ctx, d)
+	now := a.now()
+	if within && (!fixed || now.Add(d).Before(by)) {
+		by = now.Add(d)
+	}
+	ctx, cancel := context.WithTimeout(ctx, by.Sub(now))
 	return context.WithValue(ctx, stageByKey{}, by), cancel
 }
 
@@ -747,6 +779,20 @@ func (a *Anchored) deleteVersions(ctx context.Context, name string) error {
 		return errors.New("store: the stored versions of a strict record keep coming back")
 	}
 	return fmt.Errorf("store: the stored versions of %s keep coming back", name)
+}
+
+// CheckHistory reads every version of name's commits, as a strict read
+// does, whatever a.Strict: ErrForked when two commits of different digests
+// share a version anywhere in its history, ErrRolledBack when the store of
+// commits went back from what this enclave saw, and an error when Commits
+// does not read histories. It reads no value and writes nothing, so it may
+// check a record that is not strict, whose reads and writes stay as they
+// are: an answer resting on such a record (receipts' Removing, the review
+// of #170, finding 2) is then refused on a fork that a read of its newest
+// commit alone would pass. Its errors do not hold the record's name.
+func (a *Anchored) CheckHistory(ctx context.Context, name string) error {
+	_, _, err := a.headAs(ctx, name, true)
+	return err
 }
 
 // Regressions returns the commits that were there and then were not, as far as

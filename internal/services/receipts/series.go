@@ -272,7 +272,12 @@ func (s *Service) hint(ctx context.Context, sr *series) uint64 {
 // made it (also when a retry is refused over this very document), else the
 // record another enclave made there, read strictly.
 func (s *Service) create(ctx context.Context, key []byte, sr *series, n uint64, doc []byte) (j judged, own bool, err error) {
-	if by, ok := ctx.Value(writeByKey{}).(time.Time); ok && s.now().After(by) {
+	// The audit's fence (ADR 0037, R3): its own writes for an account begin
+	// within AuditWriteAfterCheck of Removing's answer. The deadline goes
+	// into the store, which stages no value past it however long the write
+	// took to begin (store.WriteBy), and the audit asks again.
+	by, fenced := ctx.Value(writeByKey{}).(time.Time)
+	if fenced && !s.now().Before(by) {
 		return judged{}, false, errFence
 	}
 	p, err := sr.parse(doc, n)
@@ -284,8 +289,15 @@ func (s *Service) create(ctx context.Context, key []byte, sr *series, n uint64, 
 	if err != nil {
 		return judged{}, false, fmt.Errorf("receipts: seal: %w", err)
 	}
-	err = s.chain.anchored.CreateNew(store.WriteWithin(ctx, ReceiptWriteMax), &store.Record{Name: name, Value: sealed})
+	wctx := store.WriteWithin(ctx, ReceiptWriteMax)
+	if fenced {
+		wctx = store.WriteBy(wctx, by)
+	}
+	err = s.chain.anchored.CreateNew(wctx, &store.Record{Name: name, Value: sealed})
 	s.chain.anchored.Forget(name)
+	if fenced && err != nil && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil && !s.now().Before(by) {
+		return judged{}, false, errFence
+	}
 	mine := judged{n: n, verdict: LinkOK, doc: doc, digest: DigestOf(doc), p: p, bytes: len(sealed)}
 	switch {
 	case err == nil:

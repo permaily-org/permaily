@@ -300,7 +300,9 @@ func (r *auditRun) unchained(ctx context.Context) error {
 }
 
 // finish records what the pass found and makes it a strict record, at the
-// number after the newest; two enclaves finishing at once make two.
+// number after the newest. Two enclaves finishing at once make two, unless
+// their documents are the same bytes (the same instants and counts), which
+// are one record.
 func (r *auditRun) finish(ctx context.Context) (*AuditPass, error) {
 	if err := r.s.record(ctx, r.findings); err != nil {
 		return nil, err
@@ -363,7 +365,11 @@ func (h *ids) Pop() any {
 // whose receipts the receipts' cursor has not reached: a link is read once
 // its time is no earlier than the receipt's less twice AdoptAfter (two
 // clocks' minute, and a link written after its receipts), and an adopted
-// link once its newest ref is no older than the receipt.
+// link once its newest ref is no older than the receipt. held counts every
+// ref it holds, each link naming a receipt counted, since a receipt written
+// with its own identity can be named again by a retry's link: the window
+// bounds that count, never the receipts' alone (the review of #170,
+// finding 4).
 type joiner struct {
 	r         *auditRun
 	sr        *series
@@ -372,6 +378,7 @@ type joiner struct {
 	out       joined
 	refs      map[string][]held
 	order     ids
+	held      int
 	links     []judged
 	next      uint64
 	expected  *Digest
@@ -456,8 +463,9 @@ func (j *joiner) consume(ctx context.Context) error {
 			heap.Push(&j.order, ref.ID)
 		}
 		j.refs[ref.ID] = append(j.refs[ref.ID], held{ref: ref, n: l.n})
+		j.held++
 	}
-	if len(j.order) > AuditWindowRefsMax {
+	if j.held > AuditWindowRefsMax {
 		return errWindow
 	}
 	return nil
@@ -504,6 +512,7 @@ func (j *joiner) receipt(ctx context.Context, e *store.Entry) error {
 	if refs := j.refs[e.Key]; len(refs) > 0 {
 		heap.Pop(&j.order)
 		delete(j.refs, e.Key)
+		j.held -= len(refs)
 		for _, h := range refs {
 			j.verdict(h, e)
 		}
@@ -532,6 +541,7 @@ func (j *joiner) resolve(ctx context.Context, id string) error {
 		ref := heap.Pop(&j.order).(string) //nolint:forcetypeassert // ids holds strings
 		refs := j.refs[ref]
 		delete(j.refs, ref)
+		j.held -= len(refs)
 		e, err := j.r.s.entries.GetEntry(ctx, j.partition, ref)
 		if errors.Is(err, store.ErrNotFound) {
 			for _, h := range refs {

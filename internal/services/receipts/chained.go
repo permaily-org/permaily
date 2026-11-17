@@ -44,6 +44,10 @@ type chainState struct {
 	// this enclave recorded since it started.
 	pending  map[Finding]bool
 	recorded map[Finding]bool
+	// continued is, of each account, a link whose commit may have expired
+	// and the digest the link above it names, authenticated when a page
+	// ended above it or a continuation read down to it (continuation).
+	continued map[string]authenticated
 
 	catalogue *appender
 	incidents *appender
@@ -65,6 +69,12 @@ var errNotChained = errors.New("receipts: the service is not chained")
 // accounts tells removed accounts apart and lists them. It refuses a
 // chain that is missing or not strict, accounts missing, and entries that
 // cannot be scanned.
+//
+// chain's Regressions name the chain's records, and a link's name holds its
+// account's identifier: the composition reports them under the fixed name
+// "receipt link", never their names, and nothing of the chain logs an
+// account (ADR 0037, "When the link before cannot be read"; the review of
+// #170, ruling 11).
 func NewChained(entries store.Entries, keys Keys, now func() time.Time, chain *store.Anchored, accounts Accounts) (*Service, error) {
 	scanner, scans := entries.(store.Scanner)
 	switch {
@@ -83,6 +93,7 @@ func NewChained(entries store.Entries, keys Keys, now func() time.Time, chain *s
 		anchored: chain, scanner: scanner, accounts: accounts,
 		appenders: map[string]*linkAppender{}, entered: map[string]bool{},
 		pending: map[Finding]bool{}, recorded: map[Finding]bool{},
+		continued: map[string]authenticated{},
 	}
 	c.catalogue = &appender{s: s, sr: catalogueSeriesOf}
 	c.incidents = &appender{s: s, sr: incidentSeriesOf}

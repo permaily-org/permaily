@@ -122,6 +122,8 @@ func TestEveryFailureIsAnError(t *testing.T) {
 		_, _ = s.Audited(ctx)
 		_, _ = s.Incidents(ctx)
 		_, _ = s.Walk(ctx, "acc_dddddddddddddddddddddddddd", Position{}, 10)
+		// A continuation at its expired link 1, from link 2's prev.
+		_, _ = s.Walk(ctx, "acc_dddddddddddddddddddddddddd", Position{N: 2}, 1)
 		f.mu.Lock()
 		done := f.n < k
 		f.mu.Unlock()

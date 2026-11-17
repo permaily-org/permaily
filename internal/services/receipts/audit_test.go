@@ -443,9 +443,9 @@ func TestL28TheEndOfTheLock(t *testing.T) {
 }
 
 // L29: the audit's record. A finished pass is made once, its number found
-// by listing; two finishing at once make two; a pass whose value is
-// deleted is lost at its number, and the newest one that can be read is
-// reported.
+// by listing; two finishing at once with different documents make two; a
+// pass whose value is deleted is lost at its number, and the newest one
+// that can be read is reported.
 func TestL29TheAuditsRecord(t *testing.T) {
 	ctx := context.Background()
 	w := newChainWorld(t)
