@@ -46,6 +46,15 @@ type S3Commits struct {
 	// Retention is how long S3 keeps each commit from when it is written.
 	Retention time.Duration
 	Now       func() time.Time
+	// Group, when set, keeps the commits of the names it groups together:
+	// those of name are under commits/g/<hash of group>/<member>/, so one
+	// listing of the group from a member reads the full history of every
+	// member above it (HistoryRange; ADR 0037). A grouped name's commits
+	// are read and written there and nowhere else, and a commit found there
+	// counts only if its name groups to that very group and member. Names
+	// it does not group (ok false) keep their commits where every record's
+	// are.
+	Group func(name string) (group, member string, ok bool)
 
 	// known is what History read of each object version (by record, key and
 	// version id): a commit, or nil for what is not one. S3 never changes the
@@ -93,6 +102,26 @@ func commitPrefix(name string) string {
 	return "commits/" + hex.EncodeToString(sum[:16]) + "/"
 }
 
+// groupPrefix is where the commits of a group's members are.
+func groupPrefix(group string) string {
+	sum := sha256.Sum256([]byte(group))
+	return "commits/g/" + hex.EncodeToString(sum[:16]) + "/"
+}
+
+// prefix is where the commits of name are: under its member of its group
+// when Group groups it, else commitPrefix.
+func (s *S3Commits) prefix(name string) string {
+	if s.Group != nil {
+		if group, member, ok := s.Group(name); ok {
+			return groupPrefix(group) + member + "/"
+		}
+	}
+	return commitPrefix(name)
+}
+
+// named is read's check of the name a commit holds.
+func named(name string) func(string) bool { return func(n string) bool { return n == name } }
+
 type commitObject struct {
 	Name    string `json:"name"`
 	Version uint64 `json:"version"`
@@ -130,7 +159,7 @@ func (s *S3Commits) Head(ctx context.Context, name string) (*Commit, uint64, err
 	if err != nil {
 		return nil, 0, err
 	}
-	prefix := commitPrefix(name)
+	prefix := s.prefix(name)
 	type object struct {
 		version uint64
 		key, id string
@@ -182,7 +211,7 @@ func (s *S3Commits) Head(ctx context.Context, name string) (*Commit, uint64, err
 		if i >= maxCommitReads {
 			return nil, 0, fmt.Errorf("store: more than %d objects that are not commits above the newest commit", maxCommitReads)
 		}
-		c, err := s.read(ctx, key, name, o.version, o.key, o.id)
+		c, err := s.read(ctx, key, named(name), o.version, o.key, o.id)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -205,8 +234,8 @@ func (s *S3Commits) Head(ctx context.Context, name string) (*Commit, uint64, err
 }
 
 // read returns the commit in one version of an object, or nil when it is not
-// a commit of this deployment for that record and version.
-func (s *S3Commits) read(ctx context.Context, key []byte, name string, version uint64, objectKey, id string) (*Commit, error) {
+// a commit of this deployment for that version and a name want takes.
+func (s *S3Commits) read(ctx context.Context, key []byte, want func(string) bool, version uint64, objectKey, id string) (*Commit, error) {
 	out, err := s.S3.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.Bucket), Key: aws.String(objectKey), VersionId: aws.String(id)})
 	if err != nil {
 		return nil, fmt.Errorf("store: read commit: %w", err)
@@ -222,7 +251,7 @@ func (s *S3Commits) read(ctx context.Context, key []byte, name string, version u
 	}
 	digest, err1 := hex.DecodeString(doc.Digest)
 	mac, err2 := hex.DecodeString(doc.MAC)
-	if err1 != nil || err2 != nil || len(digest) != sha256.Size || doc.Name != name || doc.Version != version {
+	if err1 != nil || err2 != nil || len(digest) != sha256.Size || !want(doc.Name) || doc.Version != version {
 		return nil, nil
 	}
 	c := &Commit{Name: doc.Name, Version: doc.Version, At: time.Unix(doc.At, 0).UTC()}
@@ -258,7 +287,7 @@ func (s *S3Commits) Append(ctx context.Context, c Commit) (*Commit, error) {
 	checksum := sha256.Sum256(body)
 	_, err = s.S3.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(s.Bucket),
-		Key:         aws.String(commitPrefix(c.Name) + fmt.Sprintf("%020d", c.Version)),
+		Key:         aws.String(s.prefix(c.Name) + fmt.Sprintf("%020d", c.Version)),
 		Body:        bytes.NewReader(body),
 		ContentType: aws.String("application/json"),
 		IfNoneMatch: aws.String("*"),
@@ -301,9 +330,8 @@ func (s *S3Commits) History(ctx context.Context, name string) (*History, error) 
 	if err != nil {
 		return nil, err
 	}
-	prefix := commitPrefix(name)
+	prefix := s.prefix(name)
 	var objects []historyObject
-	used := map[uint64]bool{}
 	in := &s3.ListObjectVersionsInput{Bucket: aws.String(s.Bucket), Prefix: aws.String(prefix)}
 	// Everything listed counts against the bound, before anything is left
 	// out: keys that are not versions and delete markers cost a listing as
@@ -325,7 +353,6 @@ func (s *S3Commits) History(ctx context.Context, name string) (*History, error) 
 				continue
 			}
 			objects = append(objects, historyObject{n, k, aws.ToString(v.VersionId)})
-			used[n] = true
 		}
 		if !aws.ToBool(out.IsTruncated) {
 			break
@@ -339,14 +366,24 @@ func (s *S3Commits) History(ctx context.Context, name string) (*History, error) 
 		in.KeyMarker, in.VersionIdMarker = out.NextKeyMarker, out.NextVersionIdMarker
 	}
 
+	return s.historyOf(ctx, key, name, named(name), objects)
+}
+
+// historyOf reads the objects listed of one record (or one member of a
+// group, cached under name), those this enclave has not read before, at
+// most MaxHistoryReads in one call, and groups their commits by version and
+// digest. Next is the lowest version above the head that no object is at.
+func (s *S3Commits) historyOf(ctx context.Context, key []byte, name string, want func(string) bool, objects []historyObject) (*History, error) {
 	// What each listed object is, held by this call from the moment it is
 	// known (from memory, or fetched) to the end: the memory may drop it
 	// meanwhile, for this record's objects or another's, and a decision never
 	// rests on something that went away while it was made.
 	results := make(map[string]*Commit, len(objects))
 	var unread []historyObject
+	used := map[uint64]bool{}
 	s.mu.Lock()
 	for _, o := range objects {
+		used[o.version] = true
 		if c, ok := s.known[knownKey(name, o)]; ok {
 			results[knownKey(name, o)] = c
 		} else {
@@ -355,12 +392,12 @@ func (s *S3Commits) History(ctx context.Context, name string) (*History, error) 
 	}
 	s.mu.Unlock()
 	if len(unread) > MaxHistoryReads {
-		if _, err := s.fetch(ctx, key, name, unread[:MaxHistoryReads]); err != nil {
+		if _, err := s.fetch(ctx, key, name, want, unread[:MaxHistoryReads]); err != nil {
 			return nil, err
 		}
 		return nil, fmt.Errorf("store: more than %d objects of a record not read yet; the next read goes on", MaxHistoryReads)
 	}
-	fetched, err := s.fetch(ctx, key, name, unread)
+	fetched, err := s.fetch(ctx, key, name, want, unread)
 	if err != nil {
 		return nil, err
 	}
@@ -391,9 +428,10 @@ func (s *S3Commits) History(ctx context.Context, name string) (*History, error) 
 	return h, nil
 }
 
-// fetch reads objects, historyFetches at once, keeps what each is, and
-// returns it in their order (nil for what is not a commit).
-func (s *S3Commits) fetch(ctx context.Context, key []byte, name string, objects []historyObject) ([]*Commit, error) {
+// fetch reads objects, historyFetches at once, keeps what each is (under
+// name, which says what was asked of them), and returns it in their order
+// (nil for what is not a commit whose name want takes).
+func (s *S3Commits) fetch(ctx context.Context, key []byte, name string, want func(string) bool, objects []historyObject) ([]*Commit, error) {
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, historyFetches)
 	errs := make([]error, len(objects))
@@ -403,7 +441,7 @@ func (s *S3Commits) fetch(ctx context.Context, key []byte, name string, objects 
 		wg.Add(1)
 		go func() {
 			defer func() { <-slots; wg.Done() }()
-			c, err := s.read(ctx, key, name, o.version, o.key, o.id)
+			c, err := s.read(ctx, key, want, o.version, o.key, o.id)
 			if err != nil {
 				errs[i] = err
 				return

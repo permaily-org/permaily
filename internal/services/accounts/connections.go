@@ -3,6 +3,7 @@ package accounts
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
@@ -164,4 +165,49 @@ func (s *Service) removeConnectionsAgain(ctx context.Context, key []byte, now ti
 		}
 	}
 	return first
+}
+
+// errNoAccount answers Removing for an account whose record was never made.
+var errNoAccount = errors.New("accounts: no such account")
+
+// errNoHistory answers Removing over a store of records that cannot read a
+// record's whole history.
+var errNoHistory = errors.New("accounts: Removing needs a store that reads a record's whole history")
+
+// historyChecker is a store of records that reads a record's whole
+// history (store.Anchored.CheckHistory).
+type historyChecker interface {
+	CheckHistory(ctx context.Context, name string) error
+}
+
+// Removing answers whether an account is removed or being removed, for the
+// audit of the receipts' chains (receipts.Accounts; ADR 0037, R3): removed
+// when its record was removed by its terminal commit, or says it is being
+// removed (Removing, written before the removal deletes anything), or its
+// day to close has come. Anything else (a record never made, one lost,
+// forked or that does not open, the storage failing) is an error, never
+// taken for removed or for live.
+//
+// The account's record is not strict, and is read and written as before;
+// this answer alone rests on its whole history (the review of #170,
+// finding 2): a fork at any of its versions is store.ErrForked, whichever
+// value a read of its newest commit would choose.
+func (s *Service) Removing(ctx context.Context, id string) (bool, error) {
+	checker, ok := s.cfg.Records.(historyChecker)
+	if !ok {
+		return false, errNoHistory
+	}
+	if err := checker.CheckHistory(ctx, recordName(id)); err != nil {
+		return false, fmt.Errorf("accounts: an account's record: %w", err)
+	}
+	doc, at, err := s.readAt(ctx, id)
+	switch {
+	case err != nil:
+		return false, err
+	case doc == nil && at.Version() > 0:
+		return true, nil
+	case doc == nil:
+		return false, errNoAccount
+	}
+	return doc.due(s.now()), nil
 }

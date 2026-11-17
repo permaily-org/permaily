@@ -31,6 +31,11 @@ type Service struct {
 	keys    Keys
 	now     func() time.Time
 	random  func([]byte) error
+	// chain is nil for a Service made by New: it writes receipts unchained
+	// and says so (Chained).
+	chain *chainState
+	// walkBytes is WalkBytesMax, which tests lower.
+	walkBytes int
 }
 
 var _ Writer = (*Service)(nil)
@@ -48,7 +53,7 @@ func New(entries store.Entries, keys Keys, now func() time.Time, random func([]b
 			return err
 		}
 	}
-	return &Service{entries: entries, keys: keys, now: now, random: random}
+	return &Service{entries: entries, keys: keys, now: now, random: random, walkBytes: WalkBytesMax}
 }
 
 // IDPrefix starts every receipt's identifier and key.
@@ -89,7 +94,7 @@ func (s *Service) Write(ctx context.Context, account string, r *Receipt) error {
 	}
 	partition := Partition(account)
 	if r.ID != "" {
-		return s.writeAs(ctx, partition, r)
+		return s.writeAs(ctx, account, r)
 	}
 	var key []byte
 	for range writeTries {
@@ -123,6 +128,9 @@ func (s *Service) Write(ctx context.Context, account string, r *Receipt) error {
 		case err != nil:
 			return fmt.Errorf("receipts: write: %w", err)
 		}
+		if err := s.linkStored(ctx, account, id, raw); err != nil {
+			return err
+		}
 		r.V, r.ID, r.At = Version, id, at
 		return nil
 	}
@@ -135,7 +143,8 @@ func (s *Service) Write(ctx context.Context, account string, r *Receipt) error {
 // "Refusals past a window's bound"): when the entry is already there, it is
 // this receipt if it opens to the very document, and Write succeeds;
 // anything else there is ErrIdentityTaken, and nothing is stored.
-func (s *Service) writeAs(ctx context.Context, partition string, r *Receipt) error {
+func (s *Service) writeAs(ctx context.Context, account string, r *Receipt) error {
+	partition := Partition(account)
 	if !ValidID(r.ID) || r.At.IsZero() {
 		return errors.New("receipts: a receipt's own identity needs its identifier and its time")
 	}
@@ -170,7 +179,24 @@ func (s *Service) writeAs(ctx context.Context, partition string, r *Receipt) err
 	case err != nil:
 		return fmt.Errorf("receipts: write: %w", err)
 	}
+	// Linked whether this call stored it or an earlier one did: a write made
+	// again because its outcome was not known may have stopped before its
+	// link, and a receipt may be named twice, never left out (ADR 0037).
+	if err := s.linkStored(ctx, account, doc.ID, raw); err != nil {
+		return err
+	}
 	r.V, r.At = doc.V, doc.At
+	return nil
+}
+
+// linkStored links a receipt Write stored, on a chained Service.
+func (s *Service) linkStored(ctx context.Context, account, id string, raw []byte) error {
+	if s.chain == nil {
+		return nil
+	}
+	if _, err := s.Link(ctx, account, Ref{ID: id, Digest: DigestOf(raw)}); err != nil {
+		return fmt.Errorf("receipts: link: %w", err)
+	}
 	return nil
 }
 
@@ -225,15 +251,22 @@ func (s *Service) List(ctx context.Context, account, after string, limit int) ([
 // open reads one stored receipt: it opens only under key, bound to the
 // entry's partition and key, and names that key as its ID.
 func open(key []byte, e *store.Entry) (*Receipt, error) {
+	_, r, err := openRaw(key, e)
+	return r, err
+}
+
+// openRaw is open with the document's bytes as stored, which a link's
+// digest is of.
+func openRaw(key []byte, e *store.Entry) ([]byte, *Receipt, error) {
 	raw, err := envelope.OpenText(key, e.Value, aad(e.Partition, e.Key))
 	if err != nil {
-		return nil, ErrUnreadable
+		return nil, nil, ErrUnreadable
 	}
 	var r Receipt
 	if json.Unmarshal(raw, &r) != nil || r.V < 1 || r.ID != e.Key {
-		return nil, ErrUnreadable
+		return nil, nil, ErrUnreadable
 	}
-	return &r, nil
+	return raw, &r, nil
 }
 
 // newID is IDPrefix, at in nanoseconds since 1970 as 16 hexadecimal digits,
