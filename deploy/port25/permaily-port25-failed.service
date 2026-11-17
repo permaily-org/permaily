@@ -1,0 +1,18 @@
+[Unit]
+Description=Permaily: mail that the port 25 check's run failed without its report
+
+[Service]
+Type=oneshot
+User=permaily-port25
+Group=permaily-port25
+SupplementaryGroups=systemd-journal
+EnvironmentFile=/etc/permaily-port25.env
+Environment=HOME=/var/lib/permaily-port25
+StateDirectory=permaily-port25
+StateDirectoryMode=0700
+ExecStart=/opt/permaily-port25/on-failure.sh
+TimeoutStartSec=300
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes

@@ -136,13 +136,18 @@ func (s *Service) RemoveAll(ctx context.Context, account string) error {
 		if err != nil {
 			return err
 		}
+		// A removal began when an epoch after the newest live one is
+		// removed (it removes the newest first, after a fence); the epochs
+		// before it that are removed are those a rotation closed
+		// (pruneList).
 		newest, removing := -1, false
 		for e, h := range heads {
 			if h.live {
 				newest = e
-			} else {
-				removing = true
 			}
+		}
+		for _, h := range heads[newest+1:] {
+			removing = removing || !h.live
 		}
 		if newest >= 0 {
 			var l ListState
@@ -275,17 +280,15 @@ func (s *Service) removeEpochs(ctx context.Context, name func(uint64) string) er
 	return errBusy
 }
 
-// listRemoved says the account's list was removed: its epoch 0, which a
-// removal removes last, has a removal's commit.
+// listRemoved says the account's list was removed: its epochs end in the
+// fence its removal leaves, and none has a value. Epoch 0 alone does not
+// tell, since a rotation removes it while the list lives on (pruneList).
 func (s *Service) listRemoved(ctx context.Context, account string) (bool, error) {
-	_, at, err := s.cfg.Records.GetRecordAt(ctx, ListName(account, 0))
-	switch {
-	case err == nil, errors.Is(err, store.ErrLost):
-		return false, nil
-	case errors.Is(err, store.ErrNotFound):
-		return at.Version() > 0, nil
+	heads, err := s.epochHeads(ctx, func(e uint64) string { return ListName(account, e) })
+	if err != nil {
+		return false, err
 	}
-	return false, err
+	return fenced(heads), nil
 }
 
 // WriteMax bounds every write of a value of the account's connections (a
@@ -378,6 +381,10 @@ func (s *Service) RemoveAgain(ctx context.Context, account string) error {
 	return s.cfg.Entries.DeletePartition(ctx, partition)
 }
 
+// errUnpruned is a pass that could not remove what rotations left of the
+// earlier epochs of an account's list.
+var errUnpruned error = &kind{"connections: an earlier epoch of the account's list is still to remove"}
+
 // pendingFenceAfter is how old a pending member must be before the sweep
 // fences it: its maker is then long done, or crashed.
 const pendingFenceAfter = oauth.RequestTTL
@@ -453,6 +460,19 @@ func (s *Service) sweepAccount(ctx context.Context, account string) error {
 	}
 	if err != nil {
 		return err
+	}
+	// What rotations left of the earlier epochs: removed and the mark
+	// cleared (Pruning), or removed once more RemoveAgainAfter after
+	// (RemoveAgainDue), by a write of the list (writeListOnce); a pass that
+	// could not leaves it to the next and fails.
+	if l.Pruning || l.RemoveAgainDue(s.now()) {
+		n, err := s.updateList(ctx, account, func(*ListState) error { return nil })
+		if err != nil {
+			return err
+		}
+		if n.Pruning || n.RemoveAgainDue(s.now()) {
+			return errUnpruned
+		}
 	}
 	if l.Closing {
 		if err := s.endGeneration(ctx, account, l.Generation, nil); err != nil {

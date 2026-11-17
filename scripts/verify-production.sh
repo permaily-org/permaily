@@ -9,7 +9,7 @@
 # is tried: if that one passes, the result is a pass with a notice.
 #
 # This trusts the release files (checked against their Sigstore provenance)
-# instead of a local rebuild; scripts/verify.sh is the full check. Needs gh and jq.
+# instead of a local rebuild; scripts/verify.sh is the full check. Needs gh.
 set -euo pipefail
 
 repo=${PERMAILY_REPO:-permaily-org/permaily}

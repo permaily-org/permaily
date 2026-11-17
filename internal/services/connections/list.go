@@ -21,7 +21,16 @@ import (
 // replay of a decision, the fence and the cleanup all read the newest epoch
 // alone. A reader follows Moved to the newest epoch (an enclave remembers the
 // newest it read; epochs only go forward) and makes an epoch a crash left
-// unmade again from the one before. Its document is bounded by count
+// unmade again from the one before. Once epoch n+1 is committed, epoch n is
+// removed (RemoveRecord), its removal's commit staying as its fence, so only
+// the current epoch keeps content (the owner's decision 2 of 2026-11-17):
+// Next marks the new epoch Pruning, and its next write removes what of the
+// earlier epochs is still stored before it clears the mark (Pruned). A
+// write that passed its check on an epoch before its removal can still
+// stage a value under it after (store.WriteWithin bounds it to WriteMax):
+// the epochs from Settled are removed once more RemoveAgainAfter after
+// they were pruned (RemoveAgainDue, RemovedAgain), by the hourly pass or the
+// list's next write, as RemoveAgain does for an account's removal. Its document is bounded by count
 // (ListActiveMax, ListEndedMax, ListDecidedMax) and bytes (ListBytesMax),
 // each checked by every write. The pure transitions are here, committed with
 // the design, so pull request 3 and its tests share them.
@@ -82,6 +91,15 @@ type ListState struct {
 	Epoch   uint64 `json:"epoch"`
 	// Moved: this epoch is closed; the list goes on in Epoch+1.
 	Moved bool `json:"moved,omitzero"`
+	// Pruning: an earlier epoch may still hold content, to be removed by
+	// the next write of this one, which then clears it.
+	Pruning bool `json:"pruning,omitzero"`
+	// Settled: every epoch before it was removed once more,
+	// RemoveAgainAfter after its removal. PrunedAt: when the epochs from
+	// Settled to this one were last known removed, which their last
+	// removal waits on.
+	Settled  uint64    `json:"settled,omitzero"`
+	PrunedAt time.Time `json:"pruned_at,omitzero"`
 	// Closing is the deletion's fence, and Generation the closing
 	// generation EndAll ends through (finding 6).
 	Closing    bool              `json:"closing,omitzero"`
@@ -180,11 +198,30 @@ func (l *ListState) Fits() bool {
 // this epoch: it is then written Moved, and Next made with CreateNew.
 func (l *ListState) Rotate(versions uint64) bool { return versions+1 >= ListEpochVersions }
 
-// Next is the next epoch of a list written Moved: the same document.
+// Next is the next epoch of a list written Moved: the same document,
+// Pruning until the epoch it closes is removed. The epochs still waiting
+// for their last removal (from Settled) are carried, the one it closes
+// with them: a rotation never forgets an earlier one.
 func (l *ListState) Next() ListState {
 	b, _ := json.Marshal(l)
 	var n ListState
 	_ = json.Unmarshal(b, &n)
-	n.Epoch, n.Moved = l.Epoch+1, false
+	n.Epoch, n.Moved, n.Pruning = l.Epoch+1, false, true
 	return n
 }
+
+// Pruned records that every epoch before this one was removed, as known at
+// now: the mark goes, and the last removal of the epochs from Settled waits
+// until RemoveAgainAfter past now, since a write that passed its check
+// before a removal stores its value within WriteMax of that check.
+func (l *ListState) Pruned(now time.Time) { l.Pruning, l.PrunedAt = false, now }
+
+// RemoveAgainDue says the epochs from Settled to this one are due for
+// their last removal at now: they were all removed RemoveAgainAfter ago.
+func (l *ListState) RemoveAgainDue(now time.Time) bool {
+	return !l.Pruning && l.Settled < l.Epoch && !l.PrunedAt.IsZero() && !now.Before(l.PrunedAt.Add(RemoveAgainAfter))
+}
+
+// RemovedAgain records that the epochs before this one had their last
+// removal.
+func (l *ListState) RemovedAgain() { l.Settled, l.PrunedAt = l.Epoch, time.Time{} }
