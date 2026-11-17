@@ -276,7 +276,7 @@ func (s *Service) endConnection(ctx context.Context, id string, reason contracts
 	if !listed {
 		now := s.now()
 		if _, err := s.updateList(ctx, ended.Account, func(l *ListState) error {
-			s.dropEnded(ctx, l, l.End(id, now))
+			s.dropEnded(ctx, l, l.End(id, now), nil)
 			return nil
 		}); err != nil {
 			return err
@@ -330,7 +330,7 @@ func (s *Service) abandon(ctx context.Context, account, id, client string, madeA
 	}
 	now := s.now()
 	if _, err := s.updateList(ctx, account, func(l *ListState) error {
-		s.dropEnded(ctx, l, l.End(id, now))
+		s.dropEnded(ctx, l, l.End(id, now), nil)
 		return nil
 	}); err != nil {
 		s.count("abandon_failed")
@@ -405,8 +405,9 @@ func (s *Service) endDevice(ctx context.Context, id, device string, reason contr
 // must find them, or fail (second review of #152, finding 1). The oldest
 // ended member that can be removed goes in its place, so the list stays
 // within its bounds. One that fails otherwise stays, as before, until the
-// list's next write.
-func (s *Service) dropEnded(ctx context.Context, l *ListState, remove []string) {
+// list's next write. With note (the account's final removal, endAll),
+// each one removed is noted first, with its families (removeConnStrict).
+func (s *Service) dropEnded(ctx context.Context, l *ListState, remove []string, note func(id string) error) {
 	var gone []string
 	if !l.Closing {
 		for _, id := range remove {
@@ -428,7 +429,7 @@ func (s *Service) dropEnded(ctx context.Context, l *ListState, remove []string) 
 		if len(gone) == len(remove) {
 			break
 		}
-		err := s.removeConnStrict(ctx, m.ID, nil)
+		err := s.removeConnStrict(ctx, m.ID, note)
 		if err == nil {
 			gone = append(gone, m.ID)
 		} else if !refusedRecord(err) {
@@ -456,8 +457,9 @@ func (s *Service) removeConn(ctx context.Context, id string) error {
 // since its families are known only from its record. One removed already,
 // or never made (a pending one, whose name the removal fences), has none.
 //
-// With note (RemoveAll), the connection's identifier and its families' are
-// noted first, for RemoveAgain to find their names once nothing else does.
+// With note (RemoveAll, and the trimming its EndAll does), the
+// connection's identifier and its families' are noted first, for
+// RemoveAgain to find their names once nothing else does.
 func (s *Service) removeConnStrict(ctx context.Context, id string, note func(id string) error) error {
 	d, _, err := s.readConn(ctx, id)
 	if err != nil {

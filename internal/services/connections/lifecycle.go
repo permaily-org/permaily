@@ -22,6 +22,15 @@ import (
 // generation; made with CreateNew when the account has none), and only
 // then is every connection and pending one it names ended.
 func (s *Service) EndAll(ctx context.Context, account string) error {
+	return s.endAll(ctx, account, nil)
+}
+
+// endAll is EndAll. With note (RemoveAll's, once the account's removal
+// began: no cancellation follows), every connection that ending the list's
+// members trims (dropEnded) is noted, with its families, before it is
+// removed, so that RemoveAgain finds it (third review of #152, finding 2).
+// EndAll keeps no notes: a cancellation may follow it.
+func (s *Service) endAll(ctx context.Context, account string, note func(id string) error) error {
 	l, err := s.updateList(ctx, account, func(l *ListState) error {
 		if !l.Closing {
 			l.Closing = true
@@ -32,12 +41,13 @@ func (s *Service) EndAll(ctx context.Context, account string) error {
 	if err != nil {
 		return err
 	}
-	return s.endGeneration(ctx, account, l.Generation)
+	return s.endGeneration(ctx, account, l.Generation, note)
 }
 
 // endGeneration ends every member of the list made before generation, and
-// writes them ended in the list.
-func (s *Service) endGeneration(ctx context.Context, account string, generation uint64) error {
+// writes them ended in the list; what that trims is noted with note
+// (endAll).
+func (s *Service) endGeneration(ctx context.Context, account string, generation uint64, note func(id string) error) error {
 	l, _, err := s.readList(ctx, account)
 	if err != nil || l == nil {
 		return err
@@ -58,7 +68,7 @@ func (s *Service) endGeneration(ctx context.Context, account string, generation 
 	now := s.now()
 	_, err = s.updateList(ctx, account, func(l *ListState) error {
 		for _, id := range ended {
-			s.dropEnded(ctx, l, l.End(id, now))
+			s.dropEnded(ctx, l, l.End(id, now), note)
 		}
 		return nil
 	})
@@ -114,8 +124,9 @@ func (s *Service) Reopen(ctx context.Context, account string) error {
 // back, not signed) fails it and keeps the list and the index that find it:
 // its families are known only from its record, and a removal that went on
 // would leave them where nothing finds them. Each connection, and each of
-// its families, is noted before it is removed (noteRemoved), so that
-// RemoveAgain finds their names once nothing else does.
+// its families, is noted before it is removed (noteRemoved), those its
+// EndAll trims from the list included, so that RemoveAgain finds their
+// names once nothing else does.
 func (s *Service) RemoveAll(ctx context.Context, account string) error {
 	list := func(e uint64) string { return ListName(account, e) }
 	note := func(id string) error { return s.noteRemoved(ctx, account, id) }
@@ -148,7 +159,7 @@ func (s *Service) RemoveAll(ctx context.Context, account string) error {
 			// A list no removal began on is fenced first. Once one has, its
 			// fence held when it began (the newest epoch named what is left).
 			if !l.Moved && !removing && !ended {
-				if err := s.EndAll(ctx, account); err != nil {
+				if err := s.endAll(ctx, account, note); err != nil {
 					return err
 				}
 				ended = true
@@ -433,7 +444,7 @@ func (s *Service) sweepAccount(ctx context.Context, account string) error {
 		return err
 	}
 	if l.Closing {
-		if err := s.endGeneration(ctx, account, l.Generation); err != nil {
+		if err := s.endGeneration(ctx, account, l.Generation, nil); err != nil {
 			return err
 		}
 	}
@@ -492,7 +503,7 @@ func (s *Service) sweepAccount(ctx context.Context, account string) error {
 	}
 	_, err = s.updateList(ctx, account, func(l *ListState) error {
 		for _, id := range ended {
-			s.dropEnded(ctx, l, l.End(id, now))
+			s.dropEnded(ctx, l, l.End(id, now), nil)
 		}
 		l.RemoveEnded(removed)
 		return nil
