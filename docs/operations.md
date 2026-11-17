@@ -106,14 +106,25 @@ Still needed before two run:
 
 ## Look at enclave logs
 
-The enclave sends its log lines to the host, which keeps them in the journal with the prefix `enclave:` (since v0.5.0):
+The enclave sends its log lines to the host, which keeps them in the journal with the prefix `enclave:` (since v0.5.0). The CloudWatch agent on the instance ships the journal of `permaily-host` and `permaily-enclave` to the CloudWatch Logs group `permaily-host`, one stream per instance, kept 90 days (ADR 0034), so the lines outlive the instance:
+
+```sh
+aws logs tail permaily-host --region us-east-2 --since 1h --filter-pattern '"enclave:"'   # each event is the journal entry as JSON; the line is its MESSAGE
+aws logs tail permaily-host --region us-east-2 --follow
+```
+
+On the instance itself, for the last minutes or when the agent is not running:
 
 ```sh
 aws ssm start-session --target "$(tofu -chdir=deploy/tofu output -raw instance_id)"
 sudo journalctl -u permaily-host --since "1 hour ago" | grep "enclave:"
 ```
 
-A line `log lines dropped` means the host was not reading for a while. The journal is lost if the instance is replaced.
+A line `log lines dropped` means the host was not reading for a while. The lines hold kinds only, never content (docs/threat-model.md, "Logging"); in CloudWatch they are readable by whoever has CloudWatch Logs read permissions in the account, and the instance can add lines and cannot read or delete them.
+
+- **The agent.** `scripts/deploy.sh` installs it on every deploy (`deploy/host/install-logs.sh`: the RPM pinned by version and SHA-256, configured by `deploy/host/cloudwatch-agent.json`), before it restarts anything, so a new instance ships from its first deploy. `scripts/deploy.sh --logs-only` installs it alone and restarts nothing else, for an instance that runs already. A failed install prints `WARNING: the CloudWatch agent was not installed` and does not stop the deploy: the journal keeps the lines, and the next deploy or `--logs-only` tries again.
+- **Nothing arrives.** On the instance, `systemctl status amazon-cloudwatch-agent` and `/opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log` say why: usually the role's policy (`host-logs` in `deploy/tofu/logs.tf`) or the group missing (the agent cannot create it). The agent does not send what the journal held before it started.
+- **Updating the agent.** Change `version` and `sha256` in `deploy/host/install-logs.sh` together, from the RPM of `amazon_linux/arm64/<version>/` in AWS's bucket, then deploy or run `--logs-only`.
 
 For an enclave that does not even start, deploy the same image with `--debug` (`scripts/deploy.sh eif host --debug`) and read its console:
 
