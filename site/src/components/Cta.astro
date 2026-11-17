@@ -36,7 +36,9 @@ const { title, body, primary, secondary } = Astro.props;
     text-wrap: balance;
   }
 
+  /* The sentences under it break so that no word is left alone on the last line, where the browser can. */
   .cta .intro {
     margin-bottom: var(--space-32);
+    text-wrap: pretty;
   }
 </style>
