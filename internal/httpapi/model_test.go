@@ -546,7 +546,7 @@ func TestA29TheModelNoticeRoute(t *testing.T) {
 	if agreed, err := a.svc.ModelNoticeAgreed(context.Background(), who); err != nil || agreed {
 		t.Fatalf("before: %v %v", agreed, err)
 	}
-	for _, v := range []string{"", "2020-01-01", domain.TermsVersion} {
+	for _, v := range []string{"", "2020-01-01", "2026-11-15"} { // the notice before the one in force
 		want(t, a.call("POST", "/api/v1/account/model-notice", `{"version":"`+v+`"}`, nil), 400, "model_notice_needed")
 	}
 	for _, b := range []string{"", "nonsense", `{"version":"` + domain.ModelNoticeVersion + `","other":1}`, `{"version":5}`} {
