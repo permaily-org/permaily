@@ -165,3 +165,26 @@ func (s *Service) removeConnectionsAgain(ctx context.Context, key []byte, now ti
 	}
 	return first
 }
+
+// errNoAccount answers Removing for an account whose record was never made.
+var errNoAccount = errors.New("accounts: no such account")
+
+// Removing answers whether an account is removed or being removed, for the
+// audit of the receipts' chains (receipts.Accounts; ADR 0037, R3): removed
+// when its record was removed by its terminal commit, or says it is being
+// removed (Removing, written before the removal deletes anything), or its
+// day to close has come. Anything else (a record never made, one lost or
+// that does not open, the storage failing) is an error, never taken for
+// removed or for live.
+func (s *Service) Removing(ctx context.Context, id string) (bool, error) {
+	doc, at, err := s.readAt(ctx, id)
+	switch {
+	case err != nil:
+		return false, err
+	case doc == nil && at.Version() > 0:
+		return true, nil
+	case doc == nil:
+		return false, errNoAccount
+	}
+	return doc.due(s.now()), nil
+}

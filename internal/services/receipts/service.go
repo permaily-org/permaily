@@ -31,6 +31,9 @@ type Service struct {
 	keys    Keys
 	now     func() time.Time
 	random  func([]byte) error
+	// chain is nil for a Service made by New: it writes receipts unchained
+	// and says so (Chained).
+	chain *chainState
 }
 
 var _ Writer = (*Service)(nil)
@@ -122,6 +125,11 @@ func (s *Service) Write(ctx context.Context, account string, r *Receipt) error {
 			continue
 		case err != nil:
 			return fmt.Errorf("receipts: write: %w", err)
+		}
+		if s.chain != nil {
+			if _, err := s.Link(ctx, account, Ref{ID: id, Digest: DigestOf(raw)}); err != nil {
+				return fmt.Errorf("receipts: link: %w", err)
+			}
 		}
 		r.V, r.ID, r.At = Version, id, at
 		return nil
@@ -225,15 +233,22 @@ func (s *Service) List(ctx context.Context, account, after string, limit int) ([
 // open reads one stored receipt: it opens only under key, bound to the
 // entry's partition and key, and names that key as its ID.
 func open(key []byte, e *store.Entry) (*Receipt, error) {
+	_, r, err := openRaw(key, e)
+	return r, err
+}
+
+// openRaw is open with the document's bytes as stored, which a link's
+// digest is of.
+func openRaw(key []byte, e *store.Entry) ([]byte, *Receipt, error) {
 	raw, err := envelope.OpenText(key, e.Value, aad(e.Partition, e.Key))
 	if err != nil {
-		return nil, ErrUnreadable
+		return nil, nil, ErrUnreadable
 	}
 	var r Receipt
 	if json.Unmarshal(raw, &r) != nil || r.V < 1 || r.ID != e.Key {
-		return nil, ErrUnreadable
+		return nil, nil, ErrUnreadable
 	}
-	return &r, nil
+	return raw, &r, nil
 }
 
 // newID is IDPrefix, at in nanoseconds since 1970 as 16 hexadecimal digits,
