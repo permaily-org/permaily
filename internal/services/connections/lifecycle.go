@@ -328,8 +328,13 @@ func (s *Service) sweepAccount(ctx context.Context, account string) error {
 	if l == nil {
 		// An entry of a removed list: written by a write of the list that
 		// committed before the removal and wrote the index after it, or put
-		// back by whoever writes the table. It goes on this pass.
-		if removed, rerr := s.listRemoved(ctx, account); rerr != nil || !removed {
+		// back by whoever writes the table. It goes on this pass; a pass
+		// that cannot tell fails, and the next one tries again.
+		removed, rerr := s.listRemoved(ctx, account)
+		if rerr != nil {
+			return rerr
+		}
+		if !removed {
 			return err
 		}
 		if err := s.cfg.Entries.DeleteEntry(ctx, partitionAccounts, account); err != nil && !errors.Is(err, store.ErrNotFound) {
