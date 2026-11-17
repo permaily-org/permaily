@@ -90,6 +90,13 @@ func TestH35AReceiptWithItsIdentityIsStoredOnce(t *testing.T) {
 	if err := keyless.Write(context.Background(), "acc_bbbbbbbbbbbbbbbbbbbbbbbbbb", r); err == nil {
 		t.Fatal("written without its key")
 	}
+	if err := New(w.mem, shortKeys{}, w.clock.now, nil).Write(context.Background(), "acc_bbbbbbbbbbbbbbbbbbbbbbbbbb", r); err == nil {
+		t.Fatal("written under a key no cipher takes")
+	}
+	unwritable := &Receipt{ID: id, At: at, Consent: &Consent{EndsAt: time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)}}
+	if err := s.Write(context.Background(), "acc_bbbbbbbbbbbbbbbbbbbbbbbbbb", unwritable); err == nil {
+		t.Fatal("a document that cannot be written was written")
+	}
 	w.mem.Interrupt = func(_ context.Context, step store.Step, _, _ string) error {
 		if step == store.StepEntry {
 			return errBoom
