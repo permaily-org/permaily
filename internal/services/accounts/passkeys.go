@@ -415,7 +415,10 @@ func (s *Service) NewRecoveryCodes(ctx context.Context, who *Authenticated) (*co
 // recoveryTry reports whether a recovery code may be tried for address now,
 // and counts the try when the code is wrong. Only addresses of accounts that
 // have recovery codes are counted, so nobody fills the memory with addresses.
-func (s *Service) recoveryTry(address string, right bool) bool {
+// A code this enclave took out of the record in the last hour is refused and
+// not counted: it was right, and is the same code again or the use that lost
+// to the one that took it (Recover).
+func (s *Service) recoveryTry(address string, hash []byte, right bool) bool {
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -424,10 +427,24 @@ func (s *Service) recoveryTry(address string, right bool) bool {
 	if len(list) >= domain.RecoveryTriesPerHour || (len(list) == 0 && len(s.recoveries) >= maxRecoveryCounts) {
 		return false
 	}
-	if !right {
+	if !right && len(recent(s.taken[string(hash)], now, time.Hour)) == 0 {
 		s.recoveries[address] = append(list, now)
 	}
 	return true
+}
+
+// recoveryTaken remembers that the code of hash is being taken out of its
+// account's record. It is called before the record is written, so a use that
+// reads the record once the code is gone finds it here. A code that then
+// stays (the write fails) is right, and right codes never ask. When the
+// memory is full the code is not remembered: used again, it counts.
+func (s *Service) recoveryTaken(hash []byte) {
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.taken[string(hash)]; ok || len(s.taken) < maxRecoveryCounts {
+		s.taken[string(hash)] = []time.Time{now}
+	}
 }
 
 // Recover signs in with a recovery code and the account's address, and takes
@@ -455,11 +472,13 @@ func (s *Service) Recover(ctx context.Context, in contracts.Recovery, from Brows
 	}
 	hash := recoveryHash(doc.ID, code)
 	right := doc.recoveryCode(hash) >= 0
-	if !doc.PasskeyOnly || !s.recoveryTry(address, right) || !right {
+	if !doc.PasskeyOnly || !s.recoveryTry(address, hash, right) || !right {
 		return nil, "", contracts.ErrInvalidCode
 	}
 	// Of two uses of one code at the same time, here or in two enclaves, the
-	// second finds it gone. A closing account takes the code too: its person
+	// second finds it gone: here, or in its lookup if it read the record after
+	// the first wrote it, and then it is not counted as a wrong code
+	// (recoveryTaken). A closing account takes the code too: its person
 	// signs in to cancel. A blocked one takes none: the code was right, so
 	// its person is told, and the code stays for when the account is unblocked.
 	doc, err = s.rewrite(ctx, doc.ID, func(doc *accountDoc) error {
@@ -470,6 +489,7 @@ func (s *Service) Recover(ctx context.Context, in contracts.Recovery, from Brows
 		if doc.blocked() {
 			return contracts.ErrAccountBlocked
 		}
+		s.recoveryTaken(hash)
 		doc.RecoveryCodes = slices.Delete(doc.RecoveryCodes, i, i+1)
 		return nil
 	})

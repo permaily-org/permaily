@@ -176,10 +176,13 @@ type Service struct {
 	marks map[string]*mark
 	// starts and wrong count, per address or invitation, the sign-ins started
 	// in the last hour and the wrong codes of the last day; recoveries, per
-	// address, the wrong recovery codes of the last hour.
+	// address, the wrong recovery codes of the last hour; taken, by the hash
+	// of the code, the recovery codes this enclave took out of a record in
+	// the last hour, so that one used again is not counted as a wrong one.
 	starts     map[string][]time.Time
 	wrong      map[string][]time.Time
 	recoveries map[string][]time.Time
+	taken      map[string][]time.Time
 	swept      time.Time
 	// since is when this enclave started: it counts what the operator does
 	// through it from then, and ends no sign-in made before (pending.go).
@@ -279,6 +282,7 @@ func New(cfg Config) (*Service, error) {
 		starts:     map[string][]time.Time{},
 		wrong:      map[string][]time.Time{},
 		recoveries: map[string][]time.Time{},
+		taken:      map[string][]time.Time{},
 		sending:    make(chan struct{}, maxSending),
 	}, nil
 }
@@ -917,7 +921,7 @@ func (s *Service) sweep(now time.Time) {
 	for _, counted := range []struct {
 		m      map[string][]time.Time
 		window time.Duration
-	}{{s.starts, time.Hour}, {s.wrong, 24 * time.Hour}, {s.recoveries, time.Hour}} {
+	}{{s.starts, time.Hour}, {s.wrong, 24 * time.Hour}, {s.recoveries, time.Hour}, {s.taken, time.Hour}} {
 		for k, list := range counted.m {
 			if list = recent(list, now, counted.window); len(list) == 0 {
 				delete(counted.m, k)

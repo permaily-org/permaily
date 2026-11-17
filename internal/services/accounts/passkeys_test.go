@@ -802,15 +802,21 @@ func TestRecovery(t *testing.T) {
 	if list, _ := w.svc.Passkeys(ctx, who); list.RecoveryCodesLeft != domain.RecoveryCodes-1 || !list.PasskeyOnly {
 		t.Fatalf("after one recovery: %+v", list)
 	}
+	// The same code again is refused as a wrong one is, and is not counted as
+	// one: it was right, and a person whose browser sent it twice is not
+	// nearer to being refused.
 	if _, _, err := w.recover("ana@example.org", codes[0]); !errors.Is(err, contracts.ErrInvalidCode) {
 		t.Fatalf("the same code again: %v", err)
+	}
+	if got := len(w.svc.recoveries["ana@example.org"]); got != 2 {
+		t.Fatalf("the same code again counted: %d wrong codes", got)
 	}
 	// The one recovered can make a passkey and stay in.
 	w.addPasskey(w.who(recovered), webauthntest.New(webauthntest.ES256), "new")
 
-	// Five wrong codes in an hour (three so far), and the right one is
+	// Five wrong codes in an hour (two so far), and the right one is
 	// refused too, for that address alone.
-	for range 2 {
+	for range 3 {
 		_, _, _ = w.recover("ana@example.org", wrongCode)
 	}
 	if _, _, err := w.recover("ana@example.org", codes[1]); !errors.Is(err, contracts.ErrInvalidCode) {
@@ -836,6 +842,9 @@ func TestRecovery(t *testing.T) {
 	w.svc.mu.Unlock()
 	if len(w.svc.recoveries) != 0 {
 		t.Fatalf("wrong codes kept after their hour: %v", w.svc.recoveries)
+	}
+	if len(w.svc.taken) != 0 {
+		t.Fatalf("codes taken kept after their hour: %d", len(w.svc.taken))
 	}
 	for i := range maxRecoveryCounts {
 		w.svc.recoveries[fmt.Sprint(i)] = []time.Time{w.now}
@@ -876,6 +885,48 @@ func TestRecovery(t *testing.T) {
 		if strings.Contains(logs, secret) {
 			t.Fatalf("the logs hold %q:\n%s", secret, logs)
 		}
+	}
+}
+
+// What one enclave remembers of the codes it took is bounded and lasts an
+// hour: past either, a code used again counts as a wrong one, as any code
+// that is not in the record does.
+func TestRecoveryCodeUsedAgainLater(t *testing.T) {
+	w := newWorld(t)
+	_, cookie := w.signUp("ana@example.org")
+	who := w.who(cookie)
+	w.addPasskey(who, webauthntest.New(webauthntest.ES256), "key")
+	codes := w.passkeyOnly(who)
+	counted := func() int { return len(w.svc.recoveries["ana@example.org"]) }
+
+	if _, _, err := w.recover("ana@example.org", codes[0]); err != nil {
+		t.Fatal(err)
+	}
+	w.now = w.now.Add(59 * time.Minute)
+	if _, _, err := w.recover("ana@example.org", codes[0]); !errors.Is(err, contracts.ErrInvalidCode) || counted() != 0 {
+		t.Fatalf("the same code within the hour: %v, %d counted", err, counted())
+	}
+	w.now = w.now.Add(2 * time.Minute)
+	if _, _, err := w.recover("ana@example.org", codes[0]); !errors.Is(err, contracts.ErrInvalidCode) || counted() != 1 {
+		t.Fatalf("the same code after the hour: %v, %d counted", err, counted())
+	}
+
+	// Full, the memory takes no other code; one it holds is kept.
+	for i := range maxRecoveryCounts {
+		w.svc.taken[fmt.Sprint(i)] = []time.Time{w.now}
+	}
+	if _, _, err := w.recover("ana@example.org", codes[1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.recover("ana@example.org", codes[1]); !errors.Is(err, contracts.ErrInvalidCode) || counted() != 2 {
+		t.Fatalf("the same code with the memory full: %v, %d counted", err, counted())
+	}
+	if len(w.svc.taken) != maxRecoveryCounts {
+		t.Fatalf("codes taken: %d", len(w.svc.taken))
+	}
+	w.svc.recoveryTaken([]byte("0"))
+	if got := w.svc.taken["0"]; len(got) != 1 || !got[0].Equal(w.now) {
+		t.Fatalf("a code held again: %v", got)
 	}
 }
 
