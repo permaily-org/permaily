@@ -11,6 +11,7 @@ import (
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/envelope"
 	"github.com/permaily-org/permaily/internal/query"
+	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
 )
 
@@ -99,7 +100,7 @@ func New(cfg Config) (*Service, error) {
 		stand: map[string]cachedStanding{}, epochs: map[string]uint64{}, scopes: map[string][]*query.Canonical{},
 		used: map[string]time.Time{}, refused: map[string]int64{}, leases: map[string]map[*lease]struct{}{},
 		limits:   newLimits(),
-		refusals: refusalLanes{by: map[string]*refusalLane{}, lanesMax: RefusalLanesMax, bytesMax: RefusalBytesMax, waitMax: refusalWaitMax},
+		refusals: refusalLanes{by: map[string]*refusalLane{}, lanesMax: RefusalLanesMax, bytesMax: RefusalBytesMax, waitMax: refusalWaitMax, size: receipts.Size},
 	}
 	ctx := context.Background()
 	for _, k := range []struct {

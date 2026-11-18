@@ -138,6 +138,44 @@ type refusalLanes struct {
 	// waitMax is how long a request waits for its lane's writer:
 	// refusalWaitMax, smaller in tests.
 	waitMax time.Duration
+	// size measures a receipt for the budget (receipts.Size, which
+	// serializes it), never with mu held: every refusal of the enclave takes
+	// mu. Set before the first request; tests check it is called outside mu.
+	size func(*receipts.Receipt) (int, error)
+}
+
+// sized is a refusal's receipt measured once, outside ws.mu, and then
+// reused: nothing Size counts in it changes until it is written (its ID
+// and At, set just before, Size counts at their largest).
+type sized struct {
+	n    int
+	err  error
+	done bool
+}
+
+// measure measures rc unless it was. ws.mu is not held.
+func (z *sized) measure(ws *refusalLanes, rc *receipts.Receipt) {
+	if !z.done {
+		z.n, z.err = ws.size(rc)
+		z.done = true
+	}
+}
+
+// laneHead is a lane's attribution, made and measured outside ws.mu for a
+// lane that may be needed.
+type laneHead struct {
+	rc   receipts.Receipt
+	size int
+	err  error
+}
+
+// laneHead is the attribution of a lane of r's connection: a summary's
+// receipt without the request's own fields. ws.mu is not held.
+func (s *Service) laneHead(r *reading) *laneHead {
+	h := s.receipt(r, receipts.KindRefusals)
+	h.Device, h.Formulas, h.Rules = "", nil, nil
+	n, err := s.refusals.size(h)
+	return &laneHead{rc: *h, size: n, err: err}
 }
 
 // admission is the attributed work under way: Stop closes it and waits for
@@ -273,25 +311,22 @@ func (l *refusalLane) stored(window time.Time) {
 	}
 }
 
-// lane is conn's lane, made for r when there is none and the budget has
-// room; nil when it has none. ws.mu is held.
-func (s *Service) lane(r *reading, now time.Time) *refusalLane {
+// lane is conn's lane, made for r with head (laneHead) when there is none
+// and the budget has room; nil when it has none. ws.mu is held.
+func (s *Service) lane(r *reading, now time.Time, head *laneHead) *refusalLane {
 	ws := &s.refusals
 	if l := ws.by[r.g.Connection]; l != nil {
 		return l
 	}
-	head := s.receipt(r, receipts.KindRefusals)
-	head.Device, head.Formulas, head.Rules = "", nil, nil
-	n, err := receipts.Size(head)
-	if err != nil {
+	if head.err != nil {
 		return nil
 	}
 	// The lane's own attribution, and its two summaries at their largest.
-	size := 3*n + 2*refusalCountsMax
+	size := 3*head.size + 2*refusalCountsMax
 	if len(ws.by) >= ws.lanesMax || ws.bytes+size > ws.bytesMax {
 		return nil
 	}
-	l := &refusalLane{account: r.g.Account, head: *head, size: size, start: now.Truncate(RefusalWindow)}
+	l := &refusalLane{account: r.g.Account, head: head.rc, size: size, start: now.Truncate(RefusalWindow)}
 	ws.by[r.g.Connection] = l
 	ws.bytes += size
 	return l
@@ -355,6 +390,10 @@ func (l *refusalLane) release() {
 // receipts left; the others are counted at once. It waits at most waitMax
 // in all, then is counted: its context no longer bounds it (refuseWith),
 // so the service does.
+//
+// What it measures (its lane's attribution when it has no lane, its
+// receipt when it waits or writes) it measures with ws.mu let go, once, and
+// then looks at its lane again.
 func (s *Service) refuseCounted(ctx context.Context, r *reading, rc *receipts.Receipt, err error) error {
 	ws := &s.refusals
 	key := refusalKey{r.op, refusedReason(rc)}
@@ -370,6 +409,8 @@ func (s *Service) refuseCounted(ctx context.Context, r *reading, rc *receipts.Re
 		on           *refusalLane // the lane it waited on
 		held         int          // what it holds of the budget while it waits
 		deadline     <-chan time.Time
+		head         *laneHead // measured when it found no lane
+		own          sized     // rc, measured when it waits or writes
 	)
 	for {
 		now := s.now()
@@ -379,7 +420,12 @@ func (s *Service) refuseCounted(ctx context.Context, r *reading, rc *receipts.Re
 			ws.bytes -= held
 			on = nil
 		}
-		l := s.lane(r, now)
+		if head == nil && ws.by[r.g.Connection] == nil {
+			ws.mu.Unlock()
+			head = s.laneHead(r)
+			continue
+		}
+		l := s.lane(r, now, head)
 		if l == nil {
 			ws.mu.Unlock()
 			s.count("receipt_failed")
@@ -395,10 +441,14 @@ func (s *Service) refuseCounted(ctx context.Context, r *reading, rc *receipts.Re
 			// for it: counted.
 			defer ws.mu.Unlock()
 			return count(l)
+		case l.busy != nil && !own.done:
+			ws.mu.Unlock()
+			own.measure(ws, rc)
+			continue
 		case l.busy != nil:
 			// Another request or the pass is writing the lane: this one's
 			// receipt comes after what it writes.
-			n, serr := receipts.Size(rc)
+			n, serr := own.n, own.err
 			if serr != nil {
 				defer ws.mu.Unlock()
 				return count(l)
@@ -432,7 +482,7 @@ func (s *Service) refuseCounted(ctx context.Context, r *reading, rc *receipts.Re
 		}
 		l.busy = make(chan struct{})
 		ws.mu.Unlock()
-		return s.refuseOwn(ctx, r.g.Connection, l, rc, err, count, queued)
+		return s.refuseOwn(ctx, r.g.Connection, l, rc, &own, err, count, queued)
 	}
 }
 
@@ -440,8 +490,9 @@ func (s *Service) refuseCounted(ctx context.Context, r *reading, rc *receipts.Re
 // stored and the window still has room, the refusal's own receipt under
 // its identity. The caller is writing l. A refusal that waited (queued)
 // was attributed before it waited: its account's standing is read now
-// first, and it writes nothing unless the account is still there.
-func (s *Service) refuseOwn(ctx context.Context, conn string, l *refusalLane, rc *receipts.Receipt, err error, count func(*refusalLane) error, queued bool) error {
+// first, and it writes nothing unless the account is still there. rc is
+// measured into own before ws.mu is taken, unless it was while it waited.
+func (s *Service) refuseOwn(ctx context.Context, conn string, l *refusalLane, rc *receipts.Receipt, own *sized, err error, count func(*refusalLane) error, queued bool) error {
 	ws := &s.refusals
 	empty := true
 	if queued {
@@ -449,6 +500,9 @@ func (s *Service) refuseOwn(ctx context.Context, conn string, l *refusalLane, rc
 	}
 	if empty {
 		empty = s.writeLane(ctx, conn, l, false, queued)
+	}
+	if empty {
+		own.measure(ws, rc)
 	}
 	now := s.now()
 	ws.mu.Lock()
@@ -463,8 +517,8 @@ func (s *Service) refuseOwn(ctx context.Context, conn string, l *refusalLane, rc
 	// A window that closed meanwhile left a summary to write first: this
 	// refusal is counted, after it.
 	if empty && len(l.queue) == 0 && l.reserved < RefusalsPerWindow {
-		if n, serr := receipts.Size(rc); serr == nil && ws.bytes+n <= ws.bytesMax {
-			size = n
+		if own.err == nil && ws.bytes+own.n <= ws.bytesMax {
+			size = own.n
 		}
 	}
 	if size == 0 {
@@ -479,15 +533,15 @@ func (s *Service) refuseOwn(ctx context.Context, conn string, l *refusalLane, rc
 		return count(l)
 	}
 	rc.ID, rc.At = id, now
-	own := &refusalWrite{rc: *rc, tried: true, single: true, window: l.start, size: size}
+	w := &refusalWrite{rc: *rc, tried: true, single: true, window: l.start, size: size}
 	l.reserved++
-	l.queue = append(l.queue, own)
+	l.queue = append(l.queue, w)
 	ws.bytes += size
 	ws.mu.Unlock()
-	werr := s.writeReceipt(ctx, l.account, &own.rc, time.Time{})
+	werr := s.writeReceipt(ctx, l.account, &w.rc, time.Time{})
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
-	s.settle(l, own, werr)
+	s.settle(l, w, werr)
 	l.release()
 	if werr != nil {
 		s.count("receipt_failed")
