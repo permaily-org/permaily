@@ -28,20 +28,24 @@ func imageConnections(t *testing.T) *attestation.ConnectionsStatus {
 	return &c
 }
 
+// goldenNow is a verifier's clock five minutes after the image's own
+// section was read (testdata/connections-status.json).
+var goldenNow = time.Date(2026, 11, 16, 12, 5, 0, 0, time.UTC)
+
 // V56 (ADR 0030, "What /status and permaily-verify show"): permaily-verify
-// passes the image's own section, with the warning that receipts are not
-// chained yet, and fails on each case the design names: registration,
+// passes the image's own section, with no warning (step 5's warning that
+// receipts are not chained is gone, ADR 0037), and fails on each case the design names: registration,
 // clients that are not their documents, an endpoint or a resource off the
 // deployment's hosts, a revocation slower than five seconds or bounding
 // less than every byte, assertions or codes not refused strictly, mail
 // while the model cannot be asked, decisions that are not strict, and the
 // default rule absent, off or not the one the release's commit compiles.
 func TestV56PermailyVerifyChecksTheConnections(t *testing.T) {
-	r, err := checkConnections(imageConnections(t), "permaily.com")
+	r, err := checkConnections(imageConnections(t), "permaily.com", goldenNow)
 	if err != nil {
 		t.Fatalf("the image's own: %v", err)
 	}
-	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "not chained") {
+	if len(r.Warnings) != 0 {
 		t.Fatalf("warnings: %q", r.Warnings)
 	}
 	def := rules.Default()
@@ -84,22 +88,94 @@ func TestV56PermailyVerifyChecksTheConnections(t *testing.T) {
 	} {
 		st := imageConnections(t)
 		c.change(st)
-		if _, err := checkConnections(st, "permaily.com"); err == nil || !strings.Contains(err.Error(), c.says) {
+		if _, err := checkConnections(st, "permaily.com", goldenNow); err == nil || !strings.Contains(err.Error(), c.says) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	// permaily.com's section is not another deployment's.
-	if _, err := checkConnections(imageConnections(t), "staging.permaily.com"); err == nil {
+	if _, err := checkConnections(imageConnections(t), "staging.permaily.com", goldenNow); err == nil {
 		t.Fatal("permaily.com's endpoints passed for another domain")
 	}
-	if _, err := checkConnections(imageConnections(t), ""); err == nil {
+	if _, err := checkConnections(imageConnections(t), "", goldenNow); err == nil {
 		t.Fatal("no domain")
 	}
-	// Chained receipts: no warning.
+}
+
+// L19 (ADR 0037, "What /status and permaily-verify show"): permaily-verify
+// applies ReceiptsStatus.Check to the image's receipts with its own clock.
+// It fails on receipts not sealed, not chained or not strict; on the
+// record of incidents absent, old, from the future or holding an entry;
+// on no pass of the audit (an image with no audit, or whose answering
+// enclave started a minute ago and has not read one), one older than 48
+// hours or from the future; and on anything broken, by the audit or the
+// enclave that answered, a kind missing or one it does not know. It prints
+// the counts and warns, without failing, on receipts recovered, unlinked
+// and links expired.
+func TestL19PermailyVerifyChecksTheReceipts(t *testing.T) {
+	for name, c := range map[string]struct {
+		change func(*attestation.ReceiptsStatus)
+		says   string
+	}{
+		"not sealed":          {func(r *attestation.ReceiptsStatus) { r.Sealed = false }, "not sealed"},
+		"not chained":         {func(r *attestation.ReceiptsStatus) { r.Chained = false }, "not chained"},
+		"not strict":          {func(r *attestation.ReceiptsStatus) { r.Chain = "" }, "not chained"},
+		"no record read":      {func(r *attestation.ReceiptsStatus) { r.Incidents = nil }, "could not be read"},
+		"a record read stale": {func(r *attestation.ReceiptsStatus) { r.Incidents.Read = goldenNow.Add(-31 * time.Minute) }, "not read in the"},
+		"a record from later": {func(r *attestation.ReceiptsStatus) { r.Incidents.Read = goldenNow.Add(time.Minute) }, "not read in the"},
+		"an incident":         {func(r *attestation.ReceiptsStatus) { r.Incidents.Recorded = 1 }, "holds 1 entries"},
+		"no pass":             {func(r *attestation.ReceiptsStatus) { r.Audit = nil }, "no pass"},
+		"finished before it began": {func(r *attestation.ReceiptsStatus) {
+			r.Audit.Finished = r.Audit.Began.Add(-time.Second)
+		}, "before it began"},
+		"an old pass": {func(r *attestation.ReceiptsStatus) {
+			r.Audit.Began, r.Audit.Finished = goldenNow.Add(-50*time.Hour), goldenNow.Add(-49*time.Hour)
+		}, "more than 48h0m0s old"},
+		"a pass from later":   {func(r *attestation.ReceiptsStatus) { r.Audit.Finished = goldenNow.Add(time.Minute) }, "after now"},
+		"the audit found":     {func(r *attestation.ReceiptsStatus) { r.Audit.Broken["receipt_missing"] = 1 }, "the audit found"},
+		"the enclave found":   {func(r *attestation.ReceiptsStatus) { r.Broken["link_lost"] = 2 }, "link_lost 2"},
+		"an unknown kind":     {func(r *attestation.ReceiptsStatus) { r.Broken["receipt_moved"] = 0 }, "does not know"},
+		"a kind missing":      {func(r *attestation.ReceiptsStatus) { delete(r.Audit.Broken, "link_forked") }, "does not count link_forked"},
+		"a negative count":    {func(r *attestation.ReceiptsStatus) { r.Audit.Unlinked = -1 }, "below zero"},
+		"the enclave's empty": {func(r *attestation.ReceiptsStatus) { r.Broken = nil }, "does not count"},
+	} {
+		st := imageConnections(t)
+		c.change(&st.Receipts)
+		if _, err := checkConnections(st, "permaily.com", goldenNow); err == nil || !strings.Contains(err.Error(), c.says) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// The image's own, read 31 minutes ago by the verifier's clock.
+	if _, err := checkConnections(imageConnections(t), "permaily.com", goldenNow.Add(26*time.Minute)); err == nil {
+		t.Fatal("a record of incidents read 31 minutes ago passed")
+	}
+	// Recovered, unlinked and expired are warnings, printed with the counts.
 	st := imageConnections(t)
-	st.Receipts.Chained = true
-	if r, err := checkConnections(st, "permaily.com"); err != nil || len(r.Warnings) != 0 {
+	st.Receipts.Audit.Chains, st.Receipts.Audit.Catalogue = 4, 3
+	st.Receipts.Audit.Recovered, st.Receipts.Audit.Unlinked, st.Receipts.Audit.Expired = 2, 1, 5
+	r, err := checkConnections(st, "permaily.com", goldenNow)
+	if err != nil || len(r.Warnings) != 3 {
 		t.Fatalf("%+v %v", r, err)
+	}
+	var out bytes.Buffer
+	printConnections(&out, r)
+	for _, want := range []string{
+		"receipts sealed true, chained true (strict)",
+		"record of incidents: 0 entries, read 2026-11-16T12:00:00Z",
+		"audit of receipts' chains: finished 2026-11-16T12:00:00Z (began 2026-11-16T12:00:00Z), catalogue 3, chains 4, removed 0; broken none; recovered 2, unlinked 1, expired 5",
+		"found by the enclave that answered and not recorded yet: none",
+		"warning: the audit linked 2 receipts late", "warning: 1 receipts without a link", "warning: 5 links' commits",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("no %q in\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "not chained") {
+		t.Fatalf("step 5's warning is still printed:\n%s", out.String())
+	}
+	// Counts above zero are printed by kind (as a status that failed would
+	// have them; printed only for what passed, here by hand).
+	if got := brokenCounts(map[string]int64{"link_lost": 1, "receipt_missing": 2}); got != "receipt_missing 2, link_lost 1" {
+		t.Fatalf("%q", got)
 	}
 }
 
@@ -117,7 +193,7 @@ func TestCheckStatusConnections(t *testing.T) {
 			}
 			var out bytes.Buffer
 			printHuman(&out, "test", map[uint][]byte{0: {1}, 1: {2}, 2: {3}}, []hostResult{r})
-			for _, want := range []string{"connections: issuer https://api.permaily.com", "rule default-sign-in-and-security v1 on", "warning: receipts of what left are sealed but not chained", "counted by this enclave since 2026-11-16T12:00:00Z: none"} {
+			for _, want := range []string{"connections: issuer https://api.permaily.com", "rule default-sign-in-and-security v1 on", "receipts sealed true, chained true (strict)", "record of incidents: 0 entries", "counted by this enclave since 2026-11-16T12:00:00Z: none"} {
 				if !strings.Contains(out.String(), want) {
 					t.Errorf("%s: no %q in\n%s", url, want, out.String())
 				}

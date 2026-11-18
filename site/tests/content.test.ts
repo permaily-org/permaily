@@ -99,6 +99,47 @@ describe('home page', () => {
   });
 });
 
+describe('the receipts page', () => {
+  const go = (path: string) => readFileSync(join(import.meta.dirname, '../..', path), 'utf8');
+  const text = () =>
+    (all.length ? load(join(dist, 'docs/receipts/index.html')) : parse('')).text.replace(
+      /\s+/g,
+      ' ',
+    );
+
+  it('says receipts are chained, and how a person checks theirs, as the code does it', () => {
+    // ADR 0037: the chain (pull requests 1 and 2), the person's routes and the offline check (pull request 3).
+    expect(go('cmd/permaily-enclave/main.go')).toMatch(/httpapi\.ReceiptsAPI\(/);
+    expect(go('internal/httpapi/receipts.go')).toContain('mux.HandleFunc("GET "+path+"/export"');
+    const verify = go('cmd/permaily-verify/receipts.go');
+    expect(verify).toMatch(/fs\.StringVar\(&o\.file, "receipts",/);
+    expect(verify).toMatch(/fs\.Var\(o\.heads, "receipts-head",/);
+    const page = text();
+    expect(page).not.toMatch(
+      /chaining receipts by hash|Until receipts are chained|an export are not built/,
+    );
+    // The command is in a code block, whose markup the parser keeps as text: read it in the page's source.
+    expect(go('site/src/content/docs/docs/receipts.md')).toContain(
+      'permaily-verify -receipts receipts.jsonl -receipts-head 1234:<sha256>',
+    );
+    expect(page).toContain('-receipts-head');
+    expect(page).toContain('GET /api/v1/receipts/export');
+    expect(page).toContain(
+      'The Activity screen, which shows them and downloads the export, is not built yet',
+    );
+    // A break the file reports fails the check, as the verifier does it (the review of pull request 3, F1).
+    expect(verify).toMatch(
+      /r\.Intact = r\.Consistent && len\(r\.Broken\) == 0 && len\(r\.Breaks\) == 0/,
+    );
+    expect(verify).toMatch(/r\.OK = r\.Intact/);
+    expect(page).toContain('It passes only a file that holds together and reports no break.');
+    expect(page).toContain(
+      'the check cannot tell whether the storage broke it or someone edited the file',
+    );
+    expect(page).not.toMatch(/not as a fault of the file/);
+  });
+});
+
 describe('legal pages', () => {
   const page = (path: string) => (all.length ? load(join(dist, path, 'index.html')) : parse(''));
 
@@ -439,6 +480,30 @@ describe('legal pages', () => {
       expect(text('privacy')).toContain(
         'up to one further hour of stale use after a fetch failure',
       );
+    });
+
+    it('integrity records locked ten years from their write, as the image locks them', () => {
+      // The review of pull request 174, F2: S3Commits.Append locks each commit for Retention from the moment it writes
+      // it, the image's Retention is deploy/enclave.json's anchor_retention_days, and removing an account neither ends
+      // nor extends a lock. The catalogue's and the record of incidents' entries are sealed entries of the database,
+      // not locked themselves: their commits are.
+      expect(JSON.parse(go('deploy/enclave.json')).anchor_retention_days).toBe(3650);
+      expect(go('cmd/permaily-enclave/platform_enclave.go')).toMatch(
+        /Retention: time\.Duration\(retentionDays\) \* 24 \* time\.Hour/,
+      );
+      expect(go('internal/store/s3commits.go')).toMatch(
+        /c\.LockedUntil = s\.now\(\)\.Add\(s\.Retention\)/,
+      );
+      for (const path of ['privacy', 'data-deletion']) {
+        expect(text(path), path).toContain('locked for ten years from when it is written');
+        expect(text(path), path).toContain(
+          'Removing your account neither ends nor extends those locks',
+        );
+        expect(text(path), path).toContain('are not locked themselves');
+        expect(text(path), path).not.toMatch(
+          /ten years after your account is removed|locked for ten years as well/,
+        );
+      }
     });
 
     it('pending sign-ins as stored, not as memory only', () => {

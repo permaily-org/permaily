@@ -239,8 +239,9 @@ func run(args []string, stdout, stderr io.Writer, nsmRoot *x509.Certificate) int
 		canary   = fs.String("canary", "", "internal/decide/canary.json of the commit the enclave runs, from your checkout (default: read from GitHub at that commit)")
 	)
 	prov := provenanceFlags(fs)
+	rec := receiptsFlags(fs)
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "usage: permaily-verify (-pcrs FILE | -release TAG) [flags] [https://host ...]\n       permaily-verify -provenance BUNDLE -pcrs FILE [-release-... flags]\n       permaily-verify -trust-update DIR\n")
+		fmt.Fprintf(fs.Output(), "usage: permaily-verify (-pcrs FILE | -release TAG) [flags] [https://host ...]\n       permaily-verify -provenance BUNDLE -pcrs FILE [-release-... flags]\n       permaily-verify -trust-update DIR\n       permaily-verify -receipts FILE [-receipts-head N:SHA256 ...]\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -250,6 +251,16 @@ func run(args []string, stdout, stderr io.Writer, nsmRoot *x509.Certificate) int
 		return 2
 	}
 
+	if rec.file != "" || len(rec.heads) > 0 {
+		if rec.file == "" {
+			fmt.Fprintln(stderr, "error: -receipts-head needs -receipts FILE")
+			return 2
+		}
+		if !checkReceipts(stdout, rec, *asJSON) {
+			return 1
+		}
+		return 0
+	}
 	if prov.bundle != "" {
 		if !checkProvenance(stdout, prov, *pcrsFile, *asJSON) {
 			return 1
@@ -421,7 +432,7 @@ func checkStatus(st *attestation.Status, r hostResult, pcr0 string, kms kmsOptio
 	if st.Connections != nil {
 		// What connections may get is checked whatever is skipped, as the
 		// model's is.
-		if r.Connections, err = checkConnections(st.Connections, deploymentOf(r.URL)); err != nil {
+		if r.Connections, err = checkConnections(st.Connections, deploymentOf(r.URL), kms.now); err != nil {
 			r.Connections = nil
 			r.Error = "connections: " + err.Error()
 			return r

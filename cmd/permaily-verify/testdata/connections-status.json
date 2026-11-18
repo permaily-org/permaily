@@ -40,7 +40,45 @@
   ],
   "receipts": {
     "sealed": true,
-    "chained": false,
+    "chained": true,
+    "chain": "strict",
+    "incidents": { "recorded": 0, "read": "2026-11-16T12:00:00Z" },
+    "broken": {
+      "catalogue_forked": 0,
+      "catalogue_lost": 0,
+      "catalogue_prev": 0,
+      "catalogue_unreadable": 0,
+      "link_forked": 0,
+      "link_lost": 0,
+      "link_prev": 0,
+      "link_unreadable": 0,
+      "receipt_changed": 0,
+      "receipt_missing": 0,
+      "receipt_unreadable": 0
+    },
+    "audit": {
+      "began": "2026-11-16T12:00:00Z",
+      "finished": "2026-11-16T12:00:00Z",
+      "catalogue": 0,
+      "chains": 0,
+      "removed": 0,
+      "broken": {
+        "catalogue_forked": 0,
+        "catalogue_lost": 0,
+        "catalogue_prev": 0,
+        "catalogue_unreadable": 0,
+        "link_forked": 0,
+        "link_lost": 0,
+        "link_prev": 0,
+        "link_unreadable": 0,
+        "receipt_changed": 0,
+        "receipt_missing": 0,
+        "receipt_unreadable": 0
+      },
+      "recovered": 0,
+      "unlinked": 0,
+      "expired": 0
+    },
     "decisions": "strict",
     "decisions_per_day": 28800
   },

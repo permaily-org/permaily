@@ -37,6 +37,9 @@ type lockedBucket struct {
 	failGet    error
 	failPut    error
 	lists      int
+	// listed, when set, is called after each listing, with the bucket's
+	// lock not held: what lands while a listing goes on.
+	listed func()
 }
 
 type bucketVersion struct {
@@ -77,7 +80,17 @@ func (b *lockedBucket) ListObjectVersions(_ context.Context, in *s3.ListObjectVe
 	}
 	slices.SortStableFunc(all, func(x, y bucketVersion) int { return strings.Compare(x.key, y.key) })
 	start := 0
-	if in.KeyMarker != nil {
+	switch {
+	case in.KeyMarker != nil && in.VersionIdMarker == nil:
+		// The keys after the marker, as S3 lists them.
+		start = len(all)
+		for i, v := range all {
+			if v.key > aws.ToString(in.KeyMarker) {
+				start = i
+				break
+			}
+		}
+	case in.KeyMarker != nil:
 		for i, v := range all {
 			if v.key == aws.ToString(in.KeyMarker) && v.id == aws.ToString(in.VersionIdMarker) {
 				start = i + 1
@@ -99,6 +112,9 @@ func (b *lockedBucket) ListObjectVersions(_ context.Context, in *s3.ListObjectVe
 		if i == start+size-1 && i < len(all)-1 {
 			out.IsTruncated, out.NextKeyMarker, out.NextVersionIdMarker = aws.Bool(true), aws.String(v.key), aws.String(v.id)
 		}
+	}
+	if b.listed != nil {
+		defer b.listed()
 	}
 	return out, nil
 }

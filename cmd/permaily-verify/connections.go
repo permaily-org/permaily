@@ -51,8 +51,14 @@ func deploymentOf(raw string) string {
 // assertion's replay or a code's reuse is not refused by a strict record,
 // when anything leaves while the model cannot be asked, when the rules'
 // decisions are not strict, and when the default rule is absent, off or
-// another; it warns while receipts are not chained (until step 8).
-func checkConnections(c *attestation.ConnectionsStatus, domain string) (*connectionsResult, error) {
+// another. It fails as well on what ReceiptsStatus.Check requires at now,
+// the verifier's clock (ADR 0037, "What /status and permaily-verify
+// show"): receipts sealed and chained by strict links, the record of
+// incidents read in the last 30 minutes and empty, a pass of the audit
+// finished in the last 48 hours, and nothing broken by any kind; and it
+// warns on receipts the audit linked late, receipts without a link it can
+// no longer recover, and links whose commits' lock ended.
+func checkConnections(c *attestation.ConnectionsStatus, domain string, now time.Time) (*connectionsResult, error) {
 	switch {
 	case c.DynamicRegistration:
 		return nil, errors.New("clients may register themselves (dynamic_registration): a client would be whatever it says it is")
@@ -77,12 +83,20 @@ func checkConnections(c *attestation.ConnectionsStatus, domain string) (*connect
 	if err := checkDefaultRule(c.Rules); err != nil {
 		return nil, err
 	}
-	r := &connectionsResult{ConnectionsStatus: c}
-	if !c.Receipts.Chained {
-		r.Warnings = append(r.Warnings, "receipts of what left are sealed but not chained yet (step 8): whoever writes the storage can delete one unseen")
+	if err := c.Receipts.Check(now); err != nil {
+		return nil, err
 	}
-	if !c.Receipts.Sealed {
-		r.Warnings = append(r.Warnings, "receipts of what left are not sealed")
+	r := &connectionsResult{ConnectionsStatus: c}
+	if a := c.Receipts.Audit; a != nil {
+		if a.Recovered > 0 {
+			r.Warnings = append(r.Warnings, fmt.Sprintf("the audit linked %d receipts late that it found without a link (a write that failed after its receipt was stored, or an earlier release still writing): nothing says whether their answers left", a.Recovered))
+		}
+		if a.Unlinked > 0 {
+			r.Warnings = append(r.Warnings, fmt.Sprintf("%d receipts without a link are older than the audit recovers: they can be deleted unseen", a.Unlinked))
+		}
+		if a.Expired > 0 {
+			r.Warnings = append(r.Warnings, fmt.Sprintf("%d links' commits are past their lock and gone: their bytes are still checked, a fork there no longer shows", a.Expired))
+		}
 	}
 	return r, nil
 }
@@ -164,7 +178,7 @@ func printConnections(w io.Writer, c *connectionsResult) {
 		}
 		fmt.Fprintf(w, "      rule %s v%d %s, formulas %s (the release's own)\n", r.ID, r.Version, state, strings.Join(r.Formulas, ", "))
 	}
-	fmt.Fprintf(w, "      receipts sealed %t, chained %t; decisions %s, at least %d a mailbox's day\n", c.Receipts.Sealed, c.Receipts.Chained, c.Receipts.Decisions, c.Receipts.DecisionsPerDay)
+	printReceipts(w, &c.Receipts)
 	reasons := make([]string, 0, len(c.Refused))
 	for reason := range c.Refused {
 		reasons = append(reasons, reason)
@@ -183,4 +197,34 @@ func printConnections(w io.Writer, c *connectionsResult) {
 	for _, warning := range c.Warnings {
 		fmt.Fprintf(w, "      warning: %s\n", warning)
 	}
+}
+
+// printReceipts prints how receipts are kept: chained, the record of
+// incidents, the newest pass of the audit and its counts, and what the
+// enclave that answered found and has not recorded yet; never an account.
+func printReceipts(w io.Writer, rs *attestation.ReceiptsStatus) {
+	fmt.Fprintf(w, "      receipts sealed %t, chained %t (%s); decisions %s, at least %d a mailbox's day\n", rs.Sealed, rs.Chained, rs.Chain, rs.Decisions, rs.DecisionsPerDay)
+	if rs.Incidents != nil {
+		fmt.Fprintf(w, "      record of incidents: %d entries, read %s\n", rs.Incidents.Recorded, rs.Incidents.Read.UTC().Format(time.RFC3339))
+	}
+	if a := rs.Audit; a != nil {
+		fmt.Fprintf(w, "      audit of receipts' chains: finished %s (began %s), catalogue %d, chains %d, removed %d; broken %s; recovered %d, unlinked %d, expired %d\n",
+			a.Finished.UTC().Format(time.RFC3339), a.Began.UTC().Format(time.RFC3339), a.Catalogue, a.Chains, a.Removed, brokenCounts(a.Broken), a.Recovered, a.Unlinked, a.Expired)
+	}
+	fmt.Fprintf(w, "      found by the enclave that answered and not recorded yet: %s\n", brokenCounts(rs.Broken))
+}
+
+// brokenCounts is counts by kind, in attestation.ReceiptsBrokenKinds'
+// order, those above zero; "none" when none is.
+func brokenCounts(counts map[string]int64) string {
+	var out []string
+	for _, k := range attestation.ReceiptsBrokenKinds {
+		if n := counts[k]; n != 0 {
+			out = append(out, fmt.Sprintf("%s %d", k, n))
+		}
+	}
+	if len(out) == 0 {
+		return "none"
+	}
+	return strings.Join(out, ", ")
 }
