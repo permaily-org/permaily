@@ -2,9 +2,11 @@ package receipts
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,14 +21,28 @@ import (
 
 // noticed is one enclave's chained service over the world's storage that
 // queues incidents' notices in q.
-func (w *chainWorld) noticed(q notices.Queue) *Service {
+func (w *chainWorld) noticed(q notices.Queue, opts ...ChainedOption) *Service {
 	w.t.Helper()
-	s, err := NewChained(w.mem, testKeys{secret: "root"}, w.clock.now, w.anchored(), w.accounts, WithNotices(q))
+	s, err := NewChained(w.mem, testKeys{secret: "root"}, w.clock.now, w.anchored(), w.accounts, append([]ChainedOption{WithNotices(q)}, opts...)...)
 	if err != nil {
 		w.t.Fatal(err)
 	}
 	s.random = w.random.read
+	w.noticing = append(w.noticing, s)
 	return s
+}
+
+// settle waits for what the services noticed made queue in the background.
+func (w *chainWorld) settle() {
+	for _, s := range w.noticing {
+		s.chain.notices.running.Wait()
+	}
+}
+
+// queued is what q was given once the services noticed made settle.
+func (w *chainWorld) queued(q *noticestest.Fake) []notices.Notice {
+	w.settle()
+	return q.Queued()
 }
 
 // fake is the fake queue on the world's clock.
@@ -65,9 +81,9 @@ func TestE34AWalkQueuesTheAccountsNotice(t *testing.T) {
 	if w.incidents(s) != 1 {
 		t.Fatalf("%d incidents", w.incidents(s))
 	}
-	sameNotices(t, q.Queued(), incidentOf(account, start))
+	sameNotices(t, w.queued(q), incidentOf(account, start))
 	// What the queue was given is a notice of its kind, as Check wants.
-	if err := q.Queued()[0].Check(); err != nil {
+	if err := w.queued(q)[0].Check(); err != nil {
 		t.Fatal(err)
 	}
 	// Found again by the same enclave: recorded once, nothing more queued.
@@ -77,8 +93,8 @@ func TestE34AWalkQueuesTheAccountsNotice(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(q.Queued()) != 1 {
-		t.Fatalf("queued %+v", q.Queued())
+	if len(w.queued(q)) != 1 {
+		t.Fatalf("queued %+v", w.queued(q))
 	}
 }
 
@@ -100,7 +116,7 @@ func TestE34AnExportQueuesTheAccountsNotice(t *testing.T) {
 		}
 		before = page.Next
 	}
-	sameNotices(t, q.Queued(), incidentOf(account, start))
+	sameNotices(t, w.queued(q), incidentOf(account, start))
 }
 
 func TestE34AnAppendQueuesTheAccountsNotice(t *testing.T) {
@@ -113,7 +129,7 @@ func TestE34AnAppendQueuesTheAccountsNotice(t *testing.T) {
 	if w.incidents(s) != 1 {
 		t.Fatalf("%d incidents", w.incidents(s))
 	}
-	sameNotices(t, q.Queued(), incidentOf(account, start))
+	sameNotices(t, w.queued(q), incidentOf(account, start))
 }
 
 // The audit's findings name two accounts and the catalogue: each account is
@@ -142,7 +158,7 @@ func TestE34TheAuditQueuesEachAccountsNotice(t *testing.T) {
 	}
 	want := []notices.Notice{incidentOf(account, day(1)), incidentOf(third, day(1))}
 	slices.SortFunc(want, func(x, y notices.Notice) int { return strings.Compare(x.Account, y.Account) })
-	sameNotices(t, q.Queued(), want...)
+	sameNotices(t, w.queued(q), want...)
 	for _, f := range w.findings() {
 		if f.Kind == "catalogue_lost" && f.Account != "" {
 			t.Fatalf("%+v", f)
@@ -159,14 +175,16 @@ func TestE34OnceADayPerAccount(t *testing.T) {
 	q := w.fake()
 	w.deleteReceipt(account, ids[0])
 	walkAll(t, w.noticed(q), account, 100)
+	w.settle()
 	later := time.Date(start.Year(), start.Month(), start.Day(), 23, 59, 0, 0, time.UTC)
 	w.clock.set(later)
 	w.deleteReceipt(account, ids[1])
 	walkAll(t, w.noticed(q), account, 100)
+	w.settle()
 	if w.incidents(s) != 2 {
 		t.Fatalf("%d incidents", w.incidents(s))
 	}
-	sameNotices(t, q.Queued(), incidentOf(account, start))
+	sameNotices(t, w.queued(q), incidentOf(account, start))
 	next := later.Add(2 * time.Minute)
 	w.clock.set(next)
 	w.deleteReceipt(account, ids[2])
@@ -174,7 +192,7 @@ func TestE34OnceADayPerAccount(t *testing.T) {
 	if w.incidents(s) != 3 {
 		t.Fatalf("%d incidents", w.incidents(s))
 	}
-	sameNotices(t, q.Queued(), incidentOf(account, start), incidentOf(account, next))
+	sameNotices(t, w.queued(q), incidentOf(account, start), incidentOf(account, next))
 }
 
 // failingCommits refuses the commits fail names, and calls after, when
@@ -237,8 +255,8 @@ func TestE34AnEntryThatFailsToCommitQueuesNothing(t *testing.T) {
 			if _, err := n.Walk(ctx, account, Position{}, 100); err == nil {
 				t.Fatal("a walk whose incident was not recorded passed")
 			}
-			if got := w.incidents(s); got != 0 || len(q.Queued()) != 0 {
-				t.Fatalf("%d incidents, queued %+v", got, q.Queued())
+			if got := w.incidents(s); got != 0 || len(w.queued(q)) != 0 {
+				t.Fatalf("%d incidents, queued %+v", got, w.queued(q))
 			}
 			refusing.Lock()
 			refuse = false
@@ -247,7 +265,7 @@ func TestE34AnEntryThatFailsToCommitQueuesNothing(t *testing.T) {
 			if got := w.incidents(s); got != 1 {
 				t.Fatalf("%d incidents", got)
 			}
-			sameNotices(t, q.Queued(), incidentOf(account, start))
+			sameNotices(t, w.queued(q), incidentOf(account, start))
 		})
 	}
 }
@@ -286,9 +304,9 @@ func (r *recordingQueue) Enqueue(ctx context.Context, n notices.Notice) error {
 }
 
 // A queue that fails, or holds its caller, fails nothing of the record nor
-// of what found it: the walk answers, the incident is recorded, and the
-// queue is called outside the record's lock, with EnqueueMax and not the
-// caller's context.
+// of what found it and holds none of it: the walk answers at once, the
+// incident is recorded, and the queue is called in the background, outside
+// the record's lock, with EnqueueMax and not the caller's context.
 func TestE34AQueueThatFailsFailsNothing(t *testing.T) {
 	for _, how := range []string{"refused", "invalid", "held"} {
 		t.Run(how, func(t *testing.T) {
@@ -305,7 +323,7 @@ func TestE34AQueueThatFailsFailsNothing(t *testing.T) {
 			case "held":
 				r.block = true
 			}
-			n := w.noticed(r)
+			n := w.noticed(r, WithLog(slog.New(slog.DiscardHandler)))
 			r.s = n
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -314,7 +332,11 @@ func TestE34AQueueThatFailsFailsNothing(t *testing.T) {
 			if err != nil || len(page.Links) == 0 {
 				t.Fatalf("%+v %v", page, err)
 			}
-			if how == "held" && time.Since(began) < notices.EnqueueMax/2 {
+			if took := time.Since(began); took >= notices.EnqueueMax/4 {
+				t.Fatalf("the walk waited %v for the queue", took)
+			}
+			w.settle()
+			if how == "held" && r.deadline[0] < notices.EnqueueMax/2 {
 				t.Fatal("the queue was not given its time")
 			}
 			if w.incidents(s) != 1 || n.Broken()["receipt_missing"] != 0 {
@@ -343,6 +365,7 @@ func TestE34AQueueThatFailsFailsNothing(t *testing.T) {
 	n := w.noticed(r)
 	r.s = n
 	_, _ = n.Walk(ctx, account, Position{}, 100)
+	w.settle()
 	if w.incidents(s) != 1 || len(r.notices) != 1 || r.ctxErr[0] != nil {
 		t.Fatalf("%d incidents, queued %+v with %v", w.incidents(s), r.notices, r.ctxErr)
 	}
@@ -355,7 +378,136 @@ func TestE34WithoutNotices(t *testing.T) {
 	ids := w.writes(s, account, 3)
 	w.deleteReceipt(account, ids[1])
 	walkAll(t, w.enclave(), account, 100)
-	if w.incidents(s) != 1 || s.chain.notices != nil {
+	if w.incidents(s) != 1 || s.chain.notices.q != nil || s.NoticesDropped() != 0 {
 		t.Fatal("an incident without a queue")
 	}
+	if New(w.mem, testKeys{secret: "root"}, w.clock.now, nil).NoticesDropped() != 0 {
+		t.Fatal("a service without a chain dropped notices")
+	}
+}
+
+// gatedQueue holds every call until open is closed, and counts them.
+type gatedQueue struct {
+	open  chan struct{}
+	calls atomic.Int32
+}
+
+func (g *gatedQueue) Enqueue(ctx context.Context, _ notices.Notice) error {
+	g.calls.Add(1)
+	select {
+	case <-g.open:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// With noticesInFlightMax calls of the queue busy, an entry's notices are
+// dropped at once, counted and logged by their kind, and the record goes on;
+// a committed entry that names no account (the catalogue's) queues nothing.
+func TestReview196aBusyCallsDropTheNotice(t *testing.T) {
+	ctx := context.Background()
+	w := newChainWorld(t)
+	g := &gatedQueue{open: make(chan struct{})}
+	var lines syncBuffer
+	n := w.noticed(g, WithLog(slog.New(slog.NewTextHandler(&lines, nil))))
+	entry := func(accounts ...string) []incidentAt { return []incidentAt{{at: start, accounts: accounts}} }
+	for range noticesInFlightMax {
+		n.noticeIncidents(ctx, entry(account))
+	}
+	n.noticeIncidents(ctx, entry())
+	began := time.Now()
+	n.noticeIncidents(ctx, entry(account, other))
+	if took := time.Since(began); took >= notices.EnqueueMax/4 {
+		t.Fatalf("a drop waited %v", took)
+	}
+	close(g.open)
+	w.settle()
+	if n.NoticesDropped() != 2 || g.calls.Load() != noticesInFlightMax {
+		t.Fatalf("dropped %d, called %d", n.NoticesDropped(), g.calls.Load())
+	}
+	got := lines.String()
+	if strings.Count(got, "\n") != 1 || !strings.Contains(got, "kind=receipts_incident") || strings.Contains(got, account) || strings.Contains(got, other) {
+		t.Fatalf("logged %q", got)
+	}
+}
+
+// The review of #196, finding 1: a queue held until its time ran out held
+// the append that found the incident, under its link's lock, past the
+// append's own deadline, so the link was not written. The queue is told in
+// the background: the link commits at once, whatever the queue does.
+func TestReview196aAHeldQueueDoesNotHoldTheAppend(t *testing.T) {
+	w := newChainWorld(t)
+	s := w.enclave()
+	w.writes(s, account, 3)
+	w.deleteLink(account, 3)
+	r := &recordingQueue{block: true}
+	n := w.noticed(r)
+	r.s = n
+	ctx, cancel := context.WithTimeout(context.Background(), notices.EnqueueMax/2)
+	defer cancel()
+	began := time.Now()
+	if _, err := n.chain.appender(n, account).link(ctx, []Ref{{ID: IDPrefix + strings.Repeat("a", IDLength-len(IDPrefix)), Digest: Digest{1}}}); err != nil {
+		t.Fatalf("the append failed: %v", err)
+	}
+	if took := time.Since(began); took >= notices.EnqueueMax/4 {
+		t.Fatalf("the append waited %v for the queue", took)
+	}
+	if w.incidents(s) != 1 {
+		t.Fatalf("%d incidents", w.incidents(s))
+	}
+	w.settle()
+	if len(r.notices) != 1 || r.ctxErr[0] != nil || r.deadline[0] <= 0 {
+		t.Fatalf("queued %+v, context %v, deadline %v", r.notices, r.ctxErr, r.deadline)
+	}
+}
+
+// The review of #196, finding 2: a notice the queue refused was dropped in
+// silence. It is logged by its kind alone, nothing of the account, the
+// queue's error or the incident, and the walk that found it goes on.
+func TestReview196bANoticeNotQueuedIsLoggedByItsKind(t *testing.T) {
+	for _, how := range []string{"refused", "held"} {
+		t.Run(how, func(t *testing.T) {
+			w := newChainWorld(t)
+			s := w.enclave()
+			ids := w.writes(s, account, 3)
+			w.deleteReceipt(account, ids[1])
+			r := &recordingQueue{err: errBoom, block: how == "held"}
+			var lines syncBuffer
+			n := w.noticed(r, WithLog(slog.New(slog.NewTextHandler(&lines, nil))))
+			r.s = n
+			walkAll(t, n, account, 100)
+			w.settle()
+			if w.incidents(s) != 1 || len(r.notices) != 1 {
+				t.Fatalf("%d incidents, queued %+v", w.incidents(s), r.notices)
+			}
+			got := lines.String()
+			if strings.Count(got, "\n") != 1 || !strings.Contains(got, "kind=receipts_incident") {
+				t.Fatalf("logged %q", got)
+			}
+			for _, secret := range []string{account, errBoom.Error(), "deadline", r.notices[0].Key, "receipt_missing", ids[1]} {
+				if strings.Contains(got, secret) {
+					t.Fatalf("logged %q, which names %q", got, secret)
+				}
+			}
+		})
+	}
+}
+
+// syncBuffer is a buffer written from the background.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
