@@ -1,0 +1,29 @@
+{
+  "name": "receipts-incident",
+  "to": "ada@example.com",
+  "subject": "Some of your receipts were deleted or changed",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "Permaily found that some of the receipts that record what left your mailboxes were deleted or changed in its storage."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "Open Activity at app.permaily.com to see which. Your receipts after them are still recorded, and Permaily's public check now fails until this is looked into."
+    },
+    {
+      "kind": "note",
+      "text": "To ask about it, write to support@permaily.com."
+    }
+  ]
+}

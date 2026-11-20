@@ -1,0 +1,29 @@
+{
+  "name": "connection-ending-unverified",
+  "to": "ada@example.com",
+  "subject": "One of your connections ends in a week",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "One of your connections ends in a week. After that, the app below can no longer read your mail."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "App",
+          "value": "An app Permaily hasn't verified"
+        },
+        {
+          "label": "Ends",
+          "value": "19 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "To keep it, sign in at app.permaily.com, open Connections and renew it. To let it end, do nothing."
+    }
+  ]
+}

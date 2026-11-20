@@ -263,4 +263,3 @@ func (s *Service) noticeSignedOut(ctx context.Context, by *acting, doc *accountD
 		s.cfg.Log.Warn("accounts: a notice could not be queued", "kind", string(notices.KindDevicesSignedOut))
 	}
 }
-

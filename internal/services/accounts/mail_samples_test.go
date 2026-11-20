@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/permaily-org/permaily/internal/domain/mail"
 	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
+	"github.com/permaily-org/permaily/internal/services/notices"
 )
 
 // update writes the golden files of the messages and the fixtures of the
@@ -90,6 +92,68 @@ func sampleMails() []sampleMail {
 			sampleMail{"provider-linked-" + string(p), providerMail(sampleTo, sampleApp, sampleAt, p, true)},
 			sampleMail{"provider-unlinked-" + string(p), providerMail(sampleTo, sampleApp, sampleAt, p, false)})
 	}
+	return append(list, connectionSamples()...)
+}
+
+// connectionSamples are the notices about connections and the record of what
+// left (ADR 0041, "Templates and previews"), in every variant: a vendor
+// verified and not, a connection new and replacing the client's, through the
+// API and MCP, each set of parts, and the operator and an admin.
+func connectionSamples() []sampleMail {
+	var list []sampleMail
+	add := func(name string, n notices.Notice) {
+		m, err := connectionNoticeMail(sampleTo, sampleApp, n)
+		if err != nil {
+			panic(name + ": " + err.Error())
+		}
+		list = append(list, sampleMail{name, m})
+	}
+	vendors := []struct{ name, domain string }{{"verified", "claude.ai"}, {"unverified", "permaily-security.example"}}
+	for _, v := range vendors {
+		for _, replaced := range []bool{false, true} {
+			for _, r := range []contracts.Resource{contracts.ResourceAPI, contracts.ResourceMCP} {
+				n := sampleNotice(notices.KindConnectionApproved, v.domain)
+				n.Facts.Replaced, n.Facts.Resource = replaced, r
+				how := "new"
+				if replaced {
+					how = "replaced"
+				}
+				add("connection-approved-"+v.name+"-"+how+"-"+string(r), n)
+			}
+		}
+	}
+	// Every set of parts a connection reads: the sender always, and any of
+	// the other three.
+	others := []contracts.Part{contracts.PartSubject, contracts.PartBody, contracts.PartAttachments}
+	for set := range 1 << len(others) {
+		parts := []contracts.Part{contracts.PartSender}
+		for i, p := range others {
+			if set&(1<<i) != 0 {
+				parts = append(parts, p)
+			}
+		}
+		if len(parts) == 4 {
+			continue // the variants above read every part
+		}
+		n := sampleNotice(notices.KindConnectionApproved, "claude.ai")
+		n.Facts.Parts = parts
+		name := "connection-approved-reads"
+		for _, p := range parts {
+			name += "-" + string(p)
+		}
+		add(name, n)
+	}
+	for _, kind := range []notices.Kind{notices.KindDeviceAdded, notices.KindConnectionRenewed, notices.KindConnectionEnding, notices.KindDeviceEndedReuse} {
+		for _, v := range vendors {
+			add(strings.ReplaceAll(string(kind), "_", "-")+"-"+v.name, sampleNotice(kind, v.domain))
+		}
+	}
+	add("receipts-incident", sampleNotice(notices.KindReceiptsIncident, ""))
+	for _, by := range []string{notices.ByOperator, notices.ByAdmin} {
+		n := sampleNotice(notices.KindDevicesSignedOut, "")
+		n.Facts.By = by
+		add("devices-signed-out-by-"+by, n)
+	}
 	return list
 }
 
@@ -97,8 +161,8 @@ func sampleMails() []sampleMail {
 // plain text of each, as it is sent, is the golden file's, byte for byte.
 func TestEveryMessageReadsAsItsGoldenText(t *testing.T) {
 	samples := sampleMails()
-	if len(samples) != 39 {
-		t.Fatalf("%d samples, want 39: a message added or removed changes this count and the golden files together", len(samples))
+	if len(samples) != 65 {
+		t.Fatalf("%d samples, want 65: a message added or removed changes this count and the golden files together", len(samples))
 	}
 	names := map[string]bool{}
 	for _, s := range samples {
