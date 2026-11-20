@@ -7,9 +7,11 @@
 package enclave
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -110,3 +112,83 @@ const vendorIdleConns = 16
 
 // errNotHTTP2 refuses a vendor's connection that did not negotiate HTTP/2.
 var errNotHTTP2 = errors.New("enclave: the vendor did not negotiate HTTP/2")
+
+// WebhookConnectBytesMax bounds the vendor egress's answer to a webhook
+// sender's CONNECT.
+const WebhookConnectBytesMax = 1 << 10
+
+// errEgressRefused is a vendor egress that did not open the tunnel.
+var errEgressRefused = errors.New("enclave: the vendor egress did not open the tunnel")
+
+// WebhookEgressDialer returns the dial of webhooks' sender (ADR 0039,
+// "Calling a webhook"; internal/webhook/send): a tunnelled stream to a
+// host's port 443 through the host's vendor egress on vsock port proxyPort
+// (8004), the CONNECT VendorEgressClient's transport sends, and never the
+// allowlisted proxy. The sender frames its own TLS and HTTP/2 over it. The
+// host is a lower-case DNS name (webhook.URL's); the CONNECT carries no
+// credential, and its answer is read a byte at a time, so nothing past it
+// is taken from the tunnel, to at most WebhookConnectBytesMax: the tunnel
+// is refused unless its status is 200. ctx bounds the dial and the CONNECT.
+func WebhookEgressDialer(proxyPort uint32) func(ctx context.Context, host string) (net.Conn, error) {
+	return func(ctx context.Context, host string) (net.Conn, error) {
+		if !dnsName(host) {
+			return nil, errEgressRefused
+		}
+		conn, err := dialHost(ctx, proxyPort)
+		if err != nil {
+			return nil, err
+		}
+		stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Unix(1, 0)) })
+		if d, ok := ctx.Deadline(); ok {
+			_ = conn.SetDeadline(d)
+		}
+		target := net.JoinHostPort(host, "443")
+		_, err = io.WriteString(conn, "CONNECT "+target+" HTTP/1.1\r\nHost: "+target+"\r\n\r\n")
+		if err == nil {
+			err = connected(conn)
+		}
+		if !stop() || err != nil {
+			_ = conn.Close()
+			if err == nil {
+				err = context.Cause(ctx)
+			}
+			return nil, err
+		}
+		_ = conn.SetDeadline(time.Time{})
+		return conn, nil
+	}
+}
+
+// connected reads the answer to a CONNECT, a byte at a time to its blank
+// line and no further: nil when its status is 200.
+func connected(r io.Reader) error {
+	var answer []byte
+	b := make([]byte, 1)
+	for !bytes.HasSuffix(answer, []byte("\r\n\r\n")) {
+		if len(answer) == WebhookConnectBytesMax {
+			return errEgressRefused
+		}
+		if _, err := io.ReadFull(r, b); err != nil {
+			return err
+		}
+		answer = append(answer, b[0])
+	}
+	if !bytes.HasPrefix(answer, []byte("HTTP/1.1 200 ")) && !bytes.HasPrefix(answer, []byte("HTTP/1.0 200 ")) {
+		return errEgressRefused
+	}
+	return nil
+}
+
+// dnsName is a lower-case DNS name of letters, digits, dots and hyphens.
+func dnsName(h string) bool {
+	if h == "" || len(h) > 253 {
+		return false
+	}
+	for i := 0; i < len(h); i++ {
+		c := h[i]
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' && c != '.' {
+			return false
+		}
+	}
+	return true
+}
