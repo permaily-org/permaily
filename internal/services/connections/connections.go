@@ -44,7 +44,9 @@ import (
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/rules"
+	"github.com/permaily-org/permaily/internal/services/accountrules"
 	"github.com/permaily-org/permaily/internal/services/receipts"
+	"github.com/permaily-org/permaily/internal/services/webhooks"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/vendors"
 )
@@ -88,6 +90,19 @@ type Config struct {
 	Rules []rules.Rule
 	// Receipts writes the record of what left, before it leaves.
 	Receipts receipts.Writer
+	// Webhooks is the queue of connections' webhooks (ADR 0039,
+	// services/webhooks): told when a connection with a webhook is made
+	// (Subscribe, which fails the approval when it fails) and when one ends
+	// (Ended). Nil: no request with a webhook is taken.
+	Webhooks webhooks.Queue
+	// WebhookStates, when set, gives the person's page the queue's state
+	// of a connection's webhook.
+	WebhookStates WebhookStates
+	// AccountRules, when set, is the account's rules a connection's
+	// webhook is evaluated under (ADR 0040's accountrules.Source); until
+	// ADR 0040's pull request 5 reads every read's rules through it, the
+	// reads apply Rules (webhook_connections.go, webhookRules).
+	AccountRules accountrules.Source
 	// Now is the clock; Random fills b with random bytes.
 	Now    func() time.Time
 	Random func(b []byte) error

@@ -191,6 +191,7 @@ func (s *Service) Info(ctx context.Context, g *oauth.Grant) (*contracts.VendorCo
 	if s.delivery(ctx, d) != contracts.DeliveryOn {
 		out.Delivery = contracts.DeliveryModelUnavailable
 	}
+	out.Webhook = vendorWebhook(d)
 	return out, nil
 }
 

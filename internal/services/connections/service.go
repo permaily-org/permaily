@@ -59,6 +59,9 @@ type Service struct {
 	// adm the attributed work Stop waits for.
 	refusals refusalLanes
 	adm      admission
+	// hooks are the permits of webhook calls and what else of webhooks
+	// this enclave keeps (webhook_permit.go).
+	hooks hooks
 }
 
 type cachedConn struct {
@@ -106,7 +109,7 @@ func New(cfg Config) (*Service, error) {
 	for _, k := range []struct {
 		key     *[]byte
 		purpose string
-	}{{&s.sealKey, PurposeSeal}, {&s.signKey, PurposeSign}, {&s.cursorKey, PurposeCursor}, {&s.familyKey, purposeFamilies}} {
+	}{{&s.sealKey, PurposeSeal}, {&s.signKey, PurposeSign}, {&s.cursorKey, PurposeCursor}, {&s.familyKey, purposeFamilies}, {&s.hooks.key, PurposeWebhookSeal}} {
 		b, err := cfg.Keys.Derive(ctx, k.purpose)
 		if err != nil {
 			return nil, err

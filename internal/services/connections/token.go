@@ -176,6 +176,12 @@ func (s *Service) Push(ctx context.Context, form url.Values) (string, error) {
 		}
 		return "", err
 	}
+	if _, err := s.parseWebhook(p.Webhook, c.ID); err != nil {
+		// What webhook.ParseRequest refuses is refused here, before any
+		// screen, with nothing of why (ADR 0039, K23).
+		s.count(string(oauth.ErrInvalidRequest))
+		return "", oauthErr(oauth.ErrInvalidRequest)
+	}
 	id, err := oauth.NewSecret(oauth.PrefixPushed, s.cfg.Random)
 	if err != nil {
 		return "", err
