@@ -85,6 +85,10 @@ func pollFor(within time.Duration, cond func() bool) bool {
 // seconds apart.
 const webhookPasses = 16 * time.Second
 
+// webhookWait is how long a test waits for what must happen: longer than
+// webhookPasses, for a slow machine (the race detector).
+const webhookWait = 45 * time.Second
+
 // webhooksEndToEnd is K59 and K59b (ADR 0039, "The image"), the webhooks'
 // half of TestMailEndToEnd, through two enclaves over one store, with the
 // real connections service, the real rules (ADR 0040) and the real queue:
@@ -304,7 +308,7 @@ func webhooksEndToEnd(t *testing.T, w e2eWorld) []string {
 	// its token, and a receipt is written.
 	madeAt := devClock()
 	mail("Trip to Lisbon ibis-41a0", "The train leaves at nine ibis-41a0.")
-	if !pollFor(webhookPasses, func() bool { return len(taken()) == 1 }) {
+	if !pollFor(webhookWait, func() bool { return len(taken()) == 1 }) {
 		t.Fatalf("no notice of new mail: %+v (refused %d)", taken(), rcv.vendor.Load().Refused())
 	}
 	first := taken()[0]
@@ -331,7 +335,7 @@ func webhooksEndToEnd(t *testing.T, w e2eWorld) []string {
 	// The schedule's time comes on Madrid's wall: a scheduled notice whose
 	// since is the connection's minute (nothing scheduled was taken yet).
 	devAhead.Add(int64(run.Sub(devClock()) + 2*time.Second))
-	if !pollFor(webhookPasses, func() bool { return len(taken()) == 2 }) {
+	if !pollFor(webhookWait, func() bool { return len(taken()) == 2 }) {
 		t.Fatalf("no scheduled notice: %+v", taken())
 	}
 	scheduled := taken()[1]
@@ -347,14 +351,15 @@ func webhooksEndToEnd(t *testing.T, w e2eWorld) []string {
 	devAhead.Add(int64(webhook.MinInterval + time.Second))
 	rcv.failing.Store(true)
 	mail("Dinner at Rosa's ibis-41a0", "A table for two at eight ibis-41a0.")
-	if !pollFor(webhookPasses, func() bool { return rcv.failed.Load() >= 1 }) {
+	if !pollFor(webhookWait, func() bool { return rcv.failed.Load() >= 1 }) {
 		t.Fatal("the notice of the dinner was not called")
 	}
 	failedBefore := rcv.failed.Load()
+	mem := w.shared.mem
+	settled(t, mem, connID)
 	// What the queue keeps of the connection now, the pending match under
 	// the rules as they are: put back later, as whoever writes the table
 	// could.
-	mem := w.shared.mem
 	statePartition := webhooksStatePartition(connID)
 	pending, err := mem.GetEntry(ctx, statePartition, connID)
 	if err != nil {
@@ -378,9 +383,12 @@ func webhooksEndToEnd(t *testing.T, w e2eWorld) []string {
 	rcv.failing.Store(false)
 	changedBefore := webhooksSkipped(t, w, "changed")
 	devAhead.Add(int64(time.Minute + accountrules.Fresh + time.Second))
-	if !pollFor(webhookPasses, func() bool { return webhooksSkipped(t, w, "changed") > changedBefore }) {
+	if !pollFor(webhookWait, func() bool { return webhooksSkipped(t, w, "changed") > changedBefore }) {
 		t.Fatalf("the pending match was not discarded: %+v", taken())
 	}
+	// Discarded, its match is evaluated again from where it began, under
+	// the rule: once nothing of the connection is due, it was.
+	settled(t, mem, connID)
 	if len(taken()) != 2 || rcv.failed.Load() != failedBefore || rcv.vendor.Load().Calls() != 2 {
 		t.Fatalf("a match the rule now holds was called: %+v", taken())
 	}
@@ -396,9 +404,10 @@ func webhooksEndToEnd(t *testing.T, w e2eWorld) []string {
 	}
 	changedBefore = webhooksSkipped(t, w, "changed")
 	mail("Dinner again ibis-41a0", "Or on Friday ibis-41a0.")
-	if !pollFor(webhookPasses, func() bool { return webhooksSkipped(t, w, "changed") > changedBefore }) {
+	if !pollFor(webhookWait, func() bool { return webhooksSkipped(t, w, "changed") > changedBefore }) {
 		t.Fatal("the match put back was not discarded")
 	}
+	settled(t, mem, connID)
 	if len(taken()) != 2 || rcv.vendor.Load().Calls() != 2 {
 		t.Fatalf("a match put back from before the rule was called: %+v", taken())
 	}
@@ -412,7 +421,7 @@ func webhooksEndToEnd(t *testing.T, w e2eWorld) []string {
 	devAhead.Add(int64(webhook.MinInterval + accountrules.Fresh + time.Second))
 	teaAt := devClock()
 	mail("Tea on Sunday ibis-41a0", "At five ibis-41a0.")
-	if !pollFor(webhookPasses, func() bool { return len(taken()) == 3 }) {
+	if !pollFor(webhookWait, func() bool { return len(taken()) == 3 }) {
 		t.Fatalf("no notice of the tea: %+v", taken())
 	}
 	if tea := taken()[2]; tea.Type != contracts.NoticeMailMatched || !tea.Since.Equal(teaAt.Truncate(time.Minute)) && !tea.Since.Equal(teaAt.Truncate(time.Minute).Add(time.Minute)) {
@@ -443,6 +452,25 @@ func webhooksEndToEnd(t *testing.T, w e2eWorld) []string {
 		}
 	}
 	return secrets
+}
+
+// settled waits until nothing of the connection is due in the queue up to
+// now (dev mode's clock), twice a second apart: what was due was touched,
+// its mail evaluated, and nothing waits to be.
+func settled(t *testing.T, mem *store.Memory, connection string) {
+	t.Helper()
+	quiet := func() bool {
+		now := devClock().UTC().Truncate(time.Minute)
+		for m := now.Add(-30 * time.Minute); !m.After(now); m = m.Add(time.Minute) {
+			if _, err := mem.GetEntry(context.Background(), webhooks.PartitionDue+m.Format("200601021504"), connection); err == nil {
+				return false
+			}
+		}
+		return true
+	}
+	if !pollFor(webhookWait, func() bool { return quiet() && func() bool { time.Sleep(time.Second); return quiet() }() }) {
+		t.Fatal("the queue did not settle")
+	}
 }
 
 // webhooksStatePartition is the queue's state partition of a connection
