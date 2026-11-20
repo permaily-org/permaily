@@ -105,7 +105,43 @@ type platform struct {
 // account takes to be deleted.
 var devAhead atomic.Int64
 
-func devClock() time.Time { return time.Now().Add(time.Duration(devAhead.Load())) }
+// devStill, while a test holds the clock of dev mode (devHold), is the real
+// instant it stands at: devAhead still moves it, and nothing else does, so
+// what is due comes when the test moves it and never because the test ran
+// slowly (the race detector).
+var devStill struct {
+	sync.Mutex
+	at time.Time
+}
+
+func devClock() time.Time {
+	devStill.Lock()
+	defer devStill.Unlock()
+	at := devStill.at
+	if at.IsZero() {
+		at = time.Now()
+	}
+	return at.Add(time.Duration(devAhead.Load()))
+}
+
+// devHold stops the clock of dev mode where it is; devRelease starts it
+// again from there, so it never goes back.
+func devHold() {
+	devStill.Lock()
+	defer devStill.Unlock()
+	if devStill.at.IsZero() {
+		devStill.at = time.Now()
+	}
+}
+
+func devRelease() {
+	devStill.Lock()
+	defer devStill.Unlock()
+	if !devStill.at.IsZero() {
+		devAhead.Add(int64(time.Until(devStill.at)))
+		devStill.at = time.Time{}
+	}
+}
 
 // devTerms is the version of the terms in force in dev mode, the compiled one
 // until POST /dev/terms?version=<v> changes it: then every account that
