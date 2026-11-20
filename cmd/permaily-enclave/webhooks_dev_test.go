@@ -462,7 +462,10 @@ func webhooksEndToEnd(t *testing.T, w e2eWorld) []string {
 // settled waits until nothing of the connection is due in the queue up to
 // now (dev mode's clock), twice a second apart: what was due was touched,
 // its mail evaluated, and nothing waits to be. The clock is held (devHold):
-// a retry listed in a later minute is not reached while it waits.
+// a retry listed in a later minute is not reached while it waits. Each pass
+// of the queue reads the ten minutes up to now however far behind its sweep
+// is (the earlier parts move the clock days ahead), so what is due there is
+// touched within a pass and the wait ends.
 func settled(t *testing.T, mem *store.Memory, connection string) {
 	t.Helper()
 	quiet := func() bool {

@@ -43,11 +43,16 @@ func (s *Service) pass(ctx context.Context) {
 }
 
 // scanDue reads the due entries of the minute now from its start (so what
-// becomes due is seen at every pass however long the sweep behind it), then
-// goes on with the sweep from where the last pass stopped, at most
-// scanEntriesMax in all, and holds each ready (the scheduler's admission):
-// an entry that does not fit stays where it is; one that does not open
-// (moved, or not written by this service) is deleted.
+// becomes due is seen at every pass however long the sweep behind it) and,
+// while the sweep is more than scanBack behind (the clock moved ahead, or
+// the passes stopped), of each minute back to scanBack before now, which a
+// sweep that is not behind reads at every pass: an entry made due late in a
+// minute that ended before this pass is read now, not once the sweep has
+// walked every minute between. Then it goes on with the sweep from where
+// the last pass stopped, at most scanEntriesMax in all, and holds each
+// ready (the scheduler's admission): an entry that does not fit stays where
+// it is; one that does not open (moved, or not written by this service) is
+// deleted.
 func (s *Service) scanDue(ctx context.Context) {
 	seal, _, err := s.keys(ctx)
 	if err != nil {
@@ -55,22 +60,30 @@ func (s *Service) scanDue(ctx context.Context) {
 		return
 	}
 	now := s.now().Truncate(time.Minute)
-	head, err := s.cfg.Entries.ListEntries(ctx, minuteKey(now), "", "", scanEntriesMax/2)
-	if err != nil {
-		s.fail("scan", err)
-		return
-	}
-	for _, e := range head {
-		s.ready(ctx, seal, e)
-	}
 	s.mu.Lock()
 	c := s.scan
 	s.mu.Unlock()
+	first := now
+	if c.started && c.minute.Before(now.Add(-scanBack)) {
+		first = now.Add(-scanBack)
+	}
+	read := 0
+	for m := now; !m.Before(first) && read < scanEntriesMax/2; m = m.Add(-time.Minute) {
+		head, err := s.cfg.Entries.ListEntries(ctx, minuteKey(m), "", "", scanEntriesMax/2-read)
+		if err != nil {
+			s.fail("scan", err)
+			return
+		}
+		read += len(head)
+		for _, e := range head {
+			s.ready(ctx, seal, e)
+		}
+	}
 	if !c.started {
 		c = scanCursor{started: true, from: now.Add(-scanBack), minute: now.Add(-scanBack)}
 	}
 	wrapped := false
-	for lists, read := 0, len(head); lists < scanListsMax && read < scanEntriesMax; lists++ {
+	for lists := 0; lists < scanListsMax && read < scanEntriesMax; lists++ {
 		if c.minute.After(now) {
 			if wrapped {
 				break

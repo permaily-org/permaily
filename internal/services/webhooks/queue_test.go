@@ -92,6 +92,45 @@ func TestK36AnArrivalIsToldAndALostHintIsFoundByTheRepair(t *testing.T) {
 	}
 }
 
+// An entry made due late in a minute that ends before the next pass is
+// read by that pass however far behind the sweep is (the clock moved two
+// days ahead, as dev mode's does, or the passes stopped): every pass reads
+// the last ten minutes while the sweep is behind them, as a sweep that is
+// not behind does.
+func TestAMinuteJustEndedIsReadWhileTheSweepIsBehind(t *testing.T) {
+	w := newWorld(t)
+	s := w.enclave()
+	c := w.make(s, made{newMail: true})
+	w.run(s)
+	w.clock.add(48*time.Hour + 50*time.Second)
+	w.run(s)
+	m := w.deliver(s, c, 0, true)
+	webhooks.Hints(ctx, s)
+	w.clock.add(15 * time.Second)
+	webhooks.Drain(ctx, s)
+	if ns := w.sender.notices(t); len(ns) != 1 || !ns[0].Since.Equal(m.Received.Truncate(time.Minute)) {
+		t.Fatalf("the minute just ended was not read: %+v, due %v", ns, w.dueEntries(10*time.Minute, 0))
+	}
+	// Ten minutes back at most: one older is the sweep's, which goes on
+	// from where it stopped and reaches it.
+	w.clock.add(48*time.Hour + 50*time.Second)
+	w.run(s)
+	w.clock.add(time.Minute)
+	m = w.deliver(s, c, 1, true)
+	webhooks.Hints(ctx, s)
+	w.clock.add(11 * time.Minute)
+	webhooks.Drain(ctx, s)
+	if len(w.sender.all()) != 1 {
+		t.Fatal("an entry older than ten minutes was read before the sweep reached it")
+	}
+	for range 4 * 24 * 60 / 128 {
+		webhooks.Drain(ctx, s)
+	}
+	if ns := w.sender.notices(t); len(ns) != 2 || !ns[1].Since.Equal(m.Received.Truncate(time.Minute)) {
+		t.Fatalf("the sweep did not reach an older entry: %+v", ns)
+	}
+}
+
 // K37: coalescing and frozen notices.
 func TestK37CoalescingAndFrozenNotices(t *testing.T) {
 	t.Run("a hundred matches in a minute make one notice, then one a minute", func(t *testing.T) {
