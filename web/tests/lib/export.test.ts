@@ -186,9 +186,17 @@ describe('E15: the rows of the CSV, from the walk', () => {
     expect(rows[5]?.kind).toBe('')
   })
 
+  it('writes a change of rules as one row of what changed, never the rule’s words (receipts version 3)', () => {
+    const rows = rowsOf(walk([linkOf(3, [receiptOf('rules')])]))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.kind).toBe('rules')
+    expect(rows[0]?.outcome).toBe('rules changed')
+    expect(rows[0]?.reason).toBe('criteria scope')
+  })
+
   it('lists a receipt this app can’t read as a row, never dropped and never a failed export', () => {
     const shapes = [
-      receiptOf('search', { v: 3 }),
+      receiptOf('search', { v: 4 }),
       receiptOf('search', { kind: 'rules' }),
       receiptOf('consent', { consent: null }),
       receiptOf('search', { delivered: [{ mailbox: 'mbx_x' }] }),

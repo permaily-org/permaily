@@ -301,6 +301,13 @@ function receiptRows(r: api.Receipt, verified: string | undefined): Cells[] {
           )
         : [of({ outcome: 'refused', count: '0' })]
     }
+    case 'rules': {
+      // A change of the person's rules (receipts version 3, ADR 0040): what changed, never the rule's words.
+      const change = r.rules_change as api.ReceiptRulesChange
+      return [
+        of({ outcome: 'rules changed', reason: change.changes.join(' '), rule: change.rule ?? '' }),
+      ]
+    }
   }
 }
 
