@@ -1,5 +1,6 @@
 {
   "source": "github.com/standard-webhooks/standard-webhooks libraries/javascript (standardwebhooks 1.3.0) at 3d65b1824b6697f05a5a4584e7062bd23512fc8e, run by gen.ts (ADR 0039)",
+  "go_source": "github.com/standard-webhooks/standard-webhooks libraries/go at 3d65b1824b6697f05a5a4584e7062bd23512fc8e, run by v2a-go.gen.go (ADR 0039, K19b)",
   "public_keys": {
     "wk1": "whpk_O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik=",
     "wk2": "whpk_TLWr9q15+/WrvMr8wmnYXNJlHtS4hbWGnyQa7fCluik="
@@ -8,21 +9,25 @@
   "id": "ntc_0123456789abcdefghijklmnop",
   "timestamp": "1795161787",
   "body": "{\"v\":1,\"type\":\"mail.matched\",\"id\":\"ntc_0123456789abcdefghijklmnop\",\"subscription\":\"sub_0123456789abcdefghijklmnop\",\"client_id\":\"https://trip-app.com/oauth/client.json\",\"aud\":\"https://trip-app.com/h\",\"created_at\":\"2026-11-20T08:03:07Z\",\"since\":\"2026-11-20T08:03:00Z\"}",
+  "go_signature": "v2a,GjXKHcWM3dJP0QP40TQAKvhl8+YpUBcA4+F44bE9lkBSnov6tneAGQkXsqlupN2+iM3FmzVExofQGv96yS+LBQ==",
   "cases": [
     {
       "name": "signed by the library",
       "signature": "v2a,GjXKHcWM3dJP0QP40TQAKvhl8+YpUBcA4+F44bE9lkBSnov6tneAGQkXsqlupN2+iM3FmzVExofQGv96yS+LBQ==",
-      "accepts": true
+      "accepts": true,
+      "go_accepts": true
     },
     {
       "name": "both keys during a rotation",
       "signature": "v2a,4miYS9h0X4Wr2cd1kUxmnSaMPsWD7wySrVcDJPiiyvjLdi0nEuMLOK2RYoo6fP6mOcrOIAixuQ0QI8WzGq6OBA== v2a,GjXKHcWM3dJP0QP40TQAKvhl8+YpUBcA4+F44bE9lkBSnov6tneAGQkXsqlupN2+iM3FmzVExofQGv96yS+LBQ==",
-      "accepts": true
+      "accepts": true,
+      "go_accepts": true
     },
     {
       "name": "both keys, verified by the older only",
       "signature": "v2a,4miYS9h0X4Wr2cd1kUxmnSaMPsWD7wySrVcDJPiiyvjLdi0nEuMLOK2RYoo6fP6mOcrOIAixuQ0QI8WzGq6OBA== v2a,GjXKHcWM3dJP0QP40TQAKvhl8+YpUBcA4+F44bE9lkBSnov6tneAGQkXsqlupN2+iM3FmzVExofQGv96yS+LBQ==",
       "accepts": true,
+      "go_accepts": true,
       "keys": [
         "wk2"
       ]
@@ -30,42 +35,50 @@
     {
       "name": "for another subscription",
       "signature": "v2a,xzXm7uDm/T6A03eCfpnM4BXJkH1x1w9x0AcVMXosEwe+CpigzXwRcQK/YfSH7mvjpHOBGyXDFlvOzj3zhxGRAA==",
-      "accepts": false
+      "accepts": false,
+      "go_accepts": false
     },
     {
       "name": "of another body",
       "signature": "v2a,K9twZnugvwNMDuQDBeoIYaNIqpl3XKsf3kreMGZ4seLxdObVmu8NWjrtueHgWQUha/Aub4HsMLrAXYh4KnkzDA==",
-      "accepts": false
+      "accepts": false,
+      "go_accepts": false
     },
     {
       "name": "at another timestamp",
       "signature": "v2a,9JK3aF7EeL7Eq99SN97hv8KluRsQqoYw9MaK84ZdeyEVn0AAPMt66qMBhuCm8C4kdUIBJuCmfm0kH6W4nnYsAQ==",
-      "accepts": false
+      "accepts": false,
+      "go_accepts": false
     },
     {
       "name": "by another key",
       "signature": "v2a,4miYS9h0X4Wr2cd1kUxmnSaMPsWD7wySrVcDJPiiyvjLdi0nEuMLOK2RYoo6fP6mOcrOIAixuQ0QI8WzGq6OBA==",
-      "accepts": false
+      "accepts": false,
+      "go_accepts": false
     },
     {
       "name": "the deprecated v1a",
       "signature": "v1a,5kbBW53mkkmuItINhzTgu0L3ZsKKMNS3RIL/ojDB15+X//Z7tgLmebYbOXBQC1f2HunHi9iCeR9WL+0G0hBgCA==",
-      "accepts": false
+      "accepts": false,
+      "go_accepts": false
     },
     {
       "name": "v1a's content labelled v2a",
       "signature": "v2a,5kbBW53mkkmuItINhzTgu0L3ZsKKMNS3RIL/ojDB15+X//Z7tgLmebYbOXBQC1f2HunHi9iCeR9WL+0G0hBgCA==",
-      "accepts": false
+      "accepts": false,
+      "go_accepts": false
     },
     {
       "name": "an HMAC v1 alone",
       "signature": "v1,oRV6FJ1S6Eh7YIstUH54pfgc6/H0KKnqAsvRUP902K4=",
-      "accepts": false
+      "accepts": false,
+      "go_accepts": false
     },
     {
       "name": "none",
       "signature": "",
-      "accepts": false
+      "accepts": false,
+      "go_accepts": false
     }
   ],
   "spec": {
@@ -75,6 +88,8 @@
     "id": "msg_2KWPBgLlAfxdpx2AI54pPJ85f4W",
     "timestamp": "1674087231",
     "body": "{\"type\":\"contact.created\",\"timestamp\":\"2022-11-03T20:26:10.344522Z\",\"data\":{\"id\":\"1f81eb52-5198-4599-803e-771906343485\"}}",
-    "signature": "v2a,kG9XaxZjAEpKB8KeQQb5G1Xp73YH5Rf5gxoWe7cg1kYMiyspdtZXe9w+dAwKeOurAwxfqmlOG/QR4m9s37DzAg=="
+    "signature": "v2a,kG9XaxZjAEpKB8KeQQb5G1Xp73YH5Rf5gxoWe7cg1kYMiyspdtZXe9w+dAwKeOurAwxfqmlOG/QR4m9s37DzAg==",
+    "go_accepts": true,
+    "go_signature": "v2a,kG9XaxZjAEpKB8KeQQb5G1Xp73YH5Rf5gxoWe7cg1kYMiyspdtZXe9w+dAwKeOurAwxfqmlOG/QR4m9s37DzAg=="
   }
 }
