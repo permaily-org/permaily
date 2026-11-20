@@ -86,8 +86,7 @@ export function RulePreview({
     return ask(
       () => api.previewRuleRemoval(draft, chosen, id, askedModel),
       (shown) => setRemoval({ id, shown }),
-      // The server answers not_found until it can show a message as a removal leaves it (ADR 0040, pull request 5's
-      // disclosure): the page stays, and only this is said.
+      // The server answers not_found for an email no longer in the mailbox: the page stays, and only this is said.
       (code) => (code === 'not_found' ? asLeavingUnavailable : undefined),
     )
   }

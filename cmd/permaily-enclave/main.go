@@ -343,7 +343,19 @@ func handler(cfg config, hosts router.Hosts, p *platform, log *slog.Logger) http
 			if p.model != nil {
 				mc.Asker = p.model
 			}
-			mine = httpapi.MailboxesAPI(mc)
+			// The rules' editor previews a draft as a page of matches is
+			// admitted (ADR 0040, pull request 6): the same matcher, read
+			// budget, search slots and pages a minute.
+			var previews *httpapi.RulePreviews
+			mine, previews = httpapi.MailboxesWithRulePreviews(mc)
+			if p.connections != nil {
+				// The person's own rules (ADR 0040): the list, words, the
+				// changes, the previews and the rules' notice, on the app's
+				// host; words through the model's egress and spend guard.
+				httpapi.MountRules(app, httpapi.RulesConfig{
+					Rules: p.connections.rules, Words: p.model, Standing: p.accounts, Previews: previews, Sessions: p.accounts, Log: log,
+				})
+			}
 			app.Handle("/api/v1/mailboxes", mine)
 			app.Handle("/api/v1/mailboxes/", mine)
 			// A formula's canonical form and sentence, for the owner's own

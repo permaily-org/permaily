@@ -92,11 +92,11 @@ type cachedStanding struct {
 const cacheMax = 10000
 
 // errMissing is what New says of a Config without one of what it needs.
-var errMissing error = &kind{"connections: the service needs its records, entries, keys, vendors, accounts, mailboxes and receipts"}
+var errMissing error = &kind{"connections: the service needs its records, entries, keys, vendors, accounts, mailboxes, the rules' source and receipts"}
 
 // New makes the service. The keys are derived once.
 func New(cfg Config) (*Service, error) {
-	if cfg.Records == nil || cfg.Entries == nil || cfg.Keys == nil || cfg.Vendors == nil || cfg.Accounts == nil || cfg.Mailboxes == nil || cfg.Receipts == nil {
+	if cfg.Records == nil || cfg.Entries == nil || cfg.Keys == nil || cfg.Vendors == nil || cfg.Accounts == nil || cfg.Mailboxes == nil || cfg.Source == nil || cfg.Receipts == nil {
 		return nil, errMissing
 	}
 	if cfg.Now == nil {

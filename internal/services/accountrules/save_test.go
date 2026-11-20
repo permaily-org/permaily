@@ -162,10 +162,10 @@ func TestU7TheListShowsEachRuleInTheSystemsWords(t *testing.T) {
 		t.Fatal("listed with no mailboxes read")
 	}
 	topics := removing(&contracts.RuleRemoval{Topics: []string{"A Home Address"}})
-	if got := does(topics.Effect, &contracts.RuleRemoval{Topics: []string{"a home address"}}); got != "Takes out every sentence that mentions “a home address” (a model decides), and the sender and attachments, which it does not read" {
+	if got := Does(topics.Effect, &contracts.RuleRemoval{Topics: []string{"a home address"}}); got != "Takes out every sentence that mentions “a home address” (a model decides), and the sender and attachments, which it does not read" {
 		t.Fatalf("does: %q", got)
 	}
-	if got, _ := forWhom(contracts.RuleScope{To: contracts.ScopeOnly, Clients: []string{claude}}); got != "Only the connections of claude.ai/oauth/claude-code-client-metadata" {
+	if got, _ := ForWhom(contracts.RuleScope{To: contracts.ScopeOnly, Clients: []string{claude}}); got != "Only the connections of claude.ai/oauth/claude-code-client-metadata" {
 		t.Fatalf("for: %q", got)
 	}
 	for _, k := range contracts.ShapeKinds {
@@ -280,3 +280,35 @@ func TestU7TheServiceNeedsItsParts(t *testing.T) {
 type keysFailing struct{ err error }
 
 func (k keysFailing) Derive(context.Context, string) ([]byte, error) { return nil, k.err }
+
+// U25's seam (ADR 0040, pull request 8): a rule as the consent screen lists
+// it, from the rules a connection applies: the default holds for every
+// connection; a person's rule says what it does and who for as its check
+// does, its clients each by contracts.ClientShown; a removal by topic names
+// its topics; a rule without its scope is for every connection.
+func TestU25ARuleAsTheConsentScreenListsIt(t *testing.T) {
+	def := Summary(rules.Default())
+	if def.ID != rules.DefaultID || def.Does != "Holds the email back" || def.For != "Every connection, those made later included" || len(def.Clients) != 0 || len(def.Sentence) == 0 {
+		t.Fatalf("the default: %+v", def)
+	}
+	stored := rules.Stored{ID: "rul_x", Version: 3, Draft: contracts.RuleDraft{
+		Name: "x", Effect: contracts.EffectRemove, On: true,
+		Scope:    contracts.RuleScope{To: contracts.ScopeAllExcept, Clients: []string{claude}},
+		Removal:  &contracts.RuleRemoval{Parts: []contracts.Part{contracts.PartSubject}, Topics: []string{"a home address"}},
+		Criteria: []contracts.Formula{{V: 1, All: []contracts.Group{{Any: []contracts.Condition{{Var: contracts.VarSubject, Op: contracts.OpContains, Value: "x"}}}}}},
+	}}
+	r, err := rules.Compile(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := Summary(r)
+	wantFor, wantClients := ForWhom(stored.Draft.Scope)
+	if got.ID != "rul_x" || got.Version != 3 || got.Does != Does(contracts.EffectRemove, stored.Draft.Removal) || got.For != wantFor ||
+		len(got.Clients) != 1 || got.Clients[0] != wantClients[0] || !strings.Contains(got.Does, "“a home address”") {
+		t.Fatalf("a removal: %+v", got)
+	}
+	r.Scope = nil
+	if got := Summary(r); got.For != "Every connection, those made later included" || len(got.Clients) != 0 {
+		t.Fatalf("no scope: %+v", got)
+	}
+}

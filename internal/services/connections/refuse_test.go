@@ -11,6 +11,8 @@ import (
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/jws"
 	"github.com/permaily-org/permaily/internal/oauth"
+	"github.com/permaily-org/permaily/internal/services/accountrules"
+	"github.com/permaily-org/permaily/internal/services/accountrules/accountrulestest"
 	"github.com/permaily-org/permaily/internal/services/receipts"
 )
 
@@ -27,7 +29,10 @@ import (
 // message identifier only when it is one of the connection's mailboxes.
 func TestV32RefuseBoundaryAndExactlyOneReceipt(t *testing.T) {
 	w := newWorld(t)
-	s := w.enclave()
+	// The account's rules as a cached read answers them: within
+	// accountrules.Fresh, whatever the request's context (the service's
+	// own refusal after the hard end comes after them).
+	s := w.ruleEnclave(cachedSource{&accountrulestest.Fake{}})
 	x := w.ask(claudeCode)
 	tok := w.connectAll(s, w.person(accountA), x)
 	g := w.grant(s, x, tok.AccessToken)
@@ -146,4 +151,13 @@ func TestSeam0bNarrowerDeviceKeepsConnectionScopes(t *testing.T) {
 	if !slices.Equal(g.StepUp(oauth.ScopeAttachments), []string{oauth.ScopeSender, oauth.ScopeSubject, oauth.ScopeBody, oauth.ScopeAttachments}) {
 		t.Fatal(g.StepUp(oauth.ScopeAttachments))
 	}
+}
+
+// cachedSource is a Source whose reads are served as the rules service's
+// cache serves them within accountrules.Fresh: whether or not the
+// request's context was cancelled.
+type cachedSource struct{ f *accountrulestest.Fake }
+
+func (c cachedSource) Applying(ctx context.Context, account, client string) (accountrules.Applying, error) {
+	return c.f.Applying(context.WithoutCancel(ctx), account, client)
 }

@@ -179,7 +179,8 @@ func scopeOf(s contracts.RuleScope) Scope {
 // normalises one. It checks the shapes of what it reads, not the bounds a
 // change is refused for (the rules service's, ADR 0040's pull request 1).
 func Compile(s Stored) (Rule, error) {
-	r := Rule{ID: s.ID, Version: s.Version}
+	sc := scopeOf(s.Draft.Scope)
+	r := Rule{ID: s.ID, Version: s.Version, Scope: &sc}
 	switch s.Draft.Effect {
 	case contracts.EffectHold:
 		r.Effect = Hold

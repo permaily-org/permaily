@@ -89,6 +89,39 @@ describe('U32: the consent screen lists the rules that will apply', () => {
     expect(rules.queryByText(home.check.does)).toBeNull()
   })
 
+  it('says what each does and who for in the server’s own words, the account’s rules read or not (U25)', async () => {
+    const request = requestOf({
+      rules: [
+        {
+          ...defaultRule,
+          does: 'Holds the email back',
+          for: 'Every connection, those made later included',
+        },
+        {
+          ...summaryOf(onlyA),
+          does: 'Takes out phone numbers, and the sender and attachments, which it does not read',
+          for: 'Only the connections of vendor.example/client-a.json',
+          clients: [{ client_id: a, shown: 'vendor.example/client-a.json' }],
+        },
+      ],
+    })
+    signedInWithMailboxes()
+      .on('GET /api/v1/rules', refused(503, 'other'))
+      .on(startRoute, ok({ request }))
+      .on(previewRoute, ok(previewOf()))
+    await open(`/oauth/authorize?${vendorQuery}`)
+    const rules = within(await screen.findByRole('region', { name: 'Your rules apply first' }))
+    await waitFor(() => expect(server.asked('GET /api/v1/rules')).toHaveLength(1))
+    expect(rules.getByText('Every connection, those made later included')).toBeTruthy()
+    expect(
+      rules.getByText(
+        'Takes out phone numbers, and the sender and attachments, which it does not read',
+      ),
+    ).toBeTruthy()
+    expect(rules.getByText('Only the connections of vendor.example/client-a.json')).toBeTruthy()
+    expect(rules.queryByText('Only vendor.example/client-a.json')).toBeNull()
+  })
+
   it('counts, with the model, what would leave with details your rules take out', async () => {
     const page = (removed?: string[]) => {
       const preview = previewOf([summary(1), summary(2)], { model: 'asked' })

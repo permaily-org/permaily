@@ -95,8 +95,8 @@ export function ruleName(check: RuleCheck): string {
 }
 
 /**
- * What the preview says when the server can't show a message as the removal leaves it: it answers `not_found` until
- * disclosure (ADR 0040, pull request 5) is composed, which is not the email being gone.
+ * What the preview says when the server answers `not_found` for one email as the removal leaves it: the email is no
+ * longer in the mailbox (deleted, or past the mailbox's keeping), or a server before ADR 0040's image could not show it.
  */
 export const asLeavingUnavailable =
-  "Permaily can't show this email as it would leave yet. The list above still shows the mail the rule applies to."
+  "Permaily can't show this email as it would leave: it may no longer be in the mailbox. The list above still shows the mail the rule applies to."

@@ -25,6 +25,7 @@ import (
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/rules"
+	"github.com/permaily-org/permaily/internal/services/accountrules/accountrulestest"
 	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/vendors"
@@ -555,7 +556,7 @@ func (w *world) enclave() *Service {
 func (w *world) config(r Records) Config {
 	return Config{
 		OAuth: oauthConfig, Records: r, Entries: w.mem, Keys: w.keys, Vendors: w.vendors, Accounts: w.accts, Mailboxes: w.mbx,
-		Discloser: w.disc, Model: w.gate, ModelNotice: w.notice, Rules: []rules.Rule{rules.Default()}, Receipts: w.rcpt,
+		Discloser: w.disc, Model: w.gate, ModelNotice: w.notice, Source: &accountrulestest.Fake{}, Receipts: w.rcpt,
 		Now: w.clock.now,
 	}
 }

@@ -540,17 +540,14 @@ func modelDecides(c *query.Canonical) bool {
 }
 
 // ruleSummaries are rs as the consent screen shows them, in the order they
-// apply.
+// apply: each by its sentence, what it does and who for (accountrules.Summary).
 func ruleSummaries(rs []rules.Rule) []contracts.RuleSummary {
 	out := []contracts.RuleSummary{}
 	for _, r := range rs {
-		out = append(out, contracts.RuleSummary{ID: r.ID, Version: r.Version, Sentence: query.RenderRule(r.Formulas, query.Context{Lang: "en"}).Formulas})
+		out = append(out, accountrules.Summary(r))
 	}
 	return out
 }
-
-// ruleRefs are Config.Rules' references.
-func (s *Service) ruleRefs() []rules.Ref { return refsOf(s.cfg.Rules) }
 
 // refsOf are rs' references.
 func refsOf(rs []rules.Rule) []rules.Ref {
@@ -562,13 +559,9 @@ func refsOf(rs []rules.Rule) []rules.Ref {
 }
 
 // rulesFor is the rules a connection of client applies for account now
-// (ADR 0040, accountrules.Source), or Config.Rules without a Source. An
-// error is ErrUnavailable: nothing of the account's mail leaves, the default
-// alone included.
+// (ADR 0040, accountrules.Source). An error is ErrUnavailable: nothing of
+// the account's mail leaves, the default alone included.
 func (s *Service) rulesFor(ctx context.Context, account, client string) (accountrules.Applying, error) {
-	if s.cfg.Source == nil {
-		return accountrules.Applying{Rules: slices.Clone(s.cfg.Rules)}, nil
-	}
 	a, err := s.cfg.Source.Applying(ctx, account, client)
 	if err != nil {
 		return accountrules.Applying{}, errors.Join(ErrUnavailable, err)

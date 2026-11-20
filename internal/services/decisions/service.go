@@ -56,6 +56,9 @@ type Service struct {
 	wordsMu  sync.Mutex
 	wordsDay string
 	words    map[string]int
+	// wordsCalls counts the words calls since the enclave started, by
+	// outcome (WordsCalls), under wordsMu.
+	wordsCalls map[string]int64
 }
 
 // New makes the service. It reads no storage, and calls cfg.NewModel once,

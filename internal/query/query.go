@@ -190,6 +190,12 @@ type Result struct {
 	Model []Atom
 }
 
+// RuleFalseBelow is the probability below which a condition a model
+// decides is False for a rule (ADR 0020): a rule's band, which a removal by
+// meaning keeps a sentence below for every topic (ADR 0040), and which
+// /status publishes (person_rules.meaning.threshold).
+const RuleFalseBelow = 0.30
+
 // Classify is the value of a condition a model decides, from the model's
 // probability p that it holds, in a mode (ADR 0020's thresholds, as ADR 0027
 // reads them in three values): for a query True at 0.80 or more and False at
@@ -211,7 +217,7 @@ func Classify(p float64, mode Mode) Value {
 			if p >= 0.70 {
 				return True
 			}
-			if p < 0.30 {
+			if p < RuleFalseBelow {
 				return False
 			}
 		}

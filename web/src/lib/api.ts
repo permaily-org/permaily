@@ -454,7 +454,18 @@ export type ConnectionVendor = { domain: string; verified?: string }
 export type MailSince = { new: boolean; at?: string }
 
 /** A rule every connection's reads apply first, and its sentence. */
-export type RuleSummary = { id: string; version: number; sentence: QuerySentence[] }
+/**
+ * A rule as the consent screen and a connection's page list it: its sentence, and on the consent screen what it does and
+ * who for in the server's words (ADR 0040, U25), with the clients its scope names.
+ */
+export type RuleSummary = {
+  id: string
+  version: number
+  sentence: QuerySentence[]
+  does?: string
+  for?: string
+  clients?: RuleClient[]
+}
 
 /**
  * The scope the person is about to approve: sent whole with every preview and with the decision. `mailboxes` is never

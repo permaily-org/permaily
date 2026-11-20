@@ -116,9 +116,9 @@ func (s *Service) check(d contracts.RuleDraft, mailboxes, names []string) (*chec
 	sum := sha256.Sum256(raw)
 	out.check = &contracts.RuleCheck{
 		DraftID: "rdr_" + idEncoding.EncodeToString(sum[:16]), Draft: canon,
-		Sentence: sentence(formulas, names), Does: does(canon.Effect, canon.Removal), Model: r.Model(),
+		Sentence: sentence(formulas, names), Does: Does(canon.Effect, canon.Removal), Model: r.Model(),
 	}
-	out.check.For, out.check.Clients = forWhom(scope)
+	out.check.For, out.check.Clients = ForWhom(scope)
 	return out, nil
 }
 
@@ -241,8 +241,9 @@ var (
 	}
 )
 
-// does is what a rule does, in the system's words.
-func does(effect contracts.RuleEffect, rm *contracts.RuleRemoval) string {
+// Does is what a rule does, in the system's words: the editor's, the
+// list's and the consent screen's sentence of its effect.
+func Does(effect contracts.RuleEffect, rm *contracts.RuleRemoval) string {
 	if effect == contracts.EffectHold || rm == nil {
 		return "Holds the email back"
 	}
@@ -269,9 +270,9 @@ func quoted(s string) string {
 	return "“" + s + "”"
 }
 
-// forWhom is a scope in the system's words, each client by
+// ForWhom is a scope in the system's words, each client by
 // contracts.ClientShown, never its domain alone.
-func forWhom(scope contracts.RuleScope) (string, []contracts.RuleClient) {
+func ForWhom(scope contracts.RuleScope) (string, []contracts.RuleClient) {
 	var clients []contracts.RuleClient
 	var shown []string
 	for _, id := range scope.Clients {
@@ -285,4 +286,29 @@ func forWhom(scope contracts.RuleScope) (string, []contracts.RuleClient) {
 		return "Only the connections of " + strings.Join(shown, ", "), clients
 	}
 	return "Every connection, those made later included", nil
+}
+
+// Summary is a rule as the consent screen lists it (ADR 0040, "Previews and
+// consent", U25): which rule and version, the sentence of its criteria, and
+// what it does and who for in the system's words (Does, ForWhom) with the
+// clients it names; the default rule holds for every connection.
+func Summary(r rules.Rule) contracts.RuleSummary {
+	out := contracts.RuleSummary{ID: r.ID, Version: r.Version, Sentence: query.RenderRule(r.Formulas, query.Context{Lang: "en"}).Formulas}
+	effect, removal := contracts.EffectHold, (*contracts.RuleRemoval)(nil)
+	if r.Effect == rules.Remove {
+		effect = contracts.EffectRemove
+		if rm := r.Removal; rm != nil {
+			removal = &contracts.RuleRemoval{Parts: rm.Parts, Shapes: rm.Shapes}
+			for _, t := range rm.Topics {
+				removal.Topics = append(removal.Topics, t.Topic)
+			}
+		}
+	}
+	out.Does = Does(effect, removal)
+	scope := contracts.RuleScope{To: contracts.ScopeAll}
+	if r.Scope != nil {
+		scope = contracts.RuleScope{To: r.Scope.To, Clients: r.Scope.Clients}
+	}
+	out.For, out.Clients = ForWhom(scope)
+	return out
 }

@@ -136,13 +136,26 @@ function defaultApplied(rule: api.RuleSummary): Applied {
 }
 
 /**
- * The rules the server says apply (`summaries`, the consent screen's), each said by its sentence, and, when the
- * account's rules could be read, what it does and who for in the server's words.
+ * The rules the server says apply (`summaries`, the consent screen's), each said by its sentence and by what it does and
+ * who for in the server's words: the summary's own (ADR 0040, U25), else, from a server that does not send them, the
+ * account's list's when it could be read.
  */
 export function appliedOf(summaries: api.RuleSummary[], list: api.RuleList | null): Applied[] {
   return summaries.map((summary) => {
+    const rule =
+      list && summary.id !== list.default.rule.id
+        ? list.rules.find((r) => r.id === summary.id && r.version === summary.version)
+        : undefined
+    if (summary.does && summary.for) {
+      return {
+        id: summary.id,
+        rule,
+        sentence: summary.sentence,
+        does: summary.does,
+        for: summary.for,
+      }
+    }
     if (list && summary.id === list.default.rule.id) return defaultApplied(summary)
-    const rule = list?.rules.find((r) => r.id === summary.id && r.version === summary.version)
     if (!rule) return { id: summary.id, sentence: summary.sentence }
     return {
       id: summary.id,

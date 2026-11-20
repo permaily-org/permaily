@@ -13,6 +13,7 @@ import (
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/query"
+	"github.com/permaily-org/permaily/internal/rules"
 	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/services/webhooks"
 	"github.com/permaily-org/permaily/internal/store"
@@ -312,12 +313,19 @@ func (s *Service) turnOff(ctx context.Context, id string, state contracts.Webhoo
 	return errBusy
 }
 
-// webhookOffReceipt records the person turning a webhook off, as consent.
+// webhookOffReceipt records the person turning a webhook off, as consent,
+// with the rules the connection's client applies now (Config.Source). When
+// they cannot be read it names none: turning a webhook off only narrows
+// what leaves, so it does not wait for them.
 func (s *Service) webhookOffReceipt(ctx context.Context, d *connDoc) error {
 	sc, _ := d.scope()
+	var refs []rules.Ref
+	if ap, err := s.rulesFor(ctx, d.Account, d.ClientID); err == nil {
+		refs = refsOf(ap.Rules)
+	}
 	r := &receipts.Receipt{
 		V: receipts.Version, Kind: receipts.KindConsent, Connection: d.ID, ClientID: d.ClientID, Vendor: d.Vendor, Resource: d.Resource,
-		Formulas: consentedFormulas(sc), Rules: s.ruleRefs(),
+		Formulas: consentedFormulas(sc), Rules: refs,
 		Consent: &receipts.Consent{
 			Allowed: true, Sentences: d.private.Shown.Sentences, Parts: d.Parts, Since: d.private.Since, EndsAt: d.EndsAt,
 			Mailboxes: d.Mailboxes, ModelNotice: d.ModelNotice,

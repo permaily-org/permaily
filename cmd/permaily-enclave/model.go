@@ -13,6 +13,8 @@ import (
 	"github.com/permaily-org/permaily/internal/decide"
 	"github.com/permaily-org/permaily/internal/decide/openai"
 	"github.com/permaily-org/permaily/internal/inbox"
+	"github.com/permaily-org/permaily/internal/rulewords"
+	wordsopenai "github.com/permaily-org/permaily/internal/rulewords/openai"
 	"github.com/permaily-org/permaily/internal/services/decisions"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/pkg/attestation"
@@ -73,8 +75,12 @@ type modelParts struct {
 	// in the image); nil with newModel set.
 	egress *http.Client
 	// newModel, when set, builds the model in place of openai.New over
-	// egress: dev mode's fake, which never reaches OpenAI.
-	newModel func(decide.Credential) decide.Model
+	// egress: dev mode's fake, which never reaches OpenAI. newWriter, with
+	// it, builds the words' model (nil: words are answered
+	// model_unavailable); without newModel, the words' model is
+	// internal/rulewords/openai over egress.
+	newModel  func(decide.Credential) decide.Model
+	newWriter func(decide.Credential) rulewords.Model
 	// records is the one strict Anchored of the model's records, with
 	// OnlyNewest; no other Anchored reads or writes their names.
 	records *store.Anchored
@@ -104,21 +110,26 @@ func composeModel(m modelParts) (*decisions.Service, error) {
 		// holds the limits of ADR 0028, never none.
 		m.cfg.limits = decisions.DefaultLimits
 	}
-	newModel := m.newModel
+	newModel, newWriter := m.newModel, m.newWriter
 	if newModel == nil {
 		egress, org, project := m.egress, m.cfg.organization, m.cfg.project
 		newModel = func(key decide.Credential) decide.Model { return openai.New(egress, key, org, project) }
+		// A person's words go to the Responses API through the same egress
+		// and with the same credential, organisation and project (ADR 0040,
+		// "Plain words"), each call reserved through the same guard.
+		newWriter = func(key decide.Credential) rulewords.Model { return wordsopenai.New(egress, key, org, project) }
 	}
 	return decisions.New(decisions.Config{
-		NewModel: newModel,
-		Kept:     inbox.NewKeptStore(m.entries),
-		Records:  m.records,
-		Entries:  m.entries,
-		Keys:     m.keys,
-		Alarm:    &decisions.MailAlarm{Mailer: m.mailer, To: m.superAdmin},
-		Limits:   m.cfg.limits,
-		Log:      m.log,
-		Now:      m.now,
+		NewModel:  newModel,
+		NewWriter: newWriter,
+		Kept:      inbox.NewKeptStore(m.entries),
+		Records:   m.records,
+		Entries:   m.entries,
+		Keys:      m.keys,
+		Alarm:     &decisions.MailAlarm{Mailer: m.mailer, To: m.superAdmin},
+		Limits:    m.cfg.limits,
+		Log:       m.log,
+		Now:       m.now,
 	})
 }
 

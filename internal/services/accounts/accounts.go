@@ -146,8 +146,27 @@ type Config struct {
 	// (connection_notices.go). Nil queues nothing.
 	Notices notices.Queue
 	// Rules is the person's own rules (ADR 0040): an account's record of
-	// rules is removed with it. Nil when there are none.
+	// rules is removed with it. Nil when there are none; the composition
+	// may give it later, once, with SetRules, as it does the connections.
 	Rules Rules
+}
+
+// rulesHolder keeps what SetRules gave.
+type rulesHolder struct{ r Rules }
+
+// SetRules gives the service the person's own rules, made after it (they
+// write receipts and read mailboxes, which need accounts): every account
+// removed from then on has its record of rules removed with it.
+func (s *Service) SetRules(r Rules) {
+	s.rules.Store(&rulesHolder{r: r})
+}
+
+// rulesOf is what SetRules gave, else Config.Rules; nil for none.
+func (s *Service) rulesOf() Rules {
+	if h := s.rules.Load(); h != nil {
+		return h.r
+	}
+	return s.cfg.Rules
 }
 
 // Rules is what accounts does of the person's own rules (ADR 0040, "Removed
@@ -223,6 +242,8 @@ type Service struct {
 	mailboxes atomic.Pointer[mailboxesHolder]
 	// connections is Config.Connections, or what SetConnections gave.
 	connections atomic.Pointer[connectionsHolder]
+	// rules is what SetRules gave (rulesOf).
+	rules atomic.Pointer[rulesHolder]
 
 	sending chan struct{}
 	// noticing bounds the notices being sent, and noticeWait is how long one

@@ -193,6 +193,10 @@ type ConnectionsStatus struct {
 	// Rules are the rules every connection's reads apply first: in step 5
 	// the default rule, with the canonical identifiers of its formulas.
 	Rules []RuleStatus `json:"rules"`
+	// PersonRules is a person's own rules (ADR 0040): their design's
+	// constants and versions, and this enclave's counts; nil from a release
+	// before them, which permaily-verify then refuses (PersonRulesStatus.Check).
+	PersonRules *PersonRulesStatus `json:"person_rules,omitempty"`
 	// Receipts says how the record of what left is kept: sealed, and, from
 	// step 8, chained with its head anchored.
 	Receipts ReceiptsStatus `json:"receipts"`

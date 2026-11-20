@@ -154,8 +154,8 @@ func (s *Service) removeConnectionsAgain(ctx context.Context, key []byte, now ti
 				return first
 			}
 			err := c.RemoveAgain(ctx, id)
-			if err == nil && s.cfg.Rules != nil {
-				err = s.cfg.Rules.Remove(ctx, id)
+			if r := s.rulesOf(); err == nil && r != nil {
+				err = r.Remove(ctx, id)
 			}
 			if err == nil {
 				err = s.forget(ctx, connectionsAgainPartition, e.Key)
