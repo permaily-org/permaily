@@ -334,6 +334,14 @@ func TestU13TheThirtyFirstCallOfADay(t *testing.T) {
 	if _, err := e.Write(context.Background(), account, "hide x"); !errors.Is(err, contracts.ErrModelUnavailable) {
 		t.Errorf("the next day: %v", err)
 	}
+	// /status counts every call by its outcome (ADR 0040, pull request 8):
+	// the four unusable words, the 30 and two more the model was not
+	// there for, the 31st refused.
+	want := map[string]int64{attestation.WordsProposed: 0, attestation.WordsUnusable: 4, attestation.WordsTooMany: 1, attestation.WordsUnavailable: int64(rulewords.CallsPerDay) + 2}
+	if got := e.WordsCalls(); len(got) != len(want) || got[attestation.WordsUnusable] != 4 || got[attestation.WordsTooMany] != 1 ||
+		got[attestation.WordsUnavailable] != want[attestation.WordsUnavailable] || got[attestation.WordsProposed] != 0 {
+		t.Errorf("the words calls counted %v, want %v", got, want)
+	}
 }
 
 // wordsModel is a words' client that answers err, or HoldText, and counts

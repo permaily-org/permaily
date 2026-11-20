@@ -201,7 +201,8 @@ func TestA19TheKey(t *testing.T) {
 		for m := range typ.Methods() {
 			methods = append(methods, m.Name)
 		}
-		want := []string{"Ask", "AskSentences", "Gate", "Key", "RemoveKey", "RunAlarms", "RunCanary", "SetKey", "Status", "Write"}
+		// WordsCalls answers counts of fixed kinds (ADR 0040, /status).
+		want := []string{"Ask", "AskSentences", "Gate", "Key", "RemoveKey", "RunAlarms", "RunCanary", "SetKey", "Status", "WordsCalls", "Write"}
 		if !slices.Equal(methods, want) {
 			t.Fatalf("exported methods %v: each must be checked not to return the key", methods)
 		}
