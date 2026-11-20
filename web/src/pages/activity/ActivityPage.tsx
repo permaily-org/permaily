@@ -25,6 +25,7 @@ import { cx, focusRing, pagePadding } from '../../lib/styles.ts'
 import { useStanding } from '../accounts/standing.ts'
 import { messageFor } from '../auth/messages.ts'
 import { endWords } from '../connections/words.tsx'
+import { Downloads } from './Downloads.tsx'
 import { type Known, ReceiptPanel } from './ReceiptPanel.tsx'
 import {
   type Failure,
@@ -166,6 +167,7 @@ export function ActivityPage() {
       <div className={cx('min-w-0 flex-1', pagePadding)}>
         <Headline>Activity</Headline>
         {head && head.n > 0 && <Head head={head} />}
+        {head && head.n > 0 && <Downloads connections={known.connections} />}
         {empty && (
           <div className="mt-6">
             <p className="text-body">Nothing has left your mailboxes.</p>

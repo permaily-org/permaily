@@ -6,13 +6,18 @@
 export type Asked = { method: string; path: string; body: unknown }
 
 /** An answer of the server, or `network` for a request that got none. */
-export type Reply = { status: number; body?: unknown } | 'network'
+export type Reply = { status: number; body?: unknown; text?: string } | 'network'
 
 type Answer = Reply | ((asked: Asked) => Reply | Promise<Reply>)
 
 /** A 200 with a JSON body, or a 204 without one. */
 export function ok(body?: unknown): Reply {
   return body === undefined ? { status: 204 } : { status: 200, body }
+}
+
+/** A 200 whose body is exactly this text, as the server wrote it (the export's pages, byte for byte). */
+export function okText(text: string): Reply {
+  return { status: 200, text }
 }
 
 /** A refusal in the API's own shape. */
@@ -161,7 +166,8 @@ class Server {
     }
     const reply = typeof answer === 'function' ? await answer(asked) : answer
     if (reply === 'network') throw new TypeError('Failed to fetch')
-    return new Response(reply.body === undefined ? null : JSON.stringify(reply.body), {
+    const text = reply.text ?? (reply.body === undefined ? null : JSON.stringify(reply.body))
+    return new Response(text, {
       status: reply.status,
       headers: { 'Content-Type': 'application/json' },
     })

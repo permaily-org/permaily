@@ -122,11 +122,15 @@ function cellsOf(row: Cells): string[] {
   return CSV_COLUMNS.map((column) => row[column] ?? '')
 }
 
-/** A time as RFC 3339 in UTC; one that is not a time is written as it was, guarded like every cell. */
+/**
+ * A time as RFC 3339 in UTC: as the server wrote it when it is already (keeping its microseconds), else converted; one
+ * that is not a time is written as it was, guarded like every cell.
+ */
 function utc(iso: string | undefined): string {
   if (iso === undefined) return ''
   const date = new Date(iso)
-  return Number.isNaN(date.getTime()) ? iso : date.toISOString().replace('.000Z', 'Z')
+  if (Number.isNaN(date.getTime()) || iso.endsWith('Z')) return iso
+  return date.toISOString().replace('.000Z', 'Z')
 }
 
 const receiptRecords: Record<api.ReceiptVerdict, string> = {
@@ -145,7 +149,11 @@ const linkRecords: Partial<Record<api.LinkVerdict, string>> = {
 
 /** What the walk found of a receipt kept as recorded: linked late, from before, or kept. */
 function keptRecord(link: api.ReceiptsLink): string {
-  return link.kind === 'recovered' ? 'linked late' : link.kind === 'adopted' ? 'from before' : 'kept'
+  return link.kind === 'recovered'
+    ? 'linked late'
+    : link.kind === 'adopted'
+      ? 'from before'
+      : 'kept'
 }
 
 /** An approval's outcome is the decision recorded, not the change made (ADR 0041, choice 17). */
@@ -178,7 +186,10 @@ const sendersCell = (from: readonly api.MailAddress[]): string =>
 export type VerifiedOf = (receipt: api.Receipt) => string | undefined
 
 /** The CSV's rows of one page of the walk, as cells in the columns' order. */
-export function csvRowsOf(page: api.ReceiptsPage, verified: VerifiedOf = () => undefined): string[][] {
+export function csvRowsOf(
+  page: api.ReceiptsPage,
+  verified: VerifiedOf = () => undefined,
+): string[][] {
   const rows: string[][] = []
   for (const link of page.links) {
     const linkRecord = linkRecords[link.verdict]
@@ -282,7 +293,11 @@ function receiptRows(r: api.Receipt, verified: string | undefined): Cells[] {
       const counts = r.refusals?.counts ?? []
       return counts.length > 0
         ? counts.map((c) =>
-            of({ outcome: 'refused', reason: `${c.operation}: ${c.reason}`, count: String(c.count) }),
+            of({
+              outcome: 'refused',
+              reason: `${c.operation}: ${c.reason}`,
+              count: String(c.count),
+            }),
           )
         : [of({ outcome: 'refused', count: '0' })]
     }
@@ -406,12 +421,22 @@ function noted(head: api.ReceiptsHead): string | null {
 
 /** A download, written in files of at most `partBytes`, then its manifest. Throws `ExportStopped` when it stops. */
 export async function writeExport(options: ExportOptions): Promise<ExportDone> {
+  const state: ExportState = options.resume
+    ? { ...options.resume, parts: [...options.resume.parts] }
+    : { ext: options.ext, day: options.day, head: null, parts: [], skip: 0, receipts: 0 }
+  try {
+    return await writing(options, state)
+  } catch (error) {
+    if (error instanceof ExportStopped) throw error
+    // Anything else that stops it (a file the browser would not take) stops it the same way: nothing more saved.
+    throw new ExportStopped({ ...state, parts: [...state.parts] }, 'other')
+  }
+}
+
+async function writing(options: ExportOptions, state: ExportState): Promise<ExportDone> {
   const { ext, source, save, signal, onProgress } = options
   const limit = options.partBytes ?? EXPORT_PART_BYTES
   const header = encoder.encode(ext === 'csv' ? CSV_HEADER : '')
-  const state: ExportState = options.resume
-    ? { ...options.resume, parts: [...options.resume.parts] }
-    : { ext, day: options.day, head: null, parts: [], skip: 0, receipts: 0 }
   const fresh = !options.resume
   let chunks: Uint8Array[] = []
   let bytes = 0
