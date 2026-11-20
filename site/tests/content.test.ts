@@ -219,7 +219,9 @@ describe('legal pages', () => {
       /aren’t open yet|once (mailboxes|connections) open|none of this is running/i,
     );
     expect(text).toContain('Rules of your own aren’t built yet');
-    expect(text).not.toMatch(/screen that shows (them|your receipts) to you isn’t built|Viewing and exporting them are planned/);
+    expect(text).not.toMatch(
+      /screen that shows (them|your receipts) to you isn’t built|Viewing and exporting them are planned/,
+    );
     // A connection's end and its revocation, as internal/oauth sets them.
     const oauth = go('internal/oauth/oauth.go');
     expect(oauth).toMatch(/ConnectionDefaultDays = 90\b/);
