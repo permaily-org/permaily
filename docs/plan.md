@@ -44,7 +44,7 @@ Each step ends deployed and verified, like the releases so far. The estimates ar
 | 4 | Spike, then the piece that asks OpenAI: `about`, kept decisions, the spending alarm | 1.5 |
 | 5 | Spike of the authorization server (ADR 0007), then connections, the consent screen, the API and MCP; and, moved here by the owner on 2026-11-16, the default rule and the sealed record of what left (designed in ADR 0030 and 0031, revised after their two reviews) | 7.5 |
 | 6 | Delivery on new mail and on a schedule: webhook queue and scheduler (designed in ADR 0039 on 2026-11-20, revised after its review; re-estimated from 1.5) | 3.5 |
-| 7 | Rules: written in plain words, holding back, removing details (the default rule and the decisions that cannot be undone are step 5's; designed in ADR 0040) | 1 |
+| 7 | Rules: written in plain words, holding back, removing details (the default rule and the decisions that cannot be undone are step 5's; designed in ADR 0040) | 4 |
 | 8 | Receipts chained and anchored, and the activity screen (the sealed receipts are step 5's; the chaining and anchoring brought forward by the owner on 2026-11-17 and designed in ADR 0037, so step 8 keeps the activity screen and the CSV export) | 0.5 |
 | 9 | Notices by mail, the threat model and the public pages brought up to date, a round of tests with staging images | 1 |
 
