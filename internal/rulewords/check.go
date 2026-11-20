@@ -24,7 +24,8 @@ var errUnusable = contracts.ErrRuleWordsUnusable
 // conditions a model decides over them all; hold with no removal, or remove
 // with a removal of known parts and shapes, each at most once, and at most
 // contracts.MaxRuleTopics topics the language accepts, not all three empty;
-// within contracts.MaxRuleBytes. Anything else is
+// within contracts.MaxRuleBytes; no topic and no value but a date or a size
+// joining alternatives, broken or of mixed scripts (single). Anything else is
 // contracts.ErrRuleWordsUnusable.
 //
 // The draft is for every connection (ScopeAll) and on, its criteria and
@@ -245,6 +246,9 @@ func criteria(raw json.RawMessage) ([]contracts.Formula, bool) {
 				if cond.Op == contracts.OpAbout || cond.Op == contracts.OpMentions {
 					model++
 				}
+				if !typed(cond.Op) && !single(cond.Value) {
+					return nil, false
+				}
 			}
 		}
 		out = append(out, c.Formula)
@@ -294,7 +298,7 @@ func removal(raw json.RawMessage) (*contracts.RuleRemoval, bool) {
 			return nil, false
 		}
 		topic := c.Formula.All[0].Any[0].Value
-		if seen[topic] {
+		if !single(topic) || seen[topic] {
 			return nil, false
 		}
 		seen[topic] = true
@@ -321,4 +325,77 @@ func inOrder[T ~string](values []string, known []T) ([]T, bool) {
 		}
 	}
 	return out, len(given) == 0
+}
+
+// typed says op takes a date or a number, which query.Canonicalise parses
+// whole; every other value is text the model wrote.
+func typed(op contracts.Operator) bool {
+	return op == contracts.OpSince || op == contracts.OpBefore || op == contracts.OpAtLeast || op == contracts.OpBelow
+}
+
+// single says a topic or a text value, canonical, names one thing as the
+// prompt asks: no disjunction joining alternatives in the corpus's
+// languages, no question mark and none of JSON's punctuation (which the
+// model wrote into broken values), and its letters of one script (CJK's
+// counted as one). The model joins alternatives into one topic now and
+// then whatever the prompt says, which protects less than asked; such an
+// answer is unusable instead, and the person writes conditions (ADR 0040,
+// "Words, as built").
+func single(s string) bool {
+	if strings.ContainsAny(s, "?¿؟？{}[]\"\\:,「」『』") {
+		return false
+	}
+	for _, w := range []string{"或", "または"} {
+		if strings.Contains(s, w) {
+			return false
+		}
+	}
+	for _, w := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.Is(unicode.M, r) }) {
+		switch w {
+		case "or", "o", "ou", "oder", "или":
+			return false
+		}
+	}
+	first := ""
+	for _, r := range s {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+		sc := script(r)
+		if sc == "" {
+			continue
+		}
+		if first == "" {
+			first = sc
+		} else if sc != first {
+			return false
+		}
+	}
+	return true
+}
+
+// cjk are the scripts written together in Chinese, Japanese and Korean.
+var cjk = []*unicode.RangeTable{unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul, unicode.Bopomofo}
+
+// script names the script of the letter r, CJK's as one; none ("") for a
+// letter of no one script (Common or Inherited, as Japanese's long vowel
+// mark "ー").
+func script(r rune) string {
+	if unicode.Is(unicode.Common, r) || unicode.Is(unicode.Inherited, r) {
+		return ""
+	}
+	if unicode.Is(unicode.Latin, r) {
+		return "Latin"
+	}
+	for _, t := range cjk {
+		if unicode.Is(t, r) {
+			return "CJK"
+		}
+	}
+	for name, t := range unicode.Scripts {
+		if unicode.Is(t, r) {
+			return name
+		}
+	}
+	return ""
 }

@@ -14,7 +14,7 @@ import (
 // change of any of them is a new version, never an edit of this one:
 // TestU11ThePromptIsPinned pins every byte. /status shows it and
 // permaily-verify compares it with the source (pull request 8).
-const PromptVersion = "w3-2026-11-20"
+const PromptVersion = "w4-2026-11-20"
 
 // What the image calls for words, compiled in.
 const (
@@ -79,15 +79,12 @@ const Developer = "You turn what a person writes, in any language, into one rule
 	"Use exact conditions (from_domain, from_address, contains) when the person names a sender, a domain or exact " +
 	"words. Use about or mentions only for meaning, at most 8 over the whole rule. A topic names one thing in a few " +
 	"words of the words' language, as a noun phrase (\"medical appointments\", \"a home address\"), never a sentence, " +
-	"a question or an instruction, with no question mark, comma or other punctuation in it, and at most 100 " +
-	"characters.\n" +
+	"a question or an instruction, with no punctuation at its end, and at most 100 characters.\n" +
 	"Alternatives: when the words name several things, any one of which is enough, joined by \"or\", \"and\", " +
 	"\"nor\" or commas in any language (\"about my debts or my loans\", \"from shop.example and from bank.example\"), " +
 	"write one condition for each thing, all in the same group, so that each alone catches an email: the topics " +
-	"\"debts\" and \"loans\", never one topic or value that joins them (\"debts or loans\", \"debts, loans\"). A " +
-	"topic never holds a word that joins two things, \"or\", \"and\" or the same in the words' language (\"o\", " +
-	"\"y\", \"ou\", \"e\", \"oder\", \"und\"): split it into one condition for each. Never give each alternative a " +
-	"group of its own, which would require all of them at once. Only words that narrow (\"from shop.example about returns\") " +
+	"\"debts\" and \"loans\", never one topic or value that joins them (\"debts or loans\"), and never one group " +
+	"for each, which would require all of them at once. Only words that narrow (\"from shop.example about returns\") " +
 	"are separate groups. Never invent a sender, an " +
 	"address, a domain, a list or a date the words do not give; the person's own details are never known to you, so " +
 	"\"my home address\" is the topic \"a home address\". Which apps the rule is for is chosen on another screen: " +
