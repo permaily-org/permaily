@@ -36,9 +36,10 @@
 // PurposeSign) bound to its partition and key, and is at most EntryMax.
 //
 // This file is the seam, committed with the design: what a notice is, the
-// two interfaces, the keys, the bounds and when an ending is told. ADR
-// 0041's pull request 1 writes the queue and its runner; noticestest is
-// the fake the callers are built against and the contract both keep. It
+// two interfaces, the keys, the bounds and when an ending is told. The
+// queue is New (queue.go) and its runner Run (runner.go), ADR 0041's pull
+// request 1; noticestest is the fake the callers are built against and the
+// contract both keep. It
 // knows nothing of HTTP or of SES.
 package notices
 

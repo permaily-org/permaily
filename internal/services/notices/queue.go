@@ -416,9 +416,10 @@ func (s *Service) finish(ctx context.Context, key []byte, e, mark *store.Entry, 
 	}
 }
 
-// drop marks dropped a notice no longer Sendable, and deletes it; it is
-// counted by the enclave that deletes it. One a mark holds (sent before)
-// is deleted alone.
+// drop marks dropped a notice no longer Sendable, then deletes it. It is
+// counted by the enclave whose mark is written: a deletion that fails
+// leaves the entry, which the next pass deletes under the mark without
+// counting it again. One a mark holds (sent before) is deleted alone.
 func (s *Service) drop(ctx context.Context, key []byte, e *store.Entry, d entryDoc, now time.Time) {
 	held, mark, err := s.mark(ctx, key, e.Key, now)
 	if err != nil {
@@ -430,14 +431,11 @@ func (s *Service) drop(ctx context.Context, key []byte, e *store.Entry, d entryD
 			s.failed("mark")
 			return
 		}
+		s.count(func(st *attestation.NoticesStatus) { st.Dropped++ })
+		s.told(d.Notice.Kind, outcomeDropped)
 	}
 	if s.cfg.Entries.DeleteEntryAt(ctx, e) != nil {
 		s.failed("delete")
-		return
-	}
-	if !held {
-		s.count(func(st *attestation.NoticesStatus) { st.Dropped++ })
-		s.told(d.Notice.Kind, outcomeDropped)
 	}
 }
 

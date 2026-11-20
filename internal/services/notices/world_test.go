@@ -43,6 +43,12 @@ func (k *rootKeys) Derive(_ context.Context, purpose string) ([]byte, error) {
 	return k.key, nil
 }
 
+func (k *rootKeys) set(key []byte, err error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.key, k.err = key, err
+}
+
 // syncBuffer is a log both enclaves and their goroutines write to.
 type syncBuffer struct {
 	mu sync.Mutex
