@@ -125,8 +125,20 @@ func TestU5ARuleUnderAnotherNoticeAsksNothing(t *testing.T) {
 	if err != nil || len(r.Removal.Topics) != 1 || r.Removal.Topics[0].Topic != "a home address" || r.Removal.Topics[0].Op != contracts.OpMentions {
 		t.Fatalf("a topic is normalised as the query language's: %+v, %v", r.Removal, err)
 	}
-	if !r.Removal.Attachments() {
-		t.Fatal("a removal by meaning keeps the attachments it cannot read")
+	if !r.Removal.Attachments() || !r.Removal.Sender() {
+		t.Fatal("a removal by meaning keeps the attachments or the sender it does not read")
+	}
+	// Finding 3: shapes take the sender out too; only parts that name
+	// neither leave it.
+	for rm, want := range map[*Removal]bool{
+		{Shapes: []contracts.ShapeKind{contracts.ShapeEmailAddress}}: true,
+		{Parts: []contracts.Part{contracts.PartSender}}:              true,
+		{Parts: []contracts.Part{contracts.PartBody}}:                false,
+		nil: false,
+	} {
+		if rm.Sender() != want {
+			t.Errorf("%+v takes the sender out: %v", rm, !want)
+		}
 	}
 }
 
@@ -162,8 +174,16 @@ func TestU2TheRecordsNamesAndShape(t *testing.T) {
 	}
 	r := Ref{ID: "rul_x", Version: 4}
 	m := MeaningRef(r, 1, 2)
-	if m == r || m.Version != 4 || m.ID != "rul_x#meaning-t1-s2" || MeaningRef(r, 1, 3) == m || MeaningRef(r, 2, 2) == m {
+	if m == r || m.Version != 4 || m.ID != "rul_x#meaning-t1-p2" || MeaningRef(r, 1, 3) == m || MeaningRef(r, 2, 2) == m {
 		t.Fatalf("meaning ref %+v", m)
+	}
+	if MeaningRef(Ref{ID: "rul_x", Version: 5}, 1, 2) == m {
+		t.Fatal("a new version of the rule met the old one's meaning decision")
+	}
+	// Finding 6: an epoch rolls over below the strict read's cold bound,
+	// with room for the write that rolls it and its removal.
+	if !Rotate(RecordVersionsMax-1) || Rotate(RecordVersionsMax-2) || RecordVersionsMax+2 > 500 {
+		t.Fatalf("rotate at %d", RecordVersionsMax)
 	}
 	b, err := json.Marshal(Record{V: RecordFormat, Account: "acc_x", Rules: []Stored{}})
 	if err != nil || string(b) != `{"v":1,"account":"acc_x","epoch":0,"rules":[]}` {

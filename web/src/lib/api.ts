@@ -614,8 +614,24 @@ export type ConnectionList = { connections: Connection[] }
 /** What a rule does to a message it applies to: hold it back, or take details out of it. */
 export type RuleEffect = 'hold' | 'remove'
 
-/** Which connections a rule is for, by their client (the app's client_id URL), those made later included unless `only`. */
+/**
+ * Which connections a rule is for, by their client (the app's client_id URL, matched exactly: two documents on one
+ * host are two apps, and an app that moves its document is a new one), those made later included unless `only`.
+ */
 export type RuleScope = { to: 'all' | 'all_except' | 'only'; clients?: string[] }
+
+/**
+ * A client as a rule's scope shows it: its client_id, `shown` (what tells it from another client on its host), and
+ * `name`, the name its own document gives, which is the vendor's words and is shown labelled as such.
+ */
+export type RuleClient = { client_id: string; shown: string; name?: string }
+
+/** How a client is named wherever a rule's scope is shown (`contracts.ClientShown`): its client_id without `https://`. */
+export function clientShown(clientId: string): string {
+  return clientId.startsWith('https://') && clientId.length > 'https://'.length
+    ? clientId.slice('https://'.length)
+    : clientId
+}
 
 /** The kinds of data with a fixed shape a rule removes with no model, in the order the editor lists them. */
 export const SHAPE_KINDS = [
@@ -631,7 +647,10 @@ export type ShapeKind = (typeof SHAPE_KINDS)[number]
 /** What stands where a rule removed a piece of a subject or a text. */
 export const REMOVED_MARKER = '[removed]'
 
-/** What a `remove` rule takes out: whole parts, then pieces of a fixed shape, then sentences about its topics. */
+/**
+ * What a `remove` rule takes out: whole parts, pieces of a fixed shape and sentences about its topics; shapes or topics
+ * take the sender and the attachments out too.
+ */
 export type RuleRemoval = { parts?: ConnectionPart[]; shapes?: ShapeKind[]; topics?: string[] }
 
 /** A rule as the person edits and confirms it: mail meets it when it meets any of its criteria. */
@@ -654,7 +673,8 @@ export type RuleSentence = {
 
 /**
  * A draft the server accepted: canonical, its identifier (sent back when saving), its sentence, what it does and who
- * for, in the server's words, and whether a model decides any of it.
+ * for, in the server's words (each client by its `shown` identity), its scope's clients, and whether a model decides
+ * any of it.
  */
 export type RuleCheck = {
   draft_id: string
@@ -662,6 +682,7 @@ export type RuleCheck = {
   sentence: RuleSentence
   does: string
   for: string
+  clients?: RuleClient[]
   model: boolean
 }
 

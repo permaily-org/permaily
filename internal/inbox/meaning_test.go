@@ -1,10 +1,19 @@
 package inbox_test
 
 import (
+	"context"
+	"errors"
 	"math"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/permaily-org/permaily/internal/inbox"
+	"github.com/permaily-org/permaily/internal/inbox/disclosetest"
+	"github.com/permaily-org/permaily/internal/redact"
+	"github.com/permaily-org/permaily/internal/redact/redacttest"
+	"github.com/permaily-org/permaily/internal/rules"
 )
 
 // U17's rule of what a removal by meaning keeps: only a sentence the model
@@ -40,5 +49,116 @@ func TestU17ASentenceIsKeptOnlyOnLowAnswersForEveryTopic(t *testing.T) {
 		if k {
 			t.Errorf("a removal with no topic kept sentence %d", i)
 		}
+	}
+}
+
+// U18's identity half (finding 1): a meaning decision is applied only to the
+// map it numbered. The review's case: one rule, one message; whichever parts
+// a connection reads, the view and its map are the same, so one decision
+// serves both; a view that differs (another extractor's text) does not take
+// it, and the whole subject and text are removed.
+func TestU18AMeaningDecisionIsBoundToItsMap(t *testing.T) {
+	r := redacttest.Naive{}
+	v := redact.NewView("My home address is 123 Main Street.", "Thank you.")
+	m := r.Sentences(v)
+	kept := &inbox.MeaningKept{Map: m.Digest(v), Kept: []bool{false, true}}
+	got, ok := kept.For(v, m)
+	if !ok || got[0] || !got[1] {
+		t.Fatalf("its own map: %v %v", got, ok)
+	}
+	s, b := redact.Join(v, inbox.MeaningSpans(v, m, got))
+	// A body-only connection and a subject-only one cut their parts from
+	// the same result: the address is removed for both.
+	if s != "[removed]" || b != "Thank you." {
+		t.Fatalf("joined %q / %q", s, b)
+	}
+	other := redact.NewView("", "My home address is 123 Main Street.")
+	om := r.Sentences(other)
+	if _, ok := kept.For(other, om); ok {
+		t.Fatal("a decision applied to another view's sentences")
+	}
+	s, b = redact.Join(other, inbox.MeaningSpans(other, om, nil))
+	if s != "" || b != "[removed]" {
+		t.Fatalf("no decision usable: %q / %q", s, b)
+	}
+	if _, ok := (*inbox.MeaningKept)(nil).For(v, m); ok {
+		t.Fatal("no decision applied")
+	}
+	short := &inbox.MeaningKept{Map: m.Digest(v), Kept: []bool{true}}
+	if _, ok := short.For(v, m); ok {
+		t.Fatal("a bitmap of another count applied")
+	}
+}
+
+// U18 (finding 1): two meaning rules, decided apart on the same map, remove
+// the same text in either order: their removals are a union, never one
+// rule's applied to what another left.
+func TestU18TwoMeaningRulesInEitherOrder(t *testing.T) {
+	v := redact.NewView("Hello", "I live at 1 Main St. My doctor is Dr Who. Thanks.")
+	m := (redacttest.Naive{}).Sentences(v)
+	address := []bool{true, false, true, true}
+	health := []bool{true, true, false, true}
+	if len(m.Sentences) != 4 {
+		t.Fatalf("%d sentences", len(m.Sentences))
+	}
+	a := inbox.MeaningSpans(v, m, address)
+	h := inbox.MeaningSpans(v, m, health)
+	s1, b1 := redact.Join(v, append(append([]redact.Span{}, a...), h...))
+	s2, b2 := redact.Join(v, append(append([]redact.Span{}, h...), a...))
+	if s1 != s2 || b1 != b2 || b1 != "[removed] [removed] Thanks." {
+		t.Fatalf("%q, %q", b1, b2)
+	}
+}
+
+// Meaning's past the cut is removed, never kept by a bitmap.
+func TestU19WhatIsPastTheCutIsRemoved(t *testing.T) {
+	v := redact.NewView("", "One. Two.")
+	m := redact.SentenceMap{Sentences: []redact.Span{{Start: v.Body.Start, End: v.Body.Start + 4}}, Cut: v.Body.Start + 4}
+	if _, b := redact.Join(v, inbox.MeaningSpans(v, m, []bool{true})); b != "One.[removed]" {
+		t.Fatalf("%q", b)
+	}
+}
+
+// U18's records half until pull request 4: the kept sentences' encoding
+// round-trips, refuses what Encode never writes, and BlockDecisions refuses
+// a settlement with them rather than settle one without them.
+func TestU18TheKeptSentencesRoundTrip(t *testing.T) {
+	for _, kept := range [][]bool{{}, {true}, {false, true, true, false, false, false, false, true, true}, make([]bool, redact.MeaningSentencesMax)} {
+		m := &inbox.MeaningKept{Map: "d", Kept: kept}
+		enc := m.Encode()
+		if len(enc)+len("d") > inbox.MeaningKeptBytesMax {
+			t.Errorf("%q past its bound", enc)
+		}
+		back, err := inbox.DecodeMeaningKept("d", enc)
+		if err != nil || !slices.Equal(back.Kept, kept) {
+			t.Errorf("%q read back %+v, %v", enc, back, err)
+		}
+	}
+	for _, bad := range []string{"", "1", "1:", "2:c0x", "1:c0", "9:ff", "129:" + strings.Repeat("00", 17), "01:80", "-1:", "2:C0"} {
+		if _, err := inbox.DecodeMeaningKept("d", bad); err == nil {
+			t.Errorf("%q read", bad)
+		}
+	}
+	if _, err := inbox.DecodeMeaningKept("", "1:80"); err == nil {
+		t.Error("read with no map")
+	}
+	d := disclosetest.NewDecisions(time.Now)
+	id := inbox.NewMessageID(time.Now())
+	_, err := d.Settle(context.Background(), inbox.Box{MailboxID: "mbx_x"}, rules.MeaningRef(rules.Ref{ID: "rul_x", Version: 1}, inbox.TextVersion, redact.SplitVersion),
+		map[string]inbox.Settlement{id: {State: inbox.DecisionCleared, Meaning: &inbox.MeaningKept{Map: "d", Kept: []bool{true}}}})
+	if !errors.Is(err, inbox.ErrMeaningNotKept) {
+		t.Fatalf("a meaning settlement before the blocks keep it: %v", err)
+	}
+}
+
+// U20's half (finding 1): what the model is given of a sentence has every
+// fixed shape masked, whichever rules apply.
+func TestU20TheModelSeesNoShape(t *testing.T) {
+	r := redacttest.Naive{}
+	v := redact.NewView("Code 123456", "Write to ana@example.com today. Thanks.")
+	got := inbox.MaskedSentences(r, v, r.Sentences(v))
+	want := []string{"Code [removed]", "Write to [removed] today.", "Thanks."}
+	if !slices.Equal(got, want) {
+		t.Fatalf("%q", got)
 	}
 }

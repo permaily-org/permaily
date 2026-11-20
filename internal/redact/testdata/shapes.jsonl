@@ -25,3 +25,6 @@
 {"name":"overlapping pieces are one, counted under the first kind","kinds":["email_address","phone_number"],"in":"ana@example.com555-1234","out":"[removed]","shapes":{"email_address":1}}
 {"name":"the marker is left as it is","kinds":["email_address","phone_number","card_number","account_number","numeric_code","link"],"in":"[removed]","out":"[removed]","shapes":{}}
 {"name":"no kind removes nothing","kinds":[],"in":"Call 555-1234","out":"Call 555-1234","shapes":{}}
+{"name":"a code next to a date is still removed: no most length (finding 2)","kinds":["numeric_code"],"in":"Code 123456 2026-11-20","out":"Code [removed]","shapes":{"numeric_code":1}}
+{"name":"a card followed by a year is still removed (finding 2)","kinds":["card_number"],"in":"Card 4111 1111 1111 1111 2026 thanks","out":"Card [removed] thanks","shapes":{"card_number":1}}
+{"name":"a phone number followed by another number is still removed (finding 2)","kinds":["phone_number"],"in":"Call 555 123 4567/12 today","out":"Call [removed] today","shapes":{"phone_number":1}}

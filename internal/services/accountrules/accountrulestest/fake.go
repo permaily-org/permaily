@@ -1,12 +1,16 @@
-// Package accountrulestest is a Source in memory for the services and
-// adapters that apply the person's rules (ADR 0040), with no cache: a change
-// is seen by the next call, which is the strictest a real Source can be.
+// Package accountrulestest is the person's rules in memory (ADR 0040), for
+// the services and adapters that apply them (accountrules.Source) and the
+// routes that change them (accountrules.Rules), with no cache: a change is
+// seen by the next call, which is the strictest a real Source can be.
+// Contract and RulesContract are what every implementation keeps. Never
+// imported outside tests (depguard).
 package accountrulestest
 
 import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/permaily-org/permaily/internal/rules"
 	"github.com/permaily-org/permaily/internal/services/accountrules"
@@ -24,6 +28,15 @@ type Fake struct {
 	Notice string
 	// Calls counts Applying's calls, by account.
 	Calls map[string]int
+	// Now is the fake's clock (time.Now when nil), for fresh proofs.
+	Now func() time.Time
+	// Changes are the `rules` receipts written, in order.
+	Changes []Change
+	// FailNextReceipt makes the next change's receipt fail: it is not made.
+	FailNextReceipt bool
+	// LoseNext makes the next change lose at its version after its receipt.
+	LoseNext bool
+	ids      uint64
 }
 
 var _ accountrules.Source = (*Fake)(nil)
@@ -32,9 +45,7 @@ var _ accountrules.Source = (*Fake)(nil)
 func (f *Fake) Set(account string, rec *rules.Record) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.records == nil {
-		f.records, f.version = map[string]*rules.Record{}, map[string]uint64{}
-	}
+	f.init()
 	f.records[account] = rec
 	f.version[account]++
 }

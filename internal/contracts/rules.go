@@ -1,6 +1,9 @@
 package contracts
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // The person's own rules (ADR 0019, "Rules"; how in ADR 0040): the shapes of
 // the rules routes under /api/v1/rules, in the person's session, and what a
@@ -39,7 +42,9 @@ const (
 // active connection, and its replacement, a device added to it, or a later
 // connection of the same client keeps the rule's scope (ADR 0040, "Scope").
 // Clients is empty for ScopeAll, and holds 1 to MaxRuleScopeClients clients
-// otherwise, each at most once.
+// otherwise, each at most once. A client is matched exactly: two documents on
+// one domain are two apps, and an app that moves its document is a new one
+// for scope (ADR 0040, finding 4).
 type RuleScope struct {
 	To      RuleScopeTo `json:"to"`
 	Clients []string    `json:"clients,omitempty"`
@@ -53,11 +58,11 @@ type ShapeKind string
 
 const (
 	ShapeEmailAddress  ShapeKind = "email_address"  // an address with an @ and a domain
-	ShapePhoneNumber   ShapeKind = "phone_number"   // a group of 7 to 15 digits
-	ShapeCardNumber    ShapeKind = "card_number"    // a group of 12 to 19 digits
-	ShapeAccountNumber ShapeKind = "account_number" // a group of 8 to 34 digits, or an IBAN
-	ShapeNumericCode   ShapeKind = "numeric_code"   // a group of 4 to 10 digits, years and amounts included
-	ShapeLink          ShapeKind = "link"           // a URL with a scheme, one that starts with www., or a domain followed by a path
+	ShapePhoneNumber   ShapeKind = "phone_number"   // a group of 7 digits or more
+	ShapeCardNumber    ShapeKind = "card_number"    // a group of 12 digits or more
+	ShapeAccountNumber ShapeKind = "account_number" // a group of 8 digits or more, or an IBAN
+	ShapeNumericCode   ShapeKind = "numeric_code"   // a group of 4 digits or more, years, amounts and neighbouring numbers included
+	ShapeLink          ShapeKind = "link"           // a URL with a scheme, one that starts with www., or a domain under a public suffix
 )
 
 // ShapeKinds are every ShapeKind, in the order the editor lists them and a
@@ -68,12 +73,13 @@ var ShapeKinds = []ShapeKind{ShapeEmailAddress, ShapePhoneNumber, ShapeCardNumbe
 // text: fixed words, never the model's, one for each run of what was removed.
 const RemovedMarker = "[removed]"
 
-// RuleRemoval is what an EffectRemove rule takes out, in this order (ADR
-// 0040, "Removing details"): whole Parts; then every piece of the subject and
-// the text that has one of the Shapes; then, sentence by sentence, every
-// sentence a model says mentions one of the Topics. At least one of the
-// three is set. A rule that removes Shapes or Topics also removes the
-// message's attachments, whose content it cannot read (ADR 0040, choice 6).
+// RuleRemoval is what an EffectRemove rule takes out (ADR 0040, "The
+// order"): whole Parts; every piece of the subject and the text that has one
+// of the Shapes; and, sentence by sentence, every sentence a model says
+// mentions one of the Topics. At least one of the three is set. A rule that
+// removes Shapes or Topics also removes the message's attachments, whose
+// content it cannot read, and its sender, whose address and name it does not
+// look into (ADR 0040, choices 6 and 9).
 type RuleRemoval struct {
 	Parts  []Part      `json:"parts,omitempty"`
 	Shapes []ShapeKind `json:"shapes,omitempty"`
@@ -119,11 +125,39 @@ type RuleCheck struct {
 	Draft    RuleDraft    `json:"draft"`
 	Sentence RuleSentence `json:"sentence"`
 	// Does is the effect in the system's words: "Holds the email back" or
-	// "Takes out" and what the removal lists.
+	// "Takes out" and what the removal lists (the sender and the
+	// attachments included when shapes or topics take them out, and each
+	// kind's false positives said).
 	Does string `json:"does"`
-	// For is the scope in the system's words, with the clients' domains.
-	For   string `json:"for"`
-	Model bool   `json:"model"`
+	// For is the scope in the system's words, each client by its Shown
+	// identity, never by its domain alone (ADR 0040, finding 4).
+	For string `json:"for"`
+	// Clients are the scope's clients as the sentence names them, in the
+	// scope's order.
+	Clients []RuleClient `json:"clients,omitempty"`
+	Model   bool         `json:"model"`
+}
+
+// RuleClient is a client as a rule's scope shows it (ADR 0040, finding 4):
+// its client_id, Shown (ClientShown: what tells two clients apart, never the
+// domain alone), and Name, the name its document gives itself, when the
+// account has a connection of it: the vendor's own words, untrusted, which
+// the screens label as such ("calls itself").
+type RuleClient struct {
+	ClientID string `json:"client_id"`
+	Shown    string `json:"shown"`
+	Name     string `json:"name,omitempty"`
+}
+
+// ClientShown is how a client is named wherever a rule's scope is shown: its
+// client_id with "https://" left out and nothing else, so two documents on
+// one host are told apart by their paths; any other client_id is shown
+// whole. web/src/lib/api.ts's clientShown is the same (U1's cases).
+func ClientShown(clientID string) string {
+	if rest, ok := strings.CutPrefix(clientID, "https://"); ok && rest != "" {
+		return rest
+	}
+	return clientID
 }
 
 // RuleWords is the body of POST /api/v1/rules/words: what the person wrote,
@@ -263,16 +297,18 @@ type RemovedSummary struct {
 	// counted once, under the first in ShapeKinds).
 	Shapes map[ShapeKind]int `json:"shapes,omitempty"`
 	// Sentences counts the sentences removed by meaning, Of how many the
-	// text was split into; Whole says the text (and the subject, when the
-	// rule reads it) was removed whole instead, because a decision could
-	// not be made or used, or the text is past what meaning reads (ADR 0040,
-	// "Removing by meaning"): Why then says which, in HeldWhy's words.
+	// message's view (its subject and text, ADR 0040, "One view") was split
+	// into, what lies past meaning's bounds counted as one; Whole says the
+	// subject and the text were removed whole instead, because a decision
+	// could not be made or used (ADR 0040, "Removing by meaning"): Why then
+	// says which, in HeldWhy's words.
 	Sentences int    `json:"sentences,omitempty"`
 	Of        int    `json:"of,omitempty"`
 	Whole     bool   `json:"whole,omitempty"`
 	Why       string `json:"why,omitempty"`
 	// Attachments counts the attachments removed, by a rule removing the
-	// part or a rule removing shapes or topics.
+	// part or a rule removing shapes or topics (whose removal of the sender
+	// is in Parts).
 	Attachments int `json:"attachments,omitempty"`
 }
 

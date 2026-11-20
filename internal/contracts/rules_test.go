@@ -95,7 +95,8 @@ func TestU1TheRulesShapes(t *testing.T) {
 					On:      true,
 				},
 				Sentence: RuleSentence{Lang: "en", Text: "All mail", Lead: []SentencePart{}, Formulas: []Sentence{}},
-				Does:     "Takes out", For: "Every connection but claude.ai's", Model: true,
+				Does:     "Takes out", For: "Every connection but claude.ai/oauth/mcp-oauth-client-metadata", Model: true,
+				Clients: []RuleClient{{ClientID: "https://claude.ai/oauth/mcp-oauth-client-metadata", Shown: "claude.ai/oauth/mcp-oauth-client-metadata", Name: "Claude"}},
 			},
 		}},
 		Notice:  &RuleNoticeAgreement{Version: "2026-11-20", At: at},
@@ -109,7 +110,8 @@ func TestU1TheRulesShapes(t *testing.T) {
 		`"rules":[{"id":"rul_x","version":2,"check":{"draft_id":"rdr_x","draft":{"name":"Home address","criteria":[{"v":1,"all":[]}],` +
 		`"effect":"remove","removal":{"parts":["attachments"],"shapes":["phone_number"],"topics":["a home address"]},` +
 		`"scope":{"to":"all_except","clients":["https://claude.ai/oauth/mcp-oauth-client-metadata"]},"on":true},` +
-		`"sentence":{"lang":"en","text":"All mail","lead":[],"formulas":[]},"does":"Takes out","for":"Every connection but claude.ai's","model":true},` +
+		`"sentence":{"lang":"en","text":"All mail","lead":[],"formulas":[]},"does":"Takes out","for":"Every connection but claude.ai/oauth/mcp-oauth-client-metadata",` +
+		`"clients":[{"client_id":"https://claude.ai/oauth/mcp-oauth-client-metadata","shown":"claude.ai/oauth/mcp-oauth-client-metadata","name":"Claude"}],"model":true},` +
 		`"notice":"2026-11-20","created_at":"2026-11-20T12:00:00Z","changed_at":"2026-11-20T12:00:00Z","model_off":true}],` +
 		`"notice":{"version":"2026-11-20","at":"2026-11-20T12:00:00Z"},"version":7,"max":16}`
 	if string(b) != want {
@@ -121,5 +123,23 @@ func TestU1TheRulesShapes(t *testing.T) {
 	}
 	if w, _ := json.Marshal(RemovedSummary{Whole: true, Why: "undecided"}); string(w) != `{"whole":true,"why":"undecided"}` {
 		t.Fatalf("a whole removal written %s", w)
+	}
+}
+
+// U1 (finding 4): a client is shown so that two documents on one host are
+// told apart, never by the domain alone; web/src/lib/api.ts's clientShown
+// answers these same cases (U32).
+func TestU1AClientIsShownApartFromAnotherOnItsHost(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://vendor.example/client-a.json":              "vendor.example/client-a.json",
+		"https://vendor.example/client-b.json":              "vendor.example/client-b.json",
+		"https://vendor.example/v2/client-a.json":           "vendor.example/v2/client-a.json",
+		"https://claude.ai/oauth/mcp-oauth-client-metadata": "claude.ai/oauth/mcp-oauth-client-metadata",
+		"http://localhost:8080/client":                      "http://localhost:8080/client",
+		"https://":                                          "https://",
+	} {
+		if got := ClientShown(in); got != want {
+			t.Errorf("%s shown %q, want %q", in, got, want)
+		}
 	}
 }

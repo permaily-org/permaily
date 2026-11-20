@@ -22,12 +22,15 @@ import (
 // before the connection's formulas read it; the rest leaves.
 const Remove Effect = "remove"
 
-// Removal is what a Remove rule takes out, in this order: whole Parts; every
-// piece of the subject and the text with one of Shapes, by internal/redact's
-// patterns; then each sentence the model says mentions one of Topics (each an
-// atom `message mentions <topic>`, asked sentence by sentence, never as the
-// query language asks it). A rule that removes Shapes or Topics removes the
-// message's attachments too (ADR 0040, choice 6).
+// Removal is what a Remove rule takes out: whole Parts; every piece of the
+// subject and the text with one of Shapes, by internal/redact's patterns;
+// and each sentence the model says mentions one of Topics (each an atom
+// `message mentions <topic>`, asked sentence by sentence, never as the query
+// language asks it). Every removal is a set of spans of the
+// message's one redact.View, whatever the connection reads, so the removals
+// of every rule that applies are joined by redact.Union (ADR 0040, finding
+// 1). A rule that removes Shapes or Topics removes the message's attachments
+// and its sender too (choices 6 and 9).
 type Removal struct {
 	Parts  []contracts.Part
 	Shapes []contracts.ShapeKind
@@ -37,6 +40,14 @@ type Removal struct {
 // Attachments says the removal takes the message's attachments out.
 func (r *Removal) Attachments() bool {
 	return r != nil && (slices.Contains(r.Parts, contracts.PartAttachments) || len(r.Shapes) > 0 || len(r.Topics) > 0)
+}
+
+// Sender says the removal takes the message's sender out: a rule that
+// removes it, or that removes Shapes or Topics, which are never looked for in
+// the sender's address or name (ADR 0040, finding 3 and choice 9): a rule
+// that says it removes email addresses must not let the sender's leave.
+func (r *Removal) Sender() bool {
+	return r != nil && (slices.Contains(r.Parts, contracts.PartSender) || len(r.Shapes) > 0 || len(r.Topics) > 0)
 }
 
 // Scope is which connections a rule is for, by their client (contracts.RuleScope).
@@ -99,12 +110,19 @@ type Stored struct {
 }
 
 // The record's bounds (ADR 0040, "The rules' record"): its JSON before
-// sealing, within a store item with room to spare; and its versions, below
-// the strict read's 10,000, after which the record rolls to its next epoch.
+// sealing, within a store item with room to spare; and the versions of one
+// epoch, the account's list of connections' (connections.ListEpochVersions,
+// ADR 0030's C2; finding 6 of ADR 0040's review), below
+// store.MaxHistoryReads with room for the write that rolls it over and its
+// removal's commit, so a cold strict read of an epoch never fails.
 const (
 	RecordBytesMax    = 300 << 10
-	RecordVersionsMax = 9000
+	RecordVersionsMax = 400
 )
+
+// Rotate says the write that takes an epoch to versions+1 rolls it over: it
+// writes the epoch Next, and the next epoch is made with everything.
+func Rotate(versions uint64) bool { return versions+1 >= RecordVersionsMax }
 
 // RecordName is the name of an account's record of rules in its epoch.
 func RecordName(account string, epoch uint64) string {
@@ -245,11 +263,16 @@ func (r Rule) Model() bool {
 
 // MeaningRef names the decision of which sentences a Remove rule's topics
 // take out of a message (ADR 0040, "Removing by meaning"): apart from the
-// rule's own decision of whether it applies, and bound to how the text was
-// taken out of the message (textVersion, inbox.TextVersion) and what the
-// fixed shapes removed before the model read it (shapesVersion,
-// redact.Version), since a sentence's number means nothing under another
-// split. A change of either is a new decision, never the old one used.
-func MeaningRef(r Ref, textVersion, shapesVersion int) Ref {
-	return Ref{ID: r.ID + "#meaning-t" + strconv.Itoa(textVersion) + "-s" + strconv.Itoa(shapesVersion), Version: r.Version}
+// rule's own decision of whether it applies, and bound to the rule's
+// version, to how the text was taken out of the message (textVersion,
+// inbox.TextVersion) and to how its one View was split (splitVersion,
+// redact.SplitVersion), since a sentence's number means nothing under
+// another split. A change of any is a new decision, never the old one used.
+// The decision itself keeps the digest of the sentence map it numbered
+// (inbox.MeaningKept.Map), and one whose map is not the message's now is
+// never applied: the whole text is removed (finding 1). It does not depend
+// on the connection, its parts or any other rule: every connection, and
+// every other rule, meets the same decision.
+func MeaningRef(r Ref, textVersion, splitVersion int) Ref {
+	return Ref{ID: r.ID + "#meaning-t" + strconv.Itoa(textVersion) + "-p" + strconv.Itoa(splitVersion), Version: r.Version}
 }
