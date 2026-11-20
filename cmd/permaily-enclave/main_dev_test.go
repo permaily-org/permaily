@@ -1186,10 +1186,10 @@ func TestMailEndToEnd(t *testing.T) {
 	sum := sha256.Sum256([]byte(admin))
 	var logs lockedBuffer
 	var enclaves []config
-	var auditTicks, incidentsTicks []chan time.Time
+	var auditTicks, incidentsTicks, sweepTicks []chan time.Time
 	for range 2 {
-		audit, incidents := make(chan time.Time), make(chan time.Time)
-		auditTicks, incidentsTicks = append(auditTicks, audit), append(incidentsTicks, incidents)
+		audit, incidents, sweep := make(chan time.Time), make(chan time.Time), make(chan time.Time)
+		auditTicks, incidentsTicks, sweepTicks = append(auditTicks, audit), append(incidentsTicks, incidents), append(sweepTicks, sweep)
 		cfg := config{
 			domain: "permaily.test", acmeDirectory: "unused", port: freePort(t), smtpPort: freePort(t), mtaSTSMode: "testing",
 			adminTokenSHA256: hex.EncodeToString(sum[:]), model: modelConfig{organization: "org-e2e-7f3a", project: "proj-e2e-7f3a"},
@@ -1199,6 +1199,8 @@ func TestMailEndToEnd(t *testing.T) {
 			// The audit and the reads of the record of incidents on the
 			// test's ticks (ADR 0037).
 			receiptsTicks: receiptsTicks{audit: audit, incidents: incidents},
+			// The connections' hourly pass on the test's ticks too (E40).
+			sweepTick: sweep,
 		}
 		enclaves = append(enclaves, cfg)
 		go func() {
@@ -1733,7 +1735,7 @@ func TestMailEndToEnd(t *testing.T) {
 	}
 	connectionSecrets := connectionsEndToEnd(t, e2eWorld{
 		enclaves: enclaves, call: call, newBrowser: newBrowser, outboxCode: outboxCode, send: send, modelTab: modelTab, modelKey: modelKey,
-		vendor: vendor, bea: bea, mailbox: beas.ID, address: beas.Address, platforms: ps, auditTicks: auditTicks, incidentsTicks: incidentsTicks,
+		vendor: vendor, bea: bea, mailbox: beas.ID, address: beas.Address, platforms: ps, auditTicks: auditTicks, incidentsTicks: incidentsTicks, sweepTicks: sweepTicks,
 	})
 
 	out := logs.String()

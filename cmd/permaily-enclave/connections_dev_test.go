@@ -151,8 +151,9 @@ type e2eWorld struct {
 	// platforms are the two enclaves' platforms.
 	platforms []*platform
 	// auditTicks and incidentsTicks tick each enclave's audit and its reads
-	// of the record of incidents (runReceipts).
-	auditTicks, incidentsTicks []chan time.Time
+	// of the record of incidents (runReceipts), sweepTicks its connections'
+	// hourly pass (runConnections).
+	auditTicks, incidentsTicks, sweepTicks []chan time.Time
 }
 
 // The clients the played vendor publishes: an app for the API and an agent
@@ -626,6 +627,8 @@ func connectionsEndToEnd(t *testing.T, w e2eWorld) []string {
 	// check passes, with the deployment's one newest pass: it checked Bea's
 	// chain, found nothing broken, and linked late the receipts the failing
 	// chain left without a link (recovered, a warning).
+	// E40's first half: the notices so far, before the day passes.
+	noticesSoFar(t, w)
 	devAhead.Add(int64(receipts.AuditEvery))
 	ticked := devClock()
 	var passes []attestation.ReceiptsAudit
@@ -728,6 +731,7 @@ func connectionsEndToEnd(t *testing.T, w e2eWorld) []string {
 			t.Fatalf("Bea's export through enclave %d holds %d links of %d", enclave, len(exported), chainHead())
 		}
 	}
+	noticesEndToEnd(t, w, connectionsSteps{token: token, agent: agent})
 	checkRecordsApart(t, w.platforms)
 	return append(secrets, "vendor-e2e", e2eAppClient, e2eAgentClient, e2eRedirect, "49152/callback", "penguin", "heron", "482913", "carol@", "bank.example")
 }

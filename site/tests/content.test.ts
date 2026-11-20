@@ -206,7 +206,7 @@ describe('legal pages', () => {
   it('say what is open as the image composes it', () => {
     // The image composes mailboxes, the model, connections and the default rule (cmd/permaily-enclave, ADR 0026,
     // 0028, 0030 and 0031), so the privacy page says them in the present tense and keeps "planned" for what is not
-    // built: the person's own rules (step 7) and the receipts' screen (step 8).
+    // built: the person's own rules (step 7). The receipts' screen and its downloads are built (ADR 0041).
     const go = (path: string) => readFileSync(join(import.meta.dirname, '../..', path), 'utf8');
     const composition = go('cmd/permaily-enclave/connections.go');
     expect(composition).toMatch(/Rules:\s+\[\]rules\.Rule\{rules\.Default\(\)\}/);
@@ -218,8 +218,9 @@ describe('legal pages', () => {
     expect(text).not.toMatch(
       /aren’t open yet|once (mailboxes|connections) open|none of this is running/i,
     );
-    expect(text).toContain(
-      'Rules of your own, and a screen that shows you your receipts, aren’t built yet',
+    expect(text).toContain('Rules of your own aren’t built yet');
+    expect(text).not.toMatch(
+      /screen that shows (them|your receipts) to you isn’t built|Viewing and exporting them are planned/,
     );
     // A connection's end and its revocation, as internal/oauth sets them.
     const oauth = go('internal/oauth/oauth.go');
@@ -279,6 +280,25 @@ describe('legal pages', () => {
         expect(text(path), path).not.toMatch(/Never the sender/);
       }
       expect(text('terms')).toContain('even when the connection’s own query uses no model');
+    });
+
+    it('how long a queued notice and its mark are kept, as services/notices sets it', () => {
+      // The code review of ADR 0041's pull request 7, 3: a notice is tried for RetryFor from its time, its entry
+      // expires entryKeptFor after it, and a mark KeptFor after it is written; both are then removed by DynamoDB's
+      // TTL cleanup, which is not immediate, and a deletion that fails leaves the entry to its expiry. The page says
+      // the window and the expiry apart, never a hard one-day erasure.
+      const notices = go('internal/services/notices/notices.go');
+      const queue = go('internal/services/notices/queue.go');
+      expect(notices).toMatch(/RetryFor = 24 \* time\.Hour\b/);
+      expect(notices).toMatch(/KeptFor = 30 \* 24 \* time\.Hour\b/);
+      expect(queue).toMatch(/const entryKeptFor = RetryFor \+ time\.Hour\b/);
+      expect(queue).toMatch(/ExpiresAt = v, d\.Notice\.At\.Add\(entryKeptFor\)/);
+      expect(queue).toMatch(/ExpiresAt: now\.Add\(KeptFor\)/);
+      const privacy = text('privacy');
+      expect(privacy).toContain(
+        'Tried for 24 hours from the event it tells of, and deleted once it is sent, or once it is no longer to be sent, when that deletion succeeds. Otherwise it expires 25 hours after the event, and our database’s automatic cleanup removes it some time after that. The mark expires 30 days after it is written and is removed by the same cleanup',
+      );
+      expect(privacy).not.toContain('at most a day');
     });
 
     it('a new mailbox’s retention and its choices, as internal/contracts sets them', () => {

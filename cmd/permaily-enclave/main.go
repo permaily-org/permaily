@@ -233,6 +233,11 @@ func run(cfg config, log *slog.Logger) error {
 		// for /status, and runs the daily audit under its lease (ADR 0037).
 		runReceipts(ctx, p.receipts, log, cfg.receiptsTicks)
 	}
+	if p.notices != nil {
+		// Every enclave runs the queue's runner: either may send a notice
+		// the other queued (ADR 0041, "The queue").
+		runNotices(ctx, p.notices)
+	}
 	var refusalsPassed <-chan struct{}
 	if p.connections != nil {
 		// Every enclave runs the connections' hourly pass (ADR 0030,
@@ -274,6 +279,16 @@ func run(cfg config, log *slog.Logger) error {
 	go func() {
 		defer close(stopped)
 		<-ctx.Done()
+		// The notices' attempts under way finish while the server stops,
+		// and nothing more is admitted (stopNotices).
+		noticesStopped := make(chan error, 1)
+		go func() {
+			if p.notices == nil {
+				noticesStopped <- nil
+				return
+			}
+			noticesStopped <- stopNotices(p.notices, log)
+		}()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -285,6 +300,7 @@ func run(cfg config, log *slog.Logger) error {
 			// After the last request: what the refusals' windows counted.
 			stopErr = stopConnections(p.connections.svc, refusalsPassed, log)
 		}
+		stopErr = errors.Join(stopErr, <-noticesStopped)
 	}()
 	if err := srv.ServeTLS(p.listener, "", ""); !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -398,6 +414,10 @@ func handler(cfg config, hosts router.Hosts, p *platform, log *slog.Logger) http
 	}
 	if p.connections != nil {
 		status.Connections = connectionsStatus(p.connections)
+	}
+	if p.notices != nil {
+		// What this enclave did with the queue of notices, in mail.notices.
+		status.Notices = p.notices.status
 	}
 	common := map[string]http.Handler{
 		"/attestation": httpapi.Attestation(p.attester, p.certs.UserData),

@@ -21,6 +21,10 @@ type StatusSources struct {
 	// Mail describes the mail the enclave sends and whether SES would keep a
 	// copy of it; nil when the image sends no mail.
 	Mail func() *attestation.MailStatus
+	// Notices counts what this enclave did with the queue of notices by
+	// mail (ADR 0041, "What /status and permaily-verify show"), reported as
+	// mail.notices with Mail's answer; nil when the image queues none.
+	Notices func() *attestation.NoticesStatus
 	// Admin counts what the operator did to accounts through this enclave;
 	// nil when the image has no accounts.
 	Admin func() *attestation.AdminStatus
@@ -43,6 +47,7 @@ type StatusSources struct {
 // attestation document (attestation.FetchStatus).
 func Status(src StatusSources) http.Handler {
 	tls, root, sigstore, anchors, mail, admin, model, conns := src.TLS, src.Root, src.Sigstore, src.Anchors, src.Mail, src.Admin, src.Model, src.Connections
+	notices := src.Notices
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -69,6 +74,10 @@ func Status(src StatusSources) http.Handler {
 		}
 		if mail != nil {
 			st.Mail = mail()
+		}
+		if st.Mail != nil && notices != nil {
+			// Mail's answer is a copy of its own: the counts go in it.
+			st.Mail.Notices = notices()
 		}
 		if admin != nil {
 			st.Admin = admin()

@@ -80,4 +80,25 @@ func printSentMail(w io.Writer, m *attestation.MailStatus) {
 		fmt.Fprintln(w, "      warning: the enclave's latest reading of SES failed; it sends no mail until one succeeds")
 	}
 	fmt.Fprintln(w, "      note: whoever administers the account can set one; the enclave sends only on a reading of the last seconds, and it would show here while this enclave runs, not before it started or after a restart")
+	printNotices(w, m.Notices)
+}
+
+// printNotices says what the enclave that answered did with the queue of
+// notices by mail since it started (ADR 0041, "What /status and
+// permaily-verify show"), and warns when it dropped a notice or found an
+// entry that does not verify. Neither fails the check: a notice tells, the
+// app shows, and the queue's code is what the measurements say. Nothing
+// is printed for an image older than the queue.
+func printNotices(w io.Writer, n *attestation.NoticesStatus) {
+	if n == nil {
+		return
+	}
+	fmt.Fprintf(w, "      notices by mail about connections and receipts, this enclave's own since %s: %d queued, %d sent, %d attempt(s) failed and tried again, %d dropped, %d skipped, %d refused\n",
+		n.Since.UTC().Format(time.RFC3339), n.Queued, n.Sent, n.Failed, n.Dropped, n.Skipped, n.Refused)
+	if n.Dropped > 0 {
+		fmt.Fprintf(w, "      warning: %d notice(s) were given up after a day of failed attempts, so someone was not told of a change to their connections or receipts (docs/operations.md, \"The queue of notices\")\n", n.Dropped)
+	}
+	if n.Refused > 0 {
+		fmt.Fprintf(w, "      warning: %d entry(ies) of the queue did not verify or were not notices this image words, and nothing sent them: someone wrote the table, or an image wrote what this one does not know (docs/operations.md, \"The queue of notices\")\n", n.Refused)
+	}
 }

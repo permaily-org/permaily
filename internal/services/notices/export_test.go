@@ -28,7 +28,7 @@ func SetEvery(s *Service, d time.Duration)      { s.every = d }
 // Pass is one pass as the runner makes it, due entries only, and waits for
 // its attempts.
 func Pass(ctx context.Context, s *Service) error {
-	s.pass(ctx, false)
+	s.pass(ctx, s.work, false)
 	return s.busy.wait(ctx)
 }
 
