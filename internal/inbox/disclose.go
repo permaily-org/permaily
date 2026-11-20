@@ -62,6 +62,10 @@ type Disclosed struct {
 	// with what it rested on, N4); a rule whose exact formulas were all
 	// False and which needed no model is not listed.
 	Rules []RuleCleared
+	// Removed is what each of the person's rules that remove details took
+	// out of it (ADR 0040), in the order they applied; empty when none did.
+	// Message is as it left, after them.
+	Removed []RemovedBy
 }
 
 // RuleCleared is a rule committed Cleared for a message.

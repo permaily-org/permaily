@@ -1,0 +1,30 @@
+{"name":"a US phone number with its parentheses and plus","kinds":["phone_number"],"in":"Call +1 (555) 123-4567 today.","out":"Call [removed] today.","shapes":{"phone_number":1}}
+{"name":"invisible characters inside a number neither break nor count","kinds":["phone_number"],"in":"Call 555​123​4567","out":"Call [removed]","shapes":{"phone_number":1}}
+{"name":"a Spanish phone number in pairs","kinds":["phone_number"],"in":"Llámame al 612 34 56 78","out":"Llámame al [removed]","shapes":{"phone_number":1}}
+{"name":"fullwidth digits are digits","kinds":["numeric_code"],"in":"Code: １２３４５６","out":"Code: [removed]","shapes":{"numeric_code":1}}
+{"name":"Arabic-Indic digits are digits","kinds":["numeric_code"],"in":"رمز ٤٨٢٩١٣","out":"رمز [removed]","shapes":{"numeric_code":1}}
+{"name":"three digits are not a code","kinds":["numeric_code"],"in":"Room 123","out":"Room 123","shapes":{}}
+{"name":"a year is a code: the stated false positive","kinds":["numeric_code"],"in":"Since 2026","out":"Since [removed]","shapes":{"numeric_code":1}}
+{"name":"an amount is a code: the stated false positive","kinds":["numeric_code"],"in":"Total 1.299,00 €","out":"Total [removed] €","shapes":{"numeric_code":1}}
+{"name":"a date is a phone number: the stated false positive","kinds":["phone_number"],"in":"On 2026-11-20 we met","out":"On [removed] we met","shapes":{"phone_number":1}}
+{"name":"a card number in fours","kinds":["card_number"],"in":"Card 4111 1111 1111 1111 expires","out":"Card [removed] expires","shapes":{"card_number":1}}
+{"name":"a phone number is not a card","kinds":["card_number"],"in":"Call 555-1234","out":"Call 555-1234","shapes":{}}
+{"name":"an IBAN in groups, its full stop kept","kinds":["account_number"],"in":"IBAN GB82 WEST 1234 5698 7654 32.","out":"IBAN [removed].","shapes":{"account_number":1}}
+{"name":"a long account number","kinds":["account_number"],"in":"Account 000123456789","out":"Account [removed]","shapes":{"account_number":1}}
+{"name":"an address with its comma kept","kinds":["email_address"],"in":"Write to ana.perez@example.com, please","out":"Write to [removed], please","shapes":{"email_address":1}}
+{"name":"a fullwidth at sign","kinds":["email_address"],"in":"ana＠example.com","out":"[removed]","shapes":{"email_address":1}}
+{"name":"an address in angle brackets","kinds":["email_address"],"in":"Ana <ana@example.org>","out":"Ana <[removed]>","shapes":{"email_address":1}}
+{"name":"an at sign alone is not an address","kinds":["email_address"],"in":"meet @ 5pm","out":"meet @ 5pm","shapes":{}}
+{"name":"a URL with its full stop kept","kinds":["link"],"in":"See https://example.com/a?b=1.","out":"See [removed].","shapes":{"link":1}}
+{"name":"www. with no scheme","kinds":["link"],"in":"Go to www.example.org now","out":"Go to [removed] now","shapes":{"link":1}}
+{"name":"a domain and a path","kinds":["link"],"in":"Open example.com/reset","out":"Open [removed]","shapes":{"link":1}}
+{"name":"a domain under a public suffix","kinds":["link"],"in":"Visit permaily.com","out":"Visit [removed]","shapes":{"link":1}}
+{"name":"a name with a dot is not a domain","kinds":["link"],"in":"Use Node.js daily","out":"Use Node.js daily","shapes":{}}
+{"name":"mailto is a link","kinds":["link"],"in":"mailto:ana@example.com","out":"[removed]","shapes":{"link":1}}
+{"name":"two kinds, two pieces","kinds":["phone_number","email_address"],"in":"Call 555-1234 or ana@example.com","out":"Call [removed] or [removed]","shapes":{"phone_number":1,"email_address":1}}
+{"name":"overlapping pieces are one, counted under the first kind","kinds":["email_address","phone_number"],"in":"ana@example.com555-1234","out":"[removed]","shapes":{"email_address":1}}
+{"name":"the marker is left as it is","kinds":["email_address","phone_number","card_number","account_number","numeric_code","link"],"in":"[removed]","out":"[removed]","shapes":{}}
+{"name":"no kind removes nothing","kinds":[],"in":"Call 555-1234","out":"Call 555-1234","shapes":{}}
+{"name":"a code next to a date is still removed: no most length (finding 2)","kinds":["numeric_code"],"in":"Code 123456 2026-11-20","out":"Code [removed]","shapes":{"numeric_code":1}}
+{"name":"a card followed by a year is still removed (finding 2)","kinds":["card_number"],"in":"Card 4111 1111 1111 1111 2026 thanks","out":"Card [removed] thanks","shapes":{"card_number":1}}
+{"name":"a phone number followed by another number is still removed (finding 2)","kinds":["phone_number"],"in":"Call 555 123 4567/12 today","out":"Call [removed] today","shapes":{"phone_number":1}}

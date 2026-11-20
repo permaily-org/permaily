@@ -175,6 +175,11 @@ type Decision struct {
 	// it back in the Settlement, so that its settlement changes only its
 	// own Pending (ADR 0031, "Changed after the fourth design review", F1).
 	Attempt Attempt
+	// Meaning is, for a Cleared decision of a rules.MeaningRef, which
+	// sentences it kept (ADR 0040, "Removing by meaning"); nil for every
+	// other. A Cleared meaning decision without it, or whose Map is not
+	// the message's now, removes the whole text (MeaningKept.For).
+	Meaning *MeaningKept
 }
 
 // Attempt names one begun Pending: the block it was begun in and the
@@ -199,6 +204,11 @@ type Settlement struct {
 	// the Pending it began. Held needs none (it settles whatever Pending it
 	// finds, as a recovery does).
 	Attempt Attempt
+	// Meaning is, for Cleared under a rules.MeaningRef, which sentences
+	// were kept, kept with the decision and answered with it ever after
+	// (ADR 0040). BlockDecisions refuses it (ErrMeaningNotKept) until ADR
+	// 0040's pull request 4 keeps it in the blocks.
+	Meaning *MeaningKept
 }
 
 // DecisionRecord is one block's document, sealed in the store.

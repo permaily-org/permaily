@@ -222,12 +222,15 @@ type MatchRequest struct {
 //
 // Held (ADR 0030, the consent screen's preview with AskModel) lists the
 // messages the formulas match that a rule holds back, the default rule
-// included: they are not in Messages. Absent on every other page.
+// included: they are not in Messages. Absent on every other page. Removed
+// (ADR 0040, the same preview) lists the messages in Messages that would leave
+// with details a rule of the person's takes out; absent on every other page.
 type MatchPage struct {
 	Messages   []MessageSummary `json:"messages"`
 	NeedsModel []string         `json:"needs_model"`
 	Unknown    []string         `json:"unknown"`
 	Held       []string         `json:"held,omitempty"`
+	Removed    []string         `json:"removed,omitempty"`
 	Next       string           `json:"next,omitempty"`
 	SearchedTo time.Time        `json:"searched_to,omitzero"`
 	Model      MatchModel       `json:"model,omitempty"`
