@@ -293,6 +293,9 @@ func (s *Service) closeAccountSessions(ctx context.Context, by *acting, id strin
 	}
 	s.acted(ActionSessionsClose, 1)
 	s.logged(ctx, by, logDoc{Kind: ActionSessionsClose, Account: doc.ID})
+	// Told once the change is stored, keyed by the count of sign-outs it
+	// made: a retry of the request is another sign-out, and told again.
+	s.noticeSignedOut(ctx, by, doc)
 	if err := s.closeSessions(ctx, id, ""); err != nil {
 		return nil, err
 	}
