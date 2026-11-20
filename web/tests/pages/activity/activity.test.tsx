@@ -926,7 +926,9 @@ describe('E2: the panel names every kind of row', () => {
   it('lists a search that matched nothing, and keeps it among what was made available', async () => {
     signedIn().on(
       firstPage,
-      ok(pageOf([linkOf(3, [receiptOf('search', { delivered: [], held: [] }), receiptOf('ended')])])),
+      ok(
+        pageOf([linkOf(3, [receiptOf('search', { delivered: [], held: [] }), receiptOf('ended')])]),
+      ),
     )
     const { user } = await openActivity()
     await findRow('Searched, nothing matched')
