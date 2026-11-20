@@ -14,13 +14,13 @@ package openai
 // reserved at rulewords.Estimate before it is sent, and the eval stops
 // before a call that would pass the budget (2 USD unless set). A phrasing
 // is usable when rulewords.Read accepts the answer; it protects less than
-// asked when its effect, criteria or removal leave out what the phrasing
-// asks (expect in the corpus); the gate is at least 90% usable of the
+// asked when its effect, criteria or removal hold or remove less than the
+// phrasing asks (expect in the corpus, read by less in judge_test.go); the
+// gate is at least 90% usable of the
 // phrasings that ask for a rule, none protecting less, and the phrasings
 // that ask for no rule refused.
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -28,7 +28,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -36,26 +35,6 @@ import (
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/rulewords"
 )
-
-type wordsCase struct {
-	ID     string `json:"id"`
-	Lang   string `json:"lang"`
-	Words  string `json:"words"`
-	Expect struct {
-		Unusable   bool                  `json:"unusable"`
-		Effect     contracts.RuleEffect  `json:"effect"`
-		Everything bool                  `json:"everything"`
-		Require    []contracts.Condition `json:"require"`
-		NarrowOK   bool                  `json:"narrow_ok"`
-		Shapes     []contracts.ShapeKind `json:"shapes"`
-		Parts      []contracts.Part      `json:"parts"`
-		Topics     bool                  `json:"topics"`
-		// OrHold are the conditions of a hold that protects at least as
-		// much as the removal asked for (holding every message with
-		// attachments in place of removing them).
-		OrHold []contracts.Condition `json:"or_hold"`
-	} `json:"expect"`
-}
 
 type wordsResult struct {
 	ID      string               `json:"id"`
@@ -67,122 +46,6 @@ type wordsResult struct {
 	Cost    int64                `json:"cost_nano_usd"`
 	Took    time.Duration        `json:"took"`
 	Refused bool                 `json:"refused,omitempty"`
-}
-
-func loadWords(t *testing.T) []wordsCase {
-	f, err := os.Open(filepath.Join("..", "testdata", "words.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	var out []wordsCase
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		var c wordsCase
-		dec := json.NewDecoder(strings.NewReader(sc.Text()))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&c); err != nil {
-			t.Fatalf("%s: %v", sc.Text(), err)
-		}
-		out = append(out, c)
-	}
-	return out
-}
-
-// matches says a condition of a draft is the one the corpus requires:
-// "*any*" any variable, "*text*" the subject, the body or the message,
-// "*model*" about or mentions; values compared without case.
-func matches(want, got contracts.Condition) bool {
-	switch want.Var {
-	case "*any*":
-	case "*text*":
-		if got.Var != contracts.VarSubject && got.Var != contracts.VarBody && got.Var != contracts.VarMessage {
-			return false
-		}
-	default:
-		if got.Var != want.Var {
-			return false
-		}
-	}
-	if want.Op == "*model*" {
-		if got.Op != contracts.OpAbout && got.Op != contracts.OpMentions {
-			return false
-		}
-	} else if got.Op != want.Op {
-		return false
-	}
-	return !got.Not && (want.Value == "" || strings.EqualFold(want.Value, got.Value))
-}
-
-// less says how a draft protects less than its phrasing asks, or "".
-func less(c wordsCase, d contracts.RuleDraft) string {
-	e := c.Expect
-	if e.Effect == contracts.EffectRemove && d.Effect == contracts.EffectHold && len(e.OrHold) > 0 {
-		for _, f := range d.Criteria {
-			if len(f.All) == 0 {
-				return ""
-			}
-			if len(f.All) == 1 && slices.ContainsFunc(f.All[0].Any, func(got contracts.Condition) bool {
-				return slices.ContainsFunc(e.OrHold, func(w contracts.Condition) bool { return matches(w, got) })
-			}) {
-				return ""
-			}
-		}
-	}
-	if e.Effect == contracts.EffectHold && d.Effect != contracts.EffectHold {
-		return "removes where it should hold"
-	}
-	everything := slices.ContainsFunc(d.Criteria, func(f contracts.Formula) bool { return len(f.All) == 0 })
-	if e.Everything && !everything {
-		return "does not apply to all mail"
-	}
-	// A required condition is met by a criteria that holds it and whose
-	// every group holds a required condition: another group would narrow
-	// it (unless the phrasing asks for that). Other criteria only widen
-	// the rule, as criteria are joined by "any".
-	plain := func(f contracts.Formula) bool {
-		if e.NarrowOK {
-			return true
-		}
-		for _, g := range f.All {
-			if !slices.ContainsFunc(g.Any, func(got contracts.Condition) bool {
-				return slices.ContainsFunc(e.Require, func(w contracts.Condition) bool { return matches(w, got) })
-			}) {
-				return false
-			}
-		}
-		return true
-	}
-	for _, w := range e.Require {
-		found := everything
-		for _, f := range d.Criteria {
-			for _, g := range f.All {
-				if slices.ContainsFunc(g.Any, func(got contracts.Condition) bool { return matches(w, got) }) && plain(f) {
-					found = true
-				}
-			}
-		}
-		if !found {
-			return "misses a condition it asks for, or narrows it"
-		}
-	}
-	if d.Effect == contracts.EffectRemove {
-		r := d.Removal
-		for _, k := range e.Shapes {
-			if !slices.Contains(r.Shapes, k) {
-				return "misses a shape it asks for"
-			}
-		}
-		for _, p := range e.Parts {
-			if !slices.Contains(r.Parts, p) {
-				return "misses a part it asks for"
-			}
-		}
-		if e.Topics && len(r.Topics) == 0 && len(r.Shapes) == 0 && len(r.Parts) == 0 {
-			return "removes nothing by meaning"
-		}
-	}
-	return ""
 }
 
 func TestU33TheWordsEval(t *testing.T) {
