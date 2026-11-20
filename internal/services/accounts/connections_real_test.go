@@ -16,6 +16,7 @@ import (
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/keys"
 	"github.com/permaily-org/permaily/internal/oauth"
+	"github.com/permaily-org/permaily/internal/services/accountrules/accountrulestest"
 	"github.com/permaily-org/permaily/internal/services/connections"
 	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
@@ -96,7 +97,7 @@ func TestCancellingAfterAFailedFenceNeverBringsAConnectionBack(t *testing.T) {
 		s, err := connections.New(connections.Config{
 			OAuth:   oauth.Config{Issuer: "https://api.permaily.test", AppOrigin: "https://app.permaily.test", APIResource: "https://api.permaily.test/v1", MCPResource: "https://mcp.permaily.test/mcp"},
 			Records: f, Entries: w.mem, Keys: k, Vendors: realVendors{}, Accounts: w.svc, Mailboxes: realMailboxes{},
-			Receipts: realReceipts{}, ModelNotice: w.notice, Now: clock,
+			Receipts: realReceipts{}, Source: &accountrulestest.Fake{}, ModelNotice: w.notice, Now: clock,
 		})
 		if err != nil {
 			t.Fatal(err)
