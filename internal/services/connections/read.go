@@ -15,6 +15,7 @@ import (
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/query"
+	"github.com/permaily-org/permaily/internal/rules"
 	"github.com/permaily-org/permaily/internal/services/receipts"
 )
 
@@ -30,6 +31,9 @@ type reading struct {
 	conn     *connDoc
 	d        inbox.Disclosure
 	formulas []receipts.Formula
+	// rules are the rules the request applies, as its receipt names them;
+	// nil until they are read.
+	rules []rules.Ref
 }
 
 // prepare checks the gates of a read and makes its disclosure, the search's
@@ -81,7 +85,14 @@ func (s *Service) prepare(ctx context.Context, g *oauth.Grant, op Operation, sea
 	if search != nil {
 		add(receipts.RoleSearch, search, true)
 	}
-	r.d.Rules, r.d.Parts, r.d.Account, r.d.Model = s.cfg.Rules, slices.Clone(g.Parts), g.Account, true
+	// The account's rules for this client, read now (ADR 0040): nothing
+	// leaves when they cannot be read, the default alone included.
+	ap, err := s.rulesFor(ctx, g.Account, g.ClientID)
+	if err != nil {
+		return refused(ErrUnavailable)
+	}
+	r.rules = refsOf(ap.Rules)
+	r.d.Rules, r.d.Parts, r.d.Account, r.d.Model = ap.Rules, slices.Clone(g.Parts), g.Account, true
 	// Nothing leaves while the model cannot be asked, nor for a connection
 	// approved under another notice (the owner's decision 9, finding 18).
 	if d.ModelNotice != s.cfg.ModelNotice || s.cfg.Model == nil || s.cfg.Model.Gate(ctx, g.Account) != inbox.AskAnswered {
@@ -108,8 +119,17 @@ func (s *Service) asking(ctx context.Context, d inbox.Disclosure) context.Contex
 func (s *Service) receipt(r *reading, kind receipts.Kind) *receipts.Receipt {
 	return &receipts.Receipt{
 		V: receipts.Version, Kind: kind, Connection: r.g.Connection, Device: r.g.Family, ClientID: r.g.ClientID,
-		Vendor: r.g.Vendor, Resource: r.g.Resource, Formulas: r.formulas, Rules: s.ruleRefs(),
+		Vendor: r.g.Vendor, Resource: r.g.Resource, Formulas: r.formulas, Rules: r.ruleRefs(s),
 	}
+}
+
+// ruleRefs are the rules r applies, once read; before, Config.Rules (the
+// rules a refusal before them would have applied, none with a Source).
+func (r *reading) ruleRefs(s *Service) []rules.Ref {
+	if r.rules != nil {
+		return r.rules
+	}
+	return s.ruleRefs()
 }
 
 // refuse records the refusal of a request a valid token attributed to its
@@ -367,6 +387,12 @@ pages:
 			}
 			fit, err := rp.Add(mbx, r.d.Parts, it)
 			if err != nil {
+				return refuse(receipts.RefusedUnavailable, ErrUnavailable)
+			}
+			if !fit && considered == 0 {
+				// One message's receipt cannot fit even an empty page: it
+				// is refused, never answered as an empty page whose cursor
+				// does not move (ADR 0040, "The receipt's size", U24).
 				return refuse(receipts.RefusedUnavailable, ErrUnavailable)
 			}
 			if !fit {

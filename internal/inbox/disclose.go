@@ -26,11 +26,15 @@ type Disclosure struct {
 	// Formulas are canonical and never simplified together; a message
 	// leaves only when the least of their values is True (query.ForQuery).
 	Formulas []*query.Canonical
-	// Rules apply before the formulas, on every message: a message one of
-	// them applies to (a formula of it True or Unknown, query.ForRule) is
-	// held and does not leave. A rule's value that would rest on a model's
-	// answer is decided once and committed through Decisions before
-	// anything is asked (ADR 0031, "Holds that cannot be undone").
+	// Rules apply before the formulas, on every message, each read for a
+	// rule (a formula of it True or Unknown, query.ForRule, applies it): a
+	// message a rule that holds applies to does not leave; then every rule
+	// that removes (rules.Remove) and applies takes its details out of the
+	// message's one view, and the formulas read what is left (ADR 0040,
+	// "The order"). A rule's value that would rest on a model's answer, and
+	// which sentences a removal's topics keep, are decided once and
+	// committed through Decisions before anything is asked (ADR 0031,
+	// "Holds that cannot be undone").
 	Rules []rules.Rule
 	// Parts are the effective parts: the token's scopes, the device's and
 	// the connection's parts, intersected (ADR 0030, finding 7).
