@@ -527,6 +527,11 @@ func (s *Service) sweepAccount(ctx context.Context, account string) error {
 			if err := s.tidyConn(ctx, d, at); err != nil {
 				return err
 			}
+			// Live, and ending within the week: told once per connection
+			// and end (ADR 0041, E32); a closing account is told nothing.
+			if !l.Closing {
+				s.notifyEnding(ctx, d, now)
+			}
 		}
 	}
 	if len(ended) == 0 && len(removed) == 0 {
