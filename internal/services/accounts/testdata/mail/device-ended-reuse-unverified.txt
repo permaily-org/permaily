@@ -1,0 +1,11 @@
+To: ada@example.com
+Subject: Permaily ended a device of one of your connections
+
+Permaily ended a device of one of your connections, because a key that device reads with was used twice. That can mean someone copied it.
+
+    When: 12 November 2026, 09:30 UTC
+    App: An app Permaily hasn't verified
+
+The app may ask you to connect again: approve it only if you asked for it.
+
+If you don't know why this happened, revoke the connection in Connections at app.permaily.com, and write to support@permaily.com.

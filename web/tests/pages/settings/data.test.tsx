@@ -13,13 +13,13 @@ async function settings() {
 }
 
 describe('notifications and your data', () => {
-  it('say what is true today, and show no control that does nothing', async () => {
+  it('say what is true today, and show no control that does nothing (E39)', async () => {
     await settings()
     const notifications = within(screen.getByRole('region', { name: 'Notifications' }))
     expect(
       notifications.getByText(/^Permaily emails you only about security and access/).textContent,
     ).toBe(
-      "Permaily emails you only about security and access: a sign-in from a new device, a change in how you sign in or in your contact address, and your account being deleted or blocked. These emails can't be turned off.",
+      "Permaily emails you only about security and access: a sign-in from a new device, a change in how you sign in or in your contact address, your account being deleted or blocked, a connection approved, renewed or given a new device, a connection that ends in a week or loses a device for safety, receipts found deleted or changed, and every device signed out by Permaily. These emails can't be turned off.",
     )
     const data = within(screen.getByRole('region', { name: 'Your data' }))
     expect(data.getByText(/^Deleting your account below/).textContent).toBe(
