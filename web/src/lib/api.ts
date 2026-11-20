@@ -2084,3 +2084,290 @@ export async function exportReceipts(): Promise<{ file: string; head: ReceiptsHe
     before = page.next
   }
 }
+
+/*
+  A receipt as the walk gives it (ADR 0041, "What a receipt shows"): internal/services/receipts.Receipt, versions 1
+  and 2, whose stored documents are the golden files of internal/services/receipts/testdata/golden, which the tests
+  read with readReceipt. Everything a receipt names is as it was when the request was answered. Senders, subjects
+  and a model's topics are what mail and vendors wrote: shown as text, never as markup or links.
+*/
+
+/** What a receipt records. `refusals` (version 2) counts, for one connection's minute, the refusals past those recorded one by one. */
+export type ReceiptKind =
+  | 'search'
+  | 'read'
+  | 'attachment'
+  | 'refused'
+  | 'consent'
+  | 'ended'
+  | 'refusals'
+
+/** A rule by its identifier and version. */
+export type RuleRef = { id: string; version: number }
+
+/** A formula evaluated, by role and identifier; its canonical form only for a search and in a consent. */
+export type ReceiptFormula = {
+  role: 'consented' | 'mailboxes' | 'since' | 'search'
+  id: string
+  formula?: QueryFormula
+}
+
+/** One answer of the model, or its kept refusal, a decision rested on. */
+export type ReceiptModel = {
+  var: QueryVariable
+  op: QueryOperator
+  topic: string
+  p: number
+  refused?: boolean
+  by_rule?: boolean
+  model?: string
+  prompt?: string
+  canary_checked?: string
+  canary_change?: string
+}
+
+/** One message made available: never its text or an attachment. */
+export type ReceiptDelivered = {
+  mailbox: string
+  message: string
+  received: string
+  parts: ConnectionPart[]
+  from?: MailAddress[]
+  subject?: string
+  attachment?: number
+  model?: ReceiptModel[]
+  cleared?: { rule: RuleRef; at: string; model?: ReceiptModel[] }[]
+}
+
+/** One message a rule held: nothing of it left. `why` is `exact`, `decided`, `recovered` or `undecided`. */
+export type ReceiptHeld = {
+  mailbox: string
+  message: string
+  rule: RuleRef
+  why: string
+  model?: ReceiptModel[]
+}
+
+/** A request for mail that got none, and why. */
+export type ReceiptRefused = {
+  reason: string
+  mailbox?: string
+  message?: string
+  held?: ReceiptHeld
+  receipt?: string
+}
+
+/** What the person was shown and decided. */
+export type ReceiptConsent = {
+  allowed: boolean
+  renewal?: boolean
+  change?: ConnectionChange
+  sentences: string[]
+  parts: ConnectionPart[]
+  since: MailSince
+  ends_at?: string
+  mailboxes: string[]
+  model_notice: string
+  replaced?: string
+}
+
+/** One connection's refusals in a minute past the ones recorded each in its own receipt. */
+export type ReceiptRefusals = {
+  from: string
+  until: string
+  recorded: number
+  counts: { operation: string; reason: string; count: number }[]
+}
+
+/** A receipt's document. The arrays a version may leave out are always there, empty. */
+export type Receipt = {
+  v: 1 | 2
+  id: string
+  at: string
+  kind: ReceiptKind
+  connection?: string
+  device?: string
+  client_id: string
+  vendor: string
+  resource: ConnectionResource
+  formulas: ReceiptFormula[]
+  rules: RuleRef[]
+  delivered: ReceiptDelivered[]
+  held: ReceiptHeld[]
+  refused?: ReceiptRefused
+  consent?: ReceiptConsent
+  ended?: { reason: EndReason; replaced_by?: string }
+  refusals?: ReceiptRefusals
+}
+
+const receiptKinds: readonly string[] = [
+  'search',
+  'read',
+  'attachment',
+  'refused',
+  'consent',
+  'ended',
+  'refusals',
+]
+
+/*
+  The shape readReceipt holds a receipt to: every part, list and nested field the Activity screen and the CSV read (ADR
+  0041, "Changed after the design review", 5). The storage authenticates a receipt's bytes, its version and its
+  identifier, not this app's schema, so this is the screen's compatibility boundary: a shape it cannot use is null,
+  never a row that throws. A list Go wrote from a nil slice (`null`) or left out is empty; any other value that is not a
+  list is not a receipt this app can show.
+*/
+type Shape = Record<string, unknown>
+
+const isObject = (v: unknown): v is Shape =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+const isString = (v: unknown): v is string => typeof v === 'string'
+const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const optional =
+  (check: (v: unknown) => boolean) =>
+  (v: unknown): boolean =>
+    v === undefined || check(v)
+const optString = optional(isString)
+const optNumber = optional(isNumber)
+const optBoolean = optional((v) => typeof v === 'boolean')
+
+/** A list as Go writes it: an array each of whose items passes, or null or nothing for none. */
+const isList =
+  (item: (v: unknown) => boolean) =>
+  (v: unknown): boolean =>
+    v === undefined || v === null || (Array.isArray(v) && v.every(item))
+const list = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : [])
+
+const isRuleRef = (v: unknown): boolean => isObject(v) && isString(v.id) && isNumber(v.version)
+const isModel = (v: unknown): boolean =>
+  isObject(v) &&
+  isString(v.var) &&
+  isString(v.op) &&
+  isString(v.topic) &&
+  isNumber(v.p) &&
+  optBoolean(v.refused) &&
+  optBoolean(v.by_rule) &&
+  optString(v.model) &&
+  optString(v.prompt) &&
+  optString(v.canary_checked) &&
+  optString(v.canary_change)
+const isAddress = (v: unknown): boolean => isObject(v) && isString(v.address) && optString(v.name)
+const isFormula = (v: unknown): boolean =>
+  isObject(v) && isString(v.role) && isString(v.id) && optional(isObject)(v.formula)
+const isDelivered = (v: unknown): boolean =>
+  isObject(v) &&
+  isString(v.mailbox) &&
+  isString(v.message) &&
+  isString(v.received) &&
+  isList(isString)(v.parts) &&
+  isList(isAddress)(v.from) &&
+  optString(v.subject) &&
+  optNumber(v.attachment) &&
+  isList(isModel)(v.model) &&
+  isList((c) => isObject(c) && isRuleRef(c.rule) && isString(c.at) && isList(isModel)(c.model))(
+    v.cleared,
+  )
+const isHeld = (v: unknown): boolean =>
+  isObject(v) &&
+  isString(v.mailbox) &&
+  isString(v.message) &&
+  isRuleRef(v.rule) &&
+  isString(v.why) &&
+  isList(isModel)(v.model)
+
+/** The part of a receipt its kind must have, and its shape; the reads may have delivered nothing, every message held. */
+const receiptPart: Partial<Record<ReceiptKind, (v: unknown) => boolean>> = {
+  refused: (v) =>
+    isObject(v) &&
+    isString(v.reason) &&
+    optString(v.mailbox) &&
+    optString(v.message) &&
+    optional(isHeld)(v.held) &&
+    optString(v.receipt),
+  consent: (v) =>
+    isObject(v) &&
+    typeof v.allowed === 'boolean' &&
+    optBoolean(v.renewal) &&
+    optString(v.change) &&
+    isList(isString)(v.sentences) &&
+    isList(isString)(v.parts) &&
+    isObject(v.since) &&
+    typeof v.since.new === 'boolean' &&
+    optString(v.since.at) &&
+    optString(v.ends_at) &&
+    isList(isString)(v.mailboxes) &&
+    isString(v.model_notice) &&
+    optString(v.replaced),
+  ended: (v) => isObject(v) && isString(v.reason) && optString(v.replaced_by),
+  refusals: (v) =>
+    isObject(v) &&
+    isString(v.from) &&
+    isString(v.until) &&
+    isNumber(v.recorded) &&
+    isList((c) => isObject(c) && isString(c.operation) && isString(c.reason) && isNumber(c.count))(
+      v.counts,
+    ),
+}
+
+const receiptParts = ['refused', 'consent', 'ended', 'refusals'] as const
+
+/**
+ * A receipt the walk found `ok`, read as this app knows receipts, or null when it is not one it can show: another
+ * version or kind, without what its kind records, or a part, list or field the screen and the CSV read in a shape they
+ * cannot use. A receipt read as null is still listed, as one this app can't show, with its identifier and position
+ * (ADR 0041): nothing found is ever left out.
+ */
+export function readReceipt(document: unknown): Receipt | null {
+  if (!isObject(document)) return null
+  const r = document
+  if (
+    (r.v !== 1 && r.v !== 2) ||
+    !isString(r.id) ||
+    !r.id.startsWith('rcp_') ||
+    !isString(r.at) ||
+    !isString(r.vendor) ||
+    !isString(r.client_id) ||
+    !isString(r.resource) ||
+    !optString(r.connection) ||
+    !optString(r.device) ||
+    !receiptKinds.includes(r.kind as string)
+  )
+    return null
+  const kind = r.kind as ReceiptKind
+  if (kind === 'refusals' && r.v !== 2) return null
+  const own = receiptPart[kind]
+  if (own && !own(r[kind])) return null
+  // A part of another kind is left as it is only when it has that kind's shape too, so nothing read is ever unusable.
+  for (const other of receiptParts)
+    if (other !== kind && r[other] !== undefined && !receiptPart[other]?.(r[other])) return null
+  if (
+    !isList(isFormula)(r.formulas) ||
+    !isList(isRuleRef)(r.rules) ||
+    !isList(isDelivered)(r.delivered) ||
+    !isList(isHeld)(r.held)
+  )
+    return null
+  const receipt = {
+    ...(r as unknown as Receipt),
+    formulas: list<ReceiptFormula>(r.formulas),
+    rules: list<RuleRef>(r.rules),
+    delivered: list<ReceiptDelivered>(r.delivered).map((d) => ({
+      ...d,
+      parts: list<ConnectionPart>(d.parts),
+    })),
+    held: list<ReceiptHeld>(r.held),
+  }
+  if (receipt.consent)
+    receipt.consent = {
+      ...receipt.consent,
+      sentences: list<string>(receipt.consent.sentences),
+      parts: list<ConnectionPart>(receipt.consent.parts),
+      mailboxes: list<string>(receipt.consent.mailboxes),
+    }
+  if (receipt.refusals)
+    receipt.refusals = {
+      ...receipt.refusals,
+      counts: list<ReceiptRefusals['counts'][number]>(receipt.refusals.counts),
+    }
+  return receipt
+}
