@@ -104,9 +104,9 @@ describe('E15: the rows of the CSV, from the walk', () => {
     expect(made?.rule).toBe('default-sign-in-and-security v1')
     expect(made?.model.split('; ')[0]).toBe('subject about "invoices": 0.91 (gpt-6-luna, p2c)')
     expect(JSON.parse(made?.search ?? '')).toEqual(
-      (everyKind[6]?.formulas as { role: string; formula?: unknown }[]).find(
-        (f) => f.role === 'search',
-      )?.formula,
+      (
+        (everyKind[6] as Record<string, unknown>).formulas as { role: string; formula?: unknown }[]
+      ).find((f) => f.role === 'search')?.formula,
     )
     const held = rows[8]
     expect([held?.reason, held?.rule, held?.message]).toEqual([
@@ -224,6 +224,38 @@ describe('E15: the rows of the CSV, from the walk', () => {
     ])
   })
 
+  it('writes what a receipt leaves out as empty, and a verdict it does not know as can’t be read', () => {
+    const search = receiptOf('search', { connection: undefined })
+    const d = (search.delivered as Record<string, unknown>[])[0] as Record<string, unknown>
+    d.subject = undefined
+    d.from = [{ address: 'billing@example.com' }]
+    d.model = [{ var: 'subject', op: 'about', topic: 'invoices', p: 0.5, refused: true }]
+    const refused = receiptOf('refused', { refused: { reason: 'rate_limited' } })
+    const rows = rowsOf(
+      walk([
+        {
+          ...linkOf(3, [search, refused]),
+          receipts: [
+            ...linkOf(3, [search, refused]).receipts,
+            { ...entryOf(9, search, 'missing'), verdict: 'gone' },
+          ],
+        },
+      ]),
+    )
+    const made = rows[0]
+    expect([made?.connection, made?.subject, made?.from]).toEqual(['', '', 'billing@example.com'])
+    expect(made?.model.split('; ')[0]).toBe('subject about "invoices": 0.5 refused')
+    const asked = rows.find((r) => r.kind === 'refused')
+    expect([asked?.reason, asked?.mailbox, asked?.message, asked?.rule, asked?.model]).toEqual([
+      'rate_limited',
+      '',
+      '',
+      '',
+      '',
+    ])
+    expect(rows.at(-1)?.record).toBe("can't be read")
+  })
+
   it('names the owner the image verified only when the caller knows it', () => {
     const doc = receiptOf('ended')
     const [none] = rowsOf(walk([linkOf(3, [doc])]))
@@ -243,7 +275,7 @@ describe('E15: the rows of the CSV, from the walk', () => {
     for (const line of lines) {
       expect(line.endsWith('\r\n')).toBe(true)
       const body = line.slice(0, -2)
-      expect(/[\u0000-\u001f]/.test(body)).toBe(false)
+      expect([...body].some((c) => c.charCodeAt(0) < 0x20)).toBe(false)
       for (const cell of body.slice(1, -1).split('","'))
         expect(/^[\s​-‍⁠﻿�]*[=+\-@|%]/.test(cell), cell).toBe(false)
     }
@@ -583,7 +615,7 @@ describe('E16: a download in parts, each saved whole, then its manifest', () => 
       day,
       partBytes: 250,
     })
-    const manifest = JSON.parse(await (files.at(-1)?.blob as Blob).text())
+    const manifest = JSON.parse(await (files.at(-1) as { blob: Blob }).blob.text())
     expect(manifest.head).toBeNull()
   })
 })
@@ -593,6 +625,7 @@ describe('E17: the downloads’ names, from the person’s local day', () => {
     expect(localDay(new Date(2026, 10, 20, 23, 59))).toBe('2026-11-20')
     expect(localDay(new Date(2027, 0, 5, 0, 1))).toBe('2027-01-05')
     expect(localDay()).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(() => exportManifestName('20 November', 'csv')).toThrow()
   })
 
   it('saves a file through a same-origin download, naming nobody', async () => {

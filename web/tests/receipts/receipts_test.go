@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -134,7 +135,11 @@ func verifier(t *testing.T) string {
 			return
 		}
 		verifyPath = filepath.Join(dir, "permaily-verify")
-		gobin := filepath.Join(runtime.GOROOT(), "bin", "go") //nolint:staticcheck // the toolchain running this test
+		// The toolchain running this test, else the one on the path.
+		gobin := "go"
+		if root := runtime.GOROOT(); root != "" { //nolint:staticcheck // the toolchain that built this test
+			gobin = filepath.Join(root, "bin", "go")
+		}
 		cmd := exec.Command(gobin, "build", "-o", verifyPath, "../../../cmd/permaily-verify")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			verifyErr = fmt.Errorf("go build: %w: %s", err, out)
@@ -165,7 +170,7 @@ func check(t *testing.T, file []byte, head string) (bool, string) {
 	}
 	out, err := exec.Command(verifier(t), "-receipts", path, "-receipts-head", head).CombinedOutput() //nolint:gosec // the binary built above
 	if err != nil {
-		if _, exited := err.(*exec.ExitError); !exited {
+		if exited := (*exec.ExitError)(nil); !errors.As(err, &exited) {
 			t.Fatal(err)
 		}
 		return false, string(out)

@@ -288,9 +288,9 @@ function receiptRows(r: api.Receipt, verified: string | undefined): Cells[] {
       return [of({ outcome: consentOutcome(consent), parts: consent.parts.join(' ') })]
     }
     case 'ended':
-      return [of({ outcome: 'ended', reason: r.ended?.reason ?? '' })]
+      return [of({ outcome: 'ended', reason: (r.ended as { reason: string }).reason })]
     case 'refusals': {
-      const counts = r.refusals?.counts ?? []
+      const { counts } = r.refusals as api.ReceiptRefusals
       return counts.length > 0
         ? counts.map((c) =>
             of({
