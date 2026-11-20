@@ -259,6 +259,14 @@ function Detail({ id, onChanged }: { id: string; onChanged: (c: api.Connection) 
               ? `allowed ${formatDay(c.made_at)}, ends ${formatDay(c.ends_at)}`
               : `ended ${formatDay(c.ended_at ?? c.ends_at)}`}
           </p>
+          {/* What it was given and refused, in the account's record (ADR 0041). */}
+          <TextLink
+            to={`/activity?connection=${encodeURIComponent(c.id)}`}
+            size="sm"
+            className="mt-2"
+          >
+            Activity <span className="sr-only">of {name}</span>
+          </TextLink>
         </div>
         {active && (
           <div className="flex flex-wrap gap-2.5">

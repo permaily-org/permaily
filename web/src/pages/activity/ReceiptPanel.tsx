@@ -1,143 +1,379 @@
 import { ChevronRight } from 'lucide-react'
-import { type ReactNode, useState } from 'react'
-import {
-  Bar,
-  ButtonLink,
-  InfoTip,
-  Mark,
-  SectionHeading,
-  TextLink,
-} from '../../components/ui/index.ts'
-import {
-  connectionById,
-  connectionLabel,
-  formatCount,
-  type Receipt,
-  rules,
-  vendorOf,
-} from '../../data/sample.ts'
+import { type ReactNode, useId, useState } from 'react'
+import { InfoTip, SectionHeading, TextAction, TextLink } from '../../components/ui/index.ts'
+import * as api from '../../lib/api.ts'
+import { useSession } from '../../lib/session.tsx'
 import { cx, focusRing } from '../../lib/styles.ts'
-import { domainOf, fullTime, previousReceipt, shortHash } from './data.ts'
+import { messageFor } from '../auth/messages.ts'
+import { vendorPath } from '../connections/ConnectionsPage.tsx'
+import { endWords, partsWords, resourceWords, Sentence, sinceWords } from '../connections/words.tsx'
+import { formatDay } from '../settings/signin/shared.ts'
+import type { Row } from './record.ts'
+import {
+  conditionWords,
+  consentTip,
+  givenWords,
+  heldWhyWords,
+  linkKindTips,
+  linkVerdictWords,
+  momentWords,
+  positionWords,
+  probabilityWords,
+  refusalCountWords,
+  refusedWords,
+  sendersWords,
+} from './words.ts'
+
+/** What the panel knows besides the receipt: the connections and mailboxes listed now, and whether it may link. */
+export type Known = {
+  connections: ReadonlyMap<string, api.Connection>
+  /** Null until the mailboxes are read, or when they could not be. */
+  mailboxes: ReadonlyMap<string, api.Mailbox> | null
+  /** Whether the connections' pages can be opened from here (not while the account is closing). */
+  linkConnections: boolean
+}
 
 function Fact({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
-    <div className="flex min-h-[34px] items-center gap-4 border-b border-rule py-[5px]">
-      <dt className="flex w-[80px] shrink-0 items-center gap-1.5 text-small text-ink-2">{label}</dt>
-      <dd className="flex min-w-0 flex-1 items-center gap-3">{children}</dd>
+    <div className="flex min-h-[34px] items-start gap-4 border-b border-rule py-[7px]">
+      <dt className="flex w-[96px] shrink-0 items-center gap-1.5 text-small text-ink-2">{label}</dt>
+      <dd className="min-w-0 flex-1 break-words text-body">{children}</dd>
     </div>
   )
 }
 
-export function ReceiptPanel({ receipt }: { receipt: Receipt }) {
-  const connection = connectionById(receipt.connectionId)
-  const vendor = connection && vendorOf(connection)
-  const name = vendor?.name ?? receipt.connectionId
-  const page = `/connections/${receipt.connectionId}`
-  const domain = domainOf(receipt.from)
-  const removedBy = receipt.removed && rules.find((rule) => rule.id === receipt.removed?.ruleId)
+function Mono({ children }: { children: ReactNode }) {
+  return <span className="font-mono text-mono break-all">{children}</span>
+}
 
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  const id = useId()
+  return (
+    <section aria-labelledby={id} className="mt-5">
+      <SectionHeading id={id} title={title} />
+      {children}
+    </section>
+  )
+}
+
+/** The receipt of a row, or what was found in its place. */
+export function ReceiptPanel({ row, title, known }: { row: Row; title: string; known: Known }) {
+  const position =
+    row.type === 'link' || row.type === 'break'
+      ? `link ${row.link.n}`
+      : `receipt ${positionWords(row.link.n, row.entry.index)}`
   return (
     <div>
-      <p className="font-mono text-mono text-ink-2">receipt {receipt.id}</p>
-      <h2 className="mt-2 text-heading font-medium">Read by {name}</h2>
-      <p className="mt-1 font-mono text-mono">{fullTime(receipt)}</p>
-
-      <section aria-labelledby="what-left" className="mt-5">
-        <SectionHeading id="what-left" title="What left" />
-        <dl>
-          <Fact label="From">
-            <span className="truncate font-mono text-small">{receipt.from}</span>
-          </Fact>
-          <Fact label="Subject">
-            <Mark>{receipt.subject}</Mark>
-          </Fact>
-          <Fact label="Body text">
-            <Mark>{formatCount(receipt.bodyChars)} characters</Mark>
-          </Fact>
-          <Fact label="Attachment">
-            {receipt.attachment === 'withheld' ? (
-              <>
-                <Bar width={96} />
-                <span className="font-mono text-mono text-ink-2">withheld</span>
-              </>
-            ) : (
-              <span className="text-body text-ink-2">None</span>
-            )}
-          </Fact>
-          {receipt.removed && (
-            <Fact label="Removed">
-              <Bar width={64} />
-              <span className="min-w-0 text-small">
-                {receipt.removed.what}, by{' '}
-                <TextLink to={`/rules/${receipt.removed.ruleId}`} size="sm">
-                  {removedBy ? removedBy.name : 'your rule'}
-                </TextLink>
-              </span>
-            </Fact>
+      <p className="font-mono text-mono text-ink-2">{position}</p>
+      <h2 className="mt-2 flex items-center gap-1.5 text-heading font-medium">
+        <span>{title}</span>
+        {row.type === 'receipt' &&
+          row.receipt.kind === 'consent' &&
+          row.receipt.consent?.allowed && (
+            <InfoTip label="About this approval" align="start">
+              {consentTip}
+            </InfoTip>
           )}
-        </dl>
-      </section>
-
-      <section aria-labelledby="why-allowed" className="mt-5">
-        <SectionHeading id="why-allowed" title="Why it was allowed" />
-        <dl>
-          <Fact label="Connection">
-            <TextLink to={page} size="sm">
-              {connection?.name ?? receipt.connectionId}
-            </TextLink>
-          </Fact>
-          <Fact label="Query">
-            <span className={receipt.query.startsWith('"') ? 'font-mono text-mono' : 'text-body'}>
-              {receipt.query}
-            </span>
-          </Fact>
-          <Fact label="Access">
-            <span className="text-body">{connection?.approved}</span>
-          </Fact>
-          <Fact label="Request">
-            <span className="font-mono text-mono">{receipt.request}</span>
-          </Fact>
-        </dl>
-      </section>
-
-      <section aria-labelledby="not-wanted" className="mt-5">
-        <SectionHeading id="not-wanted" title="Not what you wanted?" />
-        <div className="mt-2.5 flex flex-wrap gap-2">
-          <ButtonLink
-            to={`/rules/private?add=${encodeURIComponent(domain)}`}
-            variant="secondary"
-            size="sm"
-          >
-            Hold back {domain}
-          </ButtonLink>
-          <ButtonLink
-            to={`/rules/new?add=${encodeURIComponent(domain)}`}
-            variant="secondary"
-            size="sm"
-          >
-            New rule for this sender
-          </ButtonLink>
-        </div>
-        <TextLink to={page} tone="danger" className="mt-2.5">
-          Revoke {connection ? connectionLabel(connection) : name}
-        </TextLink>
-      </section>
-
-      <TechnicalRecord key={receipt.id} receipt={receipt} />
+      </h2>
+      {row.type === 'receipt' && (
+        <p className="mt-1 font-mono text-mono">{momentWords(row.receipt.at)}</p>
+      )}
+      {row.type === 'receipt' && <Receipt receipt={row.receipt} known={known} />}
+      {row.type === 'unknown' && (
+        <p className="mt-3 text-body text-ink-2">
+          It may be of a later version of Permaily. It is kept in your record and in its download
+          for checking.
+        </p>
+      )}
+      <TechnicalRecord key={row.key} row={row} />
     </div>
   )
 }
 
-function TechnicalRecord({ receipt }: { receipt: Receipt }) {
-  const [open, setOpen] = useState(false)
-  const previous = previousReceipt(receipt)
+function Receipt({ receipt: r, known }: { receipt: api.Receipt; known: Known }) {
+  const models = [
+    ...r.delivered.flatMap((d) => d.model),
+    ...r.delivered.flatMap((d) => d.cleared.flatMap((c) => c.model)),
+    ...r.held.flatMap((h) => h.model),
+    ...(r.refused?.held?.model ?? []),
+  ]
+  return (
+    <>
+      {r.delivered.length > 0 && (
+        <Section title="What left">
+          {r.delivered.map((d) => (
+            <dl key={`${d.mailbox}/${d.message}`} className="mb-3">
+              <Fact label="Mailbox">{mailboxName(d.mailbox, known)}</Fact>
+              <Fact label="Received">
+                <span className="font-mono text-mono">{momentWords(d.received)}</span>
+              </Fact>
+              {d.parts.includes('sender') && d.from.length > 0 && (
+                <Fact label="From">
+                  <bdi>{sendersWords(d.from)}</bdi>
+                </Fact>
+              )}
+              {d.parts.includes('subject') && d.subject !== undefined && (
+                <Fact label="Subject">
+                  <bdi>{d.subject}</bdi>
+                </Fact>
+              )}
+              <Fact label="Parts given">{givenWords(d.parts, d.attachment)}</Fact>
+              {d.cleared.map((c) => (
+                <Fact key={`${c.rule.id}/${c.rule.version}`} label="Let through by">
+                  <Mono>
+                    {c.rule.id} v{c.rule.version}
+                  </Mono>
+                </Fact>
+              ))}
+            </dl>
+          ))}
+        </Section>
+      )}
+      {r.held.length > 0 && (
+        <Section title="What a rule held">
+          {r.held.map((h) => (
+            <Held key={`${h.mailbox}/${h.message}`} held={h} known={known} />
+          ))}
+        </Section>
+      )}
+      {r.refused && (
+        <Section title="Why it was refused">
+          <dl>
+            <Fact label="Reason">
+              {refusedWords(r.refused.reason) ?? <Mono>{r.refused.reason}</Mono>}
+            </Fact>
+            {r.refused.mailbox && (
+              <Fact label="Mailbox">{mailboxName(r.refused.mailbox, known)}</Fact>
+            )}
+          </dl>
+          {r.refused.held && <Held held={r.refused.held} known={known} />}
+        </Section>
+      )}
+      {r.consent && <Consent consent={r.consent} known={known} />}
+      {r.ended && (
+        <Section title="Why it ended">
+          <p className="mt-2.5 text-body">{endWords(r.ended.reason)}.</p>
+        </Section>
+      )}
+      {r.refusals && (
+        <Section title="What was refused">
+          <dl>
+            <Fact label="From">
+              <span className="font-mono text-mono">{momentWords(r.refusals.from)}</span>
+            </Fact>
+            <Fact label="Until">
+              <span className="font-mono text-mono">{momentWords(r.refusals.until)}</span>
+            </Fact>
+            <Fact label="Recorded">{r.refusals.recorded} each in a receipt of its own</Fact>
+            {r.refusals.counts.map((c) => (
+              <Fact key={`${c.operation}/${c.reason}`} label={`${c.count}`}>
+                {refusalCountWords(c.operation, c.reason)}
+              </Fact>
+            ))}
+          </dl>
+        </Section>
+      )}
+      {models.length > 0 && (
+        <Section title="A model decided">
+          <ul>
+            {models.map((m, i) => (
+              // A receipt's answers have no identity but their place.
+              // biome-ignore lint/suspicious/noArrayIndexKey: the answers of a receipt never move
+              <ModelAnswer key={i} model={m} />
+            ))}
+          </ul>
+        </Section>
+      )}
+      <Allowed receipt={r} known={known} />
+    </>
+  )
+}
 
+function mailboxName(id: string, known: Known): ReactNode {
+  if (!known.mailboxes) return 'A mailbox'
+  const mailbox = known.mailboxes.get(id)
+  if (!mailbox) return 'A mailbox that was disconnected'
+  return <bdi>{mailbox.label || mailbox.address || id}</bdi>
+}
+
+function Held({ held: h, known }: { held: api.ReceiptHeld; known: Known }) {
+  return (
+    <dl className="mb-3">
+      <Fact label="Mailbox">{mailboxName(h.mailbox, known)}</Fact>
+      <Fact label="Rule">
+        <Mono>
+          {h.rule.id} v{h.rule.version}
+        </Mono>
+      </Fact>
+      <Fact label="How">{heldWhyWords(h.why)}</Fact>
+    </dl>
+  )
+}
+
+function ModelAnswer({ model: m }: { model: api.ReceiptModel }) {
+  const { lead, topic } = conditionWords(m)
+  return (
+    <li className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-rule py-[7px] text-body">
+      <span>
+        {lead} <bdi>“{topic}”</bdi>
+      </span>
+      <span className="font-mono text-mono">{m.refused ? 'refused' : probabilityWords(m.p)}</span>
+      {(m.model || m.prompt) && (
+        <span className="font-mono text-mono text-ink-2">
+          {[m.model, m.prompt].filter(Boolean).join(', ')}
+        </span>
+      )}
+      {m.canary_checked && (
+        <InfoTip label="About the model's check" align="end">
+          Its answers were checked on {m.canary_checked}
+          {m.canary_change ? `; they last changed on ${m.canary_change}` : ''}.
+        </InfoTip>
+      )}
+    </li>
+  )
+}
+
+function Consent({ consent: c, known }: { consent: api.ReceiptConsent; known: Known }) {
+  return (
+    <Section title="What you were shown">
+      <dl>
+        {c.sentences.length > 0 && (
+          <Fact label="Reads">
+            <ul className="flex flex-col gap-0.5">
+              {c.sentences.map((s) => (
+                <li key={s}>
+                  <bdi>{s}</bdi>
+                </li>
+              ))}
+            </ul>
+          </Fact>
+        )}
+        {c.mailboxes.length > 0 && (
+          <Fact label="Mailboxes">
+            <ul className="flex flex-col gap-0.5">
+              {c.mailboxes.map((m) => (
+                <li key={m}>{mailboxName(m, known)}</li>
+              ))}
+            </ul>
+          </Fact>
+        )}
+        <Fact label="Parts">{partsWords(c.parts)}</Fact>
+        <Fact label="Mail since">{sinceWords(c.since)}</Fact>
+        {c.ends_at && <Fact label="Ends">{formatDay(c.ends_at)}</Fact>}
+        <Fact label="Model's notice">
+          <span className="font-mono text-mono">{c.model_notice}</span>
+        </Fact>
+      </dl>
+    </Section>
+  )
+}
+
+/** Why it was allowed: the connection, the vendor, the resource, the device, and the search in words on a press. */
+function Allowed({ receipt: r, known }: { receipt: api.Receipt; known: Known }) {
+  const listed = r.connection ? known.connections.get(r.connection) : undefined
+  const search = r.formulas.find((f) => f.role === 'search' && f.formula)?.formula
+  return (
+    <Section title="Why it was allowed">
+      <dl>
+        {r.connection && (
+          <Fact label="Connection">
+            {listed && known.linkConnections ? (
+              <TextLink to={vendorPath(listed.vendor.domain, listed.id)} size="sm">
+                <bdi>{listed.client_name || listed.vendor.domain}</bdi>
+              </TextLink>
+            ) : listed ? (
+              <bdi>{listed.client_name || listed.vendor.domain}</bdi>
+            ) : (
+              <span className="text-ink-2">A connection no longer listed</span>
+            )}
+          </Fact>
+        )}
+        <Fact label="App">
+          <bdi className="font-mono text-mono">{r.vendor}</bdi>
+          {listed?.vendor.verified && (
+            <span className="ml-2 text-small text-ink-2">Verified: {listed.vendor.verified}</span>
+          )}
+        </Fact>
+        <Fact label="Through">{resourceWords(r.resource)}</Fact>
+        {r.device && (
+          <Fact label="Device">
+            <Mono>{r.device}</Mono>
+          </Fact>
+        )}
+      </dl>
+      {search && <SearchWords formula={search} />}
+    </Section>
+  )
+}
+
+/** The vendor's search in words, asked of the check route only when the person presses. */
+function SearchWords({ formula }: { formula: api.QueryFormula }) {
+  const { failed } = useSession()
+  const [shown, setShown] = useState<
+    | { state: 'idle' | 'asking' }
+    | { state: 'sentence'; sentence: api.QuerySentence }
+    | { state: 'refused' }
+    | { state: 'failed'; words: string }
+  >({ state: 'idle' })
+
+  async function ask() {
+    if (shown.state === 'asking') return
+    setShown({ state: 'asking' })
+    try {
+      setShown({ state: 'sentence', sentence: (await api.checkQuery(formula)).sentence })
+    } catch (problem) {
+      const code = failed(problem)
+      if (code === 'invalid_formula') setShown({ state: 'refused' })
+      else if (code) setShown({ state: 'failed', words: messageFor(code) })
+      else setShown({ state: 'idle' })
+    }
+  }
+
+  if (shown.state === 'sentence')
+    return (
+      <div className="mt-3 text-body">
+        <p className="text-small text-ink-2">The search</p>
+        <Sentence sentence={shown.sentence} />
+      </div>
+    )
+  if (shown.state === 'refused')
+    return (
+      <div className="mt-3">
+        <p className="text-small text-ink-2">
+          This version of Permaily can't put this search in words. As it was asked:
+        </p>
+        {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a region that scrolls is reached by keyboard (docs/accessibility.md) */}
+        <pre tabIndex={0} className="mt-1 overflow-x-auto font-mono text-mono">
+          {JSON.stringify(formula)}
+        </pre>
+      </div>
+    )
+  return (
+    <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <TextAction size="sm" aria-disabled={shown.state === 'asking'} onClick={ask}>
+        Show the search in words
+      </TextAction>
+      {shown.state === 'failed' && (
+        <p role="alert" className="text-small text-danger">
+          {shown.words}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** The receipt's place on the chain, folded: its identifier, position, digest, link's kind and the link before. */
+function TechnicalRecord({ row }: { row: Row }) {
+  const [open, setOpen] = useState(false)
+  const id = useId()
+  const link = row.link
+  const entry = row.type === 'link' || row.type === 'break' ? null : row.entry
   return (
     <div className="mt-5 border-t border-rule">
       <button
         type="button"
         aria-expanded={open}
-        aria-controls="technical-record"
+        aria-controls={id}
         onClick={() => setOpen((v) => !v)}
         className={cx(
           'flex w-full items-center justify-between py-3 text-small text-ink-2 hover:text-ink',
@@ -152,29 +388,61 @@ function TechnicalRecord({ receipt }: { receipt: Receipt }) {
         />
       </button>
       {open && (
-        <div id="technical-record" className="pb-2">
+        <div id={id} className="pb-2">
           <dl>
-            <Fact label="Receipt">
-              <span className="font-mono text-mono">{receipt.id}</span>
+            {entry && (
+              <>
+                <Fact label="Receipt">
+                  <Mono>{entry.id}</Mono>
+                </Fact>
+                <Fact label="Position">
+                  <Mono>
+                    {link.n}.{entry.index}
+                  </Mono>
+                </Fact>
+                <Fact label="Digest">
+                  <Mono>sha256 {entry.sha256}</Mono>
+                </Fact>
+              </>
+            )}
+            <Fact
+              label={
+                <>
+                  Link
+                  {link.verdict === 'expired' && (
+                    <InfoTip label="About this link" align="start">
+                      {linkKindTips.expired}
+                    </InfoTip>
+                  )}
+                </>
+              }
+            >
+              <Mono>{link.n}</Mono>{' '}
+              <span className="text-small">{linkVerdictWords(link.verdict, link.n)}</span>
             </Fact>
-            <Fact label="Hash">
-              <span className="font-mono text-mono">{shortHash(receipt.id)}</span>
-            </Fact>
-            {previous && (
+            {link.kind && (
               <Fact
                 label={
                   <>
-                    Previous
-                    <InfoTip label="About the hash chain" align="start">
-                      Each receipt carries the hash of the one before it, so a changed or missing
-                      receipt breaks the chain.
-                    </InfoTip>
+                    Linked
+                    {(link.kind === 'recovered' || link.kind === 'adopted') && (
+                      <InfoTip label="About how it was linked" align="start">
+                        {linkKindTips[link.kind]}
+                      </InfoTip>
+                    )}
                   </>
                 }
               >
-                <span className="font-mono text-mono">
-                  {previous.id} <span className="text-ink-2">{shortHash(previous.id)}</span>
-                </span>
+                {link.kind === 'recovered'
+                  ? 'Late'
+                  : link.kind === 'adopted'
+                    ? 'From before'
+                    : 'When it was written'}
+              </Fact>
+            )}
+            {link.prev && (
+              <Fact label="Link before">
+                <Mono>sha256 {link.prev}</Mono>
               </Fact>
             )}
           </dl>
