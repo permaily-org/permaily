@@ -67,9 +67,9 @@ type storeDiscloser struct {
 	// redactor finds the fixed shapes and splits the one view (ADR 0040).
 	redactor redact.Redactor
 	bounds   matchBounds
-	now       func() time.Time
-	settle    time.Duration
-	full      atomic.Int64
+	now      func() time.Time
+	settle   time.Duration
+	full     atomic.Int64
 }
 
 // DecisionsFull implements DecisionsFullCounter.
@@ -197,9 +197,9 @@ type discloseRun struct {
 	read, textReads, toAsk int
 	// sentences asks the model about a removal's topics, sentence by
 	// sentence (ADR 0040): Asking.Sentences, or the Asker when it is one.
-	sentences SentenceAsker
-	off, limit             bool
-	start                  time.Time
+	sentences  SentenceAsker
+	off, limit bool
+	start      time.Time
 }
 
 func (s *storeDiscloser) run(ctx context.Context, b Box, d Disclosure, page bool) *discloseRun {
