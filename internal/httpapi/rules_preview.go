@@ -54,7 +54,10 @@ func MailboxesWithRulePreviews(cfg MailboxesConfig) (http.Handler, *RulePreviews
 // A rule applies to a message any of its criteria is true or unknown for
 // (query.ForRule), and the matcher matches formulas together, so each
 // criteria is matched on its own, at once, and the pages joined
-// (joinPages): Messages are those any criteria matches, NeedsModel and
+// (joinPages). The criteria share one page's bounds (inbox.WithMatchShare):
+// each reads, reads raw and asks at most its share of a page's, so a
+// preview of eight criteria does no more work than a page of matches under
+// the one search slot and search page it was admitted with: Messages are those any criteria matches, NeedsModel and
 // Unknown those no criteria matches and one still might (a rule applies on
 // unknown, so the screen shows them as mail it may hold); the page ends
 // where every criteria considered the mail above it, so pages skip
@@ -136,10 +139,11 @@ func (a *rulesAPI) preview(w http.ResponseWriter, r *http.Request, p accountrule
 	defer done()
 	pages := make([]*contracts.MatchPage, len(criteria))
 	errs := make([]error, len(criteria))
+	shared := inbox.WithMatchShare(ctx, len(criteria))
 	var wg sync.WaitGroup
 	for i, f := range criteria {
 		wg.Go(func() {
-			pages[i], errs[i] = m.cfg.Matcher.Match(ctx, b, []*query.Canonical{f}, in.After, limit)
+			pages[i], errs[i] = m.cfg.Matcher.Match(shared, b, []*query.Canonical{f}, in.After, limit)
 		})
 	}
 	wg.Wait()

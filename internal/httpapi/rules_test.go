@@ -8,16 +8,19 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/httpapi"
+	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/rulewords/rulewordstest"
 	"github.com/permaily-org/permaily/internal/services/accountrules"
 	"github.com/permaily-org/permaily/internal/services/accountrules/accountrulestest"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
+	"github.com/permaily-org/permaily/internal/store"
 )
 
 // The rules routes (ADR 0040, pull request 6), against accountrulestest.Fake,
@@ -602,6 +605,112 @@ func TestU27TheRulePreview(t *testing.T) {
 	// Without previews, the route is not there.
 	b := newRulesApp(t, func(c *httpapi.RulesConfig) { c.Previews = nil })
 	want(t, b.do("alice", "POST", "/api/v1/rules/preview", `{"draft":`+two+`,"mailbox":"`+box.ID+`"}`), 404, "not_found")
+}
+
+// countedStore counts the stored items and raw messages a matcher reads.
+type countedStore struct {
+	inbox.ReadStore
+	mu         sync.Mutex
+	items, raw int
+}
+
+func (c *countedStore) ScanMessagesDown(ctx context.Context, mailboxID, before string, maxRead int) (*store.MessageScan, error) {
+	s, err := c.ReadStore.ScanMessagesDown(ctx, mailboxID, before, maxRead)
+	if err == nil {
+		c.mu.Lock()
+		c.items += s.Read
+		c.mu.Unlock()
+	}
+	return s, err
+}
+
+func (c *countedStore) GetEntry(ctx context.Context, partition, key string) (*store.Entry, error) {
+	c.mu.Lock()
+	c.items++
+	c.mu.Unlock()
+	return c.ReadStore.GetEntry(ctx, partition, key)
+}
+
+func (c *countedStore) ReadRaw(ctx context.Context, mailboxID, id string, maxBytes int64) ([]byte, error) {
+	c.mu.Lock()
+	c.raw++
+	c.mu.Unlock()
+	return c.ReadStore.ReadRaw(ctx, mailboxID, id, maxBytes)
+}
+
+func (c *countedStore) take() (items, raw int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	items, raw, c.items, c.raw = c.items, c.raw, 0, 0
+	return items, raw
+}
+
+// U27 (review of #199, finding 2). A preview is one page of matches,
+// however many criteria its draft has: the criteria share the page's
+// bounds, so one request of eight criteria reads no more stored items or
+// raw messages than a page may (inbox.MatchMaxRead, MatchMaxTextReads),
+// and its pages, one after another, list every message a criteria matches
+// once, none skipped.
+func TestU27ThePreviewSharesOnePageOfWork(t *testing.T) {
+	a := newRulesApp(t, nil)
+	counted := &countedStore{ReadStore: a.mem}
+	a.matcher.Matcher = inbox.NewMatcher(counted, query.Eval)
+	box := a.fake.Add(alice, "Mine")
+	raw := func(subject string) string {
+		return "From: Ana <ana@example.org>\r\nTo: x@example.org\r\nSubject: " + subject + "\r\nContent-Type: text/plain\r\n\r\nHello\r\n"
+	}
+	var matching []string // newest first
+	for i := range 160 {
+		subject := "Something else"
+		if i%20 == 0 {
+			subject = fmt.Sprintf("Invoice %d", i)
+		}
+		if i%33 == 0 {
+			subject = fmt.Sprintf("Receipt %d", i)
+		}
+		id := a.seedFrom(box.ID, raw(subject))
+		if subject != "Something else" {
+			matching = append([]string{id}, matching...)
+		}
+	}
+	// Eight criteria, six of which match nothing; the body ones read each
+	// message's entry, and its raw message when the entry's text was cut.
+	criteria := []string{formulaOf(cond("subject", "contains", "invoice")), formulaOf(cond("subject", "contains", "receipt"))}
+	for i := range 6 {
+		criteria = append(criteria, formulaOf(cond("body", "contains", fmt.Sprintf("absent%d", i))))
+	}
+	eight := `{"name":"Bills","criteria":[` + strings.Join(criteria, ",") + `],"effect":"hold","scope":{"to":"all"},"on":true}`
+	a.checked(eight)
+	counted.take()
+	var got []string
+	after, pages := "", 0
+	for ; pages < 100; pages++ {
+		body := `{"draft":` + eight + `,"mailbox":"` + box.ID + `"`
+		if after != "" {
+			body += `,"after":"` + after + `"`
+		}
+		var p contracts.RulePreviewPage
+		read(t, a.do("alice", "POST", "/api/v1/rules/preview", body+`}`), 200, &p)
+		items, raws := counted.take()
+		if items > inbox.MatchMaxRead || raws > inbox.MatchMaxTextReads {
+			t.Fatalf("page %d read %d items and %d raw messages, a page's bounds are %d and %d", pages, items, raws, inbox.MatchMaxRead, inbox.MatchMaxTextReads)
+		}
+		for _, m := range p.Page.Messages {
+			got = append(got, m.ID)
+		}
+		if len(p.Page.Unknown)+len(p.Page.NeedsModel) != 0 {
+			t.Fatalf("undecided on page %d: %+v", pages, p.Page)
+		}
+		if after = p.Page.Next; after == "" {
+			break
+		}
+	}
+	if pages == 0 {
+		t.Fatal("one page held every message: nothing was bounded")
+	}
+	if strings.Join(got, " ") != strings.Join(matching, " ") {
+		t.Fatalf("paged %v, want %v", got, matching)
+	}
 }
 
 // U28. No line any rules route logs holds the person's words, a rule's
