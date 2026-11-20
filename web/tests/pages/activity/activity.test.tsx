@@ -184,7 +184,7 @@ describe('E2: every kind of receipt, and one this app cannot read', () => {
 
   it('lists a receipt it cannot read with its identifier and position, never dropped and never throwing', async () => {
     const shapes = [
-      receiptOf('search', { id: 'rcp_v3', v: 3 }),
+      receiptOf('search', { id: 'rcp_v4', v: 4 }),
       receiptOf('search', { id: 'rcp_kind', kind: 'webhook' }),
       receiptOf('consent', { id: 'rcp_null', consent: null }),
       receiptOf('refused', { id: 'rcp_array', refused: [] }),

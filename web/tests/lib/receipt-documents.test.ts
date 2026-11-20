@@ -23,11 +23,41 @@ describe('a receipt’s document', () => {
       'read',
       'refusals',
       'refused',
+      'rules',
       'search',
     ])
     const search = readReceipt(golden.find((g) => g.name === 'search.json')?.doc)
     expect(search?.delivered[0]?.subject).toBe('Invoice 12 <for> "you"')
     expect(search?.formulas.some((f) => f.role === 'search' && f.formula)).toBe(true)
+    const rules = readReceipt(golden.find((g) => g.name === 'rules.json')?.doc)
+    expect(rules?.rules_change).toMatchObject({
+      changes: ['criteria', 'scope'],
+      before: 1,
+      after: 2,
+      epoch: 1,
+    })
+    const read = readReceipt(golden.find((g) => g.name === 'read.json')?.doc)
+    expect(read?.delivered[0]?.removed[0]).toMatchObject({
+      rule: { version: 2 },
+      removed: {
+        parts: ['sender'],
+        shapes: { phone_number: 2 },
+        sentences: 1,
+        of: 7,
+        attachments: 1,
+      },
+    })
+  })
+
+  it('reads a version 2 receipt, which has neither the rules kind nor what rules removed', () => {
+    const read = golden.find((g) => g.name === 'read.json')?.doc ?? {}
+    const v2 = readReceipt({
+      ...read,
+      v: 2,
+      delivered: (read.delivered as Record<string, unknown>[]).map(({ removed: _, ...d }) => d),
+    })
+    expect(v2?.v).toBe(2)
+    expect(v2?.delivered[0]?.removed).toEqual([])
   })
 
   it('gives the lists a version leaves out as empty, and reads version 1 as written', () => {
@@ -46,10 +76,12 @@ describe('a receipt’s document', () => {
   it('is null for what this app can’t show, never a guess', () => {
     const consent = golden.find((g) => g.name === 'consent.json')?.doc ?? {}
     const refusals = golden.find((g) => g.name === 'refusals.json')?.doc ?? {}
+    const rules = golden.find((g) => g.name === 'rules.json')?.doc ?? {}
     for (const bad of [
       null,
       'rcp_x',
-      { ...consent, v: 3 },
+      { ...consent, v: 4 },
+      { ...consent, v: '3' },
       { ...consent, id: 'con_x' },
       { ...consent, id: 7 },
       { ...consent, at: undefined },
@@ -58,6 +90,10 @@ describe('a receipt’s document', () => {
       { ...consent, consent: undefined },
       { ...refusals, v: 1 },
       { ...refusals, refusals: 'many' },
+      { ...rules, v: 2 },
+      { ...rules, v: 1 },
+      { ...rules, rules_change: undefined },
+      { ...consent, rules_change: { changes: [], epoch: 1 } },
     ])
       expect(readReceipt(bad)).toBeNull()
   })
@@ -167,6 +203,42 @@ describe('a receipt’s shape', () => {
     ['refusals.json', 'refusals.counts.0', null],
     ['refusals.json', 'refusals.counts.0.count', '412'],
     ['refusals.json', 'refusals.counts.0.operation', undefined],
+    ['rules.json', 'rules_change', null],
+    ['rules.json', 'rules_change', []],
+    ['rules.json', 'rules_change.changes', 'criteria'],
+    ['rules.json', 'rules_change.changes', [7]],
+    ['rules.json', 'rules_change.changes', ['renamed']],
+    ['rules.json', 'rules_change.rule', 7],
+    ['rules.json', 'rules_change.before', '1'],
+    ['rules.json', 'rules_change.after', '2'],
+    ['rules.json', 'rules_change.draft_id', 7],
+    ['rules.json', 'rules_change.criteria', 'qry_x'],
+    ['rules.json', 'rules_change.criteria', [7]],
+    ['rules.json', 'rules_change.notice', 7],
+    ['rules.json', 'rules_change.epoch', undefined],
+    ['rules.json', 'rules_change.epoch', '1'],
+    ['rules.json', 'rules_change.version', undefined],
+    ['rules.json', 'rules', 'default'],
+    ['read.json', 'delivered.0.removed', 'sender'],
+    ['read.json', 'delivered.0.removed', {}],
+    ['read.json', 'delivered.0.removed.0', null],
+    ['read.json', 'delivered.0.removed.0.rule', undefined],
+    ['read.json', 'delivered.0.removed.0.rule.version', '2'],
+    ['read.json', 'delivered.0.removed.0.removed', undefined],
+    ['read.json', 'delivered.0.removed.0.removed', []],
+    ['read.json', 'delivered.0.removed.0.removed.parts', 'sender'],
+    ['read.json', 'delivered.0.removed.0.removed.parts', [7]],
+    ['read.json', 'delivered.0.removed.0.removed.shapes', null],
+    ['read.json', 'delivered.0.removed.0.removed.shapes', []],
+    ['read.json', 'delivered.0.removed.0.removed.shapes.phone_number', '2'],
+    ['read.json', 'delivered.0.removed.0.removed.shapes.street', 1],
+    ['read.json', 'delivered.0.removed.0.removed.sentences', '1'],
+    ['read.json', 'delivered.0.removed.0.removed.of', '7'],
+    ['read.json', 'delivered.0.removed.0.removed.whole', 'yes'],
+    ['read.json', 'delivered.0.removed.0.removed.why', 7],
+    ['read.json', 'delivered.0.removed.0.removed.attachments', '1'],
+    ['read.json', 'delivered.0.removed.0.model', {}],
+    ['read.json', 'delivered.0.removed.0.model.0.p', '0.04'],
   ]
   it.each(cases)('is null for %s with %s as %j', (name, path, value) => {
     expect(readReceipt(at(doc(name), path, value))).toBeNull()
@@ -181,6 +253,20 @@ describe('a receipt’s shape', () => {
     expect(search).toMatchObject({ delivered: [], held: [] })
     const counts = readReceipt(at(doc('refusals.json'), 'refusals.counts', null))
     expect(counts?.refusals?.counts).toEqual([])
+    const changes = readReceipt(
+      at(at(doc('rules.json'), 'rules_change.changes', null), 'rules_change.criteria', undefined),
+    )
+    expect(changes?.rules_change).toMatchObject({ changes: [], criteria: [] })
+    const removed = readReceipt(
+      at(
+        at(doc('read.json'), 'delivered.0.removed.0.model', null),
+        'delivered.0.removed.0.removed.parts',
+        undefined,
+      ),
+    )
+    expect(removed?.delivered[0]?.removed[0]).toMatchObject({ model: [], removed: { parts: [] } })
+    const none = readReceipt(at(doc('read.json'), 'delivered.0.removed', null))
+    expect(none?.delivered[0]?.removed).toEqual([])
   })
 
   // The design's re-review, finding 5: Go writes a nil slice as null at every depth, not only at the top. Every list

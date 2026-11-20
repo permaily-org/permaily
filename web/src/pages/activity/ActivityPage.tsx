@@ -539,6 +539,9 @@ function panelTitle(row: Row): string {
       return endedDevice(r) ? 'A device ended' : 'A connection ended'
     case 'refusals':
       return 'Requests refused in a minute'
+    // ADR 0041 words a change of rules later ("Seams with ADR 0039 and 0040"); until then, as the row says.
+    case 'rules':
+      return "This app can't show this receipt"
   }
 }
 
