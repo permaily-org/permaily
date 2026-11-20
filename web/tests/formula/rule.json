@@ -1,0 +1,4 @@
+{
+  "v": 1,
+  "all": [{ "any": [{ "var": "from_domain", "op": "is", "value": "bank.example", "not": true }] }]
+}

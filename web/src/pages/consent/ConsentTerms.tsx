@@ -1,6 +1,7 @@
 import { useId, useState } from 'react'
 import { Checkbox, Notice, SectionHeading, TermRow } from '../../components/ui/index.ts'
 import type * as api from '../../lib/api.ts'
+import { REMOVED_MARKER } from '../../lib/api.ts'
 import { modelNotice, modelNoticeTitle } from '../../lib/model-notice.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
 import {
@@ -14,6 +15,7 @@ import {
   webhookLines,
   webhookNeverWords,
 } from '../connections/words.tsx'
+import { AppliedList, appliedOf, useRuleList } from '../rules/shared.tsx'
 import { formatDay } from '../settings/signin/shared.ts'
 import { ChoiceTerm } from './ChoiceDialog.tsx'
 import type { Choice } from './data.ts'
@@ -180,23 +182,7 @@ export function ConsentTerms({
 
       <Change request={request} snapshot={snapshot} />
 
-      <section aria-labelledby="rules-heading" className="mt-7">
-        <SectionHeading id="rules-heading" title="Never leaves" />
-        <ul className="flex flex-col">
-          {request.rules.map((rule) => (
-            <li key={rule.id} className="border-b border-rule py-[11px]">
-              {rule.sentence.map((sentence, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: a rule's sentences have no identity but their place
-                <Sentence key={i} sentence={sentence} />
-              ))}
-            </li>
-          ))}
-        </ul>
-        <p className="mt-2.5 text-small text-ink-2">
-          Your rules apply first, and <bdi>{request.vendor.domain}</bdi> isn't told what they hold
-          back.
-        </p>
-      </section>
+      <ConsentRules request={request} />
 
       <section aria-labelledby="model-heading" className="mt-7">
         <SectionHeading id="model-heading" title={modelNoticeTitle} />
@@ -324,4 +310,24 @@ function Change({
     )
   }
   return null
+}
+
+/**
+ * The rules that will apply to this app (ADR 0040, "Previews and consent"): each by the server's sentence, and what it
+ * does and who for in the server's words, from the account's rules; the default rule as it always reads. A rule the
+ * account's list doesn't have at that version is said by its sentence alone. Nothing here leaves the screen.
+ */
+function ConsentRules({ request }: { request: api.AuthorizationRequest }) {
+  const { list } = useRuleList()
+  return (
+    <section aria-labelledby="rules-heading" className="mt-7">
+      <SectionHeading id="rules-heading" title="Your rules apply first" />
+      <AppliedList applied={appliedOf(request.rules, list)} />
+      <p className="mt-2.5 text-small text-ink-2">
+        They hold mail back, or take details out, before <bdi>{request.vendor.domain}</bdi> reads
+        it. <bdi>{request.vendor.domain}</bdi> isn't told what they hold back, and sees “
+        {REMOVED_MARKER}” where they took details out.
+      </p>
+    </section>
+  )
 }

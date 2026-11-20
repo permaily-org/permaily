@@ -20,6 +20,7 @@ import { useSession } from '../../lib/session.tsx'
 import { cx, focusRing, pagePadding } from '../../lib/styles.ts'
 import { LoadState } from '../accounts/shared.tsx'
 import { messageFor } from '../auth/messages.ts'
+import { AppliedList, applyingTo, useRuleList } from '../rules/shared.tsx'
 import { formatDay } from '../settings/signin/shared.ts'
 import { useLimitedConnections } from './ConnectionsLayout.tsx'
 import { ConnectionRow, useConnections, vendorPath } from './ConnectionsPage.tsx'
@@ -342,6 +343,8 @@ function Detail({ id, onChanged }: { id: string; onChanged: (c: api.Connection) 
           </TermRow>
         </section>
 
+        <ConnectionRules clientId={c.client_id} />
+
         {c.webhook && (
           <WebhookSection
             webhook={c.webhook}
@@ -516,6 +519,25 @@ function Detail({ id, onChanged }: { id: string; onChanged: (c: api.Connection) 
         </Dialog>
       )}
     </>
+  )
+}
+
+/**
+ * The rules that apply to this connection (ADR 0040, "Previews and consent"): the default unless off, then each of the
+ * person's rules that is on and whose scope covers its app (`ruleCovers`, the server's `Scope.Covers`), those that hold
+ * before those that take details out. Each opens on its page.
+ */
+function ConnectionRules({ clientId }: { clientId: string }) {
+  const { list, failure, load } = useRuleList()
+  return (
+    <section aria-labelledby="rules-heading">
+      <SectionHeading id="rules-heading" title="Your rules apply first" />
+      {list ? (
+        <AppliedList applied={applyingTo(list, clientId)} links />
+      ) : (
+        <LoadState failure={failure} what="Your rules" onRetry={() => void load()} />
+      )}
+    </section>
   )
 }
 

@@ -2,7 +2,14 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { named, open, settle } from '../helpers/app.tsx'
 import { expectAccessible } from '../helpers/axe.ts'
-import { connectionOf, device2, startRoute, tripApp, vendorQuery } from '../helpers/connections.ts'
+import {
+  connectionOf,
+  device2,
+  noRules,
+  startRoute,
+  tripApp,
+  vendorQuery,
+} from '../helpers/connections.ts'
 import { personal, work } from '../helpers/mailboxes.ts'
 import { type Account, ana, meOf, ok, server } from '../helpers/server.ts'
 
@@ -17,6 +24,7 @@ function asNotAgreed(account: Account = ana) {
   return server
     .on('GET /api/v1/me', ok(meOf(account, {}, '2027-01-01')))
     .on('GET /api/v1/mailboxes', ok({ mailboxes: [personal, work], limit: 5 }))
+    .on('GET /api/v1/rules', ok(noRules))
     .on('GET /api/v1/connections', ok({ connections: [claude, tripApp] }))
     .on('GET /api/v1/connections/con_claudecode', ok(claude))
 }
@@ -143,6 +151,8 @@ describe('V62: the connections under unagreed terms', () => {
     server
       .on('GET /api/v1/me', ok(meOf()))
       .on('GET /api/v1/mailboxes', ok({ mailboxes: [personal, work], limit: 5 }))
+      .on('GET /api/v1/rules', ok(noRules))
+      .on('GET /api/v1/rules', ok(noRules))
       .on('GET /api/v1/connections', ok({ connections: [claude] }))
       .on('GET /api/v1/connections/con_claudecode', ok(claude))
     await open('/connections/claude.ai/con_claudecode')
