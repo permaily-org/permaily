@@ -68,7 +68,9 @@ func runNotices(ctx context.Context, c *composedNotices) { go c.svc.Run(ctx) }
 var errNoDeliverer = errors.New("the queue of notices has no Deliverer yet")
 
 // lateDeliverer is accounts' Deliver once it is given (deliverBy).
-type lateDeliverer struct{ a atomic.Pointer[accounts.Service] }
+type lateDeliverer struct {
+	a atomic.Pointer[accounts.Service]
+}
 
 var _ notices.Deliverer = (*lateDeliverer)(nil)
 
