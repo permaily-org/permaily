@@ -2087,12 +2087,15 @@ export async function exportReceipts(): Promise<{ file: string; head: ReceiptsHe
 
 /*
   A receipt as the walk gives it (ADR 0041, "What a receipt shows"): internal/services/receipts.Receipt, versions 1
-  and 2, whose stored documents are the golden files of internal/services/receipts/testdata/golden, which the tests
+  to 3, whose stored documents are the golden files of internal/services/receipts/testdata/golden, which the tests
   read with readReceipt. Everything a receipt names is as it was when the request was answered. Senders, subjects
   and a model's topics are what mail and vendors wrote: shown as text, never as markup or links.
 */
 
-/** What a receipt records. `refusals` (version 2) counts, for one connection's minute, the refusals past those recorded one by one. */
+/**
+ * What a receipt records. `refusals` (version 2) counts, for one connection's minute, the refusals past those recorded
+ * one by one; `rules` (version 3, ADR 0040) is a change of the person's own rules.
+ */
 export type ReceiptKind =
   | 'search'
   | 'read'
@@ -2101,6 +2104,7 @@ export type ReceiptKind =
   | 'consent'
   | 'ended'
   | 'refusals'
+  | 'rules'
 
 /** A rule by its identifier and version. */
 export type RuleRef = { id: string; version: number }
@@ -2137,6 +2141,15 @@ export type ReceiptDelivered = {
   attachment?: number
   model?: ReceiptModel[]
   cleared?: { rule: RuleRef; at: string; model?: ReceiptModel[] }[]
+  /** What each rule that applied took out before the message left (version 3), in the order the rules apply. */
+  removed: ReceiptRemoval[]
+}
+
+/** What one rule removed from a message that left, and the model's answers it rested on: never the removed content. */
+export type ReceiptRemoval = {
+  rule: RuleRef
+  removed: RemovedSummary
+  model: ReceiptModel[]
 }
 
 /** One message a rule held: nothing of it left. `why` is `exact`, `decided`, `recovered` or `undecided`. */
@@ -2179,9 +2192,54 @@ export type ReceiptRefusals = {
   counts: { operation: string; reason: string; count: number }[]
 }
 
+/** One thing a change of rules changed (internal/services/receipts.RulesChangeKind). */
+export type RulesChangeKind =
+  | 'made'
+  | 'name'
+  | 'criteria'
+  | 'effect'
+  | 'scope'
+  | 'on'
+  | 'off'
+  | 'deleted'
+  | 'default_on'
+  | 'default_off'
+  | 'notice_agreed'
+
+const rulesChangeKinds: readonly string[] = [
+  'made',
+  'name',
+  'criteria',
+  'effect',
+  'scope',
+  'on',
+  'off',
+  'deleted',
+  'default_on',
+  'default_off',
+  'notice_agreed',
+] satisfies RulesChangeKind[]
+
+/**
+ * A change of the person's rules as asked (version 3, ADR 0040, "Receipts"): the rule with its version before and
+ * after, the draft and its criteria's identifiers, the rules' notice, and the account's record of rules it was asked
+ * at. Never the person's words, a rule's name, a topic or a value of its criteria.
+ */
+export type ReceiptRulesChange = {
+  changes: RulesChangeKind[]
+  rule?: string
+  before?: number
+  after?: number
+  draft_id?: string
+  criteria: string[]
+  notice?: string
+  epoch: number
+  version: number
+}
+
 /** A receipt's document. The arrays a version may leave out are always there, empty. */
 export type Receipt = {
-  v: 1 | 2
+  v: 1 | 2 | 3
   id: string
   at: string
   kind: ReceiptKind
@@ -2198,6 +2256,7 @@ export type Receipt = {
   consent?: ReceiptConsent
   ended?: { reason: EndReason; replaced_by?: string }
   refusals?: ReceiptRefusals
+  rules_change?: ReceiptRulesChange
 }
 
 const receiptKinds: readonly string[] = [
@@ -2208,7 +2267,11 @@ const receiptKinds: readonly string[] = [
   'consent',
   'ended',
   'refusals',
-]
+  'rules',
+] satisfies ReceiptKind[]
+
+/** The version that added a kind; an older document of that kind is not one Go writes. */
+const kindSince: Partial<Record<ReceiptKind, number>> = { refusals: 2, rules: 3 }
 
 /*
   The shape readReceipt holds a receipt to: every part, list and nested field the Activity screen and the CSV read (ADR
@@ -2266,7 +2329,25 @@ const isDelivered = (v: unknown): boolean =>
   isList(isModel)(v.model) &&
   isList((c) => isObject(c) && isRuleRef(c.rule) && isString(c.at) && isList(isModel)(c.model))(
     v.cleared,
-  )
+  ) &&
+  isList(isRemoval)(v.removed)
+const isRemovedSummary = (v: unknown): boolean =>
+  isObject(v) &&
+  isList(isString)(v.parts) &&
+  optional(
+    (s) =>
+      isObject(s) &&
+      Object.entries(s).every(
+        ([k, n]) => (SHAPE_KINDS as readonly string[]).includes(k) && isNumber(n),
+      ),
+  )(v.shapes) &&
+  optNumber(v.sentences) &&
+  optNumber(v.of) &&
+  optBoolean(v.whole) &&
+  optString(v.why) &&
+  optNumber(v.attachments)
+const isRemoval = (v: unknown): boolean =>
+  isObject(v) && isRuleRef(v.rule) && isRemovedSummary(v.removed) && isList(isModel)(v.model)
 const isHeld = (v: unknown): boolean =>
   isObject(v) &&
   isString(v.mailbox) &&
@@ -2275,8 +2356,18 @@ const isHeld = (v: unknown): boolean =>
   isString(v.why) &&
   isList(isModel)(v.model)
 
+/** The field of a receipt that holds what a kind records; `rules` is not it, a list every receipt has. */
+const partField = {
+  refused: 'refused',
+  consent: 'consent',
+  ended: 'ended',
+  refusals: 'refusals',
+  rules: 'rules_change',
+} as const
+type PartKind = keyof typeof partField
+
 /** The part of a receipt its kind must have, and its shape; the reads may have delivered nothing, every message held. */
-const receiptPart: Partial<Record<ReceiptKind, (v: unknown) => boolean>> = {
+const receiptPart: Record<PartKind, (v: unknown) => boolean> = {
   refused: (v) =>
     isObject(v) &&
     isString(v.reason) &&
@@ -2307,9 +2398,20 @@ const receiptPart: Partial<Record<ReceiptKind, (v: unknown) => boolean>> = {
     isList((c) => isObject(c) && isString(c.operation) && isString(c.reason) && isNumber(c.count))(
       v.counts,
     ),
+  rules: (v) =>
+    isObject(v) &&
+    isList((c) => isString(c) && rulesChangeKinds.includes(c))(v.changes) &&
+    optString(v.rule) &&
+    optNumber(v.before) &&
+    optNumber(v.after) &&
+    optString(v.draft_id) &&
+    isList(isString)(v.criteria) &&
+    optString(v.notice) &&
+    isNumber(v.epoch) &&
+    isNumber(v.version),
 }
 
-const receiptParts = ['refused', 'consent', 'ended', 'refusals'] as const
+const receiptParts = Object.keys(partField) as PartKind[]
 
 /**
  * A receipt the walk found `ok`, read as this app knows receipts, or null when it is not one it can show: another
@@ -2321,7 +2423,7 @@ export function readReceipt(document: unknown): Receipt | null {
   if (!isObject(document)) return null
   const r = document
   if (
-    (r.v !== 1 && r.v !== 2) ||
+    (r.v !== 1 && r.v !== 2 && r.v !== 3) ||
     !isString(r.id) ||
     !r.id.startsWith('rcp_') ||
     !isString(r.at) ||
@@ -2334,12 +2436,17 @@ export function readReceipt(document: unknown): Receipt | null {
   )
     return null
   const kind = r.kind as ReceiptKind
-  if (kind === 'refusals' && r.v !== 2) return null
-  const own = receiptPart[kind]
-  if (own && !own(r[kind])) return null
+  if ((r.v as number) < (kindSince[kind] ?? 1)) return null
+  if (kind in partField && !receiptPart[kind as PartKind](r[partField[kind as PartKind]]))
+    return null
   // A part of another kind is left as it is only when it has that kind's shape too, so nothing read is ever unusable.
   for (const other of receiptParts)
-    if (other !== kind && r[other] !== undefined && !receiptPart[other]?.(r[other])) return null
+    if (
+      other !== kind &&
+      r[partField[other]] !== undefined &&
+      !receiptPart[other](r[partField[other]])
+    )
+      return null
   if (
     !isList(isFormula)(r.formulas) ||
     !isList(isRuleRef)(r.rules) ||
@@ -2354,6 +2461,11 @@ export function readReceipt(document: unknown): Receipt | null {
     delivered: list<ReceiptDelivered>(r.delivered).map((d) => ({
       ...d,
       parts: list<ConnectionPart>(d.parts),
+      removed: list<ReceiptRemoval>(d.removed).map((m) => ({
+        ...m,
+        removed: { ...m.removed, parts: list<ConnectionPart>(m.removed.parts) },
+        model: list<ReceiptModel>(m.model),
+      })),
     })),
     held: list<ReceiptHeld>(r.held),
   }
@@ -2368,6 +2480,12 @@ export function readReceipt(document: unknown): Receipt | null {
     receipt.refusals = {
       ...receipt.refusals,
       counts: list<ReceiptRefusals['counts'][number]>(receipt.refusals.counts),
+    }
+  if (receipt.rules_change)
+    receipt.rules_change = {
+      ...receipt.rules_change,
+      changes: list<RulesChangeKind>(receipt.rules_change.changes),
+      criteria: list<string>(receipt.rules_change.criteria),
     }
   return receipt
 }
