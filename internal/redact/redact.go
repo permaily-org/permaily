@@ -21,6 +21,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/permaily-org/permaily/internal/contracts"
@@ -106,8 +107,14 @@ func (m SentenceMap) Digest(v View) string {
 }
 
 // Check says m keeps a SentenceMap's invariants for v: every sentence within
-// Text and before Cut, sorted, apart, not empty, not only white space, and
-// none past MeaningSentencesMax; Cut within Text and at most MeaningTextMax.
+// Text and before Cut, sorted, apart, not empty, not only white space, at
+// most SentenceRunesMax runes, and none past MeaningSentencesMax; every
+// sentence and Cut on a rune boundary (an invalid byte being a rune of its
+// own); Cut within Text and at most MeaningTextMax; and every byte before
+// Cut in no sentence white space, so nothing meaning reads is left out of
+// what it asks about (the re-review's N1). A consumer refuses a map that
+// fails it before any decision is asked or applied, and removes the whole
+// subject and text instead.
 func (m SentenceMap) Check(v View) error {
 	if m.Cut < 0 || m.Cut > len(v.Text) || m.Cut > MeaningTextMax {
 		return errors.New("redact: the map's cut is outside the text or past what meaning reads")
@@ -115,17 +122,45 @@ func (m SentenceMap) Check(v View) error {
 	if len(m.Sentences) > MeaningSentencesMax {
 		return errors.New("redact: more sentences than meaning reads")
 	}
-	end := 0
+	text, at := v.Text, 0
+	// gap walks white space from at up to end, landing on it.
+	gap := func(end int) error {
+		for at < end {
+			r, n := utf8.DecodeRuneInString(text[at:])
+			if !unicode.IsSpace(r) {
+				return errors.New("redact: text before the cut in no sentence")
+			}
+			at += n
+		}
+		if at != end {
+			return errors.New("redact: a sentence or the cut inside a rune")
+		}
+		return nil
+	}
 	for _, s := range m.Sentences {
-		if s.Start < end || s.End <= s.Start || s.End > m.Cut {
+		if s.Start < at || s.End <= s.Start || s.End > m.Cut {
 			return errors.New("redact: a sentence out of order, empty, or past the cut")
 		}
-		if strings.TrimSpace(v.Text[s.Start:s.End]) == "" {
-			return errors.New("redact: a sentence of white space alone")
+		if err := gap(s.Start); err != nil {
+			return err
 		}
-		end = s.End
+		runes, blank := 0, true
+		for at < s.End {
+			r, n := utf8.DecodeRuneInString(text[at:])
+			blank = blank && unicode.IsSpace(r)
+			at += n
+			runes++
+		}
+		switch {
+		case at != s.End:
+			return errors.New("redact: a sentence or the cut inside a rune")
+		case blank:
+			return errors.New("redact: a sentence of white space alone")
+		case runes > SentenceRunesMax:
+			return errors.New("redact: a sentence longer than SentenceRunesMax runes")
+		}
 	}
-	return nil
+	return gap(m.Cut)
 }
 
 // Redactor finds what a removal takes out, with no model. Pull request 2
@@ -168,8 +203,9 @@ func Union(spans ...[]Span) []Span {
 // v.Text, as Union answers them, or any spans: Join unions them itself) is
 // taken out: each run of what was removed, clipped to its part, becomes one
 // contracts.RemovedMarker; everything else is kept byte for byte, so the
-// output is the input minus pieces (U23). A span that cuts a rune is widened
-// to the whole rune.
+// output is the input minus pieces (U23). A span that cuts a valid rune is
+// widened to the whole rune; an invalid byte is a rune of its own, so a span
+// beside one never takes it.
 func Join(v View, removed []Span) (subject, text string) {
 	u := Union(removed)
 	return cut(v.Text, v.Subject, u), cut(v.Text, v.Body, u)
@@ -183,11 +219,12 @@ func cut(text string, part Span, removed []Span) string {
 		if end <= start {
 			continue
 		}
-		for start > part.Start && !utf8.RuneStart(text[start]) {
-			start--
+		if p, ok := runeAround(text, start, part.Start); ok {
+			start = p
 		}
-		for end < part.End && !utf8.RuneStart(text[end]) {
-			end++
+		if p, ok := runeAround(text, end, part.Start); ok && end < part.End {
+			_, n := utf8.DecodeRuneInString(text[p:])
+			end = min(p+n, part.End)
 		}
 		if marked && start <= at {
 			// Widened into the run before: the same run, one marker.
@@ -200,4 +237,20 @@ func cut(text string, part Span, removed []Span) string {
 	}
 	b.WriteString(text[at:part.End])
 	return b.String()
+}
+
+// runeAround is where the valid rune that i is inside of starts, when i is
+// inside one (not at its start) and that start is not before from. An
+// invalid byte is a rune of its own, so a span beside one never takes it.
+func runeAround(text string, i, from int) (int, bool) {
+	if i >= len(text) || utf8.RuneStart(text[i]) {
+		return 0, false
+	}
+	for p := i - 1; p >= max(from, i-utf8.UTFMax+1); p-- {
+		if utf8.RuneStart(text[p]) {
+			r, n := utf8.DecodeRuneInString(text[p:])
+			return p, p+n > i && (r != utf8.RuneError || n > 1)
+		}
+	}
+	return 0, false
 }

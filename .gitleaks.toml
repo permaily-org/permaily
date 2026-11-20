@@ -70,3 +70,10 @@ condition = "AND"
 paths = ['''^internal/services/notices/notices_test\.go$''']
 regexTarget = "line"
 regexes = ['''^\s*func\(n \*Notice\) \{ n\.Key = "ABCDEF0123456789abcdef0123456789" \},?\s*$''']
+
+[[allowlists]]
+description = "the receipts' notices test (ADR 0041, pull request 4) names a catalogue entry by its key prefix and a zero-padded number; nobody's secret; the scan reads every commit of the branch, so the exception names that one line"
+condition = "AND"
+paths = ['''^internal/services/receipts/notices_test\.go$''']
+regexTarget = "line"
+regexes = ['''^\s*if e\.Partition == CataloguePartition && strings\.HasPrefix\(e\.Key, CatalogueKeyPrefix\+"0000000000000002@"\) \{\s*$''']
