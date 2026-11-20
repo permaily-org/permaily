@@ -121,8 +121,12 @@ export function ActivityPage() {
   const filterRef = useRef(filter)
   filterRef.current = filter
 
-  // The first page, once, with the filter the page opened with.
+  // The first page, once, with the filter the page opened with: a later `read` (a new session callback) reads nothing
+  // again, which would list the next pages twice.
+  const started = useRef(false)
   useEffect(() => {
+    if (started.current) return
+    started.current = true
     void read(filterRef.current)
   }, [read])
 
