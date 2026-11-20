@@ -15,6 +15,7 @@ import (
 	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/services/connections"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
+	"github.com/permaily-org/permaily/internal/services/webhooks"
 )
 
 // The routes of connections (ADR 0030, pull request 6): the person's on the
@@ -30,6 +31,15 @@ type ConnectionsConfig struct {
 	// Service is the connections service (connectionstest.Fake in tests).
 	Service  connections.API
 	Sessions Sessions
+	// Webhooks is what the person's route turning a connection's webhook
+	// off calls (ADR 0039, pull request 4; the connections service, which
+	// implements it, or connectionstest.Fake). Without it the route is not
+	// served (not_found).
+	Webhooks connections.WebhookAPI
+	// WebhookKeys is the key set notices are signed with, which
+	// MountConnections publishes on the api host at webhook.KeysPath
+	// (WebhookKeys). Without it nothing is published there.
+	WebhookKeys webhooks.KeySet
 	// OAuth is the hosts the image compiles in.
 	OAuth oauth.Config
 	// Metadata, ResourceMetadata and Challenge are what the image publishes
@@ -75,11 +85,13 @@ const maxConsentBody = 16 << 10
 //	POST /api/v1/connections/{id}/revoke                Connection
 //	POST /api/v1/connections/{id}/devices/{device}/revoke  Connection
 //	POST /api/v1/connections/{id}/renew                 ConnectionRenewal → Connection
+//	POST /api/v1/connections/{id}/webhook/off           {"version": n} → Connection (ADR 0039)
 //
 // Under terms the account has not agreed to, the list, a connection and
 // both revocations work (revoking only protects) and allowing and renewing
 // are the service's terms_needed (finding 17): the routes add no rule of
-// standing of their own. Allowing and renewing are refused
+// standing of their own. Turning a webhook off is like revoking: no fresh
+// proof, and it works under unagreed terms (ADR 0039, choice 11). Allowing and renewing are refused
 // confirmation_needed here already when the session's proof is not fresh,
 // before the service is asked; the service checks it again when it commits.
 func ConnectionsAPI(cfg ConnectionsConfig) http.Handler {
@@ -110,6 +122,10 @@ func ConnectionsAPI(cfg ConnectionsConfig) http.Handler {
 	mux.HandleFunc(list+"/{id}/devices/{device}/revoke", refuse(http.MethodPost))
 	mux.HandleFunc("POST "+list+"/{id}/renew", in(a.renew))
 	mux.HandleFunc(list+"/{id}/renew", refuse(http.MethodPost))
+	if cfg.Webhooks != nil {
+		mux.HandleFunc("POST "+list+"/{id}/webhook/off", in(a.webhookOff))
+		mux.HandleFunc(list+"/{id}/webhook/off", refuse(http.MethodPost))
+	}
 	mux.HandleFunc(list+"/", noSuchEndpoint)
 	app := fromTheApp(mux)
 	return RequireCanonicalPath(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
