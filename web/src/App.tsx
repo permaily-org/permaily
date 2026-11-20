@@ -56,6 +56,8 @@ export function App() {
           <Route path="inbox/:mailboxId/:messageId" element={<MessagePage />} />
           <Route path="inbox/:mailboxId/:messageId/links/:link" element={<LinkPage />} />
           <Route path="accounts" element={<AccountsPage />} />
+          {/* The record of what left, with its downloads: reachable in the limited shell too (ADR 0041, choice 5). */}
+          <Route path="activity" element={<ActivityPage />} />
         </Route>
         <Route element={<MailboxLayout flow />}>
           <Route path="accounts/:mailboxId/forwarding" element={<ForwardingSetupPage />} />
@@ -77,7 +79,6 @@ export function App() {
           <Route index element={<OverviewPage />} />
           <Route path="rules" element={<RulesPage />} />
           <Route path="rules/:id" element={<RuleEditorPage />} />
-          <Route path="activity" element={<ActivityPage />} />
           <Route path="settings" element={<SettingsPage />} />
 
           {/* The admin panel: anyone who is not an admin is led where any unknown route leads */}

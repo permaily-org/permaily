@@ -50,12 +50,20 @@ export function canDeleteMail(standing: Standing): boolean {
 
 /**
  * The routes a closing account, or one that has not agreed, still reaches: the list of mailboxes, a mailbox's
- * forwarding set-up and the inbox. Every other route shows the screen that blocks it.
+ * forwarding set-up, the inbox, and its activity with both downloads (ADR 0041, choice 5: the record is deleted with
+ * the account, and the closing week is when a person most wants a copy). Every other route shows the screen that
+ * blocks it.
  */
 export function isMailboxPath(pathname: string): boolean {
   return (
     /^\/accounts\/?$/.test(pathname) ||
     /^\/accounts\/(?!new\/)[^/]+\/forwarding\/?$/.test(pathname) ||
-    /^\/inbox(\/.*)?$/.test(pathname)
+    /^\/inbox(\/.*)?$/.test(pathname) ||
+    isActivityPath(pathname)
   )
+}
+
+/** The Activity screen, which the limited shell shows too (ADR 0041, choice 5). */
+export function isActivityPath(pathname: string): boolean {
+  return /^\/activity\/?$/.test(pathname)
 }
