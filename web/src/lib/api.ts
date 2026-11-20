@@ -2132,11 +2132,11 @@ export type ReceiptDelivered = {
   message: string
   received: string
   parts: ConnectionPart[]
-  from?: MailAddress[]
+  from: MailAddress[]
   subject?: string
   attachment?: number
-  model?: ReceiptModel[]
-  cleared?: { rule: RuleRef; at: string; model?: ReceiptModel[] }[]
+  model: ReceiptModel[]
+  cleared: { rule: RuleRef; at: string; model: ReceiptModel[] }[]
 }
 
 /** One message a rule held: nothing of it left. `why` is `exact`, `decided`, `recovered` or `undecided`. */
@@ -2145,7 +2145,7 @@ export type ReceiptHeld = {
   message: string
   rule: RuleRef
   why: string
-  model?: ReceiptModel[]
+  model: ReceiptModel[]
 }
 
 /** A request for mail that got none, and why. */
@@ -2179,7 +2179,7 @@ export type ReceiptRefusals = {
   counts: { operation: string; reason: string; count: number }[]
 }
 
-/** A receipt's document. The arrays a version may leave out are always there, empty. */
+/** A receipt's document. The lists a version may leave out, or Go writes as null, are always there, empty, at every depth. */
 export type Receipt = {
   v: 1 | 2
   id: string
@@ -2311,6 +2311,9 @@ const receiptPart: Partial<Record<ReceiptKind, (v: unknown) => boolean>> = {
 
 const receiptParts = ['refused', 'consent', 'ended', 'refusals'] as const
 
+/** A held message with its list of the model's answers always a list (ADR 0041's re-review, finding 5). */
+const heldOf = (h: ReceiptHeld): ReceiptHeld => ({ ...h, model: list<ReceiptModel>(h.model) })
+
 /**
  * A receipt the walk found `ok`, read as this app knows receipts, or null when it is not one it can show: another
  * version or kind, without what its kind records, or a part, list or field the screen and the CSV read in a shape they
@@ -2354,9 +2357,17 @@ export function readReceipt(document: unknown): Receipt | null {
     delivered: list<ReceiptDelivered>(r.delivered).map((d) => ({
       ...d,
       parts: list<ConnectionPart>(d.parts),
+      from: list<MailAddress>(d.from),
+      model: list<ReceiptModel>(d.model),
+      cleared: list<ReceiptDelivered['cleared'][number]>(d.cleared).map((c) => ({
+        ...c,
+        model: list<ReceiptModel>(c.model),
+      })),
     })),
-    held: list<ReceiptHeld>(r.held),
+    held: list<ReceiptHeld>(r.held).map(heldOf),
   }
+  if (receipt.refused?.held)
+    receipt.refused = { ...receipt.refused, held: heldOf(receipt.refused.held) }
   if (receipt.consent)
     receipt.consent = {
       ...receipt.consent,
