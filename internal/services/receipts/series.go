@@ -151,7 +151,10 @@ func (s *Service) judge(ctx context.Context, key []byte, sr *series, n uint64, m
 		}
 		return j, nil
 	}
-	if h := m.History; len(h.Forks) > 0 || h.Head.Version != 1 {
+	// Made once: one version holds a commit of this deployment's. It need
+	// not be version 1: an earlier deployment's commits, or anything else
+	// that is not one of this deployment's, may hold the versions below.
+	if h := m.History; len(h.Forks) > 0 || h.Versions != 1 {
 		j.verdict = LinkForked
 		return j, nil
 	}
