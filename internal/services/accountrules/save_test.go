@@ -162,10 +162,10 @@ func TestU7TheListShowsEachRuleInTheSystemsWords(t *testing.T) {
 		t.Fatal("listed with no mailboxes read")
 	}
 	topics := removing(&contracts.RuleRemoval{Topics: []string{"A Home Address"}})
-	if got := does(topics.Effect, &contracts.RuleRemoval{Topics: []string{"a home address"}}); got != "Takes out every sentence that mentions “a home address” (a model decides), and the sender and attachments, which it does not read" {
+	if got := Does(topics.Effect, &contracts.RuleRemoval{Topics: []string{"a home address"}}); got != "Takes out every sentence that mentions “a home address” (a model decides), and the sender and attachments, which it does not read" {
 		t.Fatalf("does: %q", got)
 	}
-	if got, _ := forWhom(contracts.RuleScope{To: contracts.ScopeOnly, Clients: []string{claude}}); got != "Only the connections of claude.ai/oauth/claude-code-client-metadata" {
+	if got, _ := ForWhom(contracts.RuleScope{To: contracts.ScopeOnly, Clients: []string{claude}}); got != "Only the connections of claude.ai/oauth/claude-code-client-metadata" {
 		t.Fatalf("for: %q", got)
 	}
 	for _, k := range contracts.ShapeKinds {

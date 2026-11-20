@@ -79,8 +79,8 @@ func TestAKeyIsSentOnlyWhenItFitsAHeader(t *testing.T) {
 	}
 	for body, want := range map[string]string{
 		`{"error":{"code":"insufficient_quota"}}`: "insufficient_quota",
-		`{"error":{}}`:                            "",
-		`not json`:                                "",
+		`{"error":{}}`: "",
+		`not json`:     "",
 	} {
 		if got := code([]byte(body)); got != want {
 			t.Errorf("code(%s) is %q, want %q", body, got, want)

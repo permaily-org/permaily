@@ -50,8 +50,10 @@ func deploymentOf(raw string) string {
 // seconds or the bound does not cover every byte, when a client
 // assertion's replay or a code's reuse is not refused by a strict record,
 // when anything leaves while the model cannot be asked, when the rules'
-// decisions are not strict, and when the default rule is absent, off or
-// another. It fails as well on what ReceiptsStatus.Check requires at now,
+// decisions are not strict, when the default rule is absent, off or
+// another, and when a person's own rules are not kept in strict records or
+// any of their constants and versions is not the source's
+// (attestation.PersonRulesStatus.Check, ADR 0040). It fails as well on what ReceiptsStatus.Check requires at now,
 // the verifier's clock (ADR 0037, "What /status and permaily-verify
 // show"): receipts sealed and chained by strict links, the record of
 // incidents read in the last 30 minutes and empty, a pass of the audit
@@ -81,6 +83,11 @@ func checkConnections(c *attestation.ConnectionsStatus, domain string, now time.
 		return nil, err
 	}
 	if err := checkDefaultRule(c.Rules); err != nil {
+		return nil, err
+	}
+	// A person's own rules (ADR 0040): every constant and version the
+	// source this verifier is built from compiles.
+	if err := c.PersonRules.Check(personRulesWant()); err != nil {
 		return nil, err
 	}
 	if err := c.Receipts.Check(now); err != nil {

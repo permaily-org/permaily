@@ -177,11 +177,16 @@ type AuthorizationRequest struct {
 }
 
 // RuleSummary is a rule as the consent screen and a connection's page show
-// it: which rule, and its sentence.
+// it: which rule, and its sentence; on the consent screen (ADR 0040, U25)
+// also what it does and who for, in the server's words, and the clients its
+// scope names (each by ClientShown).
 type RuleSummary struct {
-	ID       string     `json:"id"`
-	Version  int        `json:"version"`
-	Sentence []Sentence `json:"sentence"`
+	ID       string       `json:"id"`
+	Version  int          `json:"version"`
+	Sentence []Sentence   `json:"sentence"`
+	Does     string       `json:"does,omitempty"`
+	For      string       `json:"for,omitempty"`
+	Clients  []RuleClient `json:"clients,omitempty"`
 }
 
 // ConsentPreview asks for a page of what a request would read, under Draft,

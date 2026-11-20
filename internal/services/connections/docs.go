@@ -531,11 +531,11 @@ func modelDecides(c *query.Canonical) bool {
 }
 
 // ruleSummaries are rs as the consent screen shows them, in the order they
-// apply.
+// apply: each by its sentence, what it does and who for (accountrules.Summary).
 func ruleSummaries(rs []rules.Rule) []contracts.RuleSummary {
 	out := []contracts.RuleSummary{}
 	for _, r := range rs {
-		out = append(out, contracts.RuleSummary{ID: r.ID, Version: r.Version, Sentence: query.RenderRule(r.Formulas, query.Context{Lang: "en"}).Formulas})
+		out = append(out, accountrules.Summary(r))
 	}
 	return out
 }

@@ -44,6 +44,10 @@ type Rule struct {
 	Formulas []*query.Canonical
 	// Removal is what a Remove rule takes out (ADR 0040); nil for Hold.
 	Removal *Removal
+	// Scope is which connections a person's rule is for, as saved (ADR
+	// 0040), for what the consent screen says of it; nil for the default
+	// rule, which is for every connection.
+	Scope *Scope
 	// ModelOff says the model may not be asked for this rule (the rules'
 	// notice it was saved under, or the account's agreement, is not the one
 	// in force; ADR 0040, "The rules' notice"): its model atoms stay

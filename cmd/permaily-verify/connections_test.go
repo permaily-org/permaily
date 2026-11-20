@@ -236,3 +236,48 @@ func TestDeploymentOf(t *testing.T) {
 		}
 	}
 }
+
+// U31 (ADR 0040, "/status and permaily-verify"): permaily-verify passes the
+// image's own person_rules, which are the source's this verifier is built
+// from, and fails when the section is absent (a release before ADR 0040),
+// the record is not strict, or any constant or version is not the source's.
+func TestU31PermailyVerifyChecksThePersonsRules(t *testing.T) {
+	st := imageConnections(t)
+	if st.PersonRules == nil {
+		t.Fatal("the image publishes no person_rules")
+	}
+	w := personRulesWant()
+	w.Words.Calls, w.Unreadable = st.PersonRules.Words.Calls, st.PersonRules.Unreadable
+	if got, _ := json.Marshal(st.PersonRules); string(got) != string(must(json.Marshal(w))) {
+		t.Fatalf("the image's person_rules %s are not the source's %s", got, must(json.Marshal(w)))
+	}
+	for name, c := range map[string]struct {
+		change func(*attestation.PersonRulesStatus)
+		says   string
+	}{
+		"not strict":          {func(p *attestation.PersonRulesStatus) { p.Record = "eventual" }, "not in strict records"},
+		"another shapes":      {func(p *attestation.PersonRulesStatus) { p.Shapes.Version++ }, "fixed shapes"},
+		"another meaning":     {func(p *attestation.PersonRulesStatus) { p.Meaning.Prompt = "s0-2026-01-01" }, "removing by meaning"},
+		"a lower threshold":   {func(p *attestation.PersonRulesStatus) { p.Meaning.Threshold = 0.9 }, "removing by meaning"},
+		"another words model": {func(p *attestation.PersonRulesStatus) { p.Words.Prompt = "w1-2026-11-20" }, "words are turned into rules"},
+		"another notice":      {func(p *attestation.PersonRulesStatus) { p.Notice = "2026-11-16" }, "notice"},
+		"stale rules":         {func(p *attestation.PersonRulesStatus) { p.FreshSeconds = 60 }, "60 seconds"},
+	} {
+		st := imageConnections(t)
+		c.change(st.PersonRules)
+		if _, err := checkConnections(st, "permaily.com", goldenNow); err == nil || !strings.Contains(err.Error(), c.says) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	st.PersonRules = nil
+	if _, err := checkConnections(st, "permaily.com", goldenNow); err == nil || !strings.Contains(err.Error(), "person_rules") {
+		t.Fatalf("absent: %v", err)
+	}
+}
+
+func must(b []byte, err error) []byte {
+	if err != nil {
+		panic(err)
+	}
+	return b
+}

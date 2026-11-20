@@ -308,3 +308,52 @@ func TestU26TheSeamWithDelivery(t *testing.T) {
 		t.Fatalf("the model off: %v", err)
 	}
 }
+
+// U25 (ADR 0040, pull request 8): each rule on the consent screen says what
+// it does and who for in the server's words (accountrules.Summary): two
+// `only` rules of two clients on one host give two different sentences of
+// who, each naming its client by host and document path, never the host
+// alone; a removal says what it takes out, the sender and attachments
+// included; the default holds for every connection.
+func TestU25WhatEachRuleDoesAndWhoFor(t *testing.T) {
+	w := newWorld(t)
+	w.vendors.clients[sameHost] = &vendors.Client{ID: sameHost, Domain: "tools.example.org", Document: oauth.ClientDocument{
+		ClientID: sameHost, ClientName: "Tools", RedirectURIs: []string{"https://tools.example.org/back"}}}
+	rec := &rules.Record{V: rules.RecordFormat, Account: accountA, Notice: &contracts.RuleNoticeAgreement{Version: rulesNotice}, Rules: []rules.Stored{
+		storedRule("rul_tools", "tools", contracts.RuleScope{To: contracts.ScopeOnly, Clients: []string{otherApp}}),
+		storedRule("rul_same", "same", contracts.RuleScope{To: contracts.ScopeOnly, Clients: []string{sameHost}}),
+	}}
+	numbers := storedRule("rul_numbers", "numbers", contracts.RuleScope{To: contracts.ScopeAll})
+	numbers.Draft.Effect, numbers.Draft.Removal = contracts.EffectRemove, &contracts.RuleRemoval{Shapes: []contracts.ShapeKind{contracts.ShapePhoneNumber}}
+	rec.Rules = append(rec.Rules, numbers)
+	src := &accountrulestest.Fake{Notice: rulesNotice}
+	src.Set(accountA, rec)
+	s := w.ruleEnclave(src)
+	p := w.person(accountA)
+	fors := map[string]string{}
+	for _, client := range []string{otherApp, sameHost} {
+		a := w.ask(client)
+		if client == sameHost {
+			a.redirect = "https://tools.example.org/back"
+		}
+		req := w.start(s, p, a)
+		if len(req.Rules) != 3 {
+			t.Fatalf("%s: %v", client, ruleIDs(req.Rules))
+		}
+		def, own, rm := req.Rules[0], req.Rules[1], req.Rules[2]
+		if def.ID != rules.DefaultID || def.Does != "Holds the email back" || def.For != "Every connection, those made later included" {
+			t.Fatalf("%s: the default %+v", client, def)
+		}
+		shown := contracts.ClientShown(client)
+		if own.Does != "Holds the email back" || own.For != "Only the connections of "+shown || len(own.Clients) != 1 || own.Clients[0].Shown != shown {
+			t.Fatalf("%s: its own rule %+v", client, own)
+		}
+		if rm.ID != "rul_numbers" || !strings.HasPrefix(rm.Does, "Takes out phone numbers") || !strings.HasSuffix(rm.Does, "and the sender and attachments, which it does not read") {
+			t.Fatalf("%s: the removal %+v", client, rm)
+		}
+		fors[client] = own.For
+	}
+	if fors[otherApp] == fors[sameHost] || strings.Contains(fors[otherApp], "other/client.json") {
+		t.Fatalf("two clients on one host are not told apart: %q", fors)
+	}
+}
