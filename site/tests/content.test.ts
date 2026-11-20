@@ -282,6 +282,25 @@ describe('legal pages', () => {
       expect(text('terms')).toContain('even when the connection’s own query uses no model');
     });
 
+    it('how long a queued notice and its mark are kept, as services/notices sets it', () => {
+      // The code review of ADR 0041's pull request 7, 3: a notice is tried for RetryFor from its time, its entry
+      // expires entryKeptFor after it, and a mark KeptFor after it is written; both are then removed by DynamoDB's
+      // TTL cleanup, which is not immediate, and a deletion that fails leaves the entry to its expiry. The page says
+      // the window and the expiry apart, never a hard one-day erasure.
+      const notices = go('internal/services/notices/notices.go');
+      const queue = go('internal/services/notices/queue.go');
+      expect(notices).toMatch(/RetryFor = 24 \* time\.Hour\b/);
+      expect(notices).toMatch(/KeptFor = 30 \* 24 \* time\.Hour\b/);
+      expect(queue).toMatch(/const entryKeptFor = RetryFor \+ time\.Hour\b/);
+      expect(queue).toMatch(/ExpiresAt = v, d\.Notice\.At\.Add\(entryKeptFor\)/);
+      expect(queue).toMatch(/ExpiresAt: now\.Add\(KeptFor\)/);
+      const privacy = text('privacy');
+      expect(privacy).toContain(
+        'Tried for 24 hours from the event it tells of, and deleted once it is sent, or once it is no longer to be sent, when that deletion succeeds. Otherwise it expires 25 hours after the event, and our database’s automatic cleanup removes it some time after that. The mark expires 30 days after it is written and is removed by the same cleanup',
+      );
+      expect(privacy).not.toContain('at most a day');
+    });
+
     it('a new mailbox’s retention and its choices, as internal/contracts sets them', () => {
       const contracts = go('internal/contracts/mailboxes.go');
       expect(contracts).toMatch(/MailboxRetentionDays = \[\]int\{7, 30, 90, 180, 365\}/);
