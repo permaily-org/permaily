@@ -172,7 +172,7 @@ Step 9's notices, designed in ADR 0041 (2026-11-20, with step 8's rest): seven n
 - [x] **1. The queue.** Entries created once, marks, admission before the lease, the attempt's deadline, the runner and its bounds, retries for 24 hours from the signed time, the counts, two enclaves (E20 to E24, E26, E28), with the re-review's N1 (a pass goes on past what it cannot send) and N2 (the contract's backlog held at admission past the lease while the other enclave drains), and the code review's three findings (the attempt's deadline from before its lease, a pass reading a bounded page at a time and counting expired rows); not yet composed (2026-11-20).
 - [x] **2. The words.** Accounts' `Deliver`, held to `DelivererContract`, with the seven messages as blocks, their previews, the sign-out's notice, Settings' Notifications (E25, E35, E37 to E39) (2026-11-20; words a first draft for the designer).
 - [x] **3. Connections.** Approved, device added, renewed, the sweep's ending, a device ended for reuse (E30 to E33, E36) (2026-11-20).
-- [ ] **4. Receipts.** An incident's notice, once a day per account (E34).
+- [x] **4. Receipts.** An incident's notice, once a day per account (E34) (2026-11-20).
 - [ ] **7. The image.** The composition, `/status` and `permaily-verify`, `TestMailEndToEnd`'s notices, the threat model, data, operations, legal and the privacy page; the staging check (E27, E29, E40, E41); then the release.
 - [ ] The words of every message reviewed with the designer (the owner's), with the notices of ADR 0017 and 0026.
 
