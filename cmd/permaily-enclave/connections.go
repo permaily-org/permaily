@@ -75,8 +75,12 @@ type connectionsParts struct {
 	// (ADR 0041), and log where one that could not be queued is logged, by
 	// its kind alone.
 	notices *composedNotices
-	log     *slog.Logger
-	now     func() time.Time
+	// webhooks, when set, is the queue of connections' webhooks (ADR
+	// 0039): told of every connection with a webhook made or ended, and
+	// given the service back to read (composedWebhooks.readFrom).
+	webhooks *composedWebhooks
+	log      *slog.Logger
+	now      func() time.Time
 }
 
 // connectionsStore is where the connections' entries are, and the mail
@@ -100,6 +104,9 @@ type composedConnections struct {
 	// model's service, whose words calls /status counts.
 	rules *accountrules.Service
 	model *decisions.Service
+	// webhooks is the queue of connections' webhooks (ADR 0039), whose
+	// key set the api host publishes; nil without it.
+	webhooks *composedWebhooks
 	// since is when this enclave started counting.
 	since time.Time
 }
@@ -162,16 +169,26 @@ func composeConnections(c connectionsParts) (*composedConnections, error) {
 	if c.notices != nil {
 		cfg.Notices = c.notices.svc
 	}
+	if c.webhooks != nil {
+		// A connection with a webhook is subscribed before its code is
+		// issued, and the person's page shows the queue's state of it.
+		cfg.Webhooks, cfg.WebhookStates = c.webhooks.svc, c.webhooks.svc
+	}
 	svc, err := connections.New(cfg)
 	if err != nil {
 		return nil, err
+	}
+	if c.webhooks != nil {
+		// Whether a notice may be sent is the connections' to say (ADR
+		// 0039, "Revocation, the end and removal").
+		c.webhooks.readFrom(svc)
 	}
 	// An account being deleted fences and ends its connections, and a
 	// cancelled deletion reopens them (ADR 0030, finding 6).
 	c.accounts.SetConnections(svc)
 	// And its record of rules with it (ADR 0040, "Removed with the account").
 	c.accounts.SetRules(rs)
-	return &composedConnections{svc: svc, full: full, cfg: c.oauth, receipts: c.receipts, rules: rs, model: c.model, since: now()}, nil
+	return &composedConnections{svc: svc, full: full, cfg: c.oauth, receipts: c.receipts, rules: rs, model: c.model, webhooks: c.webhooks, since: now()}, nil
 }
 
 // connectionMailboxes is what the connections service reads of mailboxes
@@ -312,9 +329,10 @@ func stopConnections(svc *connections.Service, passed <-chan struct{}, log *slog
 
 // mountConnections puts the connections' routes on their hosts (ADR 0030,
 // "Hosts, issuer and endpoints"), with what internal/oauth writes of the
-// metadata and the challenges, and MCP's endpoint on the mcp host.
+// metadata and the challenges, and MCP's endpoint on the mcp host; with
+// webhooks, the route that turns one off and the key set.
 func mountConnections(c *composedConnections, app *httpapi.AppMux, api, mcp *http.ServeMux, spa http.Handler, sessions httpapi.Sessions, log *slog.Logger) {
-	httpapi.MountConnections(httpapi.ConnectionsMounts{App: app, API: api, MCP: mcp, SPA: spa}, httpapi.ConnectionsConfig{
+	cfg := httpapi.ConnectionsConfig{
 		Service:          c.svc,
 		Sessions:         sessions,
 		OAuth:            c.cfg,
@@ -322,7 +340,14 @@ func mountConnections(c *composedConnections, app *httpapi.AppMux, api, mcp *htt
 		ResourceMetadata: oauth.ResourceMetadataFor,
 		Challenge:        oauth.Challenge,
 		Log:              log,
-	})
+	}
+	if c.webhooks != nil {
+		// The person turns a connection's webhook off on the app's host, and
+		// the api host publishes the key set notices are signed with (ADR
+		// 0039, pull request 4's routes).
+		cfg.Webhooks, cfg.WebhookKeys = c.svc, c.webhooks.svc
+	}
+	httpapi.MountConnections(httpapi.ConnectionsMounts{App: app, API: api, MCP: mcp, SPA: spa}, cfg)
 	mcp.Handle(oauth.PathMCP, mcpapi.New(c.svc, c.cfg, mcpapi.WithLog(log)))
 }
 

@@ -238,6 +238,11 @@ func run(cfg config, log *slog.Logger) error {
 		// the other queued (ADR 0041, "The queue").
 		runNotices(ctx, p.notices)
 	}
+	if p.connections != nil && p.connections.webhooks != nil {
+		// Every enclave runs the webhooks' workers and their hourly repair:
+		// either may call a notice the other queued (ADR 0039, "The queue").
+		runWebhooks(ctx, p.connections.webhooks)
+	}
 	var refusalsPassed <-chan struct{}
 	if p.connections != nil {
 		// Every enclave runs the connections' hourly pass (ADR 0030,
@@ -289,6 +294,16 @@ func run(cfg config, log *slog.Logger) error {
 			}
 			noticesStopped <- stopNotices(p.notices, log)
 		}()
+		// The webhooks' calls under way end with the context; their runner
+		// is waited for while the server stops (stopWebhooks).
+		webhooksStopped := make(chan error, 1)
+		go func() {
+			if p.connections == nil || p.connections.webhooks == nil {
+				webhooksStopped <- nil
+				return
+			}
+			webhooksStopped <- stopWebhooks(p.connections.webhooks, log)
+		}()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -300,7 +315,7 @@ func run(cfg config, log *slog.Logger) error {
 			// After the last request: what the refusals' windows counted.
 			stopErr = stopConnections(p.connections.svc, refusalsPassed, log)
 		}
-		stopErr = errors.Join(stopErr, <-noticesStopped)
+		stopErr = errors.Join(stopErr, <-noticesStopped, <-webhooksStopped)
 	}()
 	if err := srv.ServeTLS(p.listener, "", ""); !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -426,6 +441,11 @@ func handler(cfg config, hosts router.Hosts, p *platform, log *slog.Logger) http
 	}
 	if p.connections != nil {
 		status.Connections = connectionsStatus(p.connections)
+		if p.connections.webhooks != nil {
+			// How connections' webhooks are called, and this enclave's
+			// calls by fixed outcome (ADR 0039).
+			status.Webhooks = p.connections.webhooks.status
+		}
 	}
 	if p.notices != nil {
 		// What this enclave did with the queue of notices, in mail.notices.
