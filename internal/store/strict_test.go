@@ -654,11 +654,11 @@ func TestHistoryAgreesWithHead(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, err := c.History(ctx, "tls")
-	if err != nil || h.Head == nil || *h.Head != *head || h.Next != next || next != 6 || len(h.Forks) != 0 || len(h.Unlocked) != 0 {
+	if err != nil || h.Head == nil || *h.Head != *head || h.Next != next || next != 6 || len(h.Forks) != 0 || len(h.Unlocked) != 0 || h.Versions != 3 {
 		t.Fatalf("history %+v, %v; head %+v, next %d", h, err, head, next)
 	}
 	// An empty record.
-	if h, err := c.History(ctx, "nothing"); err != nil || h.Head != nil || h.Next != 1 || h.Forks != nil {
+	if h, err := c.History(ctx, "nothing"); err != nil || h.Head != nil || h.Next != 1 || h.Forks != nil || h.Versions != 0 {
 		t.Fatalf("an empty history: %+v, %v", h, err)
 	}
 }
@@ -774,6 +774,11 @@ func TestCreateNewAroundWhatIsNotACommit(t *testing.T) {
 	}
 	if stored := names(t, records, "mailbox-1"); len(stored) != 2 || !strings.Contains(stored[0], "@00000000000000000001-") || !strings.Contains(stored[1], "@00000000000000000002-") {
 		t.Fatalf("stored %q", stored)
+	}
+	// One version holds a commit, the second: the record was made once
+	// (what a deployment started over finds above an earlier one's commits).
+	if h, err := commits.History(ctx, "mailbox-1"); err != nil || h.Head == nil || h.Head.Version != 2 || h.Versions != 1 {
+		t.Fatalf("history %+v, %v", h, err)
 	}
 
 	down := errors.New("table unreachable")
