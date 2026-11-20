@@ -28,3 +28,28 @@
 {"name":"a code next to a date is still removed: no most length (finding 2)","kinds":["numeric_code"],"in":"Code 123456 2026-11-20","out":"Code [removed]","shapes":{"numeric_code":1}}
 {"name":"a card followed by a year is still removed (finding 2)","kinds":["card_number"],"in":"Card 4111 1111 1111 1111 2026 thanks","out":"Card [removed] thanks","shapes":{"card_number":1}}
 {"name":"a phone number followed by another number is still removed (finding 2)","kinds":["phone_number"],"in":"Call 555 123 4567/12 today","out":"Call [removed] today","shapes":{"phone_number":1}}
+{"name":"a domain with an ideographic full stop","kinds":["link"],"in":"Visit example。com today","out":"Visit [removed] today","shapes":{"link":1}}
+{"name":"a domain in fullwidth letters","kinds":["link"],"in":"Visit ｅｘａｍｐｌｅ．ｃｏｍ today","out":"Visit [removed] today","shapes":{"link":1}}
+{"name":"an address whose domain has an ideographic full stop","kinds":["email_address"],"in":"Write ana@example。com now","out":"Write [removed] now","shapes":{"email_address":1}}
+{"name":"an address with the small at sign","kinds":["email_address"],"in":"ana﹫example.com","out":"[removed]","shapes":{"email_address":1}}
+{"name":"a soft hyphen inside an address is part of it","kinds":["email_address"],"in":"ana@exam­ple.com","out":"[removed]","shapes":{"email_address":1}}
+{"name":"an address before a question mark","kinds":["email_address"],"in":"Is it ana@example.com?","out":"Is it [removed]?","shapes":{"email_address":1}}
+{"name":"a domain under an internationalised top-level domain","kinds":["link"],"in":"Visit 例子.中国 now","out":"Visit [removed] now","shapes":{"link":1}}
+{"name":"a domain under a top-level domain whose rule is a wildcard","kinds":["link"],"in":"See foo.ck","out":"See [removed]","shapes":{"link":1}}
+{"name":"a domain under a private suffix is still a link","kinds":["link"],"in":"See ana.github.io","out":"See [removed]","shapes":{"link":1}}
+{"name":"a domain under no listed suffix is not a link: the stated false negative","kinds":["link"],"in":"See notes.internal","out":"See notes.internal","shapes":{}}
+{"name":"words joined by a dot under a real suffix are a link: the stated false positive","kinds":["link"],"in":"Say hello.world","out":"Say [removed]","shapes":{"link":1}}
+{"name":"tel is a link","kinds":["link"],"in":"Call tel:+15551234567 now","out":"Call [removed] now","shapes":{"link":1}}
+{"name":"www in capitals, its full stop kept","kinds":["link"],"in":"Go to WWW.EXAMPLE.ORG.","out":"Go to [removed].","shapes":{"link":1}}
+{"name":"a link in parentheses","kinds":["link"],"in":"(see https://example.com/a)","out":"(see [removed])","shapes":{"link":1}}
+{"name":"a domain with a port and a path","kinds":["link"],"in":"Open example.com:8080/admin now","out":"Open [removed] now","shapes":{"link":1}}
+{"name":"an IBAN written together","kinds":["account_number"],"in":"IBAN DE89370400440532013000 thanks","out":"IBAN [removed] thanks","shapes":{"account_number":1}}
+{"name":"an IBAN in fours whose digits are also an account number","kinds":["account_number"],"in":"IBAN DE89 3704 0044 0532 0130 00","out":"IBAN [removed]","shapes":{"account_number":1}}
+{"name":"a lowercase IBAN's digits are still an account number","kinds":["account_number"],"in":"iban de89 3704 0044 0532 0130 00","out":"iban de[removed]","shapes":{"account_number":1}}
+{"name":"Devanagari digits are digits","kinds":["numeric_code"],"in":"कोड १२३४५६","out":"कोड [removed]","shapes":{"numeric_code":1}}
+{"name":"a number split by more than two separators is two groups: the stated false negative","kinds":["numeric_code"],"in":"Pin 12 -- 34","out":"Pin 12 -- 34","shapes":{}}
+{"name":"a number written in words is not removed: the stated false negative","kinds":["phone_number"],"in":"Call five five five one two three four","out":"Call five five five one two three four","shapes":{}}
+{"name":"a phone number before a full stop","kinds":["phone_number"],"in":"Call 5551234.","out":"Call [removed].","shapes":{"phone_number":1}}
+{"name":"a phone number in a word is removed with the domain it was written into","kinds":["phone_number","link"],"in":"See abc.de5551234567 now","out":"See [removed] now","shapes":{"phone_number":1}}
+{"name":"an IBAN whose last group has an account number written after it","kinds":["account_number"],"in":"Pay GB82 WEST 1234 ABCD5551234567 now","out":"Pay [removed] now","shapes":{"account_number":1}}
+{"name":"every kind at once","kinds":["email_address","phone_number","card_number","account_number","numeric_code","link"],"in":"Ana <ana@example.com>, +34 612 34 56 78, card 4111 1111 1111 1111, code 4821, see https://example.com/x.","out":"Ana <[removed]>, [removed], card [removed], code [removed], see [removed].","shapes":{"email_address":1,"phone_number":2,"numeric_code":1,"link":1}}
