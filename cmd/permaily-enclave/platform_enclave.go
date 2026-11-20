@@ -80,6 +80,10 @@ type platform struct {
 	// rulesRecords is the one strict Anchored of the person's rules'
 	// records (ADR 0040); nil without connections.
 	rulesRecords *store.Anchored
+	// notices is the queue of the notices by mail about connections and
+	// the record of what left (ADR 0041), accounts its Deliverer; nil in an
+	// image that sends no mail.
+	notices *composedNotices
 	// receipts is the record of what left, chained (ADR 0037), over its one
 	// strict Anchored; nil without the model.
 	receipts *composedReceipts
@@ -181,6 +185,12 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			var accountRecords, mailboxRecords, modelRecords, connectionRecords, rulesRecords, chainRecords *store.Anchored
 			if cfg.mailFrom != "" {
 				accountRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true}
+				// The notices about connections (ADR 0041) are queued in the
+				// table, signed with a key of the root secret, and sent by
+				// accounts through SES, behind the watch, as every message.
+				if p.notices, err = composeNotices(noticesParts{entries: awsStore, keys: root, log: log}); err != nil {
+					return nil, err
+				}
 				sender, err := p.signIn(ctx, cfg, hosts, awsCfg, egress, accountRecords, awsStore, root, log)
 				if err != nil {
 					return nil, err
@@ -230,7 +240,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 				// values in the chain's table (a link's in its account's
 				// partition), their commits grouped under commits/g/.
 				chainRecords = &store.Anchored{Records: receipts.ChainTable{Entries: awsStore}, Commits: commits, Strict: true}
-				if p.receipts, err = composeReceipts(receiptsParts{chain: chainRecords, entries: awsStore, keys: root, accounts: p.accounts}); err != nil {
+				if p.receipts, err = composeReceipts(receiptsParts{chain: chainRecords, entries: awsStore, keys: root, accounts: p.accounts, notices: p.notices, log: log}); err != nil {
 					return nil, err
 				}
 				if p.connections, err = enclaveConnections(cfg, hosts, connectionRecords, awsStore, root, p, log); err != nil {
@@ -278,6 +288,9 @@ func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, a
 	p.accounts, err = accounts.New(accounts.Config{
 		Records: records, Entries: entries, Keys: root,
 		Mailer: sender,
+		// The operator's and an admin's sign-out of every device is told
+		// through the queue, which accounts then sends (deliverBy).
+		Notices: p.notices.svc,
 		// The providers are asked who signed in over TLS that ends here, through
 		// the host's proxy, and send the browser back to the app's own host.
 		Providers: &idp.Client{HTTP: egress, RedirectURL: "https://" + hosts.App + providerCallback},
@@ -286,6 +299,7 @@ func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, a
 	if err != nil {
 		return nil, err
 	}
+	p.notices.deliverBy(p.accounts)
 	// Accounts whose person asked to delete them are removed when their day comes.
 	go p.accounts.Run(ctx, accounts.RemoveEvery)
 	return sender, nil
@@ -316,14 +330,15 @@ var vendorEgress = enclave.VendorEgressClient
 
 // enclaveConnections composes the image's connections over records (the
 // one strict Anchored of their names), the table and the root secret's
-// keys, with the platform's accounts, mailboxes and model; vendors'
+// keys, with the platform's accounts, mailboxes, model, receipts and queue
+// of notices (log takes what it logs of a notice not queued); vendors'
 // documents are fetched through the host's vendor egress on
 // cfg.vendorEgressPort (8004) and nothing else.
 func enclaveConnections(cfg config, hosts router.Hosts, records *store.Anchored, table connectionsStore, root connections.Keys, p *platform, log *slog.Logger) (*composedConnections, error) {
 	return composeConnections(connectionsParts{
 		oauth: oauthConfig(hosts, cfg.oauthPort()), domain: cfg.domain, records: records, entries: table, keys: root,
 		vendorHTTP: vendorEgress(cfg.vendorEgressPort), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model,
-		receipts: p.receipts, rulesRecords: p.rulesRecords, log: log,
+		receipts: p.receipts, notices: p.notices, log: log, rulesRecords: p.rulesRecords,
 	})
 }
 

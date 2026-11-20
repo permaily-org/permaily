@@ -71,8 +71,12 @@ type connectionsParts struct {
 	// rulesRecords is the one strict Anchored of the person's rules'
 	// records (ADR 0040), apart from the connections'.
 	rulesRecords *store.Anchored
-	log          *slog.Logger
-	now          func() time.Time
+	// notices, when set, is the queue the notices about connections go to
+	// (ADR 0041), and log where one that could not be queued is logged, by
+	// its kind alone.
+	notices *composedNotices
+	log     *slog.Logger
+	now     func() time.Time
 }
 
 // connectionsStore is where the connections' entries are, and the mail
@@ -138,7 +142,7 @@ func composeConnections(c connectionsParts) (*composedConnections, error) {
 	}
 	store := inbox.NewDiscloser(c.entries, query.Eval, c.mailboxes.Decisions())
 	full, _ := store.(inbox.DecisionsFullCounter)
-	svc, err := connections.New(connections.Config{
+	cfg := connections.Config{
 		OAuth:       c.oauth,
 		Records:     c.records,
 		Entries:     c.entries,
@@ -153,7 +157,12 @@ func composeConnections(c connectionsParts) (*composedConnections, error) {
 		Source:      rs,
 		Receipts:    c.receipts.svc,
 		Now:         now,
-	})
+		Log:         c.log,
+	}
+	if c.notices != nil {
+		cfg.Notices = c.notices.svc
+	}
+	svc, err := connections.New(cfg)
 	if err != nil {
 		return nil, err
 	}

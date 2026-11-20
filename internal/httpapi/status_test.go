@@ -105,6 +105,45 @@ func TestStatus(t *testing.T) {
 		}
 	})
 
+	// E29 (ADR 0041): mail.notices holds this enclave's counts, every one
+	// written at zero too, and nothing else; no mail section, no counts.
+	t.Run("E29 the notices' counts", func(t *testing.T) {
+		state := attestation.MailState{DomainIdentity: attestation.MailNoConfigurationSet, AddressIdentity: attestation.MailAbsent}
+		mail := func() *attestation.MailStatus {
+			return &attestation.MailStatus{Domain: "mail.example.org", Address: "no-reply@mail.example.org", CheckedAt: at, State: &state}
+		}
+		counts := &attestation.NoticesStatus{Since: at}
+		rec := call(httpapi.Status(httpapi.StatusSources{Mail: mail, Notices: func() *attestation.NoticesStatus { return counts }}), http.MethodGet)
+		var raw struct {
+			Mail struct {
+				Notices map[string]any `json:"notices"`
+			} `json:"mail"`
+		}
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &raw) != nil {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body)
+		}
+		want := []string{"since", "queued", "sent", "failed", "dropped", "skipped", "refused"}
+		if len(raw.Mail.Notices) != len(want) {
+			t.Fatalf("notices %v, want exactly %v", raw.Mail.Notices, want)
+		}
+		for _, k := range want[1:] {
+			if v, ok := raw.Mail.Notices[k]; !ok || v != float64(0) {
+				t.Fatalf("%s is %v in %s", k, v, rec.Body)
+			}
+		}
+		counts = &attestation.NoticesStatus{Since: at, Queued: 7, Sent: 5, Failed: 3, Dropped: 1, Skipped: 1, Refused: 2}
+		rec = call(httpapi.Status(httpapi.StatusSources{Mail: mail, Notices: func() *attestation.NoticesStatus { return counts }}), http.MethodGet)
+		var got attestation.Status
+		if json.Unmarshal(rec.Body.Bytes(), &got) != nil || got.Mail == nil || !reflect.DeepEqual(got.Mail.Notices, counts) {
+			t.Fatalf("body %s", rec.Body)
+		}
+		// Without mail there is no section for the counts to be in.
+		rec = call(httpapi.Status(httpapi.StatusSources{Notices: func() *attestation.NoticesStatus { return counts }}), http.MethodGet)
+		if strings.Contains(rec.Body.String(), `"mail"`) || strings.Contains(rec.Body.String(), `"notices"`) {
+			t.Fatalf("body %s", rec.Body)
+		}
+	})
+
 	t.Run("the model", func(t *testing.T) {
 		model := &attestation.ModelStatus{Provider: "openai", PromptCache: "off", Guard: attestation.ModelGuardOK, Calls: map[string]int{attestation.ModelCallAnswered: 0}}
 		var asked context.Context
