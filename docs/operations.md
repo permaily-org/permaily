@@ -191,6 +191,14 @@ Still needed before two run:
 4. A way to roll a release out to two: hand the root secret to the new release once (any enclave of the running release can), then replace the enclaves one at a time. While both releases serve, `permaily-verify -release` fails on connections that land on the older one.
 5. A way for a verifier to reach each enclave behind one address (ADR 0024).
 
+## A person's rules
+
+A person's own rules (ADR 0040, composed by its pull request 8; on with the release that carries it) are one strict record per account and epoch (`rules-<account>-<epoch>`), sealed, read and written through an Anchored of their own, cached at most five seconds in each enclave. There is nothing for the operator to do with them, and no route of the operator reaches them.
+
+- **`rules_unreadable`** in `/status`'s `connections.person_rules` counts, for the enclave that answered and since it started, the reads of an account's rules it could not use: a record lost, forked or put back, one that does not open, or a rule in it that does not compile. Each one answered that account's connections `503` with `Retry-After` and gave nothing, the default rule alone included; the enclave logs `accountrules: …` with its kind, never the account. A count that grows is an incident like a record that went back ("Records that cannot go back"): find which kind in the log, and do not restart the enclave before looking, since it forgets what it saw. It does not mean a rule was skipped or that mail left: nothing leaves for an account whose rules cannot be read. A lost or forked record shows besides as a regression named `rules` in `anchors`.
+- **`words.calls`** counts the person's words sent to the Responses API by outcome (`proposed`, `unusable`, `too_many`, `unavailable`), for the enclave that answered. Each call is reserved through the model's spend guard in the account's share, as a question of the Decisions API is, and at most 30 an account a day an enclave. Many `unavailable` with the model's key set mean the provider refuses or fails: see the model's `calls` and the guard.
+- **Removing by meaning** asks the Decisions API through the same guard; a rule whose sentences cannot be asked removes the whole subject and text, so a model that is off does not let details out.
+
 ## The queue of notices
 
 The notices by mail about connections and receipts (ADR 0041: a connection approved, a device added, a connection renewed or ending in a week, a device ended for reuse, receipts found deleted or changed, every device signed out by the operator or an admin) are queued in the table and sent by whichever enclave tries them, through SES behind the watch of ADR 0021, like every message. On with the release that carries ADR 0041's pull request 7.

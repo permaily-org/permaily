@@ -92,7 +92,11 @@ describe('U32: the consent screen lists the rules that will apply', () => {
   it('says what each does and who for in the server’s own words, the account’s rules read or not (U25)', async () => {
     const request = requestOf({
       rules: [
-        { ...defaultRule, does: 'Holds the email back', for: 'Every connection, those made later included' },
+        {
+          ...defaultRule,
+          does: 'Holds the email back',
+          for: 'Every connection, those made later included',
+        },
         {
           ...summaryOf(onlyA),
           does: 'Takes out phone numbers, and the sender and attachments, which it does not read',
@@ -110,7 +114,9 @@ describe('U32: the consent screen lists the rules that will apply', () => {
     await waitFor(() => expect(server.asked('GET /api/v1/rules')).toHaveLength(1))
     expect(rules.getByText('Every connection, those made later included')).toBeTruthy()
     expect(
-      rules.getByText('Takes out phone numbers, and the sender and attachments, which it does not read'),
+      rules.getByText(
+        'Takes out phone numbers, and the sender and attachments, which it does not read',
+      ),
     ).toBeTruthy()
     expect(rules.getByText('Only the connections of vendor.example/client-a.json')).toBeTruthy()
     expect(rules.queryByText('Only vendor.example/client-a.json')).toBeNull()

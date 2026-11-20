@@ -204,12 +204,13 @@ describe('legal pages', () => {
   });
 
   it('say what is open as the image composes it', () => {
-    // The image composes mailboxes, the model, connections and the default rule (cmd/permaily-enclave, ADR 0026,
-    // 0028, 0030 and 0031), so the privacy page says them in the present tense and keeps "planned" for what is not
-    // built: the person's own rules (step 7). The receipts' screen and its downloads are built (ADR 0041).
+    // The image composes mailboxes, the model, connections, the default rule and the person's own rules
+    // (cmd/permaily-enclave, ADR 0026, 0028, 0030, 0031 and 0040), so the privacy page says them in the present
+    // tense. The receipts' screen and its downloads are built (ADR 0041).
     const go = (path: string) => readFileSync(join(import.meta.dirname, '../..', path), 'utf8');
     const composition = go('cmd/permaily-enclave/connections.go');
-    expect(composition).toMatch(/Rules:\s+\[\]rules\.Rule\{rules\.Default\(\)\}/);
+    expect(composition).toMatch(/Source:\s+rs,/);
+    expect(go('cmd/permaily-enclave/main.go')).toMatch(/httpapi\.MountRules\(app,/);
     expect(go('cmd/permaily-enclave/main.go')).toMatch(/mountConnections\(p\.connections,/);
     const privacy = page('privacy');
     const headings = privacy.querySelectorAll('h2').map((h) => h.text);
@@ -218,7 +219,9 @@ describe('legal pages', () => {
     expect(text).not.toMatch(
       /aren’t open yet|once (mailboxes|connections) open|none of this is running/i,
     );
-    expect(text).toContain('Rules of your own aren’t built yet');
+    expect(text).not.toMatch(/Rules of your own aren’t built yet|Planned, not built: rules of your own/);
+    expect(text).toContain('Your own rules. In Rules in the app you can turn off the rule that holds back sign-in mail');
+    expect(text).toContain('Permaily keeps the words nowhere');
     expect(text).not.toMatch(
       /screen that shows (them|your receipts) to you isn’t built|Viewing and exporting them are planned/,
     );

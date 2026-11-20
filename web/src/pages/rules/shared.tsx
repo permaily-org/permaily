@@ -147,7 +147,13 @@ export function appliedOf(summaries: api.RuleSummary[], list: api.RuleList | nul
         ? list.rules.find((r) => r.id === summary.id && r.version === summary.version)
         : undefined
     if (summary.does && summary.for) {
-      return { id: summary.id, rule, sentence: summary.sentence, does: summary.does, for: summary.for }
+      return {
+        id: summary.id,
+        rule,
+        sentence: summary.sentence,
+        does: summary.does,
+        for: summary.for,
+      }
     }
     if (list && summary.id === list.default.rule.id) return defaultApplied(summary)
     if (!rule) return { id: summary.id, sentence: summary.sentence }
