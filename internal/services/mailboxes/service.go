@@ -57,6 +57,10 @@ type Config struct {
 	Notifier Notifier
 	// Auth checks a message's signatures at delivery; nil checks none.
 	Auth inbox.Authenticator
+	// Arrivals is told of each message stored, once its mark is written
+	// (ADR 0039, "New mail"): a hint that returns at once and decides
+	// nothing; nil tells nobody.
+	Arrivals inbox.Arrivals
 	// Domain is the host mailboxes' addresses are at (inbox.permaily.com).
 	Domain string
 	Log    *slog.Logger
