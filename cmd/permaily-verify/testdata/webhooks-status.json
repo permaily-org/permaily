@@ -20,10 +20,7 @@
   "dedup_seconds": 259800,
   "host_in_flight": 2,
   "host_attempts_per_minute": 60,
-  "schedules": [
-    "day",
-    "week"
-  ],
+  "schedules": ["day", "week"],
   "since": "2026-11-20T12:00:00Z",
   "outcomes": {
     "cut": 0,
