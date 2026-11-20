@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -74,7 +75,7 @@ func TestV57TheVendorsAreFetchedThroughTheVendorEgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &platform{accounts: w.parts.accounts, mailboxes: w.parts.mailboxes, model: w.parts.model, receipts: w.parts.receipts}
-	c, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p)
+	c, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p, slog.New(slog.DiscardHandler))
 	if err != nil || c == nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestV57TheVendorsAreFetchedThroughTheVendorEgress(t *testing.T) {
 	if err := fs.Parse([]string{"-vendor-egress-port", "9004"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p); err != nil || len(ports) != 1 || ports[0] != 9004 {
+	if _, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p, slog.New(slog.DiscardHandler)); err != nil || len(ports) != 1 || ports[0] != 9004 {
 		t.Fatalf("-vendor-egress-port 9004: asked on %v (%v)", ports, err)
 	}
 	// The host listens there by default, and the entry point changes
@@ -208,5 +209,41 @@ func TestL21TheImagesCommitsGroupTheChain(t *testing.T) {
 	}
 	if strings.Count(string(src), "&store.S3Commits{") != 1 {
 		t.Error("the image makes more than one store of commits")
+	}
+}
+
+// ADR 0041, pull request 7: the image composes one queue of notices over
+// the deployment's table and the root secret's keys, before accounts, which
+// it gives the queue and then makes its Deliverer; receipts and connections
+// queue through it; every enclave runs its runner, and /status reports its
+// counts in mail.notices.
+func TestTheImageComposesTheQueueOfNotices(t *testing.T) {
+	src, err := os.ReadFile("platform_enclave.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform := string(src)
+	for _, want := range []string{
+		"composeNotices(noticesParts{entries: awsStore, keys: root, log: log})",
+		"Notices: p.notices.svc,",
+		"p.notices.deliverBy(p.accounts)",
+		"accounts: p.accounts, notices: p.notices, log: log})",
+		"receipts: p.receipts, notices: p.notices, log: log,",
+	} {
+		if strings.Count(platform, want) != 1 {
+			t.Errorf("newPlatform does not say %q once", want)
+		}
+	}
+	if strings.Count(platform, "composeNotices(") != 1 || strings.Index(platform, "composeNotices(") > strings.Index(platform, "p.signIn(") {
+		t.Error("the image does not compose one queue before accounts")
+	}
+	main, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"runNotices(ctx, p.notices)", "stopNotices(p.notices, log)", "status.Notices = p.notices.status"} {
+		if !strings.Contains(string(main), want) {
+			t.Errorf("main.go does not say %q", want)
+		}
 	}
 }

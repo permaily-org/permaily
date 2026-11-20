@@ -67,7 +67,12 @@ type connectionsParts struct {
 	// receipts writes the record of what left, each receipt linked in its
 	// account's chain before Write returns (ADR 0037).
 	receipts *composedReceipts
-	now      func() time.Time
+	// notices, when set, is the queue the notices about connections go to
+	// (ADR 0041), and log where one that could not be queued is logged, by
+	// its kind alone.
+	notices *composedNotices
+	log     *slog.Logger
+	now     func() time.Time
 }
 
 // connectionsStore is where the connections' entries are, and the mail
@@ -117,7 +122,7 @@ func composeConnections(c connectionsParts) (*composedConnections, error) {
 	}
 	store := inbox.NewDiscloser(c.entries, query.Eval, c.mailboxes.Decisions())
 	full, _ := store.(inbox.DecisionsFullCounter)
-	svc, err := connections.New(connections.Config{
+	cfg := connections.Config{
 		OAuth:       c.oauth,
 		Records:     c.records,
 		Entries:     c.entries,
@@ -132,7 +137,12 @@ func composeConnections(c connectionsParts) (*composedConnections, error) {
 		Rules:       []rules.Rule{rules.Default()},
 		Receipts:    c.receipts.svc,
 		Now:         now,
-	})
+		Log:         c.log,
+	}
+	if c.notices != nil {
+		cfg.Notices = c.notices.svc
+	}
+	svc, err := connections.New(cfg)
 	if err != nil {
 		return nil, err
 	}

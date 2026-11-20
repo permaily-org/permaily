@@ -83,6 +83,10 @@ type platform struct {
 	// one strict Anchored of its records.
 	connections       *composedConnections
 	connectionRecords *store.Anchored
+	// notices is the queue of the notices by mail about connections and
+	// the record of what left (ADR 0041), accounts its Deliverer: in dev
+	// mode their messages are kept in the outbox with the others.
+	notices *composedNotices
 	// receipts is the record of what left, chained (ADR 0037), over its one
 	// strict Anchored.
 	receipts *composedReceipts
@@ -335,14 +339,20 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	accountRecords := &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Now: devClock}
 	mailboxRecords := &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock}
 	modelRecords := &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock}
+	// The notices about connections (ADR 0041), queued in the storage as
+	// in the enclave, on the clock of dev mode, and kept in the outbox.
+	if p.notices, err = composeNotices(noticesParts{entries: mem, keys: local, now: devClock, log: log}); err != nil {
+		return nil, err
+	}
 	if p.accounts, err = accounts.New(accounts.Config{
 		// As in the enclave: only the newest version of an account's record is kept.
-		Records: accountRecords, Entries: mem,
+		Records: accountRecords, Entries: mem, Notices: p.notices.svc,
 		Keys: local, Mailer: outbox, AppURL: appURL, SuperAdmin: cfg.superAdmin, Log: log, Now: devClock, Terms: devTermsVersion,
 		Providers: &idp.Client{HTTP: &http.Client{}, RedirectURL: appURL + providerCallback, Now: devClock, Endpoints: providers.Endpoints()},
 	}); err != nil {
 		return nil, err
 	}
+	p.notices.deliverBy(p.accounts)
 	// Every provider is on from the start, with the application the local
 	// server knows: in the enclave the operator gives each (scripts/provider.sh).
 	storage.apps.Lock()
@@ -403,12 +413,12 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	// their commits grouped (devStorage), the chain blocked or failed when
 	// a test says so (devChain).
 	chainRecords := &store.Anchored{Records: receipts.ChainTable{Entries: mem}, Commits: devChainCommits{storage.commits}, Strict: true, Now: devClock}
-	if p.receipts, err = composeReceipts(receiptsParts{chain: chainRecords, entries: mem, keys: local, accounts: p.accounts, now: devClock}); err != nil {
+	if p.receipts, err = composeReceipts(receiptsParts{chain: chainRecords, entries: mem, keys: local, accounts: p.accounts, notices: p.notices, log: log, now: devClock}); err != nil {
 		return nil, err
 	}
 	if p.connections, err = composeConnections(connectionsParts{
 		oauth: oauthConfig(hosts, cfg.oauthPort()), domain: cfg.domain, records: p.connectionRecords, entries: mem, keys: local,
-		vendorHTTP: devVendorHTTP(cfg.dev), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model, receipts: p.receipts, now: devClock,
+		vendorHTTP: devVendorHTTP(cfg.dev), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model, receipts: p.receipts, notices: p.notices, log: log, now: devClock,
 	}); err != nil {
 		return nil, err
 	}

@@ -8,10 +8,14 @@ import (
 	"github.com/permaily-org/permaily/internal/store"
 )
 
-// Run is the runner: a pass every RunEvery until ctx ends, when the first
-// attempts still waiting for admission give up too (the next runner, in
-// either enclave, finds their notices).
+// Run is the runner: a pass every RunEvery until ctx ends or Stop is
+// called, when nothing more is admitted and the first attempts still
+// waiting for admission give up too (the next runner, in either enclave,
+// finds their notices). The attempts it admitted are not cut when ctx
+// ends: Stop waits for them.
 func (s *Service) Run(ctx context.Context) {
+	s.runs.add()
+	defer s.runs.done()
 	t := time.NewTicker(s.every)
 	defer t.Stop()
 	for {
@@ -19,10 +23,31 @@ func (s *Service) Run(ctx context.Context) {
 		case <-ctx.Done():
 			s.stop()
 			return
+		case <-s.life.Done():
+			return
 		case <-t.C:
-			s.pass(ctx, false)
+			s.pass(ctx, s.work, false)
 		}
 	}
+}
+
+// Stop ends the queue's work at a stop (the code review of ADR 0041's
+// pull request 7, 1): it admits nothing more, waits for Run to return and
+// for the attempts under way to finish, a send SES accepted marked as sent,
+// and returns nil. When ctx ends first, it abandons the attempts still
+// under way and returns ctx's error: the stop did not drain, and a notice
+// whose send was accepted but not marked is sent again once its lease ends
+// (at least once).
+func (s *Service) Stop(ctx context.Context) error {
+	s.stop()
+	err := s.runs.wait(ctx)
+	if err == nil {
+		err = s.busy.wait(ctx)
+	}
+	if err != nil {
+		s.abandon()
+	}
+	return err
 }
 
 // Drain waits for the attempts under way, makes one pass that tries every
@@ -33,7 +58,7 @@ func (s *Service) Drain(ctx context.Context) error {
 	if err := s.busy.wait(ctx); err != nil {
 		return err
 	}
-	s.pass(ctx, true)
+	s.pass(ctx, ctx, true)
 	return s.busy.wait(ctx)
 }
 
@@ -48,8 +73,9 @@ func (s *Service) Drain(ctx context.Context) error {
 // each admitted one again. The next pass goes on below the last row this
 // one read, whatever became of it, so rows that are never sent cannot
 // keep the runners from the ones after them (ADR 0041's re-review, N1, and
-// its code review, 2 and 3).
-func (s *Service) pass(ctx context.Context, force bool) {
+// its code review, 2 and 3). Its attempts run in work, which Run's
+// ending does not cut (Stop).
+func (s *Service) pass(ctx, work context.Context, force bool) {
 	key, err := s.signKey(ctx)
 	if err != nil {
 		s.failed("key")
@@ -94,7 +120,7 @@ func (s *Service) pass(ctx context.Context, force bool) {
 				go func(k string) {
 					defer s.busy.done()
 					defer release()
-					s.attempt(ctx, key, k, force)
+					s.attempt(work, key, k, force)
 				}(e.Key)
 				sends++
 			}

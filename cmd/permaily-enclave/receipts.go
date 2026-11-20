@@ -71,6 +71,11 @@ type receiptsParts struct {
 	keys     receipts.Keys
 	accounts receipts.Accounts
 	now      func() time.Time
+	// notices, when set, is the queue an incident's notice goes to (ADR
+	// 0041, receipts.WithNotices), and log where a notice that could not
+	// be queued is logged, by its kind alone (receipts.WithLog).
+	notices *composedNotices
+	log     *slog.Logger
 }
 
 // composedReceipts is the chained receipts service and what /status
@@ -119,7 +124,14 @@ func composeReceipts(r receiptsParts) (*composedReceipts, error) {
 	if now == nil {
 		now = time.Now
 	}
-	svc, err := receipts.NewChained(r.entries, r.keys, now, r.chain, r.accounts)
+	var opts []receipts.ChainedOption
+	if r.notices != nil {
+		opts = append(opts, receipts.WithNotices(r.notices.svc))
+	}
+	if r.log != nil {
+		opts = append(opts, receipts.WithLog(r.log))
+	}
+	svc, err := receipts.NewChained(r.entries, r.keys, now, r.chain, r.accounts, opts...)
 	if err != nil {
 		return nil, err
 	}
