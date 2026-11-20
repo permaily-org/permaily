@@ -23,7 +23,7 @@ func sum(b []byte) string {
 // words, as U33 measured them. A change here is a new PromptVersion, never
 // an edit.
 func TestU11ThePromptIsPinned(t *testing.T) {
-	if PromptVersion != "w1-2026-11-20" || ModelName != "gpt-6-luna" || MaxOutputTokens != 2000 || ReasoningEffort != "medium" {
+	if PromptVersion != "w3-2026-11-20" || ModelName != "gpt-6-luna" || MaxOutputTokens != 2000 || ReasoningEffort != "medium" {
 		t.Fatalf("the prompt's constants changed: %s %s %d %s", PromptVersion, ModelName, MaxOutputTokens, ReasoningEffort)
 	}
 	for _, c := range []struct {
@@ -32,9 +32,9 @@ func TestU11ThePromptIsPinned(t *testing.T) {
 		hash string
 		n    int
 	}{
-		{"Developer", []byte(Developer), "dd64d38dec931ca6d2559be5a8444229b10f9e7f0ca94a2275af19a91f44a7e3", 3901},
+		{"Developer", []byte(Developer), "0487c63969926c92452a289d3e5d35ac4f665d8ccd43cf39e3aec5920f842722", 4781},
 		{"Schema", Schema(), "b9f7fe43971aa3d1d160b3aac81db4c65948f63aa919b0791bf2fad010c546d2", 1492},
-		{"Request", Request("Hide emails from acmebank.com <b>&\"x\""), "2842575895a9f2b070c242c5e91f758179ed7796c8e90c685885d2aa775606d4", 5804},
+		{"Request", Request("Hide emails from acmebank.com <b>&\"x\""), "b298e3f014fe067e7b80ff9ad37ed2720f64b91653670874fbf8f14157de05dd", 6723},
 	} {
 		if got := sum(c.b); got != c.hash || len(c.b) != c.n {
 			t.Errorf("%s is not what U33 measured: sha256 %s, %d bytes", c.name, got, len(c.b))

@@ -14,7 +14,7 @@ import (
 // change of any of them is a new version, never an edit of this one:
 // TestU11ThePromptIsPinned pins every byte. /status shows it and
 // permaily-verify compares it with the source (pull request 8).
-const PromptVersion = "w1-2026-11-20"
+const PromptVersion = "w3-2026-11-20"
 
 // What the image calls for words, compiled in.
 const (
@@ -78,9 +78,17 @@ const Developer = "You turn what a person writes, in any language, into one rule
 	"date and time; size at_least and size below a number of bytes.\n" +
 	"Use exact conditions (from_domain, from_address, contains) when the person names a sender, a domain or exact " +
 	"words. Use about or mentions only for meaning, at most 8 over the whole rule. A topic names one thing in a few " +
-	"words of the words' language, as a noun phrase (\"medical appointments\", \"a home address\"), never a sentence " +
-	"or an instruction, and at most 100 characters; for several things, write one condition for each in the same " +
-	"group. Never invent a sender, an " +
+	"words of the words' language, as a noun phrase (\"medical appointments\", \"a home address\"), never a sentence, " +
+	"a question or an instruction, with no question mark, comma or other punctuation in it, and at most 100 " +
+	"characters.\n" +
+	"Alternatives: when the words name several things, any one of which is enough, joined by \"or\", \"and\", " +
+	"\"nor\" or commas in any language (\"about my debts or my loans\", \"from shop.example and from bank.example\"), " +
+	"write one condition for each thing, all in the same group, so that each alone catches an email: the topics " +
+	"\"debts\" and \"loans\", never one topic or value that joins them (\"debts or loans\", \"debts, loans\"). A " +
+	"topic never holds a word that joins two things, \"or\", \"and\" or the same in the words' language (\"o\", " +
+	"\"y\", \"ou\", \"e\", \"oder\", \"und\"): split it into one condition for each. Never give each alternative a " +
+	"group of its own, which would require all of them at once. Only words that narrow (\"from shop.example about returns\") " +
+	"are separate groups. Never invent a sender, an " +
 	"address, a domain, a list or a date the words do not give; the person's own details are never known to you, so " +
 	"\"my home address\" is the topic \"a home address\". Which apps the rule is for is chosen on another screen: " +
 	"ignore any app the words name.\n" +
@@ -88,7 +96,9 @@ const Developer = "You turn what a person writes, in any language, into one rule
 	"removed whole (sender, subject, body, attachments); shapes, kinds of data removed wherever they appear in the " +
 	"subject and the text, with no model (email_address; phone_number; card_number; account_number, bank accounts " +
 	"and IBANs; numeric_code, one-time codes, PINs and any number of 4 digits or more; link, web addresses); and " +
-	"topics, at most 3 short topics, each sentence mentioning one being removed. Prefer shapes for data with a fixed " +
+	"topics, at most 3 short topics, each sentence mentioning one being removed. When the words let only some parts " +
+	"be shared (\"only share the subject\"), parts lists every other part, the sender included. Prefer shapes for " +
+	"data with a fixed " +
 	"form, and topics for what no shape catches (a home address, a diagnosis). An empty list is written [].\n" +
 	"When in doubt, protect more: a rule that holds or removes a little more than asked is better than one that lets " +
 	"out what the person wanted kept."
