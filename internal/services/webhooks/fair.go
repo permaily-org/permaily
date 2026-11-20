@@ -27,18 +27,28 @@ type item struct {
 // each host's (HostInFlightMax, HostAttemptsPerMinute). What does not fit
 // stays in the due index, never dropped, and is admitted by a later scan:
 // when every place is taken, a host with nothing ready takes the newest
-// place of the host holding the most, so a host found due is never kept out
-// by others' backlogs. It decides nothing and holds no lock of its own: the
-// service holds its lock around every call.
+// place of the host holding the most; when every host holds one place
+// only, it waits in the line (one item a host, waitingMax hosts at most),
+// and the first in the line takes each place that frees before any scan
+// can give it again, so a host found due is never kept out by others'
+// backlogs, however many hosts there are. It decides nothing and holds no
+// lock of its own: the service holds its lock around every call.
 type scheduler struct {
 	hosts    map[string]*hostQueue
 	order    []string // the hosts in turn
 	next     int      // the next host's place in order
 	total    int      // items ready, every host together
 	queued   map[string]bool
+	line     []item          // hosts waiting for a place, first come first
+	waiting  map[string]bool // the hosts in line
 	inFlight int
 	starts   []time.Time // attempts reserved within the last minute
 }
+
+// waitingMax bounds the line: past ReadyMax plus it distinct hosts due at
+// once, a host found due is left due, as past every ready queue, and
+// enters the line at a later scan.
+const waitingMax = 4 * webhook.ReadyMax
 
 type hostQueue struct {
 	accounts map[string][]item
@@ -50,26 +60,51 @@ type hostQueue struct {
 }
 
 func newScheduler() *scheduler {
-	return &scheduler{hosts: map[string]*hostQueue{}, queued: map[string]bool{}}
+	return &scheduler{hosts: map[string]*hostQueue{}, queued: map[string]bool{}, waiting: map[string]bool{}}
 }
 
-// admit holds it ready unless it is already, its host's queue is full, or
-// every place is taken and its host already has one: then it stays due.
+// admit holds it ready, or in the line, and says whether it holds it: not
+// when it is held already, its host waits in the line, its host's queue is
+// full, or every place is taken and its host already has one (it stays
+// due). A host with nothing ready finding every place taken takes the
+// newest place of a host holding more than one while nobody waits, and
+// else waits in the line.
 func (q *scheduler) admit(it item) bool {
-	if q.queued[it.connection] {
+	if q.queued[it.connection] || q.waiting[it.host] {
 		return false
 	}
+	n := 0
+	if h := q.hosts[it.host]; h != nil {
+		n = h.n
+	}
+	if n >= webhook.HostReadyMax {
+		return false
+	}
+	if q.total >= webhook.ReadyMax {
+		switch {
+		case n > 0:
+			return false
+		case len(q.line) == 0 && q.evict():
+		case len(q.line) < waitingMax:
+			q.line = append(q.line, it)
+			q.waiting[it.host] = true
+			q.queued[it.connection] = true
+			return true
+		default:
+			return false
+		}
+	}
+	q.add(it)
+	return true
+}
+
+// add holds it ready in its host's queue.
+func (q *scheduler) add(it item) {
 	h := q.hosts[it.host]
 	if h == nil {
 		h = &hostQueue{accounts: map[string][]item{}}
 		q.hosts[it.host] = h
 		q.order = append(q.order, it.host)
-	}
-	if h.n >= webhook.HostReadyMax {
-		return false
-	}
-	if q.total >= webhook.ReadyMax && (h.n > 0 || !q.evict()) {
-		return false
 	}
 	if len(h.accounts[it.account]) == 0 {
 		h.order = append(h.order, it.account)
@@ -78,7 +113,17 @@ func (q *scheduler) admit(it item) bool {
 	h.n++
 	q.total++
 	q.queued[it.connection] = true
-	return true
+}
+
+// promote gives a place that freed to the first host in the line.
+func (q *scheduler) promote() {
+	if len(q.line) == 0 || q.total >= webhook.ReadyMax {
+		return
+	}
+	it := q.line[0]
+	q.line = slices.Delete(q.line, 0, 1)
+	delete(q.waiting, it.host)
+	q.add(it)
 }
 
 // evict gives up the newest ready item of the host holding the most, of
@@ -155,6 +200,7 @@ func (q *scheduler) pick(now time.Time) (item, bool) {
 		q.inFlight++
 		q.starts = append(q.starts, now)
 		q.total--
+		q.promote()
 		return it, true
 	}
 	return item{}, false

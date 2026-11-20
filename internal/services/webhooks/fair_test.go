@@ -224,7 +224,97 @@ func TestTheSchedulersCorners(t *testing.T) {
 	for i := range webhook.ReadyMax {
 		q.admit(item{connection: fmt.Sprint("one", i), host: fmt.Sprint("host", i), account: "x"})
 	}
-	if q.admit(item{connection: "new", host: "new", account: "x"}) {
-		t.Fatal("evicted the only item of a host")
+	// Every host holds one place: no eviction, the line instead, first come
+	// first; a host in line, or with a place, adds nothing; the first in
+	// line takes the next place that frees; past waitingMax, left due.
+	if !q.admit(item{connection: "new", host: "new", account: "x"}) || q.hosts["new"] != nil || q.total != webhook.ReadyMax {
+		t.Fatal("evicted the only item of a host, or not in line")
 	}
+	if !q.admit(item{connection: "new2", host: "new2", account: "x"}) || q.admit(item{connection: "new3", host: "new", account: "x"}) || q.admit(item{connection: "two", host: "host0", account: "x"}) {
+		t.Fatal("the line")
+	}
+	if _, ok := q.pick(now); !ok || q.hosts["new"] == nil || q.hosts["new"].n != 1 || q.waiting["new"] || len(q.line) != 1 || q.total != webhook.ReadyMax {
+		t.Fatal("the first in line did not take the place that freed")
+	}
+	for i := len(q.line); i < waitingMax; i++ {
+		q.admit(item{connection: fmt.Sprint("w", i), host: fmt.Sprint("waiting", i), account: "x"})
+	}
+	if len(q.line) != waitingMax || q.admit(item{connection: "past", host: "past", account: "x"}) || q.queued["past"] {
+		t.Fatal("past the line's bound")
+	}
+}
+
+// Review of pull request 3, finding 2: more hosts due than places. 1,024
+// hosts hold one place each and replenish it as soon as they are served;
+// a healthy host due in the same minute, listed after all of them, takes
+// its turn in the line for a place and is called within the bound of "Fair
+// shares", counting every host ready or waiting; the ready queues stay
+// within their bounds and every host keeps being served.
+func TestK45AHostPastEveryPlaceIsCalledWithinTheBound(t *testing.T) {
+	now := time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	mem := store.NewMemory()
+	mem.Now = clock
+	s, err := New(Config{Entries: mem, Keys: purposeKeys{}, Connections: noConnections{}, Sender: noSender{}, Now: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seal, _, err := s.keys(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	due := func(host string) {
+		n++
+		c := fmt.Sprintf("con_%s_%07d", host, n)
+		if err := s.markDue(context.Background(), seal, c, route{Host: host, Account: "acc_" + host}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hosts := webhook.ReadyMax
+	for i := range hosts {
+		due(fmt.Sprintf("h%04d.example", i))
+	}
+	s.scanDue(context.Background())
+	const healthy = "zz-healthy.example"
+	due(healthy)
+	served := map[string]int{}
+	var called time.Time
+	start := now
+	for step := 0; step < 1200 && called.IsZero(); step++ {
+		if step%int(passEvery/time.Second) == 0 {
+			s.scanDue(context.Background())
+		}
+		total, most := s.sched.ready()
+		if total > webhook.ReadyMax || most > webhook.HostReadyMax || len(s.sched.line) > waitingMax {
+			t.Fatalf("ready %d, %d of one host, %d waiting", total, most, len(s.sched.line))
+		}
+		for {
+			s.mu.Lock()
+			it, ok := s.sched.pick(now)
+			s.mu.Unlock()
+			if !ok {
+				break
+			}
+			served[it.host]++
+			if it.host == healthy {
+				called = now
+			}
+			// An answer at once; the host's backlog replenished.
+			s.sched.done(it, true)
+			s.unlist(context.Background(), it)
+			if it.host != healthy {
+				due(it.host)
+			}
+		}
+		now = now.Add(time.Second)
+	}
+	if called.IsZero() {
+		t.Fatal("the healthy host was never called")
+	}
+	bound := fairWaitBound(hosts + 1)
+	if wait := called.Sub(start); wait > bound {
+		t.Fatalf("the healthy host waited %v, past the bound %v", wait, bound)
+	}
+	t.Logf("the healthy host waited %v (bound %v), %d hosts served", called.Sub(start), bound, len(served))
 }
