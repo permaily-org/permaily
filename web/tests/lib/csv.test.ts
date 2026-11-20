@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { CSV_BOM, CSV_COLUMNS, CSV_NEWLINE, csvCell, csvRow } from '../../src/lib/csv.ts'
+import {
+  CSV_BOM,
+  CSV_COLUMNS,
+  CSV_NEWLINE,
+  csvCell,
+  csvRow,
+  EXPORT_PART_BYTES,
+  exportManifestName,
+  exportName,
+  utf8Bytes,
+} from '../../src/lib/csv.ts'
 
 /** A cell as a spreadsheet reads it: the quotes taken off and the doubled ones made one. */
 function unquoted(cell: string): string {
@@ -127,5 +137,36 @@ describe('the CSV’s cells', () => {
         JSON.stringify(text),
       ).toBe(false)
     }
+  })
+})
+
+// ADR 0041, "Changed after the design review", 4: a download is one file while it fits EXPORT_PART_BYTES, else numbered
+// parts and a manifest written last. What the seam fixes: the limit, the names, and the bytes a row takes once encoded.
+describe('the downloads’ parts', () => {
+  it('holds at most 16 MiB in a part, counted in UTF-8', () => {
+    expect(EXPORT_PART_BYTES).toBe(16 * 1024 * 1024)
+    expect(utf8Bytes('')).toBe(0)
+    expect(utf8Bytes('abc')).toBe(3)
+    expect(utf8Bytes(CSV_BOM)).toBe(3)
+    expect(utf8Bytes('é')).toBe(2)
+    expect(utf8Bytes('\uFFFD')).toBe(3)
+    expect(utf8Bytes('😀')).toBe(4)
+    // A subject of characters that each take three bytes takes three times its length, not its length.
+    const cell = csvCell('請求書'.repeat(1000))
+    expect(utf8Bytes(cell)).toBe(2 + 9000)
+  })
+
+  it('names a whole file, its parts in order and their manifest by the local day alone', () => {
+    expect(exportName('2026-11-20', 'csv')).toBe('permaily-receipts-2026-11-20.csv')
+    expect(exportName('2026-11-20', 'jsonl')).toBe('permaily-receipts-2026-11-20.jsonl')
+    expect(exportName('2026-11-20', 'csv', 1)).toBe('permaily-receipts-2026-11-20-part-001.csv')
+    expect(exportName('2026-11-20', 'jsonl', 12)).toBe('permaily-receipts-2026-11-20-part-012.jsonl')
+    expect(exportName('2026-11-20', 'csv', 1000)).toBe('permaily-receipts-2026-11-20-part-1000.csv')
+    expect(exportManifestName('2026-11-20', 'csv')).toBe('permaily-receipts-2026-11-20-csv-manifest.json')
+    expect(exportManifestName('2026-11-20', 'jsonl')).toBe('permaily-receipts-2026-11-20-jsonl-manifest.json')
+    const names = [1, 2, 9, 10, 100].map((n) => exportName('2026-11-20', 'csv', n))
+    expect([...names].sort()).toEqual(names)
+    for (const bad of [0, -1, 1.5, Number.NaN]) expect(() => exportName('2026-11-20', 'csv', bad)).toThrow()
+    for (const bad of ['', '2026-11-2', '20261120', 'acc_ana']) expect(() => exportName(bad, 'csv')).toThrow()
   })
 })

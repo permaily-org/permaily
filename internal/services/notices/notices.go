@@ -6,22 +6,34 @@
 // principle stands: a person is told of security and access, and of
 // nothing else, and none of these can be turned off.
 //
-// A notice is queued once and sent at least once. Enqueue writes it, under
-// a key named by the event, as an entry created at version 0, so two
+// A notice is queued once per key and sent at least once. Enqueue writes it,
+// under a key named by the event, as an entry created at version 0, so two
 // enclaves, a retry or the hourly sweep that sees the same event again
-// queue it once; the first attempt starts at once in the enclave that
-// queued it, and a runner in every enclave tries again what is still
-// queued, under a lease, for RetryFor. A notice sent is marked under the
-// same key before its entry goes, so it is not queued again while the mark
-// lasts (KeptFor). Only a crash after the mail system took the message and
-// before its mark is written sends it twice.
+// queue it once. An entry holds no lease when it is written: every attempt,
+// the first in the enclave that queued it as every later one by a runner in
+// either enclave, is admitted to the enclave's bounded workers and rate
+// first, then takes the lease by writing the entry at the version it read,
+// reads the mark again, and delivers within AttemptFor, which is shorter
+// than LeaseFor; an attempt that no longer holds its lease is abandoned. A
+// notice sent is marked under the same key before its entry goes, so it is
+// not queued again while the mark lasts (KeptFor, from the mark's own
+// signed time). A notice is tried only while Sendable, from the time it
+// carries, never from its entry's expiry.
+//
+// What it does not promise. A crash after the mail system took the message
+// and before its mark is written sends it again. And the queue is not an
+// authority (ADR 0041, "Changed after the design review", 3): whoever
+// writes the table can put back an authentic entry and delete its mark, and
+// so have a notice sent again, as often as they do it, while the notice is
+// Sendable. They can delete one (one notice fewer). They can make, move or
+// edit none, nor stretch its window, nor grow the queue's work past its
+// bounds: each pass of a runner lists at most ListMax entries and sends at
+// most PassSendsMax.
 //
 // An entry holds the account's identifier, the kind, the key and the facts
 // its words need, never the contact address, which the Deliverer reads
 // from the account when it sends. It is signed (envelope.Sign under
-// PurposeSign) bound to its partition and key: whoever writes the table
-// can delete one (one notice fewer) or a mark (one more, for a kind the
-// sweep sees again), and can make, move or edit none.
+// PurposeSign) bound to its partition and key, and is at most EntryMax.
 //
 // This file is the seam, committed with the design: what a notice is, the
 // two interfaces, the keys, the bounds and when an ending is told. ADR
@@ -128,12 +140,19 @@ type Facts struct {
 	By string `json:"by,omitempty"`
 }
 
-// ErrInvalid is a notice Check refuses: nothing is queued.
+// ErrInvalid is a notice Check refuses, or one Enqueue finds not Fresh:
+// nothing is queued. A Deliverer answers it for a notice its words do not
+// know; the queue marks it refused, counts it and never sends it.
 var ErrInvalid = errors.New("notices: not a notice of a known kind with its facts")
 
-// ErrSkip is what a Deliverer answers for an account that cannot be told
-// now and never will be of this event: gone, closing or blocked. The
-// notice is marked skipped and never tried again.
+// ErrSkip is what a Deliverer answers only for an account it has read and
+// found, positively, gone, closing or blocked: it cannot be told now and
+// never will be of this event. The notice is marked skipped and never
+// tried again. Anything less than that is not ErrSkip: an account that
+// cannot be read, a read that timed out or was refused, a record lost,
+// forked or not of the account's form, or any standing the Deliverer does
+// not know, is an error tried again, and nothing is sent while it lasts
+// (ADR 0041, "Changed after the design review", 1).
 var ErrSkip = errors.New("notices: the account cannot be told")
 
 // Queue is what the callers are given: the connections service at an
@@ -143,7 +162,8 @@ var ErrSkip = errors.New("notices: the account cannot be told")
 type Queue interface {
 	// Enqueue stores n once by its Key and returns once it is stored, or
 	// when EnqueueMax has passed, whichever is first; nil when it was
-	// queued or sent before. It refuses what Check refuses (ErrInvalid).
+	// queued or sent before. It refuses what Check refuses, and a notice
+	// not Fresh by the queue's clock (ErrInvalid).
 	// Its first attempt is not waited for. An error fails nothing of what
 	// caused it: the caller logs its kind and goes on.
 	Enqueue(ctx context.Context, n Notice) error
@@ -152,8 +172,13 @@ type Queue interface {
 // Deliverer writes a notice's message from fixed words and sends it to
 // the account's contact address as it is when it sends (accounts
 // implements it, with the words of every kind, through the Mailer the
-// watch of ADR 0021 guards). ErrSkip: the account cannot be told; any
-// other error: tried again, until RetryFor.
+// watch of ADR 0021 guards). It returns by ctx's deadline (AttemptFor, or
+// less when the lease ends sooner), its reads of the account and the mail
+// system's own retries included. It checks the notice again and writes
+// only fixed words: a kind, part, resource or signer it does not know is
+// ErrInvalid, never interpolated. ErrSkip: the account was read and cannot
+// be told; any other error: tried again while the notice is Sendable.
+// noticestest.DelivererContract is what every Deliverer keeps.
 type Deliverer interface {
 	Deliver(ctx context.Context, n Notice) error
 }
@@ -178,24 +203,62 @@ const (
 	// RunEvery is how often each enclave's runner looks at the queue.
 	RunEvery = time.Minute
 	// LeaseFor is how long an attempt holds a notice from the other
-	// enclave: longer than any send (sesmail gives one 15 seconds).
+	// enclave. It is taken only once the attempt was admitted to the
+	// enclave's workers and rate, never when the notice is queued.
 	LeaseFor = 2 * time.Minute
+	// AttemptFor bounds a whole attempt from its lease: the account's
+	// reads, the message and the mail system's own retries (sesmail gives
+	// one 15 seconds). Shorter than LeaseFor, so an attempt ends before
+	// another can take its lease.
+	AttemptFor = time.Minute
+	// AtSkew is how far from the queue's clock a notice's time may be when
+	// it is queued (Fresh): it is the time of an event that just committed.
+	AtSkew = 5 * time.Minute
 	// RetryFirst and RetryMax bound the wait between two attempts, which
 	// doubles from the first.
 	RetryFirst = time.Minute
 	RetryMax   = time.Hour
-	// RetryFor is how long a notice is tried before it is dropped, marked
-	// and counted.
+	// RetryFor is how long a notice is tried, from the time it carries
+	// (Sendable), before it is dropped, marked and counted.
 	RetryFor = 24 * time.Hour
-	// KeptFor is how long a mark is kept, so the same event is not queued
-	// again.
+	// KeptFor is how long a mark is kept, from its own signed time
+	// (MarkHolds), so the same event is not queued again.
 	KeptFor = 30 * 24 * time.Hour
 	// SendsPerSecond and InFlightMax bound what one enclave sends of the
 	// queue: SES takes 14 a second for the whole account, sign-in messages
 	// included.
 	SendsPerSecond = 2
 	InFlightMax    = 8
+	// PassSendsMax is the most attempts one runner's pass makes, and
+	// ListMax the most entries it lists: replayed entries cannot make a
+	// pass do more.
+	PassSendsMax = SendsPerSecond * int(RunEvery/time.Second)
+	ListMax      = 4096
+	// NoticeMax bounds a notice as JSON (the largest Check takes is under
+	// it), and EntryMax an entry as stored, signature and attempts
+	// included: the queue refuses one past it before it writes it.
+	NoticeMax = 1024
+	EntryMax  = 2048
 )
+
+// Fresh says whether a notice's time is close enough to now to be queued:
+// within AtSkew either way.
+func (n Notice) Fresh(now time.Time) bool {
+	return !now.Before(n.At.Add(-AtSkew)) && !now.After(n.At.Add(AtSkew))
+}
+
+// Sendable says whether a notice may be tried at now: from AtSkew before
+// its time until RetryFor after it. It reads the notice's own time, signed
+// with it, never its entry's expiry.
+func (n Notice) Sendable(now time.Time) bool {
+	return !now.Before(n.At.Add(-AtSkew)) && now.Before(n.At.Add(RetryFor))
+}
+
+// MarkHolds says whether a mark signed at marked still keeps its event from
+// being queued again at now.
+func MarkHolds(marked, now time.Time) bool {
+	return !now.Before(marked.Add(-AtSkew)) && now.Before(marked.Add(KeptFor))
+}
 
 // When a connection's end is told (KindConnectionEnding).
 const (
@@ -238,28 +301,92 @@ func IncidentKey(account string, at time.Time) string {
 	return Key(account, KindReceiptsIncident, at.UTC().Format(time.DateOnly))
 }
 
+// The facts each kind's words say (ADR 0041, "Which notices"): each is
+// required of its kinds and refused of every other.
+type needs struct{ vendor, resource, parts, ends, replaced, by bool }
+
+var factsOf = map[Kind]needs{
+	KindConnectionApproved: {vendor: true, resource: true, parts: true, ends: true, replaced: true},
+	KindDeviceAdded:        {vendor: true, parts: true, ends: true},
+	KindConnectionRenewed:  {vendor: true, ends: true},
+	KindConnectionEnding:   {vendor: true, ends: true},
+	KindDeviceEndedReuse:   {vendor: true},
+	KindReceiptsIncident:   {},
+	KindDevicesSignedOut:   {by: true},
+}
+
+// The times a notice may carry: far enough from year 10000 that no zone
+// makes one JSON cannot write.
+var (
+	timeMin = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	timeMax = time.Date(9000, 1, 1, 0, 0, 0, 0, time.UTC)
+)
+
 // Check refuses a notice that is not one: an account that is not "acc_"
-// and letters and digits, a kind not in Kinds, a key not made by Key, no
-// time, or facts its kind does not have. A notice about a connection names
-// its vendor; one that tells of a connection's end (an approval, a device
-// added, a renewal, an ending) has it; only an approval may say it
-// replaced, and only a sign-out who did it.
+// and letters and digits, a kind not in Kinds, a key not of Key's form, a
+// time out of bounds, or facts other than its kind's. Each kind has
+// exactly the facts its words say, each from a fixed set: a vendor as a
+// lower-case domain of at most 253 bytes; the resource API or MCP; the
+// parts each of contracts' four, once, the sender among them; an end after
+// the event; Replaced only for an approval; By only for a sign-out, the
+// operator or an admin. That a key names this event is the caller's, which
+// each caller's test pins (E30 to E35): Check sees only its form.
 func (n Notice) Check() error {
-	if !accountID(n.Account) || !slices.Contains(Kinds(), n.Kind) || !keyForm(n.Key) || n.At.IsZero() {
+	need, known := factsOf[n.Kind]
+	if !known || !accountID(n.Account) || !keyForm(n.Key) || !inBounds(n.At) {
 		return ErrInvalid
 	}
 	f := n.Facts
-	connection := n.Kind != KindReceiptsIncident && n.Kind != KindDevicesSignedOut
-	ends := connection && n.Kind != KindDeviceEndedReuse
 	switch {
-	case connection != (f.Vendor != ""),
-		!connection && (f.Resource != "" || len(f.Parts) > 0),
-		ends == f.EndsAt.IsZero(),
-		f.Replaced && n.Kind != KindConnectionApproved,
-		(n.Kind == KindDevicesSignedOut) != (f.By == ByOperator || f.By == ByAdmin):
+	case need.vendor != (f.Vendor != ""), f.Vendor != "" && !domain(f.Vendor),
+		need.resource != (f.Resource != ""), f.Resource != "" && f.Resource != contracts.ResourceAPI && f.Resource != contracts.ResourceMCP,
+		need.parts != (len(f.Parts) > 0), len(f.Parts) > 0 && !parts(f.Parts),
+		need.ends == f.EndsAt.IsZero(), !f.EndsAt.IsZero() && (!inBounds(f.EndsAt) || !f.EndsAt.After(n.At)),
+		f.Replaced && !need.replaced,
+		need.by != (f.By != ""), f.By != "" && f.By != ByOperator && f.By != ByAdmin:
 		return ErrInvalid
 	}
 	return nil
+}
+
+func inBounds(t time.Time) bool { return !t.Before(timeMin) && t.Before(timeMax) }
+
+// vendorMax is a domain's longest form.
+const vendorMax = 253
+
+// domain says whether s is a domain as contracts.Vendor.Domain holds one:
+// lower-case letters, digits and hyphens in labels of 1 to 63 that neither
+// start nor end with a hyphen, two labels at least, at most vendorMax.
+func domain(s string) bool {
+	labels := strings.Split(s, ".")
+	if len(s) > vendorMax || len(labels) < 2 {
+		return false
+	}
+	for _, l := range labels {
+		if l == "" || len(l) > 63 || l[0] == '-' || l[len(l)-1] == '-' {
+			return false
+		}
+		for _, c := range l {
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// parts says whether ps are parts of contracts' four, each once, the sender
+// among them (every connection reads it).
+func parts(ps []contracts.Part) bool {
+	all := []contracts.Part{contracts.PartSender, contracts.PartSubject, contracts.PartBody, contracts.PartAttachments}
+	seen := map[contracts.Part]bool{}
+	for _, p := range ps {
+		if !slices.Contains(all, p) || seen[p] {
+			return false
+		}
+		seen[p] = true
+	}
+	return seen[contracts.PartSender]
 }
 
 func accountID(s string) bool {

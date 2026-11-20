@@ -72,3 +72,37 @@ export function csvCell(value: string): string {
 export function csvRow(cells: readonly string[]): string {
   return cells.map(csvCell).join(',') + CSV_NEWLINE
 }
+
+/*
+  The downloads' files (ADR 0041, "The two downloads, in parts"). A download is one file while the whole record fits
+  EXPORT_PART_BYTES; past that it is numbered parts, each a complete file (the CSV's with its byte order mark and
+  header, the JSON's whole lines), closed before the row that would take it past the limit, then a manifest written
+  last, naming the parts and the head when the download began. A set without its manifest is incomplete, and the screen
+  says so. Rows are counted in UTF-8 as they are encoded, so a part holds at most the limit and the page being read.
+*/
+
+/** The most bytes one file of a download holds: what a phone's tab keeps with room to spare (ADR 0041, choice 16). */
+export const EXPORT_PART_BYTES = 16 * 1024 * 1024
+
+const encoder = new TextEncoder()
+
+/** The bytes a string takes in UTF-8, as a part counts it. */
+export function utf8Bytes(text: string): number {
+  return encoder.encode(text).length
+}
+
+const day = /^\d{4}-\d{2}-\d{2}$/
+
+/** A download's file name from the person's local day: the whole file, or its part (1, 2, …) when it has parts. */
+export function exportName(localDay: string, ext: 'csv' | 'jsonl', part?: number): string {
+  if (!day.test(localDay)) throw new Error('not a day')
+  if (part === undefined) return `permaily-receipts-${localDay}.${ext}`
+  if (!Number.isInteger(part) || part < 1) throw new Error('not a part')
+  return `permaily-receipts-${localDay}-part-${String(part).padStart(3, '0')}.${ext}`
+}
+
+/** The manifest of a download in parts, written after its last part. */
+export function exportManifestName(localDay: string, ext: 'csv' | 'jsonl'): string {
+  if (!day.test(localDay)) throw new Error('not a day')
+  return `permaily-receipts-${localDay}-${ext}-manifest.json`
+}
