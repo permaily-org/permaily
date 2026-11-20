@@ -76,6 +76,7 @@ const messages: Record<ApiErrorCode, string> = {
   invalid_before: 'Your receipts changed since that page. Start again from the newest.',
   receipts_unreadable:
     "Your receipts can't be read now: what Permaily stores for them was changed by someone else. Write to support@permaily.com.",
+  time_zone_invalid: "That time zone isn't one Permaily knows. Choose another, then allow again.",
   other: 'Something went wrong on our side. Try again in a moment.',
 }
 

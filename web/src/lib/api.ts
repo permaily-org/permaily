@@ -666,6 +666,7 @@ export type ApiErrorCode =
   | 'invalid_cursor'
   | 'invalid_before'
   | 'receipts_unreadable'
+  | 'time_zone_invalid'
   | 'network'
   | 'other'
 
@@ -721,6 +722,7 @@ const known: ReadonlySet<string> = new Set([
   'invalid_cursor',
   'invalid_before',
   'receipts_unreadable',
+  'time_zone_invalid',
 ])
 
 export class ApiError extends Error {
@@ -1502,6 +1504,15 @@ export async function revokeDevice(id: string, device: string): Promise<Connecti
  */
 export async function renewConnection(id: string, renewal: ConnectionRenewal): Promise<Connection> {
   return connectionOf(await request('POST', `${connectionPath(id)}/renew`, renewal))
+}
+
+/**
+ * Turns a connection's webhook off (ADR 0039), for good: only a new request of the app turns it on again. Sends the
+ * connection's version the page showed (`consent_changed` when it changed since); needs no fresh proof, since it only
+ * protects, and works under unagreed terms, as revoking does. A connection without a webhook is `not_found`.
+ */
+export async function turnWebhookOff(id: string, version: number): Promise<Connection> {
+  return connectionOf(await request('POST', `${connectionPath(id)}/webhook/off`, { version }))
 }
 
 // ---------------------------------------------------------------------------------------------------------------

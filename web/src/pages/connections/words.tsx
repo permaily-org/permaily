@@ -152,3 +152,112 @@ export function Sentence({ sentence }: { sentence: api.QuerySentence }) {
     </span>
   )
 }
+
+/*
+  A connection's webhook (ADR 0039): what the consent screen and the connection's page say of it. These words are a
+  first draft for the designer's review (docs/web.md, "Webhooks"). The host is the vendor's own domain; the time zone
+  is the person's, and only the person is shown it.
+*/
+
+const weekdays: Record<string, string> = {
+  monday: 'Monday',
+  tuesday: 'Tuesday',
+  wednesday: 'Wednesday',
+  thursday: 'Thursday',
+  friday: 'Friday',
+  saturday: 'Saturday',
+  sunday: 'Sunday',
+}
+
+/** When a schedule runs, as wall time: "every day at 08:00", "every Monday at 08:00". */
+export function scheduleWords(schedule: api.WebhookSchedule): string {
+  if (schedule.every === 'week') {
+    return `every ${weekdays[schedule.on ?? ''] ?? 'week'} at ${schedule.at}`
+  }
+  return `every day at ${schedule.at}`
+}
+
+/** What a webhook tells its vendor, one line a kind: new mail, then its schedule in the person's zone. */
+export function webhookLines(
+  webhook: { host: string; new_mail?: boolean; schedule?: api.WebhookSchedule },
+  zone: string,
+): string[] {
+  const lines: string[] = []
+  if (webhook.new_mail) lines.push(`Tells ${webhook.host} when new mail it may read arrives`)
+  if (webhook.schedule) {
+    const when = scheduleWords(webhook.schedule)
+    lines.push(`Tells ${webhook.host} ${when}, your time${zone ? ` (${zone})` : ''}`)
+  }
+  return lines
+}
+
+/** What every webhook is told, and what it is never told. */
+export function webhookNeverWords(host: string): string {
+  return `${host} is told only that there is mail to fetch, never the mail. It fetches with this connection, and every message it gets is in your activity.`
+}
+
+/** A webhook's state, as the connection's page says it. */
+export function webhookStateWords(webhook: api.ConnectionWebhook): string {
+  switch (webhook.state) {
+    case 'on':
+      return 'On'
+    case 'off':
+      return 'Turned off by you'
+    default:
+      return `Stopped: ${webhook.host} asked not to be told any more`
+  }
+}
+
+/** Why calls to a webhook fail, in fixed words: never what the vendor's server sent. */
+export function webhookFailureWords(webhook: api.ConnectionWebhook): string {
+  switch (webhook.failure) {
+    case 'no_answer':
+      return `${webhook.host} didn't answer`
+    case 'redirect':
+      return `${webhook.host} answered with a redirect, which Permaily doesn't follow`
+    case 'refused':
+      return `Permaily couldn't make a secure connection to ${webhook.host}`
+    default:
+      return `${webhook.host} answered with an error`
+  }
+}
+
+/** The browser's time zone, an IANA name, or "" when it doesn't say. */
+export function browserTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone ?? ''
+}
+
+/**
+ * The time zones the picker offers: the browser's list, which the server checks against the zones it was built with
+ * (`time_zone_invalid`), with the browser's own zone in it.
+ */
+export function timeZones(own: string): string[] {
+  let zones: string[] = []
+  try {
+    zones = Intl.supportedValuesOf('timeZone')
+  } catch {
+    zones = []
+  }
+  return own && !zones.includes(own) ? [own, ...zones].sort() : zones
+}
+
+/** "Mon 23 Nov, 08:00" in a time zone (the browser's own when none or one it doesn't know). */
+export function formatWhen(iso: string, zone?: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const options: Intl.DateTimeFormatOptions = {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }
+  try {
+    return new Intl.DateTimeFormat('en-GB', { ...options, timeZone: zone || undefined }).format(
+      date,
+    )
+  } catch {
+    return new Intl.DateTimeFormat('en-GB', options).format(date)
+  }
+}
