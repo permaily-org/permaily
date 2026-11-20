@@ -1,6 +1,7 @@
 package notices
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -80,10 +81,16 @@ type Service struct {
 	log  *slog.Logger
 	name string
 
-	// life ends when Run's context does: the first attempts waiting for
-	// admission give up, and the runners find their notices.
+	// life ends when Run's context does, or Stop is called: nothing more
+	// is admitted, the first attempts waiting for admission give up, and
+	// the runners find their notices.
 	life context.Context
 	stop context.CancelFunc
+	// work is what the attempts admitted by Run, and the first ones, run
+	// in: it outlives life, so a stop lets them finish (Stop), and ends
+	// only when Stop's deadline does.
+	work    context.Context
+	abandon context.CancelFunc
 
 	keyMu sync.Mutex
 	key   []byte
@@ -95,6 +102,7 @@ type Service struct {
 	every      time.Duration
 
 	busy tracker
+	runs tracker
 
 	mu      sync.Mutex
 	waiting int
@@ -124,8 +132,9 @@ func New(cfg Config) (*Service, error) {
 		return nil, err
 	}
 	life, stop := context.WithCancel(context.Background())
+	work, abandon := context.WithCancel(context.Background())
 	return &Service{
-		cfg: cfg, log: cfg.Log, name: hex.EncodeToString(name), life: life, stop: stop,
+		cfg: cfg, log: cfg.Log, name: hex.EncodeToString(name), life: life, stop: stop, work: work, abandon: abandon,
 		slots: make(chan struct{}, InFlightMax), pace: newPacer(), attemptFor: AttemptFor, every: RunEvery,
 		refused: map[string]bool{}, st: attestation.NoticesStatus{Since: cfg.Now().UTC()},
 	}, nil
@@ -322,19 +331,26 @@ func (s *Service) first(key []byte, k string) {
 			return
 		}
 		defer release()
-		s.attempt(s.life, key, k, false)
+		s.attempt(s.work, key, k, false)
 	}()
 }
 
 // admit waits for a worker, then for the rate, holding nothing of a
-// notice; release frees the worker.
+// notice; release frees the worker. Once ctx or the queue's life ended,
+// it admits nothing, whatever was free.
 func (s *Service) admit(ctx context.Context) (release func(), err error) {
 	select {
 	case s.slots <- struct{}{}:
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	case <-s.life.Done():
+		return nil, s.life.Err()
 	}
-	if err := s.pace.wait(ctx); err != nil {
+	err = s.pace.wait(ctx)
+	if err == nil {
+		err = cmp.Or(ctx.Err(), s.life.Err())
+	}
+	if err != nil {
 		<-s.slots
 		return nil, err
 	}

@@ -279,6 +279,16 @@ func run(cfg config, log *slog.Logger) error {
 	go func() {
 		defer close(stopped)
 		<-ctx.Done()
+		// The notices' attempts under way finish while the server stops,
+		// and nothing more is admitted (stopNotices).
+		noticesStopped := make(chan error, 1)
+		go func() {
+			if p.notices == nil {
+				noticesStopped <- nil
+				return
+			}
+			noticesStopped <- stopNotices(p.notices, log)
+		}()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -290,6 +300,7 @@ func run(cfg config, log *slog.Logger) error {
 			// After the last request: what the refusals' windows counted.
 			stopErr = stopConnections(p.connections.svc, refusalsPassed, log)
 		}
+		stopErr = errors.Join(stopErr, <-noticesStopped)
 	}()
 	if err := srv.ServeTLS(p.listener, "", ""); !errors.Is(err, http.ErrServerClosed) {
 		return err

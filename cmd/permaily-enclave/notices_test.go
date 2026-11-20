@@ -22,6 +22,7 @@ import (
 	"github.com/permaily-org/permaily/internal/keys"
 	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/services/notices"
+	"github.com/permaily-org/permaily/internal/services/notices/noticestest"
 	"github.com/permaily-org/permaily/internal/sesmail"
 	"github.com/permaily-org/permaily/internal/store"
 )
@@ -336,5 +337,96 @@ func TestTheQueueWaitsForItsDeliverer(t *testing.T) {
 	}
 	if _, err := composeNotices(noticesParts{}); !errors.Is(err, notices.ErrConfig) {
 		t.Fatalf("no storage: %v", err)
+	}
+}
+
+// deliverNotice is a notices.Deliverer of a test.
+type deliverNotice func(context.Context, notices.Notice) error
+
+func (f deliverNotice) Deliver(c context.Context, n notices.Notice) error { return f(c, n) }
+
+// The code review of ADR 0041's pull request 7, 1: the image is told to
+// stop right after SES accepted a notice's message. The stop waits for the
+// attempt (stopNotices, within noticesStopMax, shorter than the stop's own
+// budget), which writes its mark: no enclave sends it again.
+func TestNoticesStopKeepsTheMarkOfAnAcceptedSend(t *testing.T) {
+	mem := store.NewMemory()
+	clock := noticestest.NewClock(noticestest.SampleAt)
+	mem.Now = clock.Now
+	// As DynamoDB's client: a call whose context ended fails.
+	mem.Interrupt = func(c context.Context, _ store.Step, _, _ string) error { return c.Err() }
+	local, err := keys.NewLocal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, signal := context.WithCancel(context.Background())
+	defer signal()
+	d := deliverNotice(func(c context.Context, _ notices.Notice) error {
+		signal() // SIGTERM, once SES has accepted the message
+		select {
+		case <-c.Done(): // a cut attempt: SES's answer arrives after its end
+		case <-time.After(50 * time.Millisecond): // SES's answer
+		}
+		return nil
+	})
+	svc, err := notices.New(notices.Config{Entries: mem, Keys: local, Deliverer: d, Now: clock.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &composedNotices{svc: svc}
+	runNotices(ctx, c)
+	n := noticestest.Sample("rcp_stop")
+	if err := svc.Enqueue(context.Background(), n); err != nil {
+		t.Fatal(err)
+	}
+	<-ctx.Done()
+	if err := stopNotices(c, slog.New(slog.DiscardHandler)); err != nil {
+		t.Fatalf("stopNotices = %v", err)
+	}
+	if _, err := mem.GetEntry(context.Background(), notices.PartitionSent, n.Key); err != nil {
+		t.Fatalf("the mark of the accepted send: %v", err)
+	}
+	if _, err := mem.GetEntry(context.Background(), notices.PartitionQueue, n.Key); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("the sent notice is still queued, to be sent again: %v", err)
+	}
+	if noticesStopMax >= stopMax {
+		t.Fatalf("noticesStopMax %v is not shorter than the stop's budget %v", noticesStopMax, stopMax)
+	}
+}
+
+// The code review of ADR 0041's pull request 7, 1: a stop whose attempts
+// did not finish within its deadline says so.
+func TestNoticesStopThatDoesNotDrainSaysSo(t *testing.T) {
+	mem := store.NewMemory()
+	clock := noticestest.NewClock(noticestest.SampleAt)
+	mem.Now = clock.Now
+	local, err := keys.NewLocal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivering := make(chan struct{})
+	d := deliverNotice(func(c context.Context, _ notices.Notice) error {
+		close(delivering)
+		<-c.Done()
+		return c.Err()
+	})
+	svc, err := notices.New(notices.Config{Entries: mem, Keys: local, Deliverer: d, Now: clock.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Enqueue(context.Background(), noticestest.Sample("rcp_slow")); err != nil {
+		t.Fatal(err)
+	}
+	<-delivering
+	var logs strings.Builder
+	var mu sync.Mutex
+	err = stopNoticesWithin(&composedNotices{svc: svc}, slog.New(slog.NewJSONHandler(lockedWriter{&mu, &logs}, nil)), 10*time.Millisecond)
+	if err == nil {
+		t.Fatal("a stop that did not drain returned nil")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(logs.String(), `"kind":"notices"`) {
+		t.Fatalf("the log does not say the stop did not drain: %s", logs.String())
 	}
 }

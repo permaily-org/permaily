@@ -60,8 +60,34 @@ func (c *composedNotices) status() *attestation.NoticesStatus {
 }
 
 // runNotices runs the queue's runner in every enclave, a pass every
-// notices.RunEvery, until ctx ends.
+// notices.RunEvery, until ctx ends. The attempts under way then go on
+// until stopNotices waits for them.
 func runNotices(ctx context.Context, c *composedNotices) { go c.svc.Run(ctx) }
+
+// noticesStopMax bounds a stop's wait for the notices' attempts under way:
+// shorter than stopMax, and waited for while the server and the
+// connections stop, so the stop keeps its budget.
+const noticesStopMax = 15 * time.Second
+
+// stopNotices ends the queue's work at a stop (the code review of ADR
+// 0041's pull request 7, 1): it admits no attempt more, and waits, within
+// noticesStopMax, for the runner and for the attempts under way, so a send
+// SES accepted is marked and not sent again. It returns an error, and logs
+// it by its kind, when they did not finish: those are abandoned, and sent
+// again once their leases end (at least once).
+func stopNotices(c *composedNotices, log *slog.Logger) error {
+	return stopNoticesWithin(c, log, noticesStopMax)
+}
+
+func stopNoticesWithin(c *composedNotices, log *slog.Logger, within time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), within)
+	defer cancel()
+	if c.svc.Stop(ctx) != nil {
+		log.Error("notices: the attempts under way did not finish at the stop", "kind", "notices")
+		return errors.New("notices: the attempts under way did not finish at the stop")
+	}
+	return nil
+}
 
 // errNoDeliverer is an attempt made before accounts were given to the
 // queue: tried again, as one that could not send now.

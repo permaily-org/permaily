@@ -241,7 +241,7 @@ func TestTheImageComposesTheQueueOfNotices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"runNotices(ctx, p.notices)", "status.Notices = p.notices.status"} {
+	for _, want := range []string{"runNotices(ctx, p.notices)", "stopNotices(p.notices, log)", "status.Notices = p.notices.status"} {
 		if !strings.Contains(string(main), want) {
 			t.Errorf("main.go does not say %q", want)
 		}
