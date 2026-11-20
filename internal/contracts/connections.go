@@ -146,6 +146,10 @@ type AuthorizationRequest struct {
 	// EndsInDays is how long the connection lasts once approved: 90 unless
 	// the vendor asked for fewer; 365 at most.
 	EndsInDays int `json:"ends_in_days"`
+	// Webhook is the webhook the vendor asked for (ADR 0039), absent for a
+	// request without one (every MCP client); accepted or refused with the
+	// request.
+	Webhook *WebhookAsked `json:"webhook,omitempty"`
 	// Mailboxes are the account's mailboxes the request can reach, by
 	// identifier: what the picker offers; the sentence names them.
 	Mailboxes []string `json:"mailboxes"`
@@ -248,6 +252,10 @@ type AuthorizationDecision struct {
 	// Snapshot is the one the screen showed for Draft, required to allow
 	// (N5).
 	Snapshot *ConsentSnapshot `json:"snapshot,omitempty"`
+	// TimeZone is the person's time zone, an IANA name, required to allow
+	// a request whose webhook has a schedule (ErrTimeZoneInvalid), and
+	// ignored for any other (ADR 0039, "Schedules").
+	TimeZone string `json:"time_zone,omitempty"`
 }
 
 // ConnectionRenewal is the body of POST /api/v1/connections/{id}/renew: the
@@ -349,6 +357,8 @@ type Connection struct {
 	// to for it; Delivery says whether it gets mail now.
 	ModelNotice string             `json:"model_notice"`
 	Delivery    ConnectionDelivery `json:"delivery"`
+	// Webhook is its webhook (ADR 0039), absent when it has none.
+	Webhook *ConnectionWebhook `json:"webhook,omitempty"`
 	// Version is its record's version, which a renewal sends back.
 	Version uint64 `json:"version"`
 }
@@ -378,6 +388,8 @@ type VendorConnection struct {
 	// leaves because the model cannot be asked (the owner's decision 9);
 	// never why, and never how much mail is waiting.
 	Delivery ConnectionDelivery `json:"delivery"`
+	// Webhook is its webhook (ADR 0039), absent when it has none.
+	Webhook *VendorWebhook `json:"webhook,omitempty"`
 }
 
 // VendorSearch is a search of the connection's mail: Query, evaluated

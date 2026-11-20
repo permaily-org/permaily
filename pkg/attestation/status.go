@@ -57,7 +57,70 @@ type Status struct {
 	// first and the record of what left (ADR 0030, ADR 0031); nil in images
 	// older than this field or without connections.
 	Connections *ConnectionsStatus `json:"connections,omitempty"`
+	// Webhooks describes how a connection's webhook is called (ADR 0039);
+	// nil in images older than this field or without webhooks.
+	Webhooks *WebhooksStatus `json:"webhooks,omitempty"`
 }
+
+// WebhooksStatus is what the enclave reports of connections' webhooks (ADR
+// 0039, "What /status and permaily-verify show"). Everything but Since,
+// Outcomes and Skipped is compiled into the image. It never holds a vendor
+// that is not verified, a URL, a subscription, an account, a connection or
+// a count of any of them.
+type WebhooksStatus struct {
+	// Signature is WebhookSignatureV1a: notices are signed with Ed25519 as
+	// Standard Webhooks' "v1a" says; Keys are every key a notice may be
+	// signed with now, which the api host also publishes at KeysURL as a
+	// JWK set: permaily-verify fails when the two differ.
+	Signature string       `json:"signature"`
+	Keys      []WebhookKey `json:"keys"`
+	KeysURL   string       `json:"keys_url"`
+	// NoticeHoldsMail is false: a notice holds no mail, address or
+	// identifier of an account, a mailbox, a connection or a message (ADR
+	// 0039, "The notice"); permaily-verify fails on true.
+	NoticeHoldsMail bool `json:"notice_holds_mail"`
+	// SameHost is true: a webhook is only on its vendor's client_id host;
+	// Redirects is "none"; Transport is "h2". permaily-verify fails on any
+	// other value.
+	SameHost  bool   `json:"same_host"`
+	Redirects string `json:"redirects"`
+	Transport string `json:"transport"`
+	// NewMail is WebhookNewMailAfterRules: a notice of new mail is sent only
+	// for a message that would leave, every rule applied first and the model
+	// asked where it had to be; permaily-verify fails on any other value.
+	NewMail string `json:"new_mail"`
+	// RevocationSeconds bounds when another enclave stops calling a revoked
+	// connection's webhook; permaily-verify fails above 5.
+	RevocationSeconds int `json:"revocation_seconds"`
+	// The bounds, in seconds: the least time between two notices of one
+	// connection, one call's timeout and how long a notice is tried.
+	MinIntervalSeconds int `json:"min_interval_seconds"`
+	TimeoutSeconds     int `json:"timeout_seconds"`
+	GiveUpSeconds      int `json:"give_up_seconds"`
+	// Schedules are the fixed choices a schedule may be ("day", "week").
+	Schedules []string `json:"schedules"`
+	// Since is when this enclave started counting; Outcomes counts its calls
+	// by fixed outcome, and Skipped the notices it did not send by fixed
+	// reason (every key, also at zero): one enclave's observation.
+	Since    time.Time        `json:"since"`
+	Outcomes map[string]int64 `json:"outcomes"`
+	Skipped  map[string]int64 `json:"skipped"`
+}
+
+// WebhookKey is one key a notice may be signed with: its identifier and its
+// Ed25519 public key, base64url without padding (a JWK's "x").
+type WebhookKey struct {
+	ID string `json:"id"`
+	X  string `json:"x"`
+}
+
+// WebhookSignatureV1a: Ed25519 over the notice's identifier, timestamp and
+// body (Standard Webhooks).
+const WebhookSignatureV1a = "standard-webhooks-v1a"
+
+// WebhookNewMailAfterRules: a notice of new mail follows the rules and the
+// model, never an exact match alone.
+const WebhookNewMailAfterRules = "after_rules"
 
 // ConnectionsStatus is what the enclave reports of connections (ADR 0030,
 // "What /status and permaily-verify show"). Everything but Refused and Since
