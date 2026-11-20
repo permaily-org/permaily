@@ -173,7 +173,8 @@ Step 9's notices, designed in ADR 0041 (2026-11-20, with step 8's rest): seven n
 - [x] **2. The words.** Accounts' `Deliver`, held to `DelivererContract`, with the seven messages as blocks, their previews, the sign-out's notice, Settings' Notifications (E25, E35, E37 to E39) (2026-11-20; words a first draft for the designer).
 - [x] **3. Connections.** Approved, device added, renewed, the sweep's ending, a device ended for reuse (E30 to E33, E36) (2026-11-20).
 - [x] **4. Receipts.** An incident's notice, once a day per account (E34) (2026-11-20).
-- [ ] **7. The image.** The composition, `/status` and `permaily-verify`, `TestMailEndToEnd`'s notices, the threat model, data, operations, legal and the privacy page; the staging check (E27, E29, E40, E41); then the release.
+- [x] **7. The image.** The composition (`cmd/permaily-enclave/notices.go`: the queue over the table and the root secret's key, accounts as its Deliverer, its runner in every enclave, the queue given to accounts, connections and receipts), `/status`'s `mail.notices` and `permaily-verify`'s counts and warnings, `TestMailEndToEnd`'s notices, the threat model, data, operations, legal, ADR 0017's "Notices by mail" and the privacy page (E27, E29, E40) (2026-11-20; the privacy page's words for the owner's review).
+- [ ] The staging check (E41) and the release, with ADR 0039's and 0040's images.
 - [ ] The words of every message reviewed with the designer (the owner's), with the notices of ADR 0017 and 0026.
 
 About twenty-two and a half weeks (nineteen and a half before step 7's design counted words, removing by meaning and its evals). Steps 3 and 4 do not depend on 1 and 2, and can go first if seeing `about` work early is worth more than having accounts.

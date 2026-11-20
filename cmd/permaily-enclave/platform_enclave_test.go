@@ -211,3 +211,39 @@ func TestL21TheImagesCommitsGroupTheChain(t *testing.T) {
 		t.Error("the image makes more than one store of commits")
 	}
 }
+
+// ADR 0041, pull request 7: the image composes one queue of notices over
+// the deployment's table and the root secret's keys, before accounts, which
+// it gives the queue and then makes its Deliverer; receipts and connections
+// queue through it; every enclave runs its runner, and /status reports its
+// counts in mail.notices.
+func TestTheImageComposesTheQueueOfNotices(t *testing.T) {
+	src, err := os.ReadFile("platform_enclave.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform := string(src)
+	for _, want := range []string{
+		"composeNotices(noticesParts{entries: awsStore, keys: root, log: log})",
+		"Notices: p.notices.svc,",
+		"p.notices.deliverBy(p.accounts)",
+		"accounts: p.accounts, notices: p.notices, log: log})",
+		"receipts: p.receipts, notices: p.notices, log: log,",
+	} {
+		if strings.Count(platform, want) != 1 {
+			t.Errorf("newPlatform does not say %q once", want)
+		}
+	}
+	if strings.Count(platform, "composeNotices(") != 1 || strings.Index(platform, "composeNotices(") > strings.Index(platform, "p.signIn(") {
+		t.Error("the image does not compose one queue before accounts")
+	}
+	main, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"runNotices(ctx, p.notices)", "status.Notices = p.notices.status"} {
+		if !strings.Contains(string(main), want) {
+			t.Errorf("main.go does not say %q", want)
+		}
+	}
+}

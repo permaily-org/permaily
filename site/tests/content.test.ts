@@ -206,7 +206,7 @@ describe('legal pages', () => {
   it('say what is open as the image composes it', () => {
     // The image composes mailboxes, the model, connections and the default rule (cmd/permaily-enclave, ADR 0026,
     // 0028, 0030 and 0031), so the privacy page says them in the present tense and keeps "planned" for what is not
-    // built: the person's own rules (step 7) and the receipts' screen (step 8).
+    // built: the person's own rules (step 7). The receipts' screen and its downloads are built (ADR 0041).
     const go = (path: string) => readFileSync(join(import.meta.dirname, '../..', path), 'utf8');
     const composition = go('cmd/permaily-enclave/connections.go');
     expect(composition).toMatch(/Rules:\s+\[\]rules\.Rule\{rules\.Default\(\)\}/);
@@ -218,9 +218,8 @@ describe('legal pages', () => {
     expect(text).not.toMatch(
       /aren’t open yet|once (mailboxes|connections) open|none of this is running/i,
     );
-    expect(text).toContain(
-      'Rules of your own, and a screen that shows you your receipts, aren’t built yet',
-    );
+    expect(text).toContain('Rules of your own aren’t built yet');
+    expect(text).not.toMatch(/screen that shows (them|your receipts) to you isn’t built|Viewing and exporting them are planned/);
     // A connection's end and its revocation, as internal/oauth sets them.
     const oauth = go('internal/oauth/oauth.go');
     expect(oauth).toMatch(/ConnectionDefaultDays = 90\b/);
