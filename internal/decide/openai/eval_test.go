@@ -247,6 +247,26 @@ func (e *eval) ask(ctx context.Context, phase, id string, call decide.Call) (*de
 	}
 }
 
+// billing reports the calls that read or wrote cached tokens and those
+// that cost more than their estimate or reported no usage, and says why the
+// run fails when there is any: the prompt cache is off (ADR 0028), and
+// decide.Estimate must bound every call's cost, since it is what the
+// service reserves before an attempt and charges one whose billing is
+// unknown. A run that breaks either is no measurement of the prompt.
+func (e *eval) billing(report map[string]any) []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	report["calls_with_cached_tokens"], report["calls_over_their_estimate"] = e.cacheTouched, e.overEstimate
+	var failures []string
+	if e.cacheTouched > 0 {
+		failures = append(failures, fmt.Sprintf("%d calls read or wrote cached tokens", e.cacheTouched))
+	}
+	if e.overEstimate > 0 {
+		failures = append(failures, fmt.Sprintf("%d calls cost more than their estimate or reported no usage", e.overEstimate))
+	}
+	return failures
+}
+
 // each runs f for every job, n at once.
 func each[T any](n int, jobs []T, f func(T)) {
 	sem := make(chan struct{}, n)
@@ -731,13 +751,9 @@ func TestA10Eval(t *testing.T) {
 
 	e.mu.Lock()
 	report["attempts"], report["failures"], report["spent_usd"] = e.attempts, e.failures, float64(e.spent)/1e9
-	report["calls_with_cached_tokens"], report["calls_over_their_estimate"] = e.cacheTouched, e.overEstimate
 	e.mu.Unlock()
-	if e.cacheTouched > 0 {
-		t.Errorf("%d calls read or wrote cached tokens", e.cacheTouched)
-	}
-	if e.overEstimate > 0 {
-		t.Errorf("%d calls cost more than their estimate or reported no usage", e.overEstimate)
+	for _, f := range e.billing(report) {
+		t.Error(f)
 	}
 	data, _ := json.MarshalIndent(report, "", " ")
 	t.Logf("report:\n%s", data)

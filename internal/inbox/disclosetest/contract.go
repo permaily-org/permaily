@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/query"
+	"github.com/permaily-org/permaily/internal/redact"
 	"github.com/permaily-org/permaily/internal/rules"
 	"github.com/permaily-org/permaily/internal/store"
 )
@@ -532,6 +534,92 @@ func Contract(t *testing.T, make func(now func() time.Time) (inbox.DecisionStore
 		state(t, got, err, m, inbox.DecisionHeld)
 		if got[m].Leaves() || len(got[m].Evidence) != 1 || got[m].Evidence[0].Evidence.P != 0.9 {
 			t.Fatalf("M: %+v", got[m])
+		}
+	})
+	// ADR 0040, "Its decision": a meaning decision's sentences are kept with
+	// it in the blocks and answered with it ever after, through either
+	// enclave; a meaning settlement the Pending did not keep room for
+	// changes nothing; another split or extraction decides again.
+	meaning := rules.MeaningRef(rules.Ref{ID: "rul_contract", Version: 3}, inbox.TextVersion, redact.SplitVersion)
+	kept := func(n int) *inbox.MeaningKept {
+		k := &inbox.MeaningKept{Map: "0123456789abcdef0123456789abcdef"}
+		for i := range n {
+			k.Kept = append(k.Kept, i%3 == 1)
+		}
+		return k
+	}
+	t.Run("U18: a meaning decision keeps its sentences, for ever, through either enclave", func(t *testing.T) {
+		now := at
+		clock := func() time.Time { return now }
+		sa, sb := make(clock)
+		a, b := &inbox.BlockDecisions{Store: sa, Now: clock}, &inbox.BlockDecisions{Store: sb, Now: clock}
+		begun, err := a.Begin(ctx, box, meaning, key(m1, m2))
+		state(t, begun, err, m1, inbox.DecisionBegun)
+		want := kept(redact.MeaningSentencesMax)
+		got, err := a.Settle(ctx, box, meaning, of(begun, map[string]inbox.Settlement{
+			m1: {State: inbox.DecisionCleared, Evidence: evidence(0.05), Meaning: want},
+			m2: {State: inbox.DecisionCleared, Evidence: evidence(0.05)},
+		}))
+		state(t, got, err, m1, inbox.DecisionCleared)
+		for _, d := range []inbox.Decisions{a, b} {
+			got, err := d.Begin(ctx, box, meaning, key(m1, m2))
+			state(t, got, err, m1, inbox.DecisionCleared)
+			if m := got[m1].Meaning; m == nil || m.Map != want.Map || !slices.Equal(m.Kept, want.Kept) {
+				t.Fatalf("its sentences read back as %+v", m)
+			}
+			// Cleared without its sentences keeps none: the whole text goes.
+			state(t, got, err, m2, inbox.DecisionCleared)
+			if got[m2].Meaning != nil {
+				t.Fatalf("sentences for a decision settled without them: %+v", got[m2].Meaning)
+			}
+		}
+		// A later settlement, of other sentences, changes nothing.
+		got, err = b.Settle(ctx, box, meaning, map[string]inbox.Settlement{m1: {State: inbox.DecisionCleared, Meaning: kept(3)}})
+		state(t, got, err, m1, inbox.DecisionCleared)
+		if !slices.Equal(got[m1].Meaning.Kept, want.Kept) {
+			t.Fatal("a final meaning decision changed")
+		}
+		for _, other := range []rules.Ref{
+			rules.MeaningRef(rules.Ref{ID: "rul_contract", Version: 3}, inbox.TextVersion+1, redact.SplitVersion),
+			rules.MeaningRef(rules.Ref{ID: "rul_contract", Version: 3}, inbox.TextVersion, redact.SplitVersion+1),
+			rules.MeaningRef(rules.Ref{ID: "rul_contract", Version: 4}, inbox.TextVersion, redact.SplitVersion),
+		} {
+			got, err := b.Begin(ctx, box, other, key(m1))
+			state(t, got, err, m1, inbox.DecisionBegun)
+		}
+	})
+	t.Run("U18: meaning a pending did not keep room for changes nothing", func(t *testing.T) {
+		now := at
+		d := one(func() time.Time { return now })
+		begun, _ := d.Begin(ctx, box, meaning, key(m1))
+		long := kept(1)
+		long.Map = strings.Repeat("d", 65)
+		for _, bad := range []*inbox.MeaningKept{kept(redact.MeaningSentencesMax + 1), {Kept: []bool{true}}, long} {
+			got, err := d.Settle(ctx, box, meaning, of(begun, map[string]inbox.Settlement{m1: {State: inbox.DecisionCleared, Meaning: bad}}))
+			state(t, got, err, m1, inbox.DecisionPending)
+		}
+		// Sentences of a decision that is not a meaning one: refused too.
+		begun, _ = d.Begin(ctx, box, rule, key(m2))
+		got, err := d.Settle(ctx, box, rule, of(begun, map[string]inbox.Settlement{m2: {State: inbox.DecisionCleared, Evidence: evidence(0.05), Meaning: kept(2)}}))
+		state(t, got, err, m2, inbox.DecisionPending)
+		// Held keeps no sentences: it removes the whole text.
+		got, err = d.Settle(ctx, box, meaning, map[string]inbox.Settlement{m1: {State: inbox.DecisionHeld, Meaning: kept(2)}})
+		state(t, got, err, m1, inbox.DecisionHeld)
+		if got[m1].Meaning != nil || got[m1].Leaves() {
+			t.Fatalf("held with sentences: %+v", got[m1])
+		}
+	})
+	t.Run("U18: a meaning decision's settlement lost is recovered held", func(t *testing.T) {
+		now := at
+		d := one(func() time.Time { return now })
+		_, _ = d.Begin(ctx, box, meaning, key(m1))
+		now = at.Add(inbox.PendingGrace)
+		got, err := d.Settle(ctx, box, meaning, map[string]inbox.Settlement{m1: {State: inbox.DecisionHeld}})
+		state(t, got, err, m1, inbox.DecisionHeld)
+		got, err = d.Settle(ctx, box, meaning, map[string]inbox.Settlement{m1: {State: inbox.DecisionCleared, Meaning: kept(2)}})
+		state(t, got, err, m1, inbox.DecisionHeld)
+		if !got[m1].Recovered || got[m1].Meaning != nil {
+			t.Fatalf("%+v", got[m1])
 		}
 	})
 }
