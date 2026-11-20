@@ -577,7 +577,11 @@ func covers(u []redact.Span, part redact.Span) bool {
 // askReduced asks the request's Asker the formulas' model atoms about what
 // the removals left of c, under the reduced view's own name, so an answer
 // kept for the original is never used for it nor the reverse (ADR 0040,
-// "The order", 4).
+// "The order", 4). The text it gives is exactly the original's less what
+// was removed: what the View's spans left; or, when no rule that applies
+// read the View (none removes the subject, the text or a span of them; only
+// the sender or the attachments), the text as it came, read as late as the
+// original's would be. A View whose text could not be read gives none.
 func (p *discloseRun) askReduced(ctx context.Context, c *candidate, red *reduction) (*Asked, error) {
 	account := p.d.Account
 	if account == "" {
@@ -588,7 +592,7 @@ func (p *discloseRun) askReduced(ctx context.Context, c *candidate, red *reducti
 		switch {
 		case red.textOK:
 			return red.text, TextRead, nil
-		case red.view == ViewOriginal:
+		case red.view == ViewOriginal, c.view == nil && !red.hide.subject && !red.hide.body:
 			return src.text(ctx)
 		}
 		return "", TextUnavailable, nil
