@@ -27,8 +27,8 @@
 // so have a notice sent again, as often as they do it, while the notice is
 // Sendable. They can delete one (one notice fewer). They can make, move or
 // edit none, nor stretch its window, nor grow the queue's work past its
-// bounds: each pass of a runner lists at most ListMax entries and sends at
-// most PassSendsMax.
+// bounds: each pass of a runner reads at most ListMax rows, a bounded page
+// at a time, and sends at most PassSendsMax.
 //
 // An entry holds the account's identifier, the kind, the key and the facts
 // its words need, never the contact address, which the Deliverer reads
@@ -231,8 +231,8 @@ const (
 	SendsPerSecond = 2
 	InFlightMax    = 8
 	// PassSendsMax is the most attempts one runner's pass makes, and
-	// ListMax the most entries it lists: replayed entries cannot make a
-	// pass do more.
+	// ListMax the most rows it reads, expired ones included: replayed
+	// entries cannot make a pass do more.
 	PassSendsMax = SendsPerSecond * int(RunEvery/time.Second)
 	ListMax      = 4096
 	// NoticeMax bounds a notice as JSON (the largest Check takes is under
