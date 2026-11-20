@@ -365,15 +365,28 @@ export type ExportState = {
   /** The page the next part's first line is on, and how many lines of it earlier parts hold. */
   from?: api.ReceiptsPosition
   skip: number
+  /**
+   * The SHA-256 of those `skip` lines, as earlier parts hold them: going on, the page must begin with exactly them, or
+   * the download can't prove where it stopped. Empty when `skip` is 0.
+   */
+  held: string
+  /** Every line is in a saved part: only the manifest is left to write. */
+  written: boolean
   /** Receipts read before the next part, for progress. */
   receipts: number
 }
 
+/**
+ * Why a download stopped: the API's code, `cancelled`, or `changed` when the page the next part begins on no longer
+ * begins with the lines earlier parts hold, so it can't go on and must start again.
+ */
+export type ExportStopCode = api.ApiErrorCode | 'cancelled' | 'changed'
+
 /** A download that stopped before its end: `state` says what it saved and where it would go on; `code` why. */
 export class ExportStopped extends Error {
   readonly state: ExportState
-  readonly code: api.ApiErrorCode | 'cancelled'
-  constructor(state: ExportState, code: api.ApiErrorCode | 'cancelled') {
+  readonly code: ExportStopCode
+  constructor(state: ExportState, code: ExportStopCode) {
     super(code)
     this.state = state
     this.code = code
@@ -423,7 +436,16 @@ function noted(head: api.ReceiptsHead): string | null {
 export async function writeExport(options: ExportOptions): Promise<ExportDone> {
   const state: ExportState = options.resume
     ? { ...options.resume, parts: [...options.resume.parts] }
-    : { ext: options.ext, day: options.day, head: null, parts: [], skip: 0, receipts: 0 }
+    : {
+        ext: options.ext,
+        day: options.day,
+        head: null,
+        parts: [],
+        skip: 0,
+        held: '',
+        written: false,
+        receipts: 0,
+      }
   try {
     return await writing(options, state)
   } catch (error) {
@@ -441,6 +463,13 @@ async function writing(options: ExportOptions, state: ExportState): Promise<Expo
   let chunks: Uint8Array[] = []
   let bytes = 0
   let lines = 0
+  const stop = (code: ExportStopCode): never => {
+    throw new ExportStopped({ ...state, parts: [...state.parts] }, code)
+  }
+  // A cancel holds at every wait: nothing is saved after it, of a part or of the manifest.
+  const go = () => {
+    if (signal?.aborted) stop('cancelled')
+  }
   const open = () => {
     chunks = header.length > 0 ? [header] : []
     bytes = header.length
@@ -455,58 +484,78 @@ async function writing(options: ExportOptions, state: ExportState): Promise<Expo
     }
     chunks = []
     const saved = { name, bytes: file.length, sha256: await sha256(file) }
+    go()
     save(name, new Blob([file], { type: types[ext] }))
     state.parts.push(saved)
   }
-  const stop = (code: api.ApiErrorCode | 'cancelled'): never => {
-    throw new ExportStopped({ ...state, parts: [...state.parts] }, code)
-  }
+  /** The digest of a page's first `n` lines, as `held` notes them. */
+  const heldOf = async (page: SourcePage, n: number): Promise<string> =>
+    n === 0 ? '' : sha256(encoder.encode(page.lines.slice(0, n).join('')))
 
-  open()
-  let before = state.from
-  let skip = state.skip
-  let receipts = state.receipts
-  for (;;) {
-    if (signal?.aborted) stop('cancelled')
-    let page: SourcePage
-    try {
-      page = await source(before)
-    } catch (error) {
-      return stop(api.errorCode(error))
-    }
-    if (signal?.aborted) stop('cancelled')
-    // A page that does not move on would be asked for ever.
-    if (!page.done && before && !below(page.next, before)) stop('other')
-    if (fresh && state.parts.length === 0 && before === undefined) state.head = noted(page.head)
-    for (let i = skip; i < page.lines.length; i++) {
-      const line = encoder.encode(page.lines[i])
-      // A line no part could hold: never far from it (a receipt is at most 256 KiB sealed), and never cut.
-      if (header.length + line.length > limit) stop('other')
-      if (bytes + line.length > limit && lines > 0) {
-        await close(exportName(state.day, ext, state.parts.length + 1))
-        state.from = before
-        state.skip = i
-        state.receipts = receipts
-        onProgress?.({ receipts, parts: state.parts.length })
-        open()
+  if (!state.written) {
+    open()
+    let before = state.from
+    let skip = state.skip
+    let receipts = state.receipts
+    for (;;) {
+      go()
+      let page: SourcePage
+      try {
+        page = await source(before)
+      } catch (error) {
+        return stop(api.errorCode(error))
       }
-      chunks.push(line)
-      bytes += line.length
-      lines++
+      go()
+      // A page that does not move on would be asked for ever.
+      if (!page.done && before && !below(page.next, before)) stop('other')
+      if (fresh && state.parts.length === 0 && before === undefined) state.head = noted(page.head)
+      // Going on, the page must begin with the lines earlier parts hold, or a receipt could be left out or repeated.
+      if (skip > 0) {
+        const held = page.lines.length >= skip ? await heldOf(page, skip) : null
+        go()
+        if (held !== state.held) stop('changed')
+      }
+      for (let i = skip; i < page.lines.length; i++) {
+        const line = encoder.encode(page.lines[i])
+        // A line no part could hold: never far from it (a receipt is at most 256 KiB sealed), and never cut.
+        if (header.length + line.length > limit) stop('other')
+        if (bytes + line.length > limit && lines > 0) {
+          const held = await heldOf(page, i)
+          await close(exportName(state.day, ext, state.parts.length + 1))
+          // Where the next part begins is noted as soon as this one is saved, with nothing to wait for between.
+          state.from = before
+          state.skip = i
+          state.held = held
+          state.receipts = receipts
+          onProgress?.({ receipts, parts: state.parts.length })
+          open()
+        }
+        chunks.push(line)
+        bytes += line.length
+        lines++
+      }
+      skip = 0
+      receipts += page.receipts
+      onProgress?.({ receipts, parts: state.parts.length })
+      if (page.done) break
+      before = page.next
     }
-    skip = 0
-    receipts += page.receipts
-    onProgress?.({ receipts, parts: state.parts.length })
-    if (page.done) break
-    before = page.next
+
+    if (state.parts.length === 0) {
+      const name = exportName(state.day, ext)
+      await close(name)
+      return { files: state.parts, manifest: null }
+    }
+    await close(exportName(state.day, ext, state.parts.length + 1))
+    // Every line is saved: going on writes the manifest and reads nothing again.
+    state.written = true
+    state.from = undefined
+    state.skip = 0
+    state.held = ''
+    state.receipts = receipts
   }
 
-  if (state.parts.length === 0) {
-    const name = exportName(state.day, ext)
-    await close(name)
-    return { files: state.parts, manifest: null }
-  }
-  await close(exportName(state.day, ext, state.parts.length + 1))
+  go()
   const manifest = exportManifestName(state.day, ext)
   const body = `${JSON.stringify(
     { complete: true, file: ext, date: state.day, head: state.head, parts: state.parts },

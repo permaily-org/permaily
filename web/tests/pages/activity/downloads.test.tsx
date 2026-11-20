@@ -4,17 +4,19 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type * as api from '../../../src/lib/api.ts'
-import { CSV_HEADER, localDay } from '../../../src/lib/csv.ts'
+import { CSV_HEADER, csvLinesOf, localDay, utf8Bytes } from '../../../src/lib/csv.ts'
 import { Downloads } from '../../../src/pages/activity/Downloads.tsx'
 import { expectNotKept, open, settle } from '../../helpers/app.tsx'
 import { expectAccessible } from '../../helpers/axe.ts'
 import { connectionOf } from '../../helpers/connections.ts'
 import { personal } from '../../helpers/mailboxes.ts'
 import {
+  entryOf,
   firstPage,
   goldenConnection,
   linkOf,
   otherReceipt,
+  pageBefore,
   pageOf,
   receiptOf,
 } from '../../helpers/receipts.ts'
@@ -309,6 +311,72 @@ describe('E16: the downloads, on the screen', () => {
       .slice(1, -1)
       .map((line) => line.split('","')[7])
     expect(verified).toEqual(['Anthropic', 'Anthropic', ''])
+  })
+})
+
+// The review of pull request 198, on the screen.
+describe('PR 198 review', () => {
+  it('finding 1: says a set can’t go on when the record changed where it stopped, and offers Start again', async () => {
+    const saves = watchSaves()
+    const search = receiptOf('search')
+    const ended = receiptOf('ended')
+    const kept = linkOf(3, [search, ended])
+    const lost = { ...kept, receipts: [entryOf(1, search, 'missing'), entryOf(0, ended)] }
+    const first = (link: unknown) => pageOf([link], { done: false, next: { n: 2, index: 0 } })
+    const rows = csvLinesOf(first(kept) as unknown as api.ReceiptsPage)
+    server.on(firstPage, ok(first(kept)))
+    server.on(pageBefore(2, 0), network)
+    const { user } = await openDownloads(
+      utf8Bytes(CSV_HEADER) + utf8Bytes(rows.slice(0, 2).join('')),
+    )
+    await user.click(spreadsheet())
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Saved 1 part.')
+
+    server.on(firstPage, ok(first(lost)))
+    server.on(pageBefore(2, 0), ok(pageOf([linkOf(2, [receiptOf('read')])])))
+    await user.click(within(alert).getByRole('button', { name: 'Continue' }))
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain(
+        'Your record changed where the download stopped, so it can’t go on from there. Start again to get your whole record.',
+      ),
+    )
+    const after = screen.getByRole('alert')
+    expect(after.textContent).toContain('Saved 1 part. The download stopped before the end')
+    expect(within(after).queryByRole('button', { name: 'Continue' })).toBeNull()
+    expect(within(after).getByRole('button', { name: 'Start again' })).toBeTruthy()
+    expect(saves.names).toHaveLength(1)
+    await expectAccessible()
+  })
+
+  it('finding 2: leaving the page while a file is hashed saves nothing', async () => {
+    const saves = watchSaves()
+    playExport()
+    const real = crypto.subtle.digest.bind(crypto.subtle)
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let hashing: () => void = () => {}
+    const started = new Promise<void>((resolve) => {
+      hashing = resolve
+    })
+    let hashed: Promise<ArrayBuffer> = Promise.resolve(new ArrayBuffer(0))
+    vi.spyOn(crypto.subtle, 'digest').mockImplementation((algorithm, data) => {
+      hashing()
+      hashed = gate.then(() => real(algorithm, data))
+      return hashed
+    })
+    const { user } = await openDownloads(1_000_000)
+    await user.click(checking())
+    await started
+    cleanup()
+    await act(async () => {
+      release()
+      await hashed
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(saves.names).toEqual([])
   })
 })
 

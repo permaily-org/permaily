@@ -620,6 +620,173 @@ describe('E16: a download in parts, each saved whole, then its manifest', () => 
   })
 })
 
+/** The pages of the walk as the CSV's source gives them, read from `pages()` each time, the second failing once. */
+function walkSource(pages: () => api.ReceiptsPage[]) {
+  let failed = false
+  const source: Source = async (before) => {
+    const all = pages()
+    const page = before ? all[1] : all[0]
+    if (!page) throw new Error('no such page')
+    if (before && !failed) {
+      failed = true
+      throw new api.ApiError('network')
+    }
+    return {
+      lines: csvLinesOf(page),
+      head: page.head,
+      next: page.next,
+      done: page.done,
+      receipts: page.links.reduce((n, l) => n + l.receipts.length, 0),
+    }
+  }
+  return source
+}
+
+/** Calls `during` while the digest of `bytes` bytes is being made, once. */
+function whileHashing(bytes: number, during: () => void) {
+  const real = crypto.subtle.digest.bind(crypto.subtle)
+  let once = true
+  vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (algorithm, data) => {
+    const hashed = real(algorithm, data)
+    if (once && (data as ArrayBufferView).byteLength === bytes) {
+      once = false
+      during()
+    }
+    return hashed
+  })
+}
+
+// The review of pull request 198: going on after a page changed, a cancel during a hash, and a manifest not saved.
+describe('PR 198 review', () => {
+  it('finding 1: does not go on when the page it stopped on changed, so no receipt is left out or repeated', async () => {
+    const search = receiptOf('search')
+    const ended = receiptOf('ended')
+    const kept = linkOf(3, [search, ended])
+    const lost = { ...kept, receipts: [entryOf(1, search, 'missing'), entryOf(0, ended)] }
+    const rest = walk([linkOf(2, [receiptOf('read')])])
+    const pageWith = (link: unknown) => walk([link], { done: false, next: { n: 2, index: 0 } })
+
+    // A receipt of three rows that turns into one, and one of one row that turns into three.
+    for (const [before, after, skip] of [
+      [kept, lost, 2],
+      [lost, kept, 1],
+    ] as const) {
+      let first = pageWith(before)
+      const rows = csvLinesOf(first)
+      // A part holds the rows before the boundary, and not one more.
+      const held = rows.slice(0, skip).reduce((n, r) => n + utf8Bytes(r), 0)
+      const next = utf8Bytes(rows[skip] as string)
+      const options = {
+        ext: 'csv' as const,
+        day,
+        partBytes: utf8Bytes(CSV_HEADER) + Math.max(held, next),
+      }
+      const source = walkSource(() => [first, rest])
+      const one = saver()
+      const err = await stopped(writeExport({ ...options, source, save: one.save }))
+      expect(err.code).toBe('network')
+      expect([err.state.parts.length, err.state.skip]).toEqual([1, skip])
+
+      first = pageWith(after)
+      const two = saver()
+      const again = await stopped(
+        writeExport({ ...options, source, save: two.save, resume: err.state }),
+      )
+      // It can't prove where it stopped: nothing more saved, no manifest, the set incomplete.
+      expect(again.code).toBe('changed')
+      expect(two.files).toEqual([])
+      expect(again.state.parts).toEqual(err.state.parts)
+    }
+  })
+
+  it('finding 2: a cancel while a part is hashed saves neither it nor the manifest', async () => {
+    // One file: nothing saved.
+    const single = new AbortController()
+    whileHashing(200, () => single.abort())
+    const alone = saver()
+    const err = await stopped(
+      writeExport({
+        ext: 'jsonl',
+        source: sourceOf([lines(2, 100)]).source,
+        save: alone.save,
+        day,
+        signal: single.signal,
+      }),
+    )
+    expect(err.code).toBe('cancelled')
+    expect(alone.files).toEqual([])
+    vi.restoreAllMocks()
+
+    // In parts: the parts before it, not the last, and no manifest.
+    const pages = [lines(2, 100), lines(2, 100, 2), lines(1, 70, 4)]
+    const parted = new AbortController()
+    whileHashing(70, () => parted.abort())
+    const some = saver()
+    const err2 = await stopped(
+      writeExport({
+        ext: 'jsonl',
+        source: sourceOf(pages).source,
+        save: some.save,
+        day,
+        signal: parted.signal,
+        partBytes: 250,
+      }),
+    )
+    expect(err2.code).toBe('cancelled')
+    expect(some.files.map((f) => f.name)).toEqual([1, 2].map((n) => exportName(day, 'jsonl', n)))
+    expect(err2.state.parts.map((p) => p.name)).toEqual(some.files.map((f) => f.name))
+    vi.restoreAllMocks()
+
+    // After the last part: no manifest.
+    const last = new AbortController()
+    const all = saver()
+    const err3 = await stopped(
+      writeExport({
+        ext: 'jsonl',
+        source: sourceOf(pages).source,
+        save: (name, blob) => {
+          all.save(name, blob)
+          if (name === exportName(day, 'jsonl', 3)) last.abort()
+        },
+        day,
+        signal: last.signal,
+        partBytes: 250,
+      }),
+    )
+    expect(err3.code).toBe('cancelled')
+    expect(all.files.map((f) => f.name)).toEqual([1, 2, 3].map((n) => exportName(day, 'jsonl', n)))
+  })
+
+  it('finding 3: going on after the manifest was not saved writes the manifest alone', async () => {
+    const pages = [lines(2, 100), lines(2, 100, 2)]
+    const options = { ext: 'jsonl' as const, day, partBytes: 250 }
+    const { source, asked } = sourceOf(pages)
+    const first = saver()
+    const manifestName = exportManifestName(day, 'jsonl')
+    const err = await stopped(
+      writeExport({
+        ...options,
+        source,
+        save: (name, blob) => {
+          if (name === manifestName) throw new Error('quota')
+          first.save(name, blob)
+        },
+      }),
+    )
+    expect(err.code).toBe('other')
+    expect(first.files.map((f) => f.name)).toEqual([1, 2].map((n) => exportName(day, 'jsonl', n)))
+    const reads = asked.length
+
+    const second = saver()
+    const done = await writeExport({ ...options, source, save: second.save, resume: err.state })
+    expect(asked).toHaveLength(reads)
+    expect(second.files.map((f) => f.name)).toEqual([manifestName])
+    const manifest = JSON.parse(await (second.files[0] as { blob: Blob }).blob.text())
+    expect(manifest.parts).toEqual(err.state.parts)
+    expect(done).toEqual({ files: err.state.parts, manifest: manifestName })
+  })
+})
+
 describe('E17: the downloads’ names, from the person’s local day', () => {
   it('writes the local day the download began', () => {
     expect(localDay(new Date(2026, 10, 20, 23, 59))).toBe('2026-11-20')

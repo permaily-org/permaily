@@ -4,6 +4,7 @@ import * as api from '../../lib/api.ts'
 import {
   csvSource,
   type ExportState,
+  type ExportStopCode,
   type ExportStopped,
   jsonSource,
   localDay,
@@ -30,7 +31,7 @@ type Run =
   | { phase: 'idle' }
   | { phase: 'running'; ext: Ext; receipts: number; parts: number }
   | { phase: 'done'; ext: Ext; files: SavedFile[]; manifest: string | null }
-  | { phase: 'stopped'; ext: Ext; state: ExportState; code: api.ApiErrorCode | 'cancelled' | null }
+  | { phase: 'stopped'; ext: Ext; state: ExportState; code: ExportStopCode | null }
 
 const what: Record<Ext, string> = { jsonl: 'for checking', csv: 'as a spreadsheet' }
 
@@ -49,7 +50,9 @@ function plural(n: number, one: string, many: string): string {
 }
 
 /** Why a download stopped, in fixed words. */
-function stoppedWords(code: api.ApiErrorCode): string {
+function stoppedWords(code: Exclude<ExportStopCode, 'cancelled'>): string {
+  if (code === 'changed')
+    return 'Your record changed where the download stopped, so it can’t go on from there. Start again to get your whole record.'
   if (code === 'busy') return 'Your record is busy. Try again in a moment.'
   if (code === 'network') return "Permaily can't be reached."
   return messageFor(code)
@@ -115,7 +118,9 @@ export function Downloads({
       if (!live.current) return
       const stopped = error as ExportStopped
       const code =
-        stopped.code === 'cancelled' ? 'cancelled' : failed(new api.ApiError(stopped.code))
+        stopped.code === 'cancelled' || stopped.code === 'changed'
+          ? stopped.code
+          : failed(new api.ApiError(stopped.code))
       setRun({ phase: 'stopped', ext, state: stopped.state, code })
     } finally {
       cancel.current = null
@@ -215,6 +220,8 @@ function Stopped({
   if (saved === 0 && run.code === 'cancelled') return null
   const why = run.code !== null && run.code !== 'cancelled' ? stoppedWords(run.code) : null
   const retry = run.code !== 'receipts_unreadable'
+  // A set that can't prove where it stopped can only start again.
+  const goOn = saved > 0 && run.code !== 'changed'
   return (
     <div role="alert" className="flex flex-col items-start gap-1.5 text-small">
       {saved > 0 ? (
@@ -228,7 +235,7 @@ function Stopped({
       {why && <p className="text-danger">{why}</p>}
       {retry && (
         <div className="flex flex-wrap gap-3">
-          {saved > 0 && <TextAction onClick={onContinue}>Continue</TextAction>}
+          {goOn && <TextAction onClick={onContinue}>Continue</TextAction>}
           <TextAction onClick={onAgain}>{saved > 0 ? 'Start again' : 'Try again'}</TextAction>
         </div>
       )}
