@@ -22,13 +22,21 @@ type Keys interface {
 	Derive(ctx context.Context, purpose string) ([]byte, error)
 }
 
+// Storage is what the queue keeps its entries in: store.Entries, and the
+// scan of store.Scanner, which reads a bounded page whatever it holds
+// (*store.Memory and *store.AWS are both).
+type Storage interface {
+	store.Entries
+	ScanEntriesDown(ctx context.Context, partition, prefix, before string, maxRead int) (*store.EntryScan, error)
+}
+
 // Config is what the queue is given (ADR 0041, "What each pull request
 // adds to the seams").
 type Config struct {
 	// Entries keeps the queue (PartitionQueue) and the marks
 	// (PartitionSent), signed under PurposeSign and written at the version
-	// read.
-	Entries store.Entries
+	// read. A runner reads the queue with its scan, a page at a time.
+	Entries Storage
 	// Keys derives the signing key (PurposeSign).
 	Keys Keys
 	// Deliverer words and sends a notice (accounts, ADR 0041's pull
@@ -338,7 +346,12 @@ func (s *Service) admit(ctx context.Context) (release func(), err error) {
 // refused, one no longer Sendable dropped, one leased or (but with force)
 // not yet due left. It takes the lease at the version read, reads the mark
 // (one that holds: sent before a crash, the entry is deleted), and
-// delivers within attemptFor, which ends before the lease does.
+// delivers. Its deadline, attemptFor, which ends before the lease does,
+// runs from before the lease is written and bounds the lease's write, the
+// mark's read and the delivery alike; right before it delivers, it checks
+// on its clock that its deadline and its lease have not ended and the
+// notice is still Sendable, and abandons the notice otherwise (a late
+// answer of the storage cannot carry a send past them).
 func (s *Service) attempt(ctx context.Context, key []byte, k string, force bool) {
 	e, err := s.cfg.Entries.GetEntry(ctx, PartitionQueue, k)
 	if err != nil {
@@ -359,14 +372,16 @@ func (s *Service) attempt(ctx context.Context, key []byte, k string, force bool)
 	case now.Before(d.LeaseUntil), !force && now.Before(d.NextAt):
 		return
 	}
+	actx, cancel := context.WithTimeout(ctx, min(s.attemptFor, LeaseFor))
+	defer cancel()
 	d.LeaseUntil, d.By = now.Add(LeaseFor), s.name
-	if err := s.write(ctx, key, e, d); err != nil {
+	if err := s.write(actx, key, e, d); err != nil {
 		if !errors.Is(err, store.ErrConflict) {
 			s.failed("write")
 		}
 		return // another attempt took it, or it changed under this one
 	}
-	held, mark, err := s.mark(ctx, key, k, now)
+	held, mark, err := s.mark(actx, key, k, now)
 	if err != nil {
 		s.failed("read")
 		return // the lease ends, and the next attempt reads it again
@@ -377,7 +392,10 @@ func (s *Service) attempt(ctx context.Context, key []byte, k string, force bool)
 		}
 		return
 	}
-	actx, cancel := context.WithTimeout(ctx, min(s.attemptFor, d.LeaseUntil.Sub(now)))
+	if at := s.now(); !at.Before(now.Add(s.attemptFor)) || !at.Before(d.LeaseUntil) || !d.Notice.Sendable(at) || actx.Err() != nil {
+		s.failed("lease")
+		return // the lease ends, and the next attempt reads it again
+	}
 	err = s.cfg.Deliverer.Deliver(actx, d.Notice)
 	cancel()
 	now = s.now()

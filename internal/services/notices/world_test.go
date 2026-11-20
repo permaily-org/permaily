@@ -85,7 +85,7 @@ type world struct {
 	clock *noticestest.Clock
 	mem   *store.Memory
 	// entries is what the enclaves are given: mem unless a test wraps it.
-	entries store.Entries
+	entries notices.Storage
 	keys    *rootKeys
 	logs    *syncBuffer
 

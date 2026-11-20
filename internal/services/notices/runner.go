@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/permaily-org/permaily/internal/store"
 )
 
 // Run is the runner: a pass every RunEvery until ctx ends, when the first
@@ -26,7 +28,7 @@ func (s *Service) Run(ctx context.Context) {
 // Drain waits for the attempts under way, makes one pass that tries every
 // notice whose lease ended, due or not, and waits for its attempts: what a
 // test runs instead of the runner's ticker (noticestest.Subject). The pass
-// keeps its bounds: at most ListMax entries listed, PassSendsMax admitted.
+// keeps its bounds: at most ListMax rows read, PassSendsMax admitted.
 func (s *Service) Drain(ctx context.Context) error {
 	if err := s.busy.wait(ctx); err != nil {
 		return err
@@ -35,14 +37,18 @@ func (s *Service) Drain(ctx context.Context) error {
 	return s.busy.wait(ctx)
 }
 
-// pass lists at most ListMax entries of the queue, from after where the
-// last pass stopped and round to it, and admits at most PassSendsMax
-// attempts of those that verify, are Sendable, due (any, with force) and
-// whose lease ended. One that does not verify is counted and left; one no
-// longer Sendable is dropped; the attempt reads each admitted one again.
-// The next pass goes on after the last entry this one examined, whatever
-// became of it, so entries that are never sent cannot keep the runners
-// from the ones after them (ADR 0041's re-review, N1).
+// pass reads at most ListMax rows of the queue, a page of at most
+// store.MaxScanRead at a time (and DynamoDB's 1 MB), from the greatest key
+// down, from below where the last pass stopped and round to it, and admits
+// at most PassSendsMax attempts of the entries that verify, are Sendable,
+// due (any, with force) and whose lease ended. Every row read counts, the
+// expired ones the storage has not deleted yet included, and a pass holds
+// one page at a time. One that does not verify, or is past EntryMax, is
+// counted and left; one no longer Sendable is dropped; the attempt reads
+// each admitted one again. The next pass goes on below the last row this
+// one read, whatever became of it, so rows that are never sent cannot
+// keep the runners from the ones after them (ADR 0041's re-review, N1, and
+// its code review, 2 and 3).
 func (s *Service) pass(ctx context.Context, force bool) {
 	key, err := s.signKey(ctx)
 	if err != nil {
@@ -52,22 +58,22 @@ func (s *Service) pass(ctx context.Context, force bool) {
 	s.mu.Lock()
 	start := s.cursor
 	s.mu.Unlock()
-	// after is the last key examined; wrapped, that the listing went
-	// round from the start of the partition back towards start.
-	after, wrapped := start, start == ""
-	examined, sends := 0, 0
-	for examined < ListMax {
-		want := ListMax - examined
-		page, err := s.cfg.Entries.ListEntries(ctx, PartitionQueue, "", after, want)
+	// before is the last key read; wrapped, that the scan went round from
+	// the greatest key of the partition back down towards start.
+	before, wrapped := start, start == ""
+	read, sends := 0, 0
+	for read < ListMax {
+		page, err := s.cfg.Entries.ScanEntriesDown(ctx, PartitionQueue, "", before, min(store.MaxScanRead, ListMax-read))
 		if err != nil {
 			s.failed("list")
-			s.setCursor(after)
+			s.setCursor(before)
 			return
 		}
-		for i := range page {
-			e := &page[i]
-			if wrapped && start != "" && e.Key > start {
-				s.setCursor("") // round once: from the start next time
+		read += max(page.Read, 1) // a page that read nothing still counts
+		for i := range page.Entries {
+			e := &page.Entries[i]
+			if wrapped && start != "" && e.Key < start {
+				s.setCursor("") // round once: from the greatest next time
 				return
 			}
 			d, ok := open(key, e)
@@ -81,7 +87,7 @@ func (s *Service) pass(ctx context.Context, force bool) {
 			default:
 				release, err := s.admit(ctx)
 				if err != nil {
-					s.setCursor(after) // this one is examined again next
+					s.setCursor(before) // this one is read again next
 					return
 				}
 				s.busy.add()
@@ -92,22 +98,24 @@ func (s *Service) pass(ctx context.Context, force bool) {
 				}(e.Key)
 				sends++
 			}
-			examined++
-			after = e.Key
+			before = e.Key
 			if sends == PassSendsMax {
-				s.setCursor(after)
+				s.setCursor(before)
 				return
 			}
 		}
-		if len(page) < want {
-			if wrapped {
-				s.setCursor("")
-				return
-			}
-			wrapped, after = true, ""
+		if page.Last != "" {
+			before = page.Last // past the expired rows at the page's end too
+		}
+		switch {
+		case wrapped && start != "" && before != "" && before < start, !page.More && wrapped:
+			s.setCursor("")
+			return
+		case !page.More:
+			wrapped, before = true, ""
 		}
 	}
-	s.setCursor(after)
+	s.setCursor(before)
 }
 
 func (s *Service) setCursor(k string) {

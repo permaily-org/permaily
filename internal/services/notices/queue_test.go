@@ -436,7 +436,7 @@ func TestE24APassKeepsItsBoundsOverReplayedEntries(t *testing.T) {
 	w := newWorld(t)
 	d := &noticestest.Recorder{}
 	var admitted atomic.Int32
-	listed := &listCounter{Entries: w.mem}
+	listed := &listCounter{Storage: w.mem}
 	w.entries = listed
 	q := w.enclave(d, func(context.Context, time.Time) error { admitted.Add(1); return nil })
 	for i := range notices.ListMax + 500 {
@@ -451,16 +451,16 @@ func TestE24APassKeepsItsBoundsOverReplayedEntries(t *testing.T) {
 	}
 }
 
-// listCounter counts what the queue's listings return.
+// listCounter counts the rows the queue's scans read.
 type listCounter struct {
-	store.Entries
+	notices.Storage
 	listed atomic.Int64
 }
 
-func (l *listCounter) ListEntries(c context.Context, partition, prefix, after string, limit int) ([]store.Entry, error) {
-	out, err := l.Entries.ListEntries(c, partition, prefix, after, limit)
-	if partition == notices.PartitionQueue {
-		l.listed.Add(int64(len(out)))
+func (l *listCounter) ScanEntriesDown(c context.Context, partition, prefix, before string, maxRead int) (*store.EntryScan, error) {
+	out, err := l.Storage.ScanEntriesDown(c, partition, prefix, before, maxRead)
+	if partition == notices.PartitionQueue && err == nil {
+		l.listed.Add(int64(out.Read))
 	}
 	return out, err
 }
@@ -473,15 +473,16 @@ func TestN1APassGoesOnPastWhatItCannotSend(t *testing.T) {
 	d := &noticestest.Recorder{}
 	var admitted atomic.Int32
 	q := w.enclave(d, func(context.Context, time.Time) error { admitted.Add(1); return nil })
-	// The prefix: entries that do not verify, under keys before any other.
+	// The prefix: entries that do not verify, under keys the scan, from the
+	// greatest down, reads before any other.
 	for i := range notices.ListMax + 10 {
-		w.mem.SetEntry(store.Entry{Partition: notices.PartitionQueue, Key: fmt.Sprintf("0000%028x", i), Value: []byte("{}"), Version: 1})
+		w.mem.SetEntry(store.Entry{Partition: notices.PartitionQueue, Key: fmt.Sprintf("ffff%028x", i), Value: []byte("{}"), Version: 1})
 	}
 	// Leased and not yet due entries among the rest.
 	var leased, later notices.Notice
 	for i := 0; ; i++ {
 		n := noticestest.Sample(fmt.Sprintf("rcp_%d", i))
-		if n.Key < "1" {
+		if n.Key >= "f" {
 			continue
 		}
 		switch {
@@ -497,7 +498,7 @@ func TestN1APassGoesOnPastWhatItCannotSend(t *testing.T) {
 		}
 	}
 	due := noticestest.Sample("rcp_due")
-	for i := 0; due.Key < "1"; i++ {
+	for i := 0; due.Key >= "f"; i++ {
 		due = noticestest.Sample(fmt.Sprintf("rcp_due_%d", i))
 	}
 	w.put(q, notices.Entry{Notice: due})
