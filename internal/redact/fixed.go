@@ -161,12 +161,15 @@ func tokens(text string, removed []Span) []tok {
 	return t
 }
 
-// transparent says r is a default-ignorable or format rune (Cf: U+200B to
-// U+200D, U+2060, U+FEFF, U+00AD and the rest), a variation selector or the
-// combining grapheme joiner: it never ends a piece.
+// transparent says r is default-ignorable, as Unicode's
+// Default_Ignorable_Code_Point property says (finding 1 of the code review):
+// a format rune (Cf: U+200B to U+200D, U+2060, U+FEFF, U+00AD and the rest),
+// one of Other_Default_Ignorable_Code_Point (the combining grapheme joiner,
+// the Hangul fillers, the Khmer inherent vowels, the reserved U+2065, U+FFF0
+// to U+FFF8 and U+E0000 to U+E0FFF) or a variation selector, less white
+// space. It never ends a piece, and inside one it belongs to it.
 func transparent(r rune) bool {
-	return unicode.Is(unicode.Cf, r) || (r >= 0xFE00 && r <= 0xFE0F) || (r >= 0xE0100 && r <= 0xE01EF) ||
-		(r >= 0x180B && r <= 0x180F) || r == 0x034F
+	return unicode.In(r, unicode.Cf, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector) && !unicode.IsSpace(r)
 }
 
 func digit(r rune) bool { return r >= 0 && unicode.IsDigit(r) }
@@ -251,29 +254,130 @@ func digitGroups(t []tok) []group {
 }
 
 // emailRune may be part of an address's run: not white space, a control,
-// one of <>()[]"',;:` or an invalid byte or a marker.
+// one of <>()[]",;: or an invalid byte or a marker. An apostrophe and a
+// backtick are, as they may be in a local part (o'connor@example.com).
 func emailRune(r rune) bool {
 	if r < 0 || space(r) || unicode.IsControl(r) {
 		return false
 	}
-	return !strings.ContainsRune("<>()[]\"',;:`", r)
+	return !strings.ContainsRune("<>()[]\",;:", r)
 }
 
-// emails is every run of emailRune that holds an at sign with at least one
-// rune before it and, after it (up to the next at sign), at least two
-// labels joined by a dot; the run's trailing punctuation left out.
+// lineRune may be inside a quoted local part or a domain literal: anything
+// on the line but an invalid byte (a marker is: the text around a removal
+// reads on). A control other than a tab, and a line or paragraph separator,
+// end the line.
+func lineRune(r rune) bool {
+	if r == markRune {
+		return true
+	}
+	return r >= 0 && (r == '\t' || !unicode.IsControl(r)) && r != 0x2028 && r != 0x2029
+}
+
+// closer finds the '"' that closes a '"' on its line, a backslash escaping
+// the rune after it. A '"' inside an earlier search is an escaped one, and
+// a search from it reads on as the earlier one did, so it has that one's
+// answer: the text is read once (the calls' quotes come in order).
+type closer struct {
+	t            []tok
+	until, close int
+}
+
+func (c *closer) at(q int) int {
+	if q < c.until {
+		return c.close
+	}
+	k := q + 1
+	for k < len(c.t) && lineRune(c.t[k].r) {
+		if c.t[k].r == '"' {
+			c.until, c.close = k, k
+			return k
+		}
+		if c.t[k].r == '\\' && k+1 < len(c.t) && lineRune(c.t[k+1].r) {
+			k++
+		}
+		k++
+	}
+	c.until, c.close = k, -1
+	return -1
+}
+
+// quoted is where a quoted local part that starts at q ends (its closing
+// '"', which an at sign or a dot follows), or -1.
+func (c *closer) quoted(q int) int {
+	if c.t[q].r != '"' {
+		return -1
+	}
+	e := c.at(q)
+	if e < 0 || e+1 >= len(c.t) || (!atSign(c.t[e+1].r) && !dot(c.t[e+1].r)) {
+		return -1
+	}
+	return e
+}
+
+// literal is where a domain literal that starts at k ends: a '[' after an at
+// sign, then runes that are not white space, '[', ']' or a backslash, one
+// of them a digit or ':' ("[192.0.2.1]", "[IPv6:2001:db8::1]"; never the
+// marker), and its ']' when it has one (an unclosed one is removed as far
+// as it goes); or -1.
+func literal(t []tok, k int) int {
+	if t[k].r != '[' || k == 0 || !atSign(t[k-1].r) {
+		return -1
+	}
+	j, sure := k+1, false
+	for j < len(t) && lineRune(t[j].r) && !space(t[j].r) && !strings.ContainsRune("[]\\", t[j].r) {
+		sure = sure || digit(t[j].r) || t[j].r == ':'
+		j++
+	}
+	if !sure {
+		return -1
+	}
+	if j < len(t) && t[j].r == ']' {
+		return j
+	}
+	return j - 1
+}
+
+// emails is every address of t (finding 2 of the code review widened the
+// grammar): a run of emailRune, quoted local parts and, after an at sign,
+// domain literals, that holds an at sign with at least one rune before it
+// and, after it (up to the next at sign), a domain literal or at least two
+// labels joined by a dot; the run's trailing punctuation left out. An at
+// sign right after a '"' that opens no quoted local part (an unsure one)
+// takes the run back to the '"' before it on its line, or the line's start.
 func emails(t []tok) []Span {
 	var out []Span
+	c := &closer{t: t}
 	for i := 0; i < len(t); {
-		if !emailRune(t[i].r) {
+		a, b := i, i
+		if e := c.quoted(i); e >= 0 {
+			b = e
+		} else if !emailRune(t[i].r) {
 			i++
 			continue
 		}
-		a, b := i, i
-		for b+1 < len(t) && emailRune(t[b+1].r) {
-			b++
+		for b+1 < len(t) {
+			k := b + 1
+			if emailRune(t[k].r) {
+				b = k
+			} else if e := c.quoted(k); e >= 0 {
+				b = e
+			} else if e := literal(t, k); e >= 0 {
+				b = e
+			} else {
+				break
+			}
 		}
 		i = b + 1
+		if atSign(t[a].r) && a > 0 && t[a-1].r == '"' {
+			a--
+			for a > 0 && lineRune(t[a-1].r) && t[a-1].r != '"' {
+				a--
+			}
+			if a > 0 && t[a-1].r == '"' {
+				a--
+			}
+		}
 		for b >= a && trailing(t[b].r) {
 			b--
 		}
@@ -289,6 +393,8 @@ func emailIn(run []tok) bool {
 	ok := func() bool { return at > 0 && labels+min(label, 1) >= 2 }
 	for k, x := range run {
 		switch {
+		case at > 0 && k == at+1 && literal(run, k) >= 0:
+			return true // a domain literal
 		case atSign(x.r):
 			if ok() {
 				return true

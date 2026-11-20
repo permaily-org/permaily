@@ -53,3 +53,17 @@
 {"name":"a phone number in a word is removed with the domain it was written into","kinds":["phone_number","link"],"in":"See abc.de5551234567 now","out":"See [removed] now","shapes":{"phone_number":1}}
 {"name":"an IBAN whose last group has an account number written after it","kinds":["account_number"],"in":"Pay GB82 WEST 1234 ABCD5551234567 now","out":"Pay [removed] now","shapes":{"account_number":1}}
 {"name":"every kind at once","kinds":["email_address","phone_number","card_number","account_number","numeric_code","link"],"in":"Ana <ana@example.com>, +34 612 34 56 78, card 4111 1111 1111 1111, code 4821, see https://example.com/x.","out":"Ana <[removed]>, [removed], card [removed], code [removed], see [removed].","shapes":{"email_address":1,"phone_number":2,"numeric_code":1,"link":1}}
+{"name":"a default-ignorable Khmer vowel inside a phone number neither breaks nor counts (review finding 1)","kinds":["phone_number"],"in":"555឴123឴4567","out":"[removed]","shapes":{"phone_number":1}}
+{"name":"Hangul fillers inside a phone number neither break nor count (review finding 1)","kinds":["phone_number"],"in":"Call 555ᅟ123ᅠ4567 or 555ㅤ123ﾠ4567","out":"Call [removed] or [removed]","shapes":{"phone_number":2}}
+{"name":"a tag character inside a code neither breaks nor counts (review finding 1)","kinds":["numeric_code"],"in":"Code 12󠁁󠁁34","out":"Code [removed]","shapes":{"numeric_code":1}}
+{"name":"a quoted local part is removed whole (review finding 2)","kinds":["email_address"],"in":"\"private person\"@example.com","out":"[removed]","shapes":{"email_address":1}}
+{"name":"a quoted local part with an escaped quote is removed whole (review finding 2)","kinds":["email_address"],"in":"Write \"a\\\"b c\"@example.com, thanks","out":"Write [removed], thanks","shapes":{"email_address":1}}
+{"name":"a quoted part after a dot is removed with the rest of the local part (review finding 2)","kinds":["email_address"],"in":"Write ana.\"b c\"@example.com now","out":"Write [removed] now","shapes":{"email_address":1}}
+{"name":"a closing quote with no opening quote before the at sign removes back to the line's start (review finding 2)","kinds":["email_address"],"in":"Mail private person\"@example.com\nbye","out":"[removed]\nbye","shapes":{"email_address":1}}
+{"name":"a quoted sentence holding an address is not a local part","kinds":["email_address"],"in":"He wrote \"ana@example.com\" twice","out":"He wrote \"[removed]\" twice","shapes":{"email_address":1}}
+{"name":"an IPv4 domain literal is removed whole (review finding 2)","kinds":["email_address"],"in":"alice@[192.0.2.1]","out":"[removed]","shapes":{"email_address":1}}
+{"name":"an IPv6 domain literal is removed whole (review finding 2)","kinds":["email_address"],"in":"Write bob@[IPv6:2001:db8::1].","out":"Write [removed].","shapes":{"email_address":1}}
+{"name":"an unclosed domain literal is removed as far as it goes (review finding 2)","kinds":["email_address"],"in":"alice@[192.0.2.1 later","out":"[removed] later","shapes":{"email_address":1}}
+{"name":"the marker after an at sign is not a domain literal","kinds":["email_address"],"in":"x@[removed]","out":"x@[removed]","shapes":{}}
+{"name":"an apostrophe inside a local part leaves no prefix (review finding 2)","kinds":["email_address"],"in":"o'connor@example.com","out":"[removed]","shapes":{"email_address":1}}
+{"name":"an apostrophe local part after a word (review finding 2)","kinds":["email_address"],"in":"Mail o'connor@example.com","out":"Mail [removed]","shapes":{"email_address":1}}

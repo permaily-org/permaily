@@ -152,7 +152,8 @@ func inputs(t *testing.T) []string {
 		"1://x;http://y", "DE89\u00a03704\u00a00044\u00a00532\u00a00130\u00a000", "٠١٢٣٤٥٦٧٨٩ ۰۱۲۳", "Ｇ８２", "ab\u0301c.com",
 	)
 	alphabet := []string{"1", "2", "9", " ", "-", ".", ",", "/", "(", ")", "+", "@", "a", "Z", "G", "B", "www", "com", "de", "://",
-		"http", "tel:", "mailto:", "\u200b", "\u00a0", "\n", "。", "＠", "\xff", "\x80", "é", "例", "[removed]", ":", "?", "!", "\t", "_"}
+		"http", "tel:", "mailto:", "\u200b", "\u00a0", "\n", "。", "＠", "\xff", "\x80", "é", "例", "[removed]", ":", "?", "!", "\t", "_",
+		"\"", "[", "]", "'", "\\", "\u17b4", "\u3164", "[1", "IPv6:"}
 	rng := rand.New(rand.NewPCG(40, 2))
 	for range 3000 {
 		var b strings.Builder
@@ -246,6 +247,7 @@ func TestU9TheWorstInputsAreReadInLinearTime(t *testing.T) {
 	for _, unit := range []string{
 		"1-", "1 ", "1", "a@", "a.", "a.b@", "@a.", "GB82 ", "GB82 WEST ", "www.", "://", "http://", "a://", "1.a",
 		"a", "(", "1\u200b", "\xff", "a.de1", "x.y/", "tel:", "A1 ", "a@b.c ",
+		"\"", "\\\"", "\"a ", "x\"@", "\"@", "\"a\"@", "a@[1 ", "a@[1.", "@[", "o'", "1\u17b4", "\"\\",
 	} {
 		text := strings.Repeat(unit, (256<<10)/len(unit))
 		start := time.Now()
