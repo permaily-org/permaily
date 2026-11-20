@@ -3,10 +3,12 @@ package receipts
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/services/notices"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/pkg/attestation"
 )
@@ -51,6 +53,26 @@ type chainState struct {
 
 	catalogue *appender
 	incidents *appender
+	// notices, when given (WithNotices), is told of every account an
+	// incident's entry names once the entry commits.
+	notices notices.Queue
+}
+
+// ChainedOption is an option of NewChained.
+type ChainedOption func(*chainState)
+
+// WithNotices queues the notice that an account's receipts were found
+// deleted or changed (notices.KindReceiptsIncident) for every account an
+// entry of the record of incidents names, once that entry is committed,
+// under notices.IncidentKey of the entry's time: the queue keeps one a day
+// per account, whatever was found that day, and whichever enclave found it
+// (ADR 0041, "Which notices"). An entry that fails to commit queues
+// nothing. Queuing holds the caller at most notices.EnqueueMax, outside the
+// record's lock and whatever became of the caller's context, and a notice
+// that cannot be queued fails nothing of the record nor of what reported
+// it; the chain logs nothing, so it is not logged here either.
+func WithNotices(q notices.Queue) ChainedOption {
+	return func(c *chainState) { c.notices = q }
 }
 
 var (
@@ -75,7 +97,7 @@ var errNotChained = errors.New("receipts: the service is not chained")
 // "receipt link", never their names, and nothing of the chain logs an
 // account (ADR 0037, "When the link before cannot be read"; the review of
 // #170, ruling 11).
-func NewChained(entries store.Entries, keys Keys, now func() time.Time, chain *store.Anchored, accounts Accounts) (*Service, error) {
+func NewChained(entries store.Entries, keys Keys, now func() time.Time, chain *store.Anchored, accounts Accounts, opts ...ChainedOption) (*Service, error) {
 	scanner, scans := entries.(store.Scanner)
 	switch {
 	case chain == nil || !chain.Strict:
@@ -97,6 +119,9 @@ func NewChained(entries store.Entries, keys Keys, now func() time.Time, chain *s
 	}
 	c.catalogue = &appender{s: s, sr: catalogueSeriesOf}
 	c.incidents = &appender{s: s, sr: incidentSeriesOf}
+	for _, o := range opts {
+		o(c)
+	}
 	s.chain = c
 	return s, nil
 }
@@ -150,19 +175,40 @@ func (s *Service) record(ctx context.Context, findings []Finding) error {
 	if len(todo) == 0 {
 		return nil
 	}
+	committed, err := s.recordLocked(ctx, todo)
+	s.noticeIncidents(ctx, committed)
+	return err
+}
+
+// incidentAt is an entry of the record of incidents that was committed: its
+// time and the accounts its findings name.
+type incidentAt struct {
+	at       time.Time
+	accounts []string
+}
+
+// recordLocked writes todo in entries of the record of incidents, in chunks
+// of IncidentFindingsMax, holding the record's lock, and returns the entries
+// it committed, those before an error included.
+func (s *Service) recordLocked(ctx context.Context, todo []Finding) ([]incidentAt, error) {
+	c := s.chain
 	key, err := s.chainKey(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	c.incidents.write.Lock()
 	defer c.incidents.write.Unlock()
+	var committed []incidentAt
 	for len(todo) > 0 {
 		chunk := todo[:min(len(todo), IncidentFindingsMax)]
-		if _, err := c.incidents.putLocked(ctx, key, func(n uint64, at time.Time, prev *Digest, br BreakReason) []byte {
-			return mustJSON(&Incident{V: IncidentVersion, I: n, At: at, Prev: prev, Break: br, Findings: chunk})
+		var at time.Time
+		if _, err := c.incidents.putLocked(ctx, key, func(n uint64, t time.Time, prev *Digest, br BreakReason) []byte {
+			at = t
+			return mustJSON(&Incident{V: IncidentVersion, I: n, At: t, Prev: prev, Break: br, Findings: chunk})
 		}, nil); err != nil {
-			return err
+			return committed, err
 		}
+		committed = append(committed, incidentAt{at: at, accounts: accountsOf(chunk)})
 		c.mu.Lock()
 		if len(c.recorded) >= recordedMax {
 			clear(c.recorded)
@@ -174,7 +220,39 @@ func (s *Service) record(ctx context.Context, findings []Finding) error {
 		c.mu.Unlock()
 		todo = todo[len(chunk):]
 	}
-	return nil
+	return committed, nil
+}
+
+// accountsOf are the accounts findings name, each once, in order; a
+// finding of the catalogue names none.
+func accountsOf(findings []Finding) []string {
+	var out []string
+	for _, f := range findings {
+		if f.Account != "" {
+			out = append(out, f.Account)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// noticeIncidents queues the notice of every account the committed entries
+// name (WithNotices), bounded by notices.EnqueueMax; an error is dropped.
+func (s *Service) noticeIncidents(ctx context.Context, committed []incidentAt) {
+	q := s.chain.notices
+	if q == nil || len(committed) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), notices.EnqueueMax)
+	defer cancel()
+	for _, e := range committed {
+		for _, account := range e.accounts {
+			_ = q.Enqueue(ctx, notices.Notice{
+				Account: account, Kind: notices.KindReceiptsIncident, At: e.at,
+				Key: notices.IncidentKey(account, e.at),
+			})
+		}
+	}
 }
 
 // Incidents implements Auditor: the record of incidents' head, found by
