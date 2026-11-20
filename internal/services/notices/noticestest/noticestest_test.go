@@ -12,8 +12,8 @@ import (
 
 // The fake keeps the contract the real queue keeps (ADR 0041, E20).
 func TestE20TheFakeKeepsTheContract(t *testing.T) {
-	noticestest.Contract(t, func(_ *testing.T, d notices.Deliverer, clock *noticestest.Clock) (a, b noticestest.Subject) {
-		f := &noticestest.Fake{Deliverer: d, Now: clock.Now}
+	noticestest.Contract(t, func(_ *testing.T, a, _ noticestest.Enclave, clock *noticestest.Clock) (qa, qb noticestest.Subject) {
+		f := &noticestest.Fake{Deliverer: a.Deliverer, Now: clock.Now}
 		return f, f
 	})
 }
