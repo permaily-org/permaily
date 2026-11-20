@@ -77,6 +77,9 @@ type platform struct {
 	// one strict Anchored of its records.
 	connections       *composedConnections
 	connectionRecords *store.Anchored
+	// rulesRecords is the one strict Anchored of the person's rules'
+	// records (ADR 0040); nil without connections.
+	rulesRecords *store.Anchored
 	// receipts is the record of what left, chained (ADR 0037), over its one
 	// strict Anchored; nil without the model.
 	receipts *composedReceipts
@@ -175,7 +178,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			// Only the newest version of one is kept, so a name or a passkey
 			// that was removed does not stay in the table (ADR 0017); the TLS
 			// identity above keeps every version (ADR 0016).
-			var accountRecords, mailboxRecords, modelRecords, connectionRecords, chainRecords *store.Anchored
+			var accountRecords, mailboxRecords, modelRecords, connectionRecords, rulesRecords, chainRecords *store.Anchored
 			if cfg.mailFrom != "" {
 				accountRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true}
 				sender, err := p.signIn(ctx, cfg, hosts, awsCfg, egress, accountRecords, awsStore, root, log)
@@ -215,6 +218,11 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 				// the host's vendor egress (port 8004) and nothing else.
 				connectionRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true, Strict: true}
 				p.connectionRecords = connectionRecords
+				// The person's rules (ADR 0040): an account's record of rules
+				// is a strict record, read and written through this Anchored
+				// alone, which reads no other name.
+				rulesRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true, Strict: true}
+				p.rulesRecords = rulesRecords
 				// The record of what left, chained (ADR 0037): links, the
 				// catalogue of chains, the audit's passes and the record of
 				// incidents are strict records made once, read and written
@@ -225,12 +233,12 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 				if p.receipts, err = composeReceipts(receiptsParts{chain: chainRecords, entries: awsStore, keys: root, accounts: p.accounts}); err != nil {
 					return nil, err
 				}
-				if p.connections, err = enclaveConnections(cfg, hosts, connectionRecords, awsStore, root, p); err != nil {
+				if p.connections, err = enclaveConnections(cfg, hosts, connectionRecords, awsStore, root, p, log); err != nil {
 					return nil, err
 				}
 			}
 			p.anchors = func() *attestation.AnchorStatus {
-				st := anchorStatus(anchored, accountRecords, mailboxRecords, modelRecords, connectionRecords, cfg.anchorBucket, cfg.anchorRetentionDays)
+				st := anchorStatus(anchored, accountRecords, mailboxRecords, modelRecords, connectionRecords, rulesRecords, cfg.anchorBucket, cfg.anchorRetentionDays)
 				st.Regressions = append(st.Regressions, receiptRegressions(chainRecords)...)
 				return st
 			}
@@ -311,11 +319,11 @@ var vendorEgress = enclave.VendorEgressClient
 // keys, with the platform's accounts, mailboxes and model; vendors'
 // documents are fetched through the host's vendor egress on
 // cfg.vendorEgressPort (8004) and nothing else.
-func enclaveConnections(cfg config, hosts router.Hosts, records *store.Anchored, table connectionsStore, root connections.Keys, p *platform) (*composedConnections, error) {
+func enclaveConnections(cfg config, hosts router.Hosts, records *store.Anchored, table connectionsStore, root connections.Keys, p *platform, log *slog.Logger) (*composedConnections, error) {
 	return composeConnections(connectionsParts{
 		oauth: oauthConfig(hosts, cfg.oauthPort()), domain: cfg.domain, records: records, entries: table, keys: root,
 		vendorHTTP: vendorEgress(cfg.vendorEgressPort), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model,
-		receipts: p.receipts,
+		receipts: p.receipts, rulesRecords: p.rulesRecords, log: log,
 	})
 }
 
@@ -338,7 +346,7 @@ func anchorCommits(api store.S3CommitsAPI, bucket string, key func(context.Conte
 // back, was forked or has a commit S3 did not keep locked, never which; of
 // the model's records and the connections' the same, without their
 // versions.
-func anchorStatus(a, ofAccounts, ofMailboxes, ofModel, ofConnections *store.Anchored, bucket string, retentionDays int) *attestation.AnchorStatus {
+func anchorStatus(a, ofAccounts, ofMailboxes, ofModel, ofConnections, ofRules *store.Anchored, bucket string, retentionDays int) *attestation.AnchorStatus {
 	st := &attestation.AnchorStatus{Bucket: bucket, RetentionDays: retentionDays, Records: []attestation.AnchoredRecord{}}
 	for _, c := range a.Seen() {
 		st.Records = append(st.Records, attestation.AnchoredRecord{Name: c.Name, Version: c.Version, CommittedAt: c.At, LockedUntil: c.LockedUntil})
@@ -364,6 +372,11 @@ func anchorStatus(a, ofAccounts, ofMailboxes, ofModel, ofConnections *store.Anch
 	if ofConnections != nil {
 		for _, r := range ofConnections.Regressions() {
 			st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: connectionRecord, At: r.At, Fork: r.Fork, Unlocked: r.Unlocked, Lost: r.Lost})
+		}
+	}
+	if ofRules != nil {
+		for _, r := range ofRules.Regressions() {
+			st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: rulesRecord, At: r.At, Fork: r.Fork, Unlocked: r.Unlocked, Lost: r.Lost})
 		}
 	}
 	return st

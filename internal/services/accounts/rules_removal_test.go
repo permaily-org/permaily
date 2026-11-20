@@ -64,7 +64,8 @@ func TestU30RemovingAnAccountRemovesItsRules(t *testing.T) {
 	}
 	ar := rulesOf(t, w, k)
 	failing := &failingRules{Rules: ar, fail: errors.New("the rules cannot be removed now")}
-	w.svc.cfg.Rules = failing
+	// Given after the service was made, as the composition gives it.
+	w.svc.SetRules(failing)
 	me, cookie := w.signUp("ana@example.org")
 	id := me.Account.ID
 	d := contracts.RuleDraft{Name: "a", On: true, Effect: contracts.EffectHold, Scope: contracts.RuleScope{To: contracts.ScopeAll},

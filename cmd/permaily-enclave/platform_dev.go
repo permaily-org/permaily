@@ -406,13 +406,20 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	if p.receipts, err = composeReceipts(receiptsParts{chain: chainRecords, entries: mem, keys: local, accounts: p.accounts, now: devClock}); err != nil {
 		return nil, err
 	}
+	// The person's rules, as in the enclave: their records strict in one
+	// Anchored of their own (ADR 0040).
+	rulesRecords := &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock}
 	if p.connections, err = composeConnections(connectionsParts{
 		oauth: oauthConfig(hosts, cfg.oauthPort()), domain: cfg.domain, records: p.connectionRecords, entries: mem, keys: local,
-		vendorHTTP: devVendorHTTP(cfg.dev), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model, receipts: p.receipts, now: devClock,
+		vendorHTTP: devVendorHTTP(cfg.dev), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model, receipts: p.receipts,
+		rulesRecords: rulesRecords, log: log, now: devClock,
 	}); err != nil {
 		return nil, err
 	}
-	p.records = map[string]*store.Anchored{"accounts": accountRecords, "mailboxes": mailboxRecords, "model": modelRecords, "connections": p.connectionRecords, "receipts": chainRecords}
+	p.records = map[string]*store.Anchored{
+		"accounts": accountRecords, "mailboxes": mailboxRecords, "model": modelRecords, "connections": p.connectionRecords, "receipts": chainRecords,
+		"rules": rulesRecords,
+	}
 	devPlatforms.add(p)
 	port := cfg.smtpPort
 	if port == 25 {

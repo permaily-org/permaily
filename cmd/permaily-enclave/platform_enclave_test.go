@@ -39,14 +39,14 @@ func TestAnchorStatusSaysTheModelsRecordsWentBackWithoutTheirVersions(t *testing
 	if _, _, err := model.GetRecordAt(ctx, "model-spend-2026-11"); !errors.Is(err, store.ErrLost) {
 		t.Fatalf("a record whose value was deleted: %v", err)
 	}
-	st := anchorStatus(tls, nil, nil, model, nil, "anchors", 3650)
+	st := anchorStatus(tls, nil, nil, model, nil, nil, "anchors", 3650)
 	if len(st.Records) != 0 || len(st.Regressions) != 1 {
 		t.Fatalf("%+v", st)
 	}
 	if r := st.Regressions[0]; r.Name != modelRecord || !r.Lost || r.Had != 0 || r.Found != 0 || r.At.IsZero() {
 		t.Fatalf("%+v", r)
 	}
-	if st := anchorStatus(tls, nil, nil, nil, nil, "anchors", 3650); len(st.Regressions) != 0 {
+	if st := anchorStatus(tls, nil, nil, nil, nil, nil, "anchors", 3650); len(st.Regressions) != 0 {
 		t.Fatalf("an image without the model: %+v", st)
 	}
 }
@@ -73,8 +73,8 @@ func TestV57TheVendorsAreFetchedThroughTheVendorEgress(t *testing.T) {
 	if err := fs.Parse(nil); err != nil {
 		t.Fatal(err)
 	}
-	p := &platform{accounts: w.parts.accounts, mailboxes: w.parts.mailboxes, model: w.parts.model, receipts: w.parts.receipts}
-	c, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p)
+	p := &platform{accounts: w.parts.accounts, mailboxes: w.parts.mailboxes, model: w.parts.model, receipts: w.parts.receipts, rulesRecords: w.parts.rulesRecords}
+	c, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p, nil)
 	if err != nil || c == nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestV57TheVendorsAreFetchedThroughTheVendorEgress(t *testing.T) {
 	if err := fs.Parse([]string{"-vendor-egress-port", "9004"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p); err != nil || len(ports) != 1 || ports[0] != 9004 {
+	if _, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p, nil); err != nil || len(ports) != 1 || ports[0] != 9004 {
 		t.Fatalf("-vendor-egress-port 9004: asked on %v (%v)", ports, err)
 	}
 	// The host listens there by default, and the entry point changes
@@ -167,7 +167,7 @@ func TestAnchorStatusSaysTheConnectionsRecordsWentBackWithoutTheirVersions(t *te
 	if _, _, err := conns.GetRecordAt(ctx, name); !errors.Is(err, store.ErrLost) {
 		t.Fatalf("a record whose value was deleted: %v", err)
 	}
-	st := anchorStatus(tls, nil, nil, nil, conns, "anchors", 3650)
+	st := anchorStatus(tls, nil, nil, nil, conns, nil, "anchors", 3650)
 	if len(st.Records) != 0 || len(st.Regressions) != 1 {
 		t.Fatalf("%+v", st)
 	}

@@ -123,13 +123,10 @@ func (s *Service) receipt(r *reading, kind receipts.Kind) *receipts.Receipt {
 	}
 }
 
-// ruleRefs are the rules r applies, once read; before, Config.Rules (the
-// rules a refusal before them would have applied, none with a Source).
-func (r *reading) ruleRefs(s *Service) []rules.Ref {
-	if r.rules != nil {
-		return r.rules
-	}
-	return s.ruleRefs()
+// ruleRefs are the rules r applies, once read; none before (a refusal
+// before the account's rules were read names none).
+func (r *reading) ruleRefs(_ *Service) []rules.Ref {
+	return r.rules
 }
 
 // refuse records the refusal of a request a valid token attributed to its

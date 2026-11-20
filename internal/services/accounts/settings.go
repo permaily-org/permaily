@@ -426,8 +426,8 @@ func (s *Service) clear(ctx context.Context, id, closing string) error {
 	// Every epoch of its record of rules, the first never written fenced
 	// (ADR 0040, U30): done again by every pass that tries the removal
 	// again, and nothing more once done.
-	if s.cfg.Rules != nil {
-		if err := s.cfg.Rules.Remove(ctx, id); err != nil {
+	if r := s.rulesOf(); r != nil {
+		if err := r.Remove(ctx, id); err != nil {
 			return err
 		}
 	}

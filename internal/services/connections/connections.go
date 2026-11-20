@@ -44,7 +44,6 @@ import (
 
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/oauth"
-	"github.com/permaily-org/permaily/internal/rules"
 	"github.com/permaily-org/permaily/internal/services/accountrules"
 	"github.com/permaily-org/permaily/internal/services/notices"
 	"github.com/permaily-org/permaily/internal/services/receipts"
@@ -89,14 +88,11 @@ type Config struct {
 	// Source is the rules each connection's reads apply first, by the
 	// account and the connection's client, in their order (ADR 0040,
 	// accountrulestest.Fake in tests): the default rule unless the person
-	// turned it off, then the person's own. An error gives nothing of the
-	// account's mail (ErrUnavailable). When nil, Rules apply to every
-	// account and client, as in step 5 (the composition until ADR 0040's
-	// pull request 8 gives it the rules service).
+	// turned it off, then the person's own. Required: there is no list of
+	// rules for every account to fall back on (ADR 0040's pull request 8
+	// removed step 5's Config.Rules). An error gives nothing of the
+	// account's mail (ErrUnavailable), the default alone included.
 	Source accountrules.Source
-	// Rules are the rules every connection's reads apply first when Source
-	// is nil: in step 5, rules.Default() alone.
-	Rules []rules.Rule
 	// Receipts writes the record of what left, before it leaves.
 	Receipts receipts.Writer
 	// Notices, when set, queues the notices about connections (ADR 0041,

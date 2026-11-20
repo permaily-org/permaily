@@ -33,7 +33,7 @@ const sameHost = "https://tools.example.org/other/client.json"
 func (w *world) ruleEnclave(src accountrules.Source) *Service {
 	w.t.Helper()
 	cfg := w.config(&store.Anchored{Records: w.mem, Commits: w.commits, Strict: true, Now: w.clock.now})
-	cfg.Source, cfg.Rules = src, nil
+	cfg.Source = src
 	s, err := New(cfg)
 	if err != nil {
 		w.t.Fatal(err)

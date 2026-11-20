@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -522,8 +523,8 @@ func TestU27RulesThatCannotBeRead(t *testing.T) {
 // the draft checked first, then the mailbox opened as a search opens it
 // (another account's or none is not_found), the limit and the cursor; pages
 // that follow one another skip nothing and repeat nothing; ask_model needs
-// the rules' notice in force agreed; a removal's preview of one message is
-// not served until the discloser's removals are (pull request 5).
+// the rules' notice in force agreed; and one message as a removal would
+// leave it.
 func TestU27TheRulePreview(t *testing.T) {
 	a := newRulesApp(t, nil)
 	box := a.fake.Add(alice, "Mine")
@@ -600,8 +601,32 @@ func TestU27TheRulePreview(t *testing.T) {
 	if p.Page.Model != contracts.MatchModelOff || len(p.Page.NeedsModel) != 9 || len(p.Page.Messages) != 0 {
 		t.Fatalf("%+v", p.Page)
 	}
-	// One message as the removal would leave it: not yet.
-	want(t, preview("alice", `{"draft":`+two+`,"mailbox":"`+box.ID+`","message":"`+want3[0]+`"}`), 404, "not_found")
+	// One message as a removal would leave it (ADR 0040, pull request 8):
+	// a hold has nothing to show; a removal of the subject and of phone
+	// numbers leaves the text less the number, the sender and attachments
+	// counted out; topics without the model remove the whole subject and
+	// text, undecided; a message not in the mailbox is not_found.
+	want(t, preview("alice", `{"draft":`+two+`,"mailbox":"`+box.ID+`","message":"`+want3[0]+`"}`), 400, "invalid_rule")
+	call := a.seedFrom(box.ID, "From: Ana <ana@example.org>\r\nTo: x@example.org\r\nSubject: Call me\r\nContent-Type: text/plain\r\n\r\nRing 555 123 4567 today.\r\n")
+	shapes := `{"name":"Numbers","criteria":[` + formulaOf(cond("subject", "contains", "call")) + `],"effect":"remove",` +
+		`"removal":{"parts":["subject"],"shapes":["phone_number"]},"scope":{"to":"all"},"on":true}`
+	var shown contracts.RuleRemovalPreview
+	read(t, preview("alice", `{"draft":`+shapes+`,"mailbox":"`+box.ID+`","message":"`+call+`"}`), 200, &shown)
+	if shown.DraftID != a.checked(shapes).DraftID || shown.Subject != nil || shown.Text == nil || *shown.Text != "Ring [removed] today.\n" ||
+		shown.Removed.Shapes[contracts.ShapePhoneNumber] != 1 || !slices.Equal(shown.Removed.Parts, []contracts.Part{contracts.PartSubject, contracts.PartSender}) {
+		t.Fatalf("a removal's preview: %+v %+v", shown, shown.Removed)
+	}
+	topics := `{"name":"Calls","criteria":[` + formulaOf(cond("subject", "contains", "call")) + `],"effect":"remove",` +
+		`"removal":{"parts":[],"shapes":[],"topics":["phone calls"]},"scope":{"to":"all"},"on":true}`
+	for _, ask := range []string{"", `,"ask_model":true`} {
+		shown = contracts.RuleRemovalPreview{}
+		read(t, preview("alice", `{"draft":`+topics+`,"mailbox":"`+box.ID+`","message":"`+call+`"`+ask+`}`), 200, &shown)
+		if shown.Subject != nil || shown.Text != nil || !shown.Removed.Whole || shown.Removed.Why != "undecided" {
+			t.Fatalf("topics with no model to ask (%q): %+v %+v", ask, shown, shown.Removed)
+		}
+	}
+	want(t, preview("alice", `{"draft":`+shapes+`,"mailbox":"`+box.ID+`","message":"`+box.ID+`.`+strings.Repeat("0", 32)+`"}`), 404, "not_found")
+	want(t, preview("alice", `{"draft":`+shapes+`,"mailbox":"`+theirs.ID+`","message":"`+call+`"}`), 404, "not_found")
 	// Without previews, the route is not there.
 	b := newRulesApp(t, func(c *httpapi.RulesConfig) { c.Previews = nil })
 	want(t, b.do("alice", "POST", "/api/v1/rules/preview", `{"draft":`+two+`,"mailbox":"`+box.ID+`"}`), 404, "not_found")

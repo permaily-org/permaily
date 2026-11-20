@@ -12,6 +12,8 @@ import (
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/query"
+	"github.com/permaily-org/permaily/internal/redact"
+	"github.com/permaily-org/permaily/internal/rules"
 	"github.com/permaily-org/permaily/internal/services/accountrules"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
 )
@@ -66,24 +68,23 @@ func MailboxesWithRulePreviews(cfg MailboxesConfig) (http.Handler, *RulePreviews
 // and a query as doubt (above 0.20) is listed Unknown: the preview may
 // list more than the rule applies to, never less.
 //
-// With message set, the page is one message as the draft's removal would
-// leave it (contracts.RuleRemovalPreview), which needs the discloser's one
-// view and removals (ADR 0040's pull request 5).
-// TODO(ADR 0040, pull request 5): answer RuleRemovalPreview once the
-// discloser's removals are merged; until then it is not_found.
+// With message set, the answer is one message of the mailbox as the
+// draft's removal would leave it (contracts.RuleRemovalPreview, removal):
+// the draft must remove (invalid_rule, removal_missing, for one that
+// holds); the mailbox opened as a read of one message opens it.
 func (a *rulesAPI) preview(w http.ResponseWriter, r *http.Request, p accountrules.Person) {
 	var in contracts.RulePreview
 	if !a.standing(w, r, p, false) || !decodeRule(w, r, &in) {
-		return
-	}
-	if in.Message != "" {
-		a.fail(w, r, contracts.ErrNotFound)
 		return
 	}
 	m := a.cfg.Previews.m
 	check, err := a.cfg.Rules.Check(r.Context(), p.Account, in.Draft)
 	if err != nil {
 		a.fail(w, r, err)
+		return
+	}
+	if in.Message != "" {
+		a.removal(w, r, p, in, check)
 		return
 	}
 	c := mailboxes.Caller{Account: p.Account, ConfirmedUntil: p.ConfirmedUntil}
@@ -271,4 +272,52 @@ func arrivedAt(id string) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(0, int64(n)).UTC() //nolint:gosec // 63 bits fit
+}
+
+// previewRuleID names the draft compiled for a removal's preview: no rule
+// of the account, and nothing is kept under it.
+const previewRuleID = "rul_preview"
+
+// removal answers one message as the checked draft's removal would leave it
+// (inbox.PreviewRemoval, on the message's one view, as a connection's read
+// removes it): opened as the person's read of one message is
+// (mailboxes.AccessReadMessage), its text read under the mailboxes routes'
+// read budget; with ask_model the rules' notice in force agreed and the
+// sentences asked through the mailboxes routes' Asker in the account's
+// share, without it a removal by meaning removes the whole subject and text
+// (undecided). It begins and settles no decision, and keeps nothing.
+func (a *rulesAPI) removal(w http.ResponseWriter, r *http.Request, p accountrules.Person, in contracts.RulePreview, check *contracts.RuleCheck) {
+	m := a.cfg.Previews.m
+	rule, err := rules.Compile(rules.Stored{ID: previewRuleID, Version: 1, Draft: check.Draft})
+	if err != nil || rule.Effect != rules.Remove || rule.Removal == nil {
+		a.fail(w, r, contracts.InvalidRule(contracts.RuleRemovalMissing))
+		return
+	}
+	c := mailboxes.Caller{Account: p.Account, ConfirmedUntil: p.ConfirmedUntil}
+	b, err := m.cfg.Service.Open(r.Context(), c, in.Mailbox, mailboxes.AccessReadMessage)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	held := &heldBudget{budget: m.budget, wait: m.cfg.Wait}
+	defer held.release()
+	ctx := inbox.WithRenderAdmission(inbox.WithReadBudget(r.Context(), held), summaryAdmission{m, c.Account})
+	var asker inbox.SentenceAsker
+	if in.AskModel && len(rule.Removal.Topics) > 0 {
+		if !a.noticeAgreed(w, r, p, a.cfg.Notice) {
+			return
+		}
+		asker, _ = m.asker().(inbox.SentenceAsker)
+	}
+	msg, err := m.cfg.Reader.Get(ctx, b, in.Message)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	shown, err := inbox.PreviewRemoval(ctx, redact.Fixed{}, msg.Subject, msg.Text, len(msg.Attachments), rule.Removal, asker, c.Account)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	writeJSON(w, contracts.RuleRemovalPreview{DraftID: check.DraftID, Subject: shown.Subject, Text: shown.Text, Removed: shown.Removed})
 }

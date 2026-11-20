@@ -92,6 +92,7 @@ func newConnectionsWorld(t *testing.T) *connectionsWorld {
 	return &connectionsWorld{modelWorld: w, table: table, records: records, chain: chain, parts: connectionsParts{
 		oauth: oauthConfig(router.HostsForDomain("permaily.com"), 443), domain: "permaily.com", records: records, entries: table, keys: w.keys,
 		vendorHTTP: &http.Client{}, accounts: acc, mailboxes: mb, model: model, receipts: rc, now: w.now,
+		rulesRecords: &store.Anchored{Records: w.mem, Commits: w.commits, OnlyNewest: true, Strict: true, Now: w.now},
 	}}
 }
 
@@ -150,6 +151,10 @@ func TestV56TheConnectionsOnStatus(t *testing.T) {
 		`"vendor_transport":"h2","devices_per_connection":16,"model_unavailable":"nothing_leaves",` +
 		`"verified":[{"domain":"claude.ai","owner":"Anthropic"},{"domain":"chatgpt.com","owner":"OpenAI"}],` +
 		`"rules":[{"id":"default-sign-in-and-security","version":1,"formulas":[` + strings.Join(ids, ",") + `],"on":true}],` +
+		`"person_rules":{"record":"strict","effects":["hold","remove"],"shapes":{"version":1,"kinds":["email_address","phone_number","card_number","account_number","numeric_code","link"]},` +
+		`"meaning":{"prompt":"s1-2026-11-20","threshold":0.3,"split_version":1,"sentences_max":128,"text_max":32768,"topics_max":3},` +
+		`"words":{"model":"gpt-6-luna","prompt":"w4-2026-11-20","calls":{"proposed":0,"too_many":0,"unavailable":0,"unusable":0}},` +
+		`"notice":"2026-11-20","fresh_seconds":5,"rules_unreadable":0},` +
 		`"receipts":{"sealed":true,"chained":true,"chain":"strict","incidents":{"recorded":0,"read":"2026-11-16T12:00:00Z"},` +
 		`"broken":{` + brokenZero + `},"audit":{"began":"2026-11-16T12:00:00Z","finished":"2026-11-16T12:00:00Z","catalogue":0,` +
 		`"chains":0,"removed":0,"broken":{` + brokenZero + `},"recovered":0,"unlinked":0,"expired":0},"decisions":"strict","decisions_per_day":28800},` +
@@ -199,6 +204,22 @@ func TestV57TheCompositionRefuses(t *testing.T) {
 		if _, err := composeConnections(p); !errors.Is(err, errConnectionsRecords) {
 			t.Errorf("records %+v: %v", records, err)
 		}
+	}
+	// The person's rules likewise: their records through one strict
+	// Anchored keeping only the newest value, and receipts chained.
+	for _, records := range []*store.Anchored{
+		nil,
+		{Records: w.mem, Commits: w.commits, OnlyNewest: true},
+		{Records: w.mem, Commits: w.commits, Strict: true},
+	} {
+		p := w.parts
+		p.rulesRecords = records
+		if _, err := composeConnections(p); !errors.Is(err, errRulesRecords) {
+			t.Errorf("the rules' records %+v: %v", records, err)
+		}
+	}
+	if _, err := composeRules(rulesParts{records: w.parts.rulesRecords, keys: w.keys}); err == nil {
+		t.Error("the rules composed without receipts")
 	}
 	for i, drop := range []func(*connectionsParts){
 		func(p *connectionsParts) { p.vendorHTTP = nil },

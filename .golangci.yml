@@ -138,6 +138,24 @@ linters:
               desc: the model's client knows no service
             - pkg: github.com/aws/aws-sdk-go-v2
               desc: the model's client reaches only the model
+        words-client-sees-no-mail-store:
+          # The Responses API's client for a person's words (ADR 0040, "Plain words") is given the words and a key, and
+          # nothing that reaches stored mail, keys or accounts, as the model's client is (model-client-sees-no-mail-store).
+          files: ["**/internal/rulewords/openai/**", "!$test"]
+          list-mode: lax
+          deny:
+            - pkg: github.com/permaily-org/permaily/internal/store
+              desc: the words' client reaches no storage
+            - pkg: github.com/permaily-org/permaily/internal/inbox
+              desc: the words' client is given a person's words, never a mailbox
+            - pkg: github.com/permaily-org/permaily/internal/keys
+              desc: the words' client holds no key of the enclave
+            - pkg: github.com/permaily-org/permaily/internal/envelope
+              desc: the words' client opens nothing sealed
+            - pkg: github.com/permaily-org/permaily/internal/services
+              desc: the words' client knows no service
+            - pkg: github.com/aws/aws-sdk-go-v2
+              desc: the words' client reaches only the model
         webhook-is-pure:
           # What a connection's webhook decides from its arguments alone (ADR 0039): the URL rule, the request, schedules
           # in the person's time zone (time/tzdata, the image's own zones), the notice, its signature and the key set,

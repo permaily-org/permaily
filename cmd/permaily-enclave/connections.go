@@ -21,6 +21,7 @@ import (
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/rules"
+	"github.com/permaily-org/permaily/internal/services/accountrules"
 	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/services/connections"
 	"github.com/permaily-org/permaily/internal/services/decisions"
@@ -67,7 +68,11 @@ type connectionsParts struct {
 	// receipts writes the record of what left, each receipt linked in its
 	// account's chain before Write returns (ADR 0037).
 	receipts *composedReceipts
-	now      func() time.Time
+	// rulesRecords is the one strict Anchored of the person's rules'
+	// records (ADR 0040), apart from the connections'.
+	rulesRecords *store.Anchored
+	log          *slog.Logger
+	now          func() time.Time
 }
 
 // connectionsStore is where the connections' entries are, and the mail
@@ -86,6 +91,11 @@ type composedConnections struct {
 	cfg  oauth.Config
 	// receipts is the chained record of what left, which /status reports.
 	receipts *composedReceipts
+	// rules is the person's own rules (ADR 0040): what every connection's
+	// reads apply first, and what the rules routes change. model is the
+	// model's service, whose words calls /status counts.
+	rules *accountrules.Service
+	model *decisions.Service
 	// since is when this enclave started counting.
 	since time.Time
 }
@@ -98,8 +108,11 @@ var errConnectionsRecords = errors.New("the connections' records need a strict A
 // its records in one strict Anchored, vendors resolved through the vendor
 // egress (cimd), the account's standing and its deletion's fence from
 // accounts (which it is given back to), what a connection reads through
-// inbox's Discloser over the mailboxes' decisions, with the default rule
-// first, the model's gate and Asker, and a receipt written and linked in its
+// inbox's Discloser over the mailboxes' decisions, with the account's rules
+// first (the default unless the person turned it off, then their own: ADR
+// 0040's rules service over its own strict Anchored, which accounts is
+// given too, to remove with the account), the model's gate and Asker (which
+// asks a removal's sentences too), and a receipt written and linked in its
 // account's chain before anything leaves (ADR 0037).
 func composeConnections(c connectionsParts) (*composedConnections, error) {
 	if c.records == nil || !c.records.Strict || !c.records.OnlyNewest {
@@ -115,6 +128,14 @@ func composeConnections(c connectionsParts) (*composedConnections, error) {
 	if now == nil {
 		now = time.Now
 	}
+	// The person's rules: what every read applies first, by the account
+	// and the connection's client (ADR 0040).
+	rs, err := composeRules(rulesParts{
+		records: c.rulesRecords, keys: c.keys, receipts: c.receipts, mailboxes: connectionMailboxes{c.mailboxes}, log: c.log, now: c.now,
+	})
+	if err != nil {
+		return nil, err
+	}
 	store := inbox.NewDiscloser(c.entries, query.Eval, c.mailboxes.Decisions())
 	full, _ := store.(inbox.DecisionsFullCounter)
 	svc, err := connections.New(connections.Config{
@@ -129,7 +150,7 @@ func composeConnections(c connectionsParts) (*composedConnections, error) {
 		Asker:       c.model,
 		Model:       c.model,
 		ModelNotice: domain.ModelNoticeVersion,
-		Rules:       []rules.Rule{rules.Default()},
+		Source:      rs,
 		Receipts:    c.receipts.svc,
 		Now:         now,
 	})
@@ -139,7 +160,9 @@ func composeConnections(c connectionsParts) (*composedConnections, error) {
 	// An account being deleted fences and ends its connections, and a
 	// cancelled deletion reopens them (ADR 0030, finding 6).
 	c.accounts.SetConnections(svc)
-	return &composedConnections{svc: svc, full: full, cfg: c.oauth, receipts: c.receipts, since: now()}, nil
+	// And its record of rules with it (ADR 0040, "Removed with the account").
+	c.accounts.SetRules(rs)
+	return &composedConnections{svc: svc, full: full, cfg: c.oauth, receipts: c.receipts, rules: rs, model: c.model, since: now()}, nil
 }
 
 // connectionMailboxes is what the connections service reads of mailboxes
@@ -343,6 +366,7 @@ func connectionsStatus(c *composedConnections) func() *attestation.ConnectionsSt
 			rs.Formulas = append(rs.Formulas, f.ID)
 		}
 		st.Rules = []attestation.RuleStatus{rs}
+		st.PersonRules = personRulesStatus(c.rules, c.model)
 		for _, reason := range connectionsReasons {
 			st.Refused[reason] = 0
 		}

@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/decide"
 	"github.com/permaily-org/permaily/internal/rulewords"
+	"github.com/permaily-org/permaily/pkg/attestation"
 )
 
 var _ rulewords.Writer = (*Service)(nil)
@@ -32,7 +34,51 @@ var _ rulewords.Writer = (*Service)(nil)
 // do. An answer naming another model is contracts.ErrModelUnavailable; a
 // refusal, an answer cut at rulewords.MaxOutputTokens or one that
 // rulewords.Read refuses is contracts.ErrRuleWordsUnusable.
+//
+// Each call is counted by its outcome for /status (WordsCalls).
 func (s *Service) Write(ctx context.Context, account, words string) (*rulewords.Written, error) {
+	w, err := s.write(ctx, account, words)
+	s.countWords(err)
+	return w, err
+}
+
+// WordsCalls counts this enclave's words calls since it started, by outcome
+// (attestation.PersonRulesWordsCalls, every one also at zero): a count of
+// the image's fixed kinds, never an account's.
+func (s *Service) WordsCalls() map[string]int64 {
+	out := make(map[string]int64, len(attestation.PersonRulesWordsCalls))
+	for _, k := range attestation.PersonRulesWordsCalls {
+		out[k] = 0
+	}
+	s.wordsMu.Lock()
+	defer s.wordsMu.Unlock()
+	maps.Copy(out, s.wordsCalls)
+	return out
+}
+
+// countWords counts one words call by what Write answered: a draft
+// proposed, unusable, too many of the account's day, or the model
+// unavailable (every other error, the caller's giving up included).
+func (s *Service) countWords(err error) {
+	kind := attestation.WordsProposed
+	switch {
+	case err == nil:
+	case errors.Is(err, contracts.ErrRuleWordsUnusable):
+		kind = attestation.WordsUnusable
+	case errors.Is(err, contracts.ErrTooManyRequests):
+		kind = attestation.WordsTooMany
+	default:
+		kind = attestation.WordsUnavailable
+	}
+	s.wordsMu.Lock()
+	defer s.wordsMu.Unlock()
+	if s.wordsCalls == nil {
+		s.wordsCalls = map[string]int64{}
+	}
+	s.wordsCalls[kind]++
+}
+
+func (s *Service) write(ctx context.Context, account, words string) (*rulewords.Written, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
