@@ -300,6 +300,20 @@ type Consent struct {
 	Mailboxes   []string                   `json:"mailboxes"`
 	ModelNotice string                     `json:"model_notice"`
 	Replaced    string                     `json:"replaced,omitempty"`
+	// Webhook is the connection's webhook (ADR 0039, "Receipts"): the one
+	// approved with it, or, on the person turning it off, that change.
+	Webhook *ConsentWebhook `json:"webhook,omitempty"`
+}
+
+// ConsentWebhook is a webhook as a consent receipt records it: its host,
+// what it is told, the schedule, the person's time zone and its state.
+// Never its URL's path or its subscription.
+type ConsentWebhook struct {
+	Host     string                     `json:"host"`
+	NewMail  bool                       `json:"new_mail,omitempty"`
+	Schedule *contracts.WebhookSchedule `json:"schedule,omitempty"`
+	TimeZone string                     `json:"time_zone,omitempty"`
+	State    contracts.WebhookState     `json:"state"`
 }
 
 // RulesChangeKind is one thing a change of rules changed.

@@ -326,6 +326,11 @@ type AuthorizeParams struct {
 	// EndsInDays is a pushed request's "ends_in_days", 1 to 365; 0 when not
 	// sent.
 	EndsInDays int
+	// Webhook is a pushed request's "webhook" (ADR 0039), as sent: the
+	// caller reads it with webhook.ParseRequest, which knows the client's
+	// host (internal/webhook imports this package, so it cannot be read
+	// here). "" when not sent.
+	Webhook string `json:",omitempty"`
 }
 
 // Grant is what a valid access token stands for, once the token, its

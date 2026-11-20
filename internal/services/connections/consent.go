@@ -49,6 +49,11 @@ type requestEntry struct {
 	Account     string              `json:"account"`
 	Mailboxes   []string            `json:"mailboxes"`
 	Expires     time.Time           `json:"expires"`
+	// Webhook is the webhook the pushed request asked for (ADR 0039).
+	Webhook *contracts.WebhookRequest `json:"webhook,omitempty"`
+
+	// timeZone is the person's, from the approval (webhookZone).
+	timeZone string
 }
 
 // pushedEntry is a pushed request, sealed, bound to its client.
@@ -122,6 +127,9 @@ func (s *Service) Start(ctx context.Context, p Person, raw string) (*contracts.A
 		if len(q) != 2 {
 			return s.refusedRedirect(params, oauth.ErrInvalidRequest), nil
 		}
+		if _, err := s.parseWebhook(params.Webhook, clientID); err != nil {
+			return s.refusedRedirect(params, oauth.ErrInvalidRequest), nil
+		}
 	} else {
 		var proven bool
 		params, proven, err = oauth.Authorize(q, &client.Document, s.cfg.OAuth)
@@ -150,6 +158,7 @@ func (s *Service) Start(ctx context.Context, p Person, raw string) (*contracts.A
 		Days: oauth.ConnectionDefaultDays, Since: contracts.MailSince{New: true}, Expires: now.Add(oauth.RequestTTL),
 	}
 	req.Resource, _ = resourceOf(s.cfg.OAuth, params.Resource)
+	req.Webhook, _ = s.parseWebhook(params.Webhook, clientID)
 	if params.EndsInDays > 0 {
 		req.Days = params.EndsInDays
 	}
@@ -263,6 +272,9 @@ func (s *Service) requestFits(req *requestEntry) error {
 		State: contracts.ConnectionActive, ModelNotice: s.cfg.ModelNotice, EndReason: contracts.EndedByReplaced,
 		ReplacedBy: "con_" + strings.Repeat("a", 26),
 		private:    &connPrivate{Query: req.Query, Since: req.Since, Shown: shownWith(req, mostRules())},
+	}
+	if req.Webhook != nil {
+		d.Webhook = webhookAtMost()
 	}
 	raw, err := jsonSize(d.private)
 	if err != nil {
@@ -382,6 +394,7 @@ func (s *Service) screen(ctx context.Context, id string, req *requestEntry) (*co
 		ID: id, Vendor: vendorOf(req.Vendor), ClientName: req.ClientName, RedirectHost: host, Loopback: loopback,
 		Resource: req.Resource, Parts: slices.Clone(req.Parts), Since: req.Since, EndsInDays: req.Days,
 		Mailboxes: slices.Clone(req.Mailboxes), Rules: ruleSummaries(ap.Rules), ModelNotice: s.cfg.ModelNotice, ExpiresAt: req.Expires,
+		Webhook: webhookAsked(req),
 	}
 	if req.Query != nil {
 		c, err := query.Canonicalise(*req.Query)
@@ -508,7 +521,7 @@ func (s *Service) changeFor(ctx context.Context, req *requestEntry, d contracts.
 	}
 	snap.Connection, snap.Version, snap.Change = cur.ID, at.Version(), contracts.ChangeReplace
 	cs, err := cur.scope()
-	if err == nil && cur.Resource == req.Resource && subset(cur.Parts, req.Parts) && contained(cs, ds) {
+	if err == nil && cur.Resource == req.Resource && subset(cur.Parts, req.Parts) && contained(cs, ds) && keepsWebhook(cur, req) {
 		snap.Change, snap.EndsAt = contracts.ChangeAddDevice, cur.EndsAt
 	}
 	return snap, cur, at, ds, raw, nil
@@ -636,6 +649,9 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 		return nil, err
 	}
 	if err := validDraft(req, *in.Draft, s.now()); err != nil {
+		return nil, err
+	}
+	if req.timeZone, err = webhookZone(req, in.TimeZone); err != nil {
 		return nil, err
 	}
 	// The document is read again: the redirect URI must still be one of it.
@@ -834,10 +850,19 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 		}},
 		private: &connPrivate{Query: req.Query, Since: since, Shown: shown},
 	}
+	if doc.Webhook, err = s.newWebhook(req, id); err != nil {
+		return abandon(err)
+	}
 	if err := inTime(); err != nil {
 		return abandon(err)
 	}
 	if err := s.writeConn(ctx, doc, store.Mark{}, true); err != nil {
+		return abandon(err)
+	}
+	// Its webhook's queue entry is made after its record and before its
+	// code: an approval whose entry could not be made is abandoned
+	// (ADR 0039, K26).
+	if err := s.subscribe(ctx, doc); err != nil {
 		return abandon(err)
 	}
 	if err := inTime(); err != nil {
@@ -1016,6 +1041,7 @@ func (s *Service) consentReceipt(ctx context.Context, req *requestEntry, m *made
 			Allowed: allowed, Sentences: sh.Sentences, Parts: req.Parts, Since: d.Since, Mailboxes: d.Mailboxes, ModelNotice: s.cfg.ModelNotice,
 		},
 	}
+	r.Consent.Webhook = consentWebhook(req)
 	if m != nil {
 		r.Connection, r.Device = m.conn.ID, m.device
 		r.Consent.Change, r.Consent.EndsAt, r.Consent.Replaced = m.change, m.conn.EndsAt, m.replaced

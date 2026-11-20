@@ -96,6 +96,49 @@ func TestEnqueueOfAKeyQueuedIsNil(t *testing.T) {
 	}
 }
 
+// E20, two enclaves queuing one key at once (the hourly sweep's ending):
+// the other enclave queues, sends, marks and deletes it between this
+// one's read of the mark and its write of the entry. The write finds no
+// entry and makes one, but the notice was sent: nothing is left queued
+// or counted, and it is not sent again (TestMailEndToEnd's "queued 9 and
+// sent 8").
+func TestE20AKeySentByTheOtherEnclaveMeanwhileIsNotQueuedAgain(t *testing.T) {
+	w := newWorld(t)
+	d := &noticestest.Recorder{}
+	a, b := w.enclave(d, nil), w.enclave(d, nil)
+	n := noticestest.Sample("rcp_1")
+	w.at(store.StepEntry, notices.PartitionQueue, 1, func() {
+		must(t, a.Enqueue(ctx, n))
+		must(t, notices.Wait(ctx, a))
+	})
+	must(t, b.Enqueue(ctx, n))
+	must(t, notices.Wait(ctx, b))
+	must(t, b.Drain(ctx))
+	if w.markOf(n.Key) != "sent" || len(d.Delivered()) != 1 {
+		t.Fatalf("mark %q, delivered %d: want sent once", w.markOf(n.Key), len(d.Delivered()))
+	}
+	if a.Status().Queued+b.Status().Queued != 1 || len(w.queued()) != 0 {
+		t.Fatalf("queued %d and %d, %d left: want one queued, none left", a.Status().Queued, b.Status().Queued, len(w.queued()))
+	}
+
+	// The same, the deletion of the entry made again failing: it is left
+	// for a runner, which finds the mark and deletes it without sending.
+	m := noticestest.Sample("rcp_2")
+	w.at(store.StepEntry, notices.PartitionQueue, 1, func() {
+		must(t, a.Enqueue(ctx, m))
+		must(t, notices.Wait(ctx, a))
+		w.fail(store.StepDeleteEntry, notices.PartitionQueue, 1, errors.New("delete failed"))
+	})
+	must(t, b.Enqueue(ctx, m))
+	if len(w.queued()) != 1 || !strings.Contains(w.logs.String(), `"step":"delete"`) {
+		t.Fatalf("%d left, log %s: want the entry left and the step logged", len(w.queued()), w.logs.String())
+	}
+	must(t, b.Drain(ctx))
+	if len(d.Delivered()) != 2 || len(w.queued()) != 0 || a.Status().Queued+b.Status().Queued != 2 {
+		t.Fatalf("delivered %d, %d left, queued %d and %d: want each sent once, none left", len(d.Delivered()), len(w.queued()), a.Status().Queued, b.Status().Queued)
+	}
+}
+
 // Past WaitingMax first attempts waiting, a notice queued is left to the
 // runners.
 func TestPastWaitingMaxANoticeIsLeftToTheRunner(t *testing.T) {

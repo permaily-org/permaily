@@ -24,6 +24,7 @@ import (
 	"github.com/permaily-org/permaily/internal/keys"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/query"
+	"github.com/permaily-org/permaily/internal/rules"
 	"github.com/permaily-org/permaily/internal/services/accountrules/accountrulestest"
 	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
@@ -271,8 +272,15 @@ func (d *discloser) outcome(ml mail, ds inbox.Disclosure) (inbox.Outcome, bool) 
 	if query.Eval(ds.Formulas, evalMessage(ml), nil, query.ForQuery).Value != query.True {
 		return inbox.Outcome{}, false
 	}
-	if ml.Held && len(ds.Rules) > 0 {
-		return inbox.Outcome{Withheld: &inbox.Withheld{ID: ml.ID, Rule: ds.Rules[0].Ref(), Why: inbox.HeldExact}}, true
+	if i := slices.IndexFunc(ds.Rules, func(r rules.Rule) bool { return r.ID == rules.Default().ID }); ml.Held && i >= 0 {
+		return inbox.Outcome{Withheld: &inbox.Withheld{ID: ml.ID, Rule: ds.Rules[i].Ref(), Why: inbox.HeldExact}}, true
+	}
+	// The person's own rules (ADR 0040) hold what they apply to, read for
+	// a rule: True or Unknown.
+	for _, r := range ds.Rules {
+		if r.ID != rules.Default().ID && r.Effect == rules.Hold && query.Eval(r.Formulas, evalMessage(ml), nil, query.ForRule).Value != query.False {
+			return inbox.Outcome{Withheld: &inbox.Withheld{ID: ml.ID, Rule: r.Ref(), Why: inbox.HeldExact}}, true
+		}
 	}
 	subject, body := ml.Subject, ml.Body
 	vm := contracts.VendorMessage{ReceivedAt: ml.Received, From: []contracts.MailAddress{{Address: ml.From}}, Subject: &subject, Text: &body}

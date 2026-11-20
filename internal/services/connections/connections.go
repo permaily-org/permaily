@@ -47,6 +47,7 @@ import (
 	"github.com/permaily-org/permaily/internal/services/accountrules"
 	"github.com/permaily-org/permaily/internal/services/notices"
 	"github.com/permaily-org/permaily/internal/services/receipts"
+	"github.com/permaily-org/permaily/internal/services/webhooks"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/vendors"
 )
@@ -95,6 +96,14 @@ type Config struct {
 	Source accountrules.Source
 	// Receipts writes the record of what left, before it leaves.
 	Receipts receipts.Writer
+	// Webhooks is the queue of connections' webhooks (ADR 0039,
+	// services/webhooks): told when a connection with a webhook is made
+	// (Subscribe, which fails the approval when it fails) and when one ends
+	// (Ended). Nil: no request with a webhook is taken.
+	Webhooks webhooks.Queue
+	// WebhookStates, when set, gives the person's page the queue's state
+	// of a connection's webhook.
+	WebhookStates WebhookStates
 	// Notices, when set, queues the notices about connections (ADR 0041,
 	// notices.go): each after the change it tells of committed, under the
 	// key its event names, holding the request at most
