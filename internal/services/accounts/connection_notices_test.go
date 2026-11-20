@@ -206,6 +206,12 @@ func TestE25DeliverTriesAgainWhatItCannotSend(t *testing.T) {
 	if err == nil || errors.Is(err, notices.ErrSkip) || strings.Contains(err.Error(), "@") {
 		t.Fatalf("Deliver through a failing mail system = %v", err)
 	}
+	// An account never made: nothing says it is gone.
+	never := noticestest.Sample("rcp_1")
+	never.Account = "acc_nobody"
+	if err := w.svc.Deliver(ctx, never); err == nil || errors.Is(err, notices.ErrSkip) {
+		t.Fatalf("Deliver to an account never made = %v", err)
+	}
 	w = noticeWorld(t)
 	w.svc.cfg.Records = noHistory{w.svc.cfg.Records}
 	if err := w.svc.Deliver(ctx, noticestest.Sample("rcp_1")); err == nil || errors.Is(err, notices.ErrSkip) {
@@ -247,6 +253,9 @@ func TestE25TheWordsKnowOnlyTheirKinds(t *testing.T) {
 	added.Facts.Parts = []contracts.Part{"everything"}
 	if _, _, err := connectionNotice(sampleApp, added); !errors.Is(err, notices.ErrInvalid) {
 		t.Errorf("a device added reading an unknown part: %v", err)
+	}
+	if _, err := connectionNoticeMail(sampleTo, sampleApp, added); !errors.Is(err, notices.ErrInvalid) {
+		t.Errorf("the mail of a device added reading an unknown part: %v", err)
 	}
 	signedOut := sampleNotice(notices.KindDevicesSignedOut, "")
 	signedOut.Facts.By = "<a href=x>"
@@ -389,7 +398,7 @@ func TestE38NoticesAboutConnectionsHoldNoCodeLinkOrToken(t *testing.T) {
 				}
 			}
 			for _, name := range names.FindAllString(text, -1) {
-				if _, ok := verified[name]; name != "app.permaily.test" && name != "permaily.com" && !(ok && name == n.Facts.Vendor) {
+				if _, ok := verified[name]; name != "app.permaily.test" && name != "permaily.com" && (!ok || name != n.Facts.Vendor) {
 					t.Errorf("%s names %q:\n%s", kind, name, text)
 				}
 			}
