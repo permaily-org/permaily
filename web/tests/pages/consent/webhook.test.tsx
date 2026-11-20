@@ -163,6 +163,27 @@ describe('K54: the webhook on the consent screen', () => {
     await user.click(allowButton())
     await settle()
     expect(server.asked(decisionRoute)).toHaveLength(0)
+    // Review of PR #185, finding 1: the picker still offers zones to choose, and choosing one allows.
+    await user.selectOptions(picker, 'Europe/Lisbon')
+    expect((await allowed(user)).time_zone).toBe('Europe/Lisbon')
+  })
+
+  it('offers zones to choose from when the browser cannot list them (review of PR #185, finding 1)', async () => {
+    browserZone('Europe/Madrid')
+    vi.spyOn(Intl, 'supportedValuesOf').mockImplementation(() => {
+      throw new RangeError('not supported')
+    })
+    const { user } = await consent(tripRequest())
+    const picker = screen.getByRole('combobox', { name: 'Your time zone' }) as HTMLSelectElement
+    expect(picker.value).toBe('Europe/Madrid')
+    const zones = [...picker.options].map((o) => o.value)
+    expect(zones.length).toBeGreaterThan(50)
+    expect(zones).toEqual([...zones].sort())
+    expect(new Set(zones).size).toBe(zones.length)
+    for (const zone of ['UTC', 'America/New_York', 'Asia/Tokyo', 'Australia/Sydney'])
+      expect(zones).toContain(zone)
+    await user.selectOptions(picker, 'America/New_York')
+    expect((await allowed(user)).time_zone).toBe('America/New_York')
   })
 
   it('says in words when the server does not know the zone, and lets the person choose another', async () => {

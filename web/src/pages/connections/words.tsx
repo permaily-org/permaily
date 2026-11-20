@@ -228,36 +228,139 @@ export function browserTimeZone(): string {
 }
 
 /**
- * The time zones the picker offers: the browser's list, which the server checks against the zones it was built with
- * (`time_zone_invalid`), with the browser's own zone in it.
+ * The zones offered when the browser can't list its own (`Intl.supportedValuesOf` missing or failing): canonical IANA
+ * names of the zone database the image is built with (`time/tzdata`), at least one for every offset people live in.
+ * The server still checks the one chosen (`time_zone_invalid`).
+ */
+export const knownTimeZones: readonly string[] = [
+  'Africa/Abidjan',
+  'Africa/Cairo',
+  'Africa/Casablanca',
+  'Africa/Johannesburg',
+  'Africa/Lagos',
+  'Africa/Nairobi',
+  'America/Anchorage',
+  'America/Argentina/Buenos_Aires',
+  'America/Bogota',
+  'America/Caracas',
+  'America/Chicago',
+  'America/Denver',
+  'America/Halifax',
+  'America/Havana',
+  'America/Lima',
+  'America/Los_Angeles',
+  'America/Mexico_City',
+  'America/New_York',
+  'America/Noronha',
+  'America/Phoenix',
+  'America/Santiago',
+  'America/Sao_Paulo',
+  'America/St_Johns',
+  'America/Toronto',
+  'America/Vancouver',
+  'Asia/Bangkok',
+  'Asia/Dhaka',
+  'Asia/Dubai',
+  'Asia/Hong_Kong',
+  'Asia/Jakarta',
+  'Asia/Jerusalem',
+  'Asia/Karachi',
+  'Asia/Kathmandu',
+  'Asia/Kolkata',
+  'Asia/Manila',
+  'Asia/Riyadh',
+  'Asia/Seoul',
+  'Asia/Shanghai',
+  'Asia/Singapore',
+  'Asia/Taipei',
+  'Asia/Tehran',
+  'Asia/Tokyo',
+  'Asia/Yangon',
+  'Atlantic/Azores',
+  'Atlantic/Cape_Verde',
+  'Atlantic/Reykjavik',
+  'Australia/Adelaide',
+  'Australia/Brisbane',
+  'Australia/Darwin',
+  'Australia/Eucla',
+  'Australia/Lord_Howe',
+  'Australia/Perth',
+  'Australia/Sydney',
+  'Europe/Amsterdam',
+  'Europe/Athens',
+  'Europe/Berlin',
+  'Europe/Brussels',
+  'Europe/Bucharest',
+  'Europe/Dublin',
+  'Europe/Helsinki',
+  'Europe/Istanbul',
+  'Europe/Kyiv',
+  'Europe/Lisbon',
+  'Europe/London',
+  'Europe/Madrid',
+  'Europe/Moscow',
+  'Europe/Paris',
+  'Europe/Rome',
+  'Europe/Stockholm',
+  'Europe/Warsaw',
+  'Europe/Zurich',
+  'Pacific/Auckland',
+  'Pacific/Chatham',
+  'Pacific/Fiji',
+  'Pacific/Guam',
+  'Pacific/Honolulu',
+  'Pacific/Kiritimati',
+  'Pacific/Marquesas',
+  'Pacific/Pago_Pago',
+  'Pacific/Tongatapu',
+  'UTC',
+]
+
+/**
+ * The time zones the picker offers: the browser's list, or `knownTimeZones` when it has none, which the server checks
+ * against the zones it was built with (`time_zone_invalid`), with the browser's own zone in it.
  */
 export function timeZones(own: string): string[] {
-  let zones: string[] = []
+  let zones: readonly string[] = []
   try {
     zones = Intl.supportedValuesOf('timeZone')
   } catch {
     zones = []
   }
-  return own && !zones.includes(own) ? [own, ...zones].sort() : zones
+  if (zones.length === 0) zones = knownTimeZones
+  return own && !zones.includes(own) ? [own, ...zones].sort() : [...zones]
 }
 
-/** "Mon 23 Nov, 08:00" in a time zone (the browser's own when none or one it doesn't know). */
+/**
+ * The zone times are shown in for a stored zone: the zone itself when the browser can show it, "UTC" when it can't
+ * (a zone newer than the browser's database), and "" for none, which reads in the browser's own.
+ */
+export function shownTimeZone(zone?: string): string {
+  if (!zone) return ''
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone: zone })
+    return zone
+  } catch {
+    return 'UTC'
+  }
+}
+
+/**
+ * "Mon 23 Nov, 08:00" in a time zone (the browser's own when none). A zone the browser doesn't know reads in UTC and
+ * ends in " UTC", so a time is never shown under a zone it isn't in.
+ */
 export function formatWhen(iso: string, zone?: string): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
-  const options: Intl.DateTimeFormatOptions = {
+  const shown = shownTimeZone(zone)
+  const text = new Intl.DateTimeFormat('en-GB', {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23',
-  }
-  try {
-    return new Intl.DateTimeFormat('en-GB', { ...options, timeZone: zone || undefined }).format(
-      date,
-    )
-  } catch {
-    return new Intl.DateTimeFormat('en-GB', options).format(date)
-  }
+    timeZone: shown || undefined,
+  }).format(date)
+  return shown && shown !== zone ? `${text} UTC` : text
 }
