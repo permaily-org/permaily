@@ -1,5 +1,5 @@
 import { ChevronLeft } from 'lucide-react'
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 import { NavLink, useParams } from 'react-router'
 import { useConfirmed } from '../../components/Confirm.tsx'
 import {
@@ -25,12 +25,18 @@ import { useLimitedConnections } from './ConnectionsLayout.tsx'
 import { ConnectionRow, useConnections, vendorPath } from './ConnectionsPage.tsx'
 import {
   endWords,
+  formatWhen,
   mailboxWords,
   partsWords,
   resourceWords,
   Sentence,
+  shownTimeZone,
   sinceWords,
   VendorLine,
+  webhookFailureWords,
+  webhookLines,
+  webhookNeverWords,
+  webhookStateWords,
 } from './words.tsx'
 
 /**
@@ -139,13 +145,14 @@ function Detail({ id, onChanged }: { id: string; onChanged: (c: api.Connection) 
   const [connection, setConnection] = useState<api.Connection | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
   const [mailboxes, setMailboxes] = useState<ReadonlyMap<string, api.Mailbox>>(new Map())
-  const [asking, setAsking] = useState<'revoke' | 'renew' | null>(null)
+  const [asking, setAsking] = useState<'revoke' | 'renew' | 'webhook' | null>(null)
   const [pending, setPending] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [said, setSaid] = useState('')
   const headingRef = useRef<HTMLHeadingElement>(null)
   const devicesRef = useRef<HTMLHeadingElement>(null)
-  const focusNext = useRef<'heading' | 'devices' | null>(null)
+  const webhookRef = useRef<HTMLHeadingElement>(null)
+  const focusNext = useRef<Focus | null>(null)
 
   const load = useCallback(async () => {
     setFailure(null)
@@ -177,12 +184,14 @@ function Detail({ id, onChanged }: { id: string; onChanged: (c: api.Connection) 
   // After a change the page is redrawn: focus goes where the change shows, not back to a control that is gone.
   useEffect(() => {
     if (!focusNext.current) return
-    const target = focusNext.current === 'heading' ? headingRef.current : devicesRef.current
+    const target = { heading: headingRef, devices: devicesRef, webhook: webhookRef }[
+      focusNext.current
+    ].current
     focusNext.current = null
     target?.focus()
   })
 
-  function took(next: api.Connection, focus: 'heading' | 'devices', words: string) {
+  function took(next: api.Connection, focus: Focus, words: string) {
     setConnection(next)
     onChanged(next)
     setSaid(words)
@@ -192,7 +201,7 @@ function Detail({ id, onChanged }: { id: string; onChanged: (c: api.Connection) 
   async function act(
     what: string,
     run: () => Promise<api.Connection>,
-    focus: 'heading' | 'devices',
+    focus: Focus,
     words: (c: api.Connection) => string,
   ) {
     if (pending) return
@@ -325,6 +334,16 @@ function Detail({ id, onChanged }: { id: string; onChanged: (c: api.Connection) 
           </TermRow>
         </section>
 
+        {c.webhook && (
+          <WebhookSection
+            webhook={c.webhook}
+            active={active}
+            name={name}
+            headingRef={webhookRef}
+            onTurnOff={() => setAsking('webhook')}
+          />
+        )}
+
         <section aria-labelledby="devices-heading">
           <div className="flex items-center justify-between gap-4 border-b border-rule-strong pb-2.5">
             <h2
@@ -395,6 +414,47 @@ function Detail({ id, onChanged }: { id: string; onChanged: (c: api.Connection) 
         </div>
       </Dialog>
 
+      {c.webhook && (
+        <Dialog
+          open={asking === 'webhook'}
+          onClose={() => setAsking(null)}
+          labelledBy="webhook-off-heading"
+        >
+          <h2
+            id="webhook-off-heading"
+            data-dialog-focus
+            tabIndex={-1}
+            className="text-title font-medium outline-none"
+          >
+            Stop telling <bdi>{c.webhook.host}</bdi>?
+          </h2>
+          <p className="mt-3 text-ink-2">
+            <bdi>{name}</bdi> is no longer told when there's mail to fetch. This is final for this
+            connection: only a new request from the app turns it on again. It can still read your
+            mail when it asks.
+          </p>
+          <div className="mt-6 flex flex-wrap gap-2.5">
+            <Button
+              variant="danger"
+              aria-disabled={pending !== null}
+              onClick={() =>
+                void act(
+                  'webhook',
+                  () => api.turnWebhookOff(c.id, c.version),
+                  'webhook',
+                  (next) => `Turned off. ${next.webhook?.host ?? 'The app'} is no longer told.`,
+                )
+              }
+            >
+              Turn off
+            </Button>
+            <Button variant="secondary" onClick={() => setAsking(null)}>
+              Cancel
+            </Button>
+          </div>
+        </Dialog>
+      )}
+
       {canRenew && (
         <Dialog
           open={asking === 'renew'}
@@ -448,6 +508,91 @@ function Detail({ id, onChanged }: { id: string; onChanged: (c: api.Connection) 
         </Dialog>
       )}
     </>
+  )
+}
+
+/** Where focus goes once a change shows. */
+type Focus = 'heading' | 'devices' | 'webhook'
+
+/**
+ * A connection's webhook (ADR 0039, "Retries and giving up"): whom it tells and when, its state, the next run in the
+ * person's time zone, when a notice was last taken, why calls fail in fixed words, and turning it off. Words drafted
+ * for the designer's review.
+ */
+function WebhookSection({
+  webhook,
+  active,
+  name,
+  headingRef,
+  onTurnOff,
+}: {
+  webhook: api.ConnectionWebhook
+  active: boolean
+  name: string
+  headingRef: RefObject<HTMLHeadingElement | null>
+  onTurnOff: () => void
+}) {
+  const zone = webhook.time_zone ?? ''
+  const unshown = zone !== '' && shownTimeZone(zone) !== zone
+  const on = active && webhook.state === 'on'
+  return (
+    <section aria-labelledby="webhook-heading">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-rule-strong pb-2.5">
+        <h2
+          id="webhook-heading"
+          ref={headingRef}
+          tabIndex={-1}
+          className="text-title font-medium outline-none"
+        >
+          Tells the app
+        </h2>
+        {on && (
+          <Button variant="secondary" size="sm" onClick={onTurnOff}>
+            Turn off <span className="sr-only">telling {webhook.host}</span>
+          </Button>
+        )}
+      </div>
+      {on && webhook.failing_since && (
+        <div className="mt-3">
+          <Notice title={`Calls have failed since ${formatWhen(webhook.failing_since, zone)}.`}>
+            <bdi>{webhookFailureWords(webhook)}</bdi>. Permaily keeps trying for 72 hours for each
+            notice. <bdi>{name}</bdi> can still read your mail when it asks.
+          </Notice>
+        </div>
+      )}
+      <TermRow label="Calls">
+        <bdi className="font-mono text-mono break-all">{webhook.host}</bdi>
+      </TermRow>
+      <TermRow label="When">
+        <span className="flex flex-col gap-1">
+          {webhookLines(webhook, zone).map((line) => (
+            <bdi key={line} className="break-words">
+              {line}
+            </bdi>
+          ))}
+          <span className="text-small text-ink-2">
+            <bdi>{webhookNeverWords(webhook.host)}</bdi>
+          </span>
+          {unshown && (
+            <span className="text-small text-ink-2">
+              This browser can't show times in <bdi>{zone}</bdi>, so the times here are in UTC.
+            </span>
+          )}
+        </span>
+      </TermRow>
+      <TermRow label="State">
+        {active ? webhookStateWords(webhook) : 'Ended with the connection'}
+      </TermRow>
+      {on && webhook.schedule && webhook.next_at && (
+        <TermRow label="Next">
+          {formatWhen(webhook.next_at, zone)}
+          {zone && !unshown && <span className="text-ink-2"> ({zone})</span>}
+        </TermRow>
+      )}
+      <TermRow label="Last told">
+        {webhook.last_sent_at ? formatWhen(webhook.last_sent_at, zone) : 'Not yet'}
+      </TermRow>
+    </section>
   )
 }
 

@@ -21,7 +21,7 @@ import {
 import { useSession } from '../../lib/session.tsx'
 import { messageFor } from '../auth/messages.ts'
 import { vendorPath } from '../connections/ConnectionsPage.tsx'
-import { VendorLine } from '../connections/words.tsx'
+import { browserTimeZone, VendorLine } from '../connections/words.tsx'
 import { ConsentTerms } from './ConsentTerms.tsx'
 import { PreviewPane } from './PreviewPane.tsx'
 import { draftKey, useDraftCount } from './preview.ts'
@@ -241,6 +241,9 @@ function Screen({
   const [pending, setPending] = useState<'allow' | 'deny' | null>(null)
   const [error, setError] = useState<api.ApiErrorCode | null>(null)
   const [mailboxes, setMailboxes] = useState<ReadonlyMap<string, api.Mailbox>>(new Map())
+  // The time zone a webhook's schedule follows: the browser's, until the person picks another (ADR 0039).
+  const [timeZone, setTimeZone] = useState(browserTimeZone)
+  const scheduled = request.webhook?.schedule !== undefined
 
   // The mailboxes' names, for the picker and the sentence: without them, their identifiers.
   useEffect(() => {
@@ -261,11 +264,12 @@ function Screen({
   const snapshot = count.snapshot ?? (starting ? request.snapshot : undefined)
   const noticeShown = request.model_notice === MODEL_NOTICE_VERSION
   const empty = draft.mailboxes.length === 0
+  const noZone = scheduled && timeZone === ''
   const name = request.client_name || request.vendor.domain
   const account = state.status === 'signedIn' ? state.me.account.address : ''
 
   async function allow() {
-    if (pending || !snapshot || empty || !noticeShown) return
+    if (pending || !snapshot || empty || !noticeShown || noZone) return
     setPending('allow')
     setError(null)
     try {
@@ -276,6 +280,7 @@ function Screen({
             draft,
             model_notice: request.model_notice,
             snapshot,
+            ...(scheduled ? { time_zone: timeZone } : {}),
           }),
         allowProof,
       )
@@ -309,11 +314,13 @@ function Screen({
 
   const note = empty
     ? 'Choose at least one mailbox.'
-    : !noticeShown
-      ? 'This page is older than Permaily. Reload it from the app to read what applies now.'
-      : !snapshot
-        ? 'Working out what allowing does. You decide once the preview says.'
-        : 'You can revoke it at any time. Mail it has already read cannot be recalled.'
+    : noZone
+      ? 'Choose your time zone.'
+      : !noticeShown
+        ? 'This page is older than Permaily. Reload it from the app to read what applies now.'
+        : !snapshot
+          ? 'Working out what allowing does. You decide once the preview says.'
+          : 'You can revoke it at any time. Mail it has already read cannot be recalled.'
 
   return (
     <main className="flex min-h-svh flex-col xl:flex-row">
@@ -353,6 +360,8 @@ function Screen({
           onDraft={setDraft}
           mailboxes={mailboxes}
           snapshot={snapshot}
+          timeZone={timeZone}
+          onTimeZone={setTimeZone}
         />
 
         <section aria-labelledby="decision-heading" className="mt-7">
@@ -367,7 +376,7 @@ function Screen({
             <Button
               variant="secondary"
               className="sm:flex-1"
-              aria-disabled={pending !== null || !snapshot || empty || !noticeShown}
+              aria-disabled={pending !== null || !snapshot || empty || !noticeShown || noZone}
               aria-describedby="decision-note"
               onClick={allow}
             >

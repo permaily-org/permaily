@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Checkbox, Notice, SectionHeading, TermRow } from '../../components/ui/index.ts'
 import type * as api from '../../lib/api.ts'
 import { modelNotice, modelNoticeTitle } from '../../lib/model-notice.ts'
+import { cx, focusRing } from '../../lib/styles.ts'
 import {
   devicesMax,
   mailboxWords,
@@ -9,6 +10,9 @@ import {
   resourceWords,
   Sentence,
   sinceWords,
+  timeZones,
+  webhookLines,
+  webhookNeverWords,
 } from '../connections/words.tsx'
 import { formatDay } from '../settings/signin/shared.ts'
 import { ChoiceTerm } from './ChoiceDialog.tsx'
@@ -74,7 +78,8 @@ function sinceChoices(request: api.AuthorizationRequest): Choice[] {
 /**
  * What the request asks for and what approving it does, in "The consent screen"'s order: where the browser goes, what
  * is read (the sentence, or all mail of the mailboxes the person picks), from when, which parts, until when, what never
- * leaves, the model, and what approving does to the client's connection.
+ * leaves, the model, and what approving does to the client's connection. A request with a webhook (ADR 0039) adds what
+ * the vendor is told and, for a schedule, the person's time zone.
  */
 export function ConsentTerms({
   request,
@@ -82,12 +87,17 @@ export function ConsentTerms({
   onDraft,
   mailboxes,
   snapshot,
+  timeZone,
+  onTimeZone,
 }: {
   request: api.AuthorizationRequest
   draft: api.ConsentDraft
   onDraft: (draft: api.ConsentDraft) => void
   mailboxes: ReadonlyMap<string, api.Mailbox>
   snapshot?: api.ConsentSnapshot
+  /** The time zone the schedule of the request's webhook follows, sent with the approval. */
+  timeZone: string
+  onTimeZone: (zone: string) => void
 }) {
   const [since, setSince] = useState<Since>(() => startingSince(request))
   const choices = sinceChoices(request)
@@ -152,10 +162,13 @@ export function ConsentTerms({
             ? `${formatDay(snapshot.ends_at)}, on its own`
             : `In ${request.ends_in_days} days, on its own`}
         </TermRow>
+        {request.webhook && <WebhookTerm webhook={request.webhook} timeZone={timeZone} />}
         <TermRow label="Goes back to">
           <bdi className="font-mono text-mono break-all">{request.redirect_host}</bdi>
         </TermRow>
       </div>
+
+      {request.webhook?.schedule && <TimeZonePicker value={timeZone} onChange={onTimeZone} />}
 
       {request.loopback && (
         <div className="mt-4">
@@ -198,6 +211,66 @@ export function ConsentTerms({
         </div>
       </section>
     </>
+  )
+}
+
+/**
+ * What the vendor's webhook is told, in the request's words, then what it is never told (ADR 0039, "The consent
+ * screen"). It is accepted or refused with the request: the screen offers no way to remove it. Words drafted for the
+ * designer's review.
+ */
+function WebhookTerm({ webhook, timeZone }: { webhook: api.WebhookAsked; timeZone: string }) {
+  return (
+    <TermRow label="Tells">
+      <span className="flex flex-col gap-1">
+        {webhookLines(webhook, timeZone).map((line) => (
+          <bdi key={line} className="break-words">
+            {line}
+          </bdi>
+        ))}
+        <span className="text-small text-ink-2">
+          <bdi>{webhookNeverWords(webhook.host)}</bdi>
+        </span>
+      </span>
+    </TermRow>
+  )
+}
+
+/**
+ * The time zone a schedule follows: the browser's, preselected, and the others the browser knows. Kept with the
+ * connection and never given to the vendor; fixed until the app asks again.
+ */
+function TimeZonePicker({ value, onChange }: { value: string; onChange: (zone: string) => void }) {
+  const id = useId()
+  const [own] = useState(value)
+  const zones = timeZones(own)
+  return (
+    <div className="mt-4 flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-small font-medium">
+        Your time zone
+      </label>
+      <select
+        id={id}
+        value={value}
+        aria-describedby={`${id}-note`}
+        onChange={(event) => onChange(event.target.value)}
+        className={cx(
+          'w-full max-w-xs rounded-sm border border-ink bg-paper px-2 py-1 text-small text-ink',
+          focusRing,
+        )}
+      >
+        {value === '' && <option value="">Choose a time zone</option>}
+        {zones.map((zone) => (
+          <option key={zone} value={zone}>
+            {zone}
+          </option>
+        ))}
+      </select>
+      <p id={`${id}-note`} className="text-small text-ink-2">
+        The schedule follows this time zone. The app isn't told it. To change it later, the app asks
+        again.
+      </p>
+    </div>
   )
 }
 
