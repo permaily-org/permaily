@@ -1048,10 +1048,7 @@ func (p *discloseRun) undecided(c *candidate, ri int) Outcome {
 // formulasDecided are the model's answers the formulas' value rested on.
 func (p *discloseRun) formulasDecided(c *candidate) []Decided {
 	model, asked := c.fs.Model, c.asked
-	if c.removable {
-		if c.reduced == nil {
-			return nil
-		}
+	if c.reduced != nil {
 		model, asked = c.reduced.model, c.reduced.asked
 	} else if !c.fsModel {
 		return nil
