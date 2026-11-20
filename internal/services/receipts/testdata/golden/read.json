@@ -1,5 +1,5 @@
 {
-  "v": 2,
+  "v": 3,
   "id": "rcp_18e87e30edfd0a0000000000000000000002",
   "at": "2026-11-16T10:00:00.123456Z",
   "kind": "read",
@@ -80,6 +80,34 @@
               "prompt": "p2c",
               "canary_checked": "2026-11-15",
               "canary_change": "2026-11-01"
+            }
+          ]
+        }
+      ],
+      "removed": [
+        {
+          "rule": {
+            "id": "rul_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "version": 2
+          },
+          "removed": {
+            "parts": ["sender"],
+            "shapes": {
+              "phone_number": 2
+            },
+            "sentences": 1,
+            "of": 7,
+            "attachments": 1
+          },
+          "model": [
+            {
+              "var": "message",
+              "op": "mentions",
+              "topic": "a home address",
+              "p": 0.04,
+              "by_rule": true,
+              "model": "gpt-6-luna",
+              "prompt": "s1c"
             }
           ]
         }

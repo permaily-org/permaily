@@ -420,9 +420,17 @@ func (s *Service) removeConnections(ctx context.Context, id string) error {
 }
 
 // clear removes what is stored under an account's identifier once its
-// connections went: its receipts, its sessions and its record, and then
-// the entry of the list of closing accounts that led here.
+// connections went: its rules, its receipts, its sessions and its record,
+// and then the entry of the list of closing accounts that led here.
 func (s *Service) clear(ctx context.Context, id, closing string) error {
+	// Every epoch of its record of rules, the first never written fenced
+	// (ADR 0040, U30): done again by every pass that tries the removal
+	// again, and nothing more once done.
+	if s.cfg.Rules != nil {
+		if err := s.cfg.Rules.Remove(ctx, id); err != nil {
+			return err
+		}
+	}
 	if err := s.removeReceipts(ctx, id); err != nil {
 		return err
 	}
