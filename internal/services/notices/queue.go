@@ -336,15 +336,17 @@ func (s *Service) first(key []byte, k string) {
 }
 
 // admit waits for a worker, then for the rate, holding nothing of a
-// notice; release frees the worker. Once ctx or the queue's life ended,
-// it admits nothing, whatever was free.
+// notice; release frees the worker. Once ctx or the queue's life ended
+// (Stop), it admits nothing, whatever was free: checked before and after
+// the waits.
 func (s *Service) admit(ctx context.Context) (release func(), err error) {
+	if err := cmp.Or(ctx.Err(), s.life.Err()); err != nil {
+		return nil, err
+	}
 	select {
 	case s.slots <- struct{}{}:
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case <-s.life.Done():
-		return nil, s.life.Err()
 	}
 	err = s.pace.wait(ctx)
 	if err == nil {
