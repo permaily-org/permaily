@@ -2,7 +2,6 @@ package inbox_test
 
 import (
 	"context"
-	"errors"
 	"math"
 	"slices"
 	"strings"
@@ -66,7 +65,7 @@ func TestU18AMeaningDecisionIsBoundToItsMap(t *testing.T) {
 	if !ok || got[0] || !got[1] {
 		t.Fatalf("its own map: %v %v", got, ok)
 	}
-	s, b := redact.Join(v, inbox.MeaningSpans(v, m, got))
+	s, b := redact.Join(v, inbox.MeaningSpans(r, v, m, got))
 	// A body-only connection and a subject-only one cut their parts from
 	// the same result: the address is removed for both.
 	if s != "[removed]" || b != "Thank you." {
@@ -77,7 +76,7 @@ func TestU18AMeaningDecisionIsBoundToItsMap(t *testing.T) {
 	if _, ok := kept.For(other, om); ok {
 		t.Fatal("a decision applied to another view's sentences")
 	}
-	s, b = redact.Join(other, inbox.MeaningSpans(other, om, nil))
+	s, b = redact.Join(other, inbox.MeaningSpans(r, other, om, nil))
 	if s != "" || b != "[removed]" {
 		t.Fatalf("no decision usable: %q / %q", s, b)
 	}
@@ -101,8 +100,8 @@ func TestU18TwoMeaningRulesInEitherOrder(t *testing.T) {
 	if len(m.Sentences) != 4 {
 		t.Fatalf("%d sentences", len(m.Sentences))
 	}
-	a := inbox.MeaningSpans(v, m, address)
-	h := inbox.MeaningSpans(v, m, health)
+	a := inbox.MeaningSpans(redacttest.Naive{}, v, m, address)
+	h := inbox.MeaningSpans(redacttest.Naive{}, v, m, health)
 	s1, b1 := redact.Join(v, append(append([]redact.Span{}, a...), h...))
 	s2, b2 := redact.Join(v, append(append([]redact.Span{}, h...), a...))
 	if s1 != s2 || b1 != b2 || b1 != "[removed] [removed] Thanks." {
@@ -114,14 +113,14 @@ func TestU18TwoMeaningRulesInEitherOrder(t *testing.T) {
 func TestU19WhatIsPastTheCutIsRemoved(t *testing.T) {
 	v := redact.NewView("", "One. Two.")
 	m := redact.SentenceMap{Sentences: []redact.Span{{Start: v.Body.Start, End: v.Body.Start + 4}}, Cut: v.Body.Start + 4}
-	if _, b := redact.Join(v, inbox.MeaningSpans(v, m, []bool{true})); b != "One.[removed]" {
+	if _, b := redact.Join(v, inbox.MeaningSpans(redacttest.Naive{}, v, m, []bool{true})); b != "One.[removed]" {
 		t.Fatalf("%q", b)
 	}
 }
 
-// U18's records half until pull request 4: the kept sentences' encoding
-// round-trips, refuses what Encode never writes, and BlockDecisions refuses
-// a settlement with them rather than settle one without them.
+// U18's records half: the kept sentences' encoding round-trips, refuses
+// what Encode never writes, and BlockDecisions keeps a settlement with them
+// and answers them with the decision ever after.
 func TestU18TheKeptSentencesRoundTrip(t *testing.T) {
 	for _, kept := range [][]bool{{}, {true}, {false, true, true, false, false, false, false, true, true}, make([]bool, redact.MeaningSentencesMax)} {
 		m := &inbox.MeaningKept{Map: "d", Kept: kept}
@@ -142,12 +141,17 @@ func TestU18TheKeptSentencesRoundTrip(t *testing.T) {
 	if _, err := inbox.DecodeMeaningKept("", "1:80"); err == nil {
 		t.Error("read with no map")
 	}
+	ctx, box := context.Background(), inbox.Box{MailboxID: "mbx_x"}
 	d := disclosetest.NewDecisions(time.Now)
 	id := inbox.NewMessageID(time.Now())
-	_, err := d.Settle(context.Background(), inbox.Box{MailboxID: "mbx_x"}, rules.MeaningRef(rules.Ref{ID: "rul_x", Version: 1}, inbox.TextVersion, redact.SplitVersion),
-		map[string]inbox.Settlement{id: {State: inbox.DecisionCleared, Meaning: &inbox.MeaningKept{Map: "d", Kept: []bool{true}}}})
-	if !errors.Is(err, inbox.ErrMeaningNotKept) {
-		t.Fatalf("a meaning settlement before the blocks keep it: %v", err)
+	ref := rules.MeaningRef(rules.Ref{ID: "rul_x", Version: 1}, inbox.TextVersion, redact.SplitVersion)
+	begun, err := d.Begin(ctx, box, ref, []inbox.DecisionKey{{ID: id, ExpiresAt: time.Now().Add(time.Hour)}})
+	if err != nil || begun[id].State != inbox.DecisionBegun {
+		t.Fatal(begun, err)
+	}
+	got, err := d.Settle(ctx, box, ref, map[string]inbox.Settlement{id: {State: inbox.DecisionCleared, Attempt: begun[id].Attempt, Meaning: &inbox.MeaningKept{Map: "d", Kept: []bool{false, true}}}})
+	if err != nil || got[id].State != inbox.DecisionCleared || got[id].Meaning == nil || !slices.Equal(got[id].Meaning.Kept, []bool{false, true}) {
+		t.Fatalf("a meaning settlement: %+v, %v", got[id], err)
 	}
 }
 

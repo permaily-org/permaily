@@ -109,7 +109,7 @@ func respond(r *http.Request, status int, header http.Header, body string) *http
 func ok(n int) string {
 	var items []string
 	for i := range n {
-		items = append(items, `{"type":"predicate","name":"`+name(i)+`","probability":0.5}`)
+		items = append(items, `{"type":"predicate","name":"`+name(decide.Call{}, i)+`","probability":0.5}`)
 	}
 	return `{"model":"gpt-6-luna","answers":[` + strings.Join(items, ",") + `],"usage":{"input_tokens":1390,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0}}}`
 }
@@ -335,7 +335,7 @@ func readMaxSize(t testing.TB) []maxCase {
 func maxCall(c maxCase) decide.Call {
 	call := decide.Call{Content: decide.Content{Kind: decide.ContentMessage, Subject: c.Subject, Body: c.Body}}
 	for i := range c.Atoms {
-		call.Statements = append(call.Statements, query.Atom{Var: contracts.VarMessage, Op: contracts.OpMentions, Topic: "topic " + name(i)})
+		call.Statements = append(call.Statements, query.Atom{Var: contracts.VarMessage, Op: contracts.OpMentions, Topic: "topic " + name(decide.Call{}, i)})
 	}
 	return call
 }

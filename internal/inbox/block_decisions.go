@@ -191,13 +191,7 @@ func (d *BlockDecisions) beginDay(ctx context.Context, mailbox, day string, rule
 // Settle implements Decisions.
 func (d *BlockDecisions) Settle(ctx context.Context, b Box, rule rules.Ref, settle map[string]Settlement) (map[string]Decision, error) {
 	names := make([]string, 0, len(settle))
-	for id, s := range settle {
-		if s.Meaning != nil {
-			// The blocks keep a meaning decision's sentences from ADR
-			// 0040's pull request 4 on; until then one is refused, never
-			// settled without them.
-			return nil, ErrMeaningNotKept
-		}
+	for id := range settle {
 		names = append(names, id)
 	}
 	slices.Sort(names)

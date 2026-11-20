@@ -47,18 +47,33 @@ type Model interface {
 }
 
 // Call is one request to the model: one content and the statements about
-// it. Plan makes them from a message's atoms; a Call made by hand is not
-// checked.
+// it. Plan makes them from a message's atoms, and PlanSentences from a
+// removal's topics; a Call made by hand is not checked.
 type Call struct {
 	Content    Content
 	Statements []query.Atom
+	// On is, for a ContentSentences call, the sentence and the topic of
+	// each statement, in Statements' order: statement i says that sentence
+	// On[i].Sentence of Content.Sentences mentions Statements[i]'s topic,
+	// the removal's topic On[i].Topic (ADR 0040, "What the model sees").
+	// Nil for every other call.
+	On []SentenceTopic
+}
+
+// SentenceTopic is one statement of a ContentSentences call: a sentence's
+// index in Content.Sentences and its topic's in the removal's topics.
+type SentenceTopic struct {
+	Sentence int
+	Topic    int
 }
 
 // Content is what the model is given of one message, and nothing else: its
-// subject alone, for statements on the subject (Kind ContentSubject); or its
-// subject and its text, for statements on the message (ContentMessage).
-// Never a sender, a recipient, an attachment, an identifier of the message,
-// the mailbox or the account (ADR 0020, ADR 0028 "What is sent").
+// subject alone, for statements on the subject (Kind ContentSubject); its
+// subject and its text, for statements on the message (ContentMessage); or
+// the sentences of its one view, every fixed shape masked, for a removal by
+// meaning (ContentSentences, ADR 0040). Never a sender, a recipient, an
+// attachment, an identifier of the message, the mailbox or the account
+// (ADR 0020, ADR 0028 "What is sent").
 type Content struct {
 	Kind    ContentKind
 	Subject string
@@ -67,6 +82,11 @@ type Content struct {
 	// raw message, at most inbox.MessageTextMax (ADR 0028, the owner's
 	// decision 3). Empty for ContentSubject.
 	Body string
+	// Sentences are, for ContentSentences alone, the sentences of the
+	// message's one view in order, each with every piece of every fixed
+	// shape masked (inbox.MaskedSentences), at most MaxSentences; Subject
+	// and Body are then empty.
+	Sentences []string
 }
 
 // ContentKind says which fields of a message a Content holds.
@@ -77,6 +97,10 @@ const (
 	ContentSubject ContentKind = iota + 1
 	// ContentMessage: the subject and the text, for message atoms.
 	ContentMessage
+	// ContentSentences: the sentences of a message's one view, numbered,
+	// for a removal by meaning (ADR 0040), asked under
+	// SentencesPromptVersion.
+	ContentSentences
 )
 
 // Answer is what the model said of one statement. OK is false for a

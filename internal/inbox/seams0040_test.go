@@ -2,6 +2,7 @@ package inbox_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -93,16 +94,20 @@ func TestADR0040SeamsAssemble(t *testing.T) {
 		t.Fatal(err)
 	}
 	kept := &inbox.MeaningKept{Map: m.Digest(v), Kept: inbox.KeptSentences(asked, len(m.Sentences), len(rule.Removal.Topics))}
-	// Pull request 4 settles it with kept; until then the blocks refuse it,
-	// and the discloser would remove the whole text.
-	if _, err := s.decisions.Settle(ctx, box, ref, map[string]inbox.Settlement{id: {State: inbox.DecisionCleared, Attempt: begun[id].Attempt, Meaning: kept}}); err == nil {
-		t.Fatal("the blocks settled a meaning decision they do not keep")
+	settle := inbox.SettleMeaning(v, m, rule.Removal.Topics, asked, nil)
+	settle.Attempt = begun[id].Attempt
+	settled, err := s.decisions.Settle(ctx, box, ref, map[string]inbox.Settlement{id: settle})
+	if err != nil || settled[id].State != inbox.DecisionCleared || settled[id].Meaning == nil {
+		t.Fatalf("settle %+v, %v", settled[id], err)
 	}
-	got, ok := kept.For(v, m)
+	if again, err := s.decisions.Begin(ctx, box, ref, []inbox.DecisionKey{{ID: id, ExpiresAt: time.Now().Add(time.Hour)}}); err != nil || again[id].Meaning == nil || !slices.Equal(again[id].Meaning.Kept, kept.Kept) {
+		t.Fatalf("read back %+v, %v", again[id], err)
+	}
+	got, ok := settled[id].Meaning.For(v, m)
 	if !ok {
 		t.Fatal("its own map")
 	}
-	subject, text := redact.Join(v, inbox.MeaningSpans(v, m, got))
+	subject, text := redact.Join(v, inbox.MeaningSpans(s.redactor, v, m, got))
 	if subject != "[removed]" || text != "Thank you." {
 		t.Fatalf("%q / %q", subject, text)
 	}
