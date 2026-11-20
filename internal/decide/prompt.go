@@ -87,6 +87,9 @@ func topicJSON(topic string) string {
 // an input_text holds; the re-measure's worst text, every byte a quote, was
 // 528,346 bytes and 264,741 tokens, answered in 1.6 s.
 func ContentJSON(c Content) []byte {
+	if c.Kind == ContentSentences {
+		return sentencesJSON(c.Sentences)
+	}
 	var b strings.Builder
 	b.WriteString(`{"subject":`)
 	b.WriteString(jsonString(c.Subject))

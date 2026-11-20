@@ -75,6 +75,9 @@ function LimitedShell({ standing, children }: { standing: Standing; children: Re
           <NavLink to="/accounts" end className={tab}>
             Accounts
           </NavLink>
+          <NavLink to="/activity" className={tab}>
+            Activity
+          </NavLink>
         </nav>
       </header>
       <div className="flex flex-col gap-2 px-4 pt-4 sm:px-8 lg:px-14">

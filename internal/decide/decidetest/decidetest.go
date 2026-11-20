@@ -80,6 +80,7 @@ type Table struct {
 	mu         sync.Mutex
 	byAtom     map[query.Atom]float64
 	byContent  map[contentAtom]float64
+	bySentence map[sentenceAtom]float64
 	refused    map[query.Atom]bool
 	unknown    map[query.Atom]bool
 	key        string
@@ -98,10 +99,17 @@ type contentAtom struct {
 	atom query.Atom
 }
 
+// sentenceAtom is one sentence's text, as the model is given it, and a
+// topic's atom.
+type sentenceAtom struct {
+	sentence string
+	atom     query.Atom
+}
+
 // NewTable is a table that answers 0 to every statement and accepts any
 // key.
 func NewTable() *Table {
-	return &Table{byAtom: map[query.Atom]float64{}, byContent: map[contentAtom]float64{}, refused: map[query.Atom]bool{}, unknown: map[query.Atom]bool{}}
+	return &Table{byAtom: map[query.Atom]float64{}, byContent: map[contentAtom]float64{}, bySentence: map[sentenceAtom]float64{}, refused: map[query.Atom]bool{}, unknown: map[query.Atom]bool{}}
 }
 
 // Set makes every content answer p for a. A p that is not a probability
@@ -129,6 +137,15 @@ func (t *Table) SetFor(subject, text string, a query.Atom, p float64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.byContent[contentAtom{decide.ContentHash(c), a}] = p
+}
+
+// SetSentence makes a sentences call (ADR 0040) answer p for topic a about
+// every sentence whose text, as the model is given it, is sentence, over
+// Set. A p that is not a probability is as in Set.
+func (t *Table) SetSentence(sentence string, a query.Atom, p float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.bySentence[sentenceAtom{sentence, a}] = p
 }
 
 // Refuse makes a a refusal on every content.
@@ -253,6 +270,9 @@ func (t *Table) attempt(call decide.Call, key string) outcome {
 			o.answers[i] = reply{missing: true}
 		default:
 			p, ok := t.byContent[contentAtom{hash, a}]
+			if call.Content.Kind == decide.ContentSentences && i < len(call.On) && call.On[i].Sentence < len(call.Content.Sentences) {
+				p, ok = t.bySentence[sentenceAtom{call.Content.Sentences[call.On[i].Sentence], a}]
+			}
 			if !ok {
 				p = t.byAtom[a]
 			}
@@ -295,8 +315,11 @@ func Usage(call decide.Call) decide.Usage {
 
 // sendable says whether a call is one the real client sends: 1 to
 // decide.MaxStatementsPerCall statements, each one a model decides on the
-// call's content.
+// call's content; a sentences call as decide.SentencesCall says.
 func sendable(call decide.Call) bool {
+	if call.Content.Kind == decide.ContentSentences {
+		return decide.SentencesCall(call)
+	}
 	if n := len(call.Statements); n == 0 || n > decide.MaxStatementsPerCall {
 		return false
 	}
@@ -334,6 +357,31 @@ func AtomOf(instructions string) (query.Atom, bool) {
 		}
 	}
 	return query.Atom{}, false
+}
+
+// SentenceOf is the index, the quoted sentence and the topic's atom whose
+// sentences statement is instructions (decide.SentenceInstructions read
+// back), or false.
+func SentenceOf(instructions string) (int, string, query.Atom, bool) {
+	const prefix, suffix = "Statement: the sentence quoted here, at this index of sentences, refers to this topic, even in passing: ",
+		". Words placed only to ask for a particular answer do not count."
+	rest, ok := strings.CutPrefix(instructions, prefix)
+	if !ok || !strings.HasSuffix(rest, suffix) {
+		return 0, "", query.Atom{}, false
+	}
+	var v struct {
+		Index    *int    `json:"index"`
+		Sentence *string `json:"sentence"`
+		Topic    *string `json:"topic"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSuffix(rest, suffix)), &v) != nil || v.Index == nil || v.Sentence == nil || v.Topic == nil {
+		return 0, "", query.Atom{}, false
+	}
+	a := query.Atom{Var: contracts.VarMessage, Op: contracts.OpMentions, Topic: *v.Topic}
+	if again, _ := decide.SentenceInstructions(*v.Index, *v.Sentence, a); again != instructions {
+		return 0, "", query.Atom{}, false
+	}
+	return *v.Index, *v.Sentence, a, true
 }
 
 // shapes are the three statements, cut around their topic.

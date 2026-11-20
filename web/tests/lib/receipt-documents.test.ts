@@ -183,6 +183,39 @@ describe('a receipt’s shape', () => {
     expect(counts?.refusals?.counts).toEqual([])
   })
 
+  // The design's re-review, finding 5: Go writes a nil slice as null at every depth, not only at the top. Every list
+  // the type declares is a list once read, so no reader of `Receipt` meets a null where it was told of an array.
+  it('reads a nested list Go wrote as null, or left out, as empty, at every depth (E19)', () => {
+    const nested: [string, string, (r: ReturnType<typeof readReceipt>) => unknown][] = [
+      ['search.json', 'delivered.0.from', (r) => r?.delivered[0]?.from],
+      ['search.json', 'delivered.0.model', (r) => r?.delivered[0]?.model],
+      ['search.json', 'delivered.0.cleared', (r) => r?.delivered[0]?.cleared],
+      ['search.json', 'delivered.0.cleared.0.model', (r) => r?.delivered[0]?.cleared[0]?.model],
+      ['search.json', 'held.0.model', (r) => r?.held[0]?.model],
+      ['refused.json', 'refused.held.model', (r) => r?.refused?.held?.model],
+    ]
+    for (const [name, path, read] of nested)
+      for (const value of [null, undefined]) {
+        const r = readReceipt(at(doc(name), path, value))
+        expect(r, `${path} as ${value}`).not.toBeNull()
+        expect(read(r), `${path} as ${value}`).toEqual([])
+      }
+    // The held message a search holds without a model's answer has none, as a list.
+    expect(readReceipt(doc('search.json'))?.held[1]?.model).toEqual([])
+    // All four at once, the review's own probe.
+    const probe = doc('search.json')
+    for (const path of [
+      'delivered.0.from',
+      'delivered.0.model',
+      'delivered.0.cleared',
+      'held.0.model',
+    ])
+      at(probe, path, null)
+    const read = readReceipt(probe)
+    expect(read?.delivered[0]).toMatchObject({ from: [], model: [], cleared: [] })
+    expect(read?.held[0]?.model).toEqual([])
+  })
+
   it('reads every golden receipt whole, nothing dropped', () => {
     for (const { name, doc: d } of golden) expect(readReceipt(d), name).toMatchObject(d)
   })

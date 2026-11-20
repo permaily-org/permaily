@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -160,7 +161,8 @@ func call(body []byte) (decide.Call, bool) {
 		return decide.Call{}, false
 	}
 	var developer string
-	if r.Input[0].Role != "developer" || json.Unmarshal(r.Input[0].Content, &developer) != nil || developer != decide.Developer {
+	if r.Input[0].Role != "developer" || json.Unmarshal(r.Input[0].Content, &developer) != nil ||
+		(developer != decide.Developer && developer != decide.SentencesDeveloper) {
 		return decide.Call{}, false
 	}
 	var parts []wirePart
@@ -168,6 +170,9 @@ func call(body []byte) (decide.Call, bool) {
 	pd.DisallowUnknownFields()
 	if r.Input[1].Role != "user" || pd.Decode(&parts) != nil || len(parts) != 1 || parts[0].Type != "input_text" {
 		return decide.Call{}, false
+	}
+	if developer == decide.SentencesDeveloper {
+		return sentencesCall(r, parts[0].Text)
 	}
 	var content struct {
 		Subject *string `json:"subject"`
@@ -191,6 +196,37 @@ func call(body []byte) (decide.Call, bool) {
 			return decide.Call{}, false
 		}
 		c.Statements = append(c.Statements, a)
+	}
+	return c, sendable(c)
+}
+
+// sentencesCall reads a sentences request (ADR 0040): its content only
+// {"sentences": […]} in the bytes decide writes, each statement one of
+// decide.SentenceInstructions quoting the sentence at its index, named sNtM
+// after its sentence and topic.
+func sentencesCall(r wireRequest, text string) (decide.Call, bool) {
+	var content struct {
+		Sentences *[]string `json:"sentences"`
+	}
+	cd := json.NewDecoder(bytes.NewReader([]byte(text)))
+	cd.DisallowUnknownFields()
+	if cd.Decode(&content) != nil || content.Sentences == nil {
+		return decide.Call{}, false
+	}
+	c := decide.Call{Content: decide.Content{Kind: decide.ContentSentences, Sentences: *content.Sentences}}
+	if string(decide.ContentJSON(c.Content)) != text {
+		return decide.Call{}, false
+	}
+	for _, q := range r.Questions {
+		n, quoted, a, ok := SentenceOf(q.Instructions)
+		sentence, topic, named := strings.Cut(strings.TrimPrefix(q.Name, "s"), "t")
+		ts, errT := strconv.Atoi(topic)
+		if q.Type != "predicate" || !ok || !named || sentence != strconv.Itoa(n) || errT != nil || strconv.Itoa(ts) != topic ||
+			n >= len(c.Content.Sentences) || quoted != c.Content.Sentences[n] {
+			return decide.Call{}, false
+		}
+		c.Statements = append(c.Statements, a)
+		c.On = append(c.On, decide.SentenceTopic{Sentence: n, Topic: ts})
 	}
 	return c, sendable(c)
 }
@@ -255,11 +291,11 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 	case Drop:
 		panic(http.ErrAbortHandler) // the connection closed, with no answer (HTTP/2: RST_STREAM INTERNAL_ERROR)
 	case Invalid:
-		writeAnswer(w, Name, o, true)
+		writeAnswer(w, Name, c, o, true)
 	case OtherModel:
-		writeAnswer(w, AnotherModel, o, false)
+		writeAnswer(w, AnotherModel, c, o, false)
 	default:
-		writeAnswer(w, Name, o, false)
+		writeAnswer(w, Name, c, o, false)
 	}
 }
 
@@ -267,8 +303,9 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 // answer more than the call's statements. Every answer is valid JSON: a
 // value that is not a probability is the number when it is finite, null
 // for NaN and a string for an infinity, each of which the real client
-// reads as no answer for that statement alone.
-func writeAnswer(w http.ResponseWriter, model string, o outcome, extra bool) {
+// reads as no answer for that statement alone. Each answer is named as c
+// named its statement (decide.StatementName).
+func writeAnswer(w http.ResponseWriter, model string, c decide.Call, o outcome, extra bool) {
 	type item struct {
 		Type        string          `json:"type"`
 		Name        string          `json:"name"`
@@ -280,7 +317,7 @@ func writeAnswer(w http.ResponseWriter, model string, o outcome, extra bool) {
 	}
 	items := make([]item, len(answers))
 	for i, a := range answers {
-		items[i] = item{Type: "predicate", Name: "s" + strconv.Itoa(i)}
+		items[i] = item{Type: "predicate", Name: decide.StatementName(c, i)}
 		switch {
 		case a.refused:
 			items[i].Type = "refusal"

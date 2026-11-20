@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/query"
@@ -19,8 +22,9 @@ import (
 // which says sentence by sentence what a removal's topics mention: committed
 // with the design, so ADR 0040's pull request 4 (services/decisions
 // implements SentenceAsker, and the decisions' blocks keep MeaningKept) and
-// pull request 5 (the discloser) share one contract. Nothing implements
-// SentenceAsker in the image yet, and nothing reads Disclosed.Removed.
+// pull request 5 (the discloser) share one contract. services/decisions'
+// Service implements SentenceAsker; nothing in the image asks it yet, and
+// nothing reads Disclosed.Removed.
 //
 // Every removal is decided and applied on one View of the message
 // (redact.NewView of its subject and its text as MessageText gives it),
@@ -60,16 +64,24 @@ type SentenceQuestion struct {
 // contracts.RemovedMarker, whatever the rules remove, so what OpenAI sees
 // does not depend on which rules apply (ADR 0040, finding 1).
 func MaskedSentences(r redact.Redactor, v redact.View, m redact.SentenceMap) []string {
-	var pieces []redact.Span
-	for _, p := range r.Shapes(v.Text, contracts.ShapeKinds) {
-		pieces = append(pieces, p.Span)
-	}
+	pieces := masked(r, v)
 	out := make([]string, len(m.Sentences))
 	for i, s := range m.Sentences {
 		sv := redact.View{Text: v.Text, Subject: redact.Span{Start: s.Start, End: s.Start}, Body: s}
 		_, out[i] = redact.Join(sv, pieces)
 	}
 	return out
+}
+
+// masked is every piece of every one of contracts.ShapeKinds in v's Text:
+// what the model is never shown (MaskedSentences), and so what a meaning
+// rule always removes (MeaningSpans).
+func masked(r redact.Redactor, v redact.View) []redact.Span {
+	var pieces []redact.Span
+	for _, p := range r.Shapes(v.Text, contracts.ShapeKinds) {
+		pieces = append(pieces, p.Span)
+	}
+	return pieces
 }
 
 // SentenceTopic names one statement: sentence Sentence (its index in
@@ -131,12 +143,8 @@ type MeaningKept struct {
 
 // MeaningKeptBytesMax bounds Encode's answer and the map's digest together:
 // what a block reserves for a meaning decision's settlement beside its
-// evidence (pull request 4 counts it in the Pending's room).
+// evidence, in the room of its Pending.
 const MeaningKeptBytesMax = 64 + 4 + redact.MeaningSentencesMax/4
-
-// ErrMeaningNotKept refuses a Settlement with Meaning, until ADR 0040's pull
-// request 4 keeps it in the blocks.
-var ErrMeaningNotKept = errors.New("inbox: a meaning decision's sentences are not kept yet")
 
 // Encode is Kept as its count, ":" and a bitmap in hexadecimal, sentence 0
 // the first byte's highest bit: what the blocks keep.
@@ -181,24 +189,30 @@ func DecodeMeaningKept(mapDigest, enc string) (*MeaningKept, error) {
 }
 
 // For is which sentences of v, split as sm, the decision kept: only when it
-// was made on that same map (its digest and its count); otherwise false,
-// and the caller removes the whole text (and the subject).
+// was made on that same map (its digest and its count) and the map keeps
+// its invariants (redact.SentenceMap.Check); otherwise false, and the
+// caller removes the whole text (and the subject).
 func (m *MeaningKept) For(v redact.View, sm redact.SentenceMap) ([]bool, bool) {
-	if m == nil || len(m.Kept) != len(sm.Sentences) || m.Map != sm.Digest(v) {
+	if m == nil || len(m.Kept) != len(sm.Sentences) || m.Map != sm.Digest(v) || sm.Check(v) != nil {
 		return nil, false
 	}
 	return m.Kept, true
 }
 
-// MeaningSpans is what a meaning decision removes from v, as spans of its
-// Text: every sentence of sm not kept, and everything from sm.Cut on; with
-// kept nil (no decision, or one For refused), the subject and the text
+// MeaningSpans is what a meaning rule removes from v, as spans of its Text:
+// every sentence of sm not kept, everything from sm.Cut on, and every piece
+// of every fixed shape kind r finds in it, whatever the model answered (ADR
+// 0040's re-review, N2): the model was shown those pieces masked
+// (MaskedSentences), so "ana@example.com" and "5551234567" were the same
+// "[removed]" to it, and nothing it answered can say the piece was not what
+// the rule's topics name. With kept nil (no decision, or one For refused),
+// or a map that does not keep its invariants, the subject and the text
 // whole.
-func MeaningSpans(v redact.View, sm redact.SentenceMap, kept []bool) []redact.Span {
-	if kept == nil || len(kept) != len(sm.Sentences) {
+func MeaningSpans(r redact.Redactor, v redact.View, sm redact.SentenceMap, kept []bool) []redact.Span {
+	if kept == nil || len(kept) != len(sm.Sentences) || sm.Check(v) != nil {
 		return []redact.Span{v.Subject, v.Body}
 	}
-	var out []redact.Span
+	out := masked(r, v)
 	for i, s := range sm.Sentences {
 		if !kept[i] {
 			out = append(out, s)
@@ -207,7 +221,39 @@ func MeaningSpans(v redact.View, sm redact.SentenceMap, kept []bool) []redact.Sp
 	if sm.Cut < len(v.Text) {
 		out = append(out, redact.Span{Start: sm.Cut, End: len(v.Text)})
 	}
+	// Whatever text before the cut no sentence covers was never asked
+	// about: removed, white space apart (ADR 0040's re-review, N1; a map
+	// that keeps its invariants leaves only white space uncovered).
+	at := 0
+	for _, s := range append(slices.Clone(sm.Sentences), redact.Span{Start: sm.Cut, End: sm.Cut}) {
+		if s.Start > at {
+			if g := unblank(v.Text, at, s.Start); g.End > g.Start {
+				out = append(out, g)
+			}
+		}
+		at = max(at, s.End)
+	}
 	return out
+}
+
+// unblank is text[start:end] without its white space at either end, as a
+// span; empty when it is all white space.
+func unblank(text string, start, end int) redact.Span {
+	for start < end {
+		r, n := utf8.DecodeRuneInString(text[start:end])
+		if !unicode.IsSpace(r) {
+			break
+		}
+		start += n
+	}
+	for end > start {
+		r, n := utf8.DecodeLastRuneInString(text[start:end])
+		if !unicode.IsSpace(r) {
+			break
+		}
+		end -= n
+	}
+	return redact.Span{Start: start, End: end}
 }
 
 // RemovedBy is what one rule removed from a message that left, for the
