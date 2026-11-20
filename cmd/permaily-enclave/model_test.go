@@ -26,6 +26,7 @@ import (
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/keys"
 	"github.com/permaily-org/permaily/internal/query"
+	"github.com/permaily-org/permaily/internal/rulewords"
 	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/services/decisions"
 	"github.com/permaily-org/permaily/internal/store"
@@ -543,5 +544,55 @@ func TestComposeModelRefuses(t *testing.T) {
 	}
 	if _, err := composeModel(modelParts{records: records}); err == nil {
 		t.Fatal("composed without its storage")
+	}
+}
+
+// ADR 0040's composition of words: the image turns a person's words into a
+// draft through internal/rulewords/openai over the model's egress, with the
+// service's own key and the pinned organisation and project, each call
+// counted on /status by its outcome; the words are in no log line.
+func TestADR0040TheComposedModelWritesWordsThroughTheEgress(t *testing.T) {
+	w := newModelWorld(t)
+	writer := decidetest.NewWriter(t, false, nil)
+	records := &store.Anchored{Records: w.mem, Commits: w.commits, OnlyNewest: true, Strict: true, Now: w.now}
+	svc, err := composeModel(modelParts{
+		cfg: e2eModel, egress: writer.Client(), records: records, entries: w.mem, keys: w.keys,
+		mailer: w.outbox, superAdmin: "admin@permaily.test", now: w.now,
+		log: slog.New(slog.NewJSONHandler(w.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	const words = "hold mail from my bank quokka-41"
+	if _, err := svc.Write(ctx, "acc_words", words); !errors.Is(err, contracts.ErrModelUnavailable) || len(writer.Requests()) != 0 {
+		t.Fatalf("no key: %v, %d requests", err, len(writer.Requests()))
+	}
+	const key = "pm-words-key-7f3a"
+	if _, err := svc.SetKey(ctx, contracts.ModelKeySet{Key: key}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Write(ctx, "acc_words", words)
+	if err != nil || got.Draft.Effect != contracts.EffectHold || got.Model != rulewords.ModelName || got.Prompt != rulewords.PromptVersion {
+		t.Fatalf("the draft: %+v %v", got, err)
+	}
+	rs := writer.Requests()
+	if len(rs) != 1 {
+		t.Fatalf("%d requests", len(rs))
+	}
+	r := rs[0]
+	if r.Proto != "HTTP/2.0" || r.Path != "/v1/responses" || r.Header.Get("Authorization") != "Bearer "+key ||
+		r.Header.Get("OpenAI-Organization") != "org-a34" || r.Header.Get("OpenAI-Project") != "proj-a34" {
+		t.Fatalf("the request: %s %s %v", r.Proto, r.Path, r.Header)
+	}
+	if sent, ok := decidetest.Words(r.Body); !ok || sent != words {
+		t.Fatalf("the words sent: %q", sent)
+	}
+	calls := svc.WordsCalls()
+	if calls[attestation.WordsProposed] != 1 || calls[attestation.WordsUnavailable] != 1 || len(calls) != len(attestation.PersonRulesWordsCalls) {
+		t.Fatalf("the words calls: %v", calls)
+	}
+	if strings.Contains(w.logs.String(), "quokka") || strings.Contains(w.logs.String(), key) {
+		t.Fatal("the words or the key in the log")
 	}
 }
