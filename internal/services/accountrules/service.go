@@ -84,8 +84,8 @@ type Service struct {
 	// cache is each account's record as last read or written here.
 	cache map[string]cached
 	// pruned is, by account, the epoch below which this enclave saw every
-	// earlier epoch removed.
-	pruned map[string]uint64
+	// earlier epoch removed, and when.
+	pruned map[string]pruneMark
 
 	unreadable atomic.Int64
 }
@@ -101,6 +101,26 @@ type cached struct {
 	version uint64
 	began   time.Time
 }
+
+// pruneMark is the epoch below which an enclave saw every earlier epoch of
+// an account's record removed, when, and whether it removed them once more
+// RemoveAgainAfter after that.
+type pruneMark struct {
+	below uint64
+	at    time.Time
+	again bool
+}
+
+// WriteMax bounds each write of the record (store.WriteWithin): a write that
+// read an epoch before its removal stages its value within it, as the
+// connections' writes do (connections.WriteMax, whose reasons hold here).
+const WriteMax = 10 * time.Minute
+
+// RemoveAgainAfter is how long after an epoch's removal it is removed once
+// more, for a value a write under way at the removal staged after it:
+// WriteMax and a margin, as connections.RemoveAgainAfter, by which accounts
+// calls Remove again after an account's removal.
+const RemoveAgainAfter = WriteMax + 20*time.Minute
 
 // cacheMax bounds the accounts whose record an enclave keeps: past it the
 // cache is emptied, and the next request of each account reads again.
@@ -130,7 +150,7 @@ func New(cfg Config) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{cfg: cfg, key: key, epochs: map[string]uint64{}, cache: map[string]cached{}, pruned: map[string]uint64{}}, nil
+	return &Service{cfg: cfg, key: key, epochs: map[string]uint64{}, cache: map[string]cached{}, pruned: map[string]pruneMark{}}, nil
 }
 
 func (s *Service) now() time.Time { return s.cfg.Now() }
@@ -214,7 +234,8 @@ func (s *Service) open(ctx context.Context, account string, e uint64) (*rules.Re
 // read is the newest epoch of an account's record, read strictly and now,
 // and its mark: nil when the account has none. An epoch removed once its
 // successor was committed (a removal's commit after a value: version above
-// 1) is passed over to the next; the fence a removal of the account leaves
+// 1) is passed over to the newest epoch ever written (newest), however many
+// came between (review of #190, finding 2); the fence a removal of the account leaves
 // after its last epoch (a removal's commit on a name that never had a value,
 // version 1) reads as none, as epoch 0 never written does. An epoch above 0
 // never written follows one written Next by a writer that stopped before it
@@ -222,7 +243,7 @@ func (s *Service) open(ctx context.Context, account string, e uint64) (*rules.Re
 // taken for an account with no rules.
 func (s *Service) read(ctx context.Context, account string) (*rules.Record, store.Mark, error) {
 	e := s.epoch(account)
-	for range rules.RecordVersionsMax {
+	for range walkSteps {
 		rec, at, err := s.open(ctx, account, e)
 		switch {
 		case err == nil && rec.Next:
@@ -235,7 +256,11 @@ func (s *Service) read(ctx context.Context, account string) (*rules.Record, stor
 		case !errors.Is(err, errAbsent):
 			return nil, at, err
 		case at.Version() > 1:
-			e++
+			n, err := s.newest(ctx, account, e+1)
+			if err != nil {
+				return nil, store.Mark{}, err
+			}
+			e = n
 			continue
 		case at.Version() == 1 || e == 0:
 			return nil, at, nil
@@ -245,6 +270,68 @@ func (s *Service) read(ctx context.Context, account string) (*rules.Record, stor
 		}
 	}
 	return nil, store.Mark{}, errBusy
+}
+
+// walkSteps bounds the epochs one read opens after newest found where to
+// start: a few rollovers by another enclave meanwhile, each of
+// rules.RecordVersionsMax changes.
+const walkSteps = 16
+
+// newest is the highest epoch of an account's record at or after from that
+// was ever written (it has a commit: a value, a removal or the account's
+// fence), or from when from was never written. The epochs written are
+// always 0 to the newest: an epoch is made only once the one before it was
+// written Next, and an account's removal fences the first never written. So
+// it is found by doubling the step from from and then halving it, in about
+// twice the logarithm of the epochs passed, never one read for each: a cold
+// read reaches the current epoch however long the account's history, each
+// read one record's history, below store.MaxHistoryReads. What it finds is
+// read as any epoch is: a removed one after which nothing was written is a
+// history that went back (remake), never an account without rules.
+func (s *Service) newest(ctx context.Context, account string, from uint64) (uint64, error) {
+	ok, err := s.written(ctx, account, from)
+	if err != nil || !ok {
+		return from, err
+	}
+	lo, hi := from, from
+	for step := uint64(1); ; step *= 2 {
+		if step > removeEpochsMax {
+			return 0, errBusy
+		}
+		hi = lo + step
+		if ok, err = s.written(ctx, account, hi); err != nil {
+			return 0, err
+		}
+		if !ok {
+			break
+		}
+		lo = hi
+	}
+	for hi-lo > 1 {
+		mid := lo + (hi-lo)/2
+		ok, err := s.written(ctx, account, mid)
+		if err != nil {
+			return 0, err
+		}
+		if ok {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return lo, nil
+}
+
+// written says whether epoch e of an account's record has a commit.
+func (s *Service) written(ctx context.Context, account string, e uint64) (bool, error) {
+	_, at, err := s.cfg.Records.GetRecordAt(ctx, rules.RecordName(account, e))
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		return at.Version() > 0, nil // ErrLost too: committed, its value gone
+	}
+	return false, err
 }
 
 // remake makes epoch e of an account's record again from e-1, written Next
@@ -289,6 +376,7 @@ func (s *Service) seal(ctx context.Context, rec *rules.Record, at store.Mark, cr
 		return err
 	}
 	r := &store.Record{Name: name, Value: value, UpdatedAt: s.now()}
+	ctx = store.WriteWithin(ctx, WriteMax)
 	if create {
 		return s.cfg.Records.CreateNew(ctx, r)
 	}
@@ -330,31 +418,52 @@ func (s *Service) write(ctx context.Context, rec *rules.Record, at store.Mark, c
 	if err := s.seal(ctx, rec, at, false); err != nil {
 		return nil, 0, err
 	}
-	if s.prunedBelow(rec.Account) < rec.Epoch {
+	if s.pruneDue(rec.Account, rec.Epoch) {
 		_ = s.prune(ctx, rec.Account, rec.Epoch)
 	}
 	return rec, at.Version() + 1, nil
 }
 
-func (s *Service) prunedBelow(account string) uint64 {
+// pruneDue says whether a write of an account's record at epoch current
+// prunes: this enclave did not see the epochs before it removed (since it
+// started: a restart prunes again, finishing what failed), or saw them
+// removed RemoveAgainAfter ago and did not remove them once more.
+func (s *Service) pruneDue(account string, current uint64) bool {
+	if current == 0 {
+		return false
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.pruned[account]
+	p := s.pruned[account]
+	return p.below < current || (!p.again && !s.now().Before(p.at.Add(RemoveAgainAfter)))
 }
 
 // prune removes every epoch of an account's record before current that
 // still has a value, the oldest first, once current is committed: its
 // removal's commit stays as its fence (a removed record never reads again,
 // whatever of it is put back, and CreateNew refuses its name). Removing the
-// oldest first keeps the epochs that still have a value a run just below
-// current, so the walk down stops at the first removed one.
+// oldest first, and stopping at the first failure, keeps the epochs that
+// still have a value a run just below current, and the one removal that may
+// not have finished just below them: the walk down stops at the first
+// removed one and removes it again (RemoveRecord deletes what is stored of
+// a removed record and adds no commit), so a removal whose commit landed and
+// whose deletes failed is finished by the next prune, here or after a
+// restart, and each removed epoch is removed once more by the prune of the
+// next rollover (review of #190, finding 1). Only once all of it succeeded
+// does this enclave stop pruning at current, until RemoveAgainAfter later,
+// when it removes them once more for what a write under way staged.
 func (s *Service) prune(ctx context.Context, account string, current uint64) error {
+	began := s.now()
 	from := current
 	for from > 0 {
-		_, at, err := s.cfg.Records.GetRecordAt(ctx, rules.RecordName(account, from-1))
+		name := rules.RecordName(account, from-1)
+		_, at, err := s.cfg.Records.GetRecordAt(ctx, name)
 		if errors.Is(err, store.ErrNotFound) && !errors.Is(err, store.ErrLost) {
 			if at.Version() == 0 {
 				return store.ErrRolledBack // an epoch below a committed one was never made
+			}
+			if err := s.cfg.Records.RemoveRecord(ctx, name); err != nil {
+				return err
 			}
 			break
 		}
@@ -369,10 +478,14 @@ func (s *Service) prune(ctx context.Context, account string, current uint64) err
 		}
 	}
 	s.mu.Lock()
-	if current > s.pruned[account] {
-		s.pruned[account] = current
+	defer s.mu.Unlock()
+	switch p := s.pruned[account]; {
+	case current > p.below:
+		s.pruned[account] = pruneMark{below: current, at: began}
+	case current == p.below && !began.Before(p.at.Add(RemoveAgainAfter)):
+		p.again = true
+		s.pruned[account] = p
 	}
-	s.mu.Unlock()
 	return nil
 }
 

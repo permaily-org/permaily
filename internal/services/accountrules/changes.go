@@ -326,26 +326,27 @@ const removeEpochsMax = 1 << 16
 
 // Remove implements Rules: every epoch from 0 is removed, whatever it holds,
 // up to the first never written, which is removed too so that its removal's
-// commit fences the record (no epoch after it is ever read or made).
+// commit fences the record (no epoch after it is ever read or made). An
+// epoch removed already, and the fence, are removed again: RemoveRecord
+// deletes what is stored of a removed record and adds no commit, so a
+// removal whose commit landed and whose deletes failed, here or by a
+// rollover, is finished by the next call (review of #190, finding 1), and
+// the call accounts makes RemoveAgainAfter later deletes what a write under
+// way at the removal staged after it.
 func (s *Service) Remove(ctx context.Context, account string) error {
 	defer s.forget(account)
 	for e := range uint64(removeEpochsMax) {
 		name := rules.RecordName(account, e)
 		_, at, err := s.cfg.Records.GetRecordAt(ctx, name)
 		absent := errors.Is(err, store.ErrNotFound) && !errors.Is(err, store.ErrLost)
-		switch {
-		case absent && at.Version() == 1:
-			return nil // fenced already
-		case absent && at.Version() > 1:
-			continue // removed already
-		case err != nil && !absent && !errors.Is(err, store.ErrLost):
+		if err != nil && !absent && !errors.Is(err, store.ErrLost) {
 			return err
 		}
 		if err := s.cfg.Records.RemoveRecord(ctx, name); err != nil {
 			return err
 		}
-		if absent {
-			return nil // the fence after the last epoch
+		if absent && at.Version() <= 1 {
+			return nil // the fence after the last epoch, made now or before
 		}
 	}
 	return errBusy

@@ -12,6 +12,7 @@ import (
 	"github.com/permaily-org/permaily/internal/keys"
 	"github.com/permaily-org/permaily/internal/rules"
 	"github.com/permaily-org/permaily/internal/services/accountrules"
+	"github.com/permaily-org/permaily/internal/services/connections"
 	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
 )
@@ -101,5 +102,44 @@ func TestU30RemovingAnAccountRemovesItsRules(t *testing.T) {
 	a, err := rulesOf(t, w, k).Applying(ctx, id, "https://claude.ai/oauth/claude-code-client-metadata")
 	if err != nil || len(a.Rules) != 1 || a.Rules[0].ID != rules.DefaultID {
 		t.Fatalf("what is left of its rules: %+v, %v", a, err)
+	}
+}
+
+// Review of #190, finding 1: the account's last pass, connections.RemoveAgainAfter
+// after its removal, removes its rules again, so a value a write of its
+// record under way at the removal staged after it goes too.
+func TestReview190F1TheLastPassRemovesTheRulesAgain(t *testing.T) {
+	ctx := context.Background()
+	if accountrules.RemoveAgainAfter > connections.RemoveAgainAfter || 2*accountrules.WriteMax >= connections.RemoveAgainAfter {
+		t.Fatal("the last pass comes before a write of the rules can land")
+	}
+	w := newWorld(t)
+	w.svc.SetConnections(&lifecycle{})
+	k, err := keys.NewLocal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.svc.cfg.Rules = rulesOf(t, w, k)
+	me, cookie := w.signUp("ana@example.org")
+	id := me.Account.ID
+	if _, err := w.svc.StartDeletion(ctx, w.fresh(w.who(cookie))); err != nil {
+		t.Fatal(err)
+	}
+	w.now = w.now.Add(domain.AccountClosing)
+	if err := w.svc.RemoveDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	late := rules.RecordName(id, 0) + "@late"
+	if err := w.mem.PutRecord(ctx, &store.Record{Name: late, Value: []byte("sealed")}, true); err != nil {
+		t.Fatal(err)
+	}
+	w.now = w.now.Add(connections.RemoveAgainAfter)
+	if err := w.svc.RemoveDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range w.mem.RecordNames() {
+		if strings.HasPrefix(name, "rules-"+id+"-") {
+			t.Fatalf("its rules stay after the last pass: %s", name)
+		}
 	}
 }
