@@ -530,6 +530,20 @@ func TestK32bEveryWebhookIsListedFromTheRecords(t *testing.T) {
 	if none, _ := e.s.Webhooks(ctx, "", 0); none != nil {
 		t.Fatal("a page of no limit")
 	}
+	// A record that does not open gives no mail and is not listed; the
+	// others still are.
+	for _, n := range w.mem.RecordNames() {
+		if rec, _ := w.mem.GetRecord(ctx, n); rec != nil && strings.Contains(n, made[0]) && len(rec.Value) > 0 {
+			rec.Value = append([]byte(nil), rec.Value...)
+			rec.Value[len(rec.Value)-1] ^= 1
+			w.mem.SetRecord(*rec)
+		}
+	}
+	fresh := w.hookEnclave()
+	listed, err = fresh.s.Webhooks(ctx, "", 100)
+	if err != nil || slices.Contains(listed, made[0]) || !slices.Contains(listed, made[1]) {
+		t.Fatalf("%v %v", listed, err)
+	}
 }
 
 // K33. The approval's consent receipt holds the webhook approved and the

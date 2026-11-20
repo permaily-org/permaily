@@ -419,8 +419,11 @@ func (s *Service) listWebhooks(ctx context.Context) ([]string, error) {
 }
 
 // accountWebhooks are the connections of an account's list whose records
-// hold a webhook. A record that cannot be read fails the listing: the
-// repair tries again rather than drop a webhook it could not see.
+// hold a webhook. Storage that cannot be read fails the listing (the
+// repair tries again); a record refused (lost, rolled back, forked) gives
+// no mail and makes no notice, and is not listed. Not listed drops nothing
+// by itself: the repair drops a queue's entry only once a strict read of
+// its connection finds it no longer calls.
 func (s *Service) accountWebhooks(ctx context.Context, account string) ([]string, error) {
 	l, _, err := s.readList(ctx, account)
 	if err != nil || l == nil {
@@ -432,6 +435,10 @@ func (s *Service) accountWebhooks(ctx context.Context, account string) ([]string
 			continue
 		}
 		d, _, err := s.readConn(ctx, m.ID)
+		if refusedRecord(err) {
+			s.count("webhook_record_refused")
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
