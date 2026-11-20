@@ -346,8 +346,12 @@ func webhooksEndToEnd(t *testing.T, w e2eWorld) []string {
 	noticeIDs()
 
 	// K59b: the receiver fails, and a message arrives; its notice is
-	// called and fails.
+	// called and fails. The clock of dev mode stands still until the
+	// rule's part ends: the retry, a minute after the failure, comes when
+	// the test moves the clock past it, never because the test ran slowly.
 	ctx := context.Background()
+	devHold()
+	t.Cleanup(devRelease)
 	devAhead.Add(int64(webhook.MinInterval + time.Second))
 	rcv.failing.Store(true)
 	mail("Dinner at Rosa's ibis-41a0", "A table for two at eight ibis-41a0.")
@@ -411,6 +415,7 @@ func webhooksEndToEnd(t *testing.T, w e2eWorld) []string {
 	if len(taken()) != 2 || rcv.vendor.Load().Calls() != 2 {
 		t.Fatalf("a match put back from before the rule was called: %+v", taken())
 	}
+	devRelease()
 	// The rule deleted: nothing is told of the dinners, which were
 	// evaluated under it; a message after them is told, from its own
 	// minute; and the app's next fetch gets the dinners.
@@ -456,7 +461,11 @@ func webhooksEndToEnd(t *testing.T, w e2eWorld) []string {
 
 // settled waits until nothing of the connection is due in the queue up to
 // now (dev mode's clock), twice a second apart: what was due was touched,
-// its mail evaluated, and nothing waits to be.
+// its mail evaluated, and nothing waits to be. The clock is held (devHold):
+// a retry listed in a later minute is not reached while it waits. Each pass
+// of the queue reads the ten minutes up to now however far behind its sweep
+// is (the earlier parts move the clock days ahead), so what is due there is
+// touched within a pass and the wait ends.
 func settled(t *testing.T, mem *store.Memory, connection string) {
 	t.Helper()
 	quiet := func() bool {
