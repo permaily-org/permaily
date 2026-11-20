@@ -45,7 +45,7 @@ func TestU10WhereASentenceEnds(t *testing.T) {
 		{"", "Wait... what?! Yes.", []string{"Wait...", "what?!", "Yes."}},
 		{"", "a\xffb. c", []string{"a\xffb.", "c"}},
 		{"", "Quote \"Hi.\" Then", []string{"Quote \"Hi.\" Then"}},
-		{"", "Zero​width. Next", []string{"Zero​width.", "Next"}},
+		{"", "Zero\u200bwidth. Next", []string{"Zero\u200bwidth.", "Next"}},
 	} {
 		got, m, v := split(t, c.subject, c.text)
 		if !slices.Equal(got, c.want) {

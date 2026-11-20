@@ -94,7 +94,7 @@ func (Naive) Sentences(v redact.View) redact.SentenceMap {
 		switch {
 		case r == '\n':
 			end()
-		case unicode.IsSpace(r) && !(r == utf8.RuneError && n == 1):
+		case unicode.IsSpace(r):
 			if open >= 0 && i > 0 && strings.ContainsRune(".!?", rune(v.Text[i-1])) {
 				end()
 			}

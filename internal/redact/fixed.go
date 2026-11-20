@@ -456,7 +456,7 @@ func domains(head, run []tok) []Span {
 		// is a candidate of its own.
 		for x := i; x < j; {
 			y := x
-			for y < j && !(dot(head[y].r) && y+1 < j && dot(head[y+1].r)) {
+			for y < j && (!dot(head[y].r) || y+1 >= j || !dot(head[y+1].r)) {
 				y++
 			}
 			if y < j {
@@ -545,12 +545,8 @@ func punycode(label string) (string, bool) {
 	if basic > 0 {
 		b.WriteByte('-')
 	}
-	digitOf := func(d int) byte {
-		if d < 26 {
-			return byte('a' + d)
-		}
-		return byte('0' + d - 26)
-	}
+	const digits = "abcdefghijklmnopqrstuvwxyz0123456789"
+	digitOf := func(d int) byte { return digits[d] }
 	adapt := func(delta, points int, first bool) int {
 		if first {
 			delta /= damp
