@@ -160,33 +160,59 @@ func (s *Service) subscription(ctx context.Context, id string) (*webhooks.Subscr
 	_, basis, rulesErr := s.webhookRules(ctx, d)
 	basis.Connection = at.Version()
 	sub.Basis = basis
+	readAt, why, err := s.webhookAuthority(ctx, d)
+	if err != nil {
+		return nil, nil, err
+	}
+	if why == "" {
+		// What a call rests on is as old as the oldest of its reads.
+		sub.ReadAt = earliest(sub.ReadAt, readAt)
+	}
 	switch {
-	case !d.live(s.now()) || s.revokedHere(id, ""):
-		sub.Why = webhooks.SkipEnded
-	default:
-		st, stRead, err := s.standing(ctx, d.Account, false)
-		if err != nil {
-			return nil, nil, err
-		}
-		if stRead.Before(sub.ReadAt) {
-			sub.ReadAt = stRead
-		}
-		switch {
-		case st != StandingOpen && st != StandingNotAgreed:
-			sub.Why = webhooks.SkipEnded
-		case s.callableDevices(d) == 0:
-			sub.Why = webhooks.SkipNoDevice
-		case w.State != contracts.WebhookOn || s.offHere(id):
-			sub.Why = webhooks.SkipOff
-		case sub.Delivery != contracts.DeliveryOn:
-			sub.Why = webhooks.SkipModel
-		case rulesErr != nil:
-			sub.Why = webhooks.SkipRules
-		}
+	case why != "":
+		sub.Why = why
+	case s.callableDevices(d) == 0:
+		sub.Why = webhooks.SkipNoDevice
+	case w.State != contracts.WebhookOn || s.offHere(id):
+		sub.Why = webhooks.SkipOff
+	case sub.Delivery != contracts.DeliveryOn:
+		sub.Why = webhooks.SkipModel
+	case rulesErr != nil:
+		sub.Why = webhooks.SkipRules
 	}
 	sub.Calls = sub.Why == ""
 	return sub, d, nil
 }
+
+// webhookAuthority is a vendor's read's authority (authority) as a
+// webhook's call, evaluation or recheck needs it, through the same
+// accountAuthority: the connection live and not revoked here, its
+// account's list read strictly and not closing, its standing open or not
+// agreed. SkipEnded when it refuses; an error, never a skip, when the list
+// cannot be read or its record is refused (ErrInvalidToken wrapping it):
+// nothing calls either way. It answers the oldest instant what it used was
+// read at.
+func (s *Service) webhookAuthority(ctx context.Context, d *connDoc) (time.Time, webhooks.Skip, error) {
+	if !d.live(s.now()) || s.revokedHere(d.ID, "") {
+		return time.Time{}, webhooks.SkipEnded, nil
+	}
+	read, err := s.accountAuthority(ctx, d.Account, false)
+	switch {
+	case refusedRecord(err):
+		s.count("webhook_list_refused")
+		return time.Time{}, "", err
+	case errors.Is(err, ErrInvalidToken):
+		return time.Time{}, webhooks.SkipEnded, nil
+	case err != nil:
+		return time.Time{}, "", err
+	}
+	return read, "", nil
+}
+
+// errWebhookRefused is a connection whose authority no longer allows its
+// webhook (webhookAuthority's SkipEnded): nothing of its mail is
+// evaluated.
+var errWebhookRefused error = &kind{"connections: the connection's webhook may no longer call"}
 
 // callableDevices counts the devices that could fetch after a notice:
 // active, not revoked here, and either exchanged or with a code that may
@@ -462,6 +488,11 @@ func (s *Service) Pending(ctx context.Context, id string, after webhooks.Progres
 	if err != nil {
 		return nil, err
 	}
+	if _, why, err := s.webhookAuthority(ctx, d); err != nil {
+		return nil, err
+	} else if why != "" {
+		return nil, errWebhookRefused
+	}
 	if s.delivery(ctx, d) != contracts.DeliveryOn {
 		return nil, contracts.ErrModelUnavailable
 	}
@@ -620,6 +651,9 @@ func (s *Service) arrivalSpan(ctx context.Context, box inbox.Box, list inbox.Dis
 func (s *Service) Recheck(ctx context.Context, id string, m webhooks.Match) (bool, error) {
 	d, at, _, err := s.webhookConn(ctx, id)
 	if err != nil {
+		return false, err
+	}
+	if _, why, err := s.webhookAuthority(ctx, d); err != nil || why != "" {
 		return false, err
 	}
 	_, basis, err := s.webhookRules(ctx, d)

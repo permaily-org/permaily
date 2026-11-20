@@ -3,6 +3,7 @@ package connections
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -106,34 +107,58 @@ func (s *Service) authority(ctx context.Context, g *oauth.Grant, fresh bool) (*c
 		s.count("invalid_token")
 		return nil, time.Time{}, ErrInvalidToken
 	}
-	closing, listRead, err := s.listClosing(ctx, d.Account, fresh)
-	if err != nil {
-		if refusedRecord(err) {
-			s.count("invalid_token")
-			return nil, time.Time{}, ErrInvalidToken
-		}
-		return nil, time.Time{}, ErrUnavailable
-	}
-	if closing {
+	accountRead, err := s.accountAuthority(ctx, d.Account, fresh)
+	if errors.Is(err, ErrInvalidToken) {
 		s.count("invalid_token")
 		return nil, time.Time{}, ErrInvalidToken
 	}
-	st, stRead, err := s.standing(ctx, d.Account, fresh)
 	if err != nil {
-		return nil, time.Time{}, ErrUnavailable
-	}
-	if st != StandingOpen && st != StandingNotAgreed {
-		s.count("invalid_token")
-		return nil, time.Time{}, ErrInvalidToken
+		return nil, time.Time{}, err
 	}
 	// What it used is as old as the oldest of its reads, each dated when it
 	// began (finding 2).
-	for _, t := range []time.Time{stRead, listRead} {
-		if t.Before(read) {
-			read = t
+	read = earliest(read, accountRead)
+	return d, read, nil
+}
+
+// accountAuthority is what of a connection's authority is its account's,
+// the same for a vendor's read (authority) and a webhook's call
+// (webhookAuthority): the account's list, read strictly (refused when it
+// is closing, a fence committed whatever became of its members, or when
+// its record is refused), and its standing (open or not agreed), each from
+// this enclave's reads younger than ConnectionFresh, or read again now
+// when fresh. It answers the oldest instant what it used was read at.
+// ErrInvalidToken when it refuses, wrapping the list's error when its
+// record was refused; ErrUnavailable when the storage could not be read.
+func (s *Service) accountAuthority(ctx context.Context, account string, fresh bool) (time.Time, error) {
+	closing, listRead, err := s.listClosing(ctx, account, fresh)
+	if err != nil {
+		if refusedRecord(err) {
+			return time.Time{}, fmt.Errorf("%w: %w", ErrInvalidToken, err)
+		}
+		return time.Time{}, ErrUnavailable
+	}
+	if closing {
+		return time.Time{}, ErrInvalidToken
+	}
+	st, stRead, err := s.standing(ctx, account, fresh)
+	if err != nil {
+		return time.Time{}, ErrUnavailable
+	}
+	if st != StandingOpen && st != StandingNotAgreed {
+		return time.Time{}, ErrInvalidToken
+	}
+	return earliest(listRead, stRead), nil
+}
+
+// earliest is the earliest of ts.
+func earliest(t time.Time, ts ...time.Time) time.Time {
+	for _, u := range ts {
+		if u.Before(t) {
+			t = u
 		}
 	}
-	return d, read, nil
+	return t
 }
 
 // again reads the authority of g again, strictly and now, when its
