@@ -652,7 +652,8 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 		return refuse(err)
 	}
 	_, _ = s.endOnce(ctx, partition, req.Expires)
-	if err := s.consentReceipt(ctx, req, made, *in.Draft, ds, true); err != nil {
+	receipt, err := s.consentReceipt(ctx, req, made, *in.Draft, ds, true)
+	if err != nil {
 		return nil, err
 	}
 	if err := inTime(); err != nil {
@@ -665,6 +666,9 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 	if err := inTime(); err != nil {
 		return refuse(err)
 	}
+	// Committed, and its code handed out: told of under its consent
+	// receipt, after every check that could still undo it (ADR 0041, E30).
+	s.notifyApproved(ctx, made, receipt)
 	v := url.Values{"code": {code}}
 	if req.State != "" {
 		v.Set("state", req.State)
@@ -704,7 +708,7 @@ func (s *Service) deny(ctx context.Context, req *requestEntry, reqHash, partitio
 	}
 	_, _ = s.endOnce(ctx, partition, req.Expires)
 	ds, _ := makeScope(req.Query, req.Mailboxes, req.Since, now)
-	_ = s.consentReceipt(ctx, req, nil, contracts.ConsentDraft{Mailboxes: req.Mailboxes, Since: req.Since}, ds, false)
+	_, _ = s.consentReceipt(ctx, req, nil, contracts.ConsentDraft{Mailboxes: req.Mailboxes, Since: req.Since}, ds, false)
 	v := url.Values{"error": {string(oauth.ErrAccessDenied)}}
 	if req.State != "" {
 		v.Set("state", req.State)
@@ -948,8 +952,9 @@ func (s *Service) issueCode(ctx context.Context, req *requestEntry, m *made) (st
 	return m.code, nil
 }
 
-// consentReceipt records what the person was shown and decided.
-func (s *Service) consentReceipt(ctx context.Context, req *requestEntry, m *made, d contracts.ConsentDraft, ds scopeOf, allowed bool) error {
+// consentReceipt records what the person was shown and decided, and
+// answers the receipt's identifier.
+func (s *Service) consentReceipt(ctx context.Context, req *requestEntry, m *made, d contracts.ConsentDraft, ds scopeOf, allowed bool) (string, error) {
 	sh := s.shown(req)
 	r := &receipts.Receipt{
 		V: receipts.Version, Kind: receipts.KindConsent, ClientID: req.ClientID, Vendor: req.Vendor, Resource: req.Resource,
@@ -962,7 +967,8 @@ func (s *Service) consentReceipt(ctx context.Context, req *requestEntry, m *made
 		r.Connection, r.Device = m.conn.ID, m.device
 		r.Consent.Change, r.Consent.EndsAt, r.Consent.Replaced = m.change, m.conn.EndsAt, m.replaced
 	}
-	return s.writeReceipt(ctx, req.Account, r, time.Time{})
+	err := s.writeReceipt(ctx, req.Account, r, time.Time{})
+	return r.ID, err
 }
 
 // consentedFormulas are a scope's formulas in full, for a consent receipt.

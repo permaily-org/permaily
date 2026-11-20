@@ -180,6 +180,9 @@ func (s *Service) Renew(ctx context.Context, p Person, id string, in contracts.C
 		}
 		return nil, err
 	}
+	// Written: told of with its new end, under its consent receipt (ADR
+	// 0041, E31). A write that lost or whose answer was lost tells nothing.
+	s.notifyRenewed(ctx, d, r.ID)
 	return s.Get(ctx, p, id)
 }
 
@@ -357,18 +360,26 @@ func (s *Service) fence(ctx context.Context, account string, m ListMember, reaso
 // endDevice ends one device of a connection: in memory and its leases
 // first, then the connection's record, then its family.
 func (s *Service) endDevice(ctx context.Context, id, device string, reason contracts.EndReason) error {
+	_, err := s.endDeviceHere(ctx, id, device, reason)
+	return err
+}
+
+// endDeviceHere is endDevice, and answers the connection as written when
+// this call's write ended the device (nil when it had ended before, or its
+// connection is gone): what a device ended for reuse is told from.
+func (s *Service) endDeviceHere(ctx context.Context, id, device string, reason contracts.EndReason) (*connDoc, error) {
 	s.revoke(id, device)
 	for range RecordTries {
 		d, at, err := s.readConn(ctx, id)
 		if err != nil || d == nil {
 			if err != nil && !refusedRecord(err) {
-				return err
+				return nil, err
 			}
-			return nil
+			return nil, nil
 		}
 		dev := d.device(device)
 		if dev == nil || dev.State != contracts.ConnectionActive {
-			return s.endFamily(ctx, device, reason)
+			return nil, s.endFamily(ctx, device, reason)
 		}
 		now := s.now()
 		dev.State, dev.EndedAt, dev.EndReason = contracts.ConnectionEnded, now, reason
@@ -376,7 +387,7 @@ func (s *Service) endDevice(ctx context.Context, id, device string, reason contr
 		for _, f := range drop {
 			if f != device {
 				if err := s.removeFamily(ctx, f); err != nil {
-					return err
+					return nil, err
 				}
 			}
 		}
@@ -384,15 +395,15 @@ func (s *Service) endDevice(ctx context.Context, id, device string, reason contr
 		if err := s.writeConn(ctx, d, at, false); retry(err) {
 			continue
 		} else if err != nil {
-			return err
+			return nil, err
 		}
 		if err := s.endFamily(ctx, device, reason); err != nil {
-			return err
+			return d, err
 		}
 		s.endedReceipt(ctx, d, device, reason, "")
-		return nil
+		return d, nil
 	}
-	return errBusy
+	return nil, errBusy
 }
 
 // dropEnded removes the records and families of the ended members the

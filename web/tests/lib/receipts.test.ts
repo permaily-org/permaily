@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import * as api from '../../src/lib/api.ts'
 import { messageFor } from '../../src/pages/auth/messages.ts'
-import { ok, refused, server } from '../helpers/server.ts'
+import { network, ok, okText, refused, server } from '../helpers/server.ts'
 
 /** The code a request fails with. */
 async function failure(request: Promise<unknown>): Promise<string> {
@@ -84,51 +84,48 @@ describe('the receipts’ calls', () => {
     }
   })
 
-  it('downloads every page of the export, one line a page, and the head the person notes', async () => {
-    server.on('GET /api/v1/receipts/export', ok(exportOf()))
-    server.on(
-      'GET /api/v1/receipts/export?before=3.0',
-      ok(
-        exportOf({
-          head: { ...head, n: 4 },
-          links: [{ n: 2, verdict: 'lost' }],
-          next: { n: 2, index: 0 },
-        }),
-      ),
-    )
-    server.on(
-      'GET /api/v1/receipts/export?before=2.0',
-      ok(
-        exportOf({
-          links: [{ n: 1, verdict: 'ok', doc: 'e30=' }],
-          next: { n: 0, index: 0 },
-          done: true,
-        }),
-      ),
-    )
-    const got = await api.exportReceipts()
-    expect(got.head).toEqual(head)
-    const lines = got.file.split('\n')
-    expect(lines).toHaveLength(4)
-    expect(lines[3]).toBe('')
-    expect(lines.slice(0, 3).map((l) => JSON.parse(l).links[0].n)).toEqual([3, 2, 1])
-    expect(JSON.parse(lines[0])).toEqual(exportOf())
+  it('reads a page of the export as the server wrote it, byte for byte, as one line', async () => {
+    // Go's encoder escapes <, > and &, and ends the page with a line feed: the line keeps both.
+    const text = `${JSON.stringify(exportOf()).replace('"acc_ana"', '"acc_\\u003cana"')}\n`
+    server.on('GET /api/v1/receipts/export', okText(text))
+    const page = await api.exportReceipts()
+    expect(page.line).toBe(text)
+    expect(page.head).toEqual(head)
+    expect(page.next).toEqual({ n: 3, index: 0 })
+    expect(page.done).toBe(false)
+    expect(page.receipts).toBe(0)
+
+    const last = exportOf({
+      links: [
+        { n: 2, verdict: 'ok', doc: 'e30=', receipts: [{ index: 0 }, { index: 1 }] },
+        { n: 1, verdict: 'lost' },
+      ],
+      next: { n: 0, index: 0 },
+      done: true,
+    })
+    server.on('GET /api/v1/receipts/export?before=3.0', okText(JSON.stringify(last)))
+    const end = await api.exportReceipts(page.next)
+    expect(end.line).toBe(`${JSON.stringify(last)}\n`)
+    expect(end.done).toBe(true)
+    expect(end.receipts).toBe(2)
   })
 
-  it('refuses an export whose pages do not move on, or are not pages', async () => {
-    server.on('GET /api/v1/receipts/export', ok(exportOf()))
-    server.on('GET /api/v1/receipts/export?before=3.0', ok(exportOf()))
-    expect(await failure(api.exportReceipts())).toBe('other')
-    for (const answer of [
-      null,
-      exportOf({ links: 'x' }),
-      exportOf({ next: null }),
-      exportOf({ head: 3 }),
+  it('refuses a page of the export that is not one, or not on one line', async () => {
+    for (const text of [
+      'not json',
+      'null',
+      JSON.stringify(exportOf({ links: 'x' })),
+      JSON.stringify(exportOf({ next: null })),
+      JSON.stringify(exportOf({ head: 3 })),
+      JSON.stringify(exportOf(), null, 2),
+      `${JSON.stringify(exportOf())}\n\n`,
     ]) {
-      server.on('GET /api/v1/receipts/export', ok(answer))
-      expect(await failure(api.exportReceipts())).toBe('other')
+      server.on('GET /api/v1/receipts/export', okText(text))
+      expect(await failure(api.exportReceipts()), text).toBe('other')
     }
     server.on('GET /api/v1/receipts/export', refused(503, 'busy'))
     expect(await failure(api.exportReceipts())).toBe('busy')
+    server.on('GET /api/v1/receipts/export', network)
+    expect(await failure(api.exportReceipts())).toBe('network')
   })
 })
