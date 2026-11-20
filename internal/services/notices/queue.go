@@ -209,7 +209,7 @@ func open(key []byte, e *store.Entry) (entryDoc, bool) {
 // write stores d as e at e's version (0: created), and leaves e as
 // stored. A value past EntryMax is refused before it is written.
 func (s *Service) write(ctx context.Context, key []byte, e *store.Entry, d entryDoc) error {
-	doc, _ := json.Marshal(d)                              // strings, numbers and times in bounds (Check)
+	doc, _ := json.Marshal(d)                                   // strings, numbers and times in bounds (Check)
 	v, _ := envelope.Sign(key, doc, aad(PartitionQueue, e.Key)) // a key of its size and a JSON document
 	if len(v) > EntryMax {
 		return ErrInvalid
