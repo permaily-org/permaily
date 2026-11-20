@@ -36,6 +36,8 @@ import (
 	"github.com/permaily-org/permaily/internal/sesmail"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
+	"github.com/permaily-org/permaily/internal/webhook"
+	"github.com/permaily-org/permaily/internal/webhook/send"
 	"github.com/permaily-org/permaily/pkg/attestation"
 	"github.com/permaily-org/permaily/pkg/provenance"
 )
@@ -87,6 +89,10 @@ type platform struct {
 	// receipts is the record of what left, chained (ADR 0037), over its one
 	// strict Anchored; nil without the model.
 	receipts *composedReceipts
+	// webhooks is the queue of connections' webhooks (ADR 0039), which
+	// the mailboxes tell of every message stored and the connections are
+	// composed with; nil in an image that sends no mail.
+	webhooks *composedWebhooks
 }
 
 // devConfig is empty in the enclave: the image reaches vendors through the
@@ -200,9 +206,19 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 				// no other name: a fork anywhere in their history refuses them
 				// (ADR 0026, "The store").
 				mailboxRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true, Strict: true}
+				// Connections' webhooks (ADR 0039): their queue in the
+				// table, sealed and signed with keys of the root secret,
+				// each notice sent through the host's vendor egress (port
+				// 8004) and nothing else; told of every message stored.
+				if p.webhooks, err = composeWebhooks(webhooksParts{
+					entries: awsStore, keys: root, sender: enclaveWebhookSender(cfg), keysURL: webhookKeysURL(hosts, cfg.oauthPort()), log: log,
+				}); err != nil {
+					return nil, err
+				}
 				if p.mailboxes, err = mailboxes.New(mailboxes.Config{
 					Records: mailboxRecords, Storage: awsStore, Keys: root, Accounts: p.accounts, Notifier: p.accounts, Domain: hosts.Inbox, Log: log,
-					Auth: msgauth.DKIM(msgauth.DoH{Client: egress, Endpoint: cfg.dohEndpoint}.LookupTXT),
+					Auth:     msgauth.DKIM(msgauth.DoH{Client: egress, Endpoint: cfg.dohEndpoint}.LookupTXT),
+					Arrivals: p.webhooks.svc,
 				}); err != nil {
 					return nil, err
 				}
@@ -333,6 +349,20 @@ const rulesRecord = "rules"
 // to see which port the image uses.
 var vendorEgress = enclave.VendorEgressClient
 
+// webhookEgress is the dial notices are sent through: the host's vendor
+// egress on a port, a tunnel to a host's 443. A test replaces it to see
+// which port the image uses.
+var webhookEgress = enclave.WebhookEgressDialer
+
+// enclaveWebhookSender is the image's sender of notices: TLS and HTTP/2
+// framed by internal/webhook/send over the vendor egress on
+// cfg.vendorEgressPort (8004), checked against the roots compiled into the
+// image (golang.org/x/crypto/x509roots/fallback: the enclave has no
+// /etc/ssl), on the enclave's clock.
+func enclaveWebhookSender(cfg config) webhook.Sender {
+	return send.New(webhookEgress(cfg.vendorEgressPort), nil, time.Now)
+}
+
 // enclaveConnections composes the image's connections over records (the
 // one strict Anchored of their names), the table and the root secret's
 // keys, with the platform's accounts, mailboxes, model, receipts and queue
@@ -343,7 +373,7 @@ func enclaveConnections(cfg config, hosts router.Hosts, records *store.Anchored,
 	return composeConnections(connectionsParts{
 		oauth: oauthConfig(hosts, cfg.oauthPort()), domain: cfg.domain, records: records, entries: table, keys: root,
 		vendorHTTP: vendorEgress(cfg.vendorEgressPort), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model,
-		receipts: p.receipts, notices: p.notices, log: log, rulesRecords: p.rulesRecords,
+		receipts: p.receipts, notices: p.notices, log: log, rulesRecords: p.rulesRecords, webhooks: p.webhooks,
 	})
 }
 

@@ -42,6 +42,8 @@ import (
 	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
+	"github.com/permaily-org/permaily/internal/webhook"
+	"github.com/permaily-org/permaily/internal/webhook/send"
 	"github.com/permaily-org/permaily/pkg/attestation"
 	"github.com/permaily-org/permaily/pkg/provenance"
 )
@@ -90,6 +92,9 @@ type platform struct {
 	// receipts is the record of what left, chained (ADR 0037), over its one
 	// strict Anchored.
 	receipts *composedReceipts
+	// webhooks is the queue of connections' webhooks (ADR 0039), whose
+	// notices reach played vendors alone (devWebhookSender).
+	webhooks *composedWebhooks
 	// records are the Anchored of each kind of record, by kind, for the
 	// test that no name is read through two (dev mode only).
 	records map[string]*store.Anchored
@@ -171,6 +176,37 @@ func devFlags(fs *flag.FlagSet, d *devConfig) {
 // documents and key sets with: a played vendor's. It takes the place of
 // -dev-vendors.
 var devVendors atomic.Pointer[http.Client]
+
+// devWebhooks, when a test sets it, is where dev mode sends notices: the
+// played vendor's address, dialled for every name, and the only roots its
+// certificate is checked against. It takes the place of -dev-vendors.
+var devWebhooks atomic.Pointer[devWebhookTarget]
+
+type devWebhookTarget struct {
+	addr  string
+	roots *x509.CertPool
+}
+
+// devWebhookSender is dev mode's sender of notices: the image's
+// (internal/webhook/send) dialling the test's played vendor, else
+// -dev-vendors with its roots, for every name; with neither, a dial that
+// refuses. No real vendor is ever called from dev mode.
+func devWebhookSender(d devConfig) webhook.Sender {
+	target := devWebhooks.Load()
+	if target == nil && d.vendors != "" {
+		roots := x509.NewCertPool()
+		if pem, err := os.ReadFile(d.vendorsCA); err == nil {
+			roots.AppendCertsFromPEM(pem)
+		}
+		target = &devWebhookTarget{addr: d.vendors, roots: roots}
+	}
+	if target == nil {
+		return send.New(func(context.Context, string) (net.Conn, error) { return nil, errNoVendor }, x509.NewCertPool(), devClock)
+	}
+	return send.New(func(ctx context.Context, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", target.addr)
+	}, target.roots, devClock)
+}
 
 // errNoVendor is every fetch of dev mode with no played vendor.
 var errNoVendor = errors.New("dev mode reaches no vendor")
@@ -379,10 +415,19 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	})}
 	// The mailboxes of accounts, with their own strict records, and SMTP on
 	// -smtp-port (2525 by default in dev mode).
+	// Connections' webhooks, as in the enclave: their queue in the storage,
+	// on the clock of dev mode, told of every message stored; their
+	// notices reach played vendors alone.
+	if p.webhooks, err = composeWebhooks(webhooksParts{
+		entries: mem, keys: local, sender: devWebhookSender(cfg.dev), keysURL: webhookKeysURL(hosts, cfg.oauthPort()), now: devClock, log: log,
+	}); err != nil {
+		return nil, err
+	}
 	if p.mailboxes, err = mailboxes.New(mailboxes.Config{
 		Records: mailboxRecords,
 		Storage: mem, Keys: local, Accounts: p.accounts, Notifier: p.accounts, Domain: hosts.Inbox, Log: log, Now: devClock,
-		Auth: msgauth.DKIM(net.DefaultResolver.LookupTXT),
+		Auth:     msgauth.DKIM(net.DefaultResolver.LookupTXT),
+		Arrivals: p.webhooks.svc,
 	}); err != nil {
 		return nil, err
 	}
@@ -422,7 +467,7 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	if p.connections, err = composeConnections(connectionsParts{
 		oauth: oauthConfig(hosts, cfg.oauthPort()), domain: cfg.domain, records: p.connectionRecords, entries: mem, keys: local,
 		vendorHTTP: devVendorHTTP(cfg.dev), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model, receipts: p.receipts, notices: p.notices,
-		rulesRecords: rulesRecords, log: log, now: devClock,
+		rulesRecords: rulesRecords, webhooks: p.webhooks, log: log, now: devClock,
 	}); err != nil {
 		return nil, err
 	}

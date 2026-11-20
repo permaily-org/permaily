@@ -40,6 +40,13 @@ type StatusSources struct {
 	// account, a connection or a count of them; nil when the image has no
 	// connections.
 	Connections func() *attestation.ConnectionsStatus
+	// Webhooks describes how a connection's webhook is called (ADR 0039,
+	// "What /status and permaily-verify show"): what the image compiles
+	// in, the keys notices are signed with, and this enclave's calls by
+	// fixed outcome and its skipped notices by fixed reason, never a URL, a
+	// vendor that is not verified, a subscription or a count of webhooks;
+	// nil when the image calls none.
+	Webhooks func() *attestation.WebhooksStatus
 }
 
 // Status returns a handler for GET /status. The response has no signature: a
@@ -47,7 +54,7 @@ type StatusSources struct {
 // attestation document (attestation.FetchStatus).
 func Status(src StatusSources) http.Handler {
 	tls, root, sigstore, anchors, mail, admin, model, conns := src.TLS, src.Root, src.Sigstore, src.Anchors, src.Mail, src.Admin, src.Model, src.Connections
-	notices := src.Notices
+	notices, hooks := src.Notices, src.Webhooks
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -87,6 +94,9 @@ func Status(src StatusSources) http.Handler {
 		}
 		if conns != nil {
 			st.Connections = conns()
+		}
+		if hooks != nil {
+			st.Webhooks = hooks()
 		}
 		writeJSON(w, st)
 	})

@@ -60,6 +60,9 @@ type playedVendor struct {
 	mu    sync.Mutex
 	docs  map[string]string // by host and path
 	got   []string          // what was asked, host and path, with its protocol
+	// hook, when set, answers every POST: an app's receiver of webhooks
+	// (ADR 0039), on the same hosts as its documents.
+	hook atomic.Pointer[http.Handler]
 }
 
 func newPlayedVendor(t *testing.T, names ...string) *playedVendor {
@@ -93,6 +96,10 @@ func newPlayedVendor(t *testing.T, names ...string) *playedVendor {
 	v := &playedVendor{pool: x509.NewCertPool(), docs: map[string]string{}, caDER: caDER}
 	v.pool.AddCert(ca)
 	v.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h := v.hook.Load(); h != nil && r.Method == http.MethodPost {
+			(*h).ServeHTTP(w, r)
+			return
+		}
 		v.mu.Lock()
 		v.got = append(v.got, r.Proto+" "+r.Host+r.URL.Path)
 		doc, ok := v.docs[r.Host+r.URL.Path]
@@ -156,6 +163,10 @@ type e2eWorld struct {
 	// of the record of incidents (runReceipts), sweepTicks its connections'
 	// hourly pass (runConnections).
 	auditTicks, incidentsTicks, sweepTicks []chan time.Time
+	// signUp signs a new person up through the enclaves; shared is the
+	// storage both enclaves run over (the webhooks' half, K59b).
+	signUp func(address string) e2eBrowser
+	shared *devStorage
 }
 
 // The clients the played vendor publishes: an app for the API and an agent
