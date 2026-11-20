@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -74,7 +75,7 @@ func TestV57TheVendorsAreFetchedThroughTheVendorEgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &platform{accounts: w.parts.accounts, mailboxes: w.parts.mailboxes, model: w.parts.model, receipts: w.parts.receipts}
-	c, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p)
+	c, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p, slog.New(slog.DiscardHandler))
 	if err != nil || c == nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestV57TheVendorsAreFetchedThroughTheVendorEgress(t *testing.T) {
 	if err := fs.Parse([]string{"-vendor-egress-port", "9004"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p); err != nil || len(ports) != 1 || ports[0] != 9004 {
+	if _, err := enclaveConnections(*cfg, router.HostsForDomain(cfg.domain), w.records, w.table, w.keys, p, slog.New(slog.DiscardHandler)); err != nil || len(ports) != 1 || ports[0] != 9004 {
 		t.Fatalf("-vendor-egress-port 9004: asked on %v (%v)", ports, err)
 	}
 	// The host listens there by default, and the entry point changes
