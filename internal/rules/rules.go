@@ -7,7 +7,7 @@
 // Step 5 of F2 builds one rule, the same for every account and compiled into
 // the image: Default, which holds back sign-in codes and password resets. Step
 // 7 adds the person's own rules, their editor, removing details and turning
-// the default off; the types here are the ones it extends.
+// the default off (ADR 0040; person.go is its seam).
 //
 // It is pure, like the query language: depguard's rules-are-pure lists what
 // it may import.
@@ -42,6 +42,15 @@ type Rule struct {
 	// applies when the greatest of their values, read for a rule, is True or
 	// Unknown (query.Resolve with query.ForRule on each).
 	Formulas []*query.Canonical
+	// Removal is what a Remove rule takes out (ADR 0040); nil for Hold.
+	Removal *Removal
+	// ModelOff says the model may not be asked for this rule (the rules'
+	// notice it was saved under, or the account's agreement, is not the one
+	// in force; ADR 0040, "The rules' notice"): its model atoms stay
+	// Unknown, so it applies wherever its value would need the model, and
+	// its topics remove the whole text. The default rule never has it: a
+	// connection's own agreement to the model's notice governs it.
+	ModelOff bool
 }
 
 // Ref names one version of a rule: what a committed decision, a receipt and

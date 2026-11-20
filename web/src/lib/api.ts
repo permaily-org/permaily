@@ -345,10 +345,35 @@ export type ClientProblem = (typeof CLIENT_PROBLEMS)[number]
 export type ClientProblemDetails = { reason: ClientProblem }
 
 /**
- * The `details` of an API error (`contracts.ErrorDetails`): with `invalid_formula` a `FormulaProblem`, which always has
- * `at`; with `invalid_client` a `ClientProblemDetails`, which never has it.
+ * The reasons an `invalid_rule` answer's `details` may hold (`contracts.RuleProblem`, ADR 0040): fixed words of the
+ * server, never the person's own.
  */
-export type ErrorDetails = FormulaProblem | ClientProblemDetails
+export const RULE_PROBLEMS = [
+  'name_too_long',
+  'no_criteria',
+  'too_large',
+  'too_many_model',
+  'unknown_effect',
+  'removal_missing',
+  'removal_unexpected',
+  'unknown_part',
+  'unknown_shape',
+  'invalid_topic',
+  'unknown_scope',
+  'scope_clients',
+  'duplicate',
+  'default_not_editable',
+] as const
+export type RuleProblem = (typeof RULE_PROBLEMS)[number]
+
+/** The `details` of an `invalid_rule` error: its reason alone, under `rule`. */
+export type RuleProblemDetails = { rule: RuleProblem }
+
+/**
+ * The `details` of an API error (`contracts.ErrorDetails`): with `invalid_formula` a `FormulaProblem`, which always has
+ * `at`; with `invalid_client` a `ClientProblemDetails`, which never has it; with `invalid_rule` a `RuleProblemDetails`.
+ */
+export type ErrorDetails = FormulaProblem | ClientProblemDetails | RuleProblemDetails
 
 /** The reason in an `invalid_client` answer's `details`, when it is one of the three and there is no `at`. */
 export function clientProblemOf(details: unknown): ClientProblem | undefined {
@@ -401,6 +426,8 @@ export type MatchPage = {
   model?: MatchModel
   /** Only on the consent screen's preview with the model (ADR 0030): what a rule holds back. Not in `messages`. */
   held?: string[]
+  /** Only on the same preview (ADR 0040): what in `messages` would leave with details a rule of the person's takes out. */
+  removed?: string[]
 }
 
 /** What became of asking the model on a page of matches (ADR 0028). */
@@ -578,6 +605,113 @@ export type Connection = {
 
 /** The account's connections: the active ones and the ones that ended in the last 30 days. */
 export type ConnectionList = { connections: Connection[] }
+
+/*
+  The person's own rules (ADR 0040). The shapes of internal/contracts/rules.go; the calls and each refusal's words come
+  with the rules screens (ADR 0040's pull request 7), against the routes of its pull request 6.
+*/
+
+/** What a rule does to a message it applies to: hold it back, or take details out of it. */
+export type RuleEffect = 'hold' | 'remove'
+
+/** Which connections a rule is for, by their client (the app's client_id URL), those made later included unless `only`. */
+export type RuleScope = { to: 'all' | 'all_except' | 'only'; clients?: string[] }
+
+/** The kinds of data with a fixed shape a rule removes with no model, in the order the editor lists them. */
+export const SHAPE_KINDS = [
+  'email_address',
+  'phone_number',
+  'card_number',
+  'account_number',
+  'numeric_code',
+  'link',
+] as const
+export type ShapeKind = (typeof SHAPE_KINDS)[number]
+
+/** What stands where a rule removed a piece of a subject or a text. */
+export const REMOVED_MARKER = '[removed]'
+
+/** What a `remove` rule takes out: whole parts, then pieces of a fixed shape, then sentences about its topics. */
+export type RuleRemoval = { parts?: ConnectionPart[]; shapes?: ShapeKind[]; topics?: string[] }
+
+/** A rule as the person edits and confirms it: mail meets it when it meets any of its criteria. */
+export type RuleDraft = {
+  name: string
+  criteria: QueryFormula[]
+  effect: RuleEffect
+  removal?: RuleRemoval
+  scope: RuleScope
+  on: boolean
+}
+
+/** What a person reads of a rule's criteria, written by the server: "Any of these:" and each criteria's sentence. */
+export type RuleSentence = {
+  lang: string
+  text: string
+  lead: SentencePart[]
+  formulas: QuerySentence[]
+}
+
+/**
+ * A draft the server accepted: canonical, its identifier (sent back when saving), its sentence, what it does and who
+ * for, in the server's words, and whether a model decides any of it.
+ */
+export type RuleCheck = {
+  draft_id: string
+  draft: RuleDraft
+  sentence: RuleSentence
+  does: string
+  for: string
+  model: boolean
+}
+
+/** What the model proposed from the person's words, checked; nothing applies until the person saves it. */
+export type RuleProposal = { check: RuleCheck; model: string; prompt: string }
+
+/**
+ * One of the person's rules. `version` changes with its criteria, effect or removal; `model_off` says it asks a model
+ * under a notice no longer in force, so it asks nothing and holds (or removes the whole text) until saved again.
+ */
+export type Rule = {
+  id: string
+  version: number
+  check: RuleCheck
+  notice?: string
+  created_at: string
+  changed_at: string
+  model_off?: boolean
+}
+
+/** The rules' notice the account agreed to, and when. */
+export type RuleNoticeAgreement = { version: string; at: string }
+
+/** The default rule, the person's rules, the notice agreed and the version every change sends back. */
+export type RuleList = {
+  default: { rule: RuleSummary; on: boolean; changed_at?: string }
+  rules: Rule[]
+  notice?: RuleNoticeAgreement
+  version: number
+  max: number
+}
+
+/** What rules removed from one message: never the content itself. */
+export type RemovedSummary = {
+  parts?: ConnectionPart[]
+  shapes?: Partial<Record<ShapeKind, number>>
+  sentences?: number
+  of?: number
+  whole?: boolean
+  why?: string
+  attachments?: number
+}
+
+/** One message as a draft's removal leaves it, in the person's own preview. */
+export type RuleRemovalPreview = {
+  draft_id: string
+  subject?: string
+  text?: string
+  removed: RemovedSummary
+}
 
 /** The codes the server answers with, plus `network` for a request that got no answer. */
 export type ApiErrorCode =

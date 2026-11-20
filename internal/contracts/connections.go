@@ -560,14 +560,16 @@ func (e *ClientError) LogKind() string { return e.Error() }
 func (e *ClientError) Details() ErrorDetails { return ErrorDetails{Client: e.Problem} }
 
 // ErrorDetails is the details of an API error (internal/httpapi's
-// APIError; web/src/lib/api.ts's ErrorDetails), one of two shapes, or none:
-// with invalid_formula, a FormulaProblem, written exactly as it always was
-// ({"at","reason"}, "at" always present); with invalid_client, its
-// ClientProblem alone ({"reason"}, no "at"). The two never go together, and
-// reading tells them apart by "at".
+// APIError; web/src/lib/api.ts's ErrorDetails), one of three shapes, or
+// none: with invalid_formula, a FormulaProblem, written exactly as it always
+// was ({"at","reason"}, "at" always present); with invalid_client, its
+// ClientProblem alone ({"reason"}, no "at"); with invalid_rule (ADR 0040), its
+// RuleProblem alone ({"rule"}). No two go together, and reading tells them
+// apart by "at" and "rule".
 type ErrorDetails struct {
 	FormulaProblem
 	Client ClientProblem
+	Rule   RuleProblem
 }
 
 // IsZero says there are no details (omitzero).
@@ -575,6 +577,15 @@ func (d ErrorDetails) IsZero() bool { return d == ErrorDetails{} }
 
 func (d ErrorDetails) MarshalJSON() ([]byte, error) {
 	switch {
+	case d.Rule != "" && (d.Client != "" || d.FormulaProblem != (FormulaProblem{})):
+		return nil, errors.New("contracts: details of a rule with another's at once")
+	case d.Rule != "":
+		if !d.Rule.Valid() {
+			return nil, errors.New("contracts: an invalid rule's details hold one of its reasons")
+		}
+		return json.Marshal(struct {
+			Rule RuleProblem `json:"rule"`
+		}{d.Rule})
 	case d.Client != "" && d.FormulaProblem != (FormulaProblem{}):
 		return nil, errors.New("contracts: details of a formula and a client at once")
 	case d.Client != "":
@@ -592,9 +603,17 @@ func (d *ErrorDetails) UnmarshalJSON(b []byte) error {
 	var v struct {
 		At     *string `json:"at"`
 		Reason string  `json:"reason"`
+		Rule   *string `json:"rule"`
 	}
 	if err := json.Unmarshal(b, &v); err != nil {
 		return err
+	}
+	if v.Rule != nil {
+		if v.At != nil || v.Reason != "" || !RuleProblem(*v.Rule).Valid() {
+			return errors.New("contracts: an invalid rule's details that are not one of its reasons alone")
+		}
+		*d = ErrorDetails{Rule: RuleProblem(*v.Rule)}
+		return nil
 	}
 	if v.At != nil {
 		*d = ErrorDetails{FormulaProblem: FormulaProblem{At: *v.At, Reason: FormulaReason(v.Reason)}}

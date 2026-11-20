@@ -166,7 +166,7 @@ linters:
             - github.com/permaily-org/permaily/internal/query
             - golang.org/x/net/idna
         rules-are-pure:
-          # The rules every connection's reads apply first (ADR 0031): formulas of the query language, compiled.
+          # The rules every connection's reads apply first (ADR 0031, 0040): formulas of the query language, compiled.
           files: ["**/internal/rules/**", "!$test"]
           list-mode: strict
           allow:
@@ -174,10 +174,27 @@ linters:
             - encoding/json
             - errors
             - fmt
+            - slices
+            - strconv
             - sync
+            - time
             - github.com/permaily-org/permaily/internal/contracts
             - github.com/permaily-org/permaily/internal/query
             - github.com/permaily-org/permaily/internal/rules
+        redact-is-pure:
+          # Fixed shapes taken out of a text and the sentence split of a removal by meaning (ADR 0040): no model,
+          # no storage, the same answer in every enclave of one redact.Version.
+          files: ["**/internal/redact/**", "!$test"]
+          list-mode: strict
+          allow:
+            - slices
+            - strings
+            - unicode
+            - unicode/utf8
+            - github.com/permaily-org/permaily/internal/contracts
+            - github.com/permaily-org/permaily/internal/redact
+            - golang.org/x/net/publicsuffix
+            - golang.org/x/text/unicode/norm
         vendors-list-is-pure:
           # The verified vendors and the seam that resolves a client (ADR 0030); the fetching adapter is
           # internal/vendors/cimd, outside this rule.
