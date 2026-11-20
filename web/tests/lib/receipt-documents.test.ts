@@ -204,7 +204,12 @@ describe('a receipt’s shape', () => {
     expect(readReceipt(doc('search.json'))?.held[1]?.model).toEqual([])
     // All four at once, the review's own probe.
     const probe = doc('search.json')
-    for (const path of ['delivered.0.from', 'delivered.0.model', 'delivered.0.cleared', 'held.0.model'])
+    for (const path of [
+      'delivered.0.from',
+      'delivered.0.model',
+      'delivered.0.cleared',
+      'held.0.model',
+    ])
       at(probe, path, null)
     const read = readReceipt(probe)
     expect(read?.delivered[0]).toMatchObject({ from: [], model: [], cleared: [] })

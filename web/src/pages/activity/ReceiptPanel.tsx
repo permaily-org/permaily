@@ -65,8 +65,8 @@ export function ReceiptPanel({ row, title, known }: { row: Row; title: string; k
   return (
     <div>
       <p className="font-mono text-mono text-ink-2">{position}</p>
-      <h2 className="mt-2 flex items-center gap-1.5 text-heading font-medium">
-        <span>{title}</span>
+      <div className="mt-2 flex items-center gap-1.5">
+        <h2 className="text-heading font-medium">{title}</h2>
         {row.type === 'receipt' &&
           row.receipt.kind === 'consent' &&
           row.receipt.consent?.allowed && (
@@ -74,7 +74,7 @@ export function ReceiptPanel({ row, title, known }: { row: Row; title: string; k
               {consentTip}
             </InfoTip>
           )}
-      </h2>
+      </div>
       {row.type === 'receipt' && (
         <p className="mt-1 font-mono text-mono">{momentWords(row.receipt.at)}</p>
       )}

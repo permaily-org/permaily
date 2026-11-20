@@ -129,7 +129,11 @@ export function ActivityPage() {
   // After "Show older" a polite word of what it loaded, and focus where it was, or on the end once there is no more.
   useEffect(() => {
     if (!press || asked.current !== 'more') return
-    setSaid(press.found > 0 ? `Showed ${press.found} more receipts` : 'No more')
+    setSaid(
+      press.found > 0
+        ? `Showed ${count(press.found)} more ${press.found === 1 ? 'receipt' : 'receipts'}`
+        : 'No more',
+    )
     if (record.done) endRef.current?.focus()
   }, [press, record.done])
 
@@ -149,9 +153,8 @@ export function ActivityPage() {
   // Opening a receipt closes the one before it, which can move the tapped row up and out of view, so keep it on screen.
   useEffect(() => {
     if (wide || !pickedKey) return
-    document
-      .querySelector(`[data-row="${CSS.escape(pickedKey)}"]`)
-      ?.scrollIntoView?.({ block: 'nearest' })
+    for (const element of document.querySelectorAll<HTMLElement>('[data-row]'))
+      if (element.dataset.row === pickedKey) element.scrollIntoView?.({ block: 'nearest' })
   }, [pickedKey, wide])
 
   return (
@@ -595,8 +598,10 @@ export function moreLine(
 ): string | null {
   const newest = count(examined)
   if (filtering(filter) && (shown === 0 || press?.found === 0)) {
-    const none = shown === 0 ? 'No' : 'No more'
-    if (filter.kind === 'all') return `${none} receipt of this connection in the newest ${newest}.`
+    if (filter.kind === 'all')
+      return shown === 0
+        ? `No receipt of this connection in the newest ${newest}.`
+        : `No more receipts of this connection in the newest ${newest}.`
     const what = filter.connection === null ? 'of this kind' : 'of this kind from this connection'
     return `${shown === 0 ? 'Nothing' : 'Nothing more'} ${what} in the newest ${newest} receipts.`
   }
