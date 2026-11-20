@@ -167,3 +167,26 @@ func TestReview190F2AColdReadReachesTheCurrentEpochPastItsVersionsBound(t *testi
 		}
 	}
 }
+
+// A search for the newest epoch that cannot read one of the epochs it
+// probes (the first, one while doubling, one while halving) answers
+// ErrUnavailable, never an earlier epoch or no rules.
+func TestReview190F2ASearchThatCannotReadAnEpochIsUnavailable(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	w := NewTestWorld(t)
+	epochs(t, w, accountA, 5)
+	for _, e := range []uint64{1, 4, 6} {
+		s, h := w.enclave()
+		h.failRead = func(name string) error {
+			if name == rules.RecordName(accountA, e) {
+				return errors.New("the table does not answer")
+			}
+			return nil
+		}
+		unavailable(t, s, accountA)
+	}
+	if a, err := w.Enclave().Applying(ctx, accountA, claude); err != nil || a.Epoch != 5 {
+		t.Fatalf("read again: %+v, %v", a, err)
+	}
+}
