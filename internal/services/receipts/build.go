@@ -68,6 +68,12 @@ func DeliveredOf(mailbox string, d *inbox.Disclosed, parts []contracts.Part) Del
 	for _, c := range d.Rules {
 		out.Cleared = append(out.Cleared, Cleared{Rule: c.Rule, At: c.At, Model: ModelOf(c.Decided)})
 	}
+	// What each rule removed, and the evidence it rests on; never the
+	// content (ADR 0040, "Receipts"). The sender and the subject above are
+	// those that left.
+	for _, r := range d.Removed {
+		out.Removed = append(out.Removed, Removal{Rule: r.Rule, Removed: r.Removed, Model: ModelOf(r.Decided)})
+	}
 	return out
 }
 

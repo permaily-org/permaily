@@ -22,8 +22,6 @@ import (
 // to U16, U18, U20 to U22, and the re-review's N1 and N2), over the real
 // query.Eval, redact.Fixed and BlockDecisions.
 
-
-
 var topicHome = query.Atom{Var: contracts.VarMessage, Op: contracts.OpMentions, Topic: "a home address"}
 
 // removing is a rule that removes rm from every message (or those fs
