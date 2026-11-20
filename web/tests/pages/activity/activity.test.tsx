@@ -422,6 +422,30 @@ describe('E5: the head', () => {
     expect(await screen.findByText("Couldn't copy. Select it and copy it yourself.")).toBeTruthy()
   })
 
+  // Review of PR #195, finding 3: the words said to select the head, but only its shortened digest was on the page.
+  it('shows the whole newest link to select when copying failed', async () => {
+    signedIn().on(
+      firstPage,
+      ok(
+        pageOf([linkOf(1234, [receiptOf('ended')])], {
+          head: { n: 1234, verdict: 'ok', sha256: headDigest },
+        }),
+      ),
+    )
+    const { user } = await openActivity()
+    await screen.findByText('Your record has 1,234 links.')
+    expect(screen.queryByLabelText('The newest link')).toBeNull()
+    vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('denied'))
+    await user.click(screen.getByRole('button', { name: named('Copy the newest link') }))
+    const field = (await screen.findByLabelText('The newest link')) as HTMLInputElement
+    expect(field.value).toBe(`1234:${headDigest}`)
+    expect(field.readOnly).toBe(true)
+    await waitFor(() => expect(document.activeElement).toBe(field))
+    expect(field.selectionStart).toBe(0)
+    expect(field.selectionEnd).toBe(field.value.length)
+    await expectAccessible()
+  })
+
   it('offers nothing to note of a head that is not kept', async () => {
     signedIn().on(
       firstPage,
@@ -736,5 +760,194 @@ describe('E11: a connection’s activity', () => {
     expect(select.selectedOptions[0]?.textContent).toBe('gone.example, no longer listed')
     expect(rowSaying('A connection ended').textContent).toContain('gone.example')
     expect(panel().getByText('A connection no longer listed')).toBeTruthy()
+  })
+})
+
+/** A search receipt of another connection, whose search is another formula, made available from Trips. */
+function tripsSearch() {
+  const search = receiptOf('search')
+  return receiptOf('search', {
+    id: 'rcp_trips',
+    connection: 'con_other',
+    vendor: 'trips.example',
+    formulas: [
+      {
+        role: 'search',
+        id: 'qry_trips',
+        formula: { v: 1, all: [{ any: [{ var: 'subject', op: 'about', value: 'trips' }] }] },
+      },
+    ],
+    delivered: [
+      {
+        ...(search.delivered as object[])[0],
+        from: [{ name: 'Trips', address: 'trips@example.com' }],
+      },
+    ],
+    held: [],
+  })
+}
+
+/** The check route's answer: one sentence, of the search the formula is about. */
+function sentenceOf(text: string) {
+  return ok({
+    formula: {},
+    id: 'qry_x',
+    model: true,
+    sentence: { lang: 'en', text, lead: [], lines: [{ parts: [{ text }] }] },
+  })
+}
+
+/** What the check route was asked about: the value of the formula's one condition. */
+function topicOf(body: unknown): unknown {
+  return (body as { formula: { all: { any: { value: unknown }[] }[] } }).formula.all[0]?.any[0]
+    ?.value
+}
+
+// Review of PR #195, finding 1: the search in words is of one receipt. Another receipt never shows it, nor its answer.
+describe('E8: the search in words belongs to its receipt', () => {
+  function twoSearches(check: Parameters<typeof server.on>[1]) {
+    return signedIn(meOf(), [
+      claude,
+      connectionOf({ id: 'con_other', vendor: { domain: 'trips.example' } }),
+    ])
+      .on(firstPage, ok(pageOf([linkOf(3, [receiptOf('search'), tripsSearch()])])))
+      .on('POST /api/v1/queries/check', check)
+  }
+
+  it('does not show the words of one search under another receipt picked after it', async () => {
+    twoSearches(({ body }) =>
+      sentenceOf(topicOf(body) === 'invoices' ? 'Search A only' : 'Search B only'),
+    )
+    const { user } = await openActivity()
+    await findRow('Trips')
+    await user.click(panel().getByRole('button', { name: 'Show the search in words' }))
+    await panel().findByText('Search A only')
+    await user.click(rowSaying('Trips'))
+    expect(panel().getByText('Trips <trips@example.com>')).toBeTruthy()
+    expect(panel().queryByText('Search A only')).toBeNull()
+    await user.click(panel().getByRole('button', { name: 'Show the search in words' }))
+    expect(await panel().findByText('Search B only')).toBeTruthy()
+    expect(server.asked('POST /api/v1/queries/check').map((c) => topicOf(c.body))).toEqual([
+      'invoices',
+      'trips',
+    ])
+  })
+
+  it('drops the answer to a search asked before another receipt was picked', async () => {
+    const waiting = later()
+    twoSearches(waiting.answer)
+    const { user } = await openActivity()
+    await findRow('Trips')
+    await user.click(panel().getByRole('button', { name: 'Show the search in words' }))
+    await user.click(rowSaying('Trips'))
+    waiting.give(sentenceOf('Search A only'))
+    await settle()
+    expect(panel().queryByText('Search A only')).toBeNull()
+    const ask = panel().getByRole('button', { name: 'Show the search in words' })
+    expect(ask.getAttribute('aria-disabled')).not.toBe('true')
+  })
+
+  it('does not carry the words to the receipt a filter shows instead', async () => {
+    twoSearches(sentenceOf('Search A only'))
+    const { user } = await openActivity()
+    await findRow('Trips')
+    await user.click(panel().getByRole('button', { name: 'Show the search in words' }))
+    await panel().findByText('Search A only')
+    await user.selectOptions(screen.getByLabelText('Connection'), 'con_other')
+    await waitFor(() => expect(panel().getByText('Trips <trips@example.com>')).toBeTruthy())
+    expect(panel().queryByText('Search A only')).toBeNull()
+    expect(panel().getByRole('button', { name: 'Show the search in words' })).toBeTruthy()
+  })
+
+  it('asks once while it waits, however often it is pressed', async () => {
+    const waiting = later()
+    signedIn()
+      .on(firstPage, ok(pageOf([linkOf(3, [receiptOf('search')])])))
+      .on('POST /api/v1/queries/check', waiting.answer)
+    const { user } = await openActivity()
+    await findRow('Made available')
+    const ask = panel().getByRole('button', { name: 'Show the search in words' })
+    await user.click(ask)
+    await user.click(ask)
+    expect(ask.getAttribute('aria-disabled')).toBe('true')
+    waiting.give(sentenceOf('Mail about invoices'))
+    expect(await panel().findByText('Mail about invoices')).toBeTruthy()
+    expect(server.asked('POST /api/v1/queries/check')).toHaveLength(1)
+  })
+
+  it('says nothing when the session ended while it asked', async () => {
+    signedIn()
+      .on(firstPage, ok(pageOf([linkOf(3, [receiptOf('search')])])))
+      .on('POST /api/v1/queries/check', refused(401, 'unauthorized'))
+    const { user } = await openActivity()
+    await findRow('Made available')
+    const ask = panel().getByRole('button', { name: 'Show the search in words' })
+    server.signedOut()
+    await user.click(ask)
+    await waitFor(() => expect(current()).toBe('/sign-in'))
+    await settle()
+    expect(screen.queryByText(/Something went wrong/)).toBeNull()
+  })
+})
+
+describe('E2: the panel names every kind of row', () => {
+  it('names a message read, an attachment read, a break and a receipt deleted', async () => {
+    signedIn().on(
+      firstPage,
+      ok(
+        pageOf([
+          linkOf(5, [receiptOf('read', { id: 'rcp_read' })]),
+          linkOf(4, [receiptOf('attachment', { id: 'rcp_att' })]),
+          {
+            ...linkOf(3, []),
+            receipts: [entryOf(0, receiptOf('ended', { id: 'rcp_gone' }), 'missing')],
+          },
+          linkOf(2, [receiptOf('ended')], { break: 'lost' }),
+        ]),
+      ),
+    )
+    const { user } = await openActivity()
+    await findRow('Receipt 3.0 was deleted from the storage.')
+    const titles: string[] = []
+    for (const key of ['5.0:d0', '4.0:d0', '3.0', '2:break']) {
+      const row = rows().find((r) => r.dataset.row === key)
+      if (!row) throw new Error(`no row ${key}`)
+      await user.click(row)
+      titles.push(panelHeading())
+    }
+    expect(titles).toEqual([
+      'A message read',
+      'An attachment read',
+      'Deleted',
+      'A break in the record',
+    ])
+  })
+
+  it('lists a search that matched nothing, and keeps it among what was made available', async () => {
+    signedIn().on(
+      firstPage,
+      ok(pageOf([linkOf(3, [receiptOf('search', { delivered: [], held: [] }), receiptOf('ended')])])),
+    )
+    const { user } = await openActivity()
+    await findRow('Searched, nothing matched')
+    await user.selectOptions(screen.getByLabelText('Show'), 'made')
+    expect(rows()).toHaveLength(1)
+    expect(rowSaying('Searched, nothing matched')).toBeTruthy()
+  })
+})
+
+describe('E6: what the screen shows without the connections and mailboxes', () => {
+  it('shows the record when the connections and mailboxes cannot be read, naming no mailbox', async () => {
+    server
+      .on('GET /api/v1/me', ok(meOf()))
+      .on('GET /api/v1/connections', refused(500, 'internal'))
+      .on('GET /api/v1/mailboxes', refused(500, 'internal'))
+      .on(firstPage, ok(pageOf([linkOf(3, [receiptOf('search')])])))
+    await openActivity()
+    await findRow('Made available')
+    await settle()
+    expect(panel().getAllByText('A mailbox').length).toBeGreaterThan(0)
+    expect(panel().getByText('A connection no longer listed')).toBeTruthy()
+    expect(panel().queryByRole('link')).toBeNull()
   })
 })

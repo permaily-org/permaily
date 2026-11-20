@@ -78,7 +78,8 @@ export function ReceiptPanel({ row, title, known }: { row: Row; title: string; k
       {row.type === 'receipt' && (
         <p className="mt-1 font-mono text-mono">{momentWords(row.receipt.at)}</p>
       )}
-      {row.type === 'receipt' && <Receipt receipt={row.receipt} known={known} />}
+      {/* Keyed by the receipt's place: what it shows on a press, and an answer still on its way, are of this receipt only. */}
+      {row.type === 'receipt' && <Receipt key={row.group} receipt={row.receipt} known={known} />}
       {row.type === 'unknown' && (
         <p className="mt-3 text-body text-ink-2">
           It may be of a later version of Permaily. It is kept in your record and in its download

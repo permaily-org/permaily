@@ -68,7 +68,7 @@ export default defineConfig({
         'src/pages/inbox/**': { statements: 98, branches: 92, functions: 100, lines: 100 },
         'src/pages/consent/**': { statements: 95, branches: 89, functions: 98, lines: 98 },
         'src/pages/connections/**': { statements: 97, branches: 87, functions: 96, lines: 98 },
-        'src/pages/activity/**': { statements: 96, branches: 89, functions: 98, lines: 97 },
+        'src/pages/activity/**': { statements: 98, branches: 91, functions: 100, lines: 99 },
       },
     },
   },

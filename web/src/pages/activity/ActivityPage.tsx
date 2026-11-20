@@ -260,16 +260,25 @@ export function ActivityPage() {
 
 /** The chain's head: how long the record is, and the newest link to note before a download for checking. */
 function Head({ head }: { head: api.ReceiptsHead }) {
-  const [copied, setCopied] = useState('')
+  const [copied, setCopied] = useState<'' | 'copied' | 'failed'>('')
+  const fieldId = useId()
+  const fieldRef = useRef<HTMLInputElement>(null)
   const kept = linkKept(head.verdict) && Boolean(head.sha256)
+  const newest = `${head.n}:${head.sha256}`
   async function copy() {
     try {
-      await navigator.clipboard.writeText(`${head.n}:${head.sha256}`)
-      setCopied('Copied.')
+      await navigator.clipboard.writeText(newest)
+      setCopied('copied')
     } catch {
-      setCopied("Couldn't copy. Select it and copy it yourself.")
+      setCopied('failed')
     }
   }
+  // When the browser would not copy, the whole link is put in a field, selected, for the person to copy.
+  useEffect(() => {
+    if (copied !== 'failed') return
+    fieldRef.current?.focus()
+    fieldRef.current?.select()
+  }, [copied])
   return (
     <div className="mt-3 flex flex-col gap-1.5">
       <p className="text-body">
@@ -289,8 +298,30 @@ function Head({ head }: { head: api.ReceiptsHead }) {
             against it.
           </InfoTip>
           <span role="status" className="text-small text-ink-2">
-            {copied}
+            {copied === 'copied'
+              ? 'Copied.'
+              : copied === 'failed'
+                ? "Couldn't copy. Select it and copy it yourself."
+                : ''}
           </span>
+          {copied === 'failed' && (
+            <div className="flex w-full flex-wrap items-center gap-2">
+              <label htmlFor={fieldId} className="text-small text-ink-2">
+                The newest link
+              </label>
+              <input
+                ref={fieldRef}
+                id={fieldId}
+                readOnly
+                value={newest}
+                onFocus={(event) => event.currentTarget.select()}
+                className={cx(
+                  'min-w-0 flex-1 rounded-sm border border-ink bg-paper px-2 py-1 font-mono text-mono text-ink',
+                  focusRing,
+                )}
+              />
+            </div>
+          )}
         </div>
       ) : (
         <p className="text-small">{linkVerdictWords(head.verdict, head.n)}</p>
