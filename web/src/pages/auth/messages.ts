@@ -1,4 +1,4 @@
-import type { ApiErrorCode, Provider } from '../../lib/api.ts'
+import type { ApiErrorCode, Provider, RuleProblem } from '../../lib/api.ts'
 import type { ProviderReason } from '../../lib/arrival.ts'
 import { providerNames } from '../../lib/providers.ts'
 import type { LinkProblem } from '../../lib/session.tsx'
@@ -77,11 +77,47 @@ const messages: Record<ApiErrorCode, string> = {
   receipts_unreadable:
     "Your receipts can't be read now: what Permaily stores for them was changed by someone else. Write to support@permaily.com.",
   time_zone_invalid: "That time zone isn't one Permaily knows. Choose another, then allow again.",
+  model_unavailable:
+    "Permaily can't ask its model now (no key, or a spend limit reached). Build the rule from the conditions below instead.",
+  invalid_rule: "That rule can't be used.",
+  rule_changed: 'That rule changed since it was checked. Read its sentence again, then save.',
+  rules_changed: 'Your rules changed in another window. They are shown as they are now.',
+  too_many_rules:
+    'You have as many rules as an account can, or as many as a model can decide for you. Delete or change one first.',
+  rules_notice_needed:
+    'A model decides part of this. Read what is sent to it for rules, and agree, before it is asked.',
+  rule_words_unusable:
+    "Permaily couldn't turn that into a rule. Write it another way, or build it from the conditions below.",
   other: 'Something went wrong on our side. Try again in a moment.',
 }
 
 export function messageFor(code: ApiErrorCode): string {
   return messages[code]
+}
+
+/** Why a rule can't be used (`invalid_rule`), one sentence for each of the server's fixed reasons. */
+export const ruleProblems: Record<RuleProblem, string> = {
+  name_too_long: 'A name is one line of at most 60 characters.',
+  no_criteria: 'A rule matches mail by 1 to 8 criteria. Add a condition, or remove some criteria.',
+  too_large: 'That rule is too long. Take some values out.',
+  too_many_model:
+    'A model can decide at most 8 conditions of a rule. Take some “is about” or “mentions” out.',
+  unknown_effect: 'Choose whether the rule holds the email back or takes details out.',
+  removal_missing: 'Choose what the rule takes out: a part, a kind of data or a topic.',
+  removal_unexpected: 'A rule that holds the email back takes nothing out.',
+  unknown_part: 'Choose the parts to take out from the list.',
+  unknown_shape: 'Choose the kinds of data to take out from the list.',
+  invalid_topic:
+    'A topic is a few words, at most 100 characters, and a rule takes out at most 3 topics.',
+  unknown_scope: 'Choose which connections the rule is for.',
+  scope_clients: 'Pick 1 to 16 apps, or choose every connection.',
+  duplicate: 'A value is listed twice. Take one out.',
+  default_not_editable: 'The Sign-in and security rule can only be turned on or off.',
+}
+
+/** Why a rule was refused, in words: its reason when the server said one, otherwise what the code says. */
+export function ruleProblemFor(code: ApiErrorCode, problem?: RuleProblem): string {
+  return code === 'invalid_rule' && problem ? ruleProblems[problem] : messages[code]
 }
 
 /** The headline when the link of a message did not sign anyone in. */

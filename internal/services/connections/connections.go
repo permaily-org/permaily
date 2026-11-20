@@ -87,8 +87,16 @@ type Config struct {
 	// a connection approved under another asks nothing of the model and
 	// gives nothing until renewed (finding 18).
 	ModelNotice string
-	// Rules are the rules every connection's reads apply first: in step 5,
-	// rules.Default() alone.
+	// Source is the rules each connection's reads apply first, by the
+	// account and the connection's client, in their order (ADR 0040,
+	// accountrulestest.Fake in tests): the default rule unless the person
+	// turned it off, then the person's own. An error gives nothing of the
+	// account's mail (ErrUnavailable). When nil, Rules apply to every
+	// account and client, as in step 5 (the composition until ADR 0040's
+	// pull request 8 gives it the rules service).
+	Source accountrules.Source
+	// Rules are the rules every connection's reads apply first when Source
+	// is nil: in step 5, rules.Default() alone.
 	Rules []rules.Rule
 	// Receipts writes the record of what left, before it leaves.
 	Receipts receipts.Writer

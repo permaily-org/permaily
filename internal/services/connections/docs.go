@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/rules"
+	"github.com/permaily-org/permaily/internal/services/accountrules"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/vendors"
 )
@@ -537,21 +539,41 @@ func modelDecides(c *query.Canonical) bool {
 	return false
 }
 
-// ruleSummaries are the rules every connection applies first, as shown.
-func (s *Service) ruleSummaries() []contracts.RuleSummary {
+// ruleSummaries are rs as the consent screen shows them, in the order they
+// apply.
+func ruleSummaries(rs []rules.Rule) []contracts.RuleSummary {
 	out := []contracts.RuleSummary{}
-	for _, r := range s.cfg.Rules {
+	for _, r := range rs {
 		out = append(out, contracts.RuleSummary{ID: r.ID, Version: r.Version, Sentence: query.RenderRule(r.Formulas, query.Context{Lang: "en"}).Formulas})
 	}
 	return out
 }
 
-func (s *Service) ruleRefs() []rules.Ref {
-	out := make([]rules.Ref, 0, len(s.cfg.Rules))
-	for _, r := range s.cfg.Rules {
+// ruleRefs are Config.Rules' references.
+func (s *Service) ruleRefs() []rules.Ref { return refsOf(s.cfg.Rules) }
+
+// refsOf are rs' references.
+func refsOf(rs []rules.Rule) []rules.Ref {
+	out := make([]rules.Ref, 0, len(rs))
+	for _, r := range rs {
 		out = append(out, r.Ref())
 	}
 	return out
+}
+
+// rulesFor is the rules a connection of client applies for account now
+// (ADR 0040, accountrules.Source), or Config.Rules without a Source. An
+// error is ErrUnavailable: nothing of the account's mail leaves, the default
+// alone included.
+func (s *Service) rulesFor(ctx context.Context, account, client string) (accountrules.Applying, error) {
+	if s.cfg.Source == nil {
+		return accountrules.Applying{Rules: slices.Clone(s.cfg.Rules)}, nil
+	}
+	a, err := s.cfg.Source.Applying(ctx, account, client)
+	if err != nil {
+		return accountrules.Applying{}, errors.Join(ErrUnavailable, err)
+	}
+	return a, nil
 }
 
 // intersect is the parts in every one of the lists, in a's order.

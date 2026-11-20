@@ -20,6 +20,8 @@ export type Count = {
   messages: api.MessageSummary[]
   /** What a rule holds back, from a preview with the model. */
   held: number
+  /** What would leave with details a rule of the person's takes out, from a preview with the model (ADR 0040). */
+  removed: number
   /** What only a model would decide, while the model was not asked. */
   undecided: number
   /** What became of asking the model, when it was asked. */
@@ -116,6 +118,7 @@ export function useDraftCount(request: api.AuthorizationRequest, draft: api.Cons
                 }
               : {}),
             held: now.held + (page.held?.length ?? 0),
+            removed: now.removed + (page.removed?.length ?? 0),
             undecided: now.undecided + page.needs_model.length,
             ...(page.model ? { model: page.model } : {}),
             snapshot,
@@ -173,7 +176,16 @@ export function useDraftCount(request: api.AuthorizationRequest, draft: api.Cons
 }
 
 function empty(key: string, askModel: boolean): Count {
-  return { key, messages: [], held: 0, undecided: 0, unsure: 0, pending: false, askModel }
+  return {
+    key,
+    messages: [],
+    held: 0,
+    removed: 0,
+    undecided: 0,
+    unsure: 0,
+    pending: false,
+    askModel,
+  }
 }
 
 /**

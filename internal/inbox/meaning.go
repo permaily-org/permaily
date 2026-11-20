@@ -23,8 +23,8 @@ import (
 // with the design, so ADR 0040's pull request 4 (services/decisions
 // implements SentenceAsker, and the decisions' blocks keep MeaningKept) and
 // pull request 5 (the discloser) share one contract. services/decisions'
-// Service implements SentenceAsker; nothing in the image asks it yet, and
-// nothing reads Disclosed.Removed.
+// Service implements SentenceAsker, and the Discloser asks it (removal.go,
+// pull request 5); receipts record Disclosed.Removed.
 //
 // Every removal is decided and applied on one View of the message
 // (redact.NewView of its subject and its text as MessageText gives it),

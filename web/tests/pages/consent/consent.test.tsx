@@ -9,6 +9,7 @@ import {
   connectionOf,
   decisionRoute,
   deniedRedirect,
+  noRules,
   previewOf,
   previewRoute,
   requestId,
@@ -131,6 +132,7 @@ describe('V54: the hand-off', () => {
       .on('POST /api/v1/auth/email/start', ok({ attempt: 'att_1', expires_in: 600 }))
       .on('POST /api/v1/auth/email/finish', ok(meOf()))
       .on('GET /api/v1/mailboxes', ok({ mailboxes: [personal, work], limit: 5 }))
+      .on('GET /api/v1/rules', ok(noRules))
       .on(startRoute, ok({ request: requestOf() }))
       .on(previewRoute, ok(previewOf()))
     const { user } = await open(authorize)
@@ -220,6 +222,7 @@ describe('V54: the hand-off', () => {
         .on('POST /api/v1/auth/email/start', ok({ attempt: 'att_1', expires_in: 600 }))
         .on('POST /api/v1/auth/email/finish', ok(meOf()))
         .on('GET /api/v1/mailboxes', ok({ mailboxes: [personal, work], limit: 5 }))
+        .on('GET /api/v1/rules', ok(noRules))
         .on(startRoute, ok({ request: requestOf() }))
         .on(previewRoute, ok(previewOf()))
       const { user } = await open(`${alias}?${vendorQuery}`)

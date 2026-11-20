@@ -169,11 +169,23 @@ export const ended = connectionOf({
   version: 4,
 })
 
-/** The routes the consent screen reads besides its own: who is signed in and the mailboxes' names. */
+/** The account's rules when it has none of its own (ADR 0040): the default rule, on. */
+export const noRules = {
+  default: { rule: defaultRule, on: true },
+  rules: [],
+  version: 1,
+  max: 16,
+}
+
+/**
+ * The routes the consent screen and a connection's page read besides their own: who is signed in, the mailboxes'
+ * names, and the account's rules.
+ */
 export function signedInWithMailboxes(account = ana, session: { confirmed_until?: string } = {}) {
   return server
     .on('GET /api/v1/me', ok(meOf(account, session)))
     .on('GET /api/v1/mailboxes', ok({ mailboxes: [personal, work], limit: 5 }))
+    .on('GET /api/v1/rules', ok(noRules))
 }
 
 export const startRoute = 'POST /api/v1/oauth/requests'

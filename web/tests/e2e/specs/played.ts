@@ -122,6 +122,9 @@ export class PlayedApi {
   decisionRefusal: string | null = null
   /** The account's connections, as GET /api/v1/connections answers them. */
   connections: unknown[] = []
+  /** The person's own rules (ADR 0040), as GET /api/v1/rules lists them; saving one adds it. */
+  readonly rules: Array<Record<string, unknown>> = []
+  private rulesVersion = 1
   private decided = false
 
   constructor(private readonly vendor: Vendor) {}
@@ -144,23 +147,50 @@ export class PlayedApi {
       mailboxes: [mailbox.id],
       draft: { mailboxes: [mailbox.id], since: { new: true } },
       rules: [
-        {
-          id: 'rul_default',
-          version: 1,
-          sentence: [
-            {
-              lang: 'en',
-              text: 'Sign-in codes and password resets',
-              lead: [],
-              lines: [{ parts: [{ text: 'Sign-in codes and password resets' }] }],
-            },
-          ],
-        },
+        PlayedApi.defaultRule,
+        ...this.rules.map((r) => ({
+          id: r.id,
+          version: r.version,
+          sentence: (r.check as { sentence: { formulas: unknown[] } }).sentence.formulas,
+        })),
       ],
       change: 'new',
       snapshot: { change: 'new', ends_at: '2027-02-14T10:00:00Z', draft_id: 'drf_start' },
       model_notice: '2026-11-16',
       expires_at: new Date(Date.now() + 900_000).toISOString(),
+    }
+  }
+
+  static readonly defaultRule = {
+    id: 'rul_default',
+    version: 1,
+    sentence: [
+      {
+        lang: 'en',
+        text: 'Sign-in codes and password resets',
+        lead: [],
+        lines: [{ parts: [{ text: 'Sign-in codes and password resets' }] }],
+      },
+    ],
+  }
+
+  /** The server's check of a draft: the draft as sent, its identifier, and a sentence of its first value. */
+  private static check(draft: Record<string, unknown>): Record<string, unknown> {
+    const criteria = draft.criteria as Array<{ all: Array<{ any: Array<{ value?: string }> }> }>
+    const value = criteria[0]?.all[0]?.any[0]?.value ?? 'all mail'
+    const text = `From ${value}`
+    return {
+      draft_id: `rdr_${JSON.stringify(draft).length}`,
+      draft,
+      sentence: {
+        lang: 'en',
+        text,
+        lead: [],
+        formulas: [{ lang: 'en', text, lead: [], lines: [{ parts: [{ text }] }] }],
+      },
+      does: draft.effect === 'hold' ? 'Holds the email back' : 'Takes out what you chose',
+      for: 'Every connection',
+      model: false,
     }
   }
 
@@ -226,6 +256,31 @@ export class PlayedApi {
         return ok(me(true))
       case 'GET /api/v1/connections':
         return ok({ connections: this.connections })
+      case 'GET /api/v1/rules':
+        return ok({
+          default: { rule: PlayedApi.defaultRule, on: true },
+          rules: this.rules,
+          notice: { version: '2026-11-20', at: '2026-11-20T10:00:00Z' },
+          version: this.rulesVersion,
+          max: 16,
+        })
+      case 'POST /api/v1/rules/check':
+        return ok(PlayedApi.check((body as { draft: Record<string, unknown> }).draft))
+      case 'POST /api/v1/rules': {
+        if (!this.confirmed) return no(403, 'confirmation_needed')
+        const { draft, version } = body as { draft: Record<string, unknown>; version: number }
+        if (version !== this.rulesVersion) return no(409, 'rules_changed')
+        const rule = {
+          id: `rul_played${this.rules.length}`,
+          version: 1,
+          check: PlayedApi.check(draft),
+          created_at: '2026-11-20T10:00:00Z',
+          changed_at: '2026-11-20T10:00:00Z',
+        }
+        this.rules.push(rule)
+        this.rulesVersion += 1
+        return ok(rule)
+      }
       case 'GET /api/v1/mailboxes':
         return ok({ mailboxes: [mailbox], limit: 5 })
       case 'POST /api/v1/oauth/requests':
