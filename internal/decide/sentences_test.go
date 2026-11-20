@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -158,5 +159,19 @@ func TestASentencesEstimateCountsTheQuotedSentences(t *testing.T) {
 	content := int64(len(ContentJSON(long[0].Content)) - len(ContentJSON(short[0].Content)))
 	if d := Estimate(long[0]) - Estimate(short[0]); d < 2*content*NanoUSDPerInputToken {
 		t.Fatalf("the estimate grew %d for %d bytes in the content and as many quoted", d, content)
+	}
+}
+
+// itoa writes every int as strconv.Itoa does, a negative one included (a
+// Call made by hand can name one; SentencesCall refuses to send it).
+func TestItoaIsDecimal(t *testing.T) {
+	for _, n := range []int{0, 7, 10, 127, -1, -64} {
+		if got, want := itoa(n), strconv.Itoa(n); got != want {
+			t.Fatalf("itoa(%d) = %q, want %q", n, got, want)
+		}
+	}
+	c := Call{Content: Content{Kind: ContentSentences}, On: []SentenceTopic{{Sentence: -1, Topic: 2}}}
+	if StatementName(c, 0) != "s-1t2" {
+		t.Fatal(StatementName(c, 0))
 	}
 }

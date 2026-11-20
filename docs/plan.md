@@ -158,7 +158,7 @@ Step 7, designed in ADR 0040 on 2026-11-20 while the owner was away (status Prop
 - [ ] **1. The rules' record and service** (U2, U4 to U7, U29, U30).
 - [ ] **2. Fixed shapes and sentences** (U8 to U10, `redacttest.Contract`).
 - [ ] **3. Words** (U11 to U13, U33).
-- [ ] **4. Meaning's model** (U18 to U20's halves, U34).
+- [x] **4. Meaning's model** (U18 to U20's halves, U34): `decide.ContentSentences`, the `s1-2026-11-20` prompt (each statement quoting its sentence) and `PlanSentences`, the client's sentences request, `decisions.Service.AskSentences`, the blocks keeping `MeaningKept` with `SettleMeaning` (`ErrMeaningNotKept` removed), the re-review's N2 on the decision side (every masked piece removed by a meaning rule); U34 run against OpenAI: model recall 0.986 at 0.30, no hostile statement moved, $0.0185 a run (2026-11-20).
 - [ ] **5. Disclosure**, after 1, 2 and 4 are merged (U14 to U16, U18, U20 to U26).
 - [ ] **6. Routes**, after 1 and 3 are merged (U27, U28).
 - [ ] **7. Web**, written alongside 6 and merged after it (U32).
