@@ -1929,3 +1929,164 @@ export async function exportReceipts(): Promise<{ file: string; head: ReceiptsHe
     before = page.next
   }
 }
+
+/*
+  A receipt as the walk gives it (ADR 0041, "What a receipt shows"): internal/services/receipts.Receipt, versions 1
+  and 2, whose stored documents are the golden files of internal/services/receipts/testdata/golden, which the tests
+  read with readReceipt. Everything a receipt names is as it was when the request was answered. Senders, subjects
+  and a model's topics are what mail and vendors wrote: shown as text, never as markup or links.
+*/
+
+/** What a receipt records. `refusals` (version 2) counts, for one connection's minute, the refusals past those recorded one by one. */
+export type ReceiptKind =
+  | 'search'
+  | 'read'
+  | 'attachment'
+  | 'refused'
+  | 'consent'
+  | 'ended'
+  | 'refusals'
+
+/** A rule by its identifier and version. */
+export type RuleRef = { id: string; version: number }
+
+/** A formula evaluated, by role and identifier; its canonical form only for a search and in a consent. */
+export type ReceiptFormula = {
+  role: 'consented' | 'mailboxes' | 'since' | 'search'
+  id: string
+  formula?: QueryFormula
+}
+
+/** One answer of the model, or its kept refusal, a decision rested on. */
+export type ReceiptModel = {
+  var: QueryVariable
+  op: QueryOperator
+  topic: string
+  p: number
+  refused?: boolean
+  by_rule?: boolean
+  model?: string
+  prompt?: string
+  canary_checked?: string
+  canary_change?: string
+}
+
+/** One message made available: never its text or an attachment. */
+export type ReceiptDelivered = {
+  mailbox: string
+  message: string
+  received: string
+  parts: ConnectionPart[]
+  from?: MailAddress[]
+  subject?: string
+  attachment?: number
+  model?: ReceiptModel[]
+  cleared?: { rule: RuleRef; at: string; model?: ReceiptModel[] }[]
+}
+
+/** One message a rule held: nothing of it left. `why` is `exact`, `decided`, `recovered` or `undecided`. */
+export type ReceiptHeld = {
+  mailbox: string
+  message: string
+  rule: RuleRef
+  why: string
+  model?: ReceiptModel[]
+}
+
+/** A request for mail that got none, and why. */
+export type ReceiptRefused = {
+  reason: string
+  mailbox?: string
+  message?: string
+  held?: ReceiptHeld
+  receipt?: string
+}
+
+/** What the person was shown and decided. */
+export type ReceiptConsent = {
+  allowed: boolean
+  renewal?: boolean
+  change?: ConnectionChange
+  sentences: string[]
+  parts: ConnectionPart[]
+  since: MailSince
+  ends_at?: string
+  mailboxes: string[]
+  model_notice: string
+  replaced?: string
+}
+
+/** One connection's refusals in a minute past the ones recorded each in its own receipt. */
+export type ReceiptRefusals = {
+  from: string
+  until: string
+  recorded: number
+  counts: { operation: string; reason: string; count: number }[]
+}
+
+/** A receipt's document. The arrays a version may leave out are always there, empty. */
+export type Receipt = {
+  v: 1 | 2
+  id: string
+  at: string
+  kind: ReceiptKind
+  connection?: string
+  device?: string
+  client_id: string
+  vendor: string
+  resource: ConnectionResource
+  formulas: ReceiptFormula[]
+  rules: RuleRef[]
+  delivered: ReceiptDelivered[]
+  held: ReceiptHeld[]
+  refused?: ReceiptRefused
+  consent?: ReceiptConsent
+  ended?: { reason: EndReason; replaced_by?: string }
+  refusals?: ReceiptRefusals
+}
+
+const receiptKinds: readonly string[] = [
+  'search',
+  'read',
+  'attachment',
+  'refused',
+  'consent',
+  'ended',
+  'refusals',
+]
+
+/** The part of a receipt its kind must have; the reads may have delivered nothing, every message held. */
+const receiptPart: Partial<Record<ReceiptKind, keyof Receipt>> = {
+  refused: 'refused',
+  consent: 'consent',
+  ended: 'ended',
+  refusals: 'refusals',
+}
+
+/**
+ * A receipt the walk found `ok`, read as this app knows receipts, or null when it is not one it can show: another
+ * version or kind, or without what its kind records. A receipt read as null is still listed, as one this app can't
+ * show, with its identifier and position (ADR 0041): nothing found is ever left out.
+ */
+export function readReceipt(document: unknown): Receipt | null {
+  const r = document as Partial<Receipt> | null
+  if (
+    (r?.v !== 1 && r?.v !== 2) ||
+    typeof r.id !== 'string' ||
+    !r.id.startsWith('rcp_') ||
+    typeof r.at !== 'string' ||
+    typeof r.vendor !== 'string' ||
+    !receiptKinds.includes(r.kind as string)
+  )
+    return null
+  const kind = r.kind as ReceiptKind
+  const part = receiptPart[kind]
+  if ((kind === 'refusals' && r.v !== 2) || (part && typeof r[part] !== 'object')) return null
+  return {
+    ...(r as Receipt),
+    formulas: r.formulas ?? [],
+    rules: r.rules ?? [],
+    delivered: r.delivered ?? [],
+    held: r.held ?? [],
+  }
+}
