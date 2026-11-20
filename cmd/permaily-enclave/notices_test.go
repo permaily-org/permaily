@@ -286,10 +286,13 @@ func TestE27TheWatchAndAnUnreadableAccountHoldNoticesBack(t *testing.T) {
 	const incident = "Some of your receipts were deleted or changed"
 	w.records.unreadable.Store(&id)
 	at := w.clock.now()
+	// The baseline is read before Enqueue starts the first attempt, which
+	// may fail before this goroutine runs again (the code review of ADR
+	// 0041's pull request 7, 2).
+	failed := w.queue.status().Failed
 	if err := w.queue.svc.Enqueue(ctx, notices.Notice{Account: id, Kind: notices.KindReceiptsIncident, Key: notices.IncidentKey(id, at), At: at}); err != nil {
 		t.Fatal(err)
 	}
-	failed := w.queue.status().Failed
 	waitFor(t, "the first attempt to fail", func() bool { return w.queue.status().Failed > failed })
 	for range 6 {
 		w.clock.add(10 * time.Minute)
