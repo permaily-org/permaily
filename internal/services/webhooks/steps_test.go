@@ -2,12 +2,12 @@ package webhooks_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/services/webhooks"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/webhook"
@@ -160,19 +160,20 @@ func TestEvaluationsPastTheMinutesBound(t *testing.T) {
 	s := w.enclave()
 	var all []*conn
 	for i := range webhook.EvaluationsPerMinute + 1 {
-		all = append(all, w.make(s, made{newMail: true, host: "h.example", account: string(rune('a'+i%26)) + "_" + string(rune('a'+i/26))}))
+		// Each on a host and in an account of its own: only the
+		// evaluations' bound binds.
+		all = append(all, w.make(s, made{newMail: true, host: fmt.Sprintf("h%03d.example", i)}))
 	}
 	w.clock.add(time.Minute)
 	for _, c := range all {
 		w.deliver(s, c, 0, true)
 	}
 	w.run(s)
-	if n := len(w.sender.all()); n > webhook.EvaluationsPerMinute {
+	if n := len(w.sender.all()); n > webhook.EvaluationsPerMinute || n == 0 {
 		t.Fatalf("%d told in the first minute", n)
 	}
 	w.every(time.Minute, 3*time.Minute, s)
 	if n := len(w.sender.all()); n != len(all) {
 		t.Fatalf("%d told of %d", n, len(all))
 	}
-	_ = contracts.EveryDay
 }
