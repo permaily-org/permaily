@@ -14,8 +14,8 @@
 // Go's default sizes the first records of a connection at about 1 KiB and
 // would split it, an earlier record then whole and readable while a later
 // one is cut). That Write is admitted only after the server's SETTINGS,
-// only when the peer's windows and header list limit take the whole
-// request, and only while the permit lives and WriteBy has not passed;
+// only when the peer allows a stream and its windows and header list limit
+// take the whole request, and only while the permit lives and WriteBy has not passed;
 // admission and a cut are serialized (guard). A cut or WriteBy that comes
 // while the Write blocks closes the connection: if part of the record was
 // handed to it, the record is not whole and the peer opens none of it
@@ -23,6 +23,13 @@
 // cannot retract it (HandedWhole): the call is never cut or too_late then,
 // its answer is waited for within webhook.AttemptTimeout, and an answer
 // lost is no_answer.
+//
+// The answer is read a frame at a time with exact reads, never ahead: at
+// most webhook.ResponseHeaderBytesMax of header blocks, none of its body
+// (not one DATA frame's payload), and a header list that is not a valid
+// HTTP/2 response is no_answer whatever its status. Below that, the TLS
+// connection holds the one record it is opening, at most 16 KiB of
+// plaintext.
 package send
 
 import (

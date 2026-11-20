@@ -1,13 +1,14 @@
 package send
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"io"
+	"math"
 	"net/url"
 	"strconv"
 
+	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
 
@@ -121,26 +122,32 @@ func headerValue(v string, spaced bool) bool {
 	return true
 }
 
-// peer is what the receiver's SETTINGS said.
+// peer is what the receiver's SETTINGS said. A setting it did not send is
+// unbounded (math.MaxUint32); one it sent, zero included, is its limit.
 type peer struct {
 	window     int64  // a stream's initial window
 	connection int64  // the connection's window
-	list       uint32 // SETTINGS_MAX_HEADER_LIST_SIZE, 0 when unbounded
+	list       uint32 // SETTINGS_MAX_HEADER_LIST_SIZE
+	streams    uint32 // SETTINGS_MAX_CONCURRENT_STREAMS
 }
 
-// takes says the request fits the peer: its whole body within the stream's
-// and the connection's windows (else a request split by flow control would
-// leave its headers without its body), its header list within the peer's
-// limit.
+// takes says the request fits the peer: a stream it may open (the peer
+// allows at least one at once), its whole body within the stream's and the
+// connection's windows (else a request split by flow control would leave its
+// headers without its body), its header list within the peer's limit.
 func (p peer) takes(r request) bool {
-	return int64(r.body) <= p.window && int64(r.body) <= p.connection && (p.list == 0 || r.list <= p.list)
+	return p.streams >= 1 && int64(r.body) <= p.window && int64(r.body) <= p.connection && r.list <= p.list
 }
 
 // conn is HTTP/2 over a call's TLS connection: what it writes goes in one
-// Write each, what it reads is read a frame at a time.
+// Write each, what it reads is read a frame at a time with exact reads,
+// never ahead: a frame's nine-byte header, then its payload only when the
+// frame is one to read (next). The TLS connection below holds at most the
+// one record it is opening (16 KiB of plaintext), which TLS cannot avoid;
+// nothing of it is taken past the frame read.
 type conn struct {
 	w   io.Writer
-	br  *bufio.Reader
+	r   *exact
 	fr  *http2.Framer
 	out bytes.Buffer
 	dec *hpack.Decoder
@@ -148,9 +155,35 @@ type conn struct {
 	headers int
 }
 
+// exact reads a frame's header with an exact read and gives it back to the
+// framer, which then reads the payload exactly too.
+type exact struct {
+	r    io.Reader
+	head [9]byte
+	held []byte
+}
+
+// header reads the next frame's header and holds it for the framer.
+func (e *exact) header() (http2.FrameHeader, error) {
+	if _, err := io.ReadFull(e.r, e.head[:]); err != nil {
+		return http2.FrameHeader{}, err
+	}
+	e.held = e.head[:]
+	return http2.ReadFrameHeader(bytes.NewReader(e.head[:]))
+}
+
+func (e *exact) Read(p []byte) (int, error) {
+	if len(e.held) > 0 {
+		n := copy(p, e.held)
+		e.held = e.held[n:]
+		return n, nil
+	}
+	return e.r.Read(p)
+}
+
 func newConn(rw io.ReadWriter) *conn {
-	c := &conn{w: rw, br: bufio.NewReaderSize(rw, frameMin)}
-	c.fr = http2.NewFramer(&c.out, c.br)
+	c := &conn{w: rw, r: &exact{r: rw}}
+	c.fr = http2.NewFramer(&c.out, c.r)
 	c.fr.SetMaxReadFrameSize(frameMin)
 	c.dec = hpack.NewDecoder(headerTable, nil)
 	c.dec.SetMaxStringLength(webhook.ResponseHeaderBytesMax)
@@ -182,8 +215,16 @@ func (c *conn) start() error {
 // errProtocol is a receiver that does not speak HTTP/2 as it must.
 var errProtocol = errors.New("send: the receiver broke HTTP/2")
 
-// settings reads the server's preface, its SETTINGS, and what they say.
+// settings reads the server's preface, its SETTINGS, and what they say; a
+// first frame of another type has only its header read.
 func (c *conn) settings() (peer, error) {
+	fh, err := c.r.header()
+	if err != nil {
+		return peer{}, err
+	}
+	if fh.Type != http2.FrameSettings {
+		return peer{}, errProtocol
+	}
 	f, err := c.fr.ReadFrame()
 	if err != nil {
 		return peer{}, err
@@ -192,7 +233,7 @@ func (c *conn) settings() (peer, error) {
 	if !ok || sf.IsAck() {
 		return peer{}, errProtocol
 	}
-	p := peer{window: windowInitial, connection: windowInitial}
+	p := peer{window: windowInitial, connection: windowInitial, list: math.MaxUint32, streams: math.MaxUint32}
 	err = sf.ForeachSetting(func(s http2.Setting) error {
 		if s.Valid() != nil {
 			return errProtocol
@@ -202,6 +243,8 @@ func (c *conn) settings() (peer, error) {
 			p.window = int64(s.Val)
 		case http2.SettingMaxHeaderListSize:
 			p.list = s.Val
+		case http2.SettingMaxConcurrentStreams:
+			p.streams = s.Val
 		}
 		return nil
 	})
@@ -218,18 +261,24 @@ func (c *conn) ack() error {
 // webhook.ResponseHeaderBytesMax.
 var errHeadersTooLarge = errors.New("send: the answer's headers are too large")
 
-// next reads one frame, refusing before reading it a header block that would
-// take the answer's past webhook.ResponseHeaderBytesMax.
+// errBody is a DATA frame before the final status: the answer's body is
+// never read.
+var errBody = errors.New("send: a body before the answer's status")
+
+// next reads one frame's header and then, only when it is one to read, its
+// payload: never a DATA frame's (the body is never read, and comes only
+// after a status, which ends the answer), never a header block's that would
+// take the answer's past webhook.ResponseHeaderBytesMax; any other frame's
+// of at most 16 KiB (SetMaxReadFrameSize), read and dropped.
 func (c *conn) next() (http2.Frame, error) {
-	head, err := c.br.Peek(9)
+	fh, err := c.r.header()
 	if err != nil {
 		return nil, err
 	}
-	fh, err := http2.ReadFrameHeader(bytes.NewReader(head))
-	if err != nil {
-		return nil, err
-	}
-	if fh.Type == http2.FrameHeaders || fh.Type == http2.FrameContinuation {
+	switch fh.Type {
+	case http2.FrameData:
+		return nil, errBody
+	case http2.FrameHeaders, http2.FrameContinuation:
 		if c.headers+int(fh.Length) > webhook.ResponseHeaderBytesMax {
 			return nil, errHeadersTooLarge
 		}
@@ -265,7 +314,7 @@ func (c *conn) answer() webhook.Outcome {
 			if f.LastStreamID < stream {
 				return webhook.OutcomeNoAnswer
 			}
-		case *http2.DataFrame, *http2.RSTStreamFrame, *http2.PushPromiseFrame:
+		case *http2.RSTStreamFrame, *http2.PushPromiseFrame:
 			return webhook.OutcomeNoAnswer
 		}
 		if !ended {
@@ -290,11 +339,15 @@ func (c *conn) answer() webhook.Outcome {
 }
 
 // status decodes a header block and reads its one ":status", of three
-// digits; the rest is decoded within webhook.ResponseHeaderBytesMax and
-// dropped.
+// digits; the rest is decoded within webhook.ResponseHeaderBytesMax, checked
+// as an HTTP/2 response's (RFC 9113, sections 8.2 and 8.3: ":status" alone
+// and before every other field, names lower-case tokens, no
+// connection-specific field, values without a control character but a
+// tab) and dropped. A
+// list that is not a valid response is not a status.
 func (c *conn) status(block []byte) (int, bool) {
 	code, statuses, size := 0, 0, uint32(0)
-	ok := true
+	ok, regular := true, false
 	c.dec.SetEmitEnabled(true)
 	c.dec.SetEmitFunc(func(f hpack.HeaderField) {
 		size += f.Size()
@@ -304,7 +357,14 @@ func (c *conn) status(block []byte) (int, bool) {
 			return
 		}
 		if f.Name != ":status" {
+			if !responseField(f) {
+				ok = false
+			}
+			regular = true
 			return
+		}
+		if regular {
+			ok = false
 		}
 		statuses++
 		n, err := strconv.Atoi(f.Value)
@@ -318,4 +378,24 @@ func (c *conn) status(block []byte) (int, bool) {
 		return 0, false
 	}
 	return code, ok && statuses == 1
+}
+
+// responseField is a regular field an HTTP/2 response may carry: a
+// lower-case token for a name, not one of HTTP/1's connection-specific
+// fields (RFC 9113, section 8.2.2), a value without a control character but
+// a tab (so no NUL, CR or LF). A pseudo-header is no token.
+func responseField(f hpack.HeaderField) bool {
+	if !httpguts.ValidHeaderFieldName(f.Name) || !httpguts.ValidHeaderFieldValue(f.Value) {
+		return false
+	}
+	for i := 0; i < len(f.Name); i++ {
+		if c := f.Name[i]; c >= 'A' && c <= 'Z' {
+			return false
+		}
+	}
+	switch f.Name {
+	case "connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "te":
+		return false
+	}
+	return true
 }

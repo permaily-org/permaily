@@ -391,10 +391,12 @@ func TestK17NoAnswer(t *testing.T) {
 	d.wg.Wait()
 }
 
-// K17: an answer of 1 MiB is not read (its status decides; the window the
-// sender gives is webhook.AnswerBytesMax) and its connection is closed; a
-// header block of 1 MiB is read to webhook.ResponseHeaderBytesMax, then the
-// connection closed, the call no_answer.
+// K17: an answer of 1 MiB is not read, not one of its DATA frames (its
+// status decides; the window the sender gives is webhook.AnswerBytesMax),
+// and its connection is closed; a header block of 1 MiB is read to
+// webhook.ResponseHeaderBytesMax, then the connection closed, the call
+// no_answer: the receiver gets to write at most that and the one TLS record
+// the sender's TLS opens past it (16 KiB of plaintext).
 func TestK17AnswersAreReadOnlyWithinTheirBounds(t *testing.T) {
 	roots, cert := pki(t, host)
 	// wrote counts what a scripted receiver got to write before the sender
@@ -450,7 +452,7 @@ func TestK17AnswersAreReadOnlyWithinTheirBounds(t *testing.T) {
 			t.Errorf("%s", o)
 		}
 		got := <-out
-		if got.err == nil || got.n >= 1<<20 {
+		if got.err == nil || got.n != 0 {
 			t.Errorf("the receiver wrote %d bytes of its answer's body (%v)", got.n, got.err)
 		}
 		d.wg.Wait()
@@ -478,7 +480,7 @@ func TestK17AnswersAreReadOnlyWithinTheirBounds(t *testing.T) {
 			t.Errorf("%s", o)
 		}
 		got := <-out
-		if got.err == nil || got.n > 64<<10 {
+		if got.err == nil || got.n > webhook.ResponseHeaderBytesMax+16<<10 {
 			t.Errorf("the receiver wrote %d bytes of its header block (%v)", got.n, got.err)
 		}
 		d.wg.Wait()
@@ -665,5 +667,103 @@ func TestK22OutcomesAreCountedByFixedKey(t *testing.T) {
 	got.Outcomes[webhook.OutcomeSent] = 99
 	if s.Counts().Outcomes[webhook.OutcomeSent] != 2 {
 		t.Error("the counts can be changed from outside")
+	}
+}
+
+// K17, review of #186 finding 2: a header list that is not a valid HTTP/2
+// response is no_answer, never a status, whatever its ":status" says: a
+// regular field before the pseudo-header, a request's pseudo-header, an
+// unknown one, an upper-case name, a connection-specific field, a value
+// with a line break or a NUL, a name that is not a token, an empty name.
+func TestK17MalformedResponseHeaderListsAreNoAnswer(t *testing.T) {
+	ok := hpack.HeaderField{Name: ":status", Value: "200"}
+	for name, fields := range map[string][]hpack.HeaderField{
+		"a regular field before :status": {{Name: "server", Value: "x"}, ok},
+		"a request's :path":              {ok, {Name: ":path", Value: "/"}},
+		"an unknown pseudo-header":       {ok, {Name: ":foo", Value: "x"}},
+		"an upper-case name":             {ok, {Name: "Server", Value: "x"}},
+		"connection":                     {ok, {Name: "connection", Value: "close"}},
+		"keep-alive":                     {ok, {Name: "keep-alive", Value: "5"}},
+		"proxy-connection":               {ok, {Name: "proxy-connection", Value: "close"}},
+		"transfer-encoding":              {ok, {Name: "transfer-encoding", Value: "chunked"}},
+		"upgrade":                        {ok, {Name: "upgrade", Value: "h2c"}},
+		"te":                             {ok, {Name: "te", Value: "trailers"}},
+		"a value with a line break":      {ok, {Name: "x", Value: "a\r\nb"}},
+		"a value with a NUL":             {ok, {Name: "x", Value: "a\x00b"}},
+		"a name that is not a token":     {ok, {Name: "a b", Value: "x"}},
+		"an empty name":                  {ok, {Name: "", Value: "x"}},
+		"an interim answer malformed":    {{Name: "x", Value: "y"}, {Name: ":status", Value: "103"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rw := struct {
+				io.Reader
+				io.Writer
+			}{bytes.NewReader(answerFrames(fields...)), io.Discard}
+			if o := newConn(rw).answer(); o != webhook.OutcomeNoAnswer {
+				t.Errorf("%s", o)
+			}
+		})
+	}
+	// A valid list with ordinary fields after :status is still sent.
+	rw := struct {
+		io.Reader
+		io.Writer
+	}{bytes.NewReader(answerFrames(ok, hpack.HeaderField{Name: "content-type", Value: "text/plain; charset=utf-8"}, hpack.HeaderField{Name: "x-empty", Value: ""})), io.Discard}
+	if o := newConn(rw).answer(); o != webhook.OutcomeSent {
+		t.Errorf("a valid list: %s", o)
+	}
+}
+
+// counted is a reader that counts what was read from it.
+type counted struct {
+	r io.Reader
+	n int
+}
+
+func (c *counted) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += n
+	return n, err
+}
+
+// K17, review of #186 finding 3: the answer is read a frame at a time with
+// exact reads, never ahead: a final status coalesced with a DATA frame of
+// 12,000 bytes reads the HEADERS frame alone; a DATA frame before any
+// status, or a header frame past webhook.ResponseHeaderBytesMax delivered
+// in the same read, has only its nine-byte frame header read.
+func TestK17TheAnswerIsNotReadAhead(t *testing.T) {
+	data := func(n int) []byte {
+		var out bytes.Buffer
+		_ = http2.NewFramer(&out, nil).WriteData(1, true, make([]byte, n))
+		return out.Bytes()
+	}
+	read := func(b []byte) (webhook.Outcome, int) {
+		c := &counted{r: bytes.NewReader(b)}
+		return newConn(struct {
+			io.Reader
+			io.Writer
+		}{c, io.Discard}).answer(), c.n
+	}
+
+	headers := status("200")
+	if o, n := read(append(slices.Clone(headers), data(12000)...)); o != webhook.OutcomeSent || n != len(headers) {
+		t.Errorf("a status then a body: %s after %d bytes read, want %d", o, n, len(headers))
+	}
+	if o, n := read(data(12000)); o != webhook.OutcomeNoAnswer || n != 9 {
+		t.Errorf("a body first: %s after %d bytes read", o, n)
+	}
+	var big bytes.Buffer
+	_ = http2.NewFramer(&big, nil).WriteHeaders(http2.HeadersFrameParam{StreamID: 1, BlockFragment: make([]byte, webhook.ResponseHeaderBytesMax+1), EndHeaders: true})
+	if o, n := read(big.Bytes()); o != webhook.OutcomeNoAnswer || n != 9 {
+		t.Errorf("an oversized header frame: %s after %d bytes read", o, n)
+	}
+	// The server's SETTINGS: a first frame of another type has only its
+	// header read.
+	c := &counted{r: bytes.NewReader(data(12000))}
+	if _, err := newConn(struct {
+		io.Reader
+		io.Writer
+	}{c, io.Discard}).settings(); err == nil || c.n != 9 {
+		t.Errorf("a body for SETTINGS: %v after %d bytes read", err, c.n)
 	}
 }

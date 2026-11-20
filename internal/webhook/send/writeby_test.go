@@ -383,7 +383,7 @@ func TestK18AReceiverThatCannotTakeTheWholeRequestIsRefused(t *testing.T) {
 		})
 	}
 	req, _ := frame(aCall(aNotice(300)))
-	if (peer{window: 300, connection: 299}).takes(req) || !(peer{window: 300, connection: 300, list: req.list}).takes(req) {
+	if (peer{window: 300, connection: 299, list: req.list, streams: 1}).takes(req) || !(peer{window: 300, connection: 300, list: req.list, streams: 1}).takes(req) {
 		t.Error("the windows are not both checked")
 	}
 	// A window that fits it: written.
@@ -480,4 +480,44 @@ func TestK18AStopDuringTheDialWritesNothing(t *testing.T) {
 	if r := New(slow.dial, roots, time.Now).Attempt(context.Background(), c); r != (Result{Outcome: webhook.OutcomeTooLate}) {
 		t.Errorf("a dial past WriteBy: %+v", r)
 	}
+}
+
+// K18, review of #186 finding 1: a receiver that explicitly advertises zero
+// for SETTINGS_MAX_HEADER_LIST_SIZE (no header list fits) or for
+// SETTINGS_MAX_CONCURRENT_STREAMS (no stream may be opened) is refused and
+// sees no HEADERS: zero is a limit, not the absence of one.
+func TestK18ExplicitZeroPeerSettingsAreHonored(t *testing.T) {
+	roots, cert := pki(t, host)
+	for name, s := range map[string]http2.Setting{
+		"no header list":        {ID: http2.SettingMaxHeaderListSize, Val: 0},
+		"no concurrent streams": {ID: http2.SettingMaxConcurrentStreams, Val: 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out := make(chan opened, 1)
+			d := pipeDialer(receiver(cert, nil, []http2.Setting{s}, out))
+			s := New(d.dial, roots, time.Now)
+			s.timeout = time.Second
+			r := s.Attempt(context.Background(), aCall(aNotice(300)))
+			got := <-out
+			if r != (Result{Outcome: webhook.OutcomeRefused}) || !bytes.Equal(got.bytes, ackFrame) {
+				t.Errorf("%+v; the receiver opened %d bytes", r, len(got.bytes))
+			}
+			d.wg.Wait()
+			d.allClosed(t)
+		})
+	}
+	// One concurrent stream, and a header list limit the request fits
+	// exactly: written.
+	req, _ := frame(aCall(aNotice(300)))
+	out := make(chan opened, 1)
+	d := pipeDialer(receiver(cert, nil, []http2.Setting{
+		{ID: http2.SettingMaxConcurrentStreams, Val: 1}, {ID: http2.SettingMaxHeaderListSize, Val: req.list},
+	}, out))
+	s := New(d.dial, roots, time.Now)
+	s.timeout = 300 * time.Millisecond
+	if r := s.Attempt(context.Background(), aCall(aNotice(300))); r.Handed != HandedWhole {
+		t.Errorf("%+v", r)
+	}
+	<-out
+	d.wg.Wait()
 }
