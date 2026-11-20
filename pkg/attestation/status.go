@@ -594,6 +594,33 @@ type MailStatus struct {
 	History      []MailObservation `json:"history,omitempty"`
 	// HistoryTruncated means older states were dropped to bound the answer.
 	HistoryTruncated bool `json:"history_truncated,omitempty"`
+	// Notices counts what this enclave did with the queue of notices by
+	// mail (ADR 0041); nil in images older than this field or without it.
+	Notices *NoticesStatus `json:"notices,omitempty"`
+}
+
+// NoticesStatus is what the enclave that answered did with the queue of
+// notices by mail since it started (ADR 0041, "What /status and
+// permaily-verify show"): counts by outcome, never an account, a key, a
+// kind of event of anyone or an address. A notice is queued once for the
+// deployment and may be tried by either enclave, so the two enclaves'
+// counts are each their own. Dropped above zero is a warning of the
+// verifier, never a failure: a notice tells, and the app shows.
+type NoticesStatus struct {
+	// Since is when this enclave began counting.
+	Since time.Time `json:"since"`
+	// Queued is the notices this enclave queued that were not queued or
+	// sent before; Sent those it handed to SES; Failed its attempts that
+	// failed and will be tried again; Dropped those it gave up after
+	// notices.RetryFor; Skipped those of an account that could not be told
+	// (gone, closing or blocked); Refused the entries of the queue that did
+	// not verify, which nothing sends.
+	Queued  int64 `json:"queued"`
+	Sent    int64 `json:"sent"`
+	Failed  int64 `json:"failed"`
+	Dropped int64 `json:"dropped"`
+	Skipped int64 `json:"skipped"`
+	Refused int64 `json:"refused"`
 }
 
 // MailState is what SES says about the two identities: each is

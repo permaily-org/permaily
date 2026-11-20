@@ -63,3 +63,10 @@ regexes = ['''^eyJhbGciOiJSUzI1NiJ9\.eyJqdGkiOiJ1bmlxdWUifQ\.c2lnbmF0dXJl$''']
 description = "the consent screen's tests (ADR 0030, V54 and V63) list the pieces of a made-up vendor request that must never be kept; its PKCE code_challenge is base64 of the words CHALLENGE-challenge-challenge, nobody's secret, and the scan reads every commit of the branch"
 regexTarget = "secret"
 regexes = ['''^Q0hBTExFTkdFLWNoYWxsZW5nZS1jaGFsbGVuZ2''']
+
+[[allowlists]]
+description = "the notices' test (ADR 0041) checks that a key with upper-case letters is refused: a made-up 32-character hex string, nobody's secret; the scan reads every commit of the branch, so the exception names that one line"
+condition = "AND"
+paths = ['''^internal/services/notices/notices_test\.go$''']
+regexTarget = "line"
+regexes = ['''^\s*func\(n \*Notice\) \{ n\.Key = "ABCDEF0123456789abcdef0123456789" \},?\s*$''']
