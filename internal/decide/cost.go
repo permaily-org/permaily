@@ -37,12 +37,20 @@ func Cost(u Usage) int64 {
 }
 
 // Estimate is an upper bound of what c costs once sent: 1,000 tokens, 400 a
-// statement and one a byte of its content's JSON (ContentJSON), all at the
-// input's price, doubled past LongRequestTokens. It is what the service
+// statement and one a byte of its content's JSON (ContentJSON), and for a
+// sentences call one a byte of the sentence each statement quotes, all at
+// the input's price, doubled past LongRequestTokens. It is what the service
 // reserves before the attempt and what an attempt whose billing is unknown
 // is charged.
 func Estimate(c Call) int64 {
 	n := int64(estimateBaseTokens) + estimateStatementTokens*int64(len(c.Statements)) + int64(len(ContentJSON(c.Content)))
+	if c.Content.Kind == ContentSentences {
+		for _, on := range c.On {
+			if on.Sentence >= 0 && on.Sentence < len(c.Content.Sentences) {
+				n += int64(len(jsonString(c.Content.Sentences[on.Sentence])))
+			}
+		}
+	}
 	return Cost(Usage{InputTokens: n})
 }
 
