@@ -1,8 +1,12 @@
 package webhook
 
 import (
+	"crypto/ed25519"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/permaily-org/permaily/internal/contracts"
 )
 
 // The design review of ADR 0039, finding 10: encoding/json alone takes a
@@ -71,5 +75,78 @@ func TestTheParsersReadOneObjectExactly(t *testing.T) {
 
 // openNotice is Open as the vendor calls it at the notice's own time.
 func openNotice(body []byte, id, audience string) (any, error) {
-	return Open(body, id, audience)
+	return Open(body, id, audience, notice().CreatedAt)
+}
+
+// Every member of a notice is read with its type, and only a body Body
+// would have written opens: a vendor and Permaily read the same notice.
+func TestANoticeOpensOnlyAsBodyWroteIt(t *testing.T) {
+	n := notice()
+	n.Type, n.ScheduledAt, n.Late = contracts.NoticeScheduleDue, n.Since, true
+	body, err := Body(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Open(body, n.ID, n.Audience, n.CreatedAt); err != nil || *got != n {
+		t.Fatalf("a scheduled notice: %+v %v", got, err)
+	}
+	b := string(body)
+	for name, bad := range map[string]string{
+		"no version":              strings.Replace(b, `"v":1,`, ``, 1),
+		"a type that is a number": strings.Replace(b, `"type":"schedule.due"`, `"type":1`, 1),
+		"a time that is no time":  strings.Replace(b, `"since":"2026-11-20T08:03:00Z"`, `"since":"yesterday"`, 1),
+		"a time in another zone":  strings.Replace(b, `"since":"2026-11-20T08:03:00Z"`, `"since":"2026-11-20T09:03:00+01:00"`, 1),
+		"a scheduled time absent": strings.Replace(b, `,"scheduled_at":"2026-11-20T08:03:00Z"`, ``, 1),
+		"late written false":      strings.Replace(b, `"late":true`, `"late":false`, 1),
+		"spaces":                  strings.Replace(b, `,`, `, `, 1),
+		"too long":                b + strings.Repeat(" ", NoticeBytesMax),
+	} {
+		if _, err := Open([]byte(bad), n.ID, n.Audience, n.CreatedAt); !errors.Is(err, ErrNotice) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// A signature is read as the libraries read it: one that is not base64, or
+// not 64 bytes, is skipped, and another of the header may still verify.
+func TestASignatureNotOfTheProfileIsSkipped(t *testing.T) {
+	k, _ := KeyFromSeed(make([]byte, 32))
+	pub := []ed25519.PublicKey{k.Public().(ed25519.PublicKey)}
+	n := notice()
+	body, _ := Body(n)
+	ts, sig, _ := Sign([]ed25519.PrivateKey{k}, endpoint, n.ID, n.CreatedAt, body)
+	for _, junk := range []string{"v2a,not base64!", "v2a,AAAA", "v2a," + strings.Repeat("A", 88)} {
+		if err := Verify(pub, endpoint, n.ID, ts, junk, body, n.CreatedAt); !errors.Is(err, ErrVerify) {
+			t.Errorf("%q: %v", junk, err)
+		}
+		if err := Verify(pub, endpoint, n.ID, ts, junk+" "+sig, body, n.CreatedAt); err != nil {
+			t.Errorf("%q then a good one: %v", junk, err)
+		}
+	}
+	if err := Verify(pub, endpoint, "ntc_a.b", ts, sig, body, n.CreatedAt); !errors.Is(err, ErrVerify) {
+		t.Errorf("an identifier with a dot: %v", err)
+	}
+}
+
+// What ParseRequest takes once read exactly is still checked as before: the
+// URL on the vendor's host, the schedule one of the choices, a weekday only
+// for a week.
+func TestAWebhookRequestReadExactlyIsStillChecked(t *testing.T) {
+	for _, raw := range []string{
+		`{"url":"https://other.com/h","new_mail":true}`,
+		`{"url":"https://trip-app.com/h","schedule":{"every":"day","at":"08:10"}}`,
+		`{"url":"https://trip-app.com/h","schedule":{"every":"week","on":"","at":"08:00"}}`,
+		`{"url":"https://trip-app.com/h","schedule":{"every":"week","on":1,"at":"08:00"}}`,
+		`{"url":"https://trip-app.com/h","schedule":{"every":"day"}}`,
+		`{"url":"https://trip-app.com/h","schedule":{"at":"08:00"}}`,
+		`{"url":"https://trip-app.com/h","schedule":[]}`,
+	} {
+		if _, err := ParseRequest(raw, client, "permaily.com"); err == nil {
+			t.Errorf("took %s", raw)
+		}
+	}
+	r, err := ParseRequest(`{"url":"https://trip-app.com/h","new_mail":false,"schedule":{"every":"week","on":"monday","at":"08:00"}}`, client, "permaily.com")
+	if err != nil || r.NewMail || r.Schedule.On != "monday" {
+		t.Fatalf("%+v %v", r, err)
+	}
 }

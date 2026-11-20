@@ -14,13 +14,19 @@ import (
 // queue of internal/services/webhooks decides nothing.
 //
 // ADR 0039's pull request 2 makes *Service implement WebhookAPI and
-// webhooks.Connections; the routes (pull request 4) are built against
-// connectionstest.Fake, which implements WebhookAPI now.
+// webhooks.Connections: its Admit registers a webhooks.Permit under the
+// connection as a read registers its lease (lease.go), and every stop made
+// through this enclave (Revoke, the last device's, WebhookOff, a
+// replacement, EndAll, Stop) cuts the connection's permits before its
+// record is written, so no notice starts writing after the stop is
+// acknowledged; Webhooks lists the connections from their strict records.
+// The routes (pull request 4) are built against connectionstest.Fake,
+// which implements WebhookAPI now.
 
 // WebhookAPI is what the person's routes call of a connection's webhook.
 type WebhookAPI interface {
-	// WebhookOff turns the connection's webhook off: written at the version
-	// the page showed (contracts.ErrConsentChanged when it changed), with
+	// WebhookOff turns the connection's webhook off, its permits cut first:
+	// written at the version the page showed (contracts.ErrConsentChanged when it changed), with
 	// no fresh proof (it only protects) and while new terms are not agreed
 	// (like Revoke). Final: only a new request of the client turns it on
 	// again. A connection with no webhook is contracts.ErrNotFound.

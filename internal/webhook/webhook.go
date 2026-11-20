@@ -11,12 +11,12 @@
 package webhook
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/jws"
 	"github.com/permaily-org/permaily/internal/oauth"
 )
 
@@ -47,19 +47,62 @@ const (
 	// together; AttemptsPerMinute the calls it starts in a minute.
 	InFlightMax       = 16
 	AttemptsPerMinute = 600
-	// ArrivalLag is how far back an evaluation of new mail looks again
-	// before its watermark, for a message whose storing finished after a
-	// later one's (a delivery's deadline is a minute from its start).
+	// HostInFlightMax and HostAttemptsPerMinute are one vendor's share of
+	// them: the calls one enclave makes at once, and starts in a minute, to
+	// one canonical host (the client_id's, which is the webhook's), so a
+	// vendor whose receiver is slow or hostile delays its own notices only
+	// (design review, finding 8). HostReadyMax bounds the notices of one
+	// host an enclave holds ready to call, ReadyMax every host's together;
+	// what is past them stays in the due index for the next pass.
+	HostInFlightMax       = 2
+	HostAttemptsPerMinute = 60
+	HostReadyMax          = 64
+	ReadyMax              = 1024
+	// EvaluationsInFlightMax bounds the evaluations of new mail one enclave
+	// runs at once, AccountEvaluationsInFlightMax one account's of them, and
+	// EvaluationsPerMinute those it starts in a minute: the model's asks
+	// they make are bounded by the account's share and the spend guard too.
+	EvaluationsInFlightMax        = 4
+	AccountEvaluationsInFlightMax = 1
+	EvaluationsPerMinute          = 120
+	// ResponseHeaderBytesMax bounds the header block of a webhook's answer
+	// the sender reads (HTTP/2's SETTINGS_MAX_HEADER_LIST_SIZE, and the most
+	// it decodes); IdleConnectionsMax is how many connections to a webhook
+	// it keeps once a call ends: none, every call dials its own.
+	ResponseHeaderBytesMax = 8 << 10
+	IdleConnectionsMax     = 0
+	// RequestWriteBytesMax is the most a call's request may be once framed
+	// (its HEADERS and its one DATA frame): within one TLS record of
+	// plaintext, so the request is written in one Write, whole or not at
+	// all (Call).
+	RequestWriteBytesMax = 16 << 10
+	// ArrivalLag is how far back the late sweep of new mail looks before
+	// the cursor, for a message whose storing finished after a later one's
+	// (a delivery's deadline is a minute from its start).
 	ArrivalLag = 2 * time.Minute
-	// ArrivalPage is the most messages one evaluation of new mail reads; more
-	// are read by the next one.
+	// ArrivalPage is the most messages one evaluation of new mail reads,
+	// forward from the cursor and in the late sweep together; more are read
+	// by the next one.
 	ArrivalPage = 50
+	// MatchMessagesMax bounds the messages a match names (the earliest that
+	// would leave): what a check before every attempt looks for again.
+	MatchMessagesMax = 16
 	// RepairEvery is how often every queue entry is walked: a hint lost in
 	// a crash, a due entry deleted, a connection ended without a word.
 	RepairEvery = time.Hour
 	// TimestampTolerance is how far a notice's timestamp may be from the
 	// vendor's clock (Standard Webhooks' recommendation).
 	TimestampTolerance = 5 * time.Minute
+	// DedupKeepFor is how long a vendor must keep a notice's identifier
+	// after it first took it (design review, finding 9): a retry may come
+	// until GiveUpAfter from the notice's making, freshly signed, and each
+	// end of that span may be TimestampTolerance off the vendor's clock.
+	// Open refuses a notice made longer ago than NoticeLife, so nothing
+	// older needs keeping.
+	DedupKeepFor = GiveUpAfter + 2*TimestampTolerance
+	// NoticeLife is how old (by its created_at) a notice may be when a
+	// vendor opens it: GiveUpAfter, and the tolerance of the clocks.
+	NoticeLife = GiveUpAfter + TimestampTolerance
 	// LateAfter is how long after its scheduled time a scheduled notice is
 	// still on time; later, it says Late.
 	LateAfter = 15 * time.Minute
@@ -136,17 +179,48 @@ func URL(raw, clientID, deployment string) (string, error) {
 }
 
 // ParseRequest reads a pushed request's "webhook" parameter: one JSON object
-// of at most RequestBytesMax with no member but WebhookRequest's, a URL that
-// URL accepts for clientID, and new mail, a schedule or both.
+// of at most RequestBytesMax, read exactly (jws.Object: valid UTF-8, nothing
+// after it, a name twice in any case refused) with no member but
+// WebhookRequest's, each of its type ("url" a string, "new_mail" true or
+// false, "schedule" an object read the same way with "every", "on" and "at"
+// strings), a URL that URL accepts for clientID, and new mail, a schedule
+// or both.
 func ParseRequest(raw, clientID, deployment string) (*contracts.WebhookRequest, error) {
 	if len(raw) > RequestBytesMax {
 		return nil, ErrRequest
 	}
-	d := json.NewDecoder(bytes.NewReader([]byte(raw)))
-	d.DisallowUnknownFields()
-	var r contracts.WebhookRequest
-	if err := d.Decode(&r); err != nil || d.More() {
+	m, ok := members([]byte(raw), "url", "new_mail", "schedule")
+	if !ok {
 		return nil, ErrRequest
+	}
+	var r contracts.WebhookRequest
+	if r.URL, ok = jws.Text(m["url"]); !ok {
+		return nil, ErrRequest
+	}
+	if v, there := m["new_mail"]; there {
+		if r.NewMail, ok = boolean(v); !ok {
+			return nil, ErrRequest
+		}
+	}
+	if v, there := m["schedule"]; there {
+		s, ok := members(v, "every", "on", "at")
+		if !ok {
+			return nil, ErrRequest
+		}
+		var every string
+		r.Schedule = &contracts.WebhookSchedule{}
+		if every, ok = jws.Text(s["every"]); !ok {
+			return nil, ErrRequest
+		}
+		r.Schedule.Every = contracts.WebhookEvery(every)
+		if r.Schedule.At, ok = jws.Text(s["at"]); !ok {
+			return nil, ErrRequest
+		}
+		if v, there := s["on"]; there {
+			if r.Schedule.On, ok = jws.Text(v); !ok || r.Schedule.On == "" {
+				return nil, ErrRequest
+			}
+		}
 	}
 	if _, err := URL(r.URL, clientID, deployment); err != nil {
 		return nil, err
@@ -160,6 +234,37 @@ func ParseRequest(raw, clientID, deployment string) (*contracts.WebhookRequest, 
 		}
 	}
 	return &r, nil
+}
+
+// members reads one object exactly (jws.Object) whose names are all among
+// allowed, byte for byte.
+func members(raw []byte, allowed ...string) (map[string]json.RawMessage, bool) {
+	m, ok := jws.Object(raw)
+	if !ok {
+		return nil, false
+	}
+	for name := range m {
+		known := false
+		for _, a := range allowed {
+			known = known || name == a
+		}
+		if !known {
+			return nil, false
+		}
+	}
+	return m, true
+}
+
+// boolean is a member that is the JSON literal true or false: never null,
+// a string or a number.
+func boolean(v json.RawMessage) (bool, bool) {
+	switch string(v) {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	}
+	return false, false
 }
 
 // Same says whether two webhooks are the same one (the same URL, called for

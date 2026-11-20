@@ -182,7 +182,10 @@ func containsInt(s []int, v int) bool {
 // Due is the latest time s fell in (last, now], in loc, and whether a
 // notice for it is late: sent more than LateAfter after it, or standing for
 // more than one run missed. ok is false when none fell. A service that was
-// down for weeks sends one notice, late, never one per run missed.
+// down for weeks sends one notice, late, never one per run missed. What the
+// notice tells the vendor to fetch from is not the run before at but the
+// coverage boundary the queue keeps (Coverage; design review, finding 6),
+// so every missed run's mail is fetched.
 func Due(s contracts.WebhookSchedule, loc *time.Location, last, now time.Time) (at time.Time, late, ok bool) {
 	const window = 9 * 24 * time.Hour
 	missedMore := false
@@ -197,4 +200,15 @@ func Due(s contracts.WebhookSchedule, loc *time.Location, last, now time.Time) (
 		return time.Time{}, false, false
 	}
 	return at, runs > 1 || missedMore || now.Sub(at) > LateAfter, true
+}
+
+// Coverage is a schedule's first coverage boundary: when its connection was
+// made, rounded down to its UTC minute (a notice's Since is on a minute).
+// The queue keeps the boundary, moves it to a scheduled notice's
+// ScheduledAt only when the vendor took that notice (a 2xx), and keeps it
+// across runs missed, skipped and given up; every scheduled notice's Since
+// is the boundary, so a late notice that stands for many runs tells the
+// vendor to fetch everything since the last one it took.
+func Coverage(madeAt time.Time) time.Time {
+	return madeAt.UTC().Truncate(time.Minute)
 }

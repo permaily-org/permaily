@@ -98,7 +98,10 @@ type ConnectionWebhook struct {
 
 // VendorWebhook is what a vendor is told of its connection's webhook: the
 // subscription its notices name (so it can tell which of its tokens to
-// fetch with), the URL it asked for, what it is called for, and its state.
+// fetch with), which is also the endpoint identifier every notice's "v2a"
+// signature is bound to (Standard Webhooks: the vendor verifies with the
+// one it was given here, never one taken from a call), the URL it asked
+// for, what it is called for, and its state.
 // Never the person's time zone: the vendor asked for wall time, and the
 // zone says where the person is.
 type VendorWebhook struct {
@@ -126,19 +129,25 @@ const (
 const WebhookNoticeVersion = 1
 
 // WebhookNotice is the body of a webhook call, signed as Standard Webhooks'
-// v1a (Ed25519) says, with the headers WebhookHeaderID, WebhookHeaderTimestamp
-// and WebhookHeaderSignature (ADR 0039, "The notice"). It holds no mail, no
-// address, no account, mailbox, connection or message identifier and no
-// count: only that there is something to fetch, for which subscription, on
-// which webhook (Audience, the URL called: a vendor refuses a notice whose
-// Audience is not its own) and from when. ID is the same in every retry of
-// one notice, so the vendor takes it once; CreatedAt is when it was made,
-// and a retry keeps it. Since is the minute from which to fetch: for
-// NoticeMailMatched the minute the earliest message it is about arrived in,
-// for NoticeScheduleDue the scheduled time before (or when the connection
-// was made). ScheduledAt is the scheduled time a NoticeScheduleDue is for,
-// and Late says it is sent later than that (the service was down, or runs
-// were missed: one notice stands for all of them).
+// asymmetric "v2a" says (Ed25519 over the SHA-256 of the subscription, the
+// identifier, the timestamp and the body), with the headers WebhookHeaderID,
+// WebhookHeaderTimestamp and WebhookHeaderSignature (ADR 0039, "The notice",
+// "Signatures"). It holds no mail, no address, no account, mailbox,
+// connection or message identifier and no count: only that there is
+// something to fetch, for which subscription, on which webhook (Audience,
+// the URL called: a vendor refuses a notice whose Audience is not its own)
+// and from when. ID and the whole body are frozen once the first call of a
+// notice starts: every retry carries both, so the vendor takes it once (and
+// keeps its identifier for webhook.DedupKeepFor); what happens meanwhile is
+// told by a notice of its own, with another identifier. CreatedAt is when
+// it was made. Since is the minute from which to fetch: for
+// NoticeMailMatched the minute the earliest message it is about arrived
+// in, for NoticeScheduleDue the coverage boundary (the scheduled time of
+// the last scheduled notice the vendor took, or the minute the connection
+// was made), so a late notice standing for several runs covers all of
+// them. ScheduledAt is the scheduled time a NoticeScheduleDue is for, and
+// Late says it is sent later than that (the service was down, or runs were
+// missed: one notice stands for all of them).
 type WebhookNotice struct {
 	V            int               `json:"v"`
 	Type         WebhookNoticeType `json:"type"`

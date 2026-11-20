@@ -140,7 +140,8 @@ linters:
               desc: the model's client reaches only the model
         webhook-is-pure:
           # What a connection's webhook decides from its arguments alone (ADR 0039): the URL rule, the request, schedules
-          # in the person's time zone (time/tzdata, the image's own zones), the notice, its signature and the key set.
+          # in the person's time zone (time/tzdata, the image's own zones), the notice, its signature and the key set,
+          # each read exactly through internal/jws.Object.
           # No net/http, no io, no os, no storage: calling is internal/services/webhooks', keeping is the services'.
           files: ["**/internal/webhook/*.go", "!$test"]
           list-mode: strict
@@ -155,6 +156,7 @@ linters:
             - strings
             - time
             - github.com/permaily-org/permaily/internal/contracts
+            - github.com/permaily-org/permaily/internal/jws
             - github.com/permaily-org/permaily/internal/oauth
         oauth-is-pure:
           # What the authorization server decides from its arguments alone (ADR 0030): metadata, the rules of a

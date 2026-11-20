@@ -68,13 +68,16 @@ type Status struct {
 // that is not verified, a URL, a subscription, an account, a connection or
 // a count of any of them.
 type WebhooksStatus struct {
-	// Signature is WebhookSignatureV1a: notices are signed with Ed25519 as
-	// Standard Webhooks' "v1a" says; Keys are every key a notice may be
-	// signed with now, which the api host also publishes at KeysURL as a
-	// JWK set: permaily-verify fails when the two differ.
-	Signature string       `json:"signature"`
-	Keys      []WebhookKey `json:"keys"`
-	KeysURL   string       `json:"keys_url"`
+	// Signature is WebhookSignatureV2a: notices are signed with Ed25519 as
+	// Standard Webhooks' asymmetric "v2a" says, bound to each
+	// subscription's endpoint identifier, at the specification's revision
+	// SpecRevision (a commit of its repository); Keys are every key a
+	// notice may be signed with now, which the api host also publishes at
+	// KeysURL as a JWK set: permaily-verify fails when the two differ.
+	Signature    string       `json:"signature"`
+	SpecRevision string       `json:"spec_revision"`
+	Keys         []WebhookKey `json:"keys"`
+	KeysURL      string       `json:"keys_url"`
 	// NoticeHoldsMail is false: a notice holds no mail, address or
 	// identifier of an account, a mailbox, a connection or a message (ADR
 	// 0039, "The notice"); permaily-verify fails on true.
@@ -93,10 +96,16 @@ type WebhooksStatus struct {
 	// connection's webhook; permaily-verify fails above 5.
 	RevocationSeconds int `json:"revocation_seconds"`
 	// The bounds, in seconds: the least time between two notices of one
-	// connection, one call's timeout and how long a notice is tried.
+	// connection, one call's timeout, how long a notice is tried, and how
+	// long a vendor must keep a notice's identifier.
 	MinIntervalSeconds int `json:"min_interval_seconds"`
 	TimeoutSeconds     int `json:"timeout_seconds"`
 	GiveUpSeconds      int `json:"give_up_seconds"`
+	DedupSeconds       int `json:"dedup_seconds"`
+	// One vendor's share of this enclave's calls: at once and started in a
+	// minute, to one host.
+	HostInFlight          int `json:"host_in_flight"`
+	HostAttemptsPerMinute int `json:"host_attempts_per_minute"`
 	// Schedules are the fixed choices a schedule may be ("day", "week").
 	Schedules []string `json:"schedules"`
 	// Since is when this enclave started counting; Outcomes counts its calls
@@ -114,9 +123,10 @@ type WebhookKey struct {
 	X  string `json:"x"`
 }
 
-// WebhookSignatureV1a: Ed25519 over the notice's identifier, timestamp and
-// body (Standard Webhooks).
-const WebhookSignatureV1a = "standard-webhooks-v1a"
+// WebhookSignatureV2a: Ed25519 over the SHA-256 of the subscription's
+// endpoint identifier, the notice's identifier, the timestamp and the body
+// (Standard Webhooks' asymmetric signatures).
+const WebhookSignatureV2a = "standard-webhooks-v2a"
 
 // WebhookNewMailAfterRules: a notice of new mail follows the rules and the
 // model, never an exact match alone.

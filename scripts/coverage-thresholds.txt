@@ -29,7 +29,7 @@ github.com/permaily-org/permaily/internal/webauthn 99
 github.com/permaily-org/permaily/internal/idp 100
 github.com/permaily-org/permaily/internal/jws 100
 github.com/permaily-org/permaily/internal/oauth 100
-github.com/permaily-org/permaily/internal/webhook 95
+github.com/permaily-org/permaily/internal/webhook 96
 github.com/permaily-org/permaily/internal/services/webhooks 100
 github.com/permaily-org/permaily/internal/mailhtml 95
 github.com/permaily-org/permaily/internal/query 99

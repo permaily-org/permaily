@@ -17,20 +17,28 @@ import (
 )
 
 // Vendor is a played vendor's webhook: an http.Handler that does what ADR
-// 0039 asks every vendor to do with a call (a POST, its timestamp and
-// signature verified against Keys, its body opened for Audience, each
-// notice's identifier taken once), keeps what it took, and answers Status
-// (200 when zero) to every call it took; a call it refuses is 400 and kept
-// in Refused.
+// 0039 asks every vendor to do with a call (a POST, its timestamp and its
+// "v2a" signature for Endpoint, the subscription it was given, verified
+// against Keys, its body opened for Audience, each notice's identifier
+// taken once and kept DedupFor), keeps what it took, and answers Status
+// (200 when zero) to every call it took; a call it refuses is 400. Taking,
+// when set, is called with each notice it takes, before it answers: what a
+// vendor's fetch does then (ADR 0039's K37).
 type Vendor struct {
 	Keys     []ed25519.PublicKey
+	Endpoint string
 	Audience string
 	Status   int
 	Now      func() time.Time
+	// DedupFor is how long it keeps an identifier after it took it:
+	// webhook.DedupKeepFor when zero, which a vendor must; shorter only to
+	// show what a vendor that forgets sooner does (it takes a retry twice).
+	DedupFor time.Duration
+	Taking   func(n contracts.WebhookNotice)
 
 	mu      sync.Mutex
 	taken   []contracts.WebhookNotice
-	seen    map[string]bool
+	seen    map[string]time.Time
 	refused int
 	calls   int
 }
@@ -44,39 +52,57 @@ func (v *Vendor) now() time.Time {
 
 // ServeHTTP implements http.Handler.
 func (v *Vendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	n, status := v.take(r)
+	if n != nil && v.Taking != nil {
+		v.Taking(*n)
+	}
+	w.WriteHeader(status)
+}
+
+func (v *Vendor) take(r *http.Request) (*contracts.WebhookNotice, int) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.calls++
+	now := v.now()
 	body, err := io.ReadAll(io.LimitReader(r.Body, webhook.NoticeBytesMax+1))
 	id := r.Header.Get(contracts.WebhookHeaderID)
 	if err != nil || r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json" || r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" ||
-		webhook.Verify(v.Keys, id, r.Header.Get(contracts.WebhookHeaderTimestamp), r.Header.Get(contracts.WebhookHeaderSignature), body, v.now()) != nil {
+		webhook.Verify(v.Keys, v.Endpoint, id, r.Header.Get(contracts.WebhookHeaderTimestamp), r.Header.Get(contracts.WebhookHeaderSignature), body, now) != nil {
 		v.refused++
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return nil, http.StatusBadRequest
 	}
-	n, err := webhook.Open(body, id, v.Audience)
+	n, err := webhook.Open(body, id, v.Audience, now)
 	if err != nil {
 		v.refused++
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return nil, http.StatusBadRequest
+	}
+	keep := v.DedupFor
+	if keep == 0 {
+		keep = webhook.DedupKeepFor
 	}
 	if v.seen == nil {
-		v.seen = map[string]bool{}
+		v.seen = map[string]time.Time{}
 	}
-	if !v.seen[id] {
-		v.seen[id] = true
-		v.taken = append(v.taken, *n)
+	for seen, at := range v.seen {
+		if now.Sub(at) > keep {
+			delete(v.seen, seen)
+		}
 	}
 	status := v.Status
 	if status == 0 {
 		status = http.StatusOK
 	}
-	w.WriteHeader(status)
+	if _, taken := v.seen[id]; taken {
+		return nil, status
+	}
+	v.seen[id] = now
+	v.taken = append(v.taken, *n)
+	return n, status
 }
 
-// Taken are the notices it took, each once, in order; Refused how many calls
-// it refused; Calls how many it was made.
+// Taken are the notices it took, in order (one twice only when it forgot
+// it, DedupFor); Refused how many calls it refused; Calls how many it was
+// made.
 func (v *Vendor) Taken() []contracts.WebhookNotice {
 	v.mu.Lock()
 	defer v.mu.Unlock()

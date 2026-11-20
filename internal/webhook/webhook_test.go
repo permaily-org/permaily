@@ -3,7 +3,10 @@ package webhook
 import (
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -234,53 +237,196 @@ func TestANoticeIsWhatTheADRSaysAndFitsItsBound(t *testing.T) {
 	}
 }
 
+const endpoint = "sub_0123456789abcdefghijklmnop"
+
 func TestANoticeIsSignedAsStandardWebhooksSays(t *testing.T) {
 	seed := make([]byte, 32)
 	k, _ := KeyFromSeed(seed)
 	n := notice()
 	body, _ := Body(n)
 	at := n.CreatedAt
-	ts, sig := Sign([]ed25519.PrivateKey{k}, n.ID, at, body)
-	// The vector: what any Standard Webhooks library checks (v1a, Ed25519
-	// over "id.timestamp.body").
-	want := ed25519.Sign(k, []byte(n.ID+"."+ts+"."+string(body)))
-	if ts != "1795161787" || sig != "v1a,"+base64.StdEncoding.EncodeToString(want) {
-		t.Fatalf("%s %s", ts, sig)
+	ts, sig, err := Sign([]ed25519.PrivateKey{k}, endpoint, n.ID, at, body)
+	if err != nil || ts != "1795161787" || !strings.HasPrefix(sig, "v2a,") || strings.Contains(sig, " ") {
+		t.Fatalf("%s %s %v", ts, sig, err)
 	}
 	pub := []ed25519.PublicKey{k.Public().(ed25519.PublicKey)}
-	if err := Verify(pub, n.ID, ts, sig, body, at.Add(TimestampTolerance)); err != nil {
+	if err := Verify(pub, endpoint, n.ID, ts, sig, body, at.Add(TimestampTolerance)); err != nil {
 		t.Fatal(err)
 	}
-	got, err := Open(body, n.ID, n.Audience)
+	got, err := Open(body, n.ID, n.Audience, at)
 	if err != nil || *got != n {
 		t.Fatalf("%+v %v", got, err)
 	}
 	other, _ := KeyFromSeed(append(make([]byte, 31), 1))
 	for name, check := range map[string]error{
-		"another body":           Verify(pub, n.ID, ts, sig, append(body, ' '), at),
-		"another identifier":     Verify(pub, "ntc_other", ts, sig, body, at),
-		"another timestamp":      Verify(pub, n.ID, "1795161788", sig, body, at),
-		"too old":                Verify(pub, n.ID, ts, sig, body, at.Add(TimestampTolerance+time.Second)),
-		"from the future":        Verify(pub, n.ID, ts, sig, body, at.Add(-TimestampTolerance-time.Second)),
-		"another key":            Verify([]ed25519.PublicKey{other.Public().(ed25519.PublicKey)}, n.ID, ts, sig, body, at),
-		"v1 (HMAC) only":         Verify(pub, n.ID, ts, strings.Replace(sig, "v1a,", "v1,", 1), body, at),
-		"no signature":           Verify(pub, n.ID, ts, "", body, at),
-		"a timestamp not number": Verify(pub, n.ID, "now", sig, body, at),
+		"another body":           Verify(pub, endpoint, n.ID, ts, sig, append(body, ' '), at),
+		"another identifier":     Verify(pub, endpoint, "ntc_other", ts, sig, body, at),
+		"another subscription":   Verify(pub, "sub_other", n.ID, ts, sig, body, at),
+		"another timestamp":      Verify(pub, endpoint, n.ID, "1795161788", sig, body, at),
+		"a timestamp padded":     Verify(pub, endpoint, n.ID, "01795161787", sig, body, at),
+		"too old":                Verify(pub, endpoint, n.ID, ts, sig, body, at.Add(TimestampTolerance+time.Second)),
+		"from the future":        Verify(pub, endpoint, n.ID, ts, sig, body, at.Add(-TimestampTolerance-time.Second)),
+		"another key":            Verify([]ed25519.PublicKey{other.Public().(ed25519.PublicKey)}, endpoint, n.ID, ts, sig, body, at),
+		"v1 (HMAC) only":         Verify(pub, endpoint, n.ID, ts, strings.Replace(sig, "v2a,", "v1,", 1), body, at),
+		"v1a only":               Verify(pub, endpoint, n.ID, ts, strings.Replace(sig, "v2a,", "v1a,", 1), body, at),
+		"no signature":           Verify(pub, endpoint, n.ID, ts, "", body, at),
+		"a timestamp not number": Verify(pub, endpoint, n.ID, "now", sig, body, at),
+		"an endpoint with a dot": Verify(pub, "sub_a.b", n.ID, ts, sig, body, at),
 	} {
 		if !errors.Is(check, ErrVerify) {
 			t.Errorf("%s: %v", name, check)
 		}
 	}
+	if _, _, err := Sign([]ed25519.PrivateKey{k}, "sub_a.b", n.ID, at, body); err == nil {
+		t.Error("an endpoint with a dot is signed")
+	}
+	if _, _, err := Sign(nil, endpoint, n.ID, at, body); err == nil {
+		t.Error("signed by no key")
+	}
+	if _, _, err := Sign([]ed25519.PrivateKey{k[:10]}, endpoint, n.ID, at, body); err == nil {
+		t.Error("signed by a key that is none")
+	}
 	// During a rotation: signed by both, verified by either.
-	ts2, both := Sign([]ed25519.PrivateKey{other, k}, n.ID, at, body)
-	if err := Verify(pub, n.ID, ts2, both, body, at); err != nil {
+	ts2, both, _ := Sign([]ed25519.PrivateKey{other, k}, endpoint, n.ID, at, body)
+	if err := Verify(pub, endpoint, n.ID, ts2, both, body, at); err != nil {
 		t.Errorf("the older key during a rotation: %v", err)
 	}
-	if _, err := Open(body, n.ID, "https://trip-app.com/other"); !errors.Is(err, ErrNotice) {
+	if _, err := Open(body, n.ID, "https://trip-app.com/other", at); !errors.Is(err, ErrNotice) {
 		t.Errorf("a notice for another URL: %v", err)
 	}
-	if _, err := Open(body, "ntc_other", n.Audience); !errors.Is(err, ErrNotice) {
+	if _, err := Open(body, "ntc_other", n.Audience, at); !errors.Is(err, ErrNotice) {
 		t.Errorf("a notice under another identifier: %v", err)
+	}
+}
+
+// What the specification's own library computes (testdata/v2a.json, made by
+// testdata/v2a.gen.ts with its JavaScript library at SpecRevision, not by
+// Sign) is what Sign writes and what Verify takes and refuses: positive and
+// negative vectors (design review, finding 7).
+func TestANoticeVerifiesWithTheStandardsLibraries(t *testing.T) {
+	raw, err := os.ReadFile("testdata/v2a.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		Source     string            `json:"source"`
+		PublicKeys map[string]string `json:"public_keys"`
+		Endpoint   string            `json:"endpoint"`
+		ID         string            `json:"id"`
+		Timestamp  string            `json:"timestamp"`
+		Body       string            `json:"body"`
+		Cases      []struct {
+			Name      string   `json:"name"`
+			Signature string   `json:"signature"`
+			Accepts   bool     `json:"accepts"`
+			Keys      []string `json:"keys"`
+		} `json:"cases"`
+		Spec struct {
+			SecretKey string `json:"secret_key"`
+			PublicKey string `json:"public_key"`
+			Endpoint  string `json:"endpoint"`
+			ID        string `json:"id"`
+			Timestamp string `json:"timestamp"`
+			Body      string `json:"body"`
+			Signature string `json:"signature"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil || !strings.Contains(v.Source, SpecRevision) {
+		t.Fatalf("%v %q", err, v.Source)
+	}
+	ka, _ := KeyFromSeed(make([]byte, 32))
+	kb, _ := KeyFromSeed(append(make([]byte, 31), 1))
+	keys := map[string]ed25519.PublicKey{"wk1": ka.Public().(ed25519.PublicKey), "wk2": kb.Public().(ed25519.PublicKey)}
+	for id, k := range keys {
+		if LibraryKey(k) != v.PublicKeys[id] {
+			t.Fatalf("%s: %s, the library has %s", id, LibraryKey(k), v.PublicKeys[id])
+		}
+	}
+	body, _ := Body(notice())
+	if string(body) != v.Body || v.Endpoint != endpoint || v.ID != notice().ID {
+		t.Fatalf("the vectors are of another notice: %s", v.Body)
+	}
+	at := notice().CreatedAt
+	if ts, sig, _ := Sign([]ed25519.PrivateKey{ka}, endpoint, v.ID, at, body); ts != v.Timestamp || sig != v.Cases[0].Signature {
+		t.Errorf("Sign: %s, the library: %s", sig, v.Cases[0].Signature)
+	}
+	if _, sig, _ := Sign([]ed25519.PrivateKey{kb, ka}, endpoint, v.ID, at, body); sig != v.Cases[1].Signature {
+		t.Errorf("Sign with both keys: %s, the library: %s", sig, v.Cases[1].Signature)
+	}
+	for _, c := range v.Cases {
+		with := []ed25519.PublicKey{keys["wk1"]}
+		if c.Keys != nil {
+			with = nil
+			for _, id := range c.Keys {
+				with = append(with, keys[id])
+			}
+		}
+		if err := Verify(with, v.Endpoint, v.ID, v.Timestamp, c.Signature, body, at); (err == nil) != c.Accepts {
+			t.Errorf("%s: Verify %v, the library accepts: %v", c.Name, err, c.Accepts)
+		}
+	}
+	// The specification's example: its key signs its message as it says.
+	s := v.Spec
+	seed, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(s.SecretKey, "whsk_"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, _ := KeyFromSeed(seed)
+	sec, _ := strconv.ParseInt(s.Timestamp, 10, 64)
+	if _, sig, _ := Sign([]ed25519.PrivateKey{k}, s.Endpoint, s.ID, time.Unix(sec, 0), []byte(s.Body)); sig != s.Signature {
+		t.Errorf("the specification's example: %s, want %s", sig, s.Signature)
+	}
+	if LibraryKey(k.Public().(ed25519.PublicKey)) != s.PublicKey {
+		t.Error("the specification's public key")
+	}
+	if err := Verify([]ed25519.PublicKey{k.Public().(ed25519.PublicKey)}, s.Endpoint, s.ID, s.Timestamp, s.Signature, []byte(s.Body), time.Unix(sec, 0)); err != nil {
+		t.Errorf("the specification's example does not verify: %v", err)
+	}
+}
+
+// A vendor keeps a notice's identifier DedupKeepFor after it first took it:
+// a retry may come, freshly signed, until GiveUpAfter after the notice was
+// made, either end TimestampTolerance off; and Open refuses a notice older
+// than any retry, so nothing needs keeping longer (design review, finding 9).
+func TestANoticeIsOpenedOnlyWithinItsLife(t *testing.T) {
+	n := notice()
+	body, _ := Body(n)
+	made := n.CreatedAt
+	for name, now := range map[string]time.Time{
+		"when made":                  made,
+		"its clock a little behind":  made.Add(-TimestampTolerance),
+		"the last retry, late clock": made.Add(GiveUpAfter + TimestampTolerance),
+	} {
+		if _, err := Open(body, n.ID, n.Audience, now); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for name, now := range map[string]time.Time{
+		"older than any retry": made.Add(NoticeLife + time.Second),
+		"from the future":      made.Add(-TimestampTolerance - time.Second),
+	} {
+		if _, err := Open(body, n.ID, n.Audience, now); !errors.Is(err, ErrNotice) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// The first acceptance is at least TimestampTolerance before the
+	// notice's making on the vendor's clock; the last is NoticeLife after it.
+	if first, last := made.Add(-TimestampTolerance), made.Add(NoticeLife); last.Sub(first) != DedupKeepFor {
+		t.Errorf("a vendor keeps %s, a retry may come %s apart", DedupKeepFor, last.Sub(first))
+	}
+}
+
+// A scheduled notice's first coverage boundary is the connection's making,
+// on its minute (design review, finding 6).
+func TestAScheduleCoversFromTheConnectionsMinute(t *testing.T) {
+	made := time.Date(2026, 11, 20, 8, 3, 59, 999, time.FixedZone("x", 3600))
+	if got := Coverage(made); !got.Equal(time.Date(2026, 11, 20, 7, 3, 0, 0, time.UTC)) || got.Location() != time.UTC {
+		t.Fatal(got)
+	}
+	n := notice()
+	n.Type, n.ScheduledAt, n.Since = contracts.NoticeScheduleDue, time.Date(2026, 11, 23, 7, 0, 0, 0, time.UTC), Coverage(made)
+	if _, err := Body(n); err != nil {
+		t.Fatalf("a notice since the coverage boundary: %v", err)
 	}
 }
 
