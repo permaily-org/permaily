@@ -96,8 +96,10 @@ type connApp struct {
 }
 
 // newConnApp is the hosts with two sessions: "fresh", whose proof is fresh
-// for five more minutes, and "stale", whose proof is not.
-func newConnApp(t *testing.T) *connApp {
+// for five more minutes, and "stale", whose proof is not; the fake turns
+// webhooks off too (ADR 0039). opts change the configuration before the
+// routes are mounted.
+func newConnApp(t *testing.T, opts ...func(*httpapi.ConnectionsConfig)) *connApp {
 	t.Helper()
 	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
 	fresh := &accounts.Authenticated{AccountID: "acc_fresh", Session: contracts.Session{ID: "ses_fresh", ConfirmedUntil: now.Add(5 * time.Minute)}}
@@ -106,9 +108,12 @@ func newConnApp(t *testing.T) *connApp {
 	// A refusal the API makes itself is recorded (connections.API.Refuse).
 	a.fake.RefuseFunc = func(context.Context, *oauth.Grant, connections.Refusal) error { return nil }
 	cfg := httpapi.ConnectionsConfig{
-		Service: a.fake, Sessions: sessions{"fresh": fresh, "stale": stale}, OAuth: testOAuth,
+		Service: a.fake, Webhooks: a.fake, Sessions: sessions{"fresh": fresh, "stale": stale}, OAuth: testOAuth,
 		Metadata: testMetadata, ResourceMetadata: testResourceMetadata, Challenge: testChallenge,
 		Log: slog.New(slog.NewJSONHandler(a.logs, nil)), Now: func() time.Time { return now },
+	}
+	for _, o := range opts {
+		o(&cfg)
 	}
 	app, api, mcp := httpapi.NewAppMux(), http.NewServeMux(), http.NewServeMux()
 	api.Handle("/", router.Hello("api"))
