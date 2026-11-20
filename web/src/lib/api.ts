@@ -481,6 +481,8 @@ export type AuthorizationRequest = {
   query?: FormulaCheck
   since: MailSince
   ends_in_days: number
+  /** The webhook the vendor asked for (ADR 0039), accepted or refused with the request; absent without one. */
+  webhook?: WebhookAsked
   /** What the picker offers. */
   mailboxes: string[]
   /** Where the screen starts: every mailbox and new mail only, or the client's connection's. */
@@ -536,6 +538,8 @@ export type AuthorizationDecision = {
   draft?: ConsentDraft
   model_notice?: string
   snapshot?: ConsentSnapshot
+  /** The person's IANA time zone, required to allow a request whose webhook has a schedule (`time_zone_invalid`). */
+  time_zone?: string
 }
 
 /** A renewal: the notice and the connection's version the screen showed (`consent_changed` when it changed since). */
@@ -568,6 +572,34 @@ export type EndReason = 'person' | 'vendor' | 'reuse' | 'replaced' | 'account' |
 /** Whether a connection gets mail now: nothing leaves while the model cannot be asked or a new notice waits for the person. */
 export type ConnectionDelivery = 'delivering' | 'model_unavailable' | 'model_notice_changed'
 
+/** How often a scheduled notice is sent (ADR 0039): every day, or every week on one weekday. */
+export type WebhookEvery = 'day' | 'week'
+
+/** When a scheduled notice is sent, as wall time in the person's zone: `at` is "HH:MM" on a quarter hour; `on` a weekday in lower case for `week`. */
+export type WebhookSchedule = { every: WebhookEvery; on?: string; at: string }
+
+/** What the consent screen shows of a request's webhook: the host it is called on (the vendor's own) and when. */
+export type WebhookAsked = { host: string; new_mail?: boolean; schedule?: WebhookSchedule }
+
+/** Whether a connection's webhook is called: on, turned off by the person, or stopped by the vendor (both final). */
+export type WebhookState = 'on' | 'off' | 'stopped'
+
+/** Why the last calls of a webhook failed, in fixed words. */
+export type WebhookFailure = 'no_answer' | 'error' | 'redirect' | 'refused'
+
+/** A connection's webhook as the person's app shows it. */
+export type ConnectionWebhook = {
+  host: string
+  new_mail?: boolean
+  schedule?: WebhookSchedule
+  time_zone?: string
+  state: WebhookState
+  next_at?: string
+  last_sent_at?: string
+  failing_since?: string
+  failure?: WebhookFailure
+}
+
 /** One device of a connection: the tokens one approval started, with the scope confirmed for it. */
 export type ConnectionDevice = {
   id: string
@@ -599,6 +631,8 @@ export type Connection = {
   devices: ConnectionDevice[]
   model_notice: string
   delivery: ConnectionDelivery
+  /** Its webhook (ADR 0039), absent when it has none. */
+  webhook?: ConnectionWebhook
   /** Its record's version, which a renewal sends back. */
   version: number
 }

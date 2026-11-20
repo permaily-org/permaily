@@ -29,6 +29,16 @@ func TestTheFakeAnswersWhatTheTestSets(t *testing.T) {
 	if got := f.Calls(); !slices.Equal(got, []string{"Check", "Search"}) {
 		t.Fatal(got)
 	}
+	// ADR 0039's route for turning a webhook off is built against it too.
+	if _, err := f.WebhookOff(ctx, connections.Person{}, "con_a", 3); !errors.Is(err, ErrNotSet) {
+		t.Fatal(err)
+	}
+	f.WebhookOffFunc = func(_ context.Context, _ connections.Person, id string, version uint64) (*contracts.Connection, error) {
+		return &contracts.Connection{ID: id, Version: version + 1, Webhook: &contracts.ConnectionWebhook{State: contracts.WebhookOff}}, nil
+	}
+	if c, err := f.WebhookOff(ctx, connections.Person{}, "con_a", 3); err != nil || c.Version != 4 || c.Webhook.State != contracts.WebhookOff {
+		t.Fatalf("%+v %v", c, err)
+	}
 }
 
 // The fake lease keeps the contract every Release keeps (N2), and says what

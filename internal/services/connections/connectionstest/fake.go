@@ -45,6 +45,8 @@ type Fake struct {
 	AttachmentFunc   func(ctx context.Context, g *oauth.Grant, id string, index int) (*inbox.Attachment, connections.Release, error)
 	RefuseFunc       func(ctx context.Context, g *oauth.Grant, r connections.Refusal) error
 	RefusedFunc      func() map[string]int64
+	// WebhookOffFunc answers connections.WebhookAPI (ADR 0039).
+	WebhookOffFunc func(ctx context.Context, p connections.Person, id string, version uint64) (*contracts.Connection, error)
 
 	// Mailboxes are the connection's mailboxes as the service reads them:
 	// a refusal's receipt names its message only when the message is of
@@ -57,7 +59,19 @@ type Fake struct {
 	receipts []RefusedReceipt
 }
 
-var _ connections.API = (*Fake)(nil)
+var (
+	_ connections.API        = (*Fake)(nil)
+	_ connections.WebhookAPI = (*Fake)(nil)
+)
+
+// WebhookOff implements connections.WebhookAPI.
+func (f *Fake) WebhookOff(ctx context.Context, p connections.Person, id string, version uint64) (*contracts.Connection, error) {
+	f.called("WebhookOff")
+	if f.WebhookOffFunc == nil {
+		return nil, ErrNotSet
+	}
+	return f.WebhookOffFunc(ctx, p, id, version)
+}
 
 func (f *Fake) called(name string) {
 	f.mu.Lock()
