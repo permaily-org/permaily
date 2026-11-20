@@ -105,10 +105,30 @@ describe('K55: the webhook on the connection’s page', () => {
     expect(row('Last told')).toContain('Mon 16 Nov, 07:00')
   })
 
-  it('reads a zone the browser does not know in the browser’s own', async () => {
-    await openConnection(withWebhook({ time_zone: 'Mars/Olympus' }))
-    expect(row('Next')).toContain('Mon 23 Nov, 07:00')
-    expect(row('Next')).toContain('(Mars/Olympus)')
+  it('never labels a time with a zone the browser cannot show: it says UTC (review of PR #185, finding 2)', async () => {
+    await openConnection(
+      withWebhook({ time_zone: 'Mars/Olympus', failing_since: '2026-11-20T09:30:00Z' }),
+    )
+    // Every time is in UTC and says so; none carries the zone's name.
+    expect(row('Next')).toContain('Mon 23 Nov, 07:00 UTC')
+    expect(row('Next')).not.toContain('Mars/Olympus')
+    expect(row('Last told')).toContain('Mon 16 Nov, 07:00 UTC')
+    expect(section().getByText('Calls have failed since Fri 20 Nov, 09:30 UTC.')).toBeTruthy()
+    // The page says why, once, beside the schedule that follows the zone.
+    expect(row('When')).toContain(
+      "This browser can't show times in Mars/Olympus, so the times here are in UTC.",
+    )
+    await expectAccessible()
+  })
+
+  it('follows the changes of the clocks of a zone the browser shows', async () => {
+    // Madrid is UTC+1 in winter and UTC+2 from 29 March 2026.
+    await openConnection(withWebhook({ next_at: '2026-03-30T06:00:00Z' }))
+    expect(row('Next')).toContain('Mon 30 Mar, 08:00')
+    expect(row('Next')).toContain('(Europe/Madrid)')
+    expect(row('Next')).not.toContain('UTC')
+    expect(row('Last told')).toContain('Mon 16 Nov, 08:00')
+    expect(row('When')).not.toContain("can't show times")
   })
 
   it('says a webhook turned off or stopped, offers no button, and shows nothing of a connection without one', async () => {

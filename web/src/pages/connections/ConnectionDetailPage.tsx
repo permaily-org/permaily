@@ -30,6 +30,7 @@ import {
   partsWords,
   resourceWords,
   Sentence,
+  shownTimeZone,
   sinceWords,
   VendorLine,
   webhookFailureWords,
@@ -532,6 +533,7 @@ function WebhookSection({
   onTurnOff: () => void
 }) {
   const zone = webhook.time_zone ?? ''
+  const unshown = zone !== '' && shownTimeZone(zone) !== zone
   const on = active && webhook.state === 'on'
   return (
     <section aria-labelledby="webhook-heading">
@@ -571,6 +573,11 @@ function WebhookSection({
           <span className="text-small text-ink-2">
             <bdi>{webhookNeverWords(webhook.host)}</bdi>
           </span>
+          {unshown && (
+            <span className="text-small text-ink-2">
+              This browser can't show times in <bdi>{zone}</bdi>, so the times here are in UTC.
+            </span>
+          )}
         </span>
       </TermRow>
       <TermRow label="State">
@@ -579,7 +586,7 @@ function WebhookSection({
       {on && webhook.schedule && webhook.next_at && (
         <TermRow label="Next">
           {formatWhen(webhook.next_at, zone)}
-          {zone && <span className="text-ink-2"> ({zone})</span>}
+          {zone && !unshown && <span className="text-ink-2"> ({zone})</span>}
         </TermRow>
       )}
       <TermRow label="Last told">
