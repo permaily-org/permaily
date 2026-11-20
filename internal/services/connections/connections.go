@@ -39,12 +39,14 @@ package connections
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/rules"
 	"github.com/permaily-org/permaily/internal/services/accountrules"
+	"github.com/permaily-org/permaily/internal/services/notices"
 	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/services/webhooks"
 	"github.com/permaily-org/permaily/internal/store"
@@ -103,6 +105,15 @@ type Config struct {
 	// ADR 0040's pull request 5 reads every read's rules through it, the
 	// reads apply Rules (webhook_connections.go, webhookRules).
 	AccountRules accountrules.Source
+	// Notices, when set, queues the notices about connections (ADR 0041,
+	// notices.go): each after the change it tells of committed, under the
+	// key its event names, holding the request at most
+	// notices.EnqueueMax. Nil queues none (until the image gives it, ADR
+	// 0041's pull request 7).
+	Notices notices.Queue
+	// Log logs what the service cannot do and goes on from: a notice not
+	// queued, by its kind alone. Nil discards.
+	Log *slog.Logger
 	// Now is the clock; Random fills b with random bytes.
 	Now    func() time.Time
 	Random func(b []byte) error

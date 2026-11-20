@@ -255,7 +255,7 @@ func (s *Service) exchange(ctx context.Context, form url.Values) (*TokenAnswer, 
 		switch result {
 		case oauth.CodeReused:
 			// A second exchange: the family the first made ends (finding 8).
-			if err := s.endDevice(ctx, d.ID, dev.ID, contracts.EndedByReuse); err != nil {
+			if err := s.endForReuse(ctx, d.ID, dev.ID); err != nil {
 				return nil, ErrUnavailable
 			}
 			return nil, s.grantRefused("reuse")
@@ -289,6 +289,22 @@ func (s *Service) exchange(ctx context.Context, form url.Values) (*TokenAnswer, 
 		return s.issue(ctx, d, f, 0, f.Scopes, now)
 	}
 	return nil, ErrUnavailable
+}
+
+// endForReuse ends a device whose code or refresh token was used again
+// (EndedByReuse) and, once its end is written here, tells of it (ADR 0041,
+// E33): a device another reuse or enclave ended first is told of by that
+// one, and the key, the connection and the device, makes it one notice.
+func (s *Service) endForReuse(ctx context.Context, id, device string) error {
+	d, err := s.endDeviceHere(ctx, id, device, contracts.EndedByReuse)
+	if d != nil {
+		at := s.now()
+		if dev := d.device(device); dev != nil {
+			at = dev.EndedAt
+		}
+		s.notifyEndedReuse(ctx, d, device, at)
+	}
+	return err
 }
 
 // usable checks what a refresh or an exchange needs of the account: its
@@ -374,7 +390,7 @@ func (s *Service) refresh(ctx context.Context, form url.Values) (*TokenAnswer, e
 			s.count("refresh_retry")
 			return s.issue(ctx, d, f, issued.Generation, issued.Scope, f.RotatedAt)
 		case oauth.RefreshReuse:
-			if err := s.endDevice(ctx, d.ID, f.Family, contracts.EndedByReuse); err != nil {
+			if err := s.endForReuse(ctx, d.ID, f.Family); err != nil {
 				return nil, ErrUnavailable
 			}
 			return nil, s.grantRefused("reuse")
