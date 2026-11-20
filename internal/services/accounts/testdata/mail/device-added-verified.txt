@@ -1,0 +1,13 @@
+To: ada@example.com
+Subject: A device was added to one of your connections
+
+A new device was added to one of your connections. It reads the same mail the connection reads.
+
+    When: 12 November 2026, 09:30 UTC
+    App: An app by Anthropic (claude.ai)
+    Reads: Sender and date, subject, body text, attachments
+    Ends: 10 February 2027, 09:30 UTC
+
+You can see what it reads, and revoke it, in Connections at app.permaily.com.
+
+If this wasn't you, sign in at app.permaily.com, revoke it in Connections, sign out the devices you don't know, and write to support@permaily.com.
