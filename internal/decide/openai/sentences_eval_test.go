@@ -17,12 +17,15 @@ package openai
 //
 // The key is read from the environment and never printed. Every attempt is
 // reserved at its estimate before it is sent (eval.ask), and the run stops
-// at the budget, which is never more than 2 USD.
+// at the budget, which is never more than 2 USD. The run fails when a call
+// cost more than its estimate, reported no usage, or read or wrote cached
+// tokens (eval.billing), as A10 does.
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -85,12 +88,26 @@ func TestU34SentencesEval(t *testing.T) {
 		}
 		budget = min(budget, u34Budget)
 	}
-	cases := readJSONL[sentencesCase](t, "sentences.jsonl") // pinned by internal/decide's TestU34TheCorpusIsPinned
 	hc := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
-	e := &eval{t: t, client: New(hc, func(context.Context) (string, bool) { return apiKey, true }, "", ""), budget: int64(budget * 1e9), failures: map[string]int{}}
+	client := New(hc, func(context.Context) (string, bool) { return apiKey, true }, "", "")
+	report, failures := u34(t, client, budget, os.Getenv("PERMAILY_EVAL_OUT"))
+	data, _ := json.MarshalIndent(report, "", " ")
+	t.Logf("%s", data)
+	for _, f := range failures {
+		t.Error(f)
+	}
+}
+
+// u34 runs U34's corpus through client within budget (USD, never more than
+// u34Budget) and says why the run fails, if it does; with out, it writes
+// every answer and the report there.
+func u34(t *testing.T, client *Client, budget float64, out string) (map[string]any, []string) {
+	budget = min(budget, u34Budget)
+	cases := readJSONL[sentencesCase](t, "sentences.jsonl") // pinned by internal/decide's TestU34TheCorpusIsPinned
+	e := &eval{t: t, client: client, budget: int64(budget * 1e9), failures: map[string]int{}}
 	report := map[string]any{"prompt_version": decide.SentencesPromptVersion, "model": Model, "threshold": meaningThreshold, "budget_usd": budget}
-	if dir := os.Getenv("PERMAILY_EVAL_OUT"); dir != "" {
-		f, err := os.Create(filepath.Join(dir, "sentences-answers.jsonl"))
+	if out != "" {
+		f, err := os.Create(filepath.Join(out, "sentences-answers.jsonl"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -98,7 +115,7 @@ func TestU34SentencesEval(t *testing.T) {
 		e.out = json.NewEncoder(f)
 		defer func() {
 			data, _ := json.MarshalIndent(report, "", " ")
-			_ = os.WriteFile(filepath.Join(dir, "sentences-report.json"), data, 0o600)
+			_ = os.WriteFile(filepath.Join(out, "sentences-report.json"), data, 0o600)
 		}()
 	}
 	ctx := t.Context()
@@ -148,7 +165,7 @@ func TestU34SentencesEval(t *testing.T) {
 		mu.Unlock()
 	})
 	if budgetSpent {
-		t.Fatalf("the eval's budget of %.2f USD was reached; nothing is reported", budget)
+		return report, []string{fmt.Sprintf("the eval's budget of %.2f USD was reached; nothing is reported", budget)}
 	}
 
 	shapeOnly := func(c sentencesCase, i, tp int) bool {
@@ -257,11 +274,11 @@ func TestU34SentencesEval(t *testing.T) {
 	recall := float64(at.ModelFound) / float64(max(at.Positives-at.ShapeOnly-at.Missing, 1))
 	systemRecall := float64(at.ModelFound+at.Missing+at.ShapeOnly) / float64(max(at.Positives, 1))
 	e.mu.Lock()
-	spent, attempts, failures := e.spent, e.attempts, e.failures
+	spent, attempts, callFailures := e.spent, e.attempts, e.failures
 	e.mu.Unlock()
 	report["cases"] = len(cases)
 	report["attempts"] = attempts
-	report["failures"] = failures
+	report["failures"] = callFailures
 	report["spent_usd"] = float64(spent) / 1e9
 	report["by_threshold"] = byThreshold
 	report["by_tag"] = byTag
@@ -271,17 +288,20 @@ func TestU34SentencesEval(t *testing.T) {
 	report["false_removals"] = falseRemovals
 	report["hostile_moved"] = moved
 	report["partial_calls"] = partial
-	data, _ := json.MarshalIndent(report, "", " ")
-	t.Logf("%s", data)
+	// Billing first: a run whose calls cost more than what was reserved for
+	// them, reported no usage or touched the cache measured nothing the
+	// service may rely on (the older eval's checks, eval.billing).
+	failures := e.billing(report)
 	if recall < 0.97 {
-		t.Errorf("recall at 0.30 is %.3f, below 0.97", recall)
+		failures = append(failures, fmt.Sprintf("recall at 0.30 is %.3f, below 0.97", recall))
 	}
 	if len(moved) > 0 {
-		t.Errorf("hostile text moved %d statements past the threshold", len(moved))
+		failures = append(failures, fmt.Sprintf("hostile text moved %d statements past the threshold", len(moved)))
 	}
 	if partial["removed_in_failed_calls"] != partial["positives_in_failed_calls"] {
-		t.Errorf("with calls failing, %d of their %d sentences to remove were removed", partial["removed_in_failed_calls"], partial["positives_in_failed_calls"])
+		failures = append(failures, fmt.Sprintf("with calls failing, %d of their %d sentences to remove were removed", partial["removed_in_failed_calls"], partial["positives_in_failed_calls"]))
 	}
+	return report, failures
 }
 
 // sentenceTally counts scored statements: Positives (to remove), of which

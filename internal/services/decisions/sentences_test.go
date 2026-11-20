@@ -180,6 +180,60 @@ func TestU19TheSharePartlySpentLeavesTheRestUnasked(t *testing.T) {
 	}
 }
 
+// U34's billing on the production path (the review of pull request 4,
+// finding 1): a sentences answer that reports costing more than the
+// estimate reserved for it is charged what it reported, never capped at
+// the reservation, so the account's share counts the overrun and the next
+// question past it is held, nothing sent; an answer that reports nothing
+// is charged its estimate.
+func TestU34AnAnswerPastItsReservationIsChargedInFull(t *testing.T) {
+	sentences := sentencesOf(3)
+	calls, _ := decide.PlanSentences(sentences, []query.Atom{homeTopic})
+	if len(calls) != 1 {
+		t.Fatalf("%d calls planned", len(calls))
+	}
+	est := decide.Estimate(calls[0])
+	l := DefaultLimits
+	l.AccountDay = 3 * est // room for three reservations, were each charged its estimate
+	e := newWorld(t).keyed(withLimits(l))
+	over := decide.Usage{InputTokens: 1, Reported: true}
+	for decide.Cost(over) <= l.AccountDay {
+		over.InputTokens *= 2
+	}
+	e.model.onCall(func(_ context.Context, n int, c decide.Call) (*decide.Result, error) {
+		if n != 1 {
+			return nil, nil
+		}
+		answers := make([]decide.Answer, len(c.Statements))
+		for i := range answers {
+			answers[i] = decide.Answer{P: 0.01, OK: true}
+		}
+		return &decide.Result{Answers: answers, Model: decidetest.Name, Usage: over}, nil
+	})
+	first := e.askSentences(sentences, homeTopic)
+	if first.Outcome != inbox.AskAnswered || first.Called != 1 || len(first.Answers) != 3 {
+		t.Fatalf("first: %+v", first)
+	}
+	if got := spent(e); got != decide.Cost(over) || got <= est {
+		t.Fatalf("charged %d, reported %d, reserved %d", got, decide.Cost(over), est)
+	}
+	again := e.askSentences(sentences, homeTopic)
+	if again.Outcome != inbox.AskLimit || again.Called != 0 || len(again.Answers) != 0 || e.model.count() != 1 {
+		t.Fatalf("past the share: %+v, %d sent", again, e.model.count())
+	}
+	if kept := inbox.KeptSentences(again, len(sentences), 1); slices.Contains(kept, true) {
+		t.Fatalf("kept %v with nothing answered", kept)
+	}
+
+	// No usage reported: charged the estimate, the upper bound.
+	e2 := newWorld(t).keyed()
+	e2.model.tab.OmitUsage(true)
+	e2.model.set(homeTopic, 0.01)
+	if out := e2.askSentences(sentences, homeTopic); out.Called != 1 || spent(e2) != est {
+		t.Fatalf("no usage: %+v, charged %d, estimate %d", out, spent(e2), est)
+	}
+}
+
 // U19 and U34's partial failures: with no model, no key or a refused key
 // nothing is sent (off); one call of a message failing leaves its
 // statements unknown while the others' answers count; a refusal is kept
