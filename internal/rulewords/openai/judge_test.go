@@ -138,7 +138,10 @@ func widens(f contracts.Formula, w wantCondition) bool {
 // A hold protects at least as much as a removal of the same mail (and a
 // hold of every message with attachments as removing them); a removal must
 // take out every shape and part asked, and a topic asked by one of its
-// stems, or the subject, the body and the attachments whole.
+// stems, or the subject, the body and the attachments whole. Topics asked
+// as alternatives ("a lawsuit or my lawyer") are each their own condition:
+// one condition whose topic covers two of them joins them, and lets out the
+// mail about one alone that the meaning's model does not read as the pair.
 func less(c wordsCase, d contracts.RuleDraft) string {
 	e := c.Expect
 	everything := slices.ContainsFunc(d.Criteria, func(f contracts.Formula) bool { return len(f.All) == 0 })
@@ -171,6 +174,9 @@ func less(c wordsCase, d contracts.RuleDraft) string {
 			return fmt.Sprintf("misses %s %s %s%s, or narrows it", w.Var, w.Op, w.Value, strings.Join(w.Stems, "|"))
 		}
 	}
+	if j := joined(e.Require, d.Criteria); j != "" {
+		return j
+	}
 	if d.Effect == contracts.EffectRemove {
 		r := d.Removal
 		if r == nil {
@@ -192,6 +198,42 @@ func less(c wordsCase, d contracts.RuleDraft) string {
 			return slices.ContainsFunc(e.Topics, func(s string) bool { return strings.Contains(strings.ToLower(t), strings.ToLower(s)) })
 		}) {
 			return "misses the topic it asks to remove"
+		}
+	}
+	return ""
+}
+
+// joined names a topic the phrasing asks for apart from another that no
+// condition of the criteria covers alone, every one covering it joining
+// both, or "".
+func joined(require []wantCondition, criteria []contracts.Formula) string {
+	var topics []wantCondition
+	for _, w := range require {
+		if w.Op == contracts.OpAbout || w.Op == contracts.OpMentions {
+			topics = append(topics, w)
+		}
+	}
+	if len(topics) < 2 {
+		return ""
+	}
+	for _, w := range topics {
+		alone, with := false, ""
+		for _, f := range criteria {
+			for _, g := range f.All {
+				for _, got := range g.Any {
+					if !covers(w, got) {
+						continue
+					}
+					if slices.ContainsFunc(topics, func(o wantCondition) bool { return !slices.Equal(o.Stems, w.Stems) && covers(o, got) }) {
+						with = got.Value
+					} else {
+						alone = true
+					}
+				}
+			}
+		}
+		if !alone && with != "" {
+			return fmt.Sprintf("joins topics asked apart in one condition, %q", with)
 		}
 	}
 	return ""
@@ -289,6 +331,13 @@ func TestU33TheJudgeRefusesWhatProtectsLess(t *testing.T) {
 	onlySubject.Expect.Require = []wantCondition{want(domain, contracts.OpIs, "mybank.example")}
 	onlySubject.Expect.Parts = []contracts.Part{contracts.PartSender, contracts.PartBody, contracts.PartAttachments}
 
+	legal := wordsCase{}
+	legal.Expect.Effect = contracts.EffectHold
+	legal.Expect.Require = []wantCondition{
+		want(contracts.VarMessage, contracts.OpMentions, "", "lawsuit"),
+		want(contracts.VarMessage, contracts.OpMentions, "", "lawyer"),
+	}
+
 	domainTopic := wordsCase{}
 	domainTopic.Expect.Effect = contracts.EffectHold
 	domainTopic.Expect.Require = []wantCondition{want(domain, contracts.OpIs, "amazon.com")}
@@ -320,6 +369,9 @@ func TestU33TheJudgeRefusesWhatProtectsLess(t *testing.T) {
 		{"a removal for some mail", homeAddress, removeDraft(contracts.RuleRemoval{Topics: []string{"a home address"}}, formula(group(cnd(contracts.VarAttachments, contracts.OpExists, "")))), true},
 		{"three parts asked, one given", onlySubject, removeDraft(contracts.RuleRemoval{Parts: []contracts.Part{contracts.PartBody}}, formula(group(cnd(domain, contracts.OpIs, "mybank.example")))), true},
 		{"a hold that is narrower than the removal", attachments, holdDraft(formula(group(cnd(contracts.VarAttachmentType, contracts.OpIs, "application/pdf")))), true},
+		{"two topics asked apart, one given", legal, holdDraft(formula(group(cnd(contracts.VarMessage, contracts.OpMentions, "a lawsuit or legal case?")))), true},
+		{"two topics asked apart, joined in one", legal, holdDraft(formula(group(cnd(contracts.VarMessage, contracts.OpMentions, "a lawsuit or my lawyer")))), true},
+		{"two topics asked apart, both required at once", legal, holdDraft(formula(group(cnd(contracts.VarMessage, contracts.OpMentions, "a lawsuit")), group(cnd(contracts.VarMessage, contracts.OpMentions, "a lawyer")))), true},
 		{"removes where it should hold", everything, removeDraft(contracts.RuleRemoval{Parts: []contracts.Part{contracts.PartBody}}, all), true},
 		{"a hold of some mail where all is asked", everything, holdDraft(formula(group(cnd(contracts.VarAttachments, contracts.OpExists, "")))), true},
 		// As much or more.
@@ -342,6 +394,9 @@ func TestU33TheJudgeRefusesWhatProtectsLess(t *testing.T) {
 		{"a hold of every message with attachments", attachments, holdDraft(formula(group(cnd(contracts.VarAttachments, contracts.OpExists, "")))), false},
 		{"the parts asked", onlySubject, removeDraft(contracts.RuleRemoval{Parts: []contracts.Part{contracts.PartSender, contracts.PartBody, contracts.PartAttachments}}, formula(group(cnd(domain, contracts.OpIs, "mybank.example")))), false},
 		{"a hold where a removal is asked", onlySubject, holdDraft(formula(group(cnd(domain, contracts.OpIs, "mybank.example")))), false},
+		{"two topics asked apart, one condition each", legal, holdDraft(formula(group(cnd(contracts.VarMessage, contracts.OpMentions, "a lawsuit"), cnd(contracts.VarMessage, contracts.OpMentions, "my lawyer")))), false},
+		{"two topics asked apart, joined beside each alone", legal, holdDraft(formula(group(cnd(contracts.VarMessage, contracts.OpMentions, "a lawsuit"), cnd(contracts.VarMessage, contracts.OpMentions, "a lawyer"), cnd(contracts.VarMessage, contracts.OpMentions, "lawsuits and lawyers")))), false},
+		{"two topics asked apart, in two criteria", legal, holdDraft(formula(group(cnd(contracts.VarMessage, contracts.OpMentions, "a lawsuit"))), formula(group(cnd(contracts.VarMessage, contracts.OpMentions, "my lawyer")))), false},
 		{"narrowed where the words narrow it", domainTopic, holdDraft(formula(group(cnd(domain, contracts.OpIs, "amazon.com")), group(cnd(contracts.VarMessage, contracts.OpAbout, "returns")))), false},
 	} {
 		if got := less(tc.c, tc.d); (got != "") != tc.less {
@@ -378,6 +433,17 @@ func TestU33TheCorpusSaysWhatItAsks(t *testing.T) {
 		}
 		if e.Effect == contracts.EffectRemove && len(e.Shapes)+len(e.Parts)+len(e.Topics) == 0 {
 			t.Errorf("%s: removes nothing", c.ID)
+		}
+		for i, a := range e.Require {
+			for _, b := range e.Require[i+1:] {
+				for _, sa := range a.Stems {
+					for _, sb := range b.Stems {
+						if strings.Contains(strings.ToLower(sa), strings.ToLower(sb)) || strings.Contains(strings.ToLower(sb), strings.ToLower(sa)) {
+							t.Errorf("%s: the stems %q and %q of topics asked apart overlap, so one topic could stand for both", c.ID, sa, sb)
+						}
+					}
+				}
+			}
 		}
 		for _, w := range append(slices.Clone(e.Require), e.OrHold...) {
 			probe := contracts.Condition{Var: w.Var, Op: w.Op, Value: w.Value}
