@@ -274,6 +274,13 @@ func (d *discloser) outcome(ml mail, ds inbox.Disclosure) (inbox.Outcome, bool) 
 	if ml.Held && len(ds.Rules) > 0 {
 		return inbox.Outcome{Withheld: &inbox.Withheld{ID: ml.ID, Rule: ds.Rules[0].Ref(), Why: inbox.HeldExact}}, true
 	}
+	// The person's own rules (ADR 0040) hold what they apply to, read for
+	// a rule: True or Unknown.
+	for _, r := range ds.Rules {
+		if r.ID != rules.Default().ID && r.Effect == rules.Hold && query.Eval(r.Formulas, evalMessage(ml), nil, query.ForRule).Value != query.False {
+			return inbox.Outcome{Withheld: &inbox.Withheld{ID: ml.ID, Rule: r.Ref(), Why: inbox.HeldExact}}, true
+		}
+	}
 	subject, body := ml.Subject, ml.Body
 	vm := contracts.VendorMessage{ReceivedAt: ml.Received, From: []contracts.MailAddress{{Address: ml.From}}, Subject: &subject, Text: &body}
 	for i, a := range ml.Attachments {

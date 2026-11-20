@@ -59,7 +59,9 @@ func (w webhookConnections) Webhooks(ctx context.Context, after string, limit in
 	return w.s.Webhooks(ctx, after, limit)
 }
 
-func (w webhookConnections) Stop(ctx context.Context, id string) error { return w.s.StopWebhook(ctx, id) }
+func (w webhookConnections) Stop(ctx context.Context, id string) error {
+	return w.s.StopWebhook(ctx, id)
+}
 
 // WebhookStates is what the person's page shows of the queue's state of a
 // connection's webhook (services/webhooks' States: the next run, the last
