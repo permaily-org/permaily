@@ -60,6 +60,10 @@ import (
 // message before it. The page then says Model (MatchModelOff, before
 // MatchModelLimit, before MatchModelAsked); without an Asker it has none.
 //
+// With a share on ctx (WithMatchShare), the call is one of several made at
+// once for one page, and its bounds of stored items, raw messages and
+// messages asked about are that share of a page's.
+//
 // The page it answers is the owner's own preview (contracts.MatchPage), never
 // a vendor's result. It checks nothing of who asks: mailboxes.Service.Open
 // did.
@@ -103,9 +107,39 @@ func NewMatcher(st ReadStore, eval Evaluate) Matcher {
 type matchBounds struct {
 	read, textReads, undecided, asked int
 	soft, ask                         time.Duration
+	// shared is a share of a page's (WithMatchShare).
+	shared bool
 }
 
 var defaultMatchBounds = matchBounds{read: MatchMaxRead, textReads: MatchMaxTextReads, undecided: MatchMaxUndecided, asked: MatchMaxModelMessages, soft: MatchSoftDeadline, ask: decide.MessageDeadline}
+
+// shareKey is the context key of WithMatchShare.
+type shareKey struct{}
+
+// WithMatchShare returns ctx in which a Match call is one of of calls made
+// at once for one page (the rule editor's preview matches each of a rule's
+// criteria on its own, ADR 0040): its MatchMaxRead, MatchMaxTextReads and
+// MatchMaxModelMessages are each divided by of, at least two items, one raw
+// message and one message asked about, so every call still considers a
+// message and the calls together read and ask no more than one page, for
+// of up to MatchMaxTextReads; a scan's batch then takes at most half of
+// what is left to read, so the entries of its messages fit beside it. Its soft deadline and undecided messages are a
+// page's: the calls run at once. of below 2 changes nothing.
+func WithMatchShare(ctx context.Context, of int) context.Context {
+	return context.WithValue(ctx, shareKey{}, of)
+}
+
+// share is b divided among of calls of one page (WithMatchShare).
+func (b matchBounds) share(of int) matchBounds {
+	if of < 2 {
+		return b
+	}
+	b.read = max(2, b.read/of)
+	b.textReads = max(1, b.textReads/of)
+	b.asked = max(1, b.asked/of)
+	b.shared = true
+	return b
+}
 
 type storeMatcher struct {
 	r      *storeReader
@@ -137,7 +171,10 @@ func (mt *storeMatcher) Match(ctx context.Context, b Box, fs []*query.Canonical,
 		return nil, contracts.ErrInvalidCursor
 	}
 	page := &contracts.MatchPage{Messages: []contracts.MessageSummary{}, NeedsModel: []string{}, Unknown: []string{}}
-	p := matchRun{mt: mt, b: b, fs: fs, page: page}
+	p := matchRun{mt: mt, b: b, fs: fs, page: page, bounds: mt.bounds}
+	if of, ok := ctx.Value(shareKey{}).(int); ok {
+		p.bounds = mt.bounds.share(of)
+	}
 	p.asking, p.askOK = AskerFrom(ctx)
 	for _, f := range fs {
 		if f != nil && f.Never {
@@ -162,12 +199,18 @@ func (mt *storeMatcher) Match(ctx context.Context, b Box, fs []*query.Canonical,
 		}
 		// One item of the room is kept for the entry of the batch's first
 		// message, so every page considers at least one message.
-		room := mt.bounds.read - p.read
+		room := p.bounds.read - p.read
 		if room < 2 {
 			page.Next = last
 			break
 		}
-		scan, err := mt.r.st.ScanMessagesDown(ctx, b.MailboxID, before, min(store.MaxScanRead, room-1))
+		batch := min(store.MaxScanRead, room-1)
+		if p.bounds.shared {
+			// A share's room is small: a batch takes at most half of it, so
+			// the entries of its messages fit beside it.
+			batch = max(1, min(batch, room/2))
+		}
+		scan, err := mt.r.st.ScanMessagesDown(ctx, b.MailboxID, before, batch)
 		if err != nil {
 			return nil, err
 		}
@@ -179,7 +222,7 @@ func (mt *storeMatcher) Match(ctx context.Context, b Box, fs []*query.Canonical,
 			if lower != "" && m.ID < lower {
 				break // received before since: never evaluated
 			}
-			if considered && mt.now().Sub(start) >= mt.bounds.soft {
+			if considered && mt.now().Sub(start) >= p.bounds.soft {
 				page.Next, stopped = last, true
 				break
 			}
@@ -218,7 +261,7 @@ func (mt *storeMatcher) Match(ctx context.Context, b Box, fs []*query.Canonical,
 			break // nothing older can match
 		}
 		before = scan.Last
-		if mt.now().Sub(start) >= mt.bounds.soft {
+		if mt.now().Sub(start) >= p.bounds.soft {
 			// Past the soft deadline between batches, as within one: runs
 			// of expired items are bounded by it too.
 			page.Next = last
@@ -261,6 +304,7 @@ func answerMatch(ctx context.Context, page *contracts.MatchPage) (*contracts.Mat
 // what became of asking the model.
 type matchRun struct {
 	mt              *storeMatcher
+	bounds          matchBounds // mt's, or a share of them (WithMatchShare)
 	b               Box
 	fs              []*query.Canonical
 	page            *contracts.MatchPage
@@ -278,7 +322,7 @@ type matchRun struct {
 // full reports whether the page has its limit of matches or of undecided
 // messages.
 func (p *matchRun) full(limit int) bool {
-	return len(p.page.Messages) >= limit || len(p.page.NeedsModel)+len(p.page.Unknown) >= p.mt.bounds.undecided
+	return len(p.page.Messages) >= limit || len(p.page.NeedsModel)+len(p.page.Unknown) >= p.bounds.undecided
 }
 
 // consider classifies one message, reading its sources in order, each only
@@ -327,7 +371,7 @@ func (p *matchRun) classify(ctx context.Context, m *store.Message) (verdict, *St
 	}
 	var entry *SearchEntry
 	if res.Value == query.Unknown && res.Needs&query.FromEntry != 0 {
-		if p.read >= p.mt.bounds.read {
+		if p.read >= p.bounds.read {
 			return verdictStop, meta, nil
 		}
 		entry, err = p.readEntry(ctx, m)
@@ -338,7 +382,7 @@ func (p *matchRun) classify(ctx context.Context, m *store.Message) (verdict, *St
 		res = p.mt.eval(p.fs, qm, nil, query.ForQuery)
 	}
 	if res.Value == query.Unknown && res.Needs&query.FromText != 0 {
-		if p.textReads >= p.mt.bounds.textReads {
+		if p.textReads >= p.bounds.textReads {
 			return verdictStop, meta, nil
 		}
 		p.textReads++
@@ -389,14 +433,14 @@ func (p *matchRun) readEntry(ctx context.Context, m *store.Message) (*SearchEntr
 // ask asks the request's Asker about a message that needs a model (ADR
 // 0028, "What the matcher does"), and lists it by the answers.
 func (p *matchRun) ask(ctx context.Context, m *store.Message, meta *StoredMeta, qm *query.Message, atoms []query.Atom, src *textSource) (verdict, error) {
-	if p.asked >= p.mt.bounds.asked {
+	if p.asked >= p.bounds.asked {
 		return verdictStop, nil // the next page asks it
 	}
 	q := &Question{
 		Box: p.b, MessageID: m.ID, ExpiresAt: m.ExpiresAt, Account: p.asking.Account,
 		Atoms: slices.Clone(atoms), Subject: meta.Subject, View: ViewOriginal, Text: src.text,
 	}
-	actx, cancel := context.WithTimeout(ctx, p.mt.bounds.ask)
+	actx, cancel := context.WithTimeout(ctx, p.bounds.ask)
 	asked, err := p.asking.Asker.Ask(actx, q)
 	ranOut := errors.Is(actx.Err(), context.DeadlineExceeded) // before cancel, which sets it
 	src.close()
@@ -519,7 +563,7 @@ func (s *textSource) read(ctx context.Context) (string, TextState, error) {
 		return s.raw.Text, TextRead, nil
 	}
 	if s.entry == nil {
-		if p.read >= p.mt.bounds.read {
+		if p.read >= p.bounds.read {
 			return "", TextUnaffordable, nil
 		}
 		e, err := p.readEntry(ctx, s.m)
@@ -531,7 +575,7 @@ func (s *textSource) read(ctx context.Context) (string, TextState, error) {
 	if !entryCut(s.entry) {
 		return s.entry.Text, TextRead, nil
 	}
-	if p.textReads >= p.mt.bounds.textReads {
+	if p.textReads >= p.bounds.textReads {
 		return "", TextUnaffordable, nil
 	}
 	p.textReads++
