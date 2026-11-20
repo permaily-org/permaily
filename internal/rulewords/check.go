@@ -2,7 +2,6 @@ package rulewords
 
 import (
 	"encoding/json"
-	"slices"
 	"strings"
 	"unicode"
 
@@ -108,11 +107,21 @@ func strictly(data []byte, v any, members []string, nullable ...string) bool {
 	}
 	for _, k := range members {
 		raw, ok := m[k]
-		if !ok || (string(raw) == "null" && !slices.Contains(nullable, k)) {
+		if !ok || (string(raw) == "null" && !named(nullable, k)) {
 			return false
 		}
 	}
 	return one(data, v)
+}
+
+// named says k is one of names.
+func named(names []string, k string) bool {
+	for _, n := range names {
+		if n == k {
+			return true
+		}
+	}
+	return false
 }
 
 // list decodes a JSON array into out when it is one and holds no null.
