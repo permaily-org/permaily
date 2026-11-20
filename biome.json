@@ -19,6 +19,7 @@
       "!internal/mailhtml/testdata",
       "!internal/decide/testdata",
       "!internal/oauth/testdata",
+      "!internal/webhook/testdata",
       "!pkg/provenance/sigstore_*.json",
       "!internal/domain/mail/templates",
       "!packages/mail/fixtures",

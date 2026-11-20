@@ -138,6 +138,26 @@ linters:
               desc: the model's client knows no service
             - pkg: github.com/aws/aws-sdk-go-v2
               desc: the model's client reaches only the model
+        webhook-is-pure:
+          # What a connection's webhook decides from its arguments alone (ADR 0039): the URL rule, the request, schedules
+          # in the person's time zone (time/tzdata, the image's own zones), the notice, its signature and the key set,
+          # each read exactly through internal/jws.Object.
+          # No net/http, no io, no os, no storage: calling is internal/services/webhooks', keeping is the services'.
+          files: ["**/internal/webhook/*.go", "!$test"]
+          list-mode: strict
+          allow:
+            - bytes
+            - context
+            - crypto
+            - encoding
+            - errors
+            - slices
+            - strconv
+            - strings
+            - time
+            - github.com/permaily-org/permaily/internal/contracts
+            - github.com/permaily-org/permaily/internal/jws
+            - github.com/permaily-org/permaily/internal/oauth
         oauth-is-pure:
           # What the authorization server decides from its arguments alone (ADR 0030): metadata, the rules of a
           # client_id and its document, PKCE, redirects, resources, scopes, token shapes, client assertions.
@@ -232,6 +252,8 @@ linters:
               "!**/internal/services/connections/connectionstest/**",
               "!**/internal/services/mailboxes/mailboxestest/**",
               "!**/internal/decide/decidetest/**",
+              "!**/internal/services/webhooks/webhookstest/**",
+              "!**/internal/webhook/webhooktest/**",
             ]
           list-mode: lax
           deny:
@@ -257,6 +279,10 @@ linters:
               desc: the generators and the brute force of the query language are only for tests
             - pkg: github.com/permaily-org/permaily/internal/decide/decidetest
               desc: the fake model and its contract are only for tests
+            - pkg: github.com/permaily-org/permaily/internal/services/webhooks/webhookstest
+              desc: the fake connections of webhooks and their contract are only for tests
+            - pkg: github.com/permaily-org/permaily/internal/webhook/webhooktest
+              desc: the played vendor and the scripted sender of webhooks are only for tests
     gosec:
       excludes:
         - G104 # unhandled errors are covered by errcheck
