@@ -189,6 +189,9 @@ func (s *Service) deliver(ctx context.Context, id, from string, p *inbox.Parsed,
 	if err := s.writer.Mark(ctx, b, claim); err != nil {
 		return err
 	}
+	if s.cfg.Arrivals != nil {
+		s.cfg.Arrivals.Arrived(id, claim.Seen.ReceivedAt)
+	}
 	s.count(id, len(raw))
 	return nil
 }

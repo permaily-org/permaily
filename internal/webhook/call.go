@@ -13,20 +13,27 @@ import (
 // is written in full or not at all (oauth.ConnectionFresh after the read
 // that allowed it, connections' Permit.WriteBy).
 //
-// What "written" means (design review, finding 4): the request's HEADERS
-// frame and its one DATA frame with END_STREAM, at most
-// RequestWriteBytesMax together, handed to the TLS connection in a single
-// Write, so they leave in one TLS record, and that Write returned. The
-// sender starts that Write only after the server's SETTINGS, only when the
-// peer's stream and connection windows take the whole body (else
-// OutcomeRefused: nothing is written, since a request split by flow control
-// would leave its headers without its body), and only while the permit's
-// context lives and WriteBy has not passed (else OutcomeCut or
-// OutcomeTooLate). A cut or WriteBy that comes while the Write blocks (the
-// host not reading the vsock) closes the connection: the record is never
-// whole, and a TLS record that is not whole opens to nothing. Once the Write
-// returned only the answer is waited for, within AttemptTimeout. The dial
-// and the handshake run under the permit's context too.
+// What "written" means (design review, finding 4; re-review N1): the
+// request's HEADERS frame and its one DATA frame with END_STREAM, at most
+// RequestWriteBytesMax together, handed whole to the TLS connection in a
+// single Write on a connection whose dynamic record sizing is off, so they
+// leave in exactly one TLS record (a single Write alone is not one record:
+// Go's default sizes a connection's first records at about 1 KiB). The
+// sender admits that Write only after the server's SETTINGS, only when the
+// peer allows a stream and its stream and connection windows take the whole
+// body and its header list limit the headers (else OutcomeRefused: nothing
+// is written, since a request split by flow control would leave its headers
+// without its body), and only while the permit's context lives and WriteBy
+// has not passed (else OutcomeCut or OutcomeTooLate, nothing written: a cut
+// before admission forbids it). A cut or WriteBy that comes while the Write
+// blocks (the host not reading the vsock) closes the connection, which
+// cannot retract what was already handed to it. When none of the record, or
+// only part of it, was handed, the record is not whole and opens to nothing:
+// no byte of the request is readable, and the call is OutcomeCut or
+// OutcomeTooLate. When the whole record was handed, it cannot be recalled:
+// the call is never cut or too_late, and only its answer is waited for,
+// within AttemptTimeout (OutcomeNoAnswer when the connection was closed
+// under it). The dial and the handshake run under the permit's context too.
 type Call struct {
 	URL       string
 	ID        string
@@ -37,8 +44,11 @@ type Call struct {
 }
 
 // ErrCut is the cause of a permit's context that was cut: the connection
-// stopped calling through this enclave (connections' Permit), so nothing of
-// the call is written.
+// stopped calling through this enclave (connections' Permit), so no call of
+// it is admitted to write once it is cut. A call cut before its Write was
+// admitted writes nothing; one cut while its Write blocks may have handed
+// part of its one TLS record, which opens to nothing, and one whose whole
+// record was already handed is not cut (Call).
 var ErrCut = errors.New("webhook: the call's permit was cut")
 
 // Outcome is how a call ended, one of a fixed set: the only words kept,
@@ -50,10 +60,10 @@ const (
 	OutcomeGone     Outcome = "gone"      // 410: the vendor asks to stop
 	OutcomeRedirect Outcome = "redirect"  // a 3xx, never followed
 	OutcomeStatus   Outcome = "status"    // any other status
-	OutcomeNoAnswer Outcome = "no_answer" // not reached, reset, or past AttemptTimeout
-	OutcomeRefused  Outcome = "refused"   // TLS that does not verify, or no HTTP/2
-	OutcomeTooLate  Outcome = "too_late"  // not written by WriteBy: nothing left
-	OutcomeCut      Outcome = "cut"       // the permit was cut (ErrCut): nothing left
+	OutcomeNoAnswer Outcome = "no_answer" // not reached, reset, past AttemptTimeout, or a malformed answer
+	OutcomeRefused  Outcome = "refused"   // TLS that does not verify, no HTTP/2, or a peer that cannot take the request
+	OutcomeTooLate  Outcome = "too_late"  // not written in full by WriteBy: nothing readable left (at most part of a record)
+	OutcomeCut      Outcome = "cut"       // the permit was cut (ErrCut) before the request was written in full: the same
 )
 
 // Failure is what the person is shown of an outcome that failed.
