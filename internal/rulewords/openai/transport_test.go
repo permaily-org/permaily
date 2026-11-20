@@ -58,7 +58,7 @@ func TestTheWordsClientSpeaksOnlyHTTP2(t *testing.T) {
 		t.Error("a transport of another kind was changed")
 	}
 	c := New(nil, keyed, "", "")
-	if c.hc.Jar != nil || c.hc.CheckRedirect == nil || c.hc.CheckRedirect(nil, nil) != http.ErrUseLastResponse {
+	if c.hc.Jar != nil || c.hc.CheckRedirect == nil || !errors.Is(c.hc.CheckRedirect(nil, nil), http.ErrUseLastResponse) {
 		t.Error("a client made without one follows redirects or keeps cookies")
 	}
 	if c.Name() != "gpt-6-luna" || len(Hosts()) != 1 || Hosts()[0] != "api.openai.com:443" {

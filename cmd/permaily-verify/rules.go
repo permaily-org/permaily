@@ -7,7 +7,6 @@ import (
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/redact"
 	"github.com/permaily-org/permaily/internal/rulewords"
-	"github.com/permaily-org/permaily/internal/services/accountrules"
 	"github.com/permaily-org/permaily/pkg/attestation"
 )
 
@@ -16,7 +15,9 @@ import (
 // permaily-verify"), from the source this verifier is built from: the
 // record strict, the effects, the fixed shapes' version and kinds,
 // meaning's prompt, threshold, split and bounds, the words' model and
-// prompt, the rules' notice in force and the five seconds of freshness.
+// prompt, the rules' notice in force, and the five seconds of freshness the
+// design promises (attestation.PersonRulesFreshSeconds; the verifier links
+// no service).
 // The counts are the enclave's own, and are only checked for their kinds
 // and signs (attestation.PersonRulesStatus.Check).
 func personRulesWant() attestation.PersonRulesStatus {
@@ -34,6 +35,6 @@ func personRulesWant() attestation.PersonRulesStatus {
 		},
 		Words:        attestation.PersonRulesWords{Model: rulewords.ModelName, Prompt: rulewords.PromptVersion},
 		Notice:       domain.RulesNoticeVersion,
-		FreshSeconds: int(accountrules.Fresh.Seconds()),
+		FreshSeconds: attestation.PersonRulesFreshSeconds,
 	}
 }

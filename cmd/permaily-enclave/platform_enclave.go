@@ -323,6 +323,11 @@ const modelRecord = "model"
 // identifier, and their versions say how often a connection was used.
 const connectionRecord = "connection"
 
+// rulesRecord stands for an account's record of rules (ADR 0040) in
+// /status: its name holds the account's identifier, and its versions say
+// how often the person changed their rules.
+const rulesRecord = "rules"
+
 // vendorEgress is the client vendors' documents and key sets are fetched
 // with: the host's vendor egress on port, HTTP/2 only. A test replaces it
 // to see which port the image uses.

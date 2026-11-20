@@ -28,6 +28,7 @@ import (
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/rules"
+	"github.com/permaily-org/permaily/internal/services/accountrules"
 	"github.com/permaily-org/permaily/internal/services/accounts"
 	"github.com/permaily-org/permaily/internal/services/mailboxes"
 	"github.com/permaily-org/permaily/internal/services/receipts"
@@ -369,5 +370,13 @@ func TestTheAuthorizationServersAddresses(t *testing.T) {
 	}
 	if p := (config{port: 4443, clientPort: 8443}).oauthPort(); p != 8443 {
 		t.Fatal(p)
+	}
+}
+
+// U31: the freshness /status publishes is the rules service's own, and the
+// five seconds permaily-verify requires.
+func TestU31TheRulesFreshnessIsTheServices(t *testing.T) {
+	if accountrules.Fresh != attestation.PersonRulesFreshSeconds*time.Second {
+		t.Fatalf("accountrules.Fresh is %s, the verifier requires %d seconds", accountrules.Fresh, attestation.PersonRulesFreshSeconds)
 	}
 }

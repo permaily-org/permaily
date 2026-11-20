@@ -63,6 +63,11 @@ type PersonRulesWords struct {
 	Calls  map[string]int64 `json:"calls"`
 }
 
+// PersonRulesFreshSeconds is how old, at most, another enclave's copy of an
+// account's rules may be (ADR 0040, "Changes, and what they apply to"):
+// five seconds, as a revocation's bound (accountrules.Fresh).
+const PersonRulesFreshSeconds = 5
+
 // PersonRulesRecordStrict: an account's rules are one strict anchored
 // record per epoch, refused when lost, forked or put back.
 const PersonRulesRecordStrict = "strict"

@@ -25,11 +25,6 @@ import (
 // consent screen and delivery (connections.Config.Source), removed with
 // the account, and changed through the rules routes.
 
-// rulesRecord stands for an account's record of rules in /status: its name
-// holds the account's identifier, and its versions say how often the
-// person changed their rules.
-const rulesRecord = "rules"
-
 // errRulesRecords refuses records that are not one strict Anchored keeping
 // only the newest value.
 var errRulesRecords = errors.New("the rules' records need a strict Anchored that keeps only the newest value")
