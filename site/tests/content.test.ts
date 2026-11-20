@@ -219,8 +219,12 @@ describe('legal pages', () => {
     expect(text).not.toMatch(
       /aren’t open yet|once (mailboxes|connections) open|none of this is running/i,
     );
-    expect(text).not.toMatch(/Rules of your own aren’t built yet|Planned, not built: rules of your own/);
-    expect(text).toContain('Your own rules. In Rules in the app you can turn off the rule that holds back sign-in mail');
+    expect(text).not.toMatch(
+      /Rules of your own aren’t built yet|Planned, not built: rules of your own/,
+    );
+    expect(text).toContain(
+      'Your own rules. In Rules in the app you can turn off the rule that holds back sign-in mail',
+    );
     expect(text).toContain('Permaily keeps the words nowhere');
     expect(text).not.toMatch(
       /screen that shows (them|your receipts) to you isn’t built|Viewing and exporting them are planned/,
