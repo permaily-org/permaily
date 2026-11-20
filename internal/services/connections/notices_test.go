@@ -652,3 +652,66 @@ func (l *lockedWriter) Write(b []byte) (int, error) {
 	defer l.mu.Unlock()
 	return l.w.Write(b)
 }
+
+// E32, the cleanup that lost (review of #197, finding 1). A's sweep reads
+// a connection ending within the week with a device whose code was never
+// exchanged; before A's write of that device's end, B renews or revokes
+// the connection. A's write loses, and A queues no ending for the end it
+// read: it reads again and decides on what is there.
+func TestE32ASweepWhoseCleanupLostQueuesNoStaleEnding(t *testing.T) {
+	for _, how := range []string{"renewed", "revoked"} {
+		t.Run(how, func(t *testing.T) {
+			ctx := context.Background()
+			w := newWorld(t)
+			f := &failing{Records: &store.Anchored{Records: w.mem, Commits: w.commits, Strict: true, Now: w.clock.now}}
+			a, err := New(w.config(f))
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := w.enclave()
+			q, _ := w.noticed(a, b)
+			p := w.person(accountA)
+			w.connect(b, p, w.ask(claudeCode))
+			// A second device, its code never exchanged.
+			w.allow(b, p, w.start(b, w.person(accountA), w.ask(claudeCode)))
+			d := w.connectionOf(b, accountA, claudeCode)
+			if len(d.Devices) != 2 {
+				t.Fatalf("%d devices", len(d.Devices))
+			}
+			w.clock.add(d.EndsAt.Sub(w.clock.now()) - notices.EndingBefore + time.Hour)
+
+			raced := false
+			f.set(func(op, name string) error {
+				if op != "put" || name != connName(d.ID) || raced {
+					return nil
+				}
+				raced = true
+				p := w.person(accountA)
+				switch how {
+				case "renewed":
+					v, err := b.Get(ctx, p, d.ID)
+					if err != nil {
+						return err
+					}
+					if _, err := b.Renew(ctx, p, d.ID, contracts.ConnectionRenewal{Version: v.Version, ModelNotice: notice}); err != nil {
+						return err
+					}
+				case "revoked":
+					if _, err := b.Revoke(ctx, p, d.ID); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+			if err := a.Sweep(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if !raced {
+				t.Fatal("the sweep wrote no cleanup")
+			}
+			if got := queuedOf(q, notices.KindConnectionEnding); len(got) != 0 {
+				t.Fatalf("queued an ending after the connection was %s: %+v", how, got)
+			}
+		})
+	}
+}
