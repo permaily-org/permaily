@@ -85,6 +85,9 @@ type chainWorld struct {
 	clock    *clock
 	accounts *fakeAccounts
 	random   *counter
+	// noticing are the services noticed made, whose notices settle waits
+	// for.
+	noticing []*Service
 }
 
 func newChainWorld(t *testing.T) *chainWorld {

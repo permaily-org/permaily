@@ -43,6 +43,10 @@ query-a   ./internal/query   FuzzParse           300000   94
 query-a   ./internal/query   FuzzEval            200000   61
 query-b   ./internal/query   FuzzNormalise       500000   57
 query-b   ./internal/query   FuzzSentenceReadsBack 300000 94
+redact    ./internal/redact  FuzzShapes          500000   40
+redact    ./internal/redact  FuzzSentences       500000   35
+redact    ./internal/redact  FuzzCheck           1000000  22
+redact    ./internal/redact  FuzzJoin            1000000  20
 '
 
 groups() { awk 'NF && !seen[$1]++ { print $1 }' <<<"$targets"; }
