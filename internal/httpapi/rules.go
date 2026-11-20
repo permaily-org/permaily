@@ -8,6 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"reflect"
+	"strings"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
@@ -435,12 +437,19 @@ func refusedDraft(err error) bool {
 // member twice and every member's name exactly as the contract writes it
 // (lowercase ASCII, so none that encoding/json would take for another in
 // another case, or through the Kelvin sign or the long s), each one of v's
-// fields (DisallowUnknownFields). Anything else is invalid_body, before the
+// fields (DisallowUnknownFields); every member the contract requires present
+// and none null (complete). Anything else is invalid_body, before the
 // service is asked: two readers of a body with a member twice would read it
-// differently.
+// differently, and encoding/json reads a member missing or null as its zero,
+// so {} would turn the default rule off at version 0.
 func decodeRule(w http.ResponseWriter, r *http.Request, v any) bool {
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRuleBody))
 	if err != nil || !strictJSON(raw) {
+		writeInvalidBody(w)
+		return false
+	}
+	var tree any
+	if json.Unmarshal(raw, &tree) != nil || !complete(tree, reflect.TypeOf(v)) {
 		writeInvalidBody(w)
 		return false
 	}
@@ -451,6 +460,77 @@ func decodeRule(w http.ResponseWriter, r *http.Request, v any) bool {
 		return false
 	}
 	return true
+}
+
+// complete says v, a body read as JSON, is a value of t whole: at every
+// depth an object has each member of t's fields the contract does not mark
+// optional (omitempty or omitzero), and nothing is null, optional members
+// included (left out, never null). Whether each value has its field's type
+// is encoding/json's to refuse.
+func complete(v any, t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Pointer:
+		return complete(v, t.Elem())
+	case reflect.Struct:
+		obj, ok := v.(map[string]any)
+		if !ok {
+			return false
+		}
+		for i := range t.NumField() {
+			f := t.Field(i)
+			name, opts, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if !f.IsExported() || name == "-" {
+				continue
+			}
+			if name == "" {
+				name = f.Name
+			}
+			m, ok := obj[name]
+			if !ok {
+				if optional(opts) {
+					continue
+				}
+				return false
+			}
+			if !complete(m, f.Type) {
+				return false
+			}
+		}
+		return true
+	case reflect.Slice, reflect.Array:
+		list, ok := v.([]any)
+		if !ok {
+			return false
+		}
+		for _, e := range list {
+			if !complete(e, t.Elem()) {
+				return false
+			}
+		}
+		return true
+	case reflect.Map:
+		obj, ok := v.(map[string]any)
+		if !ok {
+			return false
+		}
+		for _, e := range obj {
+			if !complete(e, t.Elem()) {
+				return false
+			}
+		}
+		return true
+	}
+	return v != nil
+}
+
+// optional says a field's JSON options let its member be left out.
+func optional(opts string) bool {
+	for o := range strings.SplitSeq(opts, ",") {
+		if o == "omitempty" || o == "omitzero" {
+			return true
+		}
+	}
+	return false
 }
 
 // strictJSON says raw is one JSON object, with nothing after it but white

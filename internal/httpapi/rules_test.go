@@ -360,6 +360,68 @@ func TestU27RulesBodiesAreReadStrictly(t *testing.T) {
 	}
 }
 
+// U27 (review of #199, finding 1). A member the contract requires, missing
+// or null, at any depth, is invalid_body before anything changes:
+// encoding/json reads either as its zero, so {} would have turned the
+// default rule off at version 0. Optional members may be left out, never
+// sent as null.
+func TestU27MissingOrNullMembersNeverTurnTheDefaultOff(t *testing.T) {
+	a := newRulesApp(t, nil)
+	d := draft("Bank", "invoice")
+	for _, body := range []string{
+		`{}`, `{"on":null,"version":0}`, `{"on":false,"version":null}`, `{"on":false}`, `{"version":0}`, `{"on":false,"version":0,"pad":null}`,
+	} {
+		want(t, a.do("alice", "POST", "/api/v1/rules/default", body), 400, "invalid_body")
+	}
+	without := func(member string) string {
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(d), &m); err != nil {
+			t.Fatal(err)
+		}
+		delete(m, member)
+		out, _ := json.Marshal(m)
+		return string(out)
+	}
+	for _, rt := range []rulesRoute{
+		{"POST", "/api/v1/rules/check", `{}`},
+		{"POST", "/api/v1/rules/check", `{"draft":null}`},
+		{"POST", "/api/v1/rules/check", `{"draft":` + without("on") + `}`},
+		{"POST", "/api/v1/rules/check", `{"draft":` + without("scope") + `}`},
+		{"POST", "/api/v1/rules/check", `{"draft":` + without("criteria") + `}`},
+		{"POST", "/api/v1/rules/check", `{"draft":` + strings.Replace(d, `"on":true`, `"on":null`, 1) + `}`},
+		{"POST", "/api/v1/rules/check", `{"draft":` + strings.Replace(d, `"scope":{"to":"all"}`, `"scope":{"to":null}`, 1) + `}`},
+		{"POST", "/api/v1/rules/check", `{"draft":` + strings.Replace(d, `"on":true`, `"on":true,"removal":null`, 1) + `}`},
+		{"POST", "/api/v1/rules/check", `{"draft":` + strings.Replace(d, `"op":"contains"`, `"op":null`, 1) + `}`},
+		{"POST", "/api/v1/rules/check", `{"draft":` + strings.Replace(d, `"v":1,`, ``, 1) + `}`},
+		{"POST", "/api/v1/rules/check", `{"draft":` + strings.Replace(d, `"criteria":[`, `"criteria":[null,`, 1) + `}`},
+		{"POST", "/api/v1/rules", `{"draft_id":"rdr_x","draft":` + d + `}`},
+		{"POST", "/api/v1/rules", `{"draft_id":"rdr_x","draft":` + d + `,"version":null}`},
+		{"PUT", "/api/v1/rules/rul_1", `{"draft":` + d + `,"version":0}`},
+		{"POST", "/api/v1/rules", `{"draft_id":"rdr_x","draft":` + d + `,"version":0,"notice":null}`},
+		{"POST", "/api/v1/rules/rul_1/delete", `{}`},
+		{"POST", "/api/v1/rules/rul_1/delete", `{"version":null}`},
+		{"POST", "/api/v1/rules/words", `{"words":"x"}`},
+		{"POST", "/api/v1/account/rules-notice", `{}`},
+		{"POST", "/api/v1/account/rules-notice", `{"version":null}`},
+		{"POST", "/api/v1/rules/preview", `{"draft":` + d + `}`},
+		{"POST", "/api/v1/rules/preview", `{"draft":` + d + `,"mailbox":"mbx_x","limit":null}`},
+	} {
+		want(t, a.do("alice", rt.method, rt.path, rt.body), 400, "invalid_body")
+	}
+	if len(a.rules.Changes) != 0 || len(a.words.Calls) != 0 || len(a.matcher.asked()) != 0 {
+		t.Fatalf("changes %v, words %v, matched %v", a.rules.Changes, a.words.Calls, a.matcher.asked())
+	}
+	var l contracts.RuleList
+	read(t, a.do("alice", "GET", "/api/v1/rules", ""), 200, &l)
+	if !l.Default.On {
+		t.Fatalf("the default rule was turned off: %+v", l.Default)
+	}
+	// Every member present: the switch is turned, and optional members may
+	// be left out.
+	read(t, a.do("alice", "POST", "/api/v1/rules/default", `{"on":false,"version":0}`), 200, &contracts.RuleDefault{})
+	read(t, a.do("alice", "POST", "/api/v1/rules/check", `{"draft":`+d+`}`), 200, &contracts.RuleCheck{})
+}
+
 // U27. Words: the rules' notice the screen showed must be the one in force
 // and the account's, before anything is sent; then the writer's answer as
 // the account's check made it, for every connection and on whatever the
