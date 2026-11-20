@@ -49,6 +49,8 @@ export default defineConfig({
         'src/pages/rules/criteria.ts',
         'src/pages/rules/shared.tsx',
         'src/pages/rules/words.ts',
+        // The Activity screen on the account's record (ADR 0041).
+        'src/pages/activity/**',
       ],
       // The measured values, rounded down. They only go up (docs/testing.md).
       thresholds: {
@@ -75,6 +77,7 @@ export default defineConfig({
         'src/pages/consent/**': { statements: 95, branches: 89, functions: 98, lines: 98 },
         'src/pages/connections/**': { statements: 97, branches: 87, functions: 96, lines: 98 },
         'src/pages/rules/**': { statements: 90, branches: 79, functions: 93, lines: 94 },
+        'src/pages/activity/**': { statements: 98, branches: 91, functions: 100, lines: 99 },
       },
     },
   },

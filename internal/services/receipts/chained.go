@@ -3,10 +3,14 @@ package receipts
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
+	"github.com/permaily-org/permaily/internal/services/notices"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/pkg/attestation"
 )
@@ -51,6 +55,61 @@ type chainState struct {
 
 	catalogue *appender
 	incidents *appender
+	// notices, when given (WithNotices), is told of every account an
+	// incident's entry names once the entry commits, in the background.
+	notices noticer
+}
+
+// ChainedOption is an option of NewChained.
+type ChainedOption func(*chainState)
+
+// WithNotices queues the notice that an account's receipts were found
+// deleted or changed (notices.KindReceiptsIncident) for every account an
+// entry of the record of incidents names, once that entry is committed,
+// under notices.IncidentKey of the entry's time: the queue keeps one a day
+// per account, whatever was found that day, and whichever enclave found it
+// (ADR 0041, "Which notices"). An entry that fails to commit queues
+// nothing. The notices are queued in the background, at most
+// noticesInFlightMax calls at once, each bounded by notices.EnqueueMax and
+// free of the caller's context, so nothing of the record, the append, the
+// walk, the export or the audit waits for the queue (the review of #196,
+// finding 1). A notice that cannot be queued, or that is dropped because
+// the calls are all busy, fails nothing and is logged by its kind alone
+// (WithLog), never its account, its key, the incident or the queue's error
+// (ADR 0041, E36; the review of #196, finding 2); NoticesDropped counts
+// those dropped.
+func WithNotices(q notices.Queue) ChainedOption {
+	return func(c *chainState) { c.notices.q = q }
+}
+
+// WithLog is where WithNotices logs a notice it could not queue, by its
+// kind alone; slog.Default when not given. Nothing else of the chain is
+// logged.
+func WithLog(log *slog.Logger) ChainedOption {
+	return func(c *chainState) { c.notices.log = log }
+}
+
+// noticesInFlightMax bounds the calls of the queue an enclave makes at once
+// for incidents' notices: past it, a committed entry's notices are dropped,
+// counted and logged by their kind.
+const noticesInFlightMax = 16
+
+// noticer queues incidents' notices in the background (WithNotices).
+type noticer struct {
+	q       notices.Queue
+	log     *slog.Logger
+	slots   chan struct{}
+	running sync.WaitGroup
+	dropped atomic.Uint64
+}
+
+// NoticesDropped is how many incidents' notices this enclave dropped since
+// it started because noticesInFlightMax calls of the queue were busy.
+func (s *Service) NoticesDropped() uint64 {
+	if s.chain == nil {
+		return 0
+	}
+	return s.chain.notices.dropped.Load()
 }
 
 var (
@@ -75,7 +134,7 @@ var errNotChained = errors.New("receipts: the service is not chained")
 // "receipt link", never their names, and nothing of the chain logs an
 // account (ADR 0037, "When the link before cannot be read"; the review of
 // #170, ruling 11).
-func NewChained(entries store.Entries, keys Keys, now func() time.Time, chain *store.Anchored, accounts Accounts) (*Service, error) {
+func NewChained(entries store.Entries, keys Keys, now func() time.Time, chain *store.Anchored, accounts Accounts, opts ...ChainedOption) (*Service, error) {
 	scanner, scans := entries.(store.Scanner)
 	switch {
 	case chain == nil || !chain.Strict:
@@ -97,6 +156,13 @@ func NewChained(entries store.Entries, keys Keys, now func() time.Time, chain *s
 	}
 	c.catalogue = &appender{s: s, sr: catalogueSeriesOf}
 	c.incidents = &appender{s: s, sr: incidentSeriesOf}
+	for _, o := range opts {
+		o(c)
+	}
+	if c.notices.log == nil {
+		c.notices.log = slog.Default()
+	}
+	c.notices.slots = make(chan struct{}, noticesInFlightMax)
 	s.chain = c
 	return s, nil
 }
@@ -150,19 +216,40 @@ func (s *Service) record(ctx context.Context, findings []Finding) error {
 	if len(todo) == 0 {
 		return nil
 	}
+	committed, err := s.recordLocked(ctx, todo)
+	s.noticeIncidents(ctx, committed)
+	return err
+}
+
+// incidentAt is an entry of the record of incidents that was committed: its
+// time and the accounts its findings name.
+type incidentAt struct {
+	at       time.Time
+	accounts []string
+}
+
+// recordLocked writes todo in entries of the record of incidents, in chunks
+// of IncidentFindingsMax, holding the record's lock, and returns the entries
+// it committed, those before an error included.
+func (s *Service) recordLocked(ctx context.Context, todo []Finding) ([]incidentAt, error) {
+	c := s.chain
 	key, err := s.chainKey(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	c.incidents.write.Lock()
 	defer c.incidents.write.Unlock()
+	var committed []incidentAt
 	for len(todo) > 0 {
 		chunk := todo[:min(len(todo), IncidentFindingsMax)]
-		if _, err := c.incidents.putLocked(ctx, key, func(n uint64, at time.Time, prev *Digest, br BreakReason) []byte {
-			return mustJSON(&Incident{V: IncidentVersion, I: n, At: at, Prev: prev, Break: br, Findings: chunk})
+		var at time.Time
+		if _, err := c.incidents.putLocked(ctx, key, func(n uint64, t time.Time, prev *Digest, br BreakReason) []byte {
+			at = t
+			return mustJSON(&Incident{V: IncidentVersion, I: n, At: t, Prev: prev, Break: br, Findings: chunk})
 		}, nil); err != nil {
-			return err
+			return committed, err
 		}
+		committed = append(committed, incidentAt{at: at, accounts: accountsOf(chunk)})
 		c.mu.Lock()
 		if len(c.recorded) >= recordedMax {
 			clear(c.recorded)
@@ -174,7 +261,62 @@ func (s *Service) record(ctx context.Context, findings []Finding) error {
 		c.mu.Unlock()
 		todo = todo[len(chunk):]
 	}
-	return nil
+	return committed, nil
+}
+
+// accountsOf are the accounts findings name, each once, in order; a
+// finding of the catalogue names none.
+func accountsOf(findings []Finding) []string {
+	var out []string
+	for _, f := range findings {
+		if f.Account != "" {
+			out = append(out, f.Account)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// noticeIncidents queues, in the background, the notice of every account
+// the committed entries name (WithNotices), and never waits: when
+// noticesInFlightMax calls are busy the notices are dropped, counted and
+// logged by their kind.
+func (s *Service) noticeIncidents(ctx context.Context, committed []incidentAt) {
+	n := &s.chain.notices
+	if n.q == nil {
+		return
+	}
+	var queue []notices.Notice
+	for _, e := range committed {
+		for _, account := range e.accounts {
+			queue = append(queue, notices.Notice{
+				Account: account, Kind: notices.KindReceiptsIncident, At: e.at,
+				Key: notices.IncidentKey(account, e.at),
+			})
+		}
+	}
+	if len(queue) == 0 {
+		return
+	}
+	select {
+	case n.slots <- struct{}{}:
+	default:
+		n.dropped.Add(uint64(len(queue)))
+		n.log.Warn("receipts: incident notice dropped", "kind", string(notices.KindReceiptsIncident))
+		return
+	}
+	n.running.Add(1)
+	ctx = context.WithoutCancel(ctx)
+	go func() {
+		defer func() { <-n.slots; n.running.Done() }()
+		ctx, cancel := context.WithTimeout(ctx, notices.EnqueueMax)
+		defer cancel()
+		for _, notice := range queue {
+			if n.q.Enqueue(ctx, notice) != nil {
+				n.log.Warn("receipts: incident notice not queued", "kind", string(notices.KindReceiptsIncident))
+			}
+		}
+	}()
 }
 
 // Incidents implements Auditor: the record of incidents' head, found by

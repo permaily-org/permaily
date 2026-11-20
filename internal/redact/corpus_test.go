@@ -20,7 +20,7 @@ type shapeCase struct {
 	Shapes map[contracts.ShapeKind]int `json:"shapes"`
 }
 
-func readCases(t *testing.T) []shapeCase {
+func readCases(t testing.TB) []shapeCase {
 	t.Helper()
 	f, err := os.Open("testdata/shapes.jsonl")
 	if err != nil {

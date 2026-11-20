@@ -76,8 +76,8 @@ func (f *Fake) Queued() []notices.Notice {
 }
 
 // Drain makes one attempt of every notice not yet delivered, skipped,
-// refused or dropped and that no other Drain is trying; one no longer
-// Sendable is dropped, not tried.
+// refused or dropped and that no other Drain is trying, each within
+// notices.AttemptFor; one no longer Sendable is dropped, not tried.
 func (f *Fake) Drain(ctx context.Context) error {
 	f.mu.Lock()
 	var due []notices.Notice
@@ -94,7 +94,9 @@ func (f *Fake) Drain(ctx context.Context) error {
 	}
 	f.mu.Unlock()
 	for _, n := range due {
-		err := f.Deliverer.Deliver(ctx, n)
+		actx, cancel := context.WithTimeout(ctx, notices.AttemptFor)
+		err := f.Deliverer.Deliver(actx, n)
+		cancel()
 		f.mu.Lock()
 		if err == nil || errors.Is(err, notices.ErrSkip) || errors.Is(err, notices.ErrInvalid) {
 			f.done[n.Key] = true
@@ -189,17 +191,29 @@ func Sample(id string) notices.Notice {
 	}
 }
 
+// Enclave is what one enclave's queue is made with under the contract:
+// the Deliverer it sends through and, when set, Admit, which every attempt
+// of that enclave calls once the queue admitted it to its workers and its
+// rate and before it reads its entry, and which may block as a wait for
+// the rate would (the attempt holds nothing of a notice while it waits).
+// A queue with no attempts of its own outside Drain (the fake) need not
+// call it.
+type Enclave struct {
+	Deliverer notices.Deliverer
+	Admit     func(ctx context.Context) error
+}
+
 // Contract runs what every queue keeps (ADR 0041, E20 to E23 in their
-// part a played clock can show). newQueues makes two enclaves' queues over
-// one fresh storage, both delivering through d and reading clock, which
-// starts at SampleAt; a queue that is one enclave's alone (the fake)
-// returns itself twice. ADR 0041's pull request 1 runs it on the real
-// queue, over one store and over two enclaves' queues sharing it.
-func Contract(t *testing.T, newQueues func(t *testing.T, d notices.Deliverer, clock *Clock) (a, b Subject)) {
+// part a played clock can show, and the re-review's N2). newQueues makes
+// two enclaves' queues over one fresh storage, a and b, both reading
+// clock, which starts at SampleAt; a queue that is one enclave's alone
+// (the fake) returns itself twice, made with a. ADR 0041's pull request 1
+// runs it on the real queue, two enclaves sharing one store.
+func Contract(t *testing.T, newQueues func(t *testing.T, a, b Enclave, clock *Clock) (qa, qb Subject)) {
 	ctx := context.Background()
 	newQueue := func(t *testing.T, d notices.Deliverer) (Subject, *Clock) {
 		clock := NewClock(SampleAt)
-		a, _ := newQueues(t, d, clock)
+		a, _ := newQueues(t, Enclave{Deliverer: d}, Enclave{Deliverer: d}, clock)
 		return a, clock
 	}
 	t.Run("a notice is delivered once", func(t *testing.T) {
@@ -316,14 +330,30 @@ func Contract(t *testing.T, newQueues func(t *testing.T, d notices.Deliverer, cl
 		}
 	})
 	t.Run("two enclaves draining a backlog past the lease send each notice once", func(t *testing.T) {
+		// N2: the schedule is forced, not hoped for. A's attempts are held
+		// at admission while the clock passes LeaseFor and B drains the
+		// same storage; then A is let go. A queue that took a lease when it
+		// queued, and sent on it once admitted, sends twice here.
 		d := &Recorder{}
+		da, db := &Bounded{Deliverer: d}, &Bounded{Deliverer: d}
+		hold := make(chan struct{})
+		admitA := func(ctx context.Context) error {
+			select {
+			case <-hold:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
 		clock := NewClock(SampleAt)
-		a, b := newQueues(t, d, clock)
+		a, b := newQueues(t, Enclave{Deliverer: da, Admit: admitA}, Enclave{Deliverer: db}, clock)
 		n := 2*notices.InFlightMax + 1
 		for i := range n {
 			must(t, a.Enqueue(ctx, Sample(fmt.Sprintf("rcp_%d", i))))
 		}
 		clock.Advance(notices.LeaseFor + notices.RetryMax)
+		drain(t, b, 2)
+		close(hold)
 		for range 2 {
 			var wg sync.WaitGroup
 			wg.Go(func() { must(t, a.Drain(ctx)) })
@@ -339,7 +369,62 @@ func Contract(t *testing.T, newQueues func(t *testing.T, d notices.Deliverer, cl
 				t.Fatalf("notice %d delivered %d times, want once", i, seen[k])
 			}
 		}
+		for name, e := range map[string]*Bounded{"a": da, "b": db} {
+			if err := e.Err(); err != nil {
+				t.Fatalf("enclave %s: %v", name, err)
+			}
+		}
 	})
+}
+
+// Bounded is a Deliverer that passes each notice to Deliverer and checks
+// what the queue keeps of every attempt: a deadline at most
+// notices.AttemptFor away, and at most notices.InFlightMax attempts at
+// once. Err says what it found broken, nil when nothing.
+type Bounded struct {
+	Deliverer notices.Deliverer
+
+	mu       sync.Mutex
+	inFlight int
+	most     int
+	err      error
+}
+
+// Deliver implements notices.Deliverer.
+func (b *Bounded) Deliver(ctx context.Context, n notices.Notice) error {
+	b.mu.Lock()
+	b.inFlight++
+	b.most = max(b.most, b.inFlight)
+	deadline, ok := ctx.Deadline()
+	switch {
+	case b.inFlight > notices.InFlightMax:
+		b.err = fmt.Errorf("%d attempts at once, more than %d", b.inFlight, notices.InFlightMax)
+	case !ok:
+		b.err = errors.New("an attempt had no deadline")
+	case time.Until(deadline) > notices.AttemptFor:
+		b.err = fmt.Errorf("an attempt's deadline was %v away, more than %v", time.Until(deadline), notices.AttemptFor)
+	}
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		b.inFlight--
+		b.mu.Unlock()
+	}()
+	return b.Deliverer.Deliver(ctx, n)
+}
+
+// Most is the most attempts it saw at once.
+func (b *Bounded) Most() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.most
+}
+
+// Err is what it found broken, nil when nothing.
+func (b *Bounded) Err() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.err
 }
 
 // failing is a Recorder that answers err until set changes it (nil: it

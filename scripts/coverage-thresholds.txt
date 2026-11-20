@@ -23,6 +23,7 @@ github.com/permaily-org/permaily/internal/contracts 100
 github.com/permaily-org/permaily/internal/domain 100
 github.com/permaily-org/permaily/internal/domain/mail 100
 github.com/permaily-org/permaily/internal/services/accounts 99
+github.com/permaily-org/permaily/internal/services/accountrules 96
 github.com/permaily-org/permaily/internal/services/mailboxes 95
 github.com/permaily-org/permaily/internal/sesmail 98
 github.com/permaily-org/permaily/internal/webauthn 99
@@ -34,6 +35,7 @@ github.com/permaily-org/permaily/internal/webhook/send 96
 github.com/permaily-org/permaily/internal/services/webhooks 100
 github.com/permaily-org/permaily/internal/mailhtml 95
 github.com/permaily-org/permaily/internal/query 99
+github.com/permaily-org/permaily/internal/redact 97
 github.com/permaily-org/permaily/internal/decide 100
 github.com/permaily-org/permaily/internal/decide/openai 100
 github.com/permaily-org/permaily/internal/services/decisions 95
@@ -41,4 +43,5 @@ github.com/permaily-org/permaily/internal/services/connections 90
 github.com/permaily-org/permaily/internal/vendors/cimd 96
 github.com/permaily-org/permaily/internal/services/receipts 100
 github.com/permaily-org/permaily/internal/services/notices 100
+github.com/permaily-org/permaily/internal/services/notices/noticestest 87
 github.com/permaily-org/permaily/internal/mcpapi 100

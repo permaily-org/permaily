@@ -21,6 +21,10 @@ function serverNoticeVersion(dir: string): string {
 }
 
 describe("the rules' notice", () => {
+  it('has a version that is a date', () => {
+    expect(RULES_NOTICE_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
   // The app and the server ship in one image, so the notice agreed to is the version the server records: the
   // server's constant (`domain.RulesNoticeVersion`, ADR 0040's pull request 6) must be there, once, and be the same.
   it('is the version the service records', () => {

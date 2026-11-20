@@ -145,6 +145,16 @@ type Config struct {
 	// signed out by the operator or an admin, and is the queue's Deliverer
 	// (connection_notices.go). Nil queues nothing.
 	Notices notices.Queue
+	// Rules is the person's own rules (ADR 0040): an account's record of
+	// rules is removed with it. Nil when there are none.
+	Rules Rules
+}
+
+// Rules is what accounts does of the person's own rules (ADR 0040, "Removed
+// with the account"); *accountrules.Service implements it.
+type Rules interface {
+	// Remove removes every epoch of the account's record of rules.
+	Remove(ctx context.Context, account string) error
 }
 
 // Limits on what one enclave keeps in memory and starts at once.

@@ -2,12 +2,13 @@
 // model (ADR 0040, "Plain words"): the prompt pinned in the image, the
 // answer's schema and its check, pure (depguard's rulewords-is-pure).
 //
-// This file is the seam, committed with the design after its review
-// (finding 7): Writer, which services/decisions implements (Write, ADR
-// 0040's pull request 3, through the spend guard and the Responses API's
-// adapter internal/rulewords/openai) and the rules routes call (pull request
-// 6), with rulewordstest.Fake for the routes' tests. Pull request 3 writes
-// the prompt, its version and the schema here.
+// Writer, which services/decisions implements (Write, ADR 0040's pull
+// request 3, through the spend guard and the Responses API's adapter
+// internal/rulewords/openai) and the rules routes call (pull request 6), with
+// rulewordstest.Fake for the routes' tests. Model is what the adapter
+// implements: one attempt a call. prompt.go holds the developer message, the
+// schema and the request's bytes, named by PromptVersion; check.go reads an
+// answer into a draft.
 package rulewords
 
 import (
@@ -35,7 +36,9 @@ import (
 // came back for a reason of the model's (no key, a refused key, a limit, the
 // account's share, a failure, a timeout); contracts.ErrTooManyRequests past
 // the account's words calls of the day; contracts.ErrRuleWordsUnusable for
-// an answer outside the schema; the context's own error.
+// an answer outside the schema, and for words that are not 1 to
+// contracts.MaxRuleWordsRunes characters of text (nothing sent, nothing
+// counted); the context's own error.
 type Writer interface {
 	Write(ctx context.Context, account, words string) (*Written, error)
 }
@@ -52,3 +55,38 @@ type Written struct {
 // CallsPerDay bounds an account's words calls a day in one enclave, besides
 // its share of the spend (ADR 0040, choice 19).
 const CallsPerDay = 30
+
+// Model is the Responses API's client (internal/rulewords/openai in the
+// image): it sends Request(words) once and returns what came back. It never
+// tries again by itself, so every transmission is reserved for before it is
+// sent. Its errors are *decide.AttemptError, read as internal/decide's
+// Model's are (Sent, the failures by errors.Is); a refusal, an answer cut
+// at MaxOutputTokens or an answer whose text is outside the schema is an
+// Answer, never an error.
+type Model interface {
+	Write(ctx context.Context, words string) (*Answer, error)
+	// Name is the model asked, ModelName; an Answer naming another is
+	// never used.
+	Name() string
+}
+
+// Answer is what one call answered: the text of its message (the JSON the
+// schema bound, which Read checks), or that the model refused, or that the
+// answer was cut; the model that answered; and what it cost.
+type Answer struct {
+	Text       string
+	Refused    bool
+	Incomplete bool
+	Model      string
+	Usage      Usage
+}
+
+// Usage is what the provider counted for a call; Cost turns it into money.
+// Reported is false when the answer said nothing of it, and the call is
+// then charged its Estimate.
+type Usage struct {
+	InputTokens  int64
+	CachedTokens int64
+	OutputTokens int64
+	Reported     bool
+}
