@@ -271,8 +271,8 @@ func (d *discloser) outcome(ml mail, ds inbox.Disclosure) (inbox.Outcome, bool) 
 	if query.Eval(ds.Formulas, evalMessage(ml), nil, query.ForQuery).Value != query.True {
 		return inbox.Outcome{}, false
 	}
-	if ml.Held && len(ds.Rules) > 0 {
-		return inbox.Outcome{Withheld: &inbox.Withheld{ID: ml.ID, Rule: ds.Rules[0].Ref(), Why: inbox.HeldExact}}, true
+	if i := slices.IndexFunc(ds.Rules, func(r rules.Rule) bool { return r.ID == rules.Default().ID }); ml.Held && i >= 0 {
+		return inbox.Outcome{Withheld: &inbox.Withheld{ID: ml.ID, Rule: ds.Rules[i].Ref(), Why: inbox.HeldExact}}, true
 	}
 	// The person's own rules (ADR 0040) hold what they apply to, read for
 	// a rule: True or Unknown.

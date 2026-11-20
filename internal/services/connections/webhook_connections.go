@@ -13,7 +13,6 @@ import (
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/query"
-	"github.com/permaily-org/permaily/internal/rules"
 	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/services/webhooks"
 	"github.com/permaily-org/permaily/internal/store"
@@ -95,47 +94,21 @@ func (s *Service) webhookConn(ctx context.Context, id string) (*connDoc, store.M
 	return d, at, read, nil
 }
 
-// ---- the seam with ADR 0040's pull request 5 ----
+// ---- the rules, as a read applies them ----
 
-// webhookRules are the rules a connection's reads apply now, and the
-// version of the account's record they were read at: through
-// Config.AccountRules (accountrules.Source) when it is set, else the
-// rules every connection applies (Config.Rules: the default rule, with
-// the rules' basis zero, as an account with no record of rules).
-//
-// ADR 0040's pull request 5 makes the connections service read its rules
-// through accountrules.Source for every read and adds Service.Disclosure,
-// which builds a read's inbox.Disclosure in one place; once it is merged,
-// this and webhookDisclosure become calls of it, so that delivery and a
-// read can never apply different rules (ADR 0040, "The seam with
-// delivery").
-func (s *Service) webhookRules(ctx context.Context, d *connDoc) ([]rules.Rule, webhooks.Basis, error) {
-	if s.cfg.AccountRules == nil {
-		return s.cfg.Rules, webhooks.Basis{}, nil
-	}
-	a, err := s.cfg.AccountRules.Applying(ctx, d.Account, d.ClientID)
+// webhookBasis is what an evaluation of d's new mail rests on: the version
+// of d's record read (at) and of the account's rules a read of d applies
+// now, read from the same Config.Source as every vendor's read and
+// disclosureOf (rulesFor). An error, wrapping
+// webhooks.ErrRulesUnavailable, when the rules cannot be read.
+func (s *Service) webhookBasis(ctx context.Context, d *connDoc, at store.Mark) (webhooks.Basis, error) {
+	basis := webhooks.Basis{Connection: at.Version()}
+	ap, err := s.rulesFor(ctx, d.Account, d.ClientID)
 	if err != nil {
-		return nil, webhooks.Basis{}, fmt.Errorf("%w: %w", webhooks.ErrRulesUnavailable, err)
+		return basis, fmt.Errorf("%w: %w", webhooks.ErrRulesUnavailable, err)
 	}
-	return a.Rules, webhooks.Basis{RulesEpoch: a.Epoch, RulesVersion: a.Version}, nil
-}
-
-// webhookDisclosure is what an evaluation of a connection's new mail is
-// given: the account's rules first, the connection's own formulas, the
-// model where a read would ask it. No part is read: whether a message
-// leaves does not depend on them. See webhookRules for ADR 0040's pull
-// request 5.
-func (s *Service) webhookDisclosure(ctx context.Context, d *connDoc, at store.Mark) (inbox.Disclosure, webhooks.Basis, error) {
-	rs, basis, err := s.webhookRules(ctx, d)
-	basis.Connection = at.Version()
-	if err != nil {
-		return inbox.Disclosure{}, basis, err
-	}
-	sc, err := d.scope()
-	if err != nil {
-		return inbox.Disclosure{}, basis, err
-	}
-	return inbox.Disclosure{Formulas: sc.list(), Rules: rs, Account: d.Account, Model: s.delivery(ctx, d) == contracts.DeliveryOn}, basis, nil
+	basis.RulesEpoch, basis.RulesVersion = ap.Epoch, ap.Version
+	return basis, nil
 }
 
 // ---- what a call rests on ----
@@ -157,8 +130,7 @@ func (s *Service) subscription(ctx context.Context, id string) (*webhooks.Subscr
 		Mailboxes: slices.Clone(d.Mailboxes), Schedule: copySchedule(w.Schedule), TimeZone: w.private.TimeZone, MadeAt: d.MadeAt,
 		State: w.State, Delivery: s.delivery(ctx, d), ReadAt: read,
 	}
-	_, basis, rulesErr := s.webhookRules(ctx, d)
-	basis.Connection = at.Version()
+	basis, rulesErr := s.webhookBasis(ctx, d, at)
 	sub.Basis = basis
 	readAt, why, err := s.webhookAuthority(ctx, d)
 	if err != nil {
@@ -479,8 +451,8 @@ func (s *Service) accountWebhooks(ctx context.Context, account string) ([]string
 
 // Pending implements webhooks.Connections: the connection's new mail after
 // the progress, oldest first, each message evaluated once as a read of the
-// connection would evaluate it (inbox.Discloser.Message with
-// webhookDisclosure), at most webhook.ArrivalPage, the late sweep's first.
+// connection would evaluate it (inbox.Discloser.Message with the
+// disclosure Service.Disclosure builds, disclosureOf), at most webhook.ArrivalPage, the late sweep's first.
 // Nothing is evaluated while the model cannot be asked for the account or
 // its rules cannot be read.
 func (s *Service) Pending(ctx context.Context, id string, after webhooks.Progress) (*webhooks.Evaluation, error) {
@@ -496,10 +468,16 @@ func (s *Service) Pending(ctx context.Context, id string, after webhooks.Progres
 	if s.delivery(ctx, d) != contracts.DeliveryOn {
 		return nil, contracts.ErrModelUnavailable
 	}
-	disc, basis, err := s.webhookDisclosure(ctx, d, at)
+	// The disclosure a read of the connection applies now (Service.Disclosure):
+	// a notice is told only of mail the vendor's fetch would get.
+	disc, ap, err := s.disclosureOf(ctx, d)
+	if errors.Is(err, ErrUnavailable) { // the rules could not be read
+		return nil, fmt.Errorf("%w: %w", webhooks.ErrRulesUnavailable, err)
+	}
 	if err != nil {
 		return nil, err
 	}
+	basis := webhooks.Basis{Connection: at.Version(), RulesEpoch: ap.Epoch, RulesVersion: ap.Version}
 	floor := after.Cursor.Received.Add(-webhook.ArrivalLag)
 	if after.LateFrom.After(floor) {
 		floor = after.LateFrom
@@ -656,11 +634,10 @@ func (s *Service) Recheck(ctx context.Context, id string, m webhooks.Match) (boo
 	if _, why, err := s.webhookAuthority(ctx, d); err != nil || why != "" {
 		return false, err
 	}
-	_, basis, err := s.webhookRules(ctx, d)
+	basis, err := s.webhookBasis(ctx, d, at)
 	if err != nil {
 		return false, err
 	}
-	basis.Connection = at.Version()
 	if basis != m.Basis {
 		return false, nil
 	}

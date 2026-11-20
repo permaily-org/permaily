@@ -108,11 +108,6 @@ type Config struct {
 	// WebhookStates, when set, gives the person's page the queue's state
 	// of a connection's webhook.
 	WebhookStates WebhookStates
-	// AccountRules, when set, is the account's rules a connection's
-	// webhook is evaluated under (ADR 0040's accountrules.Source); until
-	// ADR 0040's pull request 5 reads every read's rules through it, the
-	// reads apply Rules (webhook_connections.go, webhookRules).
-	AccountRules accountrules.Source
 	// Notices, when set, queues the notices about connections (ADR 0041,
 	// notices.go): each after the change it tells of committed, under the
 	// key its event names, holding the request at most

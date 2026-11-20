@@ -444,10 +444,9 @@ func TestK31TwoEnclaves(t *testing.T) {
 // connection's (its formulas, the account's rules first, the model asked
 // through the Asker a read would carry).
 //
-// What the real discloser does with these (a model asked once at arrival,
-// its decision kept and met again by the vendor's fetch) is ADR 0040's pull
-// request 5's Service.Disclosure: webhookDisclosure builds the disclosure
-// here until it is merged.
+// The disclosure is Service.Disclosure's (disclosureOf), the one a
+// vendor's read applies; TestReview200Finding2RulesAreTheReadsRules
+// compares each evaluation with that read.
 func TestK32NewMailIsEvaluatedAsARead(t *testing.T) {
 	w := newHookWorld(t)
 	e := w.hookEnclave()

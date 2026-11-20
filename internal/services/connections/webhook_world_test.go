@@ -112,7 +112,7 @@ func (w *hookWorld) hookEnclave() *hookEnclave {
 	}
 	cfg := w.config(a)
 	cfg.Webhooks = w.q
-	cfg.AccountRules = &unreadable{w: w, Source: ar}
+	cfg.Source = &unreadable{w: w, Source: ar}
 	s, err := New(cfg)
 	if err != nil {
 		w.t.Fatal(err)

@@ -2,11 +2,15 @@ package connections
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/oauth"
+	"github.com/permaily-org/permaily/internal/rules"
+	"github.com/permaily-org/permaily/internal/services/accountrules"
 	"github.com/permaily-org/permaily/internal/services/webhooks"
 	"github.com/permaily-org/permaily/internal/services/webhooks/webhookstest"
 )
@@ -149,5 +153,141 @@ func TestReview200Finding1WriteByFromList(t *testing.T) {
 	defer p.Finish()
 	if sub.ReadAt.After(listRead) || p.WriteBy().After(listRead.Add(oauth.ConnectionFresh)) {
 		t.Fatalf("read at %v, write by %v, the list read at %v", sub.ReadAt, p.WriteBy(), listRead)
+	}
+}
+
+// vendorGets says whether a vendor's read of m through g would give it:
+// the disclosure prepare builds for the read, evaluated by the discloser.
+func vendorGets(t *testing.T, w *hookWorld, e *hookEnclave, g *oauth.Grant, m webhooks.Cursor) bool {
+	t.Helper()
+	ctx := context.Background()
+	r, err := e.s.prepare(ctx, g, OperationRead, nil)
+	if err != nil {
+		t.Fatalf("the read: %v", err)
+	}
+	box, err := w.mbx.OpenForConnection(ctx, g.Account, m.Mailbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := e.s.cfg.Discloser.Message(e.s.asking(ctx, r.d), box, r.d, m.Message)
+	if err != nil {
+		t.Fatalf("the read: %v", err)
+	}
+	return o.Disclosed != nil
+}
+
+// Finding 2: a notice of new mail is decided as a vendor's read of it is,
+// with the same rules from the same source: a message the default rule
+// holds, or a person's rule, never makes a match; with the default turned
+// off by the person, the message both leaves and makes a match. In every
+// case Pending matches a message exactly when the vendor's read gives it.
+func TestReview200Finding2RulesAreTheReadsRules(t *testing.T) {
+	w := newHookWorld(t)
+	e := w.hookEnclave()
+	ctx := context.Background()
+	account := w.account()
+	c, ask, tok := w.connectTok(e, account, &newMail)
+	g := w.grant(e.s, ask, tok.AccessToken)
+	start := w.clock.now()
+	from := webhooks.Progress{Cursor: webhooks.Cursor{Received: start}}
+	same := func(why string, m webhooks.Cursor, leaves bool) {
+		t.Helper()
+		ev, err := e.s.Pending(ctx, c, from)
+		if err != nil {
+			t.Fatalf("%s: %v", why, err)
+		}
+		matched := ev.Match != nil && slices.Contains(ev.Match.Messages, m)
+		gets := vendorGets(t, w, e, g, m)
+		if matched != gets || gets != leaves {
+			t.Fatalf("%s: match %v, the vendor's read gives it %v, want %v", why, matched, gets, leaves)
+		}
+	}
+	held := w.deliver(e, c, 0, start.Add(time.Second), webhookstest.ArrivalHeld)
+	same("the default rule holds it", held, false)
+
+	l, err := e.rules.List(ctx, account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := accountrules.Person{Account: account, ConfirmedUntil: w.clock.now().Add(10 * time.Minute)}
+	if _, err := e.rules.SetDefault(ctx, p, contracts.RuleDefaultSet{On: false, Version: l.Version}); err != nil {
+		t.Fatal(err)
+	}
+	same("the default turned off", held, true)
+
+	trip := w.deliver(e, c, 1, start.Add(2*time.Second), webhookstest.ArrivalLeaves)
+	same("no rule holds it", trip, true)
+	w.holdAll(e, account)
+	same("a person's rule holds it", trip, false)
+	same("a person's rule that does not apply", held, true)
+}
+
+// Finding 2 (N2): a rule saved between the recheck and the admission
+// changes the basis Admit answers, so the queue discards the match.
+func TestReview200Finding2RuleBetweenRecheckAndAdmit(t *testing.T) {
+	w := newHookWorld(t)
+	e := w.hookEnclave()
+	ctx := context.Background()
+	c, account := w.make(e, newMail)
+	start := w.clock.now()
+	w.deliver(e, c, 0, start.Add(time.Second), webhookstest.ArrivalLeaves)
+	ev, err := e.s.Pending(ctx, c, webhooks.Progress{Cursor: webhooks.Cursor{Received: start}})
+	if err != nil || ev.Match == nil {
+		t.Fatalf("%+v %v", ev, err)
+	}
+	if ok, err := e.s.Recheck(ctx, c, *ev.Match); !ok || err != nil {
+		t.Fatalf("recheck %v %v", ok, err)
+	}
+	w.holdAll(e, account)
+	sub, p, err := e.s.Admit(ctx, c)
+	if p != nil {
+		defer p.Finish()
+	}
+	if err != nil || sub.Basis == ev.Match.Basis {
+		t.Fatalf("the admission rests on the match's basis: %+v %v", sub, err)
+	}
+	if ok, _ := e.s.Recheck(ctx, c, *ev.Match); ok {
+		t.Fatal("the match stands under the new rule")
+	}
+}
+
+// Finding 2: a rule that only removes parts of a message changes the basis
+// but not whether it leaves: it still makes a match, and the vendor's read
+// still gives it.
+func TestReview200Finding2RemovingRuleStillNotifies(t *testing.T) {
+	w := newHookWorld(t)
+	e := w.hookEnclave()
+	ctx := context.Background()
+	account := w.account()
+	c, ask, tok := w.connectTok(e, account, &newMail)
+	g := w.grant(e.s, ask, tok.AccessToken)
+	start := w.clock.now()
+	m := w.deliver(e, c, 0, start.Add(time.Second), webhookstest.ArrivalLeaves)
+	draft := contracts.RuleDraft{Name: "no bodies", On: true, Effect: contracts.EffectRemove, Removal: &contracts.RuleRemoval{Parts: []contracts.Part{contracts.PartBody}},
+		Scope: contracts.RuleScope{To: contracts.ScopeAll}, Criteria: []contracts.Formula{{V: 1, All: []contracts.Group{{Any: []contracts.Condition{
+			{Var: contracts.VarSubject, Op: contracts.OpContains, Value: "trip"},
+		}}}}}}
+	chk, err := e.rules.Check(ctx, account, draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := e.rules.List(ctx, account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := accountrules.Person{Account: account, ConfirmedUntil: w.clock.now().Add(10 * time.Minute)}
+	if _, err := e.rules.Save(ctx, p, "", contracts.RuleSave{DraftID: chk.DraftID, Draft: chk.Draft, Version: l.Version}); err != nil {
+		t.Fatal(err)
+	}
+	ev, err := e.s.Pending(ctx, c, webhooks.Progress{Cursor: webhooks.Cursor{Received: start}})
+	if err != nil || ev.Match == nil || !slices.Contains(ev.Match.Messages, m) {
+		t.Fatalf("a removing rule prevented the notice: %+v %v", ev, err)
+	}
+	if !vendorGets(t, w, e, g, m) {
+		t.Fatal("the vendor's read does not give it")
+	}
+	ds := w.disc.last()
+	if !slices.ContainsFunc(ds.Rules, func(r rules.Rule) bool { return r.Effect == rules.Remove }) {
+		t.Fatalf("the evaluation did not apply the removing rule: %+v", ds.Rules)
 	}
 }
