@@ -1,0 +1,42 @@
+{
+  "name": "device-added-unverified",
+  "to": "ada@example.com",
+  "subject": "A device was added to one of your connections",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "A new device was added to one of your connections. It reads the same mail the connection reads."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        },
+        {
+          "label": "App",
+          "value": "An app Permaily hasn't verified"
+        },
+        {
+          "label": "Reads",
+          "value": "Sender and date, subject, body text, attachments"
+        },
+        {
+          "label": "Ends",
+          "value": "10 February 2027, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "You can see what it reads, and revoke it, in Connections at app.permaily.com."
+    },
+    {
+      "kind": "note",
+      "text": "If this wasn't you, sign in at app.permaily.com, revoke it in Connections, sign out the devices you don't know, and write to support@permaily.com."
+    }
+  ]
+}
