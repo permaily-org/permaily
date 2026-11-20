@@ -1,0 +1,48 @@
+{
+  "signature": "standard-webhooks-v2a",
+  "spec_revision": "3d65b1824b6697f05a5a4584e7062bd23512fc8e",
+  "keys": [
+    {
+      "id": "wk1",
+      "x": "9YhknjhYyxDGJkpOoKvQEsnw8_CKBETPD99lXw_d9zY"
+    }
+  ],
+  "keys_url": "https://api.permaily.com/.well-known/permaily-webhook-keys",
+  "notice_holds_mail": false,
+  "same_host": true,
+  "redirects": "none",
+  "transport": "h2",
+  "new_mail": "after_rules",
+  "revocation_seconds": 5,
+  "min_interval_seconds": 60,
+  "timeout_seconds": 10,
+  "give_up_seconds": 259200,
+  "dedup_seconds": 259800,
+  "host_in_flight": 2,
+  "host_attempts_per_minute": 60,
+  "schedules": [
+    "day",
+    "week"
+  ],
+  "since": "2026-11-20T12:00:00Z",
+  "outcomes": {
+    "cut": 0,
+    "gone": 0,
+    "no_answer": 0,
+    "redirect": 0,
+    "refused": 0,
+    "sent": 0,
+    "status": 0,
+    "too_late": 0
+  },
+  "skipped": {
+    "changed": 0,
+    "coalesced": 0,
+    "ended": 0,
+    "given_up": 0,
+    "model_unavailable": 0,
+    "no_device": 0,
+    "off": 0,
+    "rules_unavailable": 0
+  }
+}

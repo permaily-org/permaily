@@ -117,6 +117,10 @@ type hostResult struct {
 	// passed checkConnections, with what the verifier warns of; nil when the
 	// image is older or has no connections.
 	Connections *connectionsResult `json:"connections,omitempty"`
+	// Webhooks is what the enclave reports of connections' webhooks (ADR
+	// 0039), after it passed checkWebhooks and its published key set was
+	// found to be /status's; nil when the image is older or calls none.
+	Webhooks *webhooksResult `json:"webhooks,omitempty"`
 }
 
 // rootResult is what the verified enclave reported about the KMS key that
@@ -406,7 +410,15 @@ func verify(ctx context.Context, client *http.Client, url string, expected map[u
 	if st.Model != nil && kms.canary != nil {
 		kms.expectedCanary, kms.canaryErr = kms.canary(ctx, r.Commit)
 	}
-	return checkStatus(st, r, hex.EncodeToString(expected[0]), kms)
+	r = checkStatus(st, r, hex.EncodeToString(expected[0]), kms)
+	if r.OK && r.Webhooks != nil {
+		// The key set the api host publishes, fetched over the attested
+		// key, must be the one /status reports (ADR 0039).
+		if err := checkPublishedKeys(ctx, attestation.FetchAttested, client, r.Webhooks, res.SPKIHash); err != nil {
+			r.OK, r.Webhooks, r.Error = false, nil, "webhooks: "+err.Error()
+		}
+	}
+	return r
 }
 
 // checkStatus applies the checks to what a verified enclave reports about
@@ -435,6 +447,15 @@ func checkStatus(st *attestation.Status, r hostResult, pcr0 string, kms kmsOptio
 		if r.Connections, err = checkConnections(st.Connections, deploymentOf(r.URL), kms.now); err != nil {
 			r.Connections = nil
 			r.Error = "connections: " + err.Error()
+			return r
+		}
+	}
+	if st.Webhooks != nil {
+		// How notices are called and signed is checked whatever is
+		// skipped, as connections are.
+		if r.Webhooks, err = checkWebhooks(st.Webhooks, deploymentOf(r.URL)); err != nil {
+			r.Webhooks = nil
+			r.Error = "webhooks: " + err.Error()
 			return r
 		}
 	}
@@ -934,6 +955,7 @@ func printHuman(w io.Writer, source string, expected map[uint][]byte, results []
 		printAdmin(w, r.Admin)
 		printModel(w, r.Model)
 		printConnections(w, r.Connections)
+		printWebhooks(w, r.Webhooks)
 		if r.TLS != nil && r.TLS.Sealed {
 			fmt.Fprintf(w, "      TLS key created %s, kept sealed with KMS across restarts\n", r.TLS.KeyCreatedAt.UTC().Format(time.RFC3339))
 		}
