@@ -1,0 +1,10 @@
+To: ada@example.com
+Subject: Some of your receipts were deleted or changed
+
+Permaily found that some of the receipts that record what left your mailboxes were deleted or changed in its storage.
+
+    When: 12 November 2026, 09:30 UTC
+
+Open Activity at app.permaily.com to see which. Your receipts after them are still recorded, and Permaily's public check now fails until this is looked into.
+
+To ask about it, write to support@permaily.com.

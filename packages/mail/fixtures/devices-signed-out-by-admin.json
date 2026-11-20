@@ -1,0 +1,29 @@
+{
+  "name": "devices-signed-out-by-admin",
+  "to": "ada@example.com",
+  "subject": "Every device was signed out of your Permaily account",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "An admin of Permaily signed every device out of your Permaily account."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "You can sign in again at app.permaily.com."
+    },
+    {
+      "kind": "note",
+      "text": "To ask why, write to support@permaily.com."
+    }
+  ]
+}
