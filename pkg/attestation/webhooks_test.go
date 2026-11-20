@@ -3,6 +3,7 @@ package attestation
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -133,13 +134,13 @@ func TestFetchAttested(t *testing.T) {
 	if b, err := FetchAttested(ctx, client, srv.URL+"/keys", key); err != nil || string(b) != `{"keys":[]}` {
 		t.Fatalf("%q %v", b, err)
 	}
-	if _, err := FetchAttested(ctx, client, srv.URL+"/keys", make([]byte, 32)); err != ErrNotBound {
+	if _, err := FetchAttested(ctx, client, srv.URL+"/keys", make([]byte, 32)); !errors.Is(err, ErrNotBound) {
 		t.Fatalf("another key: %v", err)
 	}
 	if _, err := FetchAttested(ctx, client, srv.URL+"/missing", key); err == nil || !strings.Contains(err.Error(), "HTTP 404") {
 		t.Fatalf("a 404: %v", err)
 	}
-	if _, err := FetchAttested(ctx, client, "http"+strings.TrimPrefix(srv.URL, "https")+"/keys", key); err != ErrNotTLS {
+	if _, err := FetchAttested(ctx, client, "http"+strings.TrimPrefix(srv.URL, "https")+"/keys", key); !errors.Is(err, ErrNotTLS) {
 		t.Fatalf("over http: %v", err)
 	}
 }
