@@ -139,6 +139,16 @@ type Config struct {
 	// with it (RemoveAll). Nil when there are none; the composition may give
 	// it later, once, with SetConnections, as it does the mailboxes.
 	Connections connections.Lifecycle
+	// Rules is the person's own rules (ADR 0040): an account's record of
+	// rules is removed with it. Nil when there are none.
+	Rules Rules
+}
+
+// Rules is what accounts does of the person's own rules (ADR 0040, "Removed
+// with the account"); *accountrules.Service implements it.
+type Rules interface {
+	// Remove removes every epoch of the account's record of rules.
+	Remove(ctx context.Context, account string) error
 }
 
 // Limits on what one enclave keeps in memory and starts at once.

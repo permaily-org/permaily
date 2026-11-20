@@ -1,0 +1,20 @@
+{
+  "v": 3,
+  "id": "rcp_18e87e30edfd0a0000000000000000000008",
+  "at": "2026-11-16T10:00:00.123456Z",
+  "kind": "rules",
+  "client_id": "",
+  "vendor": "",
+  "resource": "",
+  "rules_change": {
+    "changes": ["criteria", "scope"],
+    "rule": "rul_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "before": 1,
+    "after": 2,
+    "draft_id": "rdr_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "criteria": ["qry_5lv6p6m7doyxgzx4d4lrv236by"],
+    "notice": "2026-11-20",
+    "epoch": 1,
+    "version": 433
+  }
+}
