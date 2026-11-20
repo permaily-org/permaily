@@ -2219,7 +2219,8 @@ const receiptKinds: readonly string[] = [
 */
 type Shape = Record<string, unknown>
 
-const isObject = (v: unknown): v is Shape => typeof v === 'object' && v !== null && !Array.isArray(v)
+const isObject = (v: unknown): v is Shape =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
 const isString = (v: unknown): v is string => typeof v === 'string'
 const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 const optional =
@@ -2263,7 +2264,9 @@ const isDelivered = (v: unknown): boolean =>
   optString(v.subject) &&
   optNumber(v.attachment) &&
   isList(isModel)(v.model) &&
-  isList((c) => isObject(c) && isRuleRef(c.rule) && isString(c.at) && isList(isModel)(c.model))(v.cleared)
+  isList((c) => isObject(c) && isRuleRef(c.rule) && isString(c.at) && isList(isModel)(c.model))(
+    v.cleared,
+  )
 const isHeld = (v: unknown): boolean =>
   isObject(v) &&
   isString(v.mailbox) &&
@@ -2301,7 +2304,9 @@ const receiptPart: Partial<Record<ReceiptKind, (v: unknown) => boolean>> = {
     isString(v.from) &&
     isString(v.until) &&
     isNumber(v.recorded) &&
-    isList((c) => isObject(c) && isString(c.operation) && isString(c.reason) && isNumber(c.count))(v.counts),
+    isList((c) => isObject(c) && isString(c.operation) && isString(c.reason) && isNumber(c.count))(
+      v.counts,
+    ),
 }
 
 const receiptParts = ['refused', 'consent', 'ended', 'refusals'] as const
@@ -2346,7 +2351,10 @@ export function readReceipt(document: unknown): Receipt | null {
     ...(r as unknown as Receipt),
     formulas: list<ReceiptFormula>(r.formulas),
     rules: list<RuleRef>(r.rules),
-    delivered: list<ReceiptDelivered>(r.delivered).map((d) => ({ ...d, parts: list<ConnectionPart>(d.parts) })),
+    delivered: list<ReceiptDelivered>(r.delivered).map((d) => ({
+      ...d,
+      parts: list<ConnectionPart>(d.parts),
+    })),
     held: list<ReceiptHeld>(r.held),
   }
   if (receipt.consent)
@@ -2357,6 +2365,9 @@ export function readReceipt(document: unknown): Receipt | null {
       mailboxes: list<string>(receipt.consent.mailboxes),
     }
   if (receipt.refusals)
-    receipt.refusals = { ...receipt.refusals, counts: list<ReceiptRefusals['counts'][number]>(receipt.refusals.counts) }
+    receipt.refusals = {
+      ...receipt.refusals,
+      counts: list<ReceiptRefusals['counts'][number]>(receipt.refusals.counts),
+    }
   return receipt
 }

@@ -160,13 +160,21 @@ describe('the downloads’ parts', () => {
     expect(exportName('2026-11-20', 'csv')).toBe('permaily-receipts-2026-11-20.csv')
     expect(exportName('2026-11-20', 'jsonl')).toBe('permaily-receipts-2026-11-20.jsonl')
     expect(exportName('2026-11-20', 'csv', 1)).toBe('permaily-receipts-2026-11-20-part-001.csv')
-    expect(exportName('2026-11-20', 'jsonl', 12)).toBe('permaily-receipts-2026-11-20-part-012.jsonl')
+    expect(exportName('2026-11-20', 'jsonl', 12)).toBe(
+      'permaily-receipts-2026-11-20-part-012.jsonl',
+    )
     expect(exportName('2026-11-20', 'csv', 1000)).toBe('permaily-receipts-2026-11-20-part-1000.csv')
-    expect(exportManifestName('2026-11-20', 'csv')).toBe('permaily-receipts-2026-11-20-csv-manifest.json')
-    expect(exportManifestName('2026-11-20', 'jsonl')).toBe('permaily-receipts-2026-11-20-jsonl-manifest.json')
+    expect(exportManifestName('2026-11-20', 'csv')).toBe(
+      'permaily-receipts-2026-11-20-csv-manifest.json',
+    )
+    expect(exportManifestName('2026-11-20', 'jsonl')).toBe(
+      'permaily-receipts-2026-11-20-jsonl-manifest.json',
+    )
     const names = [1, 2, 9, 10, 100].map((n) => exportName('2026-11-20', 'csv', n))
     expect([...names].sort()).toEqual(names)
-    for (const bad of [0, -1, 1.5, Number.NaN]) expect(() => exportName('2026-11-20', 'csv', bad)).toThrow()
-    for (const bad of ['', '2026-11-2', '20261120', 'acc_ana']) expect(() => exportName(bad, 'csv')).toThrow()
+    for (const bad of [0, -1, 1.5, Number.NaN])
+      expect(() => exportName('2026-11-20', 'csv', bad)).toThrow()
+    for (const bad of ['', '2026-11-2', '20261120', 'acc_ana'])
+      expect(() => exportName(bad, 'csv')).toThrow()
   })
 })
