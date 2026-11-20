@@ -261,6 +261,137 @@ describe('U32: the calls of the rules routes', () => {
   })
 })
 
+// The routes read every body strictly (httpapi.decodeRule): each member the contract requires present at every depth,
+// none null, nothing of the screen's own. A draft a screen left with null, undefined or extra members is sent as the
+// contract's.
+describe('U32: every body of the rules routes is complete and holds no null', () => {
+  /** The members a path in a body has that are null, undefined, or not the contract's; and those it requires missing. */
+  function problems(value: unknown, at = ''): string[] {
+    if (value === null || value === undefined) return [`${at} is ${value}`]
+    if (Array.isArray(value)) return value.flatMap((v, i) => problems(v, `${at}[${i}]`))
+    if (typeof value !== 'object') return []
+    return Object.entries(value).flatMap(([k, v]) => problems(v, `${at}.${k}`))
+  }
+  const required: Record<string, string[]> = {
+    draft: ['name', 'criteria', 'effect', 'scope', 'on'],
+    formula: ['v', 'all'],
+    group: ['any'],
+    condition: ['var', 'op'],
+    scope: ['to'],
+  }
+  const allowed: Record<string, string[]> = {
+    draft: [...required.draft, 'removal'],
+    formula: required.formula,
+    group: required.group,
+    condition: [...required.condition, 'value', 'not'],
+    scope: [...required.scope, 'clients'],
+    removal: ['parts', 'shapes', 'topics'],
+  }
+  function shapeOf(kind: string, value: Record<string, unknown>): string[] {
+    const keys = Object.keys(value)
+    return [
+      ...(required[kind] ?? []).filter((k) => !keys.includes(k)).map((k) => `${kind} lacks ${k}`),
+      ...keys.filter((k) => !allowed[kind].includes(k)).map((k) => `${kind} has ${k}`),
+    ]
+  }
+  function draftProblems(d: Record<string, unknown>): string[] {
+    const criteria = (d.criteria ?? []) as Record<string, unknown>[]
+    return [
+      ...shapeOf('draft', d),
+      ...shapeOf('scope', d.scope as Record<string, unknown>),
+      ...(d.removal ? shapeOf('removal', d.removal as Record<string, unknown>) : []),
+      ...criteria.flatMap((f) => [
+        ...shapeOf('formula', f),
+        ...((f.all ?? []) as Record<string, unknown>[]).flatMap((g) => [
+          ...shapeOf('group', g),
+          ...((g.any ?? []) as Record<string, unknown>[]).flatMap((c) => shapeOf('condition', c)),
+        ]),
+      ]),
+    ]
+  }
+
+  // What a screen could hand the calls: optional members left null or undefined, empty lists, and members of its own.
+  const loose = {
+    name: 'Bank',
+    criteria: [
+      {
+        v: 1,
+        all: [
+          {
+            any: [
+              { var: 'from.domain', op: 'eq', value: 'bank.example', not: undefined, label: 'x' },
+            ],
+          },
+          { any: [{ var: 'attachment', op: 'exists', value: undefined, not: null }] },
+        ],
+        sentence: 'From bank.example',
+      },
+    ],
+    effect: 'remove',
+    removal: { parts: ['attachments'], shapes: null, topics: [] },
+    scope: { to: 'all', clients: null },
+    on: true,
+    key: 'editor-1',
+  } as unknown as api.RuleDraft
+
+  it('sends every draft and save as the contract writes it, with no null and nothing missing', async () => {
+    const rule = list.rules[0]
+    server
+      .on('POST /api/v1/rules/check', ok(check))
+      .on('POST /api/v1/rules', ok(rule))
+      .on('PUT /api/v1/rules/rul_x', ok(rule))
+      .on('POST /api/v1/rules/preview', (asked) =>
+        (asked.body as { message?: string }).message
+          ? ok({ draft_id: 'rdr_x', removed: {} })
+          : ok({ draft_id: 'rdr_x', page: { messages: [], needs_model: [], unknown: [] } }),
+      )
+      .on('POST /api/v1/rules/default', ok(list.default))
+      .on('POST /api/v1/rules/rul_x/delete', ok())
+      .on('POST /api/v1/rules/words', ok({ check, model: 'm', prompt: 'p' }))
+      .on('POST /api/v1/account/rules-notice', ok({ version: '2026-11-20', at }))
+    const holding = { ...loose, effect: 'hold', removal: null } as unknown as api.RuleDraft
+    await api.checkRule(loose)
+    await api.checkRule(holding)
+    await api.saveRule({ draft_id: 'rdr_x', draft: loose, version: 3, notice: undefined })
+    await api.saveRule({ draft_id: 'rdr_x', draft: holding, version: 3, notice: '' }, 'rul_x')
+    await api.previewRule(loose, 'mbx_x', { after: undefined, askModel: undefined })
+    await api.previewRuleRemoval(loose, 'mbx_x', 'm1')
+    await api.setDefaultRule(false, 3)
+    await api.deleteRule('rul_x', 3)
+    await api.ruleWords('words', '2026-11-20')
+    await api.agreeRulesNotice('2026-11-20')
+    // Bodies as they went on the wire, each read back as JSON (undefined members dropped, null kept).
+    const sent = server.calls.map(
+      (c) => JSON.parse(JSON.stringify(c.body)) as Record<string, unknown>,
+    )
+    for (const body of sent) expect(problems(body)).toEqual([])
+    const drafts = sent.filter((b) => b.draft).map((b) => b.draft as Record<string, unknown>)
+    expect(drafts).toHaveLength(6)
+    for (const d of drafts) expect(draftProblems(d)).toEqual([])
+    expect(drafts[0]).toEqual({
+      name: 'Bank',
+      criteria: [
+        {
+          v: 1,
+          all: [
+            { any: [{ var: 'from.domain', op: 'eq', value: 'bank.example' }] },
+            { any: [{ var: 'attachment', op: 'exists' }] },
+          ],
+        },
+      ],
+      effect: 'remove',
+      removal: { parts: ['attachments'] },
+      scope: { to: 'all' },
+      on: true,
+    })
+    expect(drafts[1].removal).toBeUndefined()
+    expect(sent[2]).toEqual({ draft_id: 'rdr_x', draft: drafts[0], version: 3 })
+    expect(sent[3]).toEqual({ draft_id: 'rdr_x', draft: drafts[1], version: 3 })
+    // The contract's own drafts go as they are.
+    expect(api.ruleDraftWire(check.draft)).toEqual(check.draft)
+  })
+})
+
 describe('U32: who a rule is for, as the server decides it', () => {
   it('covers clients as rules.Scope.Covers does, matched exactly', () => {
     const a = 'https://vendor.example/client-a.json'

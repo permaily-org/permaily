@@ -1801,6 +1801,49 @@ function ruleDefaultOf(answer: Partial<RuleDefault> | null | undefined): RuleDef
   }
 }
 
+/** A list the server reads, of its strings: absent when empty, so nothing it reads is `null`. */
+function wireList<T>(value: readonly T[] | null | undefined): T[] | undefined {
+  return Array.isArray(value) && value.length > 0 ? [...value] : undefined
+}
+
+/**
+ * A draft as the rules routes read it (`decodeRule`): only the contract's members, every one it requires there and none
+ * `null` at any depth, so a member a screen left `null` or `undefined`, or one of its own, never reaches the server,
+ * which refuses the whole body for it (`invalid_body`).
+ */
+export function ruleDraftWire(draft: RuleDraft): RuleDraft {
+  const condition = (c: QueryCondition): QueryCondition => ({
+    var: c.var,
+    op: c.op,
+    ...(typeof c.value === 'string' && c.value !== '' ? { value: c.value } : {}),
+    ...(c.not === true ? { not: true } : {}),
+  })
+  const removal = draft.removal
+  const parts = wireList(removal?.parts)
+  const shapes = wireList(removal?.shapes)
+  const topics = wireList(removal?.topics)
+  const clients = wireList(draft.scope?.clients)
+  return {
+    name: typeof draft.name === 'string' ? draft.name : '',
+    criteria: (draft.criteria ?? []).map((f) => ({
+      v: f?.v ?? 1,
+      all: (f?.all ?? []).map((g) => ({ any: (g?.any ?? []).map(condition) })),
+    })),
+    effect: draft.effect,
+    ...(removal
+      ? {
+          removal: {
+            ...(parts ? { parts } : {}),
+            ...(shapes ? { shapes } : {}),
+            ...(topics ? { topics } : {}),
+          },
+        }
+      : {}),
+    scope: { to: draft.scope?.to ?? 'all', ...(clients ? { clients } : {}) },
+    on: draft.on === true,
+  }
+}
+
 /**
  * The account's rules: the default rule and whether it is on, the person's rules in the order they were made, the
  * rules' notice the account agreed to, the version every change sends back, and how many rules an account may have.
@@ -1825,7 +1868,7 @@ export async function rules(): Promise<RuleList> {
  * and nothing written. A refusal is `invalid_rule` with its `rule` (why), or `invalid_formula` with its `problem`.
  */
 export async function checkRule(draft: RuleDraft): Promise<RuleCheck> {
-  return ruleCheckOf(await request('POST', '/api/v1/rules/check', { draft }))
+  return ruleCheckOf(await request('POST', '/api/v1/rules/check', { draft: ruleDraftWire(draft) }))
 }
 
 /**
@@ -1851,7 +1894,13 @@ export async function ruleWords(words: string, notice: string): Promise<RuleProp
  * with the `draft_id` its check answered (`rule_changed` when they differ), the rules' version the screen read
  * (`rules_changed`) and, for a draft a model decides any of, the rules' notice. Needs a fresh proof.
  */
-export async function saveRule(save: RuleSave, id?: string): Promise<Rule> {
+export async function saveRule(rule: RuleSave, id?: string): Promise<Rule> {
+  const save: RuleSave = {
+    draft_id: rule.draft_id,
+    draft: ruleDraftWire(rule.draft),
+    version: rule.version,
+    ...(rule.notice ? { notice: rule.notice } : {}),
+  }
   return ruleOf(
     id === undefined
       ? await request('POST', '/api/v1/rules', save)
@@ -1894,7 +1943,7 @@ export async function previewRule(
   page: { after?: string; limit?: number; askModel?: boolean } = {},
 ): Promise<RulePreviewPage> {
   const answer = await request<Partial<RulePreviewPage> | null>('POST', '/api/v1/rules/preview', {
-    draft,
+    draft: ruleDraftWire(draft),
     mailbox,
     ...(page.after ? { after: page.after } : {}),
     limit: page.limit ?? messagesPerPage,
@@ -1915,7 +1964,7 @@ export async function previewRuleRemoval(
     'POST',
     '/api/v1/rules/preview',
     {
-      draft,
+      draft: ruleDraftWire(draft),
       mailbox,
       message,
       ...(askModel ? { ask_model: true } : {}),

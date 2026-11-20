@@ -4,7 +4,7 @@ import * as api from '../../lib/api.ts'
 import { useSession } from '../../lib/session.tsx'
 import { messageFor } from '../auth/messages.ts'
 import { Select } from './CriteriaEditor.tsx'
-import { partWords, shapeWords } from './words.ts'
+import { asLeavingUnavailable, partWords, shapeWords } from './words.ts'
 
 /**
  * The editor's preview (ADR 0040, "Previews and consent"): a page of a mailbox's mail the draft applies to, and for a
@@ -46,8 +46,15 @@ export function RulePreview({
     setPending(false)
   }, [shownKey])
 
-  /** Asks the server, and gives its answer to `then` only if the draft and the mailbox are still the ones asked for. */
-  async function ask<T>(question: () => Promise<T>, then: (answer: T) => void) {
+  /**
+   * Asks the server, and gives its answer to `then` only if the draft and the mailbox are still the ones asked for. A
+   * refusal is said in `refused`'s words when it has some for its code, or in the code's own.
+   */
+  async function ask<T>(
+    question: () => Promise<T>,
+    then: (answer: T) => void,
+    refused?: (code: api.ApiErrorCode) => string | undefined,
+  ) {
     if (pending) return
     const ticket = asked.current
     setPending(true)
@@ -57,7 +64,7 @@ export function RulePreview({
       if (ticket === asked.current) then(answer)
     } catch (problem) {
       const code = failed(problem)
-      if (code && ticket === asked.current) setError(messageFor(code))
+      if (code && ticket === asked.current) setError(refused?.(code) ?? messageFor(code))
     } finally {
       if (ticket === asked.current) setPending(false)
     }
@@ -79,6 +86,9 @@ export function RulePreview({
     return ask(
       () => api.previewRuleRemoval(draft, chosen, id, askedModel),
       (shown) => setRemoval({ id, shown }),
+      // The server answers not_found until it can show a message as a removal leaves it (ADR 0040, pull request 5's
+      // disclosure): the page stays, and only this is said.
+      (code) => (code === 'not_found' ? asLeavingUnavailable : undefined),
     )
   }
 

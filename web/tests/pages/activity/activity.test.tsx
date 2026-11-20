@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { current, expectNotKept, named, open, settle } from '../../helpers/app.tsx'
 import { expectAccessible } from '../../helpers/axe.ts'
-import { connectionOf } from '../../helpers/connections.ts'
+import { connectionOf, noRules } from '../../helpers/connections.ts'
 import { personal, work } from '../../helpers/mailboxes.ts'
 import {
   digest,
@@ -739,6 +739,8 @@ describe('E11: a connection’s activity', () => {
   it('links from a connection’s page to its activity', async () => {
     signedIn()
       .on(`GET /api/v1/connections/${goldenConnection}`, ok(claude))
+      // A connection's page lists the rules that apply to it (ADR 0040).
+      .on('GET /api/v1/rules', ok(noRules))
       .on(firstPage, ok(pageOf([linkOf(3, [receiptOf('ended')])])))
     const { user } = await open(`/connections/claude.ai/${goldenConnection}`)
     const link = await screen.findByRole('link', { name: named('Activity of Claude Code') })

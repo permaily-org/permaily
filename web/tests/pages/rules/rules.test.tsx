@@ -1,7 +1,9 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { RULES_NOTICE_VERSION, rulesNotice } from '../../../src/lib/rules-notice.ts'
+import { messageFor } from '../../../src/pages/auth/messages.ts'
 import {
+  asLeavingUnavailable,
   inFlight,
   senderAndAttachments,
   shapeWords,
@@ -701,6 +703,34 @@ describe('U32: a rule of the person’s', () => {
         ask_model: true,
       }),
     )
+    await expectAccessible()
+  })
+})
+
+// The removal's preview of one message answers not_found until disclosure (ADR 0040, pull request 5) is composed: the
+// screen says it can't show that yet, keeps the page, and never says the email is gone.
+describe('U32: a message as it would leave, while the server cannot show it', () => {
+  it('says it cannot show it yet, and keeps the page', async () => {
+    rulesServer()
+      .on('POST /api/v1/rules/check', echoCheck())
+      .on('POST /api/v1/rules/preview', (asked) =>
+        (asked.body as { message?: string }).message
+          ? refused(404, 'not_found')
+          : ok({
+              draft_id: 'rdr_x',
+              page: { messages: [summary(1)], needs_model: [], unknown: [] },
+            }),
+      )
+    const { user } = await open('/rules/rul_home')
+    await screen.findByRole('heading', { level: 1, name: 'Home address' })
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Mailbox' }), work.id)
+    await user.click(screen.getByRole('button', { name: 'Show the mail it applies to' }))
+    await screen.findByText(/1 of the newest emails?\./)
+    await user.click(screen.getByRole('button', { name: 'See it as it would leave' }))
+    await screen.findByText(asLeavingUnavailable)
+    expect(screen.queryByText(messageFor('not_found'))).toBeNull()
+    expect(screen.getByRole('button', { name: 'See it as it would leave' })).toBeTruthy()
+    expect(current()).toBe('/rules/rul_home')
     await expectAccessible()
   })
 })
