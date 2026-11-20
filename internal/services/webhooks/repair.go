@@ -31,7 +31,10 @@ type repairLease struct {
 // for the model or the rules, has its state, its index entries and a due
 // entry made again where missing, and is made due now when it wants new
 // mail (a lost hint); then every state entry of a connection the listing
-// did not name goes, with what it names.
+// did not name goes, with what it names, once a strict read of that
+// connection, made after the listing, finds it no longer calls: the listing
+// is no snapshot, and a webhook subscribed after its last page was read
+// stays.
 func (s *Service) repair(ctx context.Context) {
 	seal, _, err := s.keys(ctx)
 	if err != nil {
@@ -86,7 +89,7 @@ func (s *Service) rebuildAll(ctx context.Context, seal []byte, now time.Time) bo
 		}
 		after = ids[len(ids)-1]
 	}
-	s.sweep(ctx, seal, named)
+	s.sweep(ctx, seal, named, now)
 	return true
 }
 
@@ -156,9 +159,12 @@ func (s *Service) rebuild(ctx context.Context, seal []byte, id string, now time.
 
 var errNoState = errors.New("webhooks: no state")
 
-// sweep drops every state entry of a connection not named, with its index
-// entries and its due entry.
-func (s *Service) sweep(ctx context.Context, seal []byte, named map[string]bool) {
+// sweep drops every state entry of a connection not named as staying, with
+// its index entries and its due entry, once rebuild, reading the
+// connection's strict record again now, finds it does not stay (fail
+// closed: a webhook subscribed or turned on again since the listing read
+// it, or one whose read fails, stays and is rebuilt).
+func (s *Service) sweep(ctx context.Context, seal []byte, named map[string]bool, now time.Time) {
 	for i := range Shards {
 		partition := PartitionState + fmt.Sprintf("%02x", i)
 		for after := ""; ; {
@@ -168,7 +174,7 @@ func (s *Service) sweep(ctx context.Context, seal []byte, named map[string]bool)
 				return
 			}
 			for j := range entries {
-				if e := &entries[j]; !named[e.Key] {
+				if e := &entries[j]; !named[e.Key] && !s.rebuild(ctx, seal, e.Key, now) {
 					st := &state{}
 					// One that does not open names nothing: it goes alone.
 					_ = openFrom(seal, e, st)

@@ -604,9 +604,16 @@ func TestTheLastCornersOfTheStore(t *testing.T) {
 	if _, err := s.States(ctx, c.Connection); err != nil {
 		t.Fatal("not made again", err)
 	}
-	// Gone between the listing and its read.
+	// Gone at the listing's read, there again at the sweep's: it stays.
 	w.clock.add(webhook.RepairEvery + 20*time.Minute)
 	f.set("Subscription", webhooks.ErrNoWebhook)
+	webhooks.Repair(ctx, s)
+	if len(w.entries(webhooks.PartitionState)) != 1 {
+		t.Fatal("dropped on the listing's read alone")
+	}
+	// Gone between the listing and its read, and at the sweep's.
+	w.clock.add(webhook.RepairEvery + 20*time.Minute)
+	f.set("Subscription", webhooks.ErrNoWebhook, webhooks.ErrNoWebhook)
 	webhooks.Repair(ctx, s)
 	if len(w.entries(webhooks.PartitionState)) != 0 {
 		t.Fatal("its entries stay")

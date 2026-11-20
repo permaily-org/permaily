@@ -1,6 +1,7 @@
 package webhooks_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -246,4 +247,58 @@ func TestK46WhoeverWritesTheTable(t *testing.T) {
 			t.Fatal("not told once the rules are back")
 		}
 	})
+}
+
+// listingThenApproval is the connections' listing with an approval that
+// commits after the listing's last page was read and before the repair
+// sweeps the state entries (review of pull request 3, finding 1).
+type listingThenApproval struct {
+	webhooks.Connections
+	approve func()
+}
+
+func (l *listingThenApproval) Webhooks(ctx context.Context, after string, limit int) ([]string, error) {
+	ids, err := l.Connections.Webhooks(ctx, after, limit)
+	if err == nil && len(ids) < limit && l.approve != nil {
+		approve := l.approve
+		l.approve = nil
+		approve()
+	}
+	return ids, err
+}
+
+// Review of pull request 3, finding 1: the repair's listing is no snapshot.
+// A webhook subscribed after its last page was read, new mail or a
+// schedule alone, is not dropped as one the listing did not name: the
+// repair reads its strict record again first, and keeps it while it calls.
+func TestK46TheRepairKeepsAWebhookSubscribedAfterItsListing(t *testing.T) {
+	w := newWorld(t)
+	l := &listingThenApproval{Connections: w.fake}
+	s := w.enclaveWith(l)
+	old := w.make(s, made{newMail: true})
+	w.fake.Revoke(old.Connection)
+	var mail, sched *conn
+	l.approve = func() {
+		mail = w.make(s, made{newMail: true})
+		sched = w.make(s, made{schedule: &contracts.WebhookSchedule{Every: contracts.EveryDay, At: "09:30"}})
+	}
+	w.clock.add(webhook.RepairEvery)
+	webhooks.Repair(ctx, s)
+	keys := map[string]bool{}
+	for _, e := range w.entries(webhooks.PartitionState) {
+		keys[e.Key] = true
+	}
+	if !keys[mail.Connection] || !keys[sched.Connection] || keys[old.Connection] {
+		t.Fatalf("states after the repair: %v", keys)
+	}
+	w.clock.add(time.Minute)
+	w.deliver(s, mail, 0, true)
+	w.every(5*time.Second, 10*time.Minute, s)
+	if len(mail.vendor.Taken()) != 1 {
+		t.Fatal("the webhook subscribed during the repair was not told")
+	}
+	w.every(time.Minute, 48*time.Hour, s)
+	if len(sched.vendor.Taken()) == 0 {
+		t.Fatal("the schedule subscribed during the repair never ran")
+	}
 }
