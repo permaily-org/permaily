@@ -46,6 +46,7 @@ import (
 	"github.com/permaily-org/permaily/internal/envelope"
 	"github.com/permaily-org/permaily/internal/idp"
 	"github.com/permaily-org/permaily/internal/services/connections"
+	"github.com/permaily-org/permaily/internal/services/notices"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/webauthn"
 )
@@ -139,6 +140,11 @@ type Config struct {
 	// with it (RemoveAll). Nil when there are none; the composition may give
 	// it later, once, with SetConnections, as it does the mailboxes.
 	Connections connections.Lifecycle
+	// Notices is the queue of the notices about connections (ADR 0041,
+	// internal/services/notices): accounts queues the one of every device
+	// signed out by the operator or an admin, and is the queue's Deliverer
+	// (connection_notices.go). Nil queues nothing.
+	Notices notices.Queue
 	// Rules is the person's own rules (ADR 0040): an account's record of
 	// rules is removed with it. Nil when there are none.
 	Rules Rules
@@ -223,6 +229,9 @@ type Service struct {
 	// holds back the answer to what caused it.
 	noticing   chan struct{}
 	noticeWait time.Duration
+	// deliverFor bounds Deliver, a notice about a connection, when its
+	// caller gives it longer: the queue's attempt (notices.AttemptFor).
+	deliverFor time.Duration
 	work       sync.WaitGroup
 }
 
@@ -282,7 +291,7 @@ func New(cfg Config) (*Service, error) {
 	}
 	return &Service{
 		cfg: cfg, since: cfg.Now().UTC(), actions: map[string]int{},
-		noticing: make(chan struct{}, maxNoticing), noticeWait: noticeTimeout,
+		noticing: make(chan struct{}, maxNoticing), noticeWait: noticeTimeout, deliverFor: notices.AttemptFor,
 		// The port is part of the origin and not of who the passkeys are for.
 		rp:         webauthn.RelyingParty{ID: app.Hostname(), Origins: []string{app.Scheme + "://" + app.Host}},
 		marks:      map[string]*mark{},
