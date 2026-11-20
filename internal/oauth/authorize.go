@@ -20,7 +20,7 @@ import (
 // redirect URI was: only then may a refusal be sent back to it, with the
 // state p carries (empty when it was refused) and iss (Redirect). Unknown
 // parameters are ignored, the pushed request's own ones (query, mail_since,
-// ends_in_days) included: they are never taken from an address.
+// ends_in_days, webhook) included: they are never taken from an address.
 //
 // A request with request_uri carries only client_id besides it, and p holds
 // only those two: the pushed request it names is the service's to find.
@@ -110,7 +110,9 @@ func secretValue(s string) bool {
 // formula, then Authorize's checks in its order, then query (a formula
 // query.Parse takes with any well-formed mailbox), mail_since ("new" or an
 // RFC 3339 time; that it is in the past is the caller's to check, with its
-// clock) and ends_in_days (1 to ConnectionMaxDays). Every refusal is the
+// clock), ends_in_days (1 to ConnectionMaxDays) and webhook (kept as sent,
+// at most WebhookMaxBytes: the caller reads it with webhook.ParseRequest,
+// ADR 0039). Every refusal is the
 // endpoint's JSON answer, never a redirect; a formula refused is
 // invalid_request with nothing of why, which would echo it.
 func Pushed(form url.Values, doc *ClientDocument, c Config) (*AuthorizeParams, error) {
@@ -152,8 +154,18 @@ func Pushed(form url.Values, doc *ClientDocument, c Config) (*AuthorizeParams, e
 		}
 		p.EndsInDays = n
 	}
+	if hook, has := form["webhook"]; has {
+		if hook[0] == "" || len(hook[0]) > WebhookMaxBytes {
+			return nil, refuse(ErrInvalidRequest)
+		}
+		p.Webhook = hook[0]
+	}
 	return p, nil
 }
+
+// WebhookMaxBytes bounds a pushed request's "webhook" as sent: the same
+// bound as webhook.RequestBytesMax, which reads it.
+const WebhookMaxBytes = 1 << 10
 
 // pkceValue says s is 43 to 128 characters of [A-Za-z0-9-._~] (RFC 7636,
 // section 4.1): a verifier, or a challenge.

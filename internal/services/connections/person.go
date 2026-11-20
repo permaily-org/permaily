@@ -223,6 +223,12 @@ func (s *Service) revokeOnce(connection, device string) (undo func()) {
 	for _, l := range cut {
 		l.cut()
 	}
+	// A webhook's permits go with every lease (ADR 0039): a device's end
+	// cuts them too, and the next admission reads what is left.
+	s.cutPermits(connection)
+	if device == "" {
+		s.webhookEnded(connection)
+	}
 	return undo
 }
 

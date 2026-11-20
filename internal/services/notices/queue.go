@@ -271,8 +271,8 @@ func (s *Service) writeMark(ctx context.Context, key []byte, k string, over *sto
 }
 
 // Enqueue implements Queue: checked, then created once under its key
-// unless a mark holds there, with no lease; its first attempt waits for
-// admission in the background.
+// unless a mark holds there, read before the write and again after it,
+// with no lease; its first attempt waits for admission in the background.
 func (s *Service) Enqueue(ctx context.Context, n Notice) error {
 	if err := n.Check(); err != nil {
 		return err
@@ -295,13 +295,23 @@ func (s *Service) Enqueue(ctx context.Context, n Notice) error {
 	if held {
 		return nil
 	}
-	err = s.write(ctx, key, &store.Entry{Partition: PartitionQueue, Key: n.Key}, entryDoc{Notice: n})
+	e := &store.Entry{Partition: PartitionQueue, Key: n.Key}
+	err = s.write(ctx, key, e, entryDoc{Notice: n})
 	switch {
 	case errors.Is(err, store.ErrExists):
 		return nil
 	case err != nil:
 		s.failed("write")
 		return err
+	}
+	// The other enclave may have queued, sent, marked and deleted it since
+	// the mark was read: a sender marks before it deletes, so a mark read
+	// after this write sees it. Sent, it is not queued again.
+	if held, _, err := s.mark(ctx, key, n.Key, s.now()); err == nil && held {
+		if s.cfg.Entries.DeleteEntryAt(ctx, e) != nil {
+			s.failed("delete") // the runner finds the mark and deletes it
+		}
+		return nil
 	}
 	s.count(func(st *attestation.NoticesStatus) { st.Queued++ })
 	s.told(n.Kind, outcomeQueued)

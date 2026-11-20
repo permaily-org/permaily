@@ -6,7 +6,6 @@ import (
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/inbox"
-	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/services/accountrules"
 )
 
@@ -32,22 +31,25 @@ func (s *Service) Disclosure(ctx context.Context, account, connection string) (i
 	if err != nil || !d.live(s.now()) || d.Account != account {
 		return inbox.Disclosure{}, accountrules.Applying{}, ErrInvalidToken
 	}
+	return s.disclosureOf(ctx, d)
+}
+
+// disclosureOf is Disclosure for the connection's record d, already read
+// and checked by its caller: the one place a read's disclosure for
+// delivery is built, which the webhooks' evaluations (Pending) and their
+// basis (webhookBasis) use too, so a notice is decided under exactly the
+// rules a vendor's read applies.
+func (s *Service) disclosureOf(ctx context.Context, d *connDoc) (inbox.Disclosure, accountrules.Applying, error) {
 	sc, err := d.scope()
 	if err != nil {
 		return inbox.Disclosure{}, accountrules.Applying{}, ErrInvalidToken
 	}
-	var fs []*query.Canonical
-	for _, f := range []*query.Canonical{sc.Query, sc.Mailboxes, sc.Since} {
-		if f != nil {
-			fs = append(fs, f)
-		}
-	}
-	ap, err := s.rulesFor(ctx, account, d.ClientID)
+	ap, err := s.rulesFor(ctx, d.Account, d.ClientID)
 	if err != nil {
 		return inbox.Disclosure{}, accountrules.Applying{}, err
 	}
-	if d.ModelNotice != s.cfg.ModelNotice || s.cfg.Model == nil || s.cfg.Model.Gate(ctx, account) != inbox.AskAnswered {
+	if d.ModelNotice != s.cfg.ModelNotice || s.cfg.Model == nil || s.cfg.Model.Gate(ctx, d.Account) != inbox.AskAnswered {
 		return inbox.Disclosure{}, ap, contracts.ErrModelUnavailable
 	}
-	return inbox.Disclosure{Formulas: fs, Rules: ap.Rules, Parts: slices.Clone(d.Parts), Account: account, Model: true}, ap, nil
+	return inbox.Disclosure{Formulas: sc.list(), Rules: ap.Rules, Parts: slices.Clone(d.Parts), Account: d.Account, Model: true}, ap, nil
 }

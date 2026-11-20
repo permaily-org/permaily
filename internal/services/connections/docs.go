@@ -56,6 +56,10 @@ type connDoc struct {
 	// in (ListMember.Generation).
 	Generation uint64      `json:"generation"`
 	Devices    []deviceDoc `json:"devices"`
+	// Webhook is the connection's webhook (ADR 0039), its URL,
+	// subscription and zone sealed apart (webhook_record.go); absent when
+	// it has none.
+	Webhook *webhookDoc `json:"webhook,omitempty"`
 	// Sealed is connPrivate, sealed.
 	Sealed []byte `json:"sealed,omitempty"`
 
@@ -127,6 +131,9 @@ func (s *Service) readConnAt(ctx context.Context, id string) (*connDoc, store.Ma
 	} else {
 		d.private = &connPrivate{}
 	}
+	if s.openWebhook(&d) != nil {
+		return nil, at, began, errDocument
+	}
 	// The cache keeps a copy of its own: what a caller changes before its
 	// write commits is never what another reader sees (finding 3).
 	s.cacheConn(id, d.clone(), at, nil, began)
@@ -169,6 +176,7 @@ func (d *connDoc) clone() *connDoc {
 	c := *d
 	c.Parts, c.Scopes, c.Mailboxes = slices.Clone(d.Parts), slices.Clone(d.Scopes), slices.Clone(d.Mailboxes)
 	c.Sealed = slices.Clone(d.Sealed)
+	c.Webhook = d.Webhook.clone()
 	c.Devices = slices.Clone(d.Devices)
 	for i := range c.Devices {
 		c.Devices[i].Parts, c.Devices[i].Scopes = slices.Clone(c.Devices[i].Parts), slices.Clone(c.Devices[i].Scopes)
@@ -487,6 +495,7 @@ func (s *Service) view(ctx context.Context, d *connDoc, version uint64) contract
 		})
 	}
 	c.Delivery = s.delivery(ctx, d)
+	c.Webhook = s.connectionWebhook(ctx, d)
 	return c
 }
 
