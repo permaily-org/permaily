@@ -35,6 +35,7 @@ import (
 
 	"github.com/permaily-org/permaily/internal/decide"
 	"github.com/permaily-org/permaily/internal/inbox"
+	"github.com/permaily-org/permaily/internal/rulewords"
 	"github.com/permaily-org/permaily/internal/store"
 )
 
@@ -51,6 +52,13 @@ type Config struct {
 	// method of the service, so no route, operator interface or log line
 	// can reach it (ADR 0028, "The key").
 	NewModel func(key decide.Credential) decide.Model
+	// NewWriter builds the Responses API's client for a person's words
+	// (ADR 0040, "Plain words"; internal/rulewords/openai in the image), or
+	// is nil when the image asks no model for words: Write then answers
+	// contracts.ErrModelUnavailable. New calls it once, before it returns,
+	// with the same credential as NewModel's; every call it makes is
+	// reserved through the same guard (Write).
+	NewWriter func(key decide.Credential) rulewords.Model
 	// Kept reads and writes the answers kept for each message, sealed in
 	// its mailbox (inbox.KeptStore).
 	Kept inbox.KeptStore
