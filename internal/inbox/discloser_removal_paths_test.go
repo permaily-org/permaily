@@ -238,3 +238,16 @@ func TestU16AHoldUndecidedWinsAndAModelOffRemovalApplies(t *testing.T) {
 		t.Fatalf("%q", textOf(got))
 	}
 }
+
+// The stated false negatives of pull request 2's code review leave as they
+// are said to: digits that carry combining marks are not one group; an
+// address after an unclosed quote is still removed.
+func TestU14TheStatedFalseNegatives(t *testing.T) {
+	w := newDWorld(t)
+	marked := "Call 555́123́4567."
+	id := w.seed(qNow.Add(-time.Hour), 0, "Hi", marked+` He wrote "see ana@example.com today.`)
+	got := w.read(on(w.askA), w.discA, with(allParts, []rules.Rule{removing("rul_x", shapes(contracts.ShapePhoneNumber, contracts.ShapeEmailAddress))}), id)
+	if !strings.HasPrefix(textOf(got), marked) || strings.Contains(textOf(got), "ana@") || !strings.Contains(textOf(got), "[removed]") {
+		t.Fatalf("%q", textOf(got))
+	}
+}
