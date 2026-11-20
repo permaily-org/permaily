@@ -191,6 +191,11 @@ type askerKey struct{}
 type Asking struct {
 	Asker   Asker
 	Account string
+	// Sentences asks a removal's topics sentence by sentence (ADR 0040);
+	// when nil, the Discloser uses Asker if it is a SentenceAsker too, and
+	// otherwise asks nothing for meaning (the whole subject and text of a
+	// message a removal by meaning applies to are removed).
+	Sentences SentenceAsker
 }
 
 // WithAsker makes the Matcher ask a for the messages whose value depends
