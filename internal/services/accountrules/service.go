@@ -440,8 +440,15 @@ var errCompile = errors.New("accountrules: a stored rule does not compile")
 // could not be used, and answers ErrUnavailable wrapping it.
 func (s *Service) unavailable(ctx context.Context, err error) error {
 	s.unreadable.Add(1)
+	return s.failed(ctx, err)
+}
+
+// failed logs, by its kind only, why a change could not be recorded or
+// written, and answers ErrUnavailable wrapping it, without counting it as a
+// record that could not be read.
+func (s *Service) failed(ctx context.Context, err error) error {
 	if ctx.Err() == nil {
-		s.cfg.Log.Warn("accountrules: an account's rules cannot be read", "kind", kindOf(err))
+		s.cfg.Log.Warn("accountrules: an account's rules cannot be used", "kind", kindOf(err))
 	}
 	return fmt.Errorf("%w: %w", ErrUnavailable, err)
 }

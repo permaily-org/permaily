@@ -100,14 +100,14 @@ func (s *Service) change(ctx context.Context, p Person, version uint64, named bo
 		rc.Changes = []receipts.RulesChangeKind{}
 	}
 	if err := s.cfg.Receipts.Write(ctx, p.Account, &receipts.Receipt{V: receipts.Version, Kind: receipts.KindRules, RulesChange: rc}); err != nil {
-		return s.unavailable(ctx, err)
+		return s.failed(ctx, err)
 	}
 	cur, v, err := s.write(ctx, next, at, create)
 	if errors.Is(err, store.ErrChanged) || errors.Is(err, store.ErrExists) {
 		return contracts.ErrRulesChanged
 	}
 	if err != nil {
-		return s.unavailable(ctx, err)
+		return s.failed(ctx, err)
 	}
 	s.keep(p.Account, cached{rec: cur, epoch: cur.Epoch, version: v, began: began})
 	return nil

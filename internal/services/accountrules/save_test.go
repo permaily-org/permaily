@@ -220,6 +220,11 @@ func TestU7AReceiptIsWrittenBeforeItsChange(t *testing.T) {
 	if w.Receipts.Count(accountA) != before+1 || len(mustRead(t, a, accountA).Rules) != 2 {
 		t.Fatal("a stopped write did not leave its receipt and the record as they were")
 	}
+	// /status's rules_unreadable counts the record not read: a receipt or a
+	// write that failed is no reason to say an account's rules were unreadable.
+	if n := a.Unreadable(); n != 0 {
+		t.Fatalf("%d requests counted unreadable for a receipt and a write that failed", n)
+	}
 }
 
 // Agreeing to the notice is the same whatever the rules are: a write that
