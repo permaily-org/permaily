@@ -156,10 +156,11 @@ export function RulesPage() {
             </p>
             {reading && (
               <RulesNotice
-                onAgreed={(notice) => {
+                onAgreed={async (notice) => {
+                  // Agreeing moves the rules' version: read them again, for the next change to name it.
+                  if (!(await load())) setList({ ...rules, notice })
                   setReading(false)
                   setSaid('Agreed. Rules a model decides can ask it now.')
-                  setList({ ...rules, notice })
                 }}
               />
             )}

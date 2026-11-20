@@ -141,6 +141,8 @@ function Editor({
   const [changedElsewhere, setChangedElsewhere] = useState<api.Rule | null>(null)
   const [connections, setConnections] = useState<api.Connection[]>([])
   const [mailboxes, setMailboxes] = useState<api.Mailbox[]>([])
+  // A new round asks for the sentence of the same draft again: after the server refused the one checked.
+  const [round, setRound] = useState(0)
   const agreed = noticeAgreed(list)
   const draft = useMemo(() => draftOf(fields), [fields])
   const draftKey = JSON.stringify(draft)
@@ -166,7 +168,9 @@ function Editor({
     }
   }, [])
 
-  // The server writes the sentence of every draft the person makes: asked a moment after they stop changing it.
+  // The server writes the sentence of every draft the person makes: asked a moment after they stop changing it, and
+  // again in a new round.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new round asks again, though the draft is the same
   useEffect(() => {
     let live = true
     const timer = setTimeout(() => {
@@ -192,7 +196,12 @@ function Editor({
       live = false
       clearTimeout(timer)
     }
-  }, [draftKey, failed])
+  }, [draftKey, failed, round])
+
+  // Agreeing moves the rules' version: read them again, keeping the fields, for the next save to name it.
+  async function agreedTo(notice: api.RuleNoticeAgreement) {
+    if (!(await reload())) onList({ ...list, notice })
+  }
 
   function set<K extends keyof Fields>(key: K, value: Fields[K]) {
     setFields((f) => ({ ...f, [key]: value }))
@@ -224,7 +233,11 @@ function Editor({
       const code = failed(problem)
       if (!code) return
       setError(ruleProblemFor(code, problem instanceof api.ApiError ? problem.rule : undefined))
-      if (code === 'rule_changed') setCheck(null)
+      if (code === 'rule_changed') {
+        // The sentence the person read is no longer the server's: ask for it again, for them to read and save.
+        setCheck(null)
+        setRound((r) => r + 1)
+      }
       if (code === 'rules_changed' || code === 'rules_notice_needed') {
         const next = await reload()
         const now = rule && next?.rules.find((r) => r.id === rule.id)
@@ -284,7 +297,7 @@ function Editor({
 
         <Words
           agreed={agreed}
-          onAgreed={(notice) => onList({ ...list, notice })}
+          onAgreed={agreedTo}
           onProposal={(proposal) =>
             setFields((f) => {
               const next = fieldsOf(proposal.check)
@@ -386,9 +399,7 @@ function Editor({
                 <p key={line}>{line}</p>
               ))}
             </div>
-            {checked.model && !agreed && (
-              <RulesNotice headingLevel="h3" onAgreed={(notice) => onList({ ...list, notice })} />
-            )}
+            {checked.model && !agreed && <RulesNotice headingLevel="h3" onAgreed={agreedTo} />}
           </div>
         )}
         <div className="mt-6 flex flex-wrap gap-2.5">
@@ -462,7 +473,7 @@ function Words({
   onProposal,
 }: {
   agreed: boolean
-  onAgreed: (notice: api.RuleNoticeAgreement) => void
+  onAgreed: (notice: api.RuleNoticeAgreement) => Promise<void>
   onProposal: (proposal: api.RuleProposal) => void
 }) {
   const { failed } = useSession()

@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Button, TextAction } from '../../components/ui/index.ts'
 import * as api from '../../lib/api.ts'
 import { useSession } from '../../lib/session.tsx'
@@ -32,41 +32,54 @@ export function RulePreview({
   const draftKey = JSON.stringify(draft)
   const chosen = mailbox || readable[0]?.id || ''
 
-  // A page shows the draft it was asked for: a change of the draft clears it.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: what the draft is, not its identity, clears the page
+  // A page shows the draft and the mailbox it was asked for: a change of either clears it, and an answer still on its way
+  // for the one before is dropped.
+  const shownKey = `${chosen}\n${draftKey}`
+  const asked = useRef(0)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: what the draft and mailbox are, not their identity, clear the page
   useEffect(() => {
+    asked.current += 1
     setPage(null)
     setRemoval(null)
-  }, [draftKey])
+    setAskedModel(false)
+    setError(null)
+    setPending(false)
+  }, [shownKey])
 
-  async function show(askModel: boolean) {
-    if (pending || !chosen) return
+  /** Asks the server, and gives its answer to `then` only if the draft and the mailbox are still the ones asked for. */
+  async function ask<T>(question: () => Promise<T>, then: (answer: T) => void) {
+    if (pending) return
+    const ticket = asked.current
     setPending(true)
     setError(null)
-    setRemoval(null)
     try {
-      setPage(await api.previewRule(draft, chosen, { askModel }))
-      setAskedModel(askModel)
+      const answer = await question()
+      if (ticket === asked.current) then(answer)
     } catch (problem) {
       const code = failed(problem)
-      if (code) setError(messageFor(code))
+      if (code && ticket === asked.current) setError(messageFor(code))
     } finally {
-      setPending(false)
+      if (ticket === asked.current) setPending(false)
     }
   }
 
-  async function asLeaving(id: string) {
-    if (pending) return
-    setPending(true)
-    setError(null)
-    try {
-      setRemoval({ id, shown: await api.previewRuleRemoval(draft, chosen, id, askedModel) })
-    } catch (problem) {
-      const code = failed(problem)
-      if (code) setError(messageFor(code))
-    } finally {
-      setPending(false)
-    }
+  function show(askModel: boolean) {
+    if (!chosen) return
+    setRemoval(null)
+    return ask(
+      () => api.previewRule(draft, chosen, { askModel }),
+      (answer) => {
+        setPage(answer)
+        setAskedModel(askModel)
+      },
+    )
+  }
+
+  function asLeaving(id: string) {
+    return ask(
+      () => api.previewRuleRemoval(draft, chosen, id, askedModel),
+      (shown) => setRemoval({ id, shown }),
+    )
   }
 
   if (readable.length === 0) return null

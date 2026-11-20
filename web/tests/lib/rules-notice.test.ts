@@ -1,4 +1,5 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { RULES_NOTICE_VERSION, rulesNotice, rulesNoticeTitle } from '../../src/lib/rules-notice.ts'
@@ -6,18 +7,47 @@ import { RULES_NOTICE_VERSION, rulesNotice, rulesNoticeTitle } from '../../src/l
 // U32 (ADR 0040, "The rules' notice"): the notice a person agrees to before a model helps with their rules. Its own,
 // apart from the model's notice, so a new version of it stops no connection.
 
+/** The server's version of the rules' notice, declared once in the Go package at `dir`; anything else throws. */
+function serverNoticeVersion(dir: string): string {
+  const source = readdirSync(dir)
+    .filter((f) => f.endsWith('.go') && !f.endsWith('_test.go'))
+    .map((f) => readFileSync(join(dir, f), 'utf8'))
+    .join('\n')
+  const found = [...source.matchAll(/\bRulesNoticeVersion(?:\s+string)?\s*=\s*"([^"]+)"/g)]
+  if (found.length !== 1) {
+    throw new Error(`RulesNoticeVersion is declared ${found.length} times in ${dir}, not once`)
+  }
+  return found[0][1]
+}
+
 describe("the rules' notice", () => {
-  // The app and the server ship in one image, so the notice agreed to is the version the server records. The
-  // server's constant is ADR 0040's pull request 1 (`domain.RulesNoticeVersion`); until it is there, nothing compares.
-  it('is the version the service records, once the service has one', () => {
-    const dir = join(import.meta.dirname, '../../../internal/domain')
-    const source = readdirSync(dir)
-      .filter((f) => f.endsWith('.go') && !f.endsWith('_test.go'))
-      .map((f) => readFileSync(join(dir, f), 'utf8'))
-      .join('\n')
-    const server = source.match(/\bRulesNoticeVersion\s*=\s*"([^"]+)"/)?.[1]
-    if (server !== undefined) expect(server).toBe(RULES_NOTICE_VERSION)
-    expect(RULES_NOTICE_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  // The app and the server ship in one image, so the notice agreed to is the version the server records: the
+  // server's constant (`domain.RulesNoticeVersion`, ADR 0040's pull request 6) must be there, once, and be the same.
+  it('is the version the service records', () => {
+    expect(serverNoticeVersion(join(import.meta.dirname, '../../../internal/domain'))).toBe(
+      RULES_NOTICE_VERSION,
+    )
+  })
+
+  // The review of pull request 189, finding 4: a constant the test cannot find fails it, never skips the comparison.
+  it('finding 4: fails when the server’s constant is missing or said twice', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rules-notice-'))
+    try {
+      writeFileSync(join(dir, 'other.go'), 'package domain\n\nconst TermsVersion = "2026-01-01"\n')
+      expect(() => serverNoticeVersion(dir)).toThrow(/RulesNoticeVersion/)
+      writeFileSync(
+        join(dir, 'rules.go'),
+        'package domain\n\nconst RulesNoticeVersion string = "2026-11-21"\n',
+      )
+      expect(serverNoticeVersion(dir)).toBe('2026-11-21')
+      writeFileSync(
+        join(dir, 'more.go'),
+        'package domain\n\nconst (\n\tRulesNoticeVersion = "x"\n)\n',
+      )
+      expect(() => serverNoticeVersion(dir)).toThrow(/RulesNoticeVersion/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   // Its words are docs/web.md's, which say what is sent for words, for a rule a model decides and for taking out

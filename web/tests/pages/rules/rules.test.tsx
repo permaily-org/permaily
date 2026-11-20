@@ -24,9 +24,11 @@ import {
   type Asked,
   ana,
   confirmationNeeded,
+  later,
   meOf,
   ok,
   once,
+  type Reply,
   refused,
   server,
 } from '../../helpers/server.ts'
@@ -221,6 +223,8 @@ describe('U32: the rules page', () => {
     const { user } = await open('/rules')
     await user.click(await screen.findByRole('button', { name: 'Read and agree' }))
     for (const paragraph of rulesNotice) expect(screen.getByText(paragraph)).toBeTruthy()
+    // Agreeing moves the rules' version, and the page reads them again.
+    server.on(list, ok(ruleListOf([home], { version: 4 })))
     await user.click(screen.getByRole('button', { name: 'Agree' }))
     await confirm(user)
     await screen.findByText('Agreed. Rules a model decides can ask it now.')
@@ -298,6 +302,7 @@ describe('U32: making a rule', () => {
     await screen.findByRole('heading', { name: 'What you save' })
     expect(screen.queryByRole('button', { name: 'Turn into a rule' })).toBeNull()
     for (const paragraph of rulesNotice) expect(screen.getByText(paragraph)).toBeTruthy()
+    server.on(list, ok(ruleListOf([], { version: 4 })))
     await user.click(screen.getByRole('button', { name: 'Agree' }))
     await screen.findByRole('button', { name: 'Turn into a rule' })
     expect(server.asked('POST /api/v1/rules/words')).toHaveLength(0)
@@ -697,5 +702,170 @@ describe('U32: a rule of the person’s', () => {
       }),
     )
     await expectAccessible()
+  })
+})
+
+// The code review of pull request 189 (ADR 0040, pull request 7): each finding starts as a test that failed.
+describe('U32: the review of the rules screens', () => {
+  /** A server whose rules' record moves to version 4 when the notice is agreed, as the service's does. */
+  function agreeingServer(rules: unknown[]) {
+    let record = ruleListOf(rules, { notice: null, version: 3 })
+    return rulesServer()
+      .on(list, () => ok(record))
+      .on('POST /api/v1/account/rules-notice', () => {
+        record = ruleListOf(rules, { version: 4 })
+        return ok({ version: RULES_NOTICE_VERSION, at: '2026-11-20T12:00:00Z' })
+      })
+  }
+
+  it('finding 1: agreeing to the notice in the editor reads the rules’ version again, for the save to name it', async () => {
+    agreeingServer([home, bankRule])
+      .on('POST /api/v1/rules/check', echoCheck())
+      .on('PUT /api/v1/rules/rul_bank', ok(bankRule))
+    const { user } = await open('/rules/rul_bank')
+    await screen.findByRole('heading', { level: 1, name: 'Bank' })
+    await user.type(screen.getByLabelText('Name'), '!')
+    await user.click(screen.getByRole('button', { name: 'Agree' }))
+    await screen.findByRole('button', { name: 'Turn into a rule' })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save rule' }).getAttribute('aria-disabled')).toBe(
+        'false',
+      ),
+    )
+    // The unsaved change is kept.
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Bank!')
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    await user.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Save' }),
+    )
+    await waitFor(() => expect(current()).toBe('/rules'))
+    expect(server.asked('PUT /api/v1/rules/rul_bank')[0].body).toMatchObject({ version: 4 })
+  })
+
+  it('finding 1: agreeing to the notice on the list reads the rules’ version again, for the next switch to name it', async () => {
+    agreeingServer([home]).on(
+      'POST /api/v1/rules/default',
+      ok({ rule: noRules.default.rule, on: false }),
+    )
+    const { user } = await open('/rules')
+    await user.click(await screen.findByRole('button', { name: 'Read and agree' }))
+    await user.click(screen.getByRole('button', { name: 'Agree' }))
+    await screen.findByText('Agreed. Rules a model decides can ask it now.')
+    await waitFor(() => expect(server.asked(list)).toHaveLength(2))
+    await settle()
+    await user.click(screen.getByRole('switch', { name: 'Sign-in and security' }))
+    await user.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Turn off' }),
+    )
+    await screen.findByText('The Sign-in and security rule is off.')
+    expect(server.asked('POST /api/v1/rules/default')[0].body).toEqual({ on: false, version: 4 })
+  })
+
+  it('finding 2: a rule_changed refusal checks the draft again, so Save works without changing a field', async () => {
+    rulesServer()
+      .on('POST /api/v1/rules/check', echoCheck())
+      .on('PUT /api/v1/rules/rul_bank', once(refused(409, 'rule_changed'), ok(bankRule)))
+    const { user } = await open('/rules/rul_bank')
+    await screen.findByRole('heading', { level: 1, name: 'Bank' })
+    const saving = within(screen.getByRole('region', { name: 'What you save' }))
+    await saving.findByText('Holds the email back')
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    await user.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Save' }),
+    )
+    await screen.findByText(
+      'That rule changed since it was checked. Read its sentence again, then save.',
+    )
+    const checks = server.asked('POST /api/v1/rules/check').length
+    await waitFor(() =>
+      expect(server.asked('POST /api/v1/rules/check').length).toBeGreaterThan(checks),
+    )
+    await saving.findByText('Holds the email back')
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save rule' }).getAttribute('aria-disabled')).toBe(
+        'false',
+      ),
+    )
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    // The person confirms the sentence just checked, in the dialog again.
+    await user.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Save' }),
+    )
+    await waitFor(() => expect(current()).toBe('/rules'))
+    expect(server.asked('PUT /api/v1/rules/rul_bank')).toHaveLength(2)
+  })
+
+  const page = (n: number) => ({
+    draft_id: 'rdr_x',
+    page: { messages: [summary(n)], needs_model: [], unknown: [] },
+  })
+
+  it('finding 3: a page answered for a draft since changed is not shown', async () => {
+    const waiting = later()
+    rulesServer()
+      .on('POST /api/v1/rules/check', echoCheck())
+      .on('POST /api/v1/rules/preview', waiting.answer)
+    const { user } = await open('/rules/rul_bank')
+    await screen.findByRole('heading', { level: 1, name: 'Bank' })
+    await user.click(await screen.findByRole('button', { name: 'Show the mail it applies to' }))
+    await waitFor(() => expect(server.asked('POST /api/v1/rules/preview')).toHaveLength(1))
+    await user.type(screen.getByLabelText('Name'), '!')
+    waiting.give(ok(page(1)))
+    await settle()
+    expect(screen.queryByText('1 of the newest email.')).toBeNull()
+    // Asked again, for the draft as it is now, the page shows.
+    server.on('POST /api/v1/rules/preview', ok(page(2)))
+    await user.click(screen.getByRole('button', { name: 'Show the mail it applies to' }))
+    await screen.findByText('1 of the newest email.')
+    expect(
+      (server.asked('POST /api/v1/rules/preview')[1].body as { draft: { name: string } }).draft
+        .name,
+    ).toBe('Bank!')
+  })
+
+  it('finding 3: another mailbox clears the page, and a page answered for the one before is not shown', async () => {
+    const waiting = later()
+    rulesServer()
+      .on('POST /api/v1/rules/check', echoCheck())
+      .on('POST /api/v1/rules/preview', ok(page(1)))
+    const { user } = await open('/rules/rul_bank')
+    await screen.findByRole('heading', { level: 1, name: 'Bank' })
+    const mailbox = await screen.findByRole('combobox', { name: 'Mailbox' })
+    await user.click(screen.getByRole('button', { name: 'Show the mail it applies to' }))
+    await screen.findByText('1 of the newest email.')
+    await user.selectOptions(mailbox, work.id)
+    expect(screen.queryByText('1 of the newest email.')).toBeNull()
+    server.on('POST /api/v1/rules/preview', waiting.answer)
+    await user.click(screen.getByRole('button', { name: 'Show the mail it applies to' }))
+    await waitFor(() => expect(server.asked('POST /api/v1/rules/preview')).toHaveLength(2))
+    await user.selectOptions(mailbox, personal.id)
+    waiting.give(ok(page(2)))
+    await settle()
+    expect(screen.queryByText('1 of the newest email.')).toBeNull()
+  })
+
+  it('finding 3: a message as it would leave, answered for a draft since changed, is not shown', async () => {
+    let give: (reply: Reply) => void = () => {}
+    const waiting = new Promise<Reply>((resolve) => {
+      give = resolve
+    })
+    rulesServer()
+      .on('POST /api/v1/rules/check', echoCheck())
+      .on('POST /api/v1/rules/preview', (asked) =>
+        (asked.body as { message?: string }).message ? waiting : ok(page(1)),
+      )
+    const { user } = await open('/rules/rul_home')
+    await screen.findByRole('heading', { level: 1, name: 'Home address' })
+    await user.click(await screen.findByRole('button', { name: 'Show the mail it applies to' }))
+    await user.click(await screen.findByRole('button', { name: 'See it as it would leave' }))
+    await waitFor(() => expect(server.asked('POST /api/v1/rules/preview')).toHaveLength(2))
+    await user.type(screen.getByLabelText('Name'), '!')
+    await user.click(screen.getByRole('button', { name: 'Show the mail it applies to' }))
+    await screen.findByText('1 of the newest email.')
+    give(
+      ok({ draft_id: 'rdr_x', subject: 'Call me at [removed]', removed: { sentences: 1, of: 2 } }),
+    )
+    await settle()
+    expect(screen.queryByText('Call me at [removed]')).toBeNull()
   })
 })

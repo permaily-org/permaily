@@ -62,12 +62,15 @@ export function RuleSentence({ sentence }: { sentence: api.RuleSentence }) {
   )
 }
 
-/** The rules' notice, and agreeing to it. Agreeing is a change of the account's rules, so it needs a fresh proof. */
+/**
+ * The rules' notice, and agreeing to it. Agreeing is a change of the account's rules, so it needs a fresh proof, and it
+ * moves the rules' version: `onAgreed` reads them again, and the notice waits for it before taking another click.
+ */
 export function RulesNotice({
   onAgreed,
   headingLevel = 'h2',
 }: {
-  onAgreed: (agreement: api.RuleNoticeAgreement) => void
+  onAgreed: (agreement: api.RuleNoticeAgreement) => void | Promise<void>
   headingLevel?: 'h2' | 'h3'
 }) {
   const { failed } = useSession()
@@ -81,7 +84,7 @@ export function RulesNotice({
     setPending(true)
     setError(null)
     try {
-      onAgreed(await confirmed(() => api.agreeRulesNotice(RULES_NOTICE_VERSION), rulesProof))
+      await onAgreed(await confirmed(() => api.agreeRulesNotice(RULES_NOTICE_VERSION), rulesProof))
     } catch (problem) {
       if (isCancelled(problem)) return
       const code = failed(problem)
