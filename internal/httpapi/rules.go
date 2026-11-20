@@ -132,18 +132,30 @@ func RulesAPI(cfg RulesConfig) http.Handler {
 	mux.HandleFunc("GET "+base, in(a.list))
 	mux.HandleFunc("POST "+base, in(a.create))
 	mux.HandleFunc(base, refuse("GET, POST"))
-	mux.HandleFunc("POST "+base+"/check", in(a.check))
-	mux.HandleFunc(base+"/check", refuse(http.MethodPost))
-	mux.HandleFunc("POST "+base+"/words", in(a.words))
-	mux.HandleFunc(base+"/words", refuse(http.MethodPost))
-	mux.HandleFunc("POST "+base+"/default", in(a.setDefault))
-	mux.HandleFunc(base+"/default", refuse(http.MethodPost))
+	// The routes one segment below the list: the fixed ones POST, any
+	// other a rule's own, PUT. One pattern dispatches them, since a
+	// ServeMux cannot hold "/check" for every method beside "PUT /{id}".
+	fixed := map[string]http.HandlerFunc{"check": in(a.check), "words": in(a.words), "default": in(a.setDefault)}
 	if cfg.Previews != nil {
-		mux.HandleFunc("POST "+base+"/preview", in(a.preview))
-		mux.HandleFunc(base+"/preview", refuse(http.MethodPost))
+		fixed["preview"] = in(a.preview)
 	}
-	mux.HandleFunc("PUT "+base+"/{id}", in(a.update))
-	mux.HandleFunc(base+"/{id}", refuse(http.MethodPut))
+	update, refusePut, refusePost := in(a.update), refuse(http.MethodPut), refuse(http.MethodPost)
+	mux.HandleFunc(base+"/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		h, ok := fixed[id]
+		switch {
+		case ok && r.Method == http.MethodPost:
+			h(w, r)
+		case ok:
+			refusePost(w, r)
+		case id == "preview":
+			noSuchEndpoint(w, r)
+		case r.Method == http.MethodPut:
+			update(w, r)
+		default:
+			refusePut(w, r)
+		}
+	})
 	mux.HandleFunc("POST "+base+"/{id}/delete", in(a.remove))
 	mux.HandleFunc(base+"/{id}/delete", refuse(http.MethodPost))
 	mux.HandleFunc("POST "+rulesNoticePath, in(a.agree))
