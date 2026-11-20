@@ -163,27 +163,41 @@ type cacheOptions struct {
 // body is the request for call, or false for a call that must not be sent:
 // no statement, more than decide.MaxStatementsPerCall, a statement a model
 // does not decide, or one on another content than the call's (which would
-// send a field the statement does not need).
+// send a field the statement does not need). A sentences call (ADR 0040)
+// is sent with decide.SentencesDeveloper and its statements named sNtM, and
+// only when decide.SentencesCall says it may be.
 func body(call decide.Call) ([]byte, bool) {
 	n := len(call.Statements)
 	if n == 0 || n > decide.MaxStatementsPerCall {
 		return nil, false
 	}
-	if call.Content.Kind != decide.ContentSubject && call.Content.Kind != decide.ContentMessage {
-		return nil, false
-	}
+	developer := decide.Developer
 	qs := make([]question, n)
-	for i, a := range call.Statements {
-		text, ok := decide.Instructions(a)
-		if !ok || decide.KindOf(a) != call.Content.Kind {
+	switch call.Content.Kind {
+	case decide.ContentSubject, decide.ContentMessage:
+		for i, a := range call.Statements {
+			text, ok := decide.Instructions(a)
+			if !ok || decide.KindOf(a) != call.Content.Kind {
+				return nil, false
+			}
+			qs[i] = question{Type: "predicate", Name: name(call, i), Instructions: text}
+		}
+	case decide.ContentSentences:
+		if !decide.SentencesCall(call) {
 			return nil, false
 		}
-		qs[i] = question{Type: "predicate", Name: name(i), Instructions: text}
+		developer = decide.SentencesDeveloper
+		for i, a := range call.Statements {
+			text, _ := decide.SentenceInstructions(call.On[i].Sentence, call.Content.Sentences[call.On[i].Sentence], a)
+			qs[i] = question{Type: "predicate", Name: name(call, i), Instructions: text}
+		}
+	default:
+		return nil, false
 	}
 	r := request{
 		Model: Model,
 		Input: []message{
-			{Role: "developer", Content: decide.Developer},
+			{Role: "developer", Content: developer},
 			{Role: "user", Content: []part{{Type: "input_text", Text: string(decide.ContentJSON(call.Content))}}},
 		},
 		Questions:          qs,
@@ -196,8 +210,9 @@ func body(call decide.Call) ([]byte, bool) {
 	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), true
 }
 
-// name is a statement's name: its position, never its topic.
-func name(i int) string { return "s" + strconv.Itoa(i) }
+// name is a statement's name: its position, never its topic
+// (decide.StatementName).
+func name(call decide.Call, i int) string { return decide.StatementName(call, i) }
 
 // validKey says whether key can be sent in a header: printable ASCII, no
 // space, at most 1 KiB. Another one is no key.
@@ -283,7 +298,7 @@ func (c *Client) Decide(ctx context.Context, call decide.Call) (*decide.Result, 
 	if len(answer) > MaxAnswer {
 		return nil, fail(decide.ErrInvalidAnswer, true)
 	}
-	res, err := read(answer, len(call.Statements))
+	res, err := read(answer, call)
 	if err != nil {
 		return nil, fail(err, true)
 	}
@@ -383,18 +398,20 @@ type answerItem struct {
 }
 
 // read checks an answer of 200 (ADR 0028, "What comes back, and how it is
-// checked"): JSON, as many answers as statements, named s0, s1, … in their
-// order, and naming a model, or decide.ErrInvalidAnswer; then naming
-// Model, or decide.ErrModelChanged. Each answer is then a probability or
-// no answer for that statement alone.
-func read(body []byte, n int) (*decide.Result, error) {
+// checked"): JSON, as many answers as statements, named as the call named
+// them (s0, s1, …, or a sentences call's sNtM) in their order, and naming a
+// model, or decide.ErrInvalidAnswer; then naming Model, or
+// decide.ErrModelChanged. Each answer is then a probability or no answer
+// for that statement alone.
+func read(body []byte, call decide.Call) (*decide.Result, error) {
+	n := len(call.Statements)
 	var b answerBody
 	if json.Unmarshal(body, &b) != nil || len(b.Answers) != n || b.Model == nil || *b.Model == "" {
 		return nil, decide.ErrInvalidAnswer
 	}
 	items := make([]answerItem, n)
 	for i, raw := range b.Answers {
-		if json.Unmarshal(raw, &items[i]) != nil || items[i].Name != name(i) {
+		if json.Unmarshal(raw, &items[i]) != nil || items[i].Name != name(call, i) {
 			return nil, decide.ErrInvalidAnswer
 		}
 	}
