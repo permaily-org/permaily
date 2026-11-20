@@ -1,0 +1,23 @@
+{
+  "complete": true,
+  "file": "jsonl",
+  "date": "2026-11-20",
+  "head": "6:71ccb52f7ea3dc7a96333bdd8408e3ff7c527b19805733ce4c875e1c0d961f31",
+  "parts": [
+    {
+      "name": "permaily-receipts-2026-11-20-part-001.jsonl",
+      "bytes": 2442,
+      "sha256": "7257c987d833c22110491ff73162e8007ef9584a56c8d4f0df24128da47a68bf"
+    },
+    {
+      "name": "permaily-receipts-2026-11-20-part-002.jsonl",
+      "bytes": 2442,
+      "sha256": "c1d122f5a5097f1b00c283dcc85a35e1584718c02022d74edb2bfa9e2003ea0c"
+    },
+    {
+      "name": "permaily-receipts-2026-11-20-part-003.jsonl",
+      "bytes": 2454,
+      "sha256": "baa68f5c7e238da3bdafe60db78ac51b8e01dceed13e5f34d9bb31996e792e00"
+    }
+  ]
+}

@@ -928,11 +928,12 @@ export function onTermsNeeded(listener: (() => void) | null) {
 /** How long a request may take before it counts as no answer. */
 const timeout = 20_000
 
-async function request<T>(
+/** The server's answer to a request, once it is one that succeeded; any other is thrown as an `ApiError`. */
+async function answered(
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,
-): Promise<T> {
+): Promise<Response> {
   let response: Response
   try {
     response = await fetch(path, {
@@ -949,14 +950,7 @@ async function request<T>(
   } catch {
     throw new ApiError('network')
   }
-  if (response.ok) {
-    if (response.status === 204) return undefined as T
-    try {
-      return (await response.json()) as T
-    } catch {
-      throw new ApiError('other')
-    }
-  }
+  if (response.ok) return response
   let code: unknown
   let details: unknown
   try {
@@ -974,6 +968,25 @@ async function request<T>(
   if (response.status === 404) throw new ApiError('not_found')
   if (response.status === 429) throw new ApiError('too_many_requests')
   throw new ApiError('other')
+}
+
+async function request<T>(
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const response = await answered(method, path, body)
+  if (response.status === 204) return undefined as T
+  try {
+    return (await response.json()) as T
+  } catch {
+    throw new ApiError('other')
+  }
+}
+
+/** A GET's answer as the server wrote it, byte for byte: what a download for checking keeps untouched. */
+async function requestText(path: string): Promise<string> {
+  return (await answered('GET', path)).text()
 }
 
 /**
@@ -2054,34 +2067,55 @@ export async function receipts(
 }
 
 /** A page of an export as the server answers it: what permaily-verify -receipts reads, one a line. */
-type ExportPage = { head: ReceiptsHead; links: unknown[]; next: ReceiptsPosition; done?: boolean }
+type ExportPage = {
+  head: ReceiptsHead
+  links: { receipts?: unknown }[]
+  next: ReceiptsPosition
+  done?: boolean
+}
 
-/** Says whether a is strictly before b on the chain, as the next page's start always is. */
-function below(a: ReceiptsPosition, b: ReceiptsPosition): boolean {
-  return a.n < b.n || (a.n === b.n && a.index < b.index)
+/** One page of the export: the bytes the server answered, as one line of the file, and where the next begins. */
+export type ExportedPage = {
+  /** The page exactly as the server wrote it, ended by one line feed: a line of what permaily-verify -receipts reads. */
+  line: string
+  head: ReceiptsHead
+  next: ReceiptsPosition
+  done: boolean
+  /** The receipts the page names, for progress. */
+  receipts: number
 }
 
 /**
- * Every page of the account's export, in order, one JSON object a line: the file `permaily-verify -receipts` checks.
- * `head` is the chain's head when it began, for the person to note beside the file, never in it.
+ * One page of the account's export, from the head or `before` where the page before ended (ADR 0037; ADR 0041, "The
+ * two downloads, in parts"). The download asks for them one at a time and holds at most a part of them
+ * (`writeExport` in `src/lib/csv.ts`): the file `permaily-verify -receipts` checks is these lines, in order, untouched.
+ * A page that is not one, or is not on one line, is `other`.
  */
-export async function exportReceipts(): Promise<{ file: string; head: ReceiptsHead }> {
-  const lines: string[] = []
-  let head: ReceiptsHead | undefined
-  let before: ReceiptsPosition | undefined
-  for (;;) {
-    const page = await request<Partial<ExportPage> | null>(
-      'GET',
-      `/api/v1/receipts/export${receiptsQuery(before)}`,
-    )
-    if (!Array.isArray(page?.links) || !isHead(page.head) || !isPosition(page.next))
-      throw new ApiError('other')
-    head ??= page.head
-    lines.push(`${JSON.stringify(page)}\n`)
-    if (page.done === true) return { file: lines.join(''), head }
-    // A page that does not move on would be asked for ever.
-    if (before && !below(page.next, before)) throw new ApiError('other')
-    before = page.next
+export async function exportReceipts(before?: ReceiptsPosition): Promise<ExportedPage> {
+  const text = await requestText(`/api/v1/receipts/export${receiptsQuery(before)}`)
+  const line = text.endsWith('\n') ? text : `${text}\n`
+  let page: Partial<ExportPage> | null
+  try {
+    page = JSON.parse(line)
+  } catch {
+    throw new ApiError('other')
+  }
+  if (
+    line.indexOf('\n') !== line.length - 1 ||
+    !Array.isArray(page?.links) ||
+    !isHead(page.head) ||
+    !isPosition(page.next)
+  )
+    throw new ApiError('other')
+  return {
+    line,
+    head: page.head,
+    next: page.next,
+    done: page.done === true,
+    receipts: page.links.reduce(
+      (n, l) => n + (Array.isArray(l?.receipts) ? l.receipts.length : 0),
+      0,
+    ),
   }
 }
 
