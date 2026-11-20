@@ -41,4 +41,5 @@ github.com/permaily-org/permaily/internal/services/connections 90
 github.com/permaily-org/permaily/internal/vendors/cimd 96
 github.com/permaily-org/permaily/internal/services/receipts 100
 github.com/permaily-org/permaily/internal/services/notices 100
+github.com/permaily-org/permaily/internal/services/notices/noticestest 87
 github.com/permaily-org/permaily/internal/mcpapi 100
