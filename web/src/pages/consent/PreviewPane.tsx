@@ -125,6 +125,11 @@ export function PreviewPane({
             <bdi>{request.vendor.domain}</bdi> isn't told.
           </p>
         )}
+        {count.askModel && count.removed > 0 && (
+          <p>
+            {count.removed.toLocaleString('en-GB')} of them leave with details your rules take out.
+          </p>
+        )}
         {count.askModel && count.model === 'off' && (
           <p>Permaily can't ask its model now. Nothing it would decide is counted.</p>
         )}

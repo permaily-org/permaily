@@ -641,8 +641,8 @@ export type Connection = {
 export type ConnectionList = { connections: Connection[] }
 
 /*
-  The person's own rules (ADR 0040). The shapes of internal/contracts/rules.go; the calls and each refusal's words come
-  with the rules screens (ADR 0040's pull request 7), against the routes of its pull request 6.
+  The person's own rules (ADR 0040). The shapes of internal/contracts/rules.go; the calls are below the connections'
+  ("Rules (ADR 0040)"), and each refusal is an `ApiErrorCode` with its words in src/pages/auth/messages.ts.
 */
 
 /** What a rule does to a message it applies to: hold it back, or take details out of it. */
@@ -740,14 +740,32 @@ export type Rule = {
 /** The rules' notice the account agreed to, and when. */
 export type RuleNoticeAgreement = { version: string; at: string }
 
+/** The rule every account has from the start (ADR 0031), and whether the person turned it off. */
+export type RuleDefault = { rule: RuleSummary; on: boolean; changed_at?: string }
+
 /** The default rule, the person's rules, the notice agreed and the version every change sends back. */
 export type RuleList = {
-  default: { rule: RuleSummary; on: boolean; changed_at?: string }
+  default: RuleDefault
   rules: Rule[]
   notice?: RuleNoticeAgreement
   version: number
   max: number
 }
+
+/** What the person wrote for the model to turn into a rule, and the rules' notice the screen showed. */
+export type RuleWords = { words: string; notice: string }
+
+/**
+ * A rule saved, new or changed: the draft as its check answered it, with its `draft_id`, the rules' version the screen
+ * read, and for a draft a model decides any of the rules' notice the screen showed.
+ */
+export type RuleSave = { draft_id: string; draft: RuleDraft; version: number; notice?: string }
+
+/** A rule deleted, at the rules' version the screen read. */
+export type RuleDelete = { version: number }
+
+/** The default rule turned on or off, at the rules' version the screen read. */
+export type RuleDefaultSet = { on: boolean; version: number }
 
 /** What rules removed from one message: never the content itself. */
 export type RemovedSummary = {
@@ -759,6 +777,22 @@ export type RemovedSummary = {
   why?: string
   attachments?: number
 }
+
+/**
+ * A preview of a draft in one mailbox, for the person only: a page of the mail it applies to (read for a rule, unknown
+ * included), or with `message` that one message as the draft's removal would leave it. A preview decides nothing.
+ */
+export type RulePreview = {
+  draft: RuleDraft
+  mailbox: string
+  after?: string
+  limit?: number
+  ask_model?: boolean
+  message?: string
+}
+
+/** A preview's page: the draft's identifier, and the mail the rule applies to. */
+export type RulePreviewPage = { draft_id: string; page: MatchPage }
 
 /** One message as a draft's removal leaves it, in the person's own preview. */
 export type RuleRemovalPreview = {
@@ -822,6 +856,13 @@ export type ApiErrorCode =
   | 'invalid_before'
   | 'receipts_unreadable'
   | 'time_zone_invalid'
+  | 'model_unavailable'
+  | 'invalid_rule'
+  | 'rule_changed'
+  | 'rules_changed'
+  | 'too_many_rules'
+  | 'rules_notice_needed'
+  | 'rule_words_unusable'
   | 'network'
   | 'other'
 
@@ -878,18 +919,36 @@ const known: ReadonlySet<string> = new Set([
   'invalid_before',
   'receipts_unreadable',
   'time_zone_invalid',
+  'model_unavailable',
+  'invalid_rule',
+  'rule_changed',
+  'rules_changed',
+  'too_many_rules',
+  'rules_notice_needed',
+  'rule_words_unusable',
 ])
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode
   /** Where a refused formula was refused and why: only with `invalid_formula`, and only when the server said both. */
   readonly problem?: FormulaProblem
-  constructor(code: ApiErrorCode, problem?: FormulaProblem) {
+  /** Why a rule was refused: only with `invalid_rule`, and only when the server said one of `RULE_PROBLEMS`. */
+  readonly rule?: RuleProblem
+  constructor(code: ApiErrorCode, problem?: FormulaProblem, rule?: RuleProblem) {
     super(code)
     this.name = 'ApiError'
     this.code = code
     if (problem) this.problem = problem
+    if (rule) this.rule = rule
   }
+}
+
+/** The reason in an `invalid_rule` answer's `details`, when it is `{rule}` with one of the fixed reasons and nothing else. */
+export function ruleProblemOf(details: unknown): RuleProblem | undefined {
+  if (typeof details !== 'object' || details === null) return undefined
+  if (Object.keys(details).length !== 1) return undefined
+  const { rule } = details as { rule?: unknown }
+  return RULE_PROBLEMS.find((p) => p === rule)
 }
 
 /** The `details` of an `invalid_formula` answer, when they have the shape of one: a path and a reason, both text. */
@@ -969,6 +1028,7 @@ async function request<T>(
   if (code === 'account_closing') closingHeard?.()
   if (code === 'terms_needed' && response.status === 400) termsHeard?.()
   if (code === 'invalid_formula') throw new ApiError('invalid_formula', problemOf(details))
+  if (code === 'invalid_rule') throw new ApiError('invalid_rule', undefined, ruleProblemOf(details))
   if (typeof code === 'string' && known.has(code)) throw new ApiError(code as ApiErrorCode)
   if (response.status === 401) throw new ApiError('unauthorized')
   if (response.status === 404) throw new ApiError('not_found')
@@ -1536,6 +1596,7 @@ function matchPageOf(answer: Partial<MatchPage> | null | undefined): MatchPage {
     ...(typeof answer.searched_to === 'string' ? { searched_to: answer.searched_to } : {}),
     ...(isMatchModel(answer.model) ? { model: answer.model } : {}),
     ...(Array.isArray(answer.held) ? { held: answer.held } : {}),
+    ...(Array.isArray(answer.removed) ? { removed: answer.removed } : {}),
   }
 }
 
@@ -1668,6 +1729,199 @@ export async function renewConnection(id: string, renewal: ConnectionRenewal): P
  */
 export async function turnWebhookOff(id: string, version: number): Promise<Connection> {
   return connectionOf(await request('POST', `${connectionPath(id)}/webhook/off`, { version }))
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Rules (ADR 0040): the person's own rules, the default rule's switch and the rules' notice, in the person's session.
+// Every change needs a fresh proof (`confirmation_needed`, then `useConfirmed()`) and names the version of the rules it
+// was made on (`rules_changed` when another change came first).
+// ---------------------------------------------------------------------------------------------------------------
+
+function rulePath(id: string): string {
+  return `/api/v1/rules/${encodeURIComponent(id)}`
+}
+
+/** A rule's check as the server answered it, with every list there. */
+function ruleCheckOf(answer: Partial<RuleCheck> | null | undefined): RuleCheck {
+  if (
+    typeof answer?.draft_id !== 'string' ||
+    typeof answer.draft?.effect !== 'string' ||
+    typeof answer.sentence?.text !== 'string'
+  ) {
+    throw new ApiError('other')
+  }
+  const list = <T>(value: T[] | undefined): T[] => (Array.isArray(value) ? value : [])
+  return {
+    ...(answer as RuleCheck),
+    draft: { ...answer.draft, criteria: list(answer.draft.criteria) },
+    sentence: {
+      ...answer.sentence,
+      lead: list(answer.sentence.lead),
+      formulas: list(answer.sentence.formulas),
+    },
+    does: typeof answer.does === 'string' ? answer.does : '',
+    for: typeof answer.for === 'string' ? answer.for : '',
+    clients: list(answer.clients),
+    model: answer.model === true,
+  }
+}
+
+/** A rule as the server answered it. */
+function ruleOf(answer: Partial<Rule> | null | undefined): Rule {
+  if (typeof answer?.id !== 'string' || typeof answer.version !== 'number') {
+    throw new ApiError('other')
+  }
+  return { ...(answer as Rule), check: ruleCheckOf(answer.check) }
+}
+
+/** The default rule as the server answered it. */
+function ruleDefaultOf(answer: Partial<RuleDefault> | null | undefined): RuleDefault {
+  if (typeof answer?.rule?.id !== 'string' || typeof answer.on !== 'boolean') {
+    throw new ApiError('other')
+  }
+  return {
+    ...(answer as RuleDefault),
+    rule: {
+      ...answer.rule,
+      sentence: Array.isArray(answer.rule.sentence) ? answer.rule.sentence : [],
+    },
+  }
+}
+
+/**
+ * The account's rules: the default rule and whether it is on, the person's rules in the order they were made, the
+ * rules' notice the account agreed to, the version every change sends back, and how many rules an account may have.
+ * Allowed under terms the account has not agreed to, where the rules are shown and not changed.
+ */
+export async function rules(): Promise<RuleList> {
+  const answer = await request<Partial<RuleList> | null>('GET', '/api/v1/rules')
+  if (!Array.isArray(answer?.rules) || typeof answer.version !== 'number') {
+    throw new ApiError('other')
+  }
+  return {
+    default: ruleDefaultOf(answer.default),
+    rules: answer.rules.map(ruleOf),
+    ...(answer.notice ? { notice: answer.notice } : {}),
+    version: answer.version,
+    max: typeof answer.max === 'number' ? answer.max : 16,
+  }
+}
+
+/**
+ * A draft made canonical, its identifier and the server's own sentence of it: what it does and who for, with no model
+ * and nothing written. A refusal is `invalid_rule` with its `rule` (why), or `invalid_formula` with its `problem`.
+ */
+export async function checkRule(draft: RuleDraft): Promise<RuleCheck> {
+  return ruleCheckOf(await request('POST', '/api/v1/rules/check', { draft }))
+}
+
+/**
+ * Asks the model to turn the person's own words into a draft, under the rules' notice the screen showed
+ * (`rules_notice_needed` when it is not the one the account agreed to). Nothing is saved: the person reads the
+ * proposal's sentence and saves it. `model_unavailable` while the model can't be asked; `rule_words_unusable` when its
+ * answer is not a rule. The words are kept nowhere, here or on the server.
+ */
+export async function ruleWords(words: string, notice: string): Promise<RuleProposal> {
+  const answer = await request<Partial<RuleProposal> | null>('POST', '/api/v1/rules/words', {
+    words,
+    notice,
+  } satisfies RuleWords)
+  return {
+    check: ruleCheckOf(answer?.check),
+    model: typeof answer?.model === 'string' ? answer.model : '',
+    prompt: typeof answer?.prompt === 'string' ? answer.prompt : '',
+  }
+}
+
+/**
+ * Saves a rule: a new one without `id`, or a change of one (its switch included). Sends the draft the person confirmed
+ * with the `draft_id` its check answered (`rule_changed` when they differ), the rules' version the screen read
+ * (`rules_changed`) and, for a draft a model decides any of, the rules' notice. Needs a fresh proof.
+ */
+export async function saveRule(save: RuleSave, id?: string): Promise<Rule> {
+  return ruleOf(
+    id === undefined
+      ? await request('POST', '/api/v1/rules', save)
+      : await request('PUT', rulePath(id), save),
+  )
+}
+
+/** Deletes a rule, at the rules' version the screen read. Needs a fresh proof. */
+export async function deleteRule(id: string, version: number): Promise<void> {
+  await request('POST', `${rulePath(id)}/delete`, { version } satisfies RuleDelete)
+}
+
+/** Turns the default rule on or off, at the rules' version the screen read. Needs a fresh proof. */
+export async function setDefaultRule(on: boolean, version: number): Promise<RuleDefault> {
+  return ruleDefaultOf(
+    await request('POST', '/api/v1/rules/default', { on, version } satisfies RuleDefaultSet),
+  )
+}
+
+/** Agrees to the rules' notice in force (`RULES_NOTICE_VERSION` in src/lib/rules-notice.ts), by its version. */
+export async function agreeRulesNotice(version: string): Promise<RuleNoticeAgreement> {
+  const answer = await request<Partial<RuleNoticeAgreement> | null>(
+    'POST',
+    '/api/v1/account/rules-notice',
+    { version },
+  )
+  if (typeof answer?.version !== 'string' || typeof answer.at !== 'string') {
+    throw new ApiError('other')
+  }
+  return { version: answer.version, at: answer.at }
+}
+
+/**
+ * A page of a mailbox's mail a draft applies to, read for a rule (unknown included), newest first: the person's own
+ * preview, which decides nothing. With `askModel` the model is asked under the rules' notice.
+ */
+export async function previewRule(
+  draft: RuleDraft,
+  mailbox: string,
+  page: { after?: string; limit?: number; askModel?: boolean } = {},
+): Promise<RulePreviewPage> {
+  const answer = await request<Partial<RulePreviewPage> | null>('POST', '/api/v1/rules/preview', {
+    draft,
+    mailbox,
+    ...(page.after ? { after: page.after } : {}),
+    limit: page.limit ?? messagesPerPage,
+    ...(page.askModel ? { ask_model: true } : {}),
+  } satisfies RulePreview)
+  if (typeof answer?.draft_id !== 'string') throw new ApiError('other')
+  return { draft_id: answer.draft_id, page: matchPageOf(answer.page) }
+}
+
+/** One message as a draft's removal would leave it, for the person only, and what it took out. */
+export async function previewRuleRemoval(
+  draft: RuleDraft,
+  mailbox: string,
+  message: string,
+  askModel = false,
+): Promise<RuleRemovalPreview> {
+  const answer = await request<Partial<RuleRemovalPreview> | null>(
+    'POST',
+    '/api/v1/rules/preview',
+    {
+      draft,
+      mailbox,
+      message,
+      ...(askModel ? { ask_model: true } : {}),
+    } satisfies RulePreview,
+  )
+  if (typeof answer?.draft_id !== 'string' || typeof answer.removed !== 'object') {
+    throw new ApiError('other')
+  }
+  return answer as RuleRemovalPreview
+}
+
+/**
+ * Whether a rule's scope covers a client (`rules.Scope.Covers`): every connection, every one but the clients listed, or
+ * only theirs, each matched exactly. A scope this app does not know covers every client, as the server's does.
+ */
+export function ruleCovers(scope: RuleScope, clientId: string): boolean {
+  if (scope.to === 'only') return (scope.clients ?? []).includes(clientId)
+  if (scope.to === 'all_except') return !(scope.clients ?? []).includes(clientId)
+  return true
 }
 
 // ---------------------------------------------------------------------------------------------------------------

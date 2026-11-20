@@ -161,7 +161,7 @@ Step 7, designed in ADR 0040 on 2026-11-20 while the owner was away (status Prop
 - [ ] **4. Meaning's model** (U18 to U20's halves, U34).
 - [ ] **5. Disclosure**, after 1, 2 and 4 are merged (U14 to U16, U18, U20 to U26).
 - [ ] **6. Routes**, after 1 and 3 are merged (U27, U28).
-- [ ] **7. Web**, written alongside 6 and merged after it (U32).
+- [x] **7. Web**, written alongside 6 and merged after it (U32): the rules screens on the server (`web/src/pages/rules/`), the calls and refusals in `web/src/lib/api.ts` and `messages.ts`, the rules' notice (`web/src/lib/rules-notice.ts`, its version to match pull request 1's), the rules on the consent screen and a connection's page, docs/web.md's "Rules", and a real-browser test of making a rule and seeing it on the consent screen (2026-11-20). Words and layout a first draft for the designer's review.
 - [ ] **8. The image**: composition, `/status`'s `person_rules`, `permaily-verify`, the documents, the staging check and the release (U31, U35, U36).
 
 Step 9 keeps the notices about connections (one approved, a device added, one about to end), which need step 5, and the wording of every message reviewed with the designer. Until then, approving a connection needs a fresh proof (ADR 0030).

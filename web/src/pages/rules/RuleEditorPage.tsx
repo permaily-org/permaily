@@ -1,279 +1,807 @@
-import { ChevronLeft, Pencil } from 'lucide-react'
-import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router'
+import { ChevronLeft, X } from 'lucide-react'
+import { type ReactNode, useEffect, useId, useMemo, useState } from 'react'
+import { useNavigate, useParams } from 'react-router'
+import { useConfirmed } from '../../components/Confirm.tsx'
 import {
   Button,
-  ButtonLink,
-  EffectMark,
-  InfoTip,
+  Checkbox,
+  Dialog,
+  Headline,
   Notice,
+  TextAction,
   TextLink,
-  ViewSwitch,
 } from '../../components/ui/index.ts'
-import { setRuleScopes, useRuleScopes } from '../../data/ruleScopes.ts'
+import * as api from '../../lib/api.ts'
+import { isCancelled } from '../../lib/cancelled.ts'
+import { RULES_NOTICE_VERSION } from '../../lib/rules-notice.ts'
+import { useSession } from '../../lib/session.tsx'
+import { cx, focusRing, pagePadding } from '../../lib/styles.ts'
+import { LoadState } from '../accounts/shared.tsx'
+import { messageFor, ruleProblemFor } from '../auth/messages.ts'
+import { CriteriaEditor } from './CriteriaEditor.tsx'
+import { type Criteria, fromCriteria, toCriteria } from './criteria.ts'
+import { RulePreview } from './RulePreview.tsx'
+import { ModelOffNotice } from './RulesPage.tsx'
+import { noticeAgreed, RuleSentence, RulesNotice, useRuleList } from './shared.tsx'
 import {
-  type AppliesTo,
-  attention,
-  connectionById,
-  connectionsOf,
-  everyConnection,
-  type RuleEffect,
-  vendors,
-} from '../../data/sample.ts'
-import { cx, focusRing } from '../../lib/styles.ts'
-import { Criteria } from './Criteria.tsx'
-import {
-  type Criterion,
-  operators,
-  type Removal,
-  type RuleSeed,
-  removalComplete,
-  ruleSeed,
-} from './data.ts'
-import { type Draft, initialDraft, preview, savedDraft } from './draft.ts'
-import { PreviewPane } from './PreviewPane.tsx'
-import { RemovalParts } from './Removal.tsx'
-import { TargetSearch } from './Targets.tsx'
+  confirmationLines,
+  inFlight,
+  modelDown,
+  partWords,
+  removableParts,
+  ruleName,
+  rulesProof,
+  senderAndAttachments,
+  shapeWords,
+  topicsOverRemove,
+} from './words.ts'
 
-export function RuleEditorPage() {
-  const { id = 'new' } = useParams()
-  const [params] = useSearchParams()
-  const suggested = params.get('suggested')
-  const add = params.get('add')
-  /** A new rule started from a connection's page applies to that connection, and goes back there. */
-  const forConnection = connectionById(params.get('for') ?? undefined)
-  const scopes = useRuleScopes()
-  const seed = useMemo(() => {
-    const base = ruleSeed(id, { suggested, add })
-    if (!base) return base
-    if (id !== 'new') return { ...base, appliesTo: scopes[id] ?? base.appliesTo }
-    return forConnection
-      ? { ...base, appliesTo: { to: 'some', only: [forConnection.id] } satisfies AppliesTo }
-      : base
-  }, [id, suggested, add, forConnection, scopes])
-  if (!seed) return <UnknownRule />
-  return (
-    <RuleEditor
-      key={`${id}:${suggested ?? ''}:${add ?? ''}:${forConnection?.id ?? ''}`}
-      ruleId={id}
-      seed={seed}
-      returnTo={forConnection ? `/connections/${forConnection.id}` : '/rules'}
-    />
-  )
+/** The editor's fields: what the person changes, and the draft they make. */
+type Fields = {
+  name: string
+  criteria: Criteria[]
+  effect: api.RuleEffect
+  parts: api.ConnectionPart[]
+  shapes: api.ShapeKind[]
+  topics: string[]
+  to: api.RuleScope['to']
+  clients: string[]
+  on: boolean
+}
+
+const blank: Fields = {
+  name: '',
+  criteria: [],
+  effect: 'hold',
+  parts: [],
+  shapes: [],
+  topics: [],
+  to: 'all',
+  clients: [],
+  on: true,
+}
+
+/** The editor's fields of a checked draft, its criteria with the server's sentence of each. */
+function fieldsOf(check: api.RuleCheck): Fields {
+  const d = check.draft
+  return {
+    name: d.name,
+    criteria: fromCriteria(d.criteria, check.sentence.formulas),
+    effect: d.effect,
+    parts: d.removal?.parts ?? [],
+    shapes: d.removal?.shapes ?? [],
+    topics: d.removal?.topics ?? [],
+    to: d.scope.to,
+    clients: d.scope.clients ?? [],
+    on: d.on,
+  }
+}
+
+/** The draft the fields make: what is checked, previewed and saved. */
+function draftOf(f: Fields): api.RuleDraft {
+  const removal: api.RuleRemoval = {
+    ...(f.parts.length ? { parts: removableParts.filter((p) => f.parts.includes(p)) } : {}),
+    ...(f.shapes.length ? { shapes: api.SHAPE_KINDS.filter((k) => f.shapes.includes(k)) } : {}),
+    ...(f.topics.length ? { topics: f.topics } : {}),
+  }
+  return {
+    name: f.name.trim(),
+    criteria: toCriteria(f.criteria),
+    effect: f.effect,
+    ...(f.effect === 'remove' ? { removal } : {}),
+    scope: f.to === 'all' ? { to: 'all' } : { to: f.to, clients: f.clients },
+    on: f.on,
+  }
 }
 
 /**
- * The editor lists what a rule applies to, and none means every connection. A saved "every connection except" becomes
- * the vendors and connections it leaves in.
+ * A rule, new (/rules/new) or the person's own (/rules/:id) (ADR 0040, "The screens"): words to a proposal, the
+ * criteria, what it does, who for and its switch; then the sentence the server wrote of it, which Save confirms with a
+ * fresh proof; a preview on the person's mail; and Delete. Words drafted for the designer's review.
  */
-function targetsOf(appliesTo: AppliesTo): string[] {
-  if (appliesTo.to === 'some') return appliesTo.only
-  if (appliesTo.except.length === 0) return []
-  return vendors.flatMap((vendor) => {
-    const list = connectionsOf(vendor.id)
-    const kept = list.filter((c) => !appliesTo.except.some((t) => t === vendor.id || t === c.id))
-    return kept.length === list.length ? [vendor.id] : kept.map((c) => c.id)
-  })
-}
-
-function RuleEditor({
-  ruleId,
-  seed,
-  returnTo,
-}: {
-  ruleId: string
-  seed: RuleSeed
-  returnTo: string
-}) {
-  const navigate = useNavigate()
-  const isNew = ruleId === 'new'
-  const [draft, setDraft] = useState<Draft>(() => initialDraft(seed))
-  const [name, setName] = useState(seed.name)
-  const [description, setDescription] = useState(seed.description)
-  const [hint, setHint] = useState<string | null>(null)
-  const [effect, setEffect] = useState<RuleEffect>(seed.effect)
-  const [removal, setRemoval] = useState<Removal>(seed.removal)
-  const initialTargets = useMemo(() => targetsOf(seed.appliesTo), [seed])
-  const [targets, setTargets] = useState<string[]>(initialTargets)
-  const descriptionId = useId()
-
-  // Targets left as they were keep the rule's own wording, such as "every connection except", when it's saved.
-  const sameTargets = JSON.stringify(targets) === JSON.stringify(initialTargets)
-  const appliesTo: AppliesTo = sameTargets
-    ? seed.appliesTo
-    : targets.length === 0
-      ? everyConnection
-      : { to: 'some', only: targets }
-  const result = useMemo(() => preview(seed, isNew, draft), [seed, isNew, draft])
-  const saved = useMemo(() => savedDraft(seed, isNew), [seed, isNew])
-  const changed =
-    isNew ||
-    name !== seed.name ||
-    description !== seed.description ||
-    effect !== seed.effect ||
-    JSON.stringify(removal) !== JSON.stringify(seed.removal) ||
-    !sameTargets ||
-    JSON.stringify(draft) !== JSON.stringify(saved)
-  const hasConditions = draft.groups.some((g) => g.criteria.some((c) => c.values.length > 0))
-  const complete = hasConditions && (effect === 'hold' || removalComplete(removal))
-  const flag = attention.find((item) => item.to.split('?')[0] === `/rules/${ruleId}`)
-
-  function rewrite() {
-    setHint(
-      description.trim()
-        ? 'The conditions below already cover this sentence.'
-        : 'Write a sentence first, then rewrite the rule from it.',
+export function RuleEditorPage() {
+  const { id = 'new' } = useParams()
+  const { list, setList, failure, load } = useRuleList()
+  if (list === null) {
+    return (
+      <div className={pagePadding}>
+        <BackToRules />
+        <Headline className="mt-3">{id === 'new' ? 'New rule' : 'Rule'}</Headline>
+        <div className="mt-6 max-w-[880px]">
+          <LoadState failure={failure} what="Your rules" onRetry={() => void load()} />
+        </div>
+      </div>
     )
   }
+  const rule = id === 'new' ? undefined : list.rules.find((r) => r.id === id)
+  if (id !== 'new' && !rule) return <UnknownRule />
+  return <Editor key={id} rule={rule} list={list} onList={setList} reload={load} />
+}
 
-  /** Excluding a sender from the preview leaves it out of every group, adding "Sender isn't" where a group has none. */
-  function exclude(address: string) {
-    setDraft((d) => ({
-      groups: d.groups.map((g) => {
-        const notFrom = g.criteria.find((c) => c.field === 'sender' && c.operator === 'isNot')
-        if (notFrom?.values.includes(address)) return g
-        const criteria: Criterion[] = notFrom
-          ? g.criteria.map((c) => (c === notFrom ? { ...c, values: [...c.values, address] } : c))
-          : [
-              ...g.criteria,
-              { id: `${g.id}-not-from`, field: 'sender', operator: 'isNot', values: [address] },
-            ]
-        return { ...g, criteria }
-      }),
-    }))
+function Editor({
+  rule,
+  list,
+  onList,
+  reload,
+}: {
+  rule: api.Rule | undefined
+  list: api.RuleList
+  onList: (list: api.RuleList) => void
+  reload: () => Promise<api.RuleList | null>
+}) {
+  const { failed } = useSession()
+  const confirmed = useConfirmed()
+  const navigate = useNavigate()
+  const [fields, setFields] = useState<Fields>(() => (rule ? fieldsOf(rule.check) : blank))
+  const [check, setCheck] = useState<{ key: string; check: api.RuleCheck } | null>(null)
+  const [checkError, setCheckError] = useState<string | null>(null)
+  const [asking, setAsking] = useState<'save' | 'delete' | null>(null)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [changedElsewhere, setChangedElsewhere] = useState<api.Rule | null>(null)
+  const [connections, setConnections] = useState<api.Connection[]>([])
+  const [mailboxes, setMailboxes] = useState<api.Mailbox[]>([])
+  const agreed = noticeAgreed(list)
+  const draft = useMemo(() => draftOf(fields), [fields])
+  const draftKey = JSON.stringify(draft)
+  const checked = check?.key === draftKey ? check.check : null
+  const full = !rule && list.rules.length >= list.max
+
+  useEffect(() => {
+    let live = true
+    api.connections().then(
+      (answer) => {
+        if (live) setConnections(answer.connections)
+      },
+      () => {},
+    )
+    api.mailboxes().then(
+      (answer) => {
+        if (live) setMailboxes(answer.mailboxes)
+      },
+      () => {},
+    )
+    return () => {
+      live = false
+    }
+  }, [])
+
+  // The server writes the sentence of every draft the person makes: asked a moment after they stop changing it.
+  useEffect(() => {
+    let live = true
+    const timer = setTimeout(() => {
+      api.checkRule(JSON.parse(draftKey) as api.RuleDraft).then(
+        (answer) => {
+          if (!live) return
+          setCheck({ key: draftKey, check: answer })
+          setCheckError(null)
+        },
+        (problem: unknown) => {
+          if (!live) return
+          setCheck(null)
+          const code = failed(problem)
+          if (code) {
+            setCheckError(
+              ruleProblemFor(code, problem instanceof api.ApiError ? problem.rule : undefined),
+            )
+          }
+        },
+      )
+    }, 300)
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [draftKey, failed])
+
+  function set<K extends keyof Fields>(key: K, value: Fields[K]) {
+    setFields((f) => ({ ...f, [key]: value }))
   }
 
-  /** Including it again takes it out of every negative condition, and drops a condition or group left empty. */
-  function include(entry: string) {
-    setDraft((d) => ({
-      groups: d.groups
-        .map((g) => ({
-          ...g,
-          criteria: g.criteria.flatMap((c) => {
-            if (!operators[c.operator].negative || !c.values.includes(entry)) return [c]
-            const values = c.values.filter((v) => v !== entry)
-            return values.length > 0 ? [{ ...c, values }] : []
-          }),
-        }))
-        .filter((g) => g.criteria.length > 0),
-    }))
+  async function save() {
+    if (pending || !checked) return
+    setPending(true)
+    setError(null)
+    try {
+      const saved = await confirmed(
+        () =>
+          api.saveRule(
+            {
+              draft_id: checked.draft_id,
+              draft: checked.draft,
+              version: list.version,
+              ...(checked.model ? { notice: RULES_NOTICE_VERSION } : {}),
+            },
+            rule?.id,
+          ),
+        rulesProof,
+      )
+      setAsking(null)
+      navigate('/rules', { state: { said: `${ruleName(saved.check)} saved. ${inFlight}` } })
+    } catch (problem) {
+      setAsking(null)
+      if (isCancelled(problem)) return
+      const code = failed(problem)
+      if (!code) return
+      setError(ruleProblemFor(code, problem instanceof api.ApiError ? problem.rule : undefined))
+      if (code === 'rule_changed') setCheck(null)
+      if (code === 'rules_changed' || code === 'rules_notice_needed') {
+        const next = await reload()
+        const now = rule && next?.rules.find((r) => r.id === rule.id)
+        if (now && now.check.draft_id !== rule?.check.draft_id) setChangedElsewhere(now)
+        if (rule && next && !now) setChangedElsewhere(null)
+      }
+    } finally {
+      setPending(false)
+    }
   }
 
-  // From xl the editor is a column that stays in place with the save bar at its foot, and the preview scrolls beside
-  // it. Below xl the page is one column: the editor, then the preview.
+  async function remove() {
+    if (pending || !rule) return
+    setPending(true)
+    setError(null)
+    try {
+      await confirmed(() => api.deleteRule(rule.id, list.version), rulesProof)
+      setAsking(null)
+      navigate('/rules', { state: { said: `${ruleName(rule.check)} deleted. ${inFlight}` } })
+    } catch (problem) {
+      setAsking(null)
+      if (isCancelled(problem)) return
+      const code = failed(problem)
+      if (!code) return
+      setError(messageFor(code))
+      if (code === 'rules_changed') void reload()
+    } finally {
+      setPending(false)
+    }
+  }
+
+  const title = rule ? ruleName(rule.check) : 'New rule'
+
   return (
-    <div className="flex flex-col xl:min-h-svh xl:flex-row">
-      <div className="flex w-full max-w-[560px] shrink-0 flex-col xl:sticky xl:top-0 xl:h-svh xl:w-[560px]">
-        <div className="px-4 pt-7 pb-8 sm:px-8 lg:px-10 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
-          <BackToRules />
+    <div className={pagePadding}>
+      <BackToRules />
+      <h1 className="mt-3 text-display-s font-medium break-words">
+        <bdi>{title}</bdi>
+      </h1>
 
-          <div className="mt-3">
-            <RuleTitle name={name} onRename={setName} />
-          </div>
-
-          {flag && (
-            <div className="mt-4">
-              <Notice title={flag.title}>{flag.detail}</Notice>
-            </div>
-          )}
-
-          <div className="mt-3.5 flex items-center gap-1.5">
-            <label htmlFor={descriptionId} className="text-small text-ink-2">
-              Describe it in your own words
-            </label>
-            <InfoTip label="What the model sees">
-              Only this sentence goes to the model. Your mail doesn't.
-            </InfoTip>
-          </div>
-          <div className="mt-1.5 flex items-center gap-2 rounded-sm border border-ink py-1 pr-1 pl-3 has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-ink">
-            <input
-              id={descriptionId}
-              value={description}
-              onChange={(event) => {
-                setDescription(event.target.value)
-                setHint(null)
+      <div className="mt-6 flex max-w-[720px] flex-col gap-8">
+        {rule?.model_off && <ModelOffNotice />}
+        {changedElsewhere && (
+          <Notice title="This rule was changed in another window.">
+            Saved now: <RuleSentence sentence={changedElsewhere.check.sentence} />{' '}
+            <bdi>{changedElsewhere.check.does}</bdi>. <bdi>{changedElsewhere.check.for}</bdi>.{' '}
+            <TextAction
+              onClick={() => {
+                setFields(fieldsOf(changedElsewhere.check))
+                setChangedElsewhere(null)
               }}
-              placeholder="For example, never share my children's names"
-              className="min-w-0 flex-1 bg-transparent py-1.5 text-body outline-none placeholder:text-ink-3"
-            />
-            <Button variant="secondary" size="sm" onClick={rewrite}>
-              Rewrite the rule
-            </Button>
-          </div>
-          <p aria-live="polite" className="mt-1.5 font-mono text-micro text-ink-2 empty:hidden">
-            {hint}
-          </p>
-
-          <div className="mt-3 border-y border-rule">
-            <Setting
-              label="What happens"
-              tip="Full holds back the whole email. Partial takes out only the parts you pick, and the rest still goes through."
             >
-              <ViewSwitch
-                label="What happens"
-                value={effect}
-                onChange={setEffect}
-                options={[
-                  { value: 'hold', label: <EffectLabel effect="hold">Full</EffectLabel> },
-                  { value: 'remove', label: <EffectLabel effect="remove">Partial</EffectLabel> },
-                ]}
-              />
-              {effect === 'remove' && <RemovalParts removal={removal} onChange={setRemoval} />}
-            </Setting>
-            <Setting
-              label="Applies to"
-              tip="With none picked, it applies to every connection, including ones you approve later. A vendor covers all of its connections. None of them are told about this rule."
-            >
-              <TargetSearch targets={targets} onChange={setTargets} />
-            </Setting>
-          </div>
+              Edit the saved one instead
+            </TextAction>
+          </Notice>
+        )}
 
-          <div className="mt-3">
-            <Criteria groups={draft.groups} onChange={(groups) => setDraft({ groups })} />
-          </div>
-        </div>
-
-        <SaveBar
-          canSave={changed && complete}
-          onSave={() => {
-            if (!isNew) setRuleScopes({ [ruleId]: appliesTo })
-            navigate(returnTo)
-          }}
-          onDiscard={() => navigate(returnTo)}
+        <Words
+          agreed={agreed}
+          onAgreed={(notice) => onList({ ...list, notice })}
+          onProposal={(proposal) =>
+            setFields((f) => {
+              const next = fieldsOf(proposal.check)
+              // The model is told nothing of the account's connections: who a rule is for stays the person's choice.
+              return rule
+                ? { ...next, name: f.name || next.name, to: f.to, clients: f.clients, on: f.on }
+                : next
+            })
+          }
         />
+
+        <Field label="Name" htmlFor="rule-name">
+          <input
+            id="rule-name"
+            value={fields.name}
+            maxLength={60}
+            onChange={(event) => set('name', event.target.value)}
+            placeholder="Home address"
+            className={cx(
+              'w-full max-w-[420px] rounded-sm border border-rule bg-transparent px-2.5 py-1.5 text-body placeholder:text-ink-3 hover:border-ink',
+              focusRing,
+            )}
+          />
+        </Field>
+
+        <CriteriaEditor
+          criteria={fields.criteria}
+          mailboxes={mailboxes}
+          onChange={(criteria) => set('criteria', criteria)}
+        />
+
+        <Effect fields={fields} onChange={setFields} />
+
+        <Scope fields={fields} connections={connections} check={checked} onChange={setFields} />
+
+        <Checkbox
+          label="On"
+          checked={fields.on}
+          onChange={(event) => set('on', event.target.checked)}
+        />
+
+        <section aria-labelledby="saving-heading" className="flex flex-col gap-3">
+          <h2 id="saving-heading" className="text-title font-medium">
+            What you save
+          </h2>
+          <div role="status" aria-live="polite" className="flex flex-col gap-1.5">
+            {checked ? (
+              <Checked check={checked} />
+            ) : checkError ? (
+              <p className="text-small text-danger">{checkError}</p>
+            ) : (
+              <p className="text-small text-ink-2">
+                Permaily is writing its sentence of this rule.
+              </p>
+            )}
+          </div>
+          <p role="alert" className="text-small text-danger empty:hidden">
+            {error}
+          </p>
+          {full && (
+            <p className="text-small text-ink-2">
+              You have {list.max} rules, as many as an account can. Delete one to make another.
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2.5">
+            <Button
+              aria-disabled={!checked || full || pending}
+              onClick={() => {
+                if (checked && !full) setAsking('save')
+              }}
+            >
+              Save rule
+            </Button>
+            {rule && (
+              <Button variant="danger" onClick={() => setAsking('delete')}>
+                Delete rule
+              </Button>
+            )}
+          </div>
+        </section>
+
+        <RulePreview draft={draft} mailboxes={mailboxes} agreed={agreed} />
       </div>
 
-      <PreviewPane preview={result} effect={effect} onExclude={exclude} onInclude={include} />
+      <Dialog open={asking === 'save'} onClose={() => setAsking(null)} labelledBy="save-heading">
+        <h2
+          id="save-heading"
+          data-dialog-focus
+          tabIndex={-1}
+          className="text-title font-medium outline-none"
+        >
+          Save this rule?
+        </h2>
+        {checked && (
+          <div className="mt-3 flex flex-col gap-2">
+            <Checked check={checked} />
+            <div className="flex flex-col gap-1.5 text-small text-ink-2">
+              {confirmationLines(checked.draft).map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+            {checked.model && !agreed && (
+              <RulesNotice headingLevel="h3" onAgreed={(notice) => onList({ ...list, notice })} />
+            )}
+          </div>
+        )}
+        <div className="mt-6 flex flex-wrap gap-2.5">
+          <Button
+            aria-disabled={pending || (checked?.model === true && !agreed)}
+            onClick={() => {
+              if (!(checked?.model && !agreed)) void save()
+            }}
+          >
+            Save
+          </Button>
+          <Button variant="secondary" onClick={() => setAsking(null)}>
+            Cancel
+          </Button>
+        </div>
+      </Dialog>
+
+      {rule && (
+        <Dialog
+          open={asking === 'delete'}
+          onClose={() => setAsking(null)}
+          labelledBy="delete-heading"
+        >
+          <h2
+            id="delete-heading"
+            data-dialog-focus
+            tabIndex={-1}
+            className="text-title font-medium outline-none"
+          >
+            Delete <bdi>{ruleName(rule.check)}</bdi>?
+          </h2>
+          <div className="mt-3 flex flex-col gap-2 text-ink-2">
+            <p>
+              Mail it holds back or takes details out of can then leave to the connections it was
+              for.
+            </p>
+            <p>{inFlight}</p>
+          </div>
+          <div className="mt-6 flex flex-wrap gap-2.5">
+            <Button variant="danger" aria-disabled={pending} onClick={() => void remove()}>
+              Delete
+            </Button>
+            <Button variant="secondary" onClick={() => setAsking(null)}>
+              Cancel
+            </Button>
+          </div>
+        </Dialog>
+      )}
     </div>
   )
 }
 
-/** An effect with its mark. The mark sits on a paper tile, so it keeps its colors when the option is picked and turns dark. */
-function EffectLabel({ effect, children }: { effect: RuleEffect; children: ReactNode }) {
+/** The server's sentence of a draft: its criteria, what it does and who for, and whether a model decides any of it. */
+function Checked({ check }: { check: api.RuleCheck }) {
   return (
-    // A flex row rather than an inline one: the mark has no text, so on a line of text it would sit off the baseline.
-    <span className="flex items-center gap-2">
-      <span className="inline-flex size-[18px] shrink-0 items-center justify-center rounded-[1px] bg-paper">
-        <EffectMark effect={effect} />
+    <div className="flex flex-col gap-1">
+      <span>
+        <RuleSentence sentence={check.sentence} />
       </span>
-      {children}
-    </span>
+      <bdi className="text-small">{check.does}</bdi>
+      <bdi className="text-small">{check.for}</bdi>
+      {check.model && <span className="text-small text-ink-2">{modelDown}</span>}
+    </div>
   )
 }
 
-/** A label beside its controls, or above them on a phone, where the controls need the whole width. */
-function Setting({ label, tip, children }: { label: string; tip?: string; children: ReactNode }) {
+/** Describing the rule in words, for the model to propose one: under the rules' notice, agreed above it first. */
+function Words({
+  agreed,
+  onAgreed,
+  onProposal,
+}: {
+  agreed: boolean
+  onAgreed: (notice: api.RuleNoticeAgreement) => void
+  onProposal: (proposal: api.RuleProposal) => void
+}) {
+  const { failed } = useSession()
+  const [words, setWords] = useState('')
+  const [pending, setPending] = useState(false)
+  const [said, setSaid] = useState<string | null>(null)
+  const [down, setDown] = useState(false)
+  const wordsId = useId()
+
+  async function turn() {
+    const w = words.trim()
+    if (pending || !w) return
+    setPending(true)
+    setSaid(null)
+    try {
+      onProposal(await api.ruleWords(w, RULES_NOTICE_VERSION))
+      setSaid(
+        'Proposed: the fields below are the model’s. Read the sentence Permaily wrote of it before you save.',
+      )
+    } catch (problem) {
+      const code = failed(problem)
+      if (!code) return
+      if (code === 'model_unavailable') setDown(true)
+      setSaid(messageFor(code))
+    } finally {
+      setPending(false)
+    }
+  }
+
   return (
-    <div className="flex flex-col gap-2 border-b border-rule py-3 last:border-b-0 sm:flex-row sm:items-start sm:gap-3">
-      <span className="flex items-center gap-1.5 text-small whitespace-nowrap sm:w-[116px] sm:shrink-0 sm:pt-1.5">
+    <section aria-labelledby={`${wordsId}-heading`} className="flex flex-col gap-2">
+      <h2 id={`${wordsId}-heading`} className="text-title font-medium">
+        Describe it in your words
+      </h2>
+      {!agreed ? (
+        <RulesNotice headingLevel="h3" onAgreed={onAgreed} />
+      ) : (
+        <>
+          <label htmlFor={wordsId} className="text-small text-ink-2">
+            {down
+              ? 'Permaily can’t ask its model now. Build the rule from the conditions below.'
+              : 'Only these words go to the model: nothing of your mail or account. They are kept nowhere.'}
+          </label>
+          <textarea
+            id={wordsId}
+            value={words}
+            maxLength={1000}
+            rows={3}
+            onChange={(event) => setWords(event.target.value)}
+            placeholder="Take my home address out of everything apps read"
+            className={cx(
+              'w-full rounded-sm border border-ink bg-transparent px-3 py-2 text-body placeholder:text-ink-3',
+              focusRing,
+            )}
+          />
+          <div>
+            <Button
+              variant="secondary"
+              size="sm"
+              aria-disabled={pending || words.trim() === ''}
+              onClick={() => void turn()}
+            >
+              Turn into a rule
+            </Button>
+          </div>
+        </>
+      )}
+      <p role="status" className="text-small text-ink-2 empty:hidden">
+        {said}
+      </p>
+    </section>
+  )
+}
+
+/** What the rule does: holds the email back, or takes details out, each kind with what it takes out besides. */
+function Effect({ fields, onChange }: { fields: Fields; onChange: (f: Fields) => void }) {
+  const groupId = useId()
+  const toggle = <T,>(list: T[], value: T, on: boolean) =>
+    on ? [...list, value] : list.filter((v) => v !== value)
+  const reads = fields.shapes.length > 0 || fields.topics.length > 0
+  return (
+    <fieldset className="flex flex-col gap-3">
+      <legend className="mb-1.5 text-title font-medium">What it does</legend>
+      <div role="radiogroup" aria-labelledby={groupId} className="flex flex-col gap-2">
+        <span id={groupId} className="sr-only">
+          What it does
+        </span>
+        <Radio
+          name="effect"
+          checked={fields.effect === 'hold'}
+          onChange={() => onChange({ ...fields, effect: 'hold' })}
+          label="Hold the email back: it doesn’t leave, and the app isn’t told it exists"
+        />
+        <Radio
+          name="effect"
+          checked={fields.effect === 'remove'}
+          onChange={() => onChange({ ...fields, effect: 'remove' })}
+          label="Take details out: the rest leaves"
+        />
+      </div>
+      {fields.effect === 'remove' && (
+        <div className="flex flex-col gap-4 border-l border-rule pl-4">
+          <fieldset className="flex flex-col gap-1.5">
+            <legend className="mb-1 text-small font-medium">Parts, taken out whole</legend>
+            {removableParts.map((part) => (
+              <Checkbox
+                key={part}
+                label={partWords[part]}
+                checked={fields.parts.includes(part)}
+                onChange={(event) =>
+                  onChange({ ...fields, parts: toggle(fields.parts, part, event.target.checked) })
+                }
+              />
+            ))}
+          </fieldset>
+          <fieldset className="flex flex-col gap-2">
+            <legend className="mb-1 text-small font-medium">
+              Kinds of data, found by pattern with no model
+            </legend>
+            {api.SHAPE_KINDS.map((kind) => (
+              <Checkbox
+                key={kind}
+                top
+                label={
+                  <span className="flex flex-col">
+                    <span>{shapeWords[kind].label}</span>
+                    <span className="text-small text-ink-2">{shapeWords[kind].also}</span>
+                  </span>
+                }
+                checked={fields.shapes.includes(kind)}
+                onChange={(event) =>
+                  onChange({ ...fields, shapes: toggle(fields.shapes, kind, event.target.checked) })
+                }
+              />
+            ))}
+          </fieldset>
+          <Topics topics={fields.topics} onChange={(topics) => onChange({ ...fields, topics })} />
+          {reads && <p className="text-small text-ink-2">{senderAndAttachments}</p>}
+        </div>
+      )}
+    </fieldset>
+  )
+}
+
+/** Topics a model takes out sentence by sentence, at most three, with what that takes out besides. */
+function Topics({ topics, onChange }: { topics: string[]; onChange: (t: string[]) => void }) {
+  const [value, setValue] = useState('')
+  const inputId = useId()
+  function add() {
+    const v = value.trim()
+    if (!v || topics.includes(v) || topics.length >= 3) return
+    onChange([...topics, v])
+    setValue('')
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={inputId} className="text-small font-medium">
+        Topics, sentence by sentence (a model decides)
+      </label>
+      <p className="text-small text-ink-2">{topicsOverRemove}</p>
+      {topics.length > 0 && (
+        <ul className="flex flex-wrap gap-1.5">
+          {topics.map((topic) => (
+            <li
+              key={topic}
+              className="inline-flex items-center gap-1 rounded-sm bg-sunken px-2 text-small"
+            >
+              <bdi>{topic}</bdi>
+              <button
+                type="button"
+                aria-label={`Remove topic ${topic}`}
+                onClick={() => onChange(topics.filter((t) => t !== topic))}
+                className={cx(
+                  'inline-flex size-5 items-center justify-center rounded-sm text-ink-2 hover:bg-rule hover:text-ink',
+                  focusRing,
+                )}
+              >
+                <X aria-hidden size={12} strokeWidth={2} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {topics.length < 3 && (
+        <span className="flex items-center gap-2">
+          <input
+            id={inputId}
+            value={value}
+            maxLength={100}
+            placeholder="a home address"
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                add()
+              }
+            }}
+            className={cx(
+              'h-[30px] w-64 rounded-sm border border-rule bg-transparent px-2 text-small placeholder:text-ink-3 hover:border-ink',
+              focusRing,
+            )}
+          />
+          <TextAction onClick={add}>
+            Add <span className="sr-only">topic</span>
+          </TextAction>
+        </span>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Who the rule is for: every connection, every one but the apps picked, or only them. An app is its client, shown by
+ * `clientShown` (its host and document path), with the name its own document gives labelled as the app's words.
+ */
+function Scope({
+  fields,
+  connections,
+  check,
+  onChange,
+}: {
+  fields: Fields
+  connections: api.Connection[]
+  check: api.RuleCheck | null
+  onChange: (f: Fields) => void
+}) {
+  const apps = new Map<string, string>()
+  for (const c of connections) if (!apps.has(c.client_id)) apps.set(c.client_id, c.client_name)
+  for (const c of check?.clients ?? [])
+    if (!apps.has(c.client_id)) apps.set(c.client_id, c.name ?? '')
+  for (const id of fields.clients) if (!apps.has(id)) apps.set(id, '')
+  const choose = (to: api.RuleScope['to']) =>
+    onChange({ ...fields, to, clients: to === 'all' ? [] : fields.clients })
+  return (
+    <fieldset className="flex flex-col gap-3">
+      <legend className="mb-1.5 text-title font-medium">Who it’s for</legend>
+      <div className="flex flex-col gap-2">
+        <Radio
+          name="scope"
+          checked={fields.to === 'all'}
+          onChange={() => choose('all')}
+          label="Every connection, those you allow later included"
+        />
+        <Radio
+          name="scope"
+          checked={fields.to === 'all_except'}
+          onChange={() => choose('all_except')}
+          label="Every connection but the apps you pick, those you allow later included"
+        />
+        <Radio
+          name="scope"
+          checked={fields.to === 'only'}
+          onChange={() => choose('only')}
+          label="Only the apps you pick"
+        />
+      </div>
+      {fields.to !== 'all' && (
+        <fieldset className="flex flex-col gap-2 border-l border-rule pl-4">
+          <legend className="mb-1 text-small font-medium">
+            {fields.to === 'only' ? 'Only these apps' : 'Not these apps'}
+          </legend>
+          {apps.size === 0 && (
+            <p className="text-small text-ink-2">You have no connections to pick from yet.</p>
+          )}
+          {[...apps].map(([id, name]) => (
+            <Checkbox
+              key={id}
+              top
+              label={
+                <span className="flex flex-col">
+                  <bdi className="font-mono text-mono break-all">{api.clientShown(id)}</bdi>
+                  {name && (
+                    <span className="text-small text-ink-2">
+                      calls itself <bdi>{name}</bdi>
+                    </span>
+                  )}
+                </span>
+              }
+              checked={fields.clients.includes(id)}
+              onChange={(event) =>
+                onChange({
+                  ...fields,
+                  clients: event.target.checked
+                    ? [...fields.clients, id]
+                    : fields.clients.filter((c) => c !== id),
+                })
+              }
+            />
+          ))}
+          <p className="text-small text-ink-2">
+            An app is told apart by the address of its document, never by its domain alone: another
+            app on the same domain is another app.
+          </p>
+        </fieldset>
+      )}
+    </fieldset>
+  )
+}
+
+function Radio({
+  name,
+  checked,
+  onChange,
+  label,
+}: {
+  name: string
+  checked: boolean
+  onChange: () => void
+  label: ReactNode
+}) {
+  return (
+    <label className="inline-flex items-start gap-2.5">
+      <input
+        type="radio"
+        name={name}
+        checked={checked}
+        onChange={onChange}
+        className={cx('mt-1 size-[16px] shrink-0 accent-ink', focusRing)}
+      />
+      <span className="min-w-0 flex-1">{label}</span>
+    </label>
+  )
+}
+
+function Field({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string
+  htmlFor: string
+  children: ReactNode
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={htmlFor} className="text-small text-ink-2">
         {label}
-        {tip && (
-          <InfoTip label={`About ${label.toLowerCase()}`} align="start">
-            {tip}
-          </InfoTip>
-        )}
-      </span>
-      <div className="flex min-w-0 flex-1 flex-col items-start gap-2.5">{children}</div>
+      </label>
+      {children}
     </div>
   )
 }
@@ -287,104 +815,14 @@ function BackToRules() {
   )
 }
 
-function RuleTitle({ name, onRename }: { name: string; onRename: (name: string) => void }) {
-  const [editing, setEditing] = useState(false)
-  const [value, setValue] = useState(name)
-  const returnFocus = useRef(false)
-  const button = useRef<HTMLButtonElement>(null)
-  const done = useRef(false)
-
-  useEffect(() => {
-    if (editing || !returnFocus.current) return
-    returnFocus.current = false
-    button.current?.focus()
-  }, [editing])
-
-  function finish(save: boolean) {
-    if (done.current) return
-    done.current = true
-    if (save && value.trim()) onRename(value.trim())
-    returnFocus.current = true
-    setEditing(false)
-  }
-
-  if (editing) {
-    return (
-      <h1 className="min-w-0 flex-1">
-        <input
-          autoFocus
-          aria-label="Rule name"
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          onBlur={() => finish(true)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') finish(true)
-            if (event.key === 'Escape') finish(false)
-          }}
-          className={cx(
-            'w-full rounded-sm border-b border-ink bg-transparent text-display-s font-medium',
-            focusRing,
-          )}
-        />
-      </h1>
-    )
-  }
-
-  return (
-    <div className="flex min-w-0 items-center gap-2">
-      <h1 className="min-w-0 text-display-s font-medium break-words">{name}</h1>
-      <button
-        ref={button}
-        type="button"
-        aria-label="Rename rule"
-        onClick={() => {
-          done.current = false
-          setValue(name)
-          setEditing(true)
-        }}
-        className={cx('shrink-0 rounded-sm p-1 text-ink-2 hover:text-ink', focusRing)}
-      >
-        <Pencil aria-hidden size={16} />
-      </button>
-    </div>
-  )
-}
-
-/**
- * Save and Discard. Below xl the bar sticks to the foot of the window until the editor column ends, and the page's scroll
- * padding keeps a field that gets focus from scrolling in behind it.
- */
-function SaveBar({
-  canSave,
-  onSave,
-  onDiscard,
-}: {
-  canSave: boolean
-  onSave: () => void
-  onDiscard: () => void
-}) {
-  return (
-    <div className="flex shrink-0 gap-3 border-t border-rule-strong px-4 pt-4 pb-3.5 sm:px-8 lg:px-10 max-xl:sticky max-xl:bottom-0 max-xl:bg-paper max-xl:[html:has(&)]:scroll-pb-24">
-      <Button onClick={onSave} disabled={!canSave}>
-        Save rule
-      </Button>
-      <Button variant="secondary" onClick={onDiscard}>
-        Discard
-      </Button>
-    </div>
-  )
-}
-
 function UnknownRule() {
   return (
-    <div className="px-4 pt-7 pb-16 sm:px-8 lg:px-10">
+    <div className={pagePadding}>
       <BackToRules />
-      <h1 className="mt-3 text-display-s font-medium">There's no rule with that name.</h1>
-      <div className="mt-6">
-        <ButtonLink to="/rules" variant="secondary">
-          Back to rules
-        </ButtonLink>
-      </div>
+      <Headline size="display-s" className="mt-3">
+        There's no rule of yours here.
+      </Headline>
+      <p className="mt-3 text-ink-2">It may have been deleted in another window.</p>
     </div>
   )
 }

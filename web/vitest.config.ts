@@ -41,6 +41,14 @@ export default defineConfig({
         'src/pages/connections/ConnectionsPage.tsx',
         'src/pages/connections/ConnectionDetailPage.tsx',
         'src/pages/connections/words.tsx',
+        // The rules screens on the server (ADR 0040); the overview's suggested rule beside them is on sample data.
+        'src/pages/rules/RulesPage.tsx',
+        'src/pages/rules/RuleEditorPage.tsx',
+        'src/pages/rules/RulePreview.tsx',
+        'src/pages/rules/CriteriaEditor.tsx',
+        'src/pages/rules/criteria.ts',
+        'src/pages/rules/shared.tsx',
+        'src/pages/rules/words.ts',
       ],
       // The measured values, rounded down. They only go up (docs/testing.md).
       thresholds: {
@@ -66,6 +74,7 @@ export default defineConfig({
         'src/pages/inbox/**': { statements: 98, branches: 92, functions: 100, lines: 100 },
         'src/pages/consent/**': { statements: 95, branches: 89, functions: 98, lines: 98 },
         'src/pages/connections/**': { statements: 97, branches: 87, functions: 96, lines: 98 },
+        'src/pages/rules/**': { statements: 90, branches: 79, functions: 93, lines: 94 },
       },
     },
   },

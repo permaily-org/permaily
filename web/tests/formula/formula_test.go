@@ -23,3 +23,17 @@ func TestV54ReplacementFormulaParses(t *testing.T) {
 		t.Fatalf("the matches route refuses the consent screen's formula: %v", err)
 	}
 }
+
+// TestU32RuleEditorFormulaParses parses rule.json, a criteria the rule editor
+// builds from its fields (web/src/pages/rules/criteria.ts, toFormula; the web
+// test "builds a rule from conditions" checks the editor sends exactly this),
+// with the parser the rules routes check a rule's criteria with.
+func TestU32RuleEditorFormulaParses(t *testing.T) {
+	data, err := os.ReadFile("rule.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := query.Parse(data, nil); err != nil {
+		t.Fatalf("the rules routes refuse the rule editor's formula: %v", err)
+	}
+}

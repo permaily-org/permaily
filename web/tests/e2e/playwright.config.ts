@@ -42,7 +42,7 @@ export default defineConfig({
   projects: [
     {
       name: 'dev',
-      testMatch: 'consent.spec.ts',
+      testMatch: /(consent|rules)\.spec\.ts$/,
       use: { ...devices['Desktop Chrome'], baseURL: `http://localhost:${port}` },
     },
     {
