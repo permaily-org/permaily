@@ -106,7 +106,7 @@ const today = [
     why: 'To tell you by mail when a connection is approved, renewed, given a new device, about to end or loses a device for safety, when receipts are found deleted or changed, and when every device is signed out',
     where:
       'Our database, signed: your account’s identifier, the kind of notice, when, and what it says (a verified app’s web address, the parts of your mail a connection reads, its end). Never your address, a query, a mailbox or a message. After it is sent, a mark that it was, with no detail',
-    // TODO LEGAL: owner's review — the retention said as the code keeps it (the code review of ADR 0041's pull
+    // TODO LEGAL: owner's review: the retention said as the code keeps it (the code review of ADR 0041's pull
     // request 7, 3), not "at most a day"; LEGAL_UPDATED unchanged until the owner classifies it (docs/legal.md, item 5).
     kept: 'Tried for 24 hours from the event it tells of, and deleted once it is sent, or once it is no longer to be sent, when that deletion succeeds. Otherwise it expires 25 hours after the event, and our database’s automatic cleanup removes it some time after that. The mark expires 30 days after it is written and is removed by the same cleanup',
   },
