@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,7 @@ import (
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/router"
 	"github.com/permaily-org/permaily/internal/rules"
+	"github.com/permaily-org/permaily/internal/services/accountrules"
 	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/pkg/attestation"
@@ -276,11 +278,14 @@ func connectionsEndToEnd(t *testing.T, w e2eWorld) []string {
 	}
 	var own contracts.MessagePage
 	decode(w.call(w.bea, 1, "GET", "/api/v1/mailboxes/"+w.mailbox+"/messages", ""), 200, &own)
-	var heldID string
+	var heldID, lunchOwn string
 	for _, m := range own.Messages {
 		secrets = append(secrets, m.ID)
 		if m.Subject == "Your verification code" {
 			heldID = w.mailbox + "." + m.ID
+		}
+		if strings.HasPrefix(m.Subject, "Lunch") {
+			lunchOwn = m.ID
 		}
 	}
 	if heldID == "" || len(own.Messages) != 3 {
@@ -543,6 +548,66 @@ func connectionsEndToEnd(t *testing.T, w e2eWorld) []string {
 		t.Fatalf("search_mail behind a held chain: %+v", got.a)
 	}
 
+	// U31's composition (ADR 0040, pull request 8): Bea's own rule, saved
+	// through the rules routes of one enclave with her fresh proof, applies
+	// to the app's next read through that enclave at once and through the
+	// other once its copy is accountrules.Fresh old: the text of mail whose
+	// subject names lunch is taken out (one marker), the subject left. Her editor shows
+	// the same message as the rule would leave it; deleted, the text leaves
+	// again. Nothing of the rule is in /status, which publishes
+	// person_rules as the source compiles them.
+	readLunchThrough := func(enclave int) contracts.VendorMessage {
+		t.Helper()
+		a := vendorDo(enclave, "GET", cfg.APIResource+"/messages/"+lunchID, app.AccessToken, "", "")
+		var m contracts.VendorMessage
+		if a.code != 200 || json.Unmarshal([]byte(a.body), &m) != nil || m.Subject == nil || !strings.HasPrefix(*m.Subject, "Lunch plans") {
+			t.Fatalf("a read of the lunch through %d: %+v", enclave, a)
+		}
+		return m
+	}
+	readLunchThrough(1) // enclave 1 now holds Bea's rules as they were
+	ruleDraft := `{"name":"zebra-rule-91f","criteria":[{"v":1,"all":[{"any":[{"var":"subject","op":"contains","value":"lunch"}]}]}],` +
+		`"effect":"remove","removal":{"parts":["body"],"shapes":[],"topics":[]},"scope":{"to":"all"},"on":true}`
+	secrets = append(secrets, "zebra-rule-91f")
+	var list contracts.RuleList
+	decode(w.call(w.bea, 0, "GET", "/api/v1/rules", ""), 200, &list)
+	var checked contracts.RuleCheck
+	decode(w.call(w.bea, 0, "POST", "/api/v1/rules/check", `{"draft":`+ruleDraft+`}`), 200, &checked)
+	var saved contracts.Rule
+	decode(w.call(w.bea, 0, "POST", "/api/v1/rules", fmt.Sprintf(`{"draft_id":%q,"draft":%s,"version":%d}`, checked.DraftID, ruleDraft, list.Version)), 200, &saved)
+	removedText := func(m contracts.VendorMessage) bool { return m.Text != nil && *m.Text == contracts.RemovedMarker }
+	if m := readLunchThrough(0); !removedText(m) {
+		t.Fatalf("the rule did not apply at once through the enclave that saved it: %+v", m)
+	}
+	devAhead.Add(int64(accountrules.Fresh + time.Second))
+	if m := readLunchThrough(1); !removedText(m) {
+		t.Fatalf("the rule did not apply through the other enclave once its copy was %s old: %+v", accountrules.Fresh, m)
+	}
+	var shown contracts.RuleRemovalPreview
+	decode(w.call(w.bea, 1, "POST", "/api/v1/rules/preview", `{"draft":`+ruleDraft+`,"mailbox":"`+w.mailbox+`","message":"`+lunchOwn+`"}`), 200, &shown)
+	if shown.Text != nil || shown.Subject == nil || !strings.HasPrefix(*shown.Subject, "Lunch plans") || !slices.Contains(shown.Removed.Parts, contracts.PartBody) {
+		t.Fatalf("the removal's preview: %+v", shown)
+	}
+	st0 := w.call(w.newBrowser(), 0, "GET", "/status", "")
+	var withRules struct {
+		Connections *attestation.ConnectionsStatus `json:"connections"`
+	}
+	if json.Unmarshal([]byte(st0.body), &withRules) != nil || withRules.Connections == nil || withRules.Connections.PersonRules == nil ||
+		withRules.Connections.PersonRules.Record != attestation.PersonRulesRecordStrict || strings.Contains(st0.body, "zebra") || strings.Contains(st0.body, saved.ID) {
+		t.Fatalf("/status with a person's rule: %s", st0.body)
+	}
+	decode(w.call(w.bea, 0, "GET", "/api/v1/rules", ""), 200, &list)
+	if a := w.call(w.bea, 1, "POST", "/api/v1/rules/"+saved.ID+"/delete", fmt.Sprintf(`{"version":%d}`, list.Version)); a.code != 204 {
+		t.Fatalf("deleting the rule: %d %s", a.code, a.body)
+	}
+	secrets = append(secrets, saved.ID, saved.ID[len("rul_"):])
+	devAhead.Add(int64(accountrules.Fresh + time.Second))
+	for enclave := range 2 {
+		if m := readLunchThrough(enclave); m.Text == nil || !strings.Contains(*m.Text, "pier penguin-7e21") {
+			t.Fatalf("the rule deleted, through %d: %+v", enclave, m)
+		}
+	}
+
 	// A refresh, and its retry within 30 seconds: the same pair.
 	refresh := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {app.RefreshToken}, "client_id": {e2eAppClient}, "resource": {cfg.APIResource}}
 	r1, a1 := token(0, refresh)
@@ -776,7 +841,7 @@ func checkRecordsApart(t *testing.T, ps []*platform) {
 			return false
 		}
 	}
-	own := map[string]func(string) bool{"connections": of(connectionsPrefixes), "receipts": of(receiptsPrefixes)}
+	own := map[string]func(string) bool{"connections": of(connectionsPrefixes), "receipts": of(receiptsPrefixes), "rules": of([]string{"rules-"})}
 	for _, p := range ps {
 		seen := map[string]int{}
 		for kind, a := range p.records {
@@ -801,6 +866,11 @@ func checkRecordsApart(t *testing.T, ps []*platform) {
 		}
 		if p.records["connections"] != p.connectionRecords || !p.connectionRecords.Strict || !p.connectionRecords.OnlyNewest {
 			t.Errorf("the connections' records are not their own strict Anchored")
+		}
+		// The person's rules (ADR 0040): their own strict Anchored, which
+		// read Bea's record.
+		if r := p.records["rules"]; r == nil || !r.Strict || !r.OnlyNewest || seen["rules"] == 0 {
+			t.Errorf("the rules' records are not their own strict Anchored, or it read nothing")
 		}
 		chain := p.records["receipts"]
 		if chain == nil || chain != p.receipts.chain || !chain.Strict || !chainGrouped(chain.Commits) {
