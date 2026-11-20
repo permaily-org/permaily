@@ -200,3 +200,95 @@ func TestU12ANullFieldIsUnusable(t *testing.T) {
 		}
 	}
 }
+
+// TestU12AJoinedOrBrokenTopicIsUnusable: a topic or a value that joins
+// alternatives with a disjunction, holds a question mark or JSON's
+// punctuation, or mixes scripts is refused as unusable, so the person is
+// asked for conditions instead of given a rule that protects less (ADR 0040,
+// "Words, as built"). Each case is an answer U33 got from the model.
+func TestU12AJoinedOrBrokenTopicIsUnusable(t *testing.T) {
+	cond := func(v, op, value string, not bool) string {
+		n := "false"
+		if not {
+			n = "true"
+		}
+		return `{"possible":true,"name":"n","effect":"hold","criteria":[{"all":[{"any":[{"var":"` + v + `","op":"` + op + `","value":` + strconvQuote(value) + `,"not":` + n + `}]}]}],"removal":null}`
+	}
+	topic := func(t string) string {
+		return `{"possible":true,"name":"n","effect":"remove","criteria":[{"all":[]}],"removal":{"parts":[],"shapes":[],"topics":[` + strconvQuote(t) + `]}}`
+	}
+	for name, text := range map[string]string{
+		// U33's answers (w1, w2, w3).
+		"w3 en-hold-legal":       cond("message", "mentions", "a lawsuit or my lawyer?", false),
+		"w1 en-hold-legal":       cond("message", "mentions", "a lawsuit or legal case?", false),
+		"w2 pt-hold-medico":      cond("message", "mentions", "meu médico or hospital?", false),
+		"w3 pt-hold-medico":      cond("message", "mentions", "médico},{", true),
+		"w3 en-hold-signin":      cond("message", "about", "password resetsみたいな?」}]}]}],", true),
+		"w3 en-hold-two-domains": cond("from_domain", "is", "paypal.com или stripe.com", false),
+		"w2 es-hold-hacienda":    cond("message", "about", "hacienda e impuestos?", false),
+		"w3 es-hold-juicio":      cond("message", "mentions", "un juicio?", false),
+		"w2 en-hold-salary":      cond("message", "about", "salary payslips?", false),
+		"w1 health of the user":  cond("message", "about", "health of the user?", false),
+		"w1 citas médicas":       cond("message", "about", "citas médicas לפניך", false),
+		// The disjunctions of the corpus's languages.
+		"or":           cond("message", "about", "debts or loans", false),
+		"OR":           cond("subject", "contains", "Invoice OR receipt", false),
+		"o":            cond("message", "about", "deudas o préstamos", false),
+		"ou":           cond("message", "about", "dívidas ou empréstimos", false),
+		"oder":         cond("message", "about", "Schulden oder Kredite", false),
+		"или":          cond("message", "about", "долги или кредиты", false),
+		"或":            cond("message", "about", "债务或贷款", false),
+		"または":          cond("message", "about", "借金または融資", false),
+		"a topic's or": topic("a lawsuit or my lawyer"),
+		// JSON's punctuation and question marks, wherever they are.
+		"a brace":          cond("body", "contains", "pay{ment", false),
+		"a bracket":        topic("diagnoses]"),
+		"a quote":          cond("subject", "contains", `say "hi"`, false),
+		"a colon":          cond("subject", "contains", "Re: invoice", false),
+		"a comma":          topic("debts, loans"),
+		"a backslash":      topic(`debts\loans`),
+		"an opening ¿":     cond("message", "about", "¿deudas", false),
+		"a fullwidth ？":    cond("message", "about", "借金？", false),
+		"an Arabic ؟":      cond("message", "about", "ديون؟", false),
+		"a corner bracket": topic("パスワード」"),
+		// Scripts mixed.
+		"Latin and Cyrillic": topic("bank счет"),
+		"Latin and Han":      cond("message", "about", "salary 工资", false),
+		"Greek and Latin":    topic("υγεία health"),
+	} {
+		d, err := Read(text)
+		if !errors.Is(err, contracts.ErrRuleWordsUnusable) || !reflect.DeepEqual(d, contracts.RuleDraft{}) {
+			t.Errorf("%s: Read = %+v, %v; want rule_words_unusable and no draft", name, d, err)
+		}
+	}
+	// What U33's usable answers held stays usable: apostrophes, accents,
+	// one script with its marks, addresses, media types, dates and sizes.
+	for name, text := range map[string]string{
+		"an apostrophe":        cond("message", "about", "my kids' school", false),
+		"a typographic quote":  topic("my children’s names"),
+		"Spanish":              cond("message", "about", "pensión alimenticia", false),
+		"an address":           cond("from_address", "is", "dr.lopez@clinicaxyz.com", false),
+		"a hyphenated domain":  cond("from_domain", "is", "caixa-ejemplo.es", false),
+		"a media type":         cond("attachment_type", "is", "application/pdf", false),
+		"a date":               cond("received", "before", "2025-01-01T00:00:00Z", false),
+		"a size":               cond("size", "at_least", "10000000", false),
+		"Japanese":             cond("message", "about", "パスワードの再設定", false),
+		"Russian":              topic("домашний адрес"),
+		"Chinese":              cond("message", "about", "工资单", false),
+		"or inside a word":     cond("message", "about", "work order", false),
+		"o inside a word":      topic("los médicos"),
+		"digits with a script": cond("message", "about", "form 1040", false),
+	} {
+		if _, err := Read(text); err != nil {
+			t.Errorf("%s: %v, want a draft", name, err)
+		}
+	}
+}
+
+func strconvQuote(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
