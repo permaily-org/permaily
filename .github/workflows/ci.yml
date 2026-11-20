@@ -127,7 +127,7 @@ jobs:
         run: go test -race -tags dev ./cmd/permaily-enclave
 
   # The parsers fuzzed (attestation, KMS policy, release bundles, CMS, mail,
-  # mail's HTML, the query language): every target of scripts/fuzz.sh, one
+  # mail's HTML, the query language, redaction): every target of scripts/fuzz.sh, one
   # group a leg, each with its number of executions.
   fuzz-group:
     name: fuzz ${{ matrix.group }}
@@ -135,7 +135,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [verify, accounts, mailhtml, query-a, query-b]
+        group: [verify, accounts, mailhtml, query-a, query-b, redact]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
