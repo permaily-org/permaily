@@ -2,6 +2,7 @@ package rulewords
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -15,7 +16,8 @@ var errUnusable = contracts.ErrRuleWordsUnusable
 
 // Read checks the text of an answer and makes it a draft (ADR 0040, "What
 // the person confirms"): exactly the schema's JSON, nothing before or after
-// it and no member it does not list; possible; a name of 1 to
+// it, no member it does not list and none null but a hold's removal and the
+// value of exists (a null is never read as its zero value); possible; a name of 1 to
 // contracts.MaxRuleNameRunes characters with no control character; 1 to
 // contracts.MaxRuleCriteria criteria, each a formula the query language
 // accepts (its own limits, never "never", no mailbox: the model knows none
@@ -32,7 +34,7 @@ var errUnusable = contracts.ErrRuleWordsUnusable
 // bounds, the sentence) is the caller's.
 func Read(text string) (contracts.RuleDraft, error) {
 	var a wireAnswer
-	if !strictly([]byte(text), &a, "possible", "name", "effect", "criteria", "removal") {
+	if !strictly([]byte(text), &a, []string{"possible", "name", "effect", "criteria", "removal"}, "removal") {
 		return contracts.RuleDraft{}, errUnusable
 	}
 	if !a.Possible {
@@ -90,25 +92,41 @@ type wireCondition struct {
 }
 
 type wireRemoval struct {
-	Parts  []string `json:"parts"`
-	Shapes []string `json:"shapes"`
-	Topics []string `json:"topics"`
+	Parts  json.RawMessage `json:"parts"`
+	Shapes json.RawMessage `json:"shapes"`
+	Topics json.RawMessage `json:"topics"`
 }
 
 // strictly decodes one JSON object into v when it has exactly the members
-// named, each once and none null but where v's field is a pointer or raw,
-// and nothing follows it.
-func strictly(data []byte, v any, members ...string) bool {
+// named, each once, none null but those also named in nullable (the
+// schema's only nullable members: the answer's removal and a condition's
+// value), and nothing follows it. A null is never read as its zero value.
+func strictly(data []byte, v any, members []string, nullable ...string) bool {
 	var m map[string]json.RawMessage
 	if !one(data, &m) || m == nil || len(m) != len(members) || !distinctMembers(data, len(members)) {
 		return false
 	}
 	for _, k := range members {
-		if _, ok := m[k]; !ok {
+		raw, ok := m[k]
+		if !ok || (string(raw) == "null" && !slices.Contains(nullable, k)) {
 			return false
 		}
 	}
 	return one(data, v)
+}
+
+// list decodes a JSON array into out when it is one and holds no null.
+func list[T any](raw json.RawMessage, out *[]T) bool {
+	var items []json.RawMessage
+	if !one(raw, &items) || items == nil {
+		return false
+	}
+	for _, it := range items {
+		if string(it) == "null" {
+			return false
+		}
+	}
+	return one(raw, out) && *out != nil
 }
 
 // one decodes exactly one JSON value into v, with no unknown member and
@@ -169,29 +187,30 @@ func clean(s string) bool { return strings.IndexFunc(s, unwritten) < 0 }
 
 // criteria are the answer's criteria as canonical formulas.
 func criteria(raw json.RawMessage) ([]contracts.Formula, bool) {
-	var list []json.RawMessage
-	if !one(raw, &list) || len(list) == 0 || len(list) > contracts.MaxRuleCriteria {
+	var formulas []json.RawMessage
+	if !list(raw, &formulas) || len(formulas) == 0 || len(formulas) > contracts.MaxRuleCriteria {
 		return nil, false
 	}
-	out := make([]contracts.Formula, 0, len(list))
+	out := make([]contracts.Formula, 0, len(formulas))
 	model := 0
-	for _, fr := range list {
+	for _, fr := range formulas {
 		var wf wireFormula
 		var groups []json.RawMessage
-		if !strictly(fr, &wf, "all") || !one(wf.All, &groups) {
+		if !strictly(fr, &wf, []string{"all"}) || !list(wf.All, &groups) {
 			return nil, false
 		}
 		f := contracts.Formula{V: contracts.FormulaVersion, All: []contracts.Group{}}
 		for _, gr := range groups {
 			var wg wireGroup
 			var conds []json.RawMessage
-			if !strictly(gr, &wg, "any") || !one(wg.Any, &conds) {
+			if !strictly(gr, &wg, []string{"any"}) || !list(wg.Any, &conds) {
 				return nil, false
 			}
 			g := contracts.Group{Any: []contracts.Condition{}}
 			for _, cr := range conds {
 				var wc wireCondition
-				if !strictly(cr, &wc, "var", "op", "value", "not") {
+				if !strictly(cr, &wc, []string{"var", "op", "value", "not"}, "value") ||
+					(wc.Value == nil && contracts.Operator(wc.Op) != contracts.OpExists) {
 					return nil, false
 				}
 				c := contracts.Condition{Var: contracts.Variable(wc.Var), Op: contracts.Operator(wc.Op), Not: wc.Not}
@@ -237,22 +256,24 @@ func offered(v contracts.Variable) bool {
 // removal is the answer's removal, its lists in their canonical order.
 func removal(raw json.RawMessage) (*contracts.RuleRemoval, bool) {
 	var wr wireRemoval
-	if !strictly(raw, &wr, "parts", "shapes", "topics") || wr.Parts == nil || wr.Shapes == nil || wr.Topics == nil {
+	var ps, shapes, topics []string
+	if !strictly(raw, &wr, []string{"parts", "shapes", "topics"}) ||
+		!list(wr.Parts, &ps) || !list(wr.Shapes, &shapes) || !list(wr.Topics, &topics) {
 		return nil, false
 	}
-	if len(wr.Parts)+len(wr.Shapes)+len(wr.Topics) == 0 || len(wr.Topics) > contracts.MaxRuleTopics {
+	if len(ps)+len(shapes)+len(topics) == 0 || len(topics) > contracts.MaxRuleTopics {
 		return nil, false
 	}
 	r := &contracts.RuleRemoval{}
 	var ok bool
-	if r.Parts, ok = inOrder(wr.Parts, parts); !ok {
+	if r.Parts, ok = inOrder(ps, parts); !ok {
 		return nil, false
 	}
-	if r.Shapes, ok = inOrder(wr.Shapes, contracts.ShapeKinds); !ok {
+	if r.Shapes, ok = inOrder(shapes, contracts.ShapeKinds); !ok {
 		return nil, false
 	}
 	seen := map[string]bool{}
-	for _, t := range wr.Topics {
+	for _, t := range topics {
 		if !clean(t) {
 			return nil, false
 		}

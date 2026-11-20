@@ -151,3 +151,52 @@ func TestU12AnAnswerIsWithinTheRulesBytes(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// TestU12ANullFieldIsUnusable: a member the schema never lets be null
+// (every one but the answer's removal and a condition's value), or a null
+// in a list, is refused as malformed rather than read as its zero value;
+// a condition's value is null only for exists.
+func TestU12ANullFieldIsUnusable(t *testing.T) {
+	cond := func(c string) string {
+		return `{"possible":true,"name":"n","effect":"hold","criteria":[{"all":[{"any":[` + c + `]}]}],"removal":null}`
+	}
+	removal := func(r string) string {
+		return `{"possible":true,"name":"n","effect":"remove","criteria":[{"all":[]}],"removal":` + r + `}`
+	}
+	for name, text := range map[string]string{
+		"name null":            strings.Replace(hold, `"Bank mail"`, `null`, 1),
+		"effect null":          strings.Replace(hold, `"hold"`, `null`, 1),
+		"all null":             `{"possible":true,"name":"n","effect":"hold","criteria":[{"all":null}],"removal":null}`,
+		"any null":             `{"possible":true,"name":"n","effect":"hold","criteria":[{"all":[{"any":null}]}],"removal":null}`,
+		"a formula null":       `{"possible":true,"name":"n","effect":"hold","criteria":[null],"removal":null}`,
+		"a group null":         `{"possible":true,"name":"n","effect":"hold","criteria":[{"all":[null]}],"removal":null}`,
+		"a condition null":     cond(`null`),
+		"var null":             cond(`{"var":null,"op":"is","value":"bank.example","not":false}`),
+		"op null":              cond(`{"var":"from_domain","op":null,"value":"bank.example","not":false}`),
+		"not null":             cond(`{"var":"from_domain","op":"is","value":"bank.example","not":null}`),
+		"value null for is":    cond(`{"var":"from_domain","op":"is","value":null,"not":false}`),
+		"value null contains":  cond(`{"var":"subject","op":"contains","value":null,"not":false}`),
+		"value null about":     cond(`{"var":"message","op":"about","value":null,"not":false}`),
+		"shapes null":          removal(`{"parts":[],"shapes":null,"topics":["health"]}`),
+		"topics null":          removal(`{"parts":[],"shapes":["link"],"topics":null}`),
+		"a part null":          removal(`{"parts":[null],"shapes":["link"],"topics":[]}`),
+		"a shape null":         removal(`{"parts":[],"shapes":["link",null],"topics":[]}`),
+		"a topic null":         removal(`{"parts":[],"shapes":["link"],"topics":[null]}`),
+		"a hold's removal {}":  strings.Replace(hold, `"removal":null`, `"removal":{}`, 1),
+		"a remove's removal 0": removal(`0`),
+	} {
+		d, err := Read(text)
+		if !errors.Is(err, contracts.ErrRuleWordsUnusable) || !reflect.DeepEqual(d, contracts.RuleDraft{}) {
+			t.Errorf("%s: Read = %+v, %v; want rule_words_unusable and no draft", name, d, err)
+		}
+	}
+	// Exists, and only exists, takes a null value.
+	for _, c := range []string{
+		`{"var":"attachments","op":"exists","value":null,"not":false}`,
+		`{"var":"list","op":"exists","value":null,"not":true}`,
+	} {
+		if _, err := Read(cond(c)); err != nil {
+			t.Errorf("%s: %v", c, err)
+		}
+	}
+}
