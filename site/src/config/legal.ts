@@ -9,11 +9,11 @@
 // site/tests/content.test.ts checks that the page shows it and that it is the
 // service's. The service records on each account the version its person
 // agreed to and when (ADR 0017, "Agreeing to the terms").
-export const TERMS_VERSION = '2026-11-16';
+export const TERMS_VERSION = '2026-11-21';
 
 // The date shown at the top of every legal page, which is also the date the
 // page takes effect.
-export const LEGAL_UPDATED = '17 November 2026';
+export const LEGAL_UPDATED = '21 November 2026';
 
 // Decided by the maintainers on 2026-11-12: one natural person operates the
 // service and is the contracting party. The licensors of the code

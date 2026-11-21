@@ -67,9 +67,8 @@ const interfaces = [
   },
 ];
 
-// TODO LEGAL: owner's review: webhooks (ADR 0039) as built, not released yet; the
-// revision and the bounds are internal/webhook's (SpecRevision, TimestampTolerance,
-// DedupKeepFor, NoticeLife).
+// Webhooks (ADR 0039) as built: the revision and the bounds are internal/webhook's
+// (SpecRevision, TimestampTolerance, DedupKeepFor, NoticeLife).
 const hookRequest = `POST https://api.permaily.com/oauth/par
 client_id=https://trip-app.com/oauth/client.json
 &webhook={"url":"https://trip-app.com/hooks/permaily/u1",
