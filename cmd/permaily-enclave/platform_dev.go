@@ -42,6 +42,8 @@ import (
 	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
+	"github.com/permaily-org/permaily/internal/webhook"
+	"github.com/permaily-org/permaily/internal/webhook/send"
 	"github.com/permaily-org/permaily/pkg/attestation"
 	"github.com/permaily-org/permaily/pkg/provenance"
 )
@@ -83,9 +85,16 @@ type platform struct {
 	// one strict Anchored of its records.
 	connections       *composedConnections
 	connectionRecords *store.Anchored
+	// notices is the queue of the notices by mail about connections and
+	// the record of what left (ADR 0041), accounts its Deliverer: in dev
+	// mode their messages are kept in the outbox with the others.
+	notices *composedNotices
 	// receipts is the record of what left, chained (ADR 0037), over its one
 	// strict Anchored.
 	receipts *composedReceipts
+	// webhooks is the queue of connections' webhooks (ADR 0039), whose
+	// notices reach played vendors alone (devWebhookSender).
+	webhooks *composedWebhooks
 	// records are the Anchored of each kind of record, by kind, for the
 	// test that no name is read through two (dev mode only).
 	records map[string]*store.Anchored
@@ -96,7 +105,43 @@ type platform struct {
 // account takes to be deleted.
 var devAhead atomic.Int64
 
-func devClock() time.Time { return time.Now().Add(time.Duration(devAhead.Load())) }
+// devStill, while a test holds the clock of dev mode (devHold), is the real
+// instant it stands at: devAhead still moves it, and nothing else does, so
+// what is due comes when the test moves it and never because the test ran
+// slowly (the race detector).
+var devStill struct {
+	sync.Mutex
+	at time.Time
+}
+
+func devClock() time.Time {
+	devStill.Lock()
+	defer devStill.Unlock()
+	at := devStill.at
+	if at.IsZero() {
+		at = time.Now()
+	}
+	return at.Add(time.Duration(devAhead.Load()))
+}
+
+// devHold stops the clock of dev mode where it is; devRelease starts it
+// again from there, so it never goes back.
+func devHold() {
+	devStill.Lock()
+	defer devStill.Unlock()
+	if devStill.at.IsZero() {
+		devStill.at = time.Now()
+	}
+}
+
+func devRelease() {
+	devStill.Lock()
+	defer devStill.Unlock()
+	if !devStill.at.IsZero() {
+		devAhead.Add(int64(time.Until(devStill.at)))
+		devStill.at = time.Time{}
+	}
+}
 
 // devTerms is the version of the terms in force in dev mode, the compiled one
 // until POST /dev/terms?version=<v> changes it: then every account that
@@ -167,6 +212,37 @@ func devFlags(fs *flag.FlagSet, d *devConfig) {
 // documents and key sets with: a played vendor's. It takes the place of
 // -dev-vendors.
 var devVendors atomic.Pointer[http.Client]
+
+// devWebhooks, when a test sets it, is where dev mode sends notices: the
+// played vendor's address, dialled for every name, and the only roots its
+// certificate is checked against. It takes the place of -dev-vendors.
+var devWebhooks atomic.Pointer[devWebhookTarget]
+
+type devWebhookTarget struct {
+	addr  string
+	roots *x509.CertPool
+}
+
+// devWebhookSender is dev mode's sender of notices: the image's
+// (internal/webhook/send) dialling the test's played vendor, else
+// -dev-vendors with its roots, for every name; with neither, a dial that
+// refuses. No real vendor is ever called from dev mode.
+func devWebhookSender(d devConfig) webhook.Sender {
+	target := devWebhooks.Load()
+	if target == nil && d.vendors != "" {
+		roots := x509.NewCertPool()
+		if pem, err := os.ReadFile(d.vendorsCA); err == nil {
+			roots.AppendCertsFromPEM(pem)
+		}
+		target = &devWebhookTarget{addr: d.vendors, roots: roots}
+	}
+	if target == nil {
+		return send.New(func(context.Context, string) (net.Conn, error) { return nil, errNoVendor }, x509.NewCertPool(), devClock)
+	}
+	return send.New(func(ctx context.Context, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", target.addr)
+	}, target.roots, devClock)
+}
 
 // errNoVendor is every fetch of dev mode with no played vendor.
 var errNoVendor = errors.New("dev mode reaches no vendor")
@@ -335,14 +411,20 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	accountRecords := &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Now: devClock}
 	mailboxRecords := &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock}
 	modelRecords := &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock}
+	// The notices about connections (ADR 0041), queued in the storage as
+	// in the enclave, on the clock of dev mode, and kept in the outbox.
+	if p.notices, err = composeNotices(noticesParts{entries: mem, keys: local, now: devClock, log: log}); err != nil {
+		return nil, err
+	}
 	if p.accounts, err = accounts.New(accounts.Config{
 		// As in the enclave: only the newest version of an account's record is kept.
-		Records: accountRecords, Entries: mem,
+		Records: accountRecords, Entries: mem, Notices: p.notices.svc,
 		Keys: local, Mailer: outbox, AppURL: appURL, SuperAdmin: cfg.superAdmin, Log: log, Now: devClock, Terms: devTermsVersion,
 		Providers: &idp.Client{HTTP: &http.Client{}, RedirectURL: appURL + providerCallback, Now: devClock, Endpoints: providers.Endpoints()},
 	}); err != nil {
 		return nil, err
 	}
+	p.notices.deliverBy(p.accounts)
 	// Every provider is on from the start, with the application the local
 	// server knows: in the enclave the operator gives each (scripts/provider.sh).
 	storage.apps.Lock()
@@ -369,10 +451,19 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	})}
 	// The mailboxes of accounts, with their own strict records, and SMTP on
 	// -smtp-port (2525 by default in dev mode).
+	// Connections' webhooks, as in the enclave: their queue in the storage,
+	// on the clock of dev mode, told of every message stored; their
+	// notices reach played vendors alone.
+	if p.webhooks, err = composeWebhooks(webhooksParts{
+		entries: mem, keys: local, sender: devWebhookSender(cfg.dev), keysURL: webhookKeysURL(hosts, cfg.oauthPort()), now: devClock, log: log,
+	}); err != nil {
+		return nil, err
+	}
 	if p.mailboxes, err = mailboxes.New(mailboxes.Config{
 		Records: mailboxRecords,
 		Storage: mem, Keys: local, Accounts: p.accounts, Notifier: p.accounts, Domain: hosts.Inbox, Log: log, Now: devClock,
-		Auth: msgauth.DKIM(net.DefaultResolver.LookupTXT),
+		Auth:     msgauth.DKIM(net.DefaultResolver.LookupTXT),
+		Arrivals: p.webhooks.svc,
 	}); err != nil {
 		return nil, err
 	}
@@ -403,16 +494,23 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 	// their commits grouped (devStorage), the chain blocked or failed when
 	// a test says so (devChain).
 	chainRecords := &store.Anchored{Records: receipts.ChainTable{Entries: mem}, Commits: devChainCommits{storage.commits}, Strict: true, Now: devClock}
-	if p.receipts, err = composeReceipts(receiptsParts{chain: chainRecords, entries: mem, keys: local, accounts: p.accounts, now: devClock}); err != nil {
+	if p.receipts, err = composeReceipts(receiptsParts{chain: chainRecords, entries: mem, keys: local, accounts: p.accounts, notices: p.notices, log: log, now: devClock}); err != nil {
 		return nil, err
 	}
+	// The person's rules, as in the enclave: their records strict in one
+	// Anchored of their own (ADR 0040).
+	rulesRecords := &store.Anchored{Records: mem, Commits: commits, OnlyNewest: true, Strict: true, Now: devClock}
 	if p.connections, err = composeConnections(connectionsParts{
 		oauth: oauthConfig(hosts, cfg.oauthPort()), domain: cfg.domain, records: p.connectionRecords, entries: mem, keys: local,
-		vendorHTTP: devVendorHTTP(cfg.dev), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model, receipts: p.receipts, now: devClock,
+		vendorHTTP: devVendorHTTP(cfg.dev), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model, receipts: p.receipts, notices: p.notices,
+		rulesRecords: rulesRecords, webhooks: p.webhooks, log: log, now: devClock,
 	}); err != nil {
 		return nil, err
 	}
-	p.records = map[string]*store.Anchored{"accounts": accountRecords, "mailboxes": mailboxRecords, "model": modelRecords, "connections": p.connectionRecords, "receipts": chainRecords}
+	p.records = map[string]*store.Anchored{
+		"accounts": accountRecords, "mailboxes": mailboxRecords, "model": modelRecords, "connections": p.connectionRecords, "receipts": chainRecords,
+		"rules": rulesRecords,
+	}
 	devPlatforms.add(p)
 	port := cfg.smtpPort
 	if port == 25 {

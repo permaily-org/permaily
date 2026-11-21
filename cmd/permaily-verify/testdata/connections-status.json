@@ -23,8 +23,14 @@
   "devices_per_connection": 16,
   "model_unavailable": "nothing_leaves",
   "verified": [
-    { "domain": "claude.ai", "owner": "Anthropic" },
-    { "domain": "chatgpt.com", "owner": "OpenAI" }
+    {
+      "domain": "claude.ai",
+      "owner": "Anthropic"
+    },
+    {
+      "domain": "chatgpt.com",
+      "owner": "OpenAI"
+    }
   ],
   "rules": [
     {
@@ -38,11 +44,50 @@
       "on": true
     }
   ],
+  "person_rules": {
+    "record": "strict",
+    "effects": ["hold", "remove"],
+    "shapes": {
+      "version": 1,
+      "kinds": [
+        "email_address",
+        "phone_number",
+        "card_number",
+        "account_number",
+        "numeric_code",
+        "link"
+      ]
+    },
+    "meaning": {
+      "prompt": "s1-2026-11-20",
+      "threshold": 0.3,
+      "split_version": 1,
+      "sentences_max": 128,
+      "text_max": 32768,
+      "topics_max": 3
+    },
+    "words": {
+      "model": "gpt-6-luna",
+      "prompt": "w4-2026-11-20",
+      "calls": {
+        "proposed": 0,
+        "too_many": 0,
+        "unavailable": 0,
+        "unusable": 0
+      }
+    },
+    "notice": "2026-11-20",
+    "fresh_seconds": 5,
+    "rules_unreadable": 0
+  },
   "receipts": {
     "sealed": true,
     "chained": true,
     "chain": "strict",
-    "incidents": { "recorded": 0, "read": "2026-11-16T12:00:00Z" },
+    "incidents": {
+      "recorded": 0,
+      "read": "2026-11-16T12:00:00Z"
+    },
     "broken": {
       "catalogue_forked": 0,
       "catalogue_lost": 0,

@@ -345,10 +345,35 @@ export type ClientProblem = (typeof CLIENT_PROBLEMS)[number]
 export type ClientProblemDetails = { reason: ClientProblem }
 
 /**
- * The `details` of an API error (`contracts.ErrorDetails`): with `invalid_formula` a `FormulaProblem`, which always has
- * `at`; with `invalid_client` a `ClientProblemDetails`, which never has it.
+ * The reasons an `invalid_rule` answer's `details` may hold (`contracts.RuleProblem`, ADR 0040): fixed words of the
+ * server, never the person's own.
  */
-export type ErrorDetails = FormulaProblem | ClientProblemDetails
+export const RULE_PROBLEMS = [
+  'name_too_long',
+  'no_criteria',
+  'too_large',
+  'too_many_model',
+  'unknown_effect',
+  'removal_missing',
+  'removal_unexpected',
+  'unknown_part',
+  'unknown_shape',
+  'invalid_topic',
+  'unknown_scope',
+  'scope_clients',
+  'duplicate',
+  'default_not_editable',
+] as const
+export type RuleProblem = (typeof RULE_PROBLEMS)[number]
+
+/** The `details` of an `invalid_rule` error: its reason alone, under `rule`. */
+export type RuleProblemDetails = { rule: RuleProblem }
+
+/**
+ * The `details` of an API error (`contracts.ErrorDetails`): with `invalid_formula` a `FormulaProblem`, which always has
+ * `at`; with `invalid_client` a `ClientProblemDetails`, which never has it; with `invalid_rule` a `RuleProblemDetails`.
+ */
+export type ErrorDetails = FormulaProblem | ClientProblemDetails | RuleProblemDetails
 
 /** The reason in an `invalid_client` answer's `details`, when it is one of the three and there is no `at`. */
 export function clientProblemOf(details: unknown): ClientProblem | undefined {
@@ -401,6 +426,8 @@ export type MatchPage = {
   model?: MatchModel
   /** Only on the consent screen's preview with the model (ADR 0030): what a rule holds back. Not in `messages`. */
   held?: string[]
+  /** Only on the same preview (ADR 0040): what in `messages` would leave with details a rule of the person's takes out. */
+  removed?: string[]
 }
 
 /** What became of asking the model on a page of matches (ADR 0028). */
@@ -427,7 +454,18 @@ export type ConnectionVendor = { domain: string; verified?: string }
 export type MailSince = { new: boolean; at?: string }
 
 /** A rule every connection's reads apply first, and its sentence. */
-export type RuleSummary = { id: string; version: number; sentence: QuerySentence[] }
+/**
+ * A rule as the consent screen and a connection's page list it: its sentence, and on the consent screen what it does and
+ * who for in the server's words (ADR 0040, U25), with the clients its scope names.
+ */
+export type RuleSummary = {
+  id: string
+  version: number
+  sentence: QuerySentence[]
+  does?: string
+  for?: string
+  clients?: RuleClient[]
+}
 
 /**
  * The scope the person is about to approve: sent whole with every preview and with the decision. `mailboxes` is never
@@ -454,6 +492,8 @@ export type AuthorizationRequest = {
   query?: FormulaCheck
   since: MailSince
   ends_in_days: number
+  /** The webhook the vendor asked for (ADR 0039), accepted or refused with the request; absent without one. */
+  webhook?: WebhookAsked
   /** What the picker offers. */
   mailboxes: string[]
   /** Where the screen starts: every mailbox and new mail only, or the client's connection's. */
@@ -509,6 +549,8 @@ export type AuthorizationDecision = {
   draft?: ConsentDraft
   model_notice?: string
   snapshot?: ConsentSnapshot
+  /** The person's IANA time zone, required to allow a request whose webhook has a schedule (`time_zone_invalid`). */
+  time_zone?: string
 }
 
 /** A renewal: the notice and the connection's version the screen showed (`consent_changed` when it changed since). */
@@ -541,6 +583,34 @@ export type EndReason = 'person' | 'vendor' | 'reuse' | 'replaced' | 'account' |
 /** Whether a connection gets mail now: nothing leaves while the model cannot be asked or a new notice waits for the person. */
 export type ConnectionDelivery = 'delivering' | 'model_unavailable' | 'model_notice_changed'
 
+/** How often a scheduled notice is sent (ADR 0039): every day, or every week on one weekday. */
+export type WebhookEvery = 'day' | 'week'
+
+/** When a scheduled notice is sent, as wall time in the person's zone: `at` is "HH:MM" on a quarter hour; `on` a weekday in lower case for `week`. */
+export type WebhookSchedule = { every: WebhookEvery; on?: string; at: string }
+
+/** What the consent screen shows of a request's webhook: the host it is called on (the vendor's own) and when. */
+export type WebhookAsked = { host: string; new_mail?: boolean; schedule?: WebhookSchedule }
+
+/** Whether a connection's webhook is called: on, turned off by the person, or stopped by the vendor (both final). */
+export type WebhookState = 'on' | 'off' | 'stopped'
+
+/** Why the last calls of a webhook failed, in fixed words. */
+export type WebhookFailure = 'no_answer' | 'error' | 'redirect' | 'refused'
+
+/** A connection's webhook as the person's app shows it. */
+export type ConnectionWebhook = {
+  host: string
+  new_mail?: boolean
+  schedule?: WebhookSchedule
+  time_zone?: string
+  state: WebhookState
+  next_at?: string
+  last_sent_at?: string
+  failing_since?: string
+  failure?: WebhookFailure
+}
+
 /** One device of a connection: the tokens one approval started, with the scope confirmed for it. */
 export type ConnectionDevice = {
   id: string
@@ -572,12 +642,176 @@ export type Connection = {
   devices: ConnectionDevice[]
   model_notice: string
   delivery: ConnectionDelivery
+  /** Its webhook (ADR 0039), absent when it has none. */
+  webhook?: ConnectionWebhook
   /** Its record's version, which a renewal sends back. */
   version: number
 }
 
 /** The account's connections: the active ones and the ones that ended in the last 30 days. */
 export type ConnectionList = { connections: Connection[] }
+
+/*
+  The person's own rules (ADR 0040). The shapes of internal/contracts/rules.go; the calls are below the connections'
+  ("Rules (ADR 0040)"), and each refusal is an `ApiErrorCode` with its words in src/pages/auth/messages.ts.
+*/
+
+/** What a rule does to a message it applies to: hold it back, or take details out of it. */
+export type RuleEffect = 'hold' | 'remove'
+
+/**
+ * Which connections a rule is for, by their client (the app's client_id URL, matched exactly: two documents on one
+ * host are two apps, and an app that moves its document is a new one), those made later included unless `only`.
+ */
+export type RuleScope = { to: 'all' | 'all_except' | 'only'; clients?: string[] }
+
+/**
+ * A client as a rule's scope shows it: its client_id, `shown` (what tells it from another client on its host), and
+ * `name`, the name its own document gives, which is the vendor's words and is shown labelled as such.
+ */
+export type RuleClient = { client_id: string; shown: string; name?: string }
+
+/** How a client is named wherever a rule's scope is shown (`contracts.ClientShown`): its client_id without `https://`. */
+export function clientShown(clientId: string): string {
+  return clientId.startsWith('https://') && clientId.length > 'https://'.length
+    ? clientId.slice('https://'.length)
+    : clientId
+}
+
+/** The kinds of data with a fixed shape a rule removes with no model, in the order the editor lists them. */
+export const SHAPE_KINDS = [
+  'email_address',
+  'phone_number',
+  'card_number',
+  'account_number',
+  'numeric_code',
+  'link',
+] as const
+export type ShapeKind = (typeof SHAPE_KINDS)[number]
+
+/** What stands where a rule removed a piece of a subject or a text. */
+export const REMOVED_MARKER = '[removed]'
+
+/**
+ * What a `remove` rule takes out: whole parts, pieces of a fixed shape and sentences about its topics; shapes or topics
+ * take the sender and the attachments out too.
+ */
+export type RuleRemoval = { parts?: ConnectionPart[]; shapes?: ShapeKind[]; topics?: string[] }
+
+/** A rule as the person edits and confirms it: mail meets it when it meets any of its criteria. */
+export type RuleDraft = {
+  name: string
+  criteria: QueryFormula[]
+  effect: RuleEffect
+  removal?: RuleRemoval
+  scope: RuleScope
+  on: boolean
+}
+
+/** What a person reads of a rule's criteria, written by the server: "Any of these:" and each criteria's sentence. */
+export type RuleSentence = {
+  lang: string
+  text: string
+  lead: SentencePart[]
+  formulas: QuerySentence[]
+}
+
+/**
+ * A draft the server accepted: canonical, its identifier (sent back when saving), its sentence, what it does and who
+ * for, in the server's words (each client by its `shown` identity), its scope's clients, and whether a model decides
+ * any of it.
+ */
+export type RuleCheck = {
+  draft_id: string
+  draft: RuleDraft
+  sentence: RuleSentence
+  does: string
+  for: string
+  clients?: RuleClient[]
+  model: boolean
+}
+
+/** What the model proposed from the person's words, checked; nothing applies until the person saves it. */
+export type RuleProposal = { check: RuleCheck; model: string; prompt: string }
+
+/**
+ * One of the person's rules. `version` changes with its criteria, effect or removal; `model_off` says it asks a model
+ * under a notice no longer in force, so it asks nothing and holds (or removes the whole text) until saved again.
+ */
+export type Rule = {
+  id: string
+  version: number
+  check: RuleCheck
+  notice?: string
+  created_at: string
+  changed_at: string
+  model_off?: boolean
+}
+
+/** The rules' notice the account agreed to, and when. */
+export type RuleNoticeAgreement = { version: string; at: string }
+
+/** The rule every account has from the start (ADR 0031), and whether the person turned it off. */
+export type RuleDefault = { rule: RuleSummary; on: boolean; changed_at?: string }
+
+/** The default rule, the person's rules, the notice agreed and the version every change sends back. */
+export type RuleList = {
+  default: RuleDefault
+  rules: Rule[]
+  notice?: RuleNoticeAgreement
+  version: number
+  max: number
+}
+
+/** What the person wrote for the model to turn into a rule, and the rules' notice the screen showed. */
+export type RuleWords = { words: string; notice: string }
+
+/**
+ * A rule saved, new or changed: the draft as its check answered it, with its `draft_id`, the rules' version the screen
+ * read, and for a draft a model decides any of the rules' notice the screen showed.
+ */
+export type RuleSave = { draft_id: string; draft: RuleDraft; version: number; notice?: string }
+
+/** A rule deleted, at the rules' version the screen read. */
+export type RuleDelete = { version: number }
+
+/** The default rule turned on or off, at the rules' version the screen read. */
+export type RuleDefaultSet = { on: boolean; version: number }
+
+/** What rules removed from one message: never the content itself. */
+export type RemovedSummary = {
+  parts?: ConnectionPart[]
+  shapes?: Partial<Record<ShapeKind, number>>
+  sentences?: number
+  of?: number
+  whole?: boolean
+  why?: string
+  attachments?: number
+}
+
+/**
+ * A preview of a draft in one mailbox, for the person only: a page of the mail it applies to (read for a rule, unknown
+ * included), or with `message` that one message as the draft's removal would leave it. A preview decides nothing.
+ */
+export type RulePreview = {
+  draft: RuleDraft
+  mailbox: string
+  after?: string
+  limit?: number
+  ask_model?: boolean
+  message?: string
+}
+
+/** A preview's page: the draft's identifier, and the mail the rule applies to. */
+export type RulePreviewPage = { draft_id: string; page: MatchPage }
+
+/** One message as a draft's removal leaves it, in the person's own preview. */
+export type RuleRemovalPreview = {
+  draft_id: string
+  subject?: string
+  text?: string
+  removed: RemovedSummary
+}
 
 /** The codes the server answers with, plus `network` for a request that got no answer. */
 export type ApiErrorCode =
@@ -632,6 +866,14 @@ export type ApiErrorCode =
   | 'invalid_cursor'
   | 'invalid_before'
   | 'receipts_unreadable'
+  | 'time_zone_invalid'
+  | 'model_unavailable'
+  | 'invalid_rule'
+  | 'rule_changed'
+  | 'rules_changed'
+  | 'too_many_rules'
+  | 'rules_notice_needed'
+  | 'rule_words_unusable'
   | 'network'
   | 'other'
 
@@ -687,18 +929,37 @@ const known: ReadonlySet<string> = new Set([
   'invalid_cursor',
   'invalid_before',
   'receipts_unreadable',
+  'time_zone_invalid',
+  'model_unavailable',
+  'invalid_rule',
+  'rule_changed',
+  'rules_changed',
+  'too_many_rules',
+  'rules_notice_needed',
+  'rule_words_unusable',
 ])
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode
   /** Where a refused formula was refused and why: only with `invalid_formula`, and only when the server said both. */
   readonly problem?: FormulaProblem
-  constructor(code: ApiErrorCode, problem?: FormulaProblem) {
+  /** Why a rule was refused: only with `invalid_rule`, and only when the server said one of `RULE_PROBLEMS`. */
+  readonly rule?: RuleProblem
+  constructor(code: ApiErrorCode, problem?: FormulaProblem, rule?: RuleProblem) {
     super(code)
     this.name = 'ApiError'
     this.code = code
     if (problem) this.problem = problem
+    if (rule) this.rule = rule
   }
+}
+
+/** The reason in an `invalid_rule` answer's `details`, when it is `{rule}` with one of the fixed reasons and nothing else. */
+export function ruleProblemOf(details: unknown): RuleProblem | undefined {
+  if (typeof details !== 'object' || details === null) return undefined
+  if (Object.keys(details).length !== 1) return undefined
+  const { rule } = details as { rule?: unknown }
+  return RULE_PROBLEMS.find((p) => p === rule)
 }
 
 /** The `details` of an `invalid_formula` answer, when they have the shape of one: a path and a reason, both text. */
@@ -737,11 +998,12 @@ export function onTermsNeeded(listener: (() => void) | null) {
 /** How long a request may take before it counts as no answer. */
 const timeout = 20_000
 
-async function request<T>(
+/** The server's answer to a request, once it is one that succeeded; any other is thrown as an `ApiError`. */
+async function answered(
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,
-): Promise<T> {
+): Promise<Response> {
   let response: Response
   try {
     response = await fetch(path, {
@@ -758,14 +1020,7 @@ async function request<T>(
   } catch {
     throw new ApiError('network')
   }
-  if (response.ok) {
-    if (response.status === 204) return undefined as T
-    try {
-      return (await response.json()) as T
-    } catch {
-      throw new ApiError('other')
-    }
-  }
+  if (response.ok) return response
   let code: unknown
   let details: unknown
   try {
@@ -778,11 +1033,31 @@ async function request<T>(
   if (code === 'account_closing') closingHeard?.()
   if (code === 'terms_needed' && response.status === 400) termsHeard?.()
   if (code === 'invalid_formula') throw new ApiError('invalid_formula', problemOf(details))
+  if (code === 'invalid_rule') throw new ApiError('invalid_rule', undefined, ruleProblemOf(details))
   if (typeof code === 'string' && known.has(code)) throw new ApiError(code as ApiErrorCode)
   if (response.status === 401) throw new ApiError('unauthorized')
   if (response.status === 404) throw new ApiError('not_found')
   if (response.status === 429) throw new ApiError('too_many_requests')
   throw new ApiError('other')
+}
+
+async function request<T>(
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const response = await answered(method, path, body)
+  if (response.status === 204) return undefined as T
+  try {
+    return (await response.json()) as T
+  } catch {
+    throw new ApiError('other')
+  }
+}
+
+/** A GET's answer as the server wrote it, byte for byte: what a download for checking keeps untouched. */
+async function requestText(path: string): Promise<string> {
+  return (await answered('GET', path)).text()
 }
 
 /**
@@ -1345,6 +1620,7 @@ function matchPageOf(answer: Partial<MatchPage> | null | undefined): MatchPage {
     ...(typeof answer.searched_to === 'string' ? { searched_to: answer.searched_to } : {}),
     ...(isMatchModel(answer.model) ? { model: answer.model } : {}),
     ...(Array.isArray(answer.held) ? { held: answer.held } : {}),
+    ...(Array.isArray(answer.removed) ? { removed: answer.removed } : {}),
   }
 }
 
@@ -1468,6 +1744,257 @@ export async function revokeDevice(id: string, device: string): Promise<Connecti
  */
 export async function renewConnection(id: string, renewal: ConnectionRenewal): Promise<Connection> {
   return connectionOf(await request('POST', `${connectionPath(id)}/renew`, renewal))
+}
+
+/**
+ * Turns a connection's webhook off (ADR 0039), for good: only a new request of the app turns it on again. Sends the
+ * connection's version the page showed (`consent_changed` when it changed since); needs no fresh proof, since it only
+ * protects, and works under unagreed terms, as revoking does. A connection without a webhook is `not_found`.
+ */
+export async function turnWebhookOff(id: string, version: number): Promise<Connection> {
+  return connectionOf(await request('POST', `${connectionPath(id)}/webhook/off`, { version }))
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Rules (ADR 0040): the person's own rules, the default rule's switch and the rules' notice, in the person's session.
+// Every change needs a fresh proof (`confirmation_needed`, then `useConfirmed()`) and names the version of the rules it
+// was made on (`rules_changed` when another change came first).
+// ---------------------------------------------------------------------------------------------------------------
+
+function rulePath(id: string): string {
+  return `/api/v1/rules/${encodeURIComponent(id)}`
+}
+
+/** A rule's check as the server answered it, with every list there. */
+function ruleCheckOf(answer: Partial<RuleCheck> | null | undefined): RuleCheck {
+  if (
+    typeof answer?.draft_id !== 'string' ||
+    typeof answer.draft?.effect !== 'string' ||
+    typeof answer.sentence?.text !== 'string'
+  ) {
+    throw new ApiError('other')
+  }
+  const list = <T>(value: T[] | undefined): T[] => (Array.isArray(value) ? value : [])
+  return {
+    ...(answer as RuleCheck),
+    draft: { ...answer.draft, criteria: list(answer.draft.criteria) },
+    sentence: {
+      ...answer.sentence,
+      lead: list(answer.sentence.lead),
+      formulas: list(answer.sentence.formulas),
+    },
+    does: typeof answer.does === 'string' ? answer.does : '',
+    for: typeof answer.for === 'string' ? answer.for : '',
+    clients: list(answer.clients),
+    model: answer.model === true,
+  }
+}
+
+/** A rule as the server answered it. */
+function ruleOf(answer: Partial<Rule> | null | undefined): Rule {
+  if (typeof answer?.id !== 'string' || typeof answer.version !== 'number') {
+    throw new ApiError('other')
+  }
+  return { ...(answer as Rule), check: ruleCheckOf(answer.check) }
+}
+
+/** The default rule as the server answered it. */
+function ruleDefaultOf(answer: Partial<RuleDefault> | null | undefined): RuleDefault {
+  if (typeof answer?.rule?.id !== 'string' || typeof answer.on !== 'boolean') {
+    throw new ApiError('other')
+  }
+  return {
+    ...(answer as RuleDefault),
+    rule: {
+      ...answer.rule,
+      sentence: Array.isArray(answer.rule.sentence) ? answer.rule.sentence : [],
+    },
+  }
+}
+
+/** A list the server reads, of its strings: absent when empty, so nothing it reads is `null`. */
+function wireList<T>(value: readonly T[] | null | undefined): T[] | undefined {
+  return Array.isArray(value) && value.length > 0 ? [...value] : undefined
+}
+
+/**
+ * A draft as the rules routes read it (`decodeRule`): only the contract's members, every one it requires there and none
+ * `null` at any depth, so a member a screen left `null` or `undefined`, or one of its own, never reaches the server,
+ * which refuses the whole body for it (`invalid_body`).
+ */
+export function ruleDraftWire(draft: RuleDraft): RuleDraft {
+  const condition = (c: QueryCondition): QueryCondition => ({
+    var: c.var,
+    op: c.op,
+    ...(typeof c.value === 'string' && c.value !== '' ? { value: c.value } : {}),
+    ...(c.not === true ? { not: true } : {}),
+  })
+  const removal = draft.removal
+  const parts = wireList(removal?.parts)
+  const shapes = wireList(removal?.shapes)
+  const topics = wireList(removal?.topics)
+  const clients = wireList(draft.scope?.clients)
+  return {
+    name: typeof draft.name === 'string' ? draft.name : '',
+    criteria: (draft.criteria ?? []).map((f) => ({
+      v: f?.v ?? 1,
+      all: (f?.all ?? []).map((g) => ({ any: (g?.any ?? []).map(condition) })),
+    })),
+    effect: draft.effect,
+    ...(removal
+      ? {
+          removal: {
+            ...(parts ? { parts } : {}),
+            ...(shapes ? { shapes } : {}),
+            ...(topics ? { topics } : {}),
+          },
+        }
+      : {}),
+    scope: { to: draft.scope?.to ?? 'all', ...(clients ? { clients } : {}) },
+    on: draft.on === true,
+  }
+}
+
+/**
+ * The account's rules: the default rule and whether it is on, the person's rules in the order they were made, the
+ * rules' notice the account agreed to, the version every change sends back, and how many rules an account may have.
+ * Allowed under terms the account has not agreed to, where the rules are shown and not changed.
+ */
+export async function rules(): Promise<RuleList> {
+  const answer = await request<Partial<RuleList> | null>('GET', '/api/v1/rules')
+  if (!Array.isArray(answer?.rules) || typeof answer.version !== 'number') {
+    throw new ApiError('other')
+  }
+  return {
+    default: ruleDefaultOf(answer.default),
+    rules: answer.rules.map(ruleOf),
+    ...(answer.notice ? { notice: answer.notice } : {}),
+    version: answer.version,
+    max: typeof answer.max === 'number' ? answer.max : 16,
+  }
+}
+
+/**
+ * A draft made canonical, its identifier and the server's own sentence of it: what it does and who for, with no model
+ * and nothing written. A refusal is `invalid_rule` with its `rule` (why), or `invalid_formula` with its `problem`.
+ */
+export async function checkRule(draft: RuleDraft): Promise<RuleCheck> {
+  return ruleCheckOf(await request('POST', '/api/v1/rules/check', { draft: ruleDraftWire(draft) }))
+}
+
+/**
+ * Asks the model to turn the person's own words into a draft, under the rules' notice the screen showed
+ * (`rules_notice_needed` when it is not the one the account agreed to). Nothing is saved: the person reads the
+ * proposal's sentence and saves it. `model_unavailable` while the model can't be asked; `rule_words_unusable` when its
+ * answer is not a rule. The words are kept nowhere, here or on the server.
+ */
+export async function ruleWords(words: string, notice: string): Promise<RuleProposal> {
+  const answer = await request<Partial<RuleProposal> | null>('POST', '/api/v1/rules/words', {
+    words,
+    notice,
+  } satisfies RuleWords)
+  return {
+    check: ruleCheckOf(answer?.check),
+    model: typeof answer?.model === 'string' ? answer.model : '',
+    prompt: typeof answer?.prompt === 'string' ? answer.prompt : '',
+  }
+}
+
+/**
+ * Saves a rule: a new one without `id`, or a change of one (its switch included). Sends the draft the person confirmed
+ * with the `draft_id` its check answered (`rule_changed` when they differ), the rules' version the screen read
+ * (`rules_changed`) and, for a draft a model decides any of, the rules' notice. Needs a fresh proof.
+ */
+export async function saveRule(rule: RuleSave, id?: string): Promise<Rule> {
+  const save: RuleSave = {
+    draft_id: rule.draft_id,
+    draft: ruleDraftWire(rule.draft),
+    version: rule.version,
+    ...(rule.notice ? { notice: rule.notice } : {}),
+  }
+  return ruleOf(
+    id === undefined
+      ? await request('POST', '/api/v1/rules', save)
+      : await request('PUT', rulePath(id), save),
+  )
+}
+
+/** Deletes a rule, at the rules' version the screen read. Needs a fresh proof. */
+export async function deleteRule(id: string, version: number): Promise<void> {
+  await request('POST', `${rulePath(id)}/delete`, { version } satisfies RuleDelete)
+}
+
+/** Turns the default rule on or off, at the rules' version the screen read. Needs a fresh proof. */
+export async function setDefaultRule(on: boolean, version: number): Promise<RuleDefault> {
+  return ruleDefaultOf(
+    await request('POST', '/api/v1/rules/default', { on, version } satisfies RuleDefaultSet),
+  )
+}
+
+/** Agrees to the rules' notice in force (`RULES_NOTICE_VERSION` in src/lib/rules-notice.ts), by its version. */
+export async function agreeRulesNotice(version: string): Promise<RuleNoticeAgreement> {
+  const answer = await request<Partial<RuleNoticeAgreement> | null>(
+    'POST',
+    '/api/v1/account/rules-notice',
+    { version },
+  )
+  if (typeof answer?.version !== 'string' || typeof answer.at !== 'string') {
+    throw new ApiError('other')
+  }
+  return { version: answer.version, at: answer.at }
+}
+
+/**
+ * A page of a mailbox's mail a draft applies to, read for a rule (unknown included), newest first: the person's own
+ * preview, which decides nothing. With `askModel` the model is asked under the rules' notice.
+ */
+export async function previewRule(
+  draft: RuleDraft,
+  mailbox: string,
+  page: { after?: string; limit?: number; askModel?: boolean } = {},
+): Promise<RulePreviewPage> {
+  const answer = await request<Partial<RulePreviewPage> | null>('POST', '/api/v1/rules/preview', {
+    draft: ruleDraftWire(draft),
+    mailbox,
+    ...(page.after ? { after: page.after } : {}),
+    limit: page.limit ?? messagesPerPage,
+    ...(page.askModel ? { ask_model: true } : {}),
+  } satisfies RulePreview)
+  if (typeof answer?.draft_id !== 'string') throw new ApiError('other')
+  return { draft_id: answer.draft_id, page: matchPageOf(answer.page) }
+}
+
+/** One message as a draft's removal would leave it, for the person only, and what it took out. */
+export async function previewRuleRemoval(
+  draft: RuleDraft,
+  mailbox: string,
+  message: string,
+  askModel = false,
+): Promise<RuleRemovalPreview> {
+  const answer = await request<Partial<RuleRemovalPreview> | null>(
+    'POST',
+    '/api/v1/rules/preview',
+    {
+      draft: ruleDraftWire(draft),
+      mailbox,
+      message,
+      ...(askModel ? { ask_model: true } : {}),
+    } satisfies RulePreview,
+  )
+  if (typeof answer?.draft_id !== 'string' || typeof answer.removed !== 'object') {
+    throw new ApiError('other')
+  }
+  return answer as RuleRemovalPreview
+}
+
+/**
+ * Whether a rule's scope covers a client (`rules.Scope.Covers`): every connection, every one but the clients listed, or
+ * only theirs, each matched exactly. A scope this app does not know covers every client, as the server's does.
+ */
+export function ruleCovers(scope: RuleScope, clientId: string): boolean {
+  if (scope.to === 'only') return (scope.clients ?? []).includes(clientId)
+  if (scope.to === 'all_except') return !(scope.clients ?? []).includes(clientId)
+  return true
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1854,33 +2381,470 @@ export async function receipts(
 }
 
 /** A page of an export as the server answers it: what permaily-verify -receipts reads, one a line. */
-type ExportPage = { head: ReceiptsHead; links: unknown[]; next: ReceiptsPosition; done?: boolean }
+type ExportPage = {
+  head: ReceiptsHead
+  links: { receipts?: unknown }[]
+  next: ReceiptsPosition
+  done?: boolean
+}
 
-/** Says whether a is strictly before b on the chain, as the next page's start always is. */
-function below(a: ReceiptsPosition, b: ReceiptsPosition): boolean {
-  return a.n < b.n || (a.n === b.n && a.index < b.index)
+/** One page of the export: the bytes the server answered, as one line of the file, and where the next begins. */
+export type ExportedPage = {
+  /** The page exactly as the server wrote it, ended by one line feed: a line of what permaily-verify -receipts reads. */
+  line: string
+  head: ReceiptsHead
+  next: ReceiptsPosition
+  done: boolean
+  /** The receipts the page names, for progress. */
+  receipts: number
 }
 
 /**
- * Every page of the account's export, in order, one JSON object a line: the file `permaily-verify -receipts` checks.
- * `head` is the chain's head when it began, for the person to note beside the file, never in it.
+ * One page of the account's export, from the head or `before` where the page before ended (ADR 0037; ADR 0041, "The
+ * two downloads, in parts"). The download asks for them one at a time and holds at most a part of them
+ * (`writeExport` in `src/lib/csv.ts`): the file `permaily-verify -receipts` checks is these lines, in order, untouched.
+ * A page that is not one, or is not on one line, is `other`.
  */
-export async function exportReceipts(): Promise<{ file: string; head: ReceiptsHead }> {
-  const lines: string[] = []
-  let head: ReceiptsHead | undefined
-  let before: ReceiptsPosition | undefined
-  for (;;) {
-    const page = await request<Partial<ExportPage> | null>(
-      'GET',
-      `/api/v1/receipts/export${receiptsQuery(before)}`,
-    )
-    if (!Array.isArray(page?.links) || !isHead(page.head) || !isPosition(page.next))
-      throw new ApiError('other')
-    head ??= page.head
-    lines.push(`${JSON.stringify(page)}\n`)
-    if (page.done === true) return { file: lines.join(''), head }
-    // A page that does not move on would be asked for ever.
-    if (before && !below(page.next, before)) throw new ApiError('other')
-    before = page.next
+export async function exportReceipts(before?: ReceiptsPosition): Promise<ExportedPage> {
+  const text = await requestText(`/api/v1/receipts/export${receiptsQuery(before)}`)
+  const line = text.endsWith('\n') ? text : `${text}\n`
+  let page: Partial<ExportPage> | null
+  try {
+    page = JSON.parse(line)
+  } catch {
+    throw new ApiError('other')
   }
+  if (
+    line.indexOf('\n') !== line.length - 1 ||
+    !Array.isArray(page?.links) ||
+    !isHead(page.head) ||
+    !isPosition(page.next)
+  )
+    throw new ApiError('other')
+  return {
+    line,
+    head: page.head,
+    next: page.next,
+    done: page.done === true,
+    receipts: page.links.reduce(
+      (n, l) => n + (Array.isArray(l?.receipts) ? l.receipts.length : 0),
+      0,
+    ),
+  }
+}
+
+/*
+  A receipt as the walk gives it (ADR 0041, "What a receipt shows"): internal/services/receipts.Receipt, versions 1
+  to 3, whose stored documents are the golden files of internal/services/receipts/testdata/golden, which the tests
+  read with readReceipt. Everything a receipt names is as it was when the request was answered. Senders, subjects
+  and a model's topics are what mail and vendors wrote: shown as text, never as markup or links.
+*/
+
+/**
+ * What a receipt records. `refusals` (version 2) counts, for one connection's minute, the refusals past those recorded
+ * one by one; `rules` (version 3, ADR 0040) is a change of the person's own rules.
+ */
+export type ReceiptKind =
+  | 'search'
+  | 'read'
+  | 'attachment'
+  | 'refused'
+  | 'consent'
+  | 'ended'
+  | 'refusals'
+  | 'rules'
+
+/** A rule by its identifier and version. */
+export type RuleRef = { id: string; version: number }
+
+/** A formula evaluated, by role and identifier; its canonical form only for a search and in a consent. */
+export type ReceiptFormula = {
+  role: 'consented' | 'mailboxes' | 'since' | 'search'
+  id: string
+  formula?: QueryFormula
+}
+
+/** One answer of the model, or its kept refusal, a decision rested on. */
+export type ReceiptModel = {
+  var: QueryVariable
+  op: QueryOperator
+  topic: string
+  p: number
+  refused?: boolean
+  by_rule?: boolean
+  model?: string
+  prompt?: string
+  canary_checked?: string
+  canary_change?: string
+}
+
+/** One message made available: never its text or an attachment. */
+export type ReceiptDelivered = {
+  mailbox: string
+  message: string
+  received: string
+  parts: ConnectionPart[]
+  from: MailAddress[]
+  subject?: string
+  attachment?: number
+  model: ReceiptModel[]
+  cleared: { rule: RuleRef; at: string; model: ReceiptModel[] }[]
+  /** What each rule that applied took out before the message left (version 3), in the order the rules apply. */
+  removed: ReceiptRemoval[]
+}
+
+/** What one rule removed from a message that left, and the model's answers it rested on: never the removed content. */
+export type ReceiptRemoval = {
+  rule: RuleRef
+  removed: RemovedSummary
+  model: ReceiptModel[]
+}
+
+/** One message a rule held: nothing of it left. `why` is `exact`, `decided`, `recovered` or `undecided`. */
+export type ReceiptHeld = {
+  mailbox: string
+  message: string
+  rule: RuleRef
+  why: string
+  model: ReceiptModel[]
+}
+
+/** A request for mail that got none, and why. */
+export type ReceiptRefused = {
+  reason: string
+  mailbox?: string
+  message?: string
+  held?: ReceiptHeld
+  receipt?: string
+}
+
+/** What the person was shown and decided. */
+export type ReceiptConsent = {
+  allowed: boolean
+  renewal?: boolean
+  change?: ConnectionChange
+  sentences: string[]
+  parts: ConnectionPart[]
+  since: MailSince
+  ends_at?: string
+  mailboxes: string[]
+  model_notice: string
+  replaced?: string
+}
+
+/** One connection's refusals in a minute past the ones recorded each in its own receipt. */
+export type ReceiptRefusals = {
+  from: string
+  until: string
+  recorded: number
+  counts: { operation: string; reason: string; count: number }[]
+}
+
+/** One thing a change of rules changed (internal/services/receipts.RulesChangeKind). */
+export type RulesChangeKind =
+  | 'made'
+  | 'name'
+  | 'criteria'
+  | 'effect'
+  | 'scope'
+  | 'on'
+  | 'off'
+  | 'deleted'
+  | 'default_on'
+  | 'default_off'
+  | 'notice_agreed'
+
+const rulesChangeKinds: readonly string[] = [
+  'made',
+  'name',
+  'criteria',
+  'effect',
+  'scope',
+  'on',
+  'off',
+  'deleted',
+  'default_on',
+  'default_off',
+  'notice_agreed',
+] satisfies RulesChangeKind[]
+
+/**
+ * A change of the person's rules as asked (version 3, ADR 0040, "Receipts"): the rule with its version before and
+ * after, the draft and its criteria's identifiers, the rules' notice, and the account's record of rules it was asked
+ * at. Never the person's words, a rule's name, a topic or a value of its criteria.
+ */
+export type ReceiptRulesChange = {
+  changes: RulesChangeKind[]
+  rule?: string
+  before?: number
+  after?: number
+  draft_id?: string
+  criteria: string[]
+  notice?: string
+  epoch: number
+  version: number
+}
+
+/** A receipt's document. The lists a version may leave out, or Go writes as null, are always there, empty, at every depth. */
+export type Receipt = {
+  v: 1 | 2 | 3
+  id: string
+  at: string
+  kind: ReceiptKind
+  connection?: string
+  device?: string
+  client_id: string
+  vendor: string
+  resource: ConnectionResource
+  formulas: ReceiptFormula[]
+  rules: RuleRef[]
+  delivered: ReceiptDelivered[]
+  held: ReceiptHeld[]
+  refused?: ReceiptRefused
+  consent?: ReceiptConsent
+  ended?: { reason: EndReason; replaced_by?: string }
+  refusals?: ReceiptRefusals
+  rules_change?: ReceiptRulesChange
+}
+
+const receiptKinds: readonly string[] = [
+  'search',
+  'read',
+  'attachment',
+  'refused',
+  'consent',
+  'ended',
+  'refusals',
+  'rules',
+] satisfies ReceiptKind[]
+
+/** The version that added a kind; an older document of that kind is not one Go writes. */
+const kindSince: Partial<Record<ReceiptKind, number>> = { refusals: 2, rules: 3 }
+
+/*
+  The shape readReceipt holds a receipt to: every part, list and nested field the Activity screen and the CSV read (ADR
+  0041, "Changed after the design review", 5). The storage authenticates a receipt's bytes, its version and its
+  identifier, not this app's schema, so this is the screen's compatibility boundary: a shape it cannot use is null,
+  never a row that throws. A list Go wrote from a nil slice (`null`) or left out is empty; any other value that is not a
+  list is not a receipt this app can show.
+*/
+type Shape = Record<string, unknown>
+
+const isObject = (v: unknown): v is Shape =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+const isString = (v: unknown): v is string => typeof v === 'string'
+const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const optional =
+  (check: (v: unknown) => boolean) =>
+  (v: unknown): boolean =>
+    v === undefined || check(v)
+const optString = optional(isString)
+const optNumber = optional(isNumber)
+const optBoolean = optional((v) => typeof v === 'boolean')
+
+/** A list as Go writes it: an array each of whose items passes, or null or nothing for none. */
+const isList =
+  (item: (v: unknown) => boolean) =>
+  (v: unknown): boolean =>
+    v === undefined || v === null || (Array.isArray(v) && v.every(item))
+const list = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : [])
+
+const isRuleRef = (v: unknown): boolean => isObject(v) && isString(v.id) && isNumber(v.version)
+const isModel = (v: unknown): boolean =>
+  isObject(v) &&
+  isString(v.var) &&
+  isString(v.op) &&
+  isString(v.topic) &&
+  isNumber(v.p) &&
+  optBoolean(v.refused) &&
+  optBoolean(v.by_rule) &&
+  optString(v.model) &&
+  optString(v.prompt) &&
+  optString(v.canary_checked) &&
+  optString(v.canary_change)
+const isAddress = (v: unknown): boolean => isObject(v) && isString(v.address) && optString(v.name)
+const isFormula = (v: unknown): boolean =>
+  isObject(v) && isString(v.role) && isString(v.id) && optional(isObject)(v.formula)
+const isDelivered = (v: unknown): boolean =>
+  isObject(v) &&
+  isString(v.mailbox) &&
+  isString(v.message) &&
+  isString(v.received) &&
+  isList(isString)(v.parts) &&
+  isList(isAddress)(v.from) &&
+  optString(v.subject) &&
+  optNumber(v.attachment) &&
+  isList(isModel)(v.model) &&
+  isList((c) => isObject(c) && isRuleRef(c.rule) && isString(c.at) && isList(isModel)(c.model))(
+    v.cleared,
+  ) &&
+  isList(isRemoval)(v.removed)
+const isRemovedSummary = (v: unknown): boolean =>
+  isObject(v) &&
+  isList(isString)(v.parts) &&
+  optional(
+    (s) =>
+      isObject(s) &&
+      Object.entries(s).every(
+        ([k, n]) => (SHAPE_KINDS as readonly string[]).includes(k) && isNumber(n),
+      ),
+  )(v.shapes) &&
+  optNumber(v.sentences) &&
+  optNumber(v.of) &&
+  optBoolean(v.whole) &&
+  optString(v.why) &&
+  optNumber(v.attachments)
+const isRemoval = (v: unknown): boolean =>
+  isObject(v) && isRuleRef(v.rule) && isRemovedSummary(v.removed) && isList(isModel)(v.model)
+const isHeld = (v: unknown): boolean =>
+  isObject(v) &&
+  isString(v.mailbox) &&
+  isString(v.message) &&
+  isRuleRef(v.rule) &&
+  isString(v.why) &&
+  isList(isModel)(v.model)
+
+/** The field of a receipt that holds what a kind records; `rules` is not it, a list every receipt has. */
+const partField = {
+  refused: 'refused',
+  consent: 'consent',
+  ended: 'ended',
+  refusals: 'refusals',
+  rules: 'rules_change',
+} as const
+type PartKind = keyof typeof partField
+
+/** The part of a receipt its kind must have, and its shape; the reads may have delivered nothing, every message held. */
+const receiptPart: Record<PartKind, (v: unknown) => boolean> = {
+  refused: (v) =>
+    isObject(v) &&
+    isString(v.reason) &&
+    optString(v.mailbox) &&
+    optString(v.message) &&
+    optional(isHeld)(v.held) &&
+    optString(v.receipt),
+  consent: (v) =>
+    isObject(v) &&
+    typeof v.allowed === 'boolean' &&
+    optBoolean(v.renewal) &&
+    optString(v.change) &&
+    isList(isString)(v.sentences) &&
+    isList(isString)(v.parts) &&
+    isObject(v.since) &&
+    typeof v.since.new === 'boolean' &&
+    optString(v.since.at) &&
+    optString(v.ends_at) &&
+    isList(isString)(v.mailboxes) &&
+    isString(v.model_notice) &&
+    optString(v.replaced),
+  ended: (v) => isObject(v) && isString(v.reason) && optString(v.replaced_by),
+  refusals: (v) =>
+    isObject(v) &&
+    isString(v.from) &&
+    isString(v.until) &&
+    isNumber(v.recorded) &&
+    isList((c) => isObject(c) && isString(c.operation) && isString(c.reason) && isNumber(c.count))(
+      v.counts,
+    ),
+  rules: (v) =>
+    isObject(v) &&
+    isList((c) => isString(c) && rulesChangeKinds.includes(c))(v.changes) &&
+    optString(v.rule) &&
+    optNumber(v.before) &&
+    optNumber(v.after) &&
+    optString(v.draft_id) &&
+    isList(isString)(v.criteria) &&
+    optString(v.notice) &&
+    isNumber(v.epoch) &&
+    isNumber(v.version),
+}
+
+const receiptParts = Object.keys(partField) as PartKind[]
+
+/** A held message with its list of the model's answers always a list (ADR 0041's re-review, finding 5). */
+const heldOf = (h: ReceiptHeld): ReceiptHeld => ({ ...h, model: list<ReceiptModel>(h.model) })
+
+/**
+ * A receipt the walk found `ok`, read as this app knows receipts, or null when it is not one it can show: another
+ * version or kind, without what its kind records, or a part, list or field the screen and the CSV read in a shape they
+ * cannot use. A receipt read as null is still listed, as one this app can't show, with its identifier and position
+ * (ADR 0041): nothing found is ever left out.
+ */
+export function readReceipt(document: unknown): Receipt | null {
+  if (!isObject(document)) return null
+  const r = document
+  if (
+    (r.v !== 1 && r.v !== 2 && r.v !== 3) ||
+    !isString(r.id) ||
+    !r.id.startsWith('rcp_') ||
+    !isString(r.at) ||
+    !isString(r.vendor) ||
+    !isString(r.client_id) ||
+    !isString(r.resource) ||
+    !optString(r.connection) ||
+    !optString(r.device) ||
+    !receiptKinds.includes(r.kind as string)
+  )
+    return null
+  const kind = r.kind as ReceiptKind
+  if ((r.v as number) < (kindSince[kind] ?? 1)) return null
+  if (kind in partField && !receiptPart[kind as PartKind](r[partField[kind as PartKind]]))
+    return null
+  // A part of another kind is left as it is only when it has that kind's shape too, so nothing read is ever unusable.
+  for (const other of receiptParts)
+    if (
+      other !== kind &&
+      r[partField[other]] !== undefined &&
+      !receiptPart[other](r[partField[other]])
+    )
+      return null
+  if (
+    !isList(isFormula)(r.formulas) ||
+    !isList(isRuleRef)(r.rules) ||
+    !isList(isDelivered)(r.delivered) ||
+    !isList(isHeld)(r.held)
+  )
+    return null
+  const receipt = {
+    ...(r as unknown as Receipt),
+    formulas: list<ReceiptFormula>(r.formulas),
+    rules: list<RuleRef>(r.rules),
+    delivered: list<ReceiptDelivered>(r.delivered).map((d) => ({
+      ...d,
+      parts: list<ConnectionPart>(d.parts),
+      from: list<MailAddress>(d.from),
+      model: list<ReceiptModel>(d.model),
+      cleared: list<ReceiptDelivered['cleared'][number]>(d.cleared).map((c) => ({
+        ...c,
+        model: list<ReceiptModel>(c.model),
+      })),
+      removed: list<ReceiptRemoval>(d.removed).map((m) => ({
+        ...m,
+        removed: { ...m.removed, parts: list<ConnectionPart>(m.removed.parts) },
+        model: list<ReceiptModel>(m.model),
+      })),
+    })),
+    held: list<ReceiptHeld>(r.held).map(heldOf),
+  }
+  if (receipt.refused?.held)
+    receipt.refused = { ...receipt.refused, held: heldOf(receipt.refused.held) }
+  if (receipt.consent)
+    receipt.consent = {
+      ...receipt.consent,
+      sentences: list<string>(receipt.consent.sentences),
+      parts: list<ConnectionPart>(receipt.consent.parts),
+      mailboxes: list<string>(receipt.consent.mailboxes),
+    }
+  if (receipt.refusals)
+    receipt.refusals = {
+      ...receipt.refusals,
+      counts: list<ReceiptRefusals['counts'][number]>(receipt.refusals.counts),
+    }
+  if (receipt.rules_change)
+    receipt.rules_change = {
+      ...receipt.rules_change,
+      changes: list<RulesChangeKind>(receipt.rules_change.changes),
+      criteria: list<string>(receipt.rules_change.criteria),
+    }
+  return receipt
 }

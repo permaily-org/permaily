@@ -1,6 +1,10 @@
 package inbox
 
-import "time"
+import (
+	"time"
+
+	"github.com/permaily-org/permaily/internal/redact"
+)
 
 // NewDiscloserWith is NewDiscloser with a page's bounds and the clock of
 // the test's (zero fields keep the defaults; asked bounds the messages a
@@ -31,3 +35,7 @@ func SettleWithin(d Discloser, within time.Duration) { d.(*storeDiscloser).settl
 
 // AskWithin sets each asked message's own deadline (decide.MessageDeadline).
 func AskWithin(d Discloser, within time.Duration) { d.(*storeDiscloser).bounds.ask = within }
+
+// SetRedactor sets the Redactor the discloser finds shapes and splits the
+// one view with (redact.Fixed by default).
+func SetRedactor(d Discloser, r redact.Redactor) { d.(*storeDiscloser).redactor = r }

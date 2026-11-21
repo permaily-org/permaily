@@ -162,6 +162,11 @@ func TestMailStatusJSON(t *testing.T) {
 	if got, _ = json.Marshal(attestation.Status{Commit: "abc"}); string(got) != `{"commit":"abc"}` {
 		t.Fatalf("got %s", got)
 	}
+	// E29: the notices' counts, every one also at zero, under mail (ADR 0041).
+	got, _ = json.Marshal(attestation.MailStatus{Domain: "d", Address: "a", Notices: &attestation.NoticesStatus{Since: at, Sent: 2, Dropped: 1}})
+	if string(got) != `{"domain":"d","address":"a","notices":{"since":"2026-11-11T12:00:00Z","queued":0,"sent":2,"failed":0,"dropped":1,"skipped":0,"refused":0}}` {
+		t.Fatalf("got %s", got)
+	}
 }
 
 func TestAdminStatusJSON(t *testing.T) {

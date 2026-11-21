@@ -13,6 +13,7 @@ import (
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/services/connections"
+	"github.com/permaily-org/permaily/internal/webhook"
 )
 
 // metadataCache is how long a client may keep the server's and the
@@ -36,7 +37,9 @@ type ConnectionsMounts struct {
 //     routes (ConnectionsAPI);
 //   - the api host, the issuer, which has no cookie: the server's metadata,
 //     the API's resource metadata, the token, revocation and pushed request
-//     endpoints (AuthorizationServer) and the API for apps (VendorAPI);
+//     endpoints (AuthorizationServer), the API for apps (VendorAPI) and,
+//     when the composition gives one, the key set webhooks' notices are
+//     signed with (WebhookKeys, ADR 0039);
 //   - the mcp host: its resource metadata at both of RFC 9728's places
 //     (ResourceMetadataMCP). The MCP endpoint itself is internal/mcpapi's.
 //
@@ -56,6 +59,9 @@ func MountConnections(m ConnectionsMounts, cfg ConnectionsConfig) {
 	vendor := VendorAPI(cfg)
 	m.API.Handle(oauth.PathAPI+"/connection", vendor)
 	m.API.Handle(oauth.PathAPI+"/messages/", vendor)
+	if cfg.WebhookKeys != nil {
+		m.API.Handle(webhook.KeysPath, WebhookKeys(cfg.WebhookKeys, cfg.Log))
+	}
 	mcp := ResourceMetadataMCP(cfg)
 	m.MCP.Handle(oauth.PathResourceMetadata, mcp)
 	m.MCP.Handle(oauth.PathResourceMetadata+oauth.PathMCP, mcp)

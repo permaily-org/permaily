@@ -10,6 +10,8 @@ import (
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/query"
+	"github.com/permaily-org/permaily/internal/redact"
+	"github.com/permaily-org/permaily/internal/rules"
 	"github.com/permaily-org/permaily/internal/store"
 )
 
@@ -34,7 +36,7 @@ import (
 // Decisions, BlockDecisions over its sealed records). The Discloser it
 // returns also counts what DecisionsFullCounter says.
 func NewDiscloser(st ReadStore, eval Evaluate, d Decisions) Discloser {
-	return &storeDiscloser{r: &storeReader{st: st, now: time.Now}, eval: eval, decisions: d, bounds: defaultMatchBounds, now: time.Now, settle: settleWithin}
+	return &storeDiscloser{r: &storeReader{st: st, now: time.Now}, eval: eval, decisions: d, redactor: redact.Fixed{}, bounds: defaultMatchBounds, now: time.Now, settle: settleWithin}
 }
 
 // DecisionsFullCounter is implemented by the Discloser NewDiscloser returns:
@@ -62,10 +64,12 @@ type storeDiscloser struct {
 	r         *storeReader
 	eval      Evaluate
 	decisions Decisions
-	bounds    matchBounds
-	now       func() time.Time
-	settle    time.Duration
-	full      atomic.Int64
+	// redactor finds the fixed shapes and splits the one view (ADR 0040).
+	redactor redact.Redactor
+	bounds   matchBounds
+	now      func() time.Time
+	settle   time.Duration
+	full     atomic.Int64
 }
 
 // DecisionsFull implements DecisionsFullCounter.
@@ -95,6 +99,9 @@ func (s *storeDiscloser) Page(ctx context.Context, b Box, d Disclosure, before s
 	if err != nil {
 		return nil, err
 	}
+	if cut, err = p.reduce(ctx, cands[:cut]); err != nil {
+		return nil, err
+	}
 	if cut < len(cands) {
 		next = cands[cut-1].m.ID // what was not asked is the next page's
 		cands = cands[:cut]
@@ -121,7 +128,7 @@ func (s *storeDiscloser) Message(ctx context.Context, b Box, d Disclosure, id st
 		return Outcome{}, contracts.ErrNotFound
 	}
 	if o.Disclosed != nil && slices.Contains(d.Parts, contracts.PartBody) {
-		text, cut, err := p.vendorText(ctx, c)
+		text, cut, err := p.leavingText(ctx, c)
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -148,7 +155,8 @@ func (s *storeDiscloser) Attachment(ctx context.Context, b Box, d Disclosure, id
 		return o, nil, nil // the vendor is told not_found; the record, why
 	}
 	at := slices.IndexFunc(c.meta.Attachments, func(a contracts.MessageAttachment) bool { return a.Index == index })
-	if at < 0 || c.meta.Unparsed {
+	if at < 0 || c.meta.Unparsed || c.reduced != nil && c.reduced.attachments {
+		// A rule removed the attachments: none of them leaves (ADR 0040).
 		return Outcome{}, nil, contracts.ErrNotFound
 	}
 	if c.meta.Attachments[at].Size > contracts.VendorAttachmentMax {
@@ -187,14 +195,23 @@ type discloseRun struct {
 	// matches' do; a single message's take from ReadBudget, as Reader.Get's.
 	page                   bool
 	read, textReads, toAsk int
-	off, limit             bool
-	start                  time.Time
+	// sentences asks the model about a removal's topics, sentence by
+	// sentence (ADR 0040): Asking.Sentences, or the Asker when it is one.
+	sentences  SentenceAsker
+	off, limit bool
+	start      time.Time
 }
 
 func (s *storeDiscloser) run(ctx context.Context, b Box, d Disclosure, page bool) *discloseRun {
 	p := &discloseRun{s: s, b: b, d: d, page: page, start: s.now()}
 	asking, ok := AskerFrom(ctx)
 	p.asking, p.model = asking, ok && d.Model
+	if p.model {
+		p.sentences = asking.Sentences
+		if p.sentences == nil {
+			p.sentences, _ = asking.Asker.(SentenceAsker)
+		}
+	}
 	return p
 }
 
@@ -235,15 +252,36 @@ type candidate struct {
 	answers query.Answers
 	// expired: a decision found its message past its expiry.
 	expired bool
+	// removable: a rule that removes details may apply to it, so the
+	// formulas are read on what it leaves (ADR 0040, "The order"), never
+	// on the original: their model atoms are asked in reduce.
+	removable bool
+	// view, smap and smapOK are its one View and that view's SentenceMap
+	// (ADR 0040), made in reduce when a removal reads its text.
+	view   *redact.View
+	viewOK bool
+	smap   redact.SentenceMap
+	smapOK bool
+	// reduced is what the rules that remove left of it, nil when none
+	// applied.
+	reduced *reduction
 }
 
 // ruleNeed is one rule's value on a candidate that rests on the model.
 type ruleNeed struct {
-	need  bool
-	atoms []query.Atom
+	need bool
+	// applies: a rule that removes applies without the model (a formula
+	// True, Unknown on data that cannot be read, or the model off for it).
+	applies bool
+	atoms   []query.Atom
 	// failed: its day's blocks could not be read or written.
 	failed bool
 	dec    Decision // what Begin answered, then Settle
+	// meaning is the rule's meaning decision (rules.MeaningRef), and
+	// meaningFailed says its day's blocks could not be read or written.
+	meaning       Decision
+	meaningFailed bool
+	meaningAsked  *SentencesAsked
 }
 
 // walk is the first pass: the candidates of a page in order, and its next.
@@ -346,6 +384,9 @@ func (p *discloseRun) one(ctx context.Context, id string) (*candidate, error) {
 	if _, err := p.decide(ctx, []*candidate{c}); err != nil {
 		return nil, err
 	}
+	if _, err := p.reduce(ctx, []*candidate{c}); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
@@ -371,7 +412,7 @@ func (p *discloseRun) consider(ctx context.Context, m *store.Message) (*candidat
 	c := &candidate{m: m, meta: meta, exact: -1, qm: QueryMessage(m, meta, nil, nil)}
 	for {
 		needs := p.evaluate(c)
-		if c.fs.Value == query.False {
+		if c.fs.Value == query.False && !p.mayRemove(c) {
 			return nil, verdictNone, nil
 		}
 		if needs == 0 || meta.Unparsed || c.exact >= 0 {
@@ -425,19 +466,61 @@ func (p *discloseRun) evaluate(c *candidate) query.Sources {
 		needs |= c.fs.Needs
 	}
 	c.exact = -1
+	view := false
 	for i, r := range p.d.Rules {
+		applies := false
 		for _, f := range r.Formulas {
 			res := eval([]*query.Canonical{f}, c.qm, nil, query.ForRule)
-			if res.Value == query.True {
+			if res.Value == query.True && holds(r) {
 				c.exact = i
 				return 0 // held whatever the rest says: nothing more is read
+			}
+			if res.Value != query.False {
+				applies = true
 			}
 			if res.Value == query.Unknown {
 				needs |= res.Needs
 			}
 		}
+		view = view || applies && readsView(r)
+	}
+	// A removal that may apply is decided on the message's text: read it
+	// (ADR 0040, "The order").
+	if view {
+		needs |= query.FromEntry
+		if c.entry != nil && entryCut(c.entry) {
+			needs |= query.FromText
+		}
 	}
 	return needs
+}
+
+// holds says r holds what it applies to; every rule but one that removes
+// does (an effect this release does not know protects as a hold does).
+func holds(r rules.Rule) bool { return r.Effect != rules.Remove }
+
+// readsView says r, a rule that removes, removes from the subject or the
+// text: whole, by shapes or by meaning.
+func readsView(r rules.Rule) bool {
+	rm := r.Removal
+	return !holds(r) && (rm == nil || len(rm.Shapes) > 0 || len(rm.Topics) > 0 ||
+		slices.Contains(rm.Parts, contracts.PartSubject) || slices.Contains(rm.Parts, contracts.PartBody))
+}
+
+// mayRemove says a rule that removes may apply to c on what is read of it:
+// one of its formulas is not False.
+func (p *discloseRun) mayRemove(c *candidate) bool {
+	for _, r := range p.d.Rules {
+		if holds(r) {
+			continue
+		}
+		for _, f := range r.Formulas {
+			if p.s.eval([]*query.Canonical{f}, c.qm, nil, query.ForRule).Value != query.False {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // classify settles what the first pass knows of c once no more is read: it
@@ -445,8 +528,12 @@ func (p *discloseRun) evaluate(c *candidate) query.Sources {
 // holds c exactly or needs a decision, with the model's atoms it needs.
 func (p *discloseRun) classify(c *candidate) bool {
 	c.rules = make([]ruleNeed, len(p.d.Rules))
+	c.removable = p.mayRemove(c)
 	switch {
 	case c.fs.Value == query.True:
+	case c.fs.Value == query.False:
+		// Kept only because a removal may apply: the formulas are read
+		// again on what it leaves.
 	case c.exact >= 0:
 		// A rule holds it, read no further: the formulas could match it.
 	case c.fs.Needs != 0 || len(c.fs.Model) == 0 || c.meta.Unparsed:
@@ -454,7 +541,7 @@ func (p *discloseRun) classify(c *candidate) bool {
 		// unparsed message is never asked about (ADR 0028, "What is never
 		// asked").
 	default:
-		if !p.couldBeTrue(c) {
+		if !p.couldBeTrue(c) && !c.removable {
 			return false
 		}
 		c.fsModel = true
@@ -465,12 +552,22 @@ func (p *discloseRun) classify(c *candidate) bool {
 	for i, r := range p.d.Rules {
 		for _, f := range r.Formulas {
 			res := p.s.eval([]*query.Canonical{f}, c.qm, nil, query.ForRule)
+			if res.Value == query.True && !holds(r) {
+				c.rules[i].applies = true
+			}
 			if res.Value != query.Unknown {
 				continue
 			}
-			if res.Needs != 0 || len(res.Model) == 0 || c.meta.Unparsed {
-				c.exact = i // Unknown on a text that cannot be read: held, without the model
-				return true
+			if res.Needs != 0 || len(res.Model) == 0 || c.meta.Unparsed || r.ModelOff {
+				// Unknown on a text that cannot be read, or on a model the
+				// rule may not ask (ADR 0040, "The rules' notice"): it
+				// applies, without the model.
+				if holds(r) {
+					c.exact = i
+					return true
+				}
+				c.rules[i].applies = true
+				continue
 			}
 			c.rules[i].need = true
 			for _, a := range res.Model {
@@ -478,6 +575,9 @@ func (p *discloseRun) classify(c *candidate) bool {
 					c.rules[i].atoms = append(c.rules[i].atoms, a)
 				}
 			}
+		}
+		if c.rules[i].applies {
+			c.rules[i].need, c.rules[i].atoms = false, nil
 		}
 	}
 	return true
@@ -509,6 +609,9 @@ func (p *discloseRun) needsAsk(c *candidate) bool {
 		return false
 	}
 	if c.fsModel {
+		return true
+	}
+	if c.removable && slices.ContainsFunc(p.d.Rules, func(r rules.Rule) bool { return r.Removal != nil && len(r.Removal.Topics) > 0 }) {
 		return true
 	}
 	return slices.ContainsFunc(c.rules, func(r ruleNeed) bool { return r.need })
@@ -652,7 +755,8 @@ func (p *discloseRun) decide(ctx context.Context, cands []*candidate) (int, erro
 // nothing more.
 func (p *discloseRun) begin(ctx context.Context, cands []*candidate) {
 	of := byID(cands)
-	for ri, rule := range p.d.Rules {
+	for _, ri := range p.holdsFirst() {
+		rule := p.d.Rules[ri]
 		byDay := map[string][]DecisionKey{}
 		var order []string
 		for _, c := range cands {
@@ -692,14 +796,36 @@ func lifetimeOf(id string) time.Time {
 	return timeOfMessageID(id).AddDate(0, 0, slices.Max(contracts.MailboxRetentionDays))
 }
 
-// heldBefore says a rule before ri already holds c, or leaves it undecided.
+// heldBefore says a rule that holds, before ri (every one, for a rule that
+// removes), already holds c, or leaves it undecided.
 func (p *discloseRun) heldBefore(c *candidate, ri int) bool {
-	for _, r := range c.rules[:ri] {
+	for j, r := range c.rules {
+		if !holds(p.d.Rules[j]) {
+			continue
+		}
+		if holds(p.d.Rules[ri]) && j >= ri {
+			break
+		}
 		if r.need && (r.failed || r.dec.State != DecisionCleared && r.dec.State != DecisionBegun) {
 			return true
 		}
 	}
 	return c.expired
+}
+
+// holdsFirst is the rules' indices, those that hold before those that
+// remove, each in order: what a message is held by is decided before
+// anything is decided of what is removed from it.
+func (p *discloseRun) holdsFirst() []int {
+	var hs, rs []int
+	for i, r := range p.d.Rules {
+		if holds(r) {
+			hs = append(hs, i)
+		} else {
+			rs = append(rs, i)
+		}
+	}
+	return append(hs, rs...)
 }
 
 // byID is the candidates by their message.
@@ -719,11 +845,13 @@ func (p *discloseRun) atomsFor(c *candidate) []query.Atom {
 		return nil
 	}
 	var atoms []query.Atom
-	for _, r := range c.rules {
+	for ri, r := range c.rules {
 		switch {
 		case !r.need, r.dec.State == DecisionCleared:
-		case r.failed || r.dec.State != DecisionBegun:
+		case (r.failed || r.dec.State != DecisionBegun) && holds(p.d.Rules[ri]):
 			return nil // held, undecided or final, whatever is asked
+		case r.failed || r.dec.State != DecisionBegun:
+			// A removal that applies, or is undecided: it applies.
 		default:
 			for _, a := range r.atoms {
 				if !slices.Contains(atoms, a) {
@@ -732,7 +860,7 @@ func (p *discloseRun) atomsFor(c *candidate) []query.Atom {
 			}
 		}
 	}
-	if c.fsModel {
+	if c.fsModel && !c.removable {
 		for _, a := range c.fs.Model {
 			if !slices.Contains(atoms, a) {
 				atoms = append(atoms, a)
@@ -854,8 +982,18 @@ func (p *discloseRun) outcome(c *candidate) (Outcome, bool) {
 		return Outcome{}, false
 	}
 	fs := c.fs.Value
-	if c.fsModel && c.asked != nil {
+	if c.fsModel && c.asked != nil && !c.removable {
 		fs = p.s.eval(p.d.Formulas, c.qm, c.answers, query.ForQuery).Value
+	}
+	if c.removable {
+		// The formulas are read on what the removals leave (reduce); a
+		// message reduce did not reach is listed only when a rule holds it.
+		switch {
+		case c.reduced != nil:
+			fs = c.reduced.fs.Value
+		case fs != query.False:
+			fs = query.Unknown
+		}
 	}
 	if fs == query.False {
 		return Outcome{}, false
@@ -867,6 +1005,12 @@ func (p *discloseRun) outcome(c *candidate) (Outcome, bool) {
 		}
 		need := c.rules[ri]
 		if c.exact >= 0 || !need.need {
+			continue
+		}
+		if !holds(r) {
+			if need.dec.State == DecisionCleared && !need.failed && p.model {
+				cleared = append(cleared, RuleCleared{Rule: r.Ref(), At: need.dec.At, Decided: need.dec.Evidence})
+			}
 			continue
 		}
 		switch {
@@ -885,7 +1029,11 @@ func (p *discloseRun) outcome(c *candidate) (Outcome, bool) {
 	if fs != query.True {
 		return Outcome{}, false
 	}
-	return Outcome{Disclosed: &Disclosed{Message: p.vendorMessage(c), ID: c.m.ID, Decided: p.formulasDecided(c), Rules: cleared}}, true
+	out := &Disclosed{Message: p.vendorMessage(c), ID: c.m.ID, Decided: p.formulasDecided(c), Rules: cleared}
+	if c.reduced != nil {
+		out.Removed = c.reduced.removed
+	}
+	return Outcome{Disclosed: out}, true
 }
 
 // undecided is c held, undecided, by rule ri; one held for want of room in
@@ -899,12 +1047,18 @@ func (p *discloseRun) undecided(c *candidate, ri int) Outcome {
 
 // formulasDecided are the model's answers the formulas' value rested on.
 func (p *discloseRun) formulasDecided(c *candidate) []Decided {
-	if !c.fsModel || c.asked == nil {
+	model, asked := c.fs.Model, c.asked
+	if c.reduced != nil {
+		model, asked = c.reduced.model, c.reduced.asked
+	} else if !c.fsModel {
+		return nil
+	}
+	if asked == nil {
 		return nil
 	}
 	var out []Decided
-	for _, a := range c.fs.Model {
-		if e, ok := c.asked.Evidence[a]; ok {
+	for _, a := range model {
+		if e, ok := asked.Evidence[a]; ok {
 			out = append(out, Decided{Atom: a, Evidence: e})
 		}
 	}
@@ -919,11 +1073,20 @@ func (p *discloseRun) formulasDecided(c *candidate) []Decided {
 // for apps").
 func (p *discloseRun) vendorMessage(c *candidate) contracts.VendorMessage {
 	vm := contracts.VendorMessage{ID: p.b.MailboxID + "." + c.m.ID, ReceivedAt: timeOfMessageID(c.m.ID), From: orEmpty(c.meta.From)}
+	r := c.reduced
+	if r != nil && r.sender {
+		vm.From = []contracts.MailAddress{}
+	}
 	if slices.Contains(p.d.Parts, contracts.PartSubject) {
 		s := c.meta.Subject
+		if r != nil {
+			s = r.subject
+		}
 		vm.Subject = &s
 	}
-	if slices.Contains(p.d.Parts, contracts.PartAttachments) {
+	if slices.Contains(p.d.Parts, contracts.PartAttachments) && r != nil && r.attachments {
+		vm.Attachments = []contracts.VendorAttachment{}
+	} else if slices.Contains(p.d.Parts, contracts.PartAttachments) {
 		vm.Attachments = []contracts.VendorAttachment{}
 		for _, a := range c.meta.Attachments {
 			vm.Attachments = append(vm.Attachments, contracts.VendorAttachment{Index: a.Index, Name: a.Name, Type: a.Type, Size: int(a.Size)}) //nolint:gosec // G115: a stored message is at most 25 MiB

@@ -190,6 +190,15 @@ func samples(t testing.TB) map[Kind]*Receipt {
 	r = fresh()
 	r.Kind, r.Formulas, r.Rules = KindRead, scope, []rules.Ref{defaultRef}
 	r.Delivered = []Delivered{DeliveredOf(mailboxA, &left, append(parts, contracts.PartBody))}
+	// What a person's rule took out of it (ADR 0040, version 3): never what.
+	r.Delivered[0].Removed = []Removal{{
+		Rule: rules.Ref{ID: "rul_aaaaaaaaaaaaaaaaaaaaaaaaaa", Version: 2},
+		Removed: contracts.RemovedSummary{
+			Parts: []contracts.Part{contracts.PartSender}, Shapes: map[contracts.ShapeKind]int{contracts.ShapePhoneNumber: 2},
+			Sentences: 1, Of: 7, Attachments: 1,
+		},
+		Model: []Model{{Var: contracts.VarMessage, Op: contracts.OpMentions, Topic: "a home address", P: 0.04, ByRule: true, Name: "gpt-6-luna", Prompt: "s1c"}},
+	}}
 	out[KindRead] = r
 
 	r = fresh()
@@ -229,6 +238,13 @@ func samples(t testing.TB) map[Kind]*Receipt {
 		Counts: []RefusalCount{{Operation: "read", Reason: RefusedRateLimited, Count: 412}, {Operation: "search", Reason: RefusedInvalidBody, Count: 7}},
 	}
 	out[KindRefusals] = r
+
+	r = &Receipt{Kind: KindRules, ClientID: ""}
+	r.RulesChange = &RulesChange{
+		Changes: []RulesChangeKind{RulesCriteria, RulesScope}, Rule: "rul_aaaaaaaaaaaaaaaaaaaaaaaaaa", Before: 1, After: 2,
+		DraftID: "rdr_bbbbbbbbbbbbbbbbbbbbbbbbbb", Criteria: []string{consented.ID}, Notice: "2026-11-20", Epoch: 1, Version: 433,
+	}
+	out[KindRules] = r
 
 	return out
 }

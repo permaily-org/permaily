@@ -1178,18 +1178,22 @@ func TestMailEndToEnd(t *testing.T) {
 	t.Cleanup(func() { devModelClient.Store(nil) })
 	// The vendors, played: dev mode fetches their documents from here and
 	// from nowhere else (V57).
-	vendor := newPlayedVendor(t, "apps.vendor-e2e.org", "agents.vendor-e2e.org")
+	vendor := newPlayedVendor(t, "apps.vendor-e2e.org", "agents.vendor-e2e.org", "hooks.vendor-e2e.org")
 	devVendors.Store(vendor.client())
 	t.Cleanup(func() { devVendors.Store(nil) })
+	// The apps' receivers of webhooks are played by the same vendor: dev
+	// mode sends notices there and nowhere else (K57).
+	devWebhooks.Store(&devWebhookTarget{addr: vendor.srv.Listener.Addr().String(), roots: vendor.pool})
+	t.Cleanup(func() { devWebhooks.Store(nil) })
 	platformsBefore := len(devPlatforms.all())
 	const admin = "pma_mail_e2e_token"
 	sum := sha256.Sum256([]byte(admin))
 	var logs lockedBuffer
 	var enclaves []config
-	var auditTicks, incidentsTicks []chan time.Time
+	var auditTicks, incidentsTicks, sweepTicks []chan time.Time
 	for range 2 {
-		audit, incidents := make(chan time.Time), make(chan time.Time)
-		auditTicks, incidentsTicks = append(auditTicks, audit), append(incidentsTicks, incidents)
+		audit, incidents, sweep := make(chan time.Time), make(chan time.Time), make(chan time.Time)
+		auditTicks, incidentsTicks, sweepTicks = append(auditTicks, audit), append(incidentsTicks, incidents), append(sweepTicks, sweep)
 		cfg := config{
 			domain: "permaily.test", acmeDirectory: "unused", port: freePort(t), smtpPort: freePort(t), mtaSTSMode: "testing",
 			adminTokenSHA256: hex.EncodeToString(sum[:]), model: modelConfig{organization: "org-e2e-7f3a", project: "proj-e2e-7f3a"},
@@ -1199,6 +1203,8 @@ func TestMailEndToEnd(t *testing.T) {
 			// The audit and the reads of the record of incidents on the
 			// test's ticks (ADR 0037).
 			receiptsTicks: receiptsTicks{audit: audit, incidents: incidents},
+			// The connections' hourly pass on the test's ticks too (E40).
+			sweepTick: sweep,
 		}
 		enclaves = append(enclaves, cfg)
 		go func() {
@@ -1731,10 +1737,15 @@ func TestMailEndToEnd(t *testing.T) {
 	if len(ps) != 2 {
 		t.Fatalf("%d platforms", len(ps))
 	}
-	connectionSecrets := connectionsEndToEnd(t, e2eWorld{
+	world := e2eWorld{
 		enclaves: enclaves, call: call, newBrowser: newBrowser, outboxCode: outboxCode, send: send, modelTab: modelTab, modelKey: modelKey,
-		vendor: vendor, bea: bea, mailbox: beas.ID, address: beas.Address, platforms: ps, auditTicks: auditTicks, incidentsTicks: incidentsTicks,
-	})
+		vendor: vendor, bea: bea, mailbox: beas.ID, address: beas.Address, platforms: ps, auditTicks: auditTicks, incidentsTicks: incidentsTicks, sweepTicks: sweepTicks,
+		signUp: signUp, shared: shared,
+	}
+	connectionSecrets := connectionsEndToEnd(t, world)
+	// Webhooks (K59, K59b): an app told of new mail and on a schedule,
+	// through both enclaves, under the person's rules.
+	connectionSecrets = append(connectionSecrets, webhooksEndToEnd(t, world)...)
 
 	out := logs.String()
 	if !strings.Contains(out, "mailboxes: a message was stored") {

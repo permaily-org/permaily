@@ -3,6 +3,7 @@ package attestation
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,6 +58,187 @@ type Status struct {
 	// first and the record of what left (ADR 0030, ADR 0031); nil in images
 	// older than this field or without connections.
 	Connections *ConnectionsStatus `json:"connections,omitempty"`
+	// Webhooks describes how a connection's webhook is called (ADR 0039);
+	// nil in images older than this field or without webhooks.
+	Webhooks *WebhooksStatus `json:"webhooks,omitempty"`
+}
+
+// WebhooksStatus is what the enclave reports of connections' webhooks (ADR
+// 0039, "What /status and permaily-verify show"). Everything but Since,
+// Outcomes and Skipped is compiled into the image. It never holds a vendor
+// that is not verified, a URL, a subscription, an account, a connection or
+// a count of any of them.
+type WebhooksStatus struct {
+	// Signature is WebhookSignatureV2a: notices are signed with Ed25519 as
+	// Standard Webhooks' asymmetric "v2a" says, bound to each
+	// subscription's endpoint identifier, at the specification's revision
+	// SpecRevision (a commit of its repository); Keys are every key a
+	// notice may be signed with now, which the api host also publishes at
+	// KeysURL as a JWK set: permaily-verify fails when the two differ.
+	Signature    string       `json:"signature"`
+	SpecRevision string       `json:"spec_revision"`
+	Keys         []WebhookKey `json:"keys"`
+	KeysURL      string       `json:"keys_url"`
+	// NoticeHoldsMail is false: a notice holds no mail, address or
+	// identifier of an account, a mailbox, a connection or a message (ADR
+	// 0039, "The notice"); permaily-verify fails on true.
+	NoticeHoldsMail bool `json:"notice_holds_mail"`
+	// SameHost is true: a webhook is only on its vendor's client_id host;
+	// Redirects is "none"; Transport is "h2". permaily-verify fails on any
+	// other value.
+	SameHost  bool   `json:"same_host"`
+	Redirects string `json:"redirects"`
+	Transport string `json:"transport"`
+	// NewMail is WebhookNewMailAfterRules: a notice of new mail is sent only
+	// for a message that would leave, every rule applied first and the model
+	// asked where it had to be; permaily-verify fails on any other value.
+	NewMail string `json:"new_mail"`
+	// RevocationSeconds bounds when another enclave stops calling a revoked
+	// connection's webhook; permaily-verify fails above 5.
+	RevocationSeconds int `json:"revocation_seconds"`
+	// The bounds, in seconds: the least time between two notices of one
+	// connection, one call's timeout, how long a notice is tried, and how
+	// long a vendor must keep a notice's identifier.
+	MinIntervalSeconds int `json:"min_interval_seconds"`
+	TimeoutSeconds     int `json:"timeout_seconds"`
+	GiveUpSeconds      int `json:"give_up_seconds"`
+	DedupSeconds       int `json:"dedup_seconds"`
+	// One vendor's share of this enclave's calls: at once and started in a
+	// minute, to one host.
+	HostInFlight          int `json:"host_in_flight"`
+	HostAttemptsPerMinute int `json:"host_attempts_per_minute"`
+	// Schedules are the fixed choices a schedule may be ("day", "week").
+	Schedules []string `json:"schedules"`
+	// Since is when this enclave started counting; Outcomes counts its calls
+	// by fixed outcome, and Skipped the notices it did not send by fixed
+	// reason (every key, also at zero): one enclave's observation.
+	Since    time.Time        `json:"since"`
+	Outcomes map[string]int64 `json:"outcomes"`
+	Skipped  map[string]int64 `json:"skipped"`
+}
+
+// WebhookKey is one key a notice may be signed with: its identifier and its
+// Ed25519 public key, base64url without padding (a JWK's "x").
+type WebhookKey struct {
+	ID string `json:"id"`
+	X  string `json:"x"`
+}
+
+// WebhookSignatureV2a: Ed25519 over the SHA-256 of the subscription's
+// endpoint identifier, the notice's identifier, the timestamp and the body
+// (Standard Webhooks' asymmetric signatures).
+const WebhookSignatureV2a = "standard-webhooks-v2a"
+
+// WebhookNewMailAfterRules: a notice of new mail follows the rules and the
+// model, never an exact match alone.
+const WebhookNewMailAfterRules = "after_rules"
+
+// WebhookOutcomes are the fixed outcomes of a call to a webhook, and
+// WebhookSkips the fixed reasons a notice due was not sent, which
+// WebhooksStatus counts (every one, also at zero), in the order they are
+// shown.
+var (
+	WebhookOutcomes = []string{"sent", "gone", "redirect", "status", "no_answer", "refused", "too_late", "cut"}
+	WebhookSkips    = []string{"ended", "no_device", "off", "model_unavailable", "rules_unavailable", "changed", "given_up", "coalesced"}
+)
+
+// WebhookRevocationSecondsMax is the longest another enclave may go on
+// calling a revoked connection's webhook (ADR 0039, "Revocation, the end
+// and removal": the five seconds of ADR 0030).
+const WebhookRevocationSecondsMax = 5
+
+// Check says whether an enclave's w keeps what ADR 0039 promises, against
+// want, the verifier's own (built from the release's source): notices
+// signed as Standard Webhooks' "v2a" at want's revision of the
+// specification, holding no mail, only on the vendor's own host, never
+// redirected, over HTTP/2, of new mail only after the rules, stopped within
+// five seconds of a revocation through the other enclave; the key set
+// published at want's KeysURL; the bounds and the schedules the source's;
+// at least one key, each named once with an Ed25519 key; every outcome and
+// reason counted, none below zero and none the verifier does not know. The
+// first error says which differs. A nil w is an enclave that calls no
+// webhook. The published key set is compared with Keys apart (it is
+// fetched over the attested connection: FetchAttested).
+func (w *WebhooksStatus) Check(want WebhooksStatus) error {
+	switch {
+	case w == nil:
+		return errors.New("the enclave publishes nothing of webhooks (webhooks)")
+	case w.Signature != WebhookSignatureV2a:
+		return fmt.Errorf("notices are signed %q, not %q", w.Signature, WebhookSignatureV2a)
+	case w.SpecRevision != want.SpecRevision:
+		return fmt.Errorf("notices are signed as Standard Webhooks says at revision %q, not %q", w.SpecRevision, want.SpecRevision)
+	case w.NoticeHoldsMail:
+		return errors.New("a notice holds mail (notice_holds_mail is true)")
+	case !w.SameHost:
+		return errors.New("a webhook may be on another host than its vendor's (same_host is false)")
+	case w.Redirects != "none":
+		return fmt.Errorf("a webhook's redirects are %q, not none", w.Redirects)
+	case w.Transport != "h2":
+		return fmt.Errorf("a webhook is called over %q, not h2", w.Transport)
+	case w.NewMail != WebhookNewMailAfterRules:
+		return fmt.Errorf("a notice of new mail is sent %q, not %q", w.NewMail, WebhookNewMailAfterRules)
+	case w.RevocationSeconds < 0 || w.RevocationSeconds > WebhookRevocationSecondsMax:
+		return fmt.Errorf("another enclave may call a revoked connection's webhook for %d seconds, more than %d", w.RevocationSeconds, WebhookRevocationSecondsMax)
+	case w.KeysURL != want.KeysURL:
+		return fmt.Errorf("the key set is published at %q, not %q", w.KeysURL, want.KeysURL)
+	case w.MinIntervalSeconds != want.MinIntervalSeconds || w.TimeoutSeconds != want.TimeoutSeconds || w.GiveUpSeconds != want.GiveUpSeconds || w.DedupSeconds != want.DedupSeconds:
+		return fmt.Errorf("the bounds are %d, %d, %d and %d seconds, not %d, %d, %d and %d", w.MinIntervalSeconds, w.TimeoutSeconds, w.GiveUpSeconds, w.DedupSeconds,
+			want.MinIntervalSeconds, want.TimeoutSeconds, want.GiveUpSeconds, want.DedupSeconds)
+	case w.HostInFlight != want.HostInFlight || w.HostAttemptsPerMinute != want.HostAttemptsPerMinute:
+		return fmt.Errorf("one vendor's share is %d calls at once and %d a minute, not %d and %d", w.HostInFlight, w.HostAttemptsPerMinute, want.HostInFlight, want.HostAttemptsPerMinute)
+	case !slices.Equal(w.Schedules, want.Schedules):
+		return fmt.Errorf("the schedules are %q, not %q", w.Schedules, want.Schedules)
+	case len(w.Keys) == 0:
+		return errors.New("no key a notice may be signed with")
+	}
+	seen := map[string]bool{}
+	for _, k := range w.Keys {
+		x, err := base64.RawURLEncoding.Strict().DecodeString(k.X)
+		switch {
+		case k.ID == "" || seen[k.ID]:
+			return fmt.Errorf("a webhook key is named %q, empty or twice", k.ID)
+		case err != nil || len(x) != 32:
+			return fmt.Errorf("webhook key %q is not an Ed25519 public key", k.ID)
+		}
+		seen[k.ID] = true
+	}
+	if err := counted("calls", w.Outcomes, WebhookOutcomes); err != nil {
+		return err
+	}
+	return counted("skipped notices", w.Skipped, WebhookSkips)
+}
+
+// counted checks counts: every one of kinds present, none below zero, none
+// of another kind.
+func counted(what string, counts map[string]int64, kinds []string) error {
+	for k, n := range counts {
+		switch {
+		case !slices.Contains(kinds, k):
+			return fmt.Errorf("%s are counted by %q, a kind this verifier does not know", what, k)
+		case n < 0:
+			return fmt.Errorf("%s %q are counted below zero", what, k)
+		}
+	}
+	for _, k := range kinds {
+		if _, ok := counts[k]; !ok {
+			return fmt.Errorf("%s %q are not counted", what, k)
+		}
+	}
+	return nil
+}
+
+// SameWebhookKeys says whether the key set published at KeysURL (by
+// identifier, each key base64url without padding) is exactly w's Keys.
+func (w *WebhooksStatus) SameWebhookKeys(published map[string]string) error {
+	if len(published) != len(w.Keys) {
+		return fmt.Errorf("the published key set holds %d keys, /status %d", len(published), len(w.Keys))
+	}
+	for _, k := range w.Keys {
+		if published[k.ID] != k.X {
+			return fmt.Errorf("the published key set's key %q is not /status's", k.ID)
+		}
+	}
+	return nil
 }
 
 // ConnectionsStatus is what the enclave reports of connections (ADR 0030,
@@ -120,6 +302,10 @@ type ConnectionsStatus struct {
 	// Rules are the rules every connection's reads apply first: in step 5
 	// the default rule, with the canonical identifiers of its formulas.
 	Rules []RuleStatus `json:"rules"`
+	// PersonRules is a person's own rules (ADR 0040): their design's
+	// constants and versions, and this enclave's counts; nil from a release
+	// before them, which permaily-verify then refuses (PersonRulesStatus.Check).
+	PersonRules *PersonRulesStatus `json:"person_rules,omitempty"`
 	// Receipts says how the record of what left is kept: sealed, and, from
 	// step 8, chained with its head anchored.
 	Receipts ReceiptsStatus `json:"receipts"`
@@ -521,6 +707,33 @@ type MailStatus struct {
 	History      []MailObservation `json:"history,omitempty"`
 	// HistoryTruncated means older states were dropped to bound the answer.
 	HistoryTruncated bool `json:"history_truncated,omitempty"`
+	// Notices counts what this enclave did with the queue of notices by
+	// mail (ADR 0041); nil in images older than this field or without it.
+	Notices *NoticesStatus `json:"notices,omitempty"`
+}
+
+// NoticesStatus is what the enclave that answered did with the queue of
+// notices by mail since it started (ADR 0041, "What /status and
+// permaily-verify show"): counts by outcome, never an account, a key, a
+// kind of event of anyone or an address. A notice is queued once for the
+// deployment and may be tried by either enclave, so the two enclaves'
+// counts are each their own. Dropped above zero is a warning of the
+// verifier, never a failure: a notice tells, and the app shows.
+type NoticesStatus struct {
+	// Since is when this enclave began counting.
+	Since time.Time `json:"since"`
+	// Queued is the notices this enclave queued that were not queued or
+	// sent before; Sent those it handed to SES; Failed its attempts that
+	// failed and will be tried again; Dropped those it gave up after
+	// notices.RetryFor; Skipped those of an account that could not be told
+	// (gone, closing or blocked); Refused the entries of the queue that did
+	// not verify, which nothing sends.
+	Queued  int64 `json:"queued"`
+	Sent    int64 `json:"sent"`
+	Failed  int64 `json:"failed"`
+	Dropped int64 `json:"dropped"`
+	Skipped int64 `json:"skipped"`
+	Refused int64 `json:"refused"`
 }
 
 // MailState is what SES says about the two identities: each is
@@ -746,6 +959,18 @@ func FetchStatus(ctx context.Context, client *http.Client, baseURL string, spkiH
 		return nil, fmt.Errorf("%w: status: %w", ErrMalformed, err)
 	}
 	return &st, nil
+}
+
+// FetchAttested gets url (an https address) and returns its body, only
+// when it came over a TLS connection whose key is the attested one
+// (spkiHash, of a verified attestation) and was answered 200: what
+// permaily-verify reads the published key set of webhooks with, at most
+// 1 MiB.
+func FetchAttested(ctx context.Context, client *http.Client, url string, spkiHash []byte) ([]byte, error) {
+	if !strings.HasPrefix(url, "https://") {
+		return nil, ErrNotTLS
+	}
+	return fetchBound(ctx, client, url, spkiHash)
 }
 
 // fetchBound gets url and returns the body only when the connection's TLS

@@ -6,10 +6,12 @@ import (
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/query"
+	"github.com/permaily-org/permaily/internal/redact"
 	"github.com/permaily-org/permaily/internal/rules"
 )
 
@@ -175,6 +177,11 @@ type Decision struct {
 	// it back in the Settlement, so that its settlement changes only its
 	// own Pending (ADR 0031, "Changed after the fourth design review", F1).
 	Attempt Attempt
+	// Meaning is, for a Cleared decision of a rules.MeaningRef, which
+	// sentences it kept (ADR 0040, "Removing by meaning"); nil for every
+	// other. A Cleared meaning decision without it, or whose Map is not
+	// the message's now, removes the whole text (MeaningKept.For).
+	Meaning *MeaningKept
 }
 
 // Attempt names one begun Pending: the block it was begun in and the
@@ -199,6 +206,15 @@ type Settlement struct {
 	// the Pending it began. Held needs none (it settles whatever Pending it
 	// finds, as a recovery does).
 	Attempt Attempt
+	// Meaning is, for Cleared under a rules.MeaningRef, which sentences
+	// were kept, kept with the decision and answered with it ever after
+	// (ADR 0040, "Its decision"). A Cleared whose Meaning is past its bounds
+	// (a digest of more than 64 bytes or none, more than
+	// redact.MeaningSentencesMax sentences) or whose rule is not a
+	// rules.MeaningRef changes nothing, as evidence past its bounds does:
+	// the Pending stays, and is recovered Held. It is never kept with Held,
+	// which removes the whole subject and text.
+	Meaning *MeaningKept
 }
 
 // DecisionRecord is one block's document, sealed in the store.
@@ -230,6 +246,39 @@ type DecisionEntry struct {
 	// Attempt is, for a Pending, the version of its block its Begin wrote
 	// (Attempt.Version); dropped when it is settled.
 	Attempt uint64 `json:"ag,omitzero"`
+	// MeaningMap and MeaningKept are, for a Cleared meaning decision
+	// (rules.MeaningRef), its Settlement.Meaning: the digest of the map its
+	// sentences are numbered in and MeaningKept.Encode (ADR 0040). An entry
+	// whose two do not read back (DecodeMeaningKept) is answered Cleared
+	// with no Meaning, which removes the whole subject and text.
+	MeaningMap  string `json:"mm,omitempty"`
+	MeaningKept string `json:"mk,omitempty"`
+}
+
+// meaningRoom is what a Pending of a meaning decision keeps in its block
+// for its sentences, beside its evidence: MeaningKeptBytesMax and the two
+// fields' names and quotes (ADR 0040, "Its decision"), so its settlement
+// always fits.
+const meaningRoom = MeaningKeptBytesMax + len(`,"mm":"","mk":""`)
+
+// meaningMark is in the identifier of every rules.MeaningRef and of no
+// rule's own: a Pending of a rule with it keeps meaningRoom too.
+const meaningMark = "#meaning-"
+
+// room is what a Pending of rule keeps in its block for its settlement:
+// DecisionEvidenceBytesMax, and meaningRoom for a meaning decision.
+func room(rule string) int {
+	if strings.Contains(rule, meaningMark) {
+		return DecisionEvidenceBytesMax + meaningRoom
+	}
+	return DecisionEvidenceBytesMax
+}
+
+// meaningFits says a settlement's sentences are within what a Pending of
+// rule kept for them: none, or, for a meaning decision only, a digest of 1
+// to 64 bytes and at most redact.MeaningSentencesMax sentences.
+func meaningFits(rule string, m *MeaningKept) bool {
+	return m == nil || (strings.Contains(rule, meaningMark) && m.Map != "" && len(m.Map) <= 64 && len(m.Kept) <= redact.MeaningSentencesMax)
 }
 
 // DecisionEvidence is one answer kept with a final decision: inbox.Evidence
@@ -266,6 +315,11 @@ func storedEvidence(ds []Decided) []DecisionEvidence {
 
 func (e DecisionEntry) decision() Decision {
 	d := Decision{State: e.State, At: e.At, Recovered: e.Recovered}
+	if e.State == DecisionCleared && e.MeaningMap != "" {
+		if m, err := DecodeMeaningKept(e.MeaningMap, e.MeaningKept); err == nil {
+			d.Meaning = m
+		}
+	}
 	for _, s := range e.Evidence {
 		d.Evidence = append(d.Evidence, Decided{
 			Atom: query.Atom{Var: contracts.Variable(s.Var), Op: contracts.Operator(s.Op), Topic: s.Topic},
@@ -321,6 +375,17 @@ func (r *DecisionRecord) pending() int {
 	return n
 }
 
+// reserved is what the block's Pending keep for their settlements (room).
+func (r *DecisionRecord) reserved() int {
+	n := 0
+	for _, e := range r.Entries {
+		if e.State == DecisionPending {
+			n += room(e.Rule)
+		}
+	}
+	return n
+}
+
 // fits says the block is within its count and its bytes, every Pending
 // counted at its largest settlement.
 func (r *DecisionRecord) fits() bool {
@@ -328,7 +393,7 @@ func (r *DecisionRecord) fits() bool {
 		return false
 	}
 	b, err := json.Marshal(r)
-	return err == nil && len(b)+r.pending()*DecisionEvidenceBytesMax <= DecisionsBytesMax
+	return err == nil && len(b)+r.reserved() <= DecisionsBytesMax
 }
 
 // versionsFor says a block at versions can take one more write that leaves
@@ -376,7 +441,7 @@ func (r *DecisionRecord) Begin(rule rules.Ref, ids []DecisionKey, now time.Time,
 	// The block's bytes, counted once and then by each entry added (one
 	// more for its comma: never fewer than the block's JSON).
 	size, err := json.Marshal(r)
-	n, pending := len(size), r.pending()
+	n, pending, reserved := len(size), r.pending(), r.reserved()
 	attempt := Attempt{Block: r.Block, Version: versions + 1}
 	began := false
 	for _, k := range fresh {
@@ -384,11 +449,11 @@ func (r *DecisionRecord) Begin(rule rules.Ref, ids []DecisionKey, now time.Time,
 		e.Attempt = attempt.Version
 		b, errEntry := json.Marshal(e)
 		if err != nil || errEntry != nil || len(r.Entries)+1 > DecisionsMax ||
-			n+len(b)+1+(pending+1)*DecisionEvidenceBytesMax > DecisionsBytesMax || !versionsFor(versions, pending+1) {
+			n+len(b)+1+reserved+room(rule.ID) > DecisionsBytesMax || !versionsFor(versions, pending+1) {
 			continue
 		}
 		r.Entries = append(r.Entries, e)
-		n, pending = n+len(b)+1, pending+1
+		n, pending, reserved = n+len(b)+1, pending+1, reserved+room(rule.ID)
 		out[k.ID] = Decision{State: DecisionBegun, At: now, Attempt: attempt}
 		began = true
 	}
@@ -411,7 +476,7 @@ func (r *DecisionRecord) waits(e DecisionEntry, now time.Time, versions uint64) 
 	c := DecisionRecord{V: r.V, Mailbox: r.Mailbox, Day: r.Day, Block: r.Block, Entries: slices.Clone(r.Entries)}
 	c.prune(now)
 	c.Entries = append(c.Entries, e)
-	live, kept := 0, 0
+	live, kept, keeps := 0, 0, 0
 	for _, x := range c.Entries {
 		switch {
 		case x.State != DecisionPending:
@@ -419,13 +484,14 @@ func (r *DecisionRecord) waits(e DecisionEntry, now time.Time, versions uint64) 
 			live++
 		default:
 			kept++
+			keeps += room(x.Rule)
 		}
 	}
 	if r.Next || live == 0 || len(c.Entries) > DecisionsMax || !versionsFor(versions, live+kept) {
 		return false
 	}
 	b, err := json.Marshal(&c)
-	return err == nil && len(b)+kept*DecisionEvidenceBytesMax <= DecisionsBytesMax
+	return err == nil && len(b)+keeps <= DecisionsBytesMax
 }
 
 // pendingEntry and heldEntry are the entries Begin and Settle add.
@@ -465,7 +531,7 @@ func (r *DecisionRecord) Settle(rule rules.Ref, settle map[string]Settlement, no
 		switch {
 		case i >= 0 && r.Entries[i].State != DecisionPending:
 			out[id] = r.Entries[i].decision()
-		case i >= 0 && (!writable || (final && !evidenceFits(want.Evidence)) || (destructive && !r.began(i, want.Attempt))):
+		case i >= 0 && (!writable || (final && !evidenceFits(want.Evidence)) || (want.State == DecisionCleared && !meaningFits(rule.ID, want.Meaning)) || (destructive && !r.began(i, want.Attempt))):
 			out[id] = Decision{State: DecisionPending, At: r.Entries[i].At}
 		case i >= 0 && want.State == DecisionAbandoned:
 			r.Entries = append(r.Entries[:i], r.Entries[i+1:]...)
@@ -475,6 +541,9 @@ func (r *DecisionRecord) Settle(rule rules.Ref, settle map[string]Settlement, no
 			e := &r.Entries[i]
 			e.State, e.At, e.Attempt = want.State, now, 0
 			e.Evidence, e.Recovered = storedEvidence(want.Evidence), want.State == DecisionHeld && len(want.Evidence) == 0
+			if want.State == DecisionCleared && want.Meaning != nil {
+				e.MeaningMap, e.MeaningKept = want.Meaning.Map, want.Meaning.Encode()
+			}
 			out[id] = e.decision()
 			changed = true
 		case i >= 0:
@@ -778,6 +847,56 @@ func SettleAfterAsk(r query.Result, atoms []query.Atom, a *Asked, err error) Set
 	default:
 		return Settlement{State: DecisionAbandoned}
 	}
+}
+
+// SettleMeaning is how a meaning decision (rules.MeaningRef) is settled once
+// the discloser has asked for it (ADR 0040, "Its decision"), as
+// SettleAfterAsk is for a hold: topics are the removal's, a and err what
+// AskSentences answered for the sentences of sm, v's map. An answer
+// received is never forgotten: whatever was answered, the decision is
+// Cleared with Meaning, sm's digest and the sentences KeptSentences keeps
+// (only those answered below the rule's band for every topic), and the
+// evidence of the closest call (for each topic, the highest probability
+// among the sentences kept, with the ask's model, prompt version and canary
+// days). With positive evidence that the model answered nothing (an error,
+// which AskSentences answers only before asking anything; or no answer and
+// no refusal at all: the guard stopped it, or every call failed without
+// one), it is Abandoned, so a later request decides it, and this request
+// removes the whole subject and text. A map with no sentence, or a removal
+// with no topic, asks nothing and is Cleared as it is. A map that does not
+// keep its invariants (redact.SentenceMap.Check) is never settled on: it is
+// Held, which removes the whole subject and text for good.
+func SettleMeaning(v redact.View, sm redact.SentenceMap, topics []query.Atom, a *SentencesAsked, err error) Settlement {
+	if sm.Check(v) != nil {
+		return Settlement{State: DecisionHeld}
+	}
+	n := len(sm.Sentences)
+	nothingToAsk := n == 0 || len(topics) == 0
+	if !nothingToAsk && (err != nil || a == nil || len(a.Answers)+len(a.Refused) == 0) {
+		return Settlement{State: DecisionAbandoned}
+	}
+	if err != nil {
+		a = nil
+	}
+	kept := KeptSentences(a, n, len(topics))
+	s := Settlement{State: DecisionCleared, Meaning: &MeaningKept{Map: sm.Digest(v), Kept: kept}}
+	if a == nil {
+		return s
+	}
+	for t, topic := range topics {
+		closest, found := 0.0, false
+		for i, k := range kept {
+			if p := a.Answers[SentenceTopic{Sentence: i, Topic: t}]; k && (!found || p > closest) {
+				closest, found = p, true
+			}
+		}
+		if found {
+			e := a.Evidence
+			e.ByRule, e.Refused, e.P = false, false, closest
+			s.Evidence = append(s.Evidence, Decided{Atom: topic, Evidence: e})
+		}
+	}
+	return s
 }
 
 // OverdueAt says a Pending decision begun at began is to be settled Held by

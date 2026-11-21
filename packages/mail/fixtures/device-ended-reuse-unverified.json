@@ -1,0 +1,33 @@
+{
+  "name": "device-ended-reuse-unverified",
+  "to": "ada@example.com",
+  "subject": "Permaily ended a device of one of your connections",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "Permaily ended a device of one of your connections, because a key that device reads with was used twice. That can mean someone copied it."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        },
+        {
+          "label": "App",
+          "value": "An app Permaily hasn't verified"
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "The app may ask you to connect again: approve it only if you asked for it."
+    },
+    {
+      "kind": "note",
+      "text": "If you don't know why this happened, revoke the connection in Connections at app.permaily.com, and write to support@permaily.com."
+    }
+  ]
+}

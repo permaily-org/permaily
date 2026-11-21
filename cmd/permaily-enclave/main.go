@@ -233,6 +233,16 @@ func run(cfg config, log *slog.Logger) error {
 		// for /status, and runs the daily audit under its lease (ADR 0037).
 		runReceipts(ctx, p.receipts, log, cfg.receiptsTicks)
 	}
+	if p.notices != nil {
+		// Every enclave runs the queue's runner: either may send a notice
+		// the other queued (ADR 0041, "The queue").
+		runNotices(ctx, p.notices)
+	}
+	if p.connections != nil && p.connections.webhooks != nil {
+		// Every enclave runs the webhooks' workers and their hourly repair:
+		// either may call a notice the other queued (ADR 0039, "The queue").
+		runWebhooks(ctx, p.connections.webhooks)
+	}
 	var refusalsPassed <-chan struct{}
 	if p.connections != nil {
 		// Every enclave runs the connections' hourly pass (ADR 0030,
@@ -274,6 +284,26 @@ func run(cfg config, log *slog.Logger) error {
 	go func() {
 		defer close(stopped)
 		<-ctx.Done()
+		// The notices' attempts under way finish while the server stops,
+		// and nothing more is admitted (stopNotices).
+		noticesStopped := make(chan error, 1)
+		go func() {
+			if p.notices == nil {
+				noticesStopped <- nil
+				return
+			}
+			noticesStopped <- stopNotices(p.notices, log)
+		}()
+		// The webhooks' calls under way end with the context; their runner
+		// is waited for while the server stops (stopWebhooks).
+		webhooksStopped := make(chan error, 1)
+		go func() {
+			if p.connections == nil || p.connections.webhooks == nil {
+				webhooksStopped <- nil
+				return
+			}
+			webhooksStopped <- stopWebhooks(p.connections.webhooks, log)
+		}()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -285,6 +315,7 @@ func run(cfg config, log *slog.Logger) error {
 			// After the last request: what the refusals' windows counted.
 			stopErr = stopConnections(p.connections.svc, refusalsPassed, log)
 		}
+		stopErr = errors.Join(stopErr, <-noticesStopped, <-webhooksStopped)
 	}()
 	if err := srv.ServeTLS(p.listener, "", ""); !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -327,7 +358,19 @@ func handler(cfg config, hosts router.Hosts, p *platform, log *slog.Logger) http
 			if p.model != nil {
 				mc.Asker = p.model
 			}
-			mine = httpapi.MailboxesAPI(mc)
+			// The rules' editor previews a draft as a page of matches is
+			// admitted (ADR 0040, pull request 6): the same matcher, read
+			// budget, search slots and pages a minute.
+			var previews *httpapi.RulePreviews
+			mine, previews = httpapi.MailboxesWithRulePreviews(mc)
+			if p.connections != nil {
+				// The person's own rules (ADR 0040): the list, words, the
+				// changes, the previews and the rules' notice, on the app's
+				// host; words through the model's egress and spend guard.
+				httpapi.MountRules(app, httpapi.RulesConfig{
+					Rules: p.connections.rules, Words: p.model, Standing: p.accounts, Previews: previews, Sessions: p.accounts, Log: log,
+				})
+			}
 			app.Handle("/api/v1/mailboxes", mine)
 			app.Handle("/api/v1/mailboxes/", mine)
 			// A formula's canonical form and sentence, for the owner's own
@@ -398,6 +441,15 @@ func handler(cfg config, hosts router.Hosts, p *platform, log *slog.Logger) http
 	}
 	if p.connections != nil {
 		status.Connections = connectionsStatus(p.connections)
+		if p.connections.webhooks != nil {
+			// How connections' webhooks are called, and this enclave's
+			// calls by fixed outcome (ADR 0039).
+			status.Webhooks = p.connections.webhooks.status
+		}
+	}
+	if p.notices != nil {
+		// What this enclave did with the queue of notices, in mail.notices.
+		status.Notices = p.notices.status
 	}
 	common := map[string]http.Handler{
 		"/attestation": httpapi.Attestation(p.attester, p.certs.UserData),

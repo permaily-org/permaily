@@ -138,6 +138,44 @@ linters:
               desc: the model's client knows no service
             - pkg: github.com/aws/aws-sdk-go-v2
               desc: the model's client reaches only the model
+        words-client-sees-no-mail-store:
+          # The Responses API's client for a person's words (ADR 0040, "Plain words") is given the words and a key, and
+          # nothing that reaches stored mail, keys or accounts, as the model's client is (model-client-sees-no-mail-store).
+          files: ["**/internal/rulewords/openai/**", "!$test"]
+          list-mode: lax
+          deny:
+            - pkg: github.com/permaily-org/permaily/internal/store
+              desc: the words' client reaches no storage
+            - pkg: github.com/permaily-org/permaily/internal/inbox
+              desc: the words' client is given a person's words, never a mailbox
+            - pkg: github.com/permaily-org/permaily/internal/keys
+              desc: the words' client holds no key of the enclave
+            - pkg: github.com/permaily-org/permaily/internal/envelope
+              desc: the words' client opens nothing sealed
+            - pkg: github.com/permaily-org/permaily/internal/services
+              desc: the words' client knows no service
+            - pkg: github.com/aws/aws-sdk-go-v2
+              desc: the words' client reaches only the model
+        webhook-is-pure:
+          # What a connection's webhook decides from its arguments alone (ADR 0039): the URL rule, the request, schedules
+          # in the person's time zone (time/tzdata, the image's own zones), the notice, its signature and the key set,
+          # each read exactly through internal/jws.Object.
+          # No net/http, no io, no os, no storage: calling is internal/services/webhooks', keeping is the services'.
+          files: ["**/internal/webhook/*.go", "!$test"]
+          list-mode: strict
+          allow:
+            - bytes
+            - context
+            - crypto
+            - encoding
+            - errors
+            - slices
+            - strconv
+            - strings
+            - time
+            - github.com/permaily-org/permaily/internal/contracts
+            - github.com/permaily-org/permaily/internal/jws
+            - github.com/permaily-org/permaily/internal/oauth
         oauth-is-pure:
           # What the authorization server decides from its arguments alone (ADR 0030): metadata, the rules of a
           # client_id and its document, PKCE, redirects, resources, scopes, token shapes, client assertions.
@@ -166,7 +204,7 @@ linters:
             - github.com/permaily-org/permaily/internal/query
             - golang.org/x/net/idna
         rules-are-pure:
-          # The rules every connection's reads apply first (ADR 0031): formulas of the query language, compiled.
+          # The rules every connection's reads apply first (ADR 0031, 0040): formulas of the query language, compiled.
           files: ["**/internal/rules/**", "!$test"]
           list-mode: strict
           allow:
@@ -174,10 +212,45 @@ linters:
             - encoding/json
             - errors
             - fmt
+            - slices
+            - strconv
             - sync
+            - time
             - github.com/permaily-org/permaily/internal/contracts
             - github.com/permaily-org/permaily/internal/query
             - github.com/permaily-org/permaily/internal/rules
+        redact-is-pure:
+          # Fixed shapes taken out of a text and the sentence split of a removal by meaning (ADR 0040): no model,
+          # no storage, the same answer in every enclave of one redact.Version.
+          files: ["**/internal/redact/**", "!$test", "!**/internal/redact/redacttest/**"]
+          list-mode: strict
+          allow:
+            - crypto/sha256
+            - encoding/binary
+            - encoding/hex
+            - errors
+            - slices
+            - strings
+            - unicode
+            - unicode/utf8
+            - github.com/permaily-org/permaily/internal/contracts
+            - github.com/permaily-org/permaily/internal/redact
+            - golang.org/x/net/publicsuffix
+            - golang.org/x/text/unicode/norm
+        rulewords-is-pure:
+          # A person's words to a rule's draft (ADR 0040): the prompt, the schema and the answer's check, pure like
+          # internal/decide. The Responses API's client is internal/rulewords/openai, an adapter.
+          files: ["**/internal/rulewords/*.go", "!$test"]
+          list-mode: strict
+          allow:
+            - context
+            - encoding/json
+            - errors
+            - strings
+            - unicode
+            - github.com/permaily-org/permaily/internal/contracts
+            - github.com/permaily-org/permaily/internal/query
+            - github.com/permaily-org/permaily/internal/rulewords
         vendors-list-is-pure:
           # The verified vendors and the seam that resolves a client (ADR 0030); the fetching adapter is
           # internal/vendors/cimd, outside this rule.
@@ -231,7 +304,13 @@ linters:
               "!**/internal/inbox/disclosetest/**",
               "!**/internal/services/connections/connectionstest/**",
               "!**/internal/services/mailboxes/mailboxestest/**",
+              "!**/internal/services/notices/noticestest/**",
               "!**/internal/decide/decidetest/**",
+              "!**/internal/redact/redacttest/**",
+              "!**/internal/rulewords/rulewordstest/**",
+              "!**/internal/services/accountrules/accountrulestest/**",
+              "!**/internal/services/webhooks/webhookstest/**",
+              "!**/internal/webhook/webhooktest/**",
             ]
           list-mode: lax
           deny:
@@ -253,10 +332,22 @@ linters:
               desc: the fake connections service is only for tests
             - pkg: github.com/permaily-org/permaily/internal/services/mailboxes/mailboxestest
               desc: the fake mailboxes are only for tests
+            - pkg: github.com/permaily-org/permaily/internal/services/notices/noticestest
+              desc: the fake queue of notices is only for tests
             - pkg: github.com/permaily-org/permaily/internal/query/querytest
               desc: the generators and the brute force of the query language are only for tests
             - pkg: github.com/permaily-org/permaily/internal/decide/decidetest
               desc: the fake model and its contract are only for tests
+            - pkg: github.com/permaily-org/permaily/internal/redact/redacttest
+              desc: the played fixed shapes and their contract are only for tests
+            - pkg: github.com/permaily-org/permaily/internal/rulewords/rulewordstest
+              desc: the played words writer is only for tests
+            - pkg: github.com/permaily-org/permaily/internal/services/accountrules/accountrulestest
+              desc: the person's rules in memory and their contracts are only for tests
+            - pkg: github.com/permaily-org/permaily/internal/services/webhooks/webhookstest
+              desc: the fake connections of webhooks and their contract are only for tests
+            - pkg: github.com/permaily-org/permaily/internal/webhook/webhooktest
+              desc: the played vendor and the scripted sender of webhooks are only for tests
     gosec:
       excludes:
         - G104 # unhandled errors are covered by errcheck

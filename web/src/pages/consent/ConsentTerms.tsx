@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Checkbox, Notice, SectionHeading, TermRow } from '../../components/ui/index.ts'
 import type * as api from '../../lib/api.ts'
+import { REMOVED_MARKER } from '../../lib/api.ts'
 import { modelNotice, modelNoticeTitle } from '../../lib/model-notice.ts'
+import { cx, focusRing } from '../../lib/styles.ts'
 import {
   devicesMax,
   mailboxWords,
@@ -9,7 +11,11 @@ import {
   resourceWords,
   Sentence,
   sinceWords,
+  timeZones,
+  webhookLines,
+  webhookNeverWords,
 } from '../connections/words.tsx'
+import { AppliedList, appliedOf, useRuleList } from '../rules/shared.tsx'
 import { formatDay } from '../settings/signin/shared.ts'
 import { ChoiceTerm } from './ChoiceDialog.tsx'
 import type { Choice } from './data.ts'
@@ -74,7 +80,8 @@ function sinceChoices(request: api.AuthorizationRequest): Choice[] {
 /**
  * What the request asks for and what approving it does, in "The consent screen"'s order: where the browser goes, what
  * is read (the sentence, or all mail of the mailboxes the person picks), from when, which parts, until when, what never
- * leaves, the model, and what approving does to the client's connection.
+ * leaves, the model, and what approving does to the client's connection. A request with a webhook (ADR 0039) adds what
+ * the vendor is told and, for a schedule, the person's time zone.
  */
 export function ConsentTerms({
   request,
@@ -82,12 +89,17 @@ export function ConsentTerms({
   onDraft,
   mailboxes,
   snapshot,
+  timeZone,
+  onTimeZone,
 }: {
   request: api.AuthorizationRequest
   draft: api.ConsentDraft
   onDraft: (draft: api.ConsentDraft) => void
   mailboxes: ReadonlyMap<string, api.Mailbox>
   snapshot?: api.ConsentSnapshot
+  /** The time zone the schedule of the request's webhook follows, sent with the approval. */
+  timeZone: string
+  onTimeZone: (zone: string) => void
 }) {
   const [since, setSince] = useState<Since>(() => startingSince(request))
   const choices = sinceChoices(request)
@@ -152,10 +164,13 @@ export function ConsentTerms({
             ? `${formatDay(snapshot.ends_at)}, on its own`
             : `In ${request.ends_in_days} days, on its own`}
         </TermRow>
+        {request.webhook && <WebhookTerm webhook={request.webhook} timeZone={timeZone} />}
         <TermRow label="Goes back to">
           <bdi className="font-mono text-mono break-all">{request.redirect_host}</bdi>
         </TermRow>
       </div>
+
+      {request.webhook?.schedule && <TimeZonePicker value={timeZone} onChange={onTimeZone} />}
 
       {request.loopback && (
         <div className="mt-4">
@@ -167,23 +182,7 @@ export function ConsentTerms({
 
       <Change request={request} snapshot={snapshot} />
 
-      <section aria-labelledby="rules-heading" className="mt-7">
-        <SectionHeading id="rules-heading" title="Never leaves" />
-        <ul className="flex flex-col">
-          {request.rules.map((rule) => (
-            <li key={rule.id} className="border-b border-rule py-[11px]">
-              {rule.sentence.map((sentence, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: a rule's sentences have no identity but their place
-                <Sentence key={i} sentence={sentence} />
-              ))}
-            </li>
-          ))}
-        </ul>
-        <p className="mt-2.5 text-small text-ink-2">
-          Your rules apply first, and <bdi>{request.vendor.domain}</bdi> isn't told what they hold
-          back.
-        </p>
-      </section>
+      <ConsentRules request={request} />
 
       <section aria-labelledby="model-heading" className="mt-7">
         <SectionHeading id="model-heading" title={modelNoticeTitle} />
@@ -198,6 +197,66 @@ export function ConsentTerms({
         </div>
       </section>
     </>
+  )
+}
+
+/**
+ * What the vendor's webhook is told, in the request's words, then what it is never told (ADR 0039, "The consent
+ * screen"). It is accepted or refused with the request: the screen offers no way to remove it. Words drafted for the
+ * designer's review.
+ */
+function WebhookTerm({ webhook, timeZone }: { webhook: api.WebhookAsked; timeZone: string }) {
+  return (
+    <TermRow label="Tells">
+      <span className="flex flex-col gap-1">
+        {webhookLines(webhook, timeZone).map((line) => (
+          <bdi key={line} className="break-words">
+            {line}
+          </bdi>
+        ))}
+        <span className="text-small text-ink-2">
+          <bdi>{webhookNeverWords(webhook.host)}</bdi>
+        </span>
+      </span>
+    </TermRow>
+  )
+}
+
+/**
+ * The time zone a schedule follows: the browser's, preselected, and the others the browser knows. Kept with the
+ * connection and never given to the vendor; fixed until the app asks again.
+ */
+function TimeZonePicker({ value, onChange }: { value: string; onChange: (zone: string) => void }) {
+  const id = useId()
+  const [own] = useState(value)
+  const zones = timeZones(own)
+  return (
+    <div className="mt-4 flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-small font-medium">
+        Your time zone
+      </label>
+      <select
+        id={id}
+        value={value}
+        aria-describedby={`${id}-note`}
+        onChange={(event) => onChange(event.target.value)}
+        className={cx(
+          'w-full max-w-xs rounded-sm border border-ink bg-paper px-2 py-1 text-small text-ink',
+          focusRing,
+        )}
+      >
+        {value === '' && <option value="">Choose a time zone</option>}
+        {zones.map((zone) => (
+          <option key={zone} value={zone}>
+            {zone}
+          </option>
+        ))}
+      </select>
+      <p id={`${id}-note`} className="text-small text-ink-2">
+        The schedule follows this time zone. The app isn't told it. To change it later, the app asks
+        again.
+      </p>
+    </div>
   )
 }
 
@@ -251,4 +310,24 @@ function Change({
     )
   }
   return null
+}
+
+/**
+ * The rules that will apply to this app (ADR 0040, "Previews and consent"): each by the server's sentence, and what it
+ * does and who for in the server's words, from the account's rules; the default rule as it always reads. A rule the
+ * account's list doesn't have at that version is said by its sentence alone. Nothing here leaves the screen.
+ */
+function ConsentRules({ request }: { request: api.AuthorizationRequest }) {
+  const { list } = useRuleList()
+  return (
+    <section aria-labelledby="rules-heading" className="mt-7">
+      <SectionHeading id="rules-heading" title="Your rules apply first" />
+      <AppliedList applied={appliedOf(request.rules, list)} />
+      <p className="mt-2.5 text-small text-ink-2">
+        They hold mail back, or take details out, before <bdi>{request.vendor.domain}</bdi> reads
+        it. <bdi>{request.vendor.domain}</bdi> isn't told what they hold back, and sees “
+        {REMOVED_MARKER}” where they took details out.
+      </p>
+    </section>
+  )
 }

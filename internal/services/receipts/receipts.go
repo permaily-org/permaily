@@ -43,9 +43,10 @@ var ErrTooLarge = errors.New("receipts: the receipt is larger than one entry hol
 
 // Version is the version of a receipt's sealed document. Step 8 reads every
 // version it finds; a new version is written only with a new field, never a
-// changed one. Version 2 adds KindRefusals and its Refusals; a version 1
-// document reads as it was written.
-const Version = 2
+// changed one. Version 2 adds KindRefusals and its Refusals; version 3 adds
+// KindRules and its RulesChange, and Delivered.Removed (ADR 0040); a
+// document of an earlier version reads as it was written.
+const Version = 3
 
 // Partition is where an account's receipts are: one partition per account,
 // deleted with it (store.Entries.DeletePartition, when the account is
@@ -69,6 +70,12 @@ const (
 	// refusals past the ones the window records each in its own refused
 	// receipt (Refusals; version 2).
 	KindRefusals Kind = "refusals"
+	// KindRules is a change of the person's own rules (RulesChange; ADR
+	// 0040, "Receipts"; version 3), written before the change is: it says
+	// what the person asked, at which version of the account's record of
+	// rules, with a fresh proof. A change that then lost at that version
+	// leaves its receipt, which says more than happened, never less.
+	KindRules Kind = "rules"
 )
 
 // Receipt is one entry's sealed document. Everything a receipt names is as it
@@ -97,6 +104,8 @@ type Receipt struct {
 	Consent   *Consent    `json:"consent,omitempty"`
 	Ended     *Ended      `json:"ended,omitempty"`
 	Refusals  *Refusals   `json:"refusals,omitempty"`
+	// RulesChange is what a KindRules receipt records.
+	RulesChange *RulesChange `json:"rules_change,omitempty"`
 	// A receipt holds nothing of its chain: the link that chains it names
 	// it by identifier and digest (ADR 0037), so a receipt's document is
 	// the same chained or not, and one written before the chain is adopted
@@ -143,6 +152,22 @@ type Delivered struct {
 	// answer asked again (ADR 0031, N4).
 	Model   []Model   `json:"model,omitempty"`
 	Cleared []Cleared `json:"cleared,omitempty"`
+	// Removed is what each rule that applied took out of the message
+	// before it left (ADR 0040, "Receipts"; version 3): one entry per rule
+	// that removed something, in the order the rules apply. The senders
+	// and the subject above are those that left, never the original ones.
+	Removed []Removal `json:"removed,omitempty"`
+}
+
+// Removal is what one rule removed from a message that left: the rule and
+// its version, the summary (parts removed whole, pieces by kind, sentences
+// removed of how many, whether the whole text was removed and why,
+// attachments removed) and the model's answers its decisions rested on, as
+// their records keep them. Never the removed content.
+type Removal struct {
+	Rule    rules.Ref                `json:"rule"`
+	Removed contracts.RemovedSummary `json:"removed"`
+	Model   []Model                  `json:"model,omitempty"`
 }
 
 // Cleared is a rule committed Cleared for a message (ADR 0031).
@@ -275,6 +300,57 @@ type Consent struct {
 	Mailboxes   []string                   `json:"mailboxes"`
 	ModelNotice string                     `json:"model_notice"`
 	Replaced    string                     `json:"replaced,omitempty"`
+	// Webhook is the connection's webhook (ADR 0039, "Receipts"): the one
+	// approved with it, or, on the person turning it off, that change.
+	Webhook *ConsentWebhook `json:"webhook,omitempty"`
+}
+
+// ConsentWebhook is a webhook as a consent receipt records it: its host,
+// what it is told, the schedule, the person's time zone and its state.
+// Never its URL's path or its subscription.
+type ConsentWebhook struct {
+	Host     string                     `json:"host"`
+	NewMail  bool                       `json:"new_mail,omitempty"`
+	Schedule *contracts.WebhookSchedule `json:"schedule,omitempty"`
+	TimeZone string                     `json:"time_zone,omitempty"`
+	State    contracts.WebhookState     `json:"state"`
+}
+
+// RulesChangeKind is one thing a change of rules changed.
+type RulesChangeKind string
+
+const (
+	RulesMade         RulesChangeKind = "made"          // a rule made
+	RulesName         RulesChangeKind = "name"          // a rule's name (never written here)
+	RulesCriteria     RulesChangeKind = "criteria"      // a rule's criteria: a new version
+	RulesEffect       RulesChangeKind = "effect"        // a rule's effect, or what it removes: a new version
+	RulesScope        RulesChangeKind = "scope"         // which connections a rule is for
+	RulesOn           RulesChangeKind = "on"            // a rule turned on
+	RulesOff          RulesChangeKind = "off"           // a rule turned off
+	RulesDeleted      RulesChangeKind = "deleted"       // a rule deleted
+	RulesDefaultOn    RulesChangeKind = "default_on"    // the default rule turned on
+	RulesDefaultOff   RulesChangeKind = "default_off"   // the default rule turned off
+	RulesNoticeAgreed RulesChangeKind = "notice_agreed" // the rules' notice agreed
+)
+
+// RulesChange is a change of the person's rules as asked (ADR 0040,
+// "Receipts"): what changed; the rule, by identifier, with its version
+// before and after (0 when it had none, or has none since); the draft's
+// identifier and its criteria's canonical identifiers; the rules' notice
+// the rule was saved under, or the one agreed; and the account's record of
+// rules (its epoch, and the version of the rules the screen read,
+// contracts.RuleList.Version) the change was asked at. Never the person's
+// words, a rule's name, a topic or a value of its criteria.
+type RulesChange struct {
+	Changes  []RulesChangeKind `json:"changes"`
+	Rule     string            `json:"rule,omitempty"`
+	Before   int               `json:"before,omitempty"`
+	After    int               `json:"after,omitempty"`
+	DraftID  string            `json:"draft_id,omitempty"`
+	Criteria []string          `json:"criteria,omitempty"`
+	Notice   string            `json:"notice,omitempty"`
+	Epoch    uint64            `json:"epoch"`
+	Version  uint64            `json:"version"`
 }
 
 // Ended is a connection, or one device of it (the receipt's Device), that

@@ -1,0 +1,46 @@
+{
+  "name": "connection-approved-verified-replaced-api",
+  "to": "ada@example.com",
+  "subject": "A connection to your mail was approved",
+  "blocks": [
+    {
+      "kind": "lead",
+      "text": "A connection to your mail was approved on your Permaily account. The app below can read the mail it allows until it ends. It replaces the connection that app had before."
+    },
+    {
+      "kind": "facts",
+      "facts": [
+        {
+          "label": "When",
+          "value": "12 November 2026, 09:30 UTC",
+          "machine": true
+        },
+        {
+          "label": "App",
+          "value": "An app by Anthropic (claude.ai)"
+        },
+        {
+          "label": "Reads",
+          "value": "Sender and date, subject, body text, attachments"
+        },
+        {
+          "label": "Through",
+          "value": "API"
+        },
+        {
+          "label": "Ends",
+          "value": "10 February 2027, 09:30 UTC",
+          "machine": true
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "You can see what it reads, and revoke it, in Connections at app.permaily.com."
+    },
+    {
+      "kind": "note",
+      "text": "If this wasn't you, sign in at app.permaily.com, revoke it in Connections, sign out the devices you don't know, and write to support@permaily.com."
+    }
+  ]
+}

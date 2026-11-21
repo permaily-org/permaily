@@ -5,12 +5,14 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/permaily-org/permaily/internal/contracts"
 	"github.com/permaily-org/permaily/internal/envelope"
 	"github.com/permaily-org/permaily/internal/query"
+	"github.com/permaily-org/permaily/internal/services/notices"
 	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
 )
@@ -59,6 +61,14 @@ type Service struct {
 	// adm the attributed work Stop waits for.
 	refusals refusalLanes
 	adm      admission
+	// hooks are the permits of webhook calls and what else of webhooks
+	// this enclave keeps (webhook_permit.go).
+	hooks hooks
+	// endings are the keys of the endings this enclave queued since it
+	// started (notifyEnding), and enqueueMax how long a notice may hold
+	// its caller (notices.EnqueueMax).
+	endings    map[string]bool
+	enqueueMax time.Duration
 }
 
 type cachedConn struct {
@@ -82,11 +92,11 @@ type cachedStanding struct {
 const cacheMax = 10000
 
 // errMissing is what New says of a Config without one of what it needs.
-var errMissing error = &kind{"connections: the service needs its records, entries, keys, vendors, accounts, mailboxes and receipts"}
+var errMissing error = &kind{"connections: the service needs its records, entries, keys, vendors, accounts, mailboxes, the rules' source and receipts"}
 
 // New makes the service. The keys are derived once.
 func New(cfg Config) (*Service, error) {
-	if cfg.Records == nil || cfg.Entries == nil || cfg.Keys == nil || cfg.Vendors == nil || cfg.Accounts == nil || cfg.Mailboxes == nil || cfg.Receipts == nil {
+	if cfg.Records == nil || cfg.Entries == nil || cfg.Keys == nil || cfg.Vendors == nil || cfg.Accounts == nil || cfg.Mailboxes == nil || cfg.Source == nil || cfg.Receipts == nil {
 		return nil, errMissing
 	}
 	if cfg.Now == nil {
@@ -95,18 +105,21 @@ func New(cfg Config) (*Service, error) {
 	if cfg.Random == nil {
 		cfg.Random = randomBytes
 	}
+	if cfg.Log == nil {
+		cfg.Log = slog.New(slog.DiscardHandler)
+	}
 	s := &Service{
 		cfg: cfg, revoked: map[string]int{}, conns: map[string]cachedConn{}, lists: map[string]cachedList{},
 		stand: map[string]cachedStanding{}, epochs: map[string]uint64{}, scopes: map[string][]*query.Canonical{},
 		used: map[string]time.Time{}, refused: map[string]int64{}, leases: map[string]map[*lease]struct{}{},
-		limits:   newLimits(),
+		limits: newLimits(), endings: map[string]bool{}, enqueueMax: notices.EnqueueMax,
 		refusals: refusalLanes{by: map[string]*refusalLane{}, lanesMax: RefusalLanesMax, bytesMax: RefusalBytesMax, waitMax: refusalWaitMax, size: receipts.Size},
 	}
 	ctx := context.Background()
 	for _, k := range []struct {
 		key     *[]byte
 		purpose string
-	}{{&s.sealKey, PurposeSeal}, {&s.signKey, PurposeSign}, {&s.cursorKey, PurposeCursor}, {&s.familyKey, purposeFamilies}} {
+	}{{&s.sealKey, PurposeSeal}, {&s.signKey, PurposeSign}, {&s.cursorKey, PurposeCursor}, {&s.familyKey, purposeFamilies}, {&s.hooks.key, PurposeWebhookSeal}} {
 		b, err := cfg.Keys.Derive(ctx, k.purpose)
 		if err != nil {
 			return nil, err

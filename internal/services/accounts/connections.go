@@ -125,9 +125,10 @@ func (s *Service) removeReceiptsAgain(ctx context.Context, key []byte, now time.
 const connectionsAgainPartition = "connections-again"
 
 // removeConnectionsAgain removes once more the connections of the accounts
-// whose time has come in the list (connections.Lifecycle.RemoveAgain),
-// then their entries: a value that a write under way at the removal staged
-// after it goes too (second review of #152, finding 2). An entry that is
+// whose time has come in the list (connections.Lifecycle.RemoveAgain), and
+// their rules (Rules.Remove, review of #190, finding 1), then their
+// entries: a value that a write under way at the removal staged after it
+// goes too (second review of #152, finding 2). An entry that is
 // not this deployment's removes nothing; one that fails stays for the next
 // pass, and the others go on.
 func (s *Service) removeConnectionsAgain(ctx context.Context, key []byte, now time.Time) error {
@@ -153,6 +154,9 @@ func (s *Service) removeConnectionsAgain(ctx context.Context, key []byte, now ti
 				return first
 			}
 			err := c.RemoveAgain(ctx, id)
+			if r := s.rulesOf(); err == nil && r != nil {
+				err = r.Remove(ctx, id)
+			}
 			if err == nil {
 				err = s.forget(ctx, connectionsAgainPartition, e.Key)
 			}

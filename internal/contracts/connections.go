@@ -146,6 +146,10 @@ type AuthorizationRequest struct {
 	// EndsInDays is how long the connection lasts once approved: 90 unless
 	// the vendor asked for fewer; 365 at most.
 	EndsInDays int `json:"ends_in_days"`
+	// Webhook is the webhook the vendor asked for (ADR 0039), absent for a
+	// request without one (every MCP client); accepted or refused with the
+	// request.
+	Webhook *WebhookAsked `json:"webhook,omitempty"`
 	// Mailboxes are the account's mailboxes the request can reach, by
 	// identifier: what the picker offers; the sentence names them.
 	Mailboxes []string `json:"mailboxes"`
@@ -173,11 +177,16 @@ type AuthorizationRequest struct {
 }
 
 // RuleSummary is a rule as the consent screen and a connection's page show
-// it: which rule, and its sentence.
+// it: which rule, and its sentence; on the consent screen (ADR 0040, U25)
+// also what it does and who for, in the server's words, and the clients its
+// scope names (each by ClientShown).
 type RuleSummary struct {
-	ID       string     `json:"id"`
-	Version  int        `json:"version"`
-	Sentence []Sentence `json:"sentence"`
+	ID       string       `json:"id"`
+	Version  int          `json:"version"`
+	Sentence []Sentence   `json:"sentence"`
+	Does     string       `json:"does,omitempty"`
+	For      string       `json:"for,omitempty"`
+	Clients  []RuleClient `json:"clients,omitempty"`
 }
 
 // ConsentPreview asks for a page of what a request would read, under Draft,
@@ -248,6 +257,10 @@ type AuthorizationDecision struct {
 	// Snapshot is the one the screen showed for Draft, required to allow
 	// (N5).
 	Snapshot *ConsentSnapshot `json:"snapshot,omitempty"`
+	// TimeZone is the person's time zone, an IANA name, required to allow
+	// a request whose webhook has a schedule (ErrTimeZoneInvalid), and
+	// ignored for any other (ADR 0039, "Schedules").
+	TimeZone string `json:"time_zone,omitempty"`
 }
 
 // ConnectionRenewal is the body of POST /api/v1/connections/{id}/renew: the
@@ -349,6 +362,8 @@ type Connection struct {
 	// to for it; Delivery says whether it gets mail now.
 	ModelNotice string             `json:"model_notice"`
 	Delivery    ConnectionDelivery `json:"delivery"`
+	// Webhook is its webhook (ADR 0039), absent when it has none.
+	Webhook *ConnectionWebhook `json:"webhook,omitempty"`
 	// Version is its record's version, which a renewal sends back.
 	Version uint64 `json:"version"`
 }
@@ -378,6 +393,8 @@ type VendorConnection struct {
 	// leaves because the model cannot be asked (the owner's decision 9);
 	// never why, and never how much mail is waiting.
 	Delivery ConnectionDelivery `json:"delivery"`
+	// Webhook is its webhook (ADR 0039), absent when it has none.
+	Webhook *VendorWebhook `json:"webhook,omitempty"`
 }
 
 // VendorSearch is a search of the connection's mail: Query, evaluated
@@ -560,14 +577,16 @@ func (e *ClientError) LogKind() string { return e.Error() }
 func (e *ClientError) Details() ErrorDetails { return ErrorDetails{Client: e.Problem} }
 
 // ErrorDetails is the details of an API error (internal/httpapi's
-// APIError; web/src/lib/api.ts's ErrorDetails), one of two shapes, or none:
-// with invalid_formula, a FormulaProblem, written exactly as it always was
-// ({"at","reason"}, "at" always present); with invalid_client, its
-// ClientProblem alone ({"reason"}, no "at"). The two never go together, and
-// reading tells them apart by "at".
+// APIError; web/src/lib/api.ts's ErrorDetails), one of three shapes, or
+// none: with invalid_formula, a FormulaProblem, written exactly as it always
+// was ({"at","reason"}, "at" always present); with invalid_client, its
+// ClientProblem alone ({"reason"}, no "at"); with invalid_rule (ADR 0040), its
+// RuleProblem alone ({"rule"}). No two go together, and reading tells them
+// apart by "at" and "rule".
 type ErrorDetails struct {
 	FormulaProblem
 	Client ClientProblem
+	Rule   RuleProblem
 }
 
 // IsZero says there are no details (omitzero).
@@ -575,6 +594,15 @@ func (d ErrorDetails) IsZero() bool { return d == ErrorDetails{} }
 
 func (d ErrorDetails) MarshalJSON() ([]byte, error) {
 	switch {
+	case d.Rule != "" && (d.Client != "" || d.FormulaProblem != (FormulaProblem{})):
+		return nil, errors.New("contracts: details of a rule with another's at once")
+	case d.Rule != "":
+		if !d.Rule.Valid() {
+			return nil, errors.New("contracts: an invalid rule's details hold one of its reasons")
+		}
+		return json.Marshal(struct {
+			Rule RuleProblem `json:"rule"`
+		}{d.Rule})
 	case d.Client != "" && d.FormulaProblem != (FormulaProblem{}):
 		return nil, errors.New("contracts: details of a formula and a client at once")
 	case d.Client != "":
@@ -592,9 +620,17 @@ func (d *ErrorDetails) UnmarshalJSON(b []byte) error {
 	var v struct {
 		At     *string `json:"at"`
 		Reason string  `json:"reason"`
+		Rule   *string `json:"rule"`
 	}
 	if err := json.Unmarshal(b, &v); err != nil {
 		return err
+	}
+	if v.Rule != nil {
+		if v.At != nil || v.Reason != "" || !RuleProblem(*v.Rule).Valid() {
+			return errors.New("contracts: an invalid rule's details that are not one of its reasons alone")
+		}
+		*d = ErrorDetails{Rule: RuleProblem(*v.Rule)}
+		return nil
 	}
 	if v.At != nil {
 		*d = ErrorDetails{FormulaProblem: FormulaProblem{At: *v.At, Reason: FormulaReason(v.Reason)}}

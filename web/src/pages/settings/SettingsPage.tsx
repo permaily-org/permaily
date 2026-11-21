@@ -67,8 +67,10 @@ function Notifications() {
       <SectionHeading id="notifications" title="Notifications" />
       <p className="border-b border-rule py-2 text-body text-ink-2">
         Permaily emails you only about security and access: a sign-in from a new device, a change in
-        how you sign in or in your contact address, and your account being deleted or blocked. These
-        emails can't be turned off.
+        how you sign in or in your contact address, your account being deleted or blocked, a
+        connection approved, renewed or given a new device, a connection that ends in a week or
+        loses a device for safety, receipts found deleted or changed, and every device signed out by
+        Permaily. These emails can't be turned off.
       </p>
     </section>
   )

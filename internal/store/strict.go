@@ -43,6 +43,12 @@ type History struct {
 	// Next is where the next commit goes: the lowest version above Head that
 	// nothing is at (Commits.Head).
 	Next uint64
+	// Versions is how many versions hold a commit of this deployment's. A
+	// record made once has one, at whatever version: the versions below it
+	// may hold what is not a commit of this deployment's, such as an earlier
+	// deployment's commits after it started over (ADR 0037, "A new
+	// deployment").
+	Versions int
 	// Forks are the versions with commits of more than one digest, the
 	// lowest first.
 	Forks []Fork

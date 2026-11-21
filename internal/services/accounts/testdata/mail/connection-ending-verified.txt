@@ -1,0 +1,9 @@
+To: ada@example.com
+Subject: One of your connections ends in a week
+
+One of your connections ends in a week. After that, the app below can no longer read your mail.
+
+    App: An app by Anthropic (claude.ai)
+    Ends: 19 November 2026, 09:30 UTC
+
+To keep it, sign in at app.permaily.com, open Connections and renew it. To let it end, do nothing.

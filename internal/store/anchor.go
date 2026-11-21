@@ -1036,5 +1036,6 @@ func history(copies []commitCopy) *History {
 		head := byVersion[v][digests[0]].commit
 		h.Head = &head
 	}
+	h.Versions = len(versions)
 	return h
 }

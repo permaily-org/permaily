@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/query"
 	"github.com/permaily-org/permaily/internal/rules"
+	"github.com/permaily-org/permaily/internal/services/accountrules"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/vendors"
 )
@@ -54,6 +56,10 @@ type connDoc struct {
 	// in (ListMember.Generation).
 	Generation uint64      `json:"generation"`
 	Devices    []deviceDoc `json:"devices"`
+	// Webhook is the connection's webhook (ADR 0039), its URL,
+	// subscription and zone sealed apart (webhook_record.go); absent when
+	// it has none.
+	Webhook *webhookDoc `json:"webhook,omitempty"`
 	// Sealed is connPrivate, sealed.
 	Sealed []byte `json:"sealed,omitempty"`
 
@@ -125,6 +131,9 @@ func (s *Service) readConnAt(ctx context.Context, id string) (*connDoc, store.Ma
 	} else {
 		d.private = &connPrivate{}
 	}
+	if s.openWebhook(&d) != nil {
+		return nil, at, began, errDocument
+	}
 	// The cache keeps a copy of its own: what a caller changes before its
 	// write commits is never what another reader sees (finding 3).
 	s.cacheConn(id, d.clone(), at, nil, began)
@@ -167,6 +176,7 @@ func (d *connDoc) clone() *connDoc {
 	c := *d
 	c.Parts, c.Scopes, c.Mailboxes = slices.Clone(d.Parts), slices.Clone(d.Scopes), slices.Clone(d.Mailboxes)
 	c.Sealed = slices.Clone(d.Sealed)
+	c.Webhook = d.Webhook.clone()
 	c.Devices = slices.Clone(d.Devices)
 	for i := range c.Devices {
 		c.Devices[i].Parts, c.Devices[i].Scopes = slices.Clone(c.Devices[i].Parts), slices.Clone(c.Devices[i].Scopes)
@@ -485,6 +495,7 @@ func (s *Service) view(ctx context.Context, d *connDoc, version uint64) contract
 		})
 	}
 	c.Delivery = s.delivery(ctx, d)
+	c.Webhook = s.connectionWebhook(ctx, d)
 	return c
 }
 
@@ -528,21 +539,34 @@ func modelDecides(c *query.Canonical) bool {
 	return false
 }
 
-// ruleSummaries are the rules every connection applies first, as shown.
-func (s *Service) ruleSummaries() []contracts.RuleSummary {
+// ruleSummaries are rs as the consent screen shows them, in the order they
+// apply: each by its sentence, what it does and who for (accountrules.Summary).
+func ruleSummaries(rs []rules.Rule) []contracts.RuleSummary {
 	out := []contracts.RuleSummary{}
-	for _, r := range s.cfg.Rules {
-		out = append(out, contracts.RuleSummary{ID: r.ID, Version: r.Version, Sentence: query.RenderRule(r.Formulas, query.Context{Lang: "en"}).Formulas})
+	for _, r := range rs {
+		out = append(out, accountrules.Summary(r))
 	}
 	return out
 }
 
-func (s *Service) ruleRefs() []rules.Ref {
-	out := make([]rules.Ref, 0, len(s.cfg.Rules))
-	for _, r := range s.cfg.Rules {
+// refsOf are rs' references.
+func refsOf(rs []rules.Rule) []rules.Ref {
+	out := make([]rules.Ref, 0, len(rs))
+	for _, r := range rs {
 		out = append(out, r.Ref())
 	}
 	return out
+}
+
+// rulesFor is the rules a connection of client applies for account now
+// (ADR 0040, accountrules.Source). An error is ErrUnavailable: nothing of
+// the account's mail leaves, the default alone included.
+func (s *Service) rulesFor(ctx context.Context, account, client string) (accountrules.Applying, error) {
+	a, err := s.cfg.Source.Applying(ctx, account, client)
+	if err != nil {
+		return accountrules.Applying{}, errors.Join(ErrUnavailable, err)
+	}
+	return a, nil
 }
 
 // intersect is the parts in every one of the lists, in a's order.

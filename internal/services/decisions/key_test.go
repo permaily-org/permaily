@@ -201,7 +201,8 @@ func TestA19TheKey(t *testing.T) {
 		for m := range typ.Methods() {
 			methods = append(methods, m.Name)
 		}
-		want := []string{"Ask", "Gate", "Key", "RemoveKey", "RunAlarms", "RunCanary", "SetKey", "Status"}
+		// WordsCalls answers counts of fixed kinds (ADR 0040, /status).
+		want := []string{"Ask", "AskSentences", "Gate", "Key", "RemoveKey", "RunAlarms", "RunCanary", "SetKey", "Status", "WordsCalls", "Write"}
 		if !slices.Equal(methods, want) {
 			t.Fatalf("exported methods %v: each must be checked not to return the key", methods)
 		}
@@ -211,12 +212,14 @@ func TestA19TheKey(t *testing.T) {
 			}
 		}
 		w := newWorld(t)
-		e := w.keyed()
+		e := w.keyed(withWordsModel(&wordsModel{}))
 		var outs []any
 		set, _ := e.SetKey(ctx, keySet())
 		k, _ := e.Key(ctx)
 		asked := e.ask(newQuestion("m1", "Hi", "text", subj("x")))
-		outs = append(outs, set, k, asked, e.Gate(ctx, "acc_a"), e.Status(ctx), e.RunCanary(ctx), e.RunAlarms(ctx), e.RemoveKey(ctx))
+		sentences := e.askSentences([]string{"Hi."}, mentions("x"))
+		written, err := e.Write(ctx, "acc_a", "hide mail from bank.example")
+		outs = append(outs, set, k, asked, sentences, written, err, e.Gate(ctx, "acc_a"), e.Status(ctx), e.RunCanary(ctx), e.RunAlarms(ctx), e.RemoveKey(ctx))
 		raw, _ := json.Marshal(outs)
 		if strings.Contains(string(raw), testKey) || strings.Contains(w.logs.String(), testKey) || strings.Contains(w.logs.String(), wantFP) {
 			t.Fatal("the key was answered or logged")

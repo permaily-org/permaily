@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -203,5 +204,59 @@ func TestCheckStatusSentMail(t *testing.T) {
 	printHuman(&out, "test", map[uint][]byte{0: {1}, 1: {2}, 2: {3}}, []hostResult{check(sentMail(now, alone), kmsOptions{})})
 	if !strings.Contains(out.String(), "PASS  https://app.example.org") || !strings.Contains(out.String(), "mail from no-reply@mail.example.org goes out through Amazon SES") {
 		t.Fatalf("output:\n%s", out.String())
+	}
+}
+
+// E29 (ADR 0041): the verifier prints the queue's counts, every one at zero
+// too, warns when a notice was dropped or an entry refused, and fails on
+// none of them; an image older than the queue prints nothing of it.
+func TestE29TheNoticesAreCountedAndWarnedOfNeverFailed(t *testing.T) {
+	now := time.Date(2026, 11, 11, 8, 0, 0, 0, time.UTC)
+	alone := attestation.MailState{DomainIdentity: mailNone, AddressIdentity: mailAbsent}
+	host := hostResult{URL: "https://app.example.org", SPKIHash: "ab"}
+	since := now.Add(-time.Hour)
+	printed := func(n *attestation.NoticesStatus) string {
+		t.Helper()
+		m := sentMail(now, alone)
+		m.Notices = n
+		r := checkStatus(&attestation.Status{Commit: "abc", Mail: m}, host, imageA, kmsOptions{now: now})
+		if !r.OK || r.Error != "" || r.SentMail == nil || r.SentMail.Notices != n {
+			t.Fatalf("%+v fails the check: %+v", n, r)
+		}
+		var out bytes.Buffer
+		printHuman(&out, "test", map[uint][]byte{0: {1}, 1: {2}, 2: {3}}, []hostResult{r})
+		if !strings.Contains(out.String(), "PASS  https://app.example.org") {
+			t.Fatalf("output:\n%s", out.String())
+		}
+		return out.String()
+	}
+
+	out := printed(nil)
+	if strings.Contains(out, "notices") {
+		t.Fatalf("an image older than the queue:\n%s", out)
+	}
+	out = printed(&attestation.NoticesStatus{Since: since})
+	if !strings.Contains(out, "notices by mail about connections and receipts, this enclave's own since 2026-11-11T07:00:00Z: 0 queued, 0 sent, 0 attempt(s) failed and tried again, 0 dropped, 0 skipped, 0 refused") || strings.Contains(out, "warning") {
+		t.Fatalf("all at zero:\n%s", out)
+	}
+	out = printed(&attestation.NoticesStatus{Since: since, Queued: 9, Sent: 6, Failed: 4, Skipped: 1})
+	if !strings.Contains(out, "9 queued, 6 sent, 4 attempt(s) failed and tried again, 0 dropped, 1 skipped, 0 refused") || strings.Contains(out, "warning") {
+		t.Fatalf("failed attempts and a skip warn of nothing:\n%s", out)
+	}
+	out = printed(&attestation.NoticesStatus{Since: since, Dropped: 2})
+	if !strings.Contains(out, "warning: 2 notice(s) were given up after a day of failed attempts") || strings.Contains(out, "did not verify") {
+		t.Fatalf("dropped:\n%s", out)
+	}
+	out = printed(&attestation.NoticesStatus{Since: since, Refused: 3})
+	if !strings.Contains(out, "warning: 3 entry(ies) of the queue did not verify") || strings.Contains(out, "given up") {
+		t.Fatalf("refused:\n%s", out)
+	}
+	// The JSON output carries them as /status gave them.
+	m := sentMail(now, alone)
+	m.Notices = &attestation.NoticesStatus{Since: since, Dropped: 1, Refused: 1}
+	r := checkStatus(&attestation.Status{Commit: "abc", Mail: m}, host, imageA, kmsOptions{now: now})
+	b, err := json.Marshal(r)
+	if err != nil || !strings.Contains(string(b), `"notices":{"since":"2026-11-11T07:00:00Z","queued":0,"sent":0,"failed":0,"dropped":1,"skipped":0,"refused":1}`) {
+		t.Fatalf("%s %v", b, err)
 	}
 }

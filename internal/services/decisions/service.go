@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/permaily-org/permaily/internal/decide"
+	"github.com/permaily-org/permaily/internal/rulewords"
 	"github.com/permaily-org/permaily/pkg/attestation"
 )
 
@@ -20,8 +21,10 @@ import (
 // after keyFresh; the canary's state) and limits (this enclave's grants and
 // the accounts' shares): what two enclaves must agree on is in the records.
 type Service struct {
-	cfg    Config
-	model  decide.Model // nil when the image asks no model
+	cfg   Config
+	model decide.Model // nil when the image asks no model
+	// writer is the words' client (Config.NewWriter), nil when none.
+	writer rulewords.Model
 	canary *decide.Canary
 	since  time.Time
 	// id names this service in the canary's lease.
@@ -46,6 +49,16 @@ type Service struct {
 	canaryRun
 	countMu sync.Mutex
 	calls   map[string]int
+
+	// words counts each account's words calls of the day (UTC) in this
+	// enclave (rulewords.CallsPerDay), in memory: wordsDay is the day the
+	// counts are of.
+	wordsMu  sync.Mutex
+	wordsDay string
+	words    map[string]int
+	// wordsCalls counts the words calls since the enclave started, by
+	// outcome (WordsCalls), under wordsMu.
+	wordsCalls map[string]int64
 }
 
 // New makes the service. It reads no storage, and calls cfg.NewModel once,
@@ -82,6 +95,9 @@ func New(cfg Config) (*Service, error) {
 	}
 	if cfg.NewModel != nil {
 		s.model = cfg.NewModel(s.credential)
+	}
+	if cfg.NewWriter != nil {
+		s.writer = cfg.NewWriter(s.credential)
 	}
 	return s, nil
 }

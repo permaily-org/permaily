@@ -144,6 +144,7 @@ func TestReview8TheMetadataHasATotalBound(t *testing.T) {
 	// What is written is within it too.
 	mem := store.NewMemory()
 	c := &clock{t: time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)}
+	mem.Now = c.now
 	w := writer(mem, c)
 	claim, err := w.Claim(context.Background(), box, "seen-meta", 7)
 	if err != nil {

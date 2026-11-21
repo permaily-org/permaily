@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { TERMS_VERSION } from '../../../src/lib/terms.ts'
 import { agree, current, open, settle, termsBox, watchLeaving } from '../../helpers/app.tsx'
 import { expectAccessible } from '../../helpers/axe.ts'
+import { noRules } from '../../helpers/connections.ts'
 import { ana, later, meOf, network, ok, refused, server } from '../../helpers/server.ts'
 
 type User = Awaited<ReturnType<typeof open>>['user']
@@ -169,7 +170,9 @@ describe('when the terms changed', () => {
     await waitFor(() => expect(document.activeElement).toBe(termsBox()))
     expect(server.asked('POST /api/v1/account/terms')).toHaveLength(0)
 
-    server.on('POST /api/v1/account/terms', ok({ ...ana, terms: TERMS_VERSION }))
+    server
+      .on('POST /api/v1/account/terms', ok({ ...ana, terms: TERMS_VERSION }))
+      .on('GET /api/v1/rules', ok(noRules))
     await user.click(termsBox())
     await user.click(screen.getByRole('button', { name: 'Agree and continue' }))
     await screen.findByRole('navigation', { name: 'Main' })

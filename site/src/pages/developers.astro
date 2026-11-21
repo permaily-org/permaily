@@ -56,14 +56,52 @@ const interfaces = [
   },
   {
     name: 'Webhooks',
-    sample: 'message.released',
-    description: 'Get new matching mail as it arrives, signed, with its receipt id.',
+    sample: 'mail.matched',
+    description:
+      'Be told when mail you may read arrives, or on the person’s schedule, then fetch it.',
   },
   {
     name: 'Remote MCP',
     sample: 'https://mcp.permaily.com',
     description: 'Tools like describe_access, search_messages and get_message.',
   },
+];
+
+// Webhooks (ADR 0039) as built: the revision and the bounds are internal/webhook's
+// (SpecRevision, TimestampTolerance, DedupKeepFor, NoticeLife).
+const hookRequest = `POST https://api.permaily.com/oauth/par
+client_id=https://trip-app.com/oauth/client.json
+&webhook={"url":"https://trip-app.com/hooks/permaily/u1",
+          "new_mail":true,
+          "schedule":{"every":"week","on":"monday","at":"08:00"}}
+&...the rest of your request
+
+GET https://api.permaily.com/v1/connection
+{"webhook":{"subscription":"sub_...","url":"https://trip-app.com/hooks/permaily/u1",
+            "new_mail":true,"state":"on", ...}, ...}`;
+
+const hookVerify = `import { WebhookAsymmetric } from 'standardwebhooks';
+
+// The subscription GET /v1/connection gave you, and every key of
+// https://api.permaily.com/.well-known/permaily-webhook-keys,
+// each "whpk_" and the key in standard base64 (x is base64url).
+const hook = new WebhookAsymmetric(subscription, publicKeys);
+
+// The raw body and the webhook-id, webhook-timestamp and
+// webhook-signature headers; throws unless a signature verifies.
+const notice = hook.verify(body, headers);
+if (notice.aud !== myURL) throw new Error('not for this URL');
+if (await seenBefore(notice.id)) return reply(200); // kept 72 h 10 min
+// Then fetch what arrived since notice.since, with this
+// connection's token, and answer 2xx.`;
+
+const hookRules = [
+  'Your webhook is on exactly the host of your client_id, and only an app’s pushed request asks for one: MCP clients get none. The person accepts it with the rest of your request, and sees when you will be told.',
+  'A notice is signed with Ed25519 as Standard Webhooks’ v2a says, at the specification’s revision 3d65b1824b6697f05a5a4584e7062bd23512fc8e, bound to your subscription. A library of that revision verifies it; one of an earlier revision knows only v1a and does not.',
+  'The key set is published at https://api.permaily.com/.well-known/permaily-webhook-keys, a JWK set you may cache an hour, and on /status over the attested key, which permaily-verify compares. A new key is published 30 days before it signs alone; trust every key of the set.',
+  'Refuse a timestamp more than five minutes from your clock, a notice whose aud is not the URL you received it on, and one made more than 72 hours and five minutes ago. Keep every notice id you took for 72 hours and ten minutes, and take each once: a retry carries the same id and body, signed again.',
+  'A notice holds no mail: its type (mail.matched or schedule.due), its id, your subscription and client_id, the URL called, when it was made, the minute to fetch from, and for a schedule its time. Fetch with your token, which writes receipts as any read.',
+  'Answer 2xx within ten seconds over HTTP/2, which is required. Anything else is tried again at one, five and fifteen minutes, then for up to 72 hours. A redirect is never followed. 410 Gone turns the webhook off for good.',
 ];
 
 const questions = [
@@ -185,6 +223,22 @@ const questions = [
     </div>
   </section>
 
+  <section class="sec rule-top" id="webhooks">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2 class="h-l">Told when there is mail</h2>
+        <p class="intro">Not released yet. Your app can ask to be told when mail it may read arrives, or every day or week at a time the person chose. Permaily sends a signed notice from the verified environment that there is mail to fetch, never the mail.</p>
+      </div>
+      <div class="query-pair">
+        <pre class="code-block" tabindex="0"><span class="c"># Ask in your pushed request, then read your subscription</span>{'\n\n'}{hookRequest}</pre>
+        <pre class="code-block" tabindex="0"><span class="c">// Verify a notice with Standard Webhooks' library</span>{'\n\n'}{hookVerify}</pre>
+      </div>
+      <ul class="hook-rules">
+        {hookRules.map((rule) => <li>{rule}</li>)}
+      </ul>
+    </div>
+  </section>
+
   <section class="sec rule-top">
     <div class="wrap two">
       <h2 class="h-l">Questions before you switch</h2>
@@ -209,6 +263,15 @@ const questions = [
 
   .more {
     margin-top: var(--space-20);
+  }
+
+  .hook-rules {
+    display: grid;
+    gap: var(--space-12);
+    margin-top: var(--space-24);
+    padding-left: var(--space-20);
+    color: var(--ink-2);
+    font-size: var(--text-lead);
   }
 
   .same-view {

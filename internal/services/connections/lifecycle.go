@@ -509,23 +509,12 @@ func (s *Service) sweepAccount(ctx context.Context, account string) error {
 			}
 			ended = append(ended, m.ID)
 		case !m.Pending:
-			d, at, err := s.readConn(ctx, m.ID)
-			if err != nil && !refusedRecord(err) {
+			gone, err := s.sweepConn(ctx, m.ID, now, l.Closing)
+			if err != nil {
 				return err
 			}
-			if d == nil || d.State == contracts.ConnectionEnded {
+			if gone {
 				ended = append(ended, m.ID)
-				continue
-			}
-			if !now.Before(d.EndsAt) {
-				if err := s.endConnection(ctx, m.ID, contracts.EndedByTime, "", true); err != nil {
-					return err
-				}
-				ended = append(ended, m.ID)
-				continue
-			}
-			if err := s.tidyConn(ctx, d, at); err != nil {
-				return err
 			}
 		}
 	}
@@ -545,24 +534,68 @@ func (s *Service) sweepAccount(ctx context.Context, account string) error {
 	return kept
 }
 
+// sweepConn is the sweep of a listed connection that is not pending: it
+// ends one past its end, tidies a live one's devices and queues its ending
+// notice; gone says the connection is ended or removed. The notice is
+// queued only from a record still current: when the tidy's write lost to
+// another writer (a renewal, a revocation), the record is read and decided
+// again, never told from the one that lost (review of #197, finding 1).
+// A record that keeps changing is left to the next pass.
+func (s *Service) sweepConn(ctx context.Context, id string, now time.Time, closing bool) (gone bool, err error) {
+	for range RecordTries {
+		d, at, err := s.readConn(ctx, id)
+		if err != nil && !refusedRecord(err) {
+			return false, err
+		}
+		if d == nil || d.State == contracts.ConnectionEnded {
+			return true, nil
+		}
+		if !now.Before(d.EndsAt) {
+			if err := s.endConnection(ctx, id, contracts.EndedByTime, "", true); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+		current, err := s.tidyConn(ctx, d, at)
+		if err != nil {
+			return false, err
+		}
+		if !current {
+			continue
+		}
+		// Live, and ending within the week: told once per connection and
+		// end (ADR 0041, E32); a closing account is told nothing.
+		if !closing {
+			s.notifyEnding(ctx, d, now)
+		}
+		return false, nil
+	}
+	return false, nil
+}
+
 // tidyConn ends the devices of an active connection whose codes can no
-// longer be exchanged and drops the ended ones past their bounds.
-func (s *Service) tidyConn(ctx context.Context, d *connDoc, at store.Mark) error {
+// longer be exchanged and drops the ended ones past their bounds. current
+// is false when its write lost to another writer: d is no longer the
+// connection's record.
+func (s *Service) tidyConn(ctx context.Context, d *connDoc, at store.Mark) (current bool, err error) {
 	before, _ := jsonSize(d.Devices)
 	drop := d.tidy(s.now())
 	for _, f := range drop {
 		if err := s.removeFamily(ctx, f); err != nil {
-			return err
+			return false, err
 		}
 	}
 	d.dropDevices(drop)
 	if after, _ := jsonSize(d.Devices); after == before {
-		return nil
+		return true, nil
 	}
-	if err := s.writeConn(ctx, d, at, false); err != nil && !retry(err) {
-		return err
+	if err := s.writeConn(ctx, d, at, false); err != nil {
+		if retry(err) {
+			return false, nil
+		}
+		return false, err
 	}
-	return nil
+	return true, nil
 }
 
 // sweepAssertions removes the records of assertions of the hours before

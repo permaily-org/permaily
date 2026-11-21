@@ -36,6 +36,8 @@ import (
 	"github.com/permaily-org/permaily/internal/sesmail"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/tlsacme"
+	"github.com/permaily-org/permaily/internal/webhook"
+	"github.com/permaily-org/permaily/internal/webhook/send"
 	"github.com/permaily-org/permaily/pkg/attestation"
 	"github.com/permaily-org/permaily/pkg/provenance"
 )
@@ -77,9 +79,20 @@ type platform struct {
 	// one strict Anchored of its records.
 	connections       *composedConnections
 	connectionRecords *store.Anchored
+	// rulesRecords is the one strict Anchored of the person's rules'
+	// records (ADR 0040); nil without connections.
+	rulesRecords *store.Anchored
+	// notices is the queue of the notices by mail about connections and
+	// the record of what left (ADR 0041), accounts its Deliverer; nil in an
+	// image that sends no mail.
+	notices *composedNotices
 	// receipts is the record of what left, chained (ADR 0037), over its one
 	// strict Anchored; nil without the model.
 	receipts *composedReceipts
+	// webhooks is the queue of connections' webhooks (ADR 0039), which
+	// the mailboxes tell of every message stored and the connections are
+	// composed with; nil in an image that sends no mail.
+	webhooks *composedWebhooks
 }
 
 // devConfig is empty in the enclave: the image reaches vendors through the
@@ -175,9 +188,15 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 			// Only the newest version of one is kept, so a name or a passkey
 			// that was removed does not stay in the table (ADR 0017); the TLS
 			// identity above keeps every version (ADR 0016).
-			var accountRecords, mailboxRecords, modelRecords, connectionRecords, chainRecords *store.Anchored
+			var accountRecords, mailboxRecords, modelRecords, connectionRecords, rulesRecords, chainRecords *store.Anchored
 			if cfg.mailFrom != "" {
 				accountRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true}
+				// The notices about connections (ADR 0041) are queued in the
+				// table, signed with a key of the root secret, and sent by
+				// accounts through SES, behind the watch, as every message.
+				if p.notices, err = composeNotices(noticesParts{entries: awsStore, keys: root, log: log}); err != nil {
+					return nil, err
+				}
 				sender, err := p.signIn(ctx, cfg, hosts, awsCfg, egress, accountRecords, awsStore, root, log)
 				if err != nil {
 					return nil, err
@@ -187,9 +206,19 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 				// no other name: a fork anywhere in their history refuses them
 				// (ADR 0026, "The store").
 				mailboxRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true, Strict: true}
+				// Connections' webhooks (ADR 0039): their queue in the
+				// table, sealed and signed with keys of the root secret,
+				// each notice sent through the host's vendor egress (port
+				// 8004) and nothing else; told of every message stored.
+				if p.webhooks, err = composeWebhooks(webhooksParts{
+					entries: awsStore, keys: root, sender: enclaveWebhookSender(cfg), keysURL: webhookKeysURL(hosts, cfg.oauthPort()), log: log,
+				}); err != nil {
+					return nil, err
+				}
 				if p.mailboxes, err = mailboxes.New(mailboxes.Config{
 					Records: mailboxRecords, Storage: awsStore, Keys: root, Accounts: p.accounts, Notifier: p.accounts, Domain: hosts.Inbox, Log: log,
-					Auth: msgauth.DKIM(msgauth.DoH{Client: egress, Endpoint: cfg.dohEndpoint}.LookupTXT),
+					Auth:     msgauth.DKIM(msgauth.DoH{Client: egress, Endpoint: cfg.dohEndpoint}.LookupTXT),
+					Arrivals: p.webhooks.svc,
 				}); err != nil {
 					return nil, err
 				}
@@ -215,6 +244,11 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 				// the host's vendor egress (port 8004) and nothing else.
 				connectionRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true, Strict: true}
 				p.connectionRecords = connectionRecords
+				// The person's rules (ADR 0040): an account's record of rules
+				// is a strict record, read and written through this Anchored
+				// alone, which reads no other name.
+				rulesRecords = &store.Anchored{Records: awsStore, Commits: commits, OnlyNewest: true, Strict: true}
+				p.rulesRecords = rulesRecords
 				// The record of what left, chained (ADR 0037): links, the
 				// catalogue of chains, the audit's passes and the record of
 				// incidents are strict records made once, read and written
@@ -222,15 +256,15 @@ func newPlatform(ctx context.Context, cfg config, hosts router.Hosts, log *slog.
 				// values in the chain's table (a link's in its account's
 				// partition), their commits grouped under commits/g/.
 				chainRecords = &store.Anchored{Records: receipts.ChainTable{Entries: awsStore}, Commits: commits, Strict: true}
-				if p.receipts, err = composeReceipts(receiptsParts{chain: chainRecords, entries: awsStore, keys: root, accounts: p.accounts}); err != nil {
+				if p.receipts, err = composeReceipts(receiptsParts{chain: chainRecords, entries: awsStore, keys: root, accounts: p.accounts, notices: p.notices, log: log}); err != nil {
 					return nil, err
 				}
-				if p.connections, err = enclaveConnections(cfg, hosts, connectionRecords, awsStore, root, p); err != nil {
+				if p.connections, err = enclaveConnections(cfg, hosts, connectionRecords, awsStore, root, p, log); err != nil {
 					return nil, err
 				}
 			}
 			p.anchors = func() *attestation.AnchorStatus {
-				st := anchorStatus(anchored, accountRecords, mailboxRecords, modelRecords, connectionRecords, cfg.anchorBucket, cfg.anchorRetentionDays)
+				st := anchorStatus(anchored, accountRecords, mailboxRecords, modelRecords, connectionRecords, rulesRecords, cfg.anchorBucket, cfg.anchorRetentionDays)
 				st.Regressions = append(st.Regressions, receiptRegressions(chainRecords)...)
 				return st
 			}
@@ -270,6 +304,9 @@ func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, a
 	p.accounts, err = accounts.New(accounts.Config{
 		Records: records, Entries: entries, Keys: root,
 		Mailer: sender,
+		// The operator's and an admin's sign-out of every device is told
+		// through the queue, which accounts then sends (deliverBy).
+		Notices: p.notices.svc,
 		// The providers are asked who signed in over TLS that ends here, through
 		// the host's proxy, and send the browser back to the app's own host.
 		Providers: &idp.Client{HTTP: egress, RedirectURL: "https://" + hosts.App + providerCallback},
@@ -278,6 +315,7 @@ func (p *platform) signIn(ctx context.Context, cfg config, hosts router.Hosts, a
 	if err != nil {
 		return nil, err
 	}
+	p.notices.deliverBy(p.accounts)
 	// Accounts whose person asked to delete them are removed when their day comes.
 	go p.accounts.Run(ctx, accounts.RemoveEvery)
 	return sender, nil
@@ -301,21 +339,41 @@ const modelRecord = "model"
 // identifier, and their versions say how often a connection was used.
 const connectionRecord = "connection"
 
+// rulesRecord stands for an account's record of rules (ADR 0040) in
+// /status: its name holds the account's identifier, and its versions say
+// how often the person changed their rules.
+const rulesRecord = "rules"
+
 // vendorEgress is the client vendors' documents and key sets are fetched
 // with: the host's vendor egress on port, HTTP/2 only. A test replaces it
 // to see which port the image uses.
 var vendorEgress = enclave.VendorEgressClient
 
+// webhookEgress is the dial notices are sent through: the host's vendor
+// egress on a port, a tunnel to a host's 443. A test replaces it to see
+// which port the image uses.
+var webhookEgress = enclave.WebhookEgressDialer
+
+// enclaveWebhookSender is the image's sender of notices: TLS and HTTP/2
+// framed by internal/webhook/send over the vendor egress on
+// cfg.vendorEgressPort (8004), checked against the roots compiled into the
+// image (golang.org/x/crypto/x509roots/fallback: the enclave has no
+// /etc/ssl), on the enclave's clock.
+func enclaveWebhookSender(cfg config) webhook.Sender {
+	return send.New(webhookEgress(cfg.vendorEgressPort), nil, time.Now)
+}
+
 // enclaveConnections composes the image's connections over records (the
 // one strict Anchored of their names), the table and the root secret's
-// keys, with the platform's accounts, mailboxes and model; vendors'
+// keys, with the platform's accounts, mailboxes, model, receipts and queue
+// of notices (log takes what it logs of a notice not queued); vendors'
 // documents are fetched through the host's vendor egress on
 // cfg.vendorEgressPort (8004) and nothing else.
-func enclaveConnections(cfg config, hosts router.Hosts, records *store.Anchored, table connectionsStore, root connections.Keys, p *platform) (*composedConnections, error) {
+func enclaveConnections(cfg config, hosts router.Hosts, records *store.Anchored, table connectionsStore, root connections.Keys, p *platform, log *slog.Logger) (*composedConnections, error) {
 	return composeConnections(connectionsParts{
 		oauth: oauthConfig(hosts, cfg.oauthPort()), domain: cfg.domain, records: records, entries: table, keys: root,
 		vendorHTTP: vendorEgress(cfg.vendorEgressPort), accounts: p.accounts, mailboxes: p.mailboxes, model: p.model,
-		receipts: p.receipts,
+		receipts: p.receipts, notices: p.notices, log: log, rulesRecords: p.rulesRecords, webhooks: p.webhooks,
 	})
 }
 
@@ -338,7 +396,7 @@ func anchorCommits(api store.S3CommitsAPI, bucket string, key func(context.Conte
 // back, was forked or has a commit S3 did not keep locked, never which; of
 // the model's records and the connections' the same, without their
 // versions.
-func anchorStatus(a, ofAccounts, ofMailboxes, ofModel, ofConnections *store.Anchored, bucket string, retentionDays int) *attestation.AnchorStatus {
+func anchorStatus(a, ofAccounts, ofMailboxes, ofModel, ofConnections, ofRules *store.Anchored, bucket string, retentionDays int) *attestation.AnchorStatus {
 	st := &attestation.AnchorStatus{Bucket: bucket, RetentionDays: retentionDays, Records: []attestation.AnchoredRecord{}}
 	for _, c := range a.Seen() {
 		st.Records = append(st.Records, attestation.AnchoredRecord{Name: c.Name, Version: c.Version, CommittedAt: c.At, LockedUntil: c.LockedUntil})
@@ -364,6 +422,11 @@ func anchorStatus(a, ofAccounts, ofMailboxes, ofModel, ofConnections *store.Anch
 	if ofConnections != nil {
 		for _, r := range ofConnections.Regressions() {
 			st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: connectionRecord, At: r.At, Fork: r.Fork, Unlocked: r.Unlocked, Lost: r.Lost})
+		}
+	}
+	if ofRules != nil {
+		for _, r := range ofRules.Regressions() {
+			st.Regressions = append(st.Regressions, attestation.AnchorRegression{Name: rulesRecord, At: r.At, Fork: r.Fork, Unlocked: r.Unlocked, Lost: r.Lost})
 		}
 	}
 	return st

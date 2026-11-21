@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"math"
 	"net"
 	"net/url"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	"github.com/permaily-org/permaily/internal/inbox"
 	"github.com/permaily-org/permaily/internal/oauth"
 	"github.com/permaily-org/permaily/internal/query"
+	"github.com/permaily-org/permaily/internal/rules"
 	"github.com/permaily-org/permaily/internal/services/receipts"
 	"github.com/permaily-org/permaily/internal/store"
 	"github.com/permaily-org/permaily/internal/vendors"
@@ -47,6 +49,11 @@ type requestEntry struct {
 	Account     string              `json:"account"`
 	Mailboxes   []string            `json:"mailboxes"`
 	Expires     time.Time           `json:"expires"`
+	// Webhook is the webhook the pushed request asked for (ADR 0039).
+	Webhook *contracts.WebhookRequest `json:"webhook,omitempty"`
+
+	// timeZone is the person's, from the approval (webhookZone).
+	timeZone string
 }
 
 // pushedEntry is a pushed request, sealed, bound to its client.
@@ -120,6 +127,9 @@ func (s *Service) Start(ctx context.Context, p Person, raw string) (*contracts.A
 		if len(q) != 2 {
 			return s.refusedRedirect(params, oauth.ErrInvalidRequest), nil
 		}
+		if _, err := s.parseWebhook(params.Webhook, clientID); err != nil {
+			return s.refusedRedirect(params, oauth.ErrInvalidRequest), nil
+		}
 	} else {
 		var proven bool
 		params, proven, err = oauth.Authorize(q, &client.Document, s.cfg.OAuth)
@@ -148,6 +158,7 @@ func (s *Service) Start(ctx context.Context, p Person, raw string) (*contracts.A
 		Days: oauth.ConnectionDefaultDays, Since: contracts.MailSince{New: true}, Expires: now.Add(oauth.RequestTTL),
 	}
 	req.Resource, _ = resourceOf(s.cfg.OAuth, params.Resource)
+	req.Webhook, _ = s.parseWebhook(params.Webhook, clientID)
 	if params.EndsInDays > 0 {
 		req.Days = params.EndsInDays
 	}
@@ -260,7 +271,10 @@ func (s *Service) requestFits(req *requestEntry) error {
 		ClientName: req.ClientName, Resource: req.Resource, Parts: req.Parts, Scopes: req.Scopes, Mailboxes: req.Mailboxes,
 		State: contracts.ConnectionActive, ModelNotice: s.cfg.ModelNotice, EndReason: contracts.EndedByReplaced,
 		ReplacedBy: "con_" + strings.Repeat("a", 26),
-		private:    &connPrivate{Query: req.Query, Since: req.Since, Shown: s.shown(req)},
+		private:    &connPrivate{Query: req.Query, Since: req.Since, Shown: shownWith(req, mostRules())},
+	}
+	if req.Webhook != nil {
+		d.Webhook = webhookAtMost()
 	}
 	raw, err := jsonSize(d.private)
 	if err != nil {
@@ -279,21 +293,49 @@ func (s *Service) requestFits(req *requestEntry) error {
 	return nil
 }
 
-// shown is what the screen shows of a request, kept with the consent.
-func (s *Service) shown(req *requestEntry) consentShown {
+// shown is what the screen shows of a request, kept with the consent: the
+// rules that apply to its client now, read as a read reads them (ADR 0040,
+// "Previews and consent").
+func (s *Service) shown(ctx context.Context, req *requestEntry) (consentShown, error) {
+	ap, err := s.rulesFor(ctx, req.Account, req.ClientID)
+	if err != nil {
+		return consentShown{}, err
+	}
+	return shownWith(req, ap.Rules), nil
+}
+
+// shownWith is what the screen shows of a request with rs applying: every
+// rule by its reference and version, and the sentences of the query and of
+// the compiled default (the person's own rules are named by version, their
+// sentences in their record, so the connection's record keeps its bound
+// whatever rules the account has).
+func shownWith(req *requestEntry, rs []rules.Rule) consentShown {
 	host, _ := redirectHost(req.RedirectURI)
-	sh := consentShown{Rules: s.ruleRefs(), RedirectHost: host, Sentences: []string{}}
+	sh := consentShown{Rules: refsOf(rs), RedirectHost: host, Sentences: []string{}}
 	if req.Query != nil {
 		if c, err := query.Canonicalise(*req.Query); err == nil {
 			sh.Sentences = append(sh.Sentences, check(c, req.Mailboxes).Sentence.Text)
 		}
 	}
-	for _, r := range s.ruleSummaries() {
+	for _, r := range ruleSummaries(rs) {
+		if r.ID != rules.DefaultID {
+			continue
+		}
 		for _, sen := range r.Sentence {
 			sh.Sentences = append(sh.Sentences, sen.Text)
 		}
 	}
 	return sh
+}
+
+// mostRules is the most rules a consent can record: the default and
+// contracts.MaxRules of the person's, each with its longest reference.
+func mostRules() []rules.Rule {
+	out := []rules.Rule{rules.Default()}
+	for range contracts.MaxRules {
+		out = append(out, rules.Rule{ID: "rul_" + strings.Repeat("a", 26), Version: math.MaxInt})
+	}
+	return out
 }
 
 // request is a request waiting for the person, if it is this session's.
@@ -340,10 +382,19 @@ func (s *Service) current(ctx context.Context, account, client string) (raw stri
 // draft and what approving it does.
 func (s *Service) screen(ctx context.Context, id string, req *requestEntry) (*contracts.AuthorizationRequest, error) {
 	host, loopback := redirectHost(req.RedirectURI)
+	// The rules that will apply to this app, read as its reads will read
+	// them (ADR 0040, "Previews and consent"): an only rule of another
+	// client is not among them, another client on the same host is told
+	// apart by its client_id.
+	ap, err := s.rulesFor(ctx, req.Account, req.ClientID)
+	if err != nil {
+		return nil, err
+	}
 	out := &contracts.AuthorizationRequest{
 		ID: id, Vendor: vendorOf(req.Vendor), ClientName: req.ClientName, RedirectHost: host, Loopback: loopback,
 		Resource: req.Resource, Parts: slices.Clone(req.Parts), Since: req.Since, EndsInDays: req.Days,
-		Mailboxes: slices.Clone(req.Mailboxes), Rules: s.ruleSummaries(), ModelNotice: s.cfg.ModelNotice, ExpiresAt: req.Expires,
+		Mailboxes: slices.Clone(req.Mailboxes), Rules: ruleSummaries(ap.Rules), ModelNotice: s.cfg.ModelNotice, ExpiresAt: req.Expires,
+		Webhook: webhookAsked(req),
 	}
 	if req.Query != nil {
 		c, err := query.Canonicalise(*req.Query)
@@ -470,7 +521,7 @@ func (s *Service) changeFor(ctx context.Context, req *requestEntry, d contracts.
 	}
 	snap.Connection, snap.Version, snap.Change = cur.ID, at.Version(), contracts.ChangeReplace
 	cs, err := cur.scope()
-	if err == nil && cur.Resource == req.Resource && subset(cur.Parts, req.Parts) && contained(cs, ds) {
+	if err == nil && cur.Resource == req.Resource && subset(cur.Parts, req.Parts) && contained(cs, ds) && keepsWebhook(cur, req) {
 		snap.Change, snap.EndsAt = contracts.ChangeAddDevice, cur.EndsAt
 	}
 	return snap, cur, at, ds, raw, nil
@@ -522,7 +573,11 @@ func (s *Service) Preview(ctx context.Context, p Person, id string, in contracts
 	}
 	d := inbox.Disclosure{Formulas: ds.list(), Parts: req.Parts, Account: p.Account}
 	if in.AskModel {
-		d.Rules = s.cfg.Rules
+		ap, err := s.rulesFor(ctx, p.Account, req.ClientID)
+		if err != nil {
+			return nil, err
+		}
+		d.Rules = ap.Rules
 		d.Model = s.cfg.Model != nil && s.cfg.Model.Gate(ctx, p.Account) == inbox.AskAnswered
 	}
 	page, err := s.cfg.Discloser.Page(s.asking(ctx, d), box, d, in.After, limit)
@@ -541,6 +596,10 @@ func (s *Service) Preview(ctx context.Context, p Person, id string, in contracts
 				sum.Subject = *m.Subject
 			}
 			out.Page.Messages = append(out.Page.Messages, sum)
+			if len(it.Disclosed.Removed) > 0 && in.AskModel {
+				// It would leave with details a rule takes out (ADR 0040).
+				out.Page.Removed = append(out.Page.Removed, it.Disclosed.ID)
+			}
 		case it.Withheld != nil && in.AskModel:
 			out.Page.Held = append(out.Page.Held, it.Withheld.ID)
 		}
@@ -590,6 +649,9 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 		return nil, err
 	}
 	if err := validDraft(req, *in.Draft, s.now()); err != nil {
+		return nil, err
+	}
+	if req.timeZone, err = webhookZone(req, in.TimeZone); err != nil {
 		return nil, err
 	}
 	// The document is read again: the redirect URI must still be one of it.
@@ -652,7 +714,8 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 		return refuse(err)
 	}
 	_, _ = s.endOnce(ctx, partition, req.Expires)
-	if err := s.consentReceipt(ctx, req, made, *in.Draft, ds, true); err != nil {
+	receipt, err := s.consentReceipt(ctx, req, made, *in.Draft, ds, true)
+	if err != nil {
 		return nil, err
 	}
 	if err := inTime(); err != nil {
@@ -665,6 +728,9 @@ func (s *Service) Decide(ctx context.Context, p Person, id string, in contracts.
 	if err := inTime(); err != nil {
 		return refuse(err)
 	}
+	// Committed, and its code handed out: told of under its consent
+	// receipt, after every check that could still undo it (ADR 0041, E30).
+	s.notifyApproved(ctx, made, receipt)
 	v := url.Values{"code": {code}}
 	if req.State != "" {
 		v.Set("state", req.State)
@@ -704,7 +770,7 @@ func (s *Service) deny(ctx context.Context, req *requestEntry, reqHash, partitio
 	}
 	_, _ = s.endOnce(ctx, partition, req.Expires)
 	ds, _ := makeScope(req.Query, req.Mailboxes, req.Since, now)
-	_ = s.consentReceipt(ctx, req, nil, contracts.ConsentDraft{Mailboxes: req.Mailboxes, Since: req.Since}, ds, false)
+	_, _ = s.consentReceipt(ctx, req, nil, contracts.ConsentDraft{Mailboxes: req.Mailboxes, Since: req.Since}, ds, false)
 	v := url.Values{"error": {string(oauth.ErrAccessDenied)}}
 	if req.State != "" {
 		v.Set("state", req.State)
@@ -769,6 +835,10 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 		return nil, err
 	}
 	since := draft.Since
+	shown, err := s.shown(ctx, req)
+	if err != nil {
+		return abandon(err)
+	}
 	doc := &connDoc{
 		V: 1, ID: id, Account: req.Account, Vendor: req.Vendor, ClientID: req.ClientID, ClientName: req.ClientName,
 		Resource: req.Resource, Parts: slices.Clone(req.Parts), Scopes: slices.Clone(req.Scopes), Mailboxes: slices.Clone(draft.Mailboxes),
@@ -778,12 +848,21 @@ func (s *Service) makeConnection(ctx context.Context, req *requestEntry, reqHash
 			ID: family, State: contracts.ConnectionActive, MadeAt: now, Parts: slices.Clone(req.Parts), Scopes: slices.Clone(req.Scopes),
 			Code: oauth.CodeState{Hash: oauth.Hash(oauth.KindCode, code), Family: family, ExpiresAt: now.Add(oauth.CodeTTL), Status: oauth.CodeIssued},
 		}},
-		private: &connPrivate{Query: req.Query, Since: since, Shown: s.shown(req)},
+		private: &connPrivate{Query: req.Query, Since: since, Shown: shown},
+	}
+	if doc.Webhook, err = s.newWebhook(req, id); err != nil {
+		return abandon(err)
 	}
 	if err := inTime(); err != nil {
 		return abandon(err)
 	}
 	if err := s.writeConn(ctx, doc, store.Mark{}, true); err != nil {
+		return abandon(err)
+	}
+	// Its webhook's queue entry is made after its record and before its
+	// code: an approval whose entry could not be made is abandoned
+	// (ADR 0039, K26).
+	if err := s.subscribe(ctx, doc); err != nil {
 		return abandon(err)
 	}
 	if err := inTime(); err != nil {
@@ -948,21 +1027,27 @@ func (s *Service) issueCode(ctx context.Context, req *requestEntry, m *made) (st
 	return m.code, nil
 }
 
-// consentReceipt records what the person was shown and decided.
-func (s *Service) consentReceipt(ctx context.Context, req *requestEntry, m *made, d contracts.ConsentDraft, ds scopeOf, allowed bool) error {
-	sh := s.shown(req)
+// consentReceipt records what the person was shown and decided, and
+// answers the receipt's identifier.
+func (s *Service) consentReceipt(ctx context.Context, req *requestEntry, m *made, d contracts.ConsentDraft, ds scopeOf, allowed bool) (string, error) {
+	sh, err := s.shown(ctx, req)
+	if err != nil {
+		return "", err
+	}
 	r := &receipts.Receipt{
 		V: receipts.Version, Kind: receipts.KindConsent, ClientID: req.ClientID, Vendor: req.Vendor, Resource: req.Resource,
-		Formulas: consentedFormulas(ds), Rules: s.ruleRefs(),
+		Formulas: consentedFormulas(ds), Rules: sh.Rules,
 		Consent: &receipts.Consent{
 			Allowed: allowed, Sentences: sh.Sentences, Parts: req.Parts, Since: d.Since, Mailboxes: d.Mailboxes, ModelNotice: s.cfg.ModelNotice,
 		},
 	}
+	r.Consent.Webhook = consentWebhook(req)
 	if m != nil {
 		r.Connection, r.Device = m.conn.ID, m.device
 		r.Consent.Change, r.Consent.EndsAt, r.Consent.Replaced = m.change, m.conn.EndsAt, m.replaced
 	}
-	return s.writeReceipt(ctx, req.Account, r, time.Time{})
+	err = s.writeReceipt(ctx, req.Account, r, time.Time{})
+	return r.ID, err
 }
 
 // consentedFormulas are a scope's formulas in full, for a consent receipt.
