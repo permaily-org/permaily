@@ -1,6 +1,6 @@
 # 0026 Mailboxes per account: how they are built
 
-Status: Accepted. Designed on 2026-11-12 for step 2 of F2 (docs/plan.md); built by its six implementation pull requests: 0 to 4 merged on 2026-11-12 (#87, #91, #90, #88, #89), 5 in #92, released once the browser checks of docs/acceptance.md pass. The owner decided its open choices on 2026-11-12 (listed in "What it rests on, and what is left"), among them that messages are shown as HTML from the start ("Showing a message's HTML"). Revised the same day after three adversarial reviews of its core and one of its HTML; what each changed is listed in the pull request that carried it. No further review of the design is planned: each implementation pull request gets an adversarial review of its code.
+Status: Accepted, built and in production since v0.12.0 (2026-11-14). Designed on 2026-11-12 for step 2 of F2 (docs/plan.md); built by its six implementation pull requests: 0 to 4 merged on 2026-11-12 (#87, #91, #90, #88, #89), 5 in #92, released once the browser checks of docs/acceptance.md pass. The owner decided its open choices on 2026-11-12 (listed in "What it rests on, and what is left"), among them that messages are shown as HTML from the start ("Showing a message's HTML"). Revised the same day after three adversarial reviews of its core and one of its HTML; what each changed is listed in the pull request that carried it. No further review of the design is planned: each implementation pull request gets an adversarial review of its code.
 Date: 2026-11-12
 
 ## Context
