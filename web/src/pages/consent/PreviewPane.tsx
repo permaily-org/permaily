@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import {
   Button,
   Count as CountMark,
@@ -12,8 +12,11 @@ import { useSession } from '../../lib/session.tsx'
 import { messageFor } from '../auth/messages.ts'
 import { partNamesOf } from '../connections/words.tsx'
 import { formatDay } from '../settings/signin/shared.ts'
-import { PreviewEyebrow } from './InboxPreview.tsx'
 import type { Count } from './preview.ts'
+
+function PreviewEyebrow({ children }: { children: ReactNode }) {
+  return <p className="font-mono text-mono text-ink-2">{children}</p>
+}
 
 /** The most rows the preview draws: the count goes on past them. */
 const rowsShown = 50

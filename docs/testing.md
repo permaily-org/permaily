@@ -112,7 +112,7 @@ Coverage per Go package is in `scripts/coverage-thresholds.txt`, set to the meas
 | `internal/oauth` | 100 | 100.0 (2026-11-16, ADR 0030's pull request 1) |
 | `internal/mailhtml` | 95 | 95.2 (2026-11-12, after PR #92's code review) |
 
-Coverage of the web app is in `web/vitest.config.ts`, one threshold for each area that talks to the server, set the same way. The screens on sample data have none: they are still changing.
+Coverage of the web app is in `web/vitest.config.ts`, one threshold for each area that talks to the server, set the same way. No screen runs on sample data: `web/tests/build/no-sample-data.test.ts` fails if the sample's words are in `web/src` or, after `bun run build` (as `make check-web` and CI's `web-unit` run it), in `web/dist`.
 
 | Area of `web/src` | Statements, branches, functions, lines | Measured 2026-11-11 |
 |---|---|---|

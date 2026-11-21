@@ -1,7 +1,8 @@
 import { screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { expectNotKept, open, settle } from '../../helpers/app.tsx'
 import { expectAccessible } from '../../helpers/axe.ts'
+import { emptyOverview } from '../../helpers/overview.ts'
 import {
   answered,
   browserError,
@@ -9,6 +10,12 @@ import {
   requestOptions,
 } from '../../helpers/passkeys.ts'
 import { meOf, network, ok, refused, server } from '../../helpers/server.ts'
+
+// Signing in and every route that leads home end on the overview, which reads the account's mailboxes, rules and
+// connections.
+beforeEach(() => {
+  emptyOverview()
+})
 
 const ceremony = ok({ ceremony: 'cer_secret_1', options: requestOptions })
 

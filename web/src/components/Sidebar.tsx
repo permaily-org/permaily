@@ -21,7 +21,7 @@ export function Sidebar(props: SidebarProps) {
   // The admin panel is in the list only for an admin: nobody else sees that it exists.
   const shown: Section[] =
     state.status === 'signedIn' && state.me.account.admin
-      ? [...sections, { path: '/admin', label: 'Admin', icon: ShieldCheck, waiting: 0 }]
+      ? [...sections, { path: '/admin', label: 'Admin', icon: ShieldCheck }]
       : sections
 
   // A drawer takes focus when it opens.
@@ -58,7 +58,7 @@ export function Sidebar(props: SidebarProps) {
       {header}
 
       <nav aria-label="Main" className="flex flex-col gap-0.5">
-        {shown.map(({ path, label, icon: Icon, waiting }) => (
+        {shown.map(({ path, label, icon: Icon }) => (
           <NavLink
             key={path}
             to={path}
@@ -78,17 +78,6 @@ export function Sidebar(props: SidebarProps) {
           >
             <Icon aria-hidden size={16} strokeWidth={1.75} />
             <span className={collapsed ? 'sr-only' : 'flex-1'}>{label}</span>
-            {waiting > 0 && (
-              <span
-                className={cx(
-                  'font-mono font-medium text-attention',
-                  collapsed ? 'absolute right-1 top-0.5 text-micro leading-none' : 'text-mono',
-                )}
-              >
-                {waiting}
-                <span className="sr-only"> waiting for you</span>
-              </span>
-            )}
           </NavLink>
         ))}
       </nav>
