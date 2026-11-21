@@ -17,8 +17,7 @@ import {
 } from '../connections/words.tsx'
 import { AppliedList, appliedOf, useRuleList } from '../rules/shared.tsx'
 import { formatDay } from '../settings/signin/shared.ts'
-import { ChoiceTerm } from './ChoiceDialog.tsx'
-import type { Choice } from './data.ts'
+import { type Choice, ChoiceTerm } from './ChoiceDialog.tsx'
 
 const day = 86_400_000
 

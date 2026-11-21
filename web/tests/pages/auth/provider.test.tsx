@@ -1,5 +1,5 @@
 import { act, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { TERMS_VERSION } from '../../../src/lib/terms.ts'
 import {
   agree,
@@ -11,7 +11,14 @@ import {
   watchLeaving,
 } from '../../helpers/app.tsx'
 import { expectAccessible } from '../../helpers/axe.ts'
+import { emptyOverview } from '../../helpers/overview.ts'
 import { later, network, ok, refused, server } from '../../helpers/server.ts'
+
+// Signing in and every route that leads home end on the overview, which reads the account's mailboxes, rules and
+// connections.
+beforeEach(() => {
+  emptyOverview()
+})
 
 const all = ok({ providers: ['microsoft', 'meta', 'github', 'google'] })
 const away = 'https://accounts.google.com/o/oauth2/v2/auth?state=st_secret_1'

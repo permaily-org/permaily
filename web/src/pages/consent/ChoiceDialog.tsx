@@ -1,7 +1,8 @@
 import { useId, useState } from 'react'
 import { Button, Dialog, TermRow, TextAction } from '../../components/ui/index.ts'
 import { cx, focusRing } from '../../lib/styles.ts'
-import type { Choice } from './data.ts'
+/** One of a term's choices: what is saved, what it says, and a line under it. */
+export type Choice = { value: string; label: string; note?: string }
 
 type ChoiceProps = {
   title: string

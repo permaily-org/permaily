@@ -9,7 +9,7 @@ import { useStanding } from '../accounts/standing.ts'
  * The connections routes, as src/App.tsx declares them inside `ConnectionsLayout`: the list, a vendor's overview and
  * one connection. They are the routes that an account that has not agreed to the terms in force still reaches (ADR
  * 0030, finding 17): its connections keep reading, so the person can always see them and revoke one or a device of
- * one. `/connections/new`, the sample flow of connecting an agent, is not one of them.
+ * one.
  */
 export const connectionsRoutes = {
   list: 'connections',

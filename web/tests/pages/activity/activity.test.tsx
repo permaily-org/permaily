@@ -486,9 +486,12 @@ describe('E6: states', () => {
     signedIn().on(firstPage, ok(pageOf([], { head: { n: 0 } })))
     await openActivity()
     expect(await screen.findByText('Nothing has left your mailboxes.')).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Connections' }).getAttribute('href')).toBe(
-      '/connections',
-    )
+    // The page's own link, not the sidebar's.
+    expect(
+      within(screen.getByRole('main'))
+        .getByRole('link', { name: 'Connections' })
+        .getAttribute('href'),
+    ).toBe('/connections')
     expect(screen.queryByLabelText('Connection')).toBeNull()
     await expectAccessible()
   })
