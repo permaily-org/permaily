@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { SectionHeading, ViewSwitch } from '../../components/ui/index.ts'
+import { SectionHeading, TextLink, ViewSwitch } from '../../components/ui/index.ts'
 import { closingDays } from '../../lib/closing.ts'
 import { pagePadding } from '../../lib/styles.ts'
 import { applyTheme, readTheme, saveTheme, type Theme } from '../../lib/theme.ts'
@@ -83,8 +83,9 @@ function YourData() {
       <SectionHeading id="your-data" title="Your data" />
       <p className="border-b border-rule py-2 text-body text-ink-2">
         Deleting your account below stops it at once and removes it for good after {closingDays}{' '}
-        days: your address, your name, your ways to sign in and your devices. Exporting your data
-        isn't built yet.
+        days: your address, your name, your ways to sign in and your devices. What your connections
+        were given, and why, is in <TextLink to="/activity">Activity</TextLink>, where you can download
+        it. Exporting the rest of your data isn't built yet: ask us for a copy.
       </p>
     </section>
   )
