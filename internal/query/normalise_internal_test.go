@@ -68,6 +68,13 @@ func refuses(t *testing.T, v contracts.Variable, op contracts.Operator, in strin
 	}
 }
 
+func TestDomainRejectsUnstableIDNALookup(t *testing.T) {
+	d := contracts.VarFromDomain
+	refuses(t, d, "is", "ℵ0.0", contracts.FormulaInvalidValue)
+	refuses(t, d, "is", "xn--0-zhc.0", contracts.FormulaInvalidValue)
+	accepts(t, d, "is", "example.0", "example.0")
+}
+
 // Q6 of ADR 0027: addresses and domains.
 func TestQ6AddressesAndDomains(t *testing.T) {
 	d, a := contracts.VarFromDomain, contracts.VarFromAddress
