@@ -23,8 +23,9 @@ describe('notifications and your data', () => {
     )
     const data = within(screen.getByRole('region', { name: 'Your data' }))
     expect(data.getByText(/^Deleting your account below/).textContent).toBe(
-      "Deleting your account below stops it at once and removes it for good after 7 days: your address, your name, your ways to sign in and your devices. Exporting your data isn't built yet.",
+      "Deleting your account below stops it at once and removes it for good after 7 days: your address, your name, your ways to sign in and your devices. What your connections were given, and why, is in Activity, where you can download it. Exporting the rest of your data isn't built yet: ask us for a copy.",
     )
+    expect(data.getByRole('link', { name: 'Activity' }).getAttribute('href')).toBe('/activity')
     for (const region of [notifications, data]) {
       expect(region.queryAllByRole('button')).toEqual([])
       expect(region.queryAllByRole('switch')).toEqual([])
