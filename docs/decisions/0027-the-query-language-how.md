@@ -1,6 +1,6 @@
 # 0027 The query language: how it is built
 
-Status: Proposed. Designed on 2026-11-14 for step 3 of F2 (docs/plan.md); not built. Revised the same day after its first design review and the owner's answers ("Changed after the first design review (2026-11-14)"), and after its second ("Changed after the second design review (2026-11-14)"), after which it is final for building. Amends ADR 0019 (a second operator a model decides, "`mentions`"; a rule is one or more formulas, "Rules: any of their criteria"), ADR 0020 (how its thresholds read a negated condition, "The bands of a model") and ADR 0026 (what delivery records for a message, "What delivery adds"). The owner decided its six product choices on 2026-11-14 ("The owner's decisions").
+Status: Accepted, built and in production since v0.14.0 (2026-11-15); first proposed. Designed on 2026-11-14 for step 3 of F2 (docs/plan.md). Revised the same day after its first design review and the owner's answers ("Changed after the first design review (2026-11-14)"), and after its second ("Changed after the second design review (2026-11-14)"), after which it is final for building. Amends ADR 0019 (a second operator a model decides, "`mentions`"; a rule is one or more formulas, "Rules: any of their criteria"), ADR 0020 (how its thresholds read a negated condition, "The bands of a model") and ADR 0026 (what delivery records for a message, "What delivery adds"). The owner decided its six product choices on 2026-11-14 ("The owner's decisions").
 Date: 2026-11-14
 
 ## Context
