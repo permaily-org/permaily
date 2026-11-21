@@ -19,7 +19,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text'],
-      // What talks to the server. The screens on sample data are left out: they are still changing.
+      // What talks to the server: every screen of the app, now that none runs on sample data (docs/web.md).
       include: [
         'src/lib/**',
         'src/components/SessionGate.tsx',
@@ -31,9 +31,9 @@ export default defineConfig({
         'src/pages/admin/**',
         'src/pages/accounts/**',
         'src/pages/inbox/**',
-        // The consent screen and the connections pages on the server (ADR 0030); the sample screens beside them are
-        // left out.
+        // The consent screen and the connections pages on the server (ADR 0030).
         'src/pages/consent/ConsentPage.tsx',
+        'src/pages/consent/ChoiceDialog.tsx',
         'src/pages/consent/ConsentTerms.tsx',
         'src/pages/consent/PreviewPane.tsx',
         'src/pages/consent/preview.ts',
@@ -41,7 +41,7 @@ export default defineConfig({
         'src/pages/connections/ConnectionsPage.tsx',
         'src/pages/connections/ConnectionDetailPage.tsx',
         'src/pages/connections/words.tsx',
-        // The rules screens on the server (ADR 0040); the overview's suggested rule beside them is on sample data.
+        // The rules screens on the server (ADR 0040).
         'src/pages/rules/RulesPage.tsx',
         'src/pages/rules/RuleEditorPage.tsx',
         'src/pages/rules/RulePreview.tsx',
@@ -51,6 +51,8 @@ export default defineConfig({
         'src/pages/rules/words.ts',
         // The Activity screen on the account's record (ADR 0041).
         'src/pages/activity/**',
+        // The overview, on the mailboxes, rules and connections the server answers.
+        'src/pages/overview/**',
       ],
       // The measured values, rounded down. They only go up (docs/testing.md).
       thresholds: {
@@ -78,6 +80,7 @@ export default defineConfig({
         'src/pages/connections/**': { statements: 97, branches: 87, functions: 96, lines: 98 },
         'src/pages/rules/**': { statements: 90, branches: 79, functions: 93, lines: 94 },
         'src/pages/activity/**': { statements: 98, branches: 91, functions: 100, lines: 99 },
+        'src/pages/overview/**': { statements: 100, branches: 97, functions: 100, lines: 100 },
       },
     },
   },

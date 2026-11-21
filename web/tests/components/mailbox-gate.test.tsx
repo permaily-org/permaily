@@ -184,10 +184,15 @@ describe('W5: every other route', () => {
     server.signedIn().on(list, ok({ mailboxes: [], limit: 5 }))
     await open('/inbox')
     const nav = within(await screen.findByRole('navigation', { name: 'Main' }))
-    // A section's name, without what waits there.
-    expect(
-      nav.getAllByRole('link').map((link) => link.textContent?.replace(/\d+ waiting for you$/, '')),
-    ).toEqual(['Inbox', 'Connections', 'Rules', 'Activity', 'Accounts', 'Settings'])
+    // A section's name and nothing else: no count the server did not give.
+    expect(nav.getAllByRole('link').map((link) => link.textContent)).toEqual([
+      'Inbox',
+      'Connections',
+      'Rules',
+      'Activity',
+      'Accounts',
+      'Settings',
+    ])
     expect(screen.queryByRole('region', { name: /deleted|terms/ })).toBeNull()
   })
 })

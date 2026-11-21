@@ -110,19 +110,19 @@ describe('V62: the connections under unagreed terms', () => {
     expect(server.asked(startRoute)).toHaveLength(0)
   })
 
-  // Every spelling the router reads as the sample flow's route: the gate decides with the router's own matching.
+  // A path under /connections that is none of its pages (the sample flow of connecting an agent was here, and is gone),
+  // in every spelling: the gate decides with the router's own matching, and shows only the terms.
   for (const path of [
     '/connections/new',
     '/connections/NEW',
     '/connections/new/',
     '/connections/%6eew',
   ]) {
-    it(`does not reach the sample flow of connecting an agent at ${path}`, async () => {
+    it(`shows only the terms at ${path}, which is not a connections page`, async () => {
       asNotAgreed()
       await open(path)
       await settle()
       expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('The terms changed')
-      expect(screen.queryByText('Connect an agent.')).toBeNull()
     })
   }
 

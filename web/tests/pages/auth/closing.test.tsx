@@ -1,8 +1,15 @@
 import { act, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { blockStorage, current, expectNotKept, open, settle } from '../../helpers/app.tsx'
 import { expectAccessible } from '../../helpers/axe.ts'
+import { emptyOverview } from '../../helpers/overview.ts'
 import { ana, network, ok, refused, server } from '../../helpers/server.ts'
+
+// Signing in and every route that leads home end on the overview, which reads the account's mailboxes, rules and
+// connections.
+beforeEach(() => {
+  emptyOverview()
+})
 
 const closesAt = '2026-11-18T14:32:00Z'
 const closing = { ...ana, state: 'closing' as const, closes_at: closesAt }

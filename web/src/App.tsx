@@ -16,14 +16,10 @@ import { InvitationsPage } from './pages/admin/InvitationsPage.tsx'
 import { LogPage } from './pages/admin/LogPage.tsx'
 import { ProvidersPage } from './pages/admin/ProvidersPage.tsx'
 import { SignInPage } from './pages/auth/SignInPage.tsx'
-import { ConnectAgentPage } from './pages/connections/ConnectAgentPage.tsx'
 import { ConnectionDetailPage } from './pages/connections/ConnectionDetailPage.tsx'
 import { ConnectionsLayout, connectionsRoutes } from './pages/connections/ConnectionsLayout.tsx'
 import { ConnectionsPage } from './pages/connections/ConnectionsPage.tsx'
-import { ConsentAgentPage } from './pages/consent/ConsentAgentPage.tsx'
-import { ConsentAppPage } from './pages/consent/ConsentAppPage.tsx'
 import { ConsentPage } from './pages/consent/ConsentPage.tsx'
-import { WideningPage } from './pages/consent/WideningPage.tsx'
 import { InboxIndexPage } from './pages/inbox/InboxIndexPage.tsx'
 import { InboxPage } from './pages/inbox/InboxPage.tsx'
 import { LinkPage } from './pages/inbox/Link.tsx'
@@ -95,7 +91,6 @@ export function App() {
         </Route>
 
         {/* Full-page flows without the sidebar */}
-        <Route path="connections/new" element={<ConnectAgentPage />} />
         <Route path="accounts/new" element={<ConnectMailboxPage />} />
         <Route path="accounts/new/forwarding" element={<Navigate to="/accounts/new" replace />} />
 
@@ -104,11 +99,6 @@ export function App() {
           before the router ran (src/lib/oauth.ts), so signing in first comes back to it.
         */}
         <Route path={authorizeRoute} element={<ConsentPage />} />
-
-        {/* The sample consent screens, kept as the design of what a connection may ask for later (step 7) */}
-        <Route path="consent/trip-app" element={<ConsentAppPage />} />
-        <Route path="consent/claude" element={<ConsentAgentPage />} />
-        <Route path="consent/ledgerly" element={<WideningPage />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

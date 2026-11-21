@@ -1,9 +1,16 @@
 import { screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { agree, current, expectNotKept, open, settle } from '../../helpers/app.tsx'
 import { expectAccessible } from '../../helpers/axe.ts'
+import { emptyOverview } from '../../helpers/overview.ts'
 import { answered, browserWithPasskeys, requestOptions } from '../../helpers/passkeys.ts'
 import { ana, meOf, ok, refused, server } from '../../helpers/server.ts'
+
+// Signing in and every route that leads home end on the overview, which reads the account's mailboxes, rules and
+// connections.
+beforeEach(() => {
+  emptyOverview()
+})
 
 type User = Awaited<ReturnType<typeof open>>['user']
 

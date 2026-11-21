@@ -1,9 +1,16 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { adminRequests, asAdmin, boss, helper, stats } from '../../helpers/admin.ts'
 import { current, named, open, settle } from '../../helpers/app.tsx'
 import { expectAccessible } from '../../helpers/axe.ts'
+import { emptyOverview } from '../../helpers/overview.ts'
 import { ana, meOf, network, ok, refused, server } from '../../helpers/server.ts'
+
+// Signing in and every route that leads home end on the overview, which reads the account's mailboxes, rules and
+// connections.
+beforeEach(() => {
+  emptyOverview()
+})
 
 function sidebar() {
   return within(screen.getByRole('navigation', { name: 'Main' }))
