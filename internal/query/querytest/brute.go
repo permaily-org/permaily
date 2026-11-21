@@ -277,6 +277,9 @@ func domain(s string) (string, bool) {
 			return "", false
 		}
 	}
+	if checked, err := idna.Lookup.ToASCII(a); err != nil || checked != a {
+		return "", false
+	}
 	return a, true
 }
 

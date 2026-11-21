@@ -220,6 +220,13 @@ func normaliseDomain(s string) (ascii string, confusable bool, reason contracts.
 	if len(a) > maxDomainBytes {
 		return "", false, contracts.FormulaValueTooLong
 	}
+	if a != s {
+		// Decoding an A-label can trigger domain-wide bidi checks that
+		// Lookup did not apply to the original Unicode spelling.
+		if checked, err := idna.Lookup.ToASCII(a); err != nil || checked != a {
+			return "", false, contracts.FormulaInvalidValue
+		}
+	}
 	return a, confusable, ""
 }
 
