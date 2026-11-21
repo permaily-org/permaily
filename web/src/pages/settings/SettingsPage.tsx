@@ -84,8 +84,8 @@ function YourData() {
       <p className="border-b border-rule py-2 text-body text-ink-2">
         Deleting your account below stops it at once and removes it for good after {closingDays}{' '}
         days: your address, your name, your ways to sign in and your devices. What your connections
-        were given, and why, is in <TextLink to="/activity">Activity</TextLink>, where you can download
-        it. Exporting the rest of your data isn't built yet: ask us for a copy.
+        were given, and why, is in <TextLink to="/activity">Activity</TextLink>, where you can
+        download it. Exporting the rest of your data isn't built yet: ask us for a copy.
       </p>
     </section>
   )
