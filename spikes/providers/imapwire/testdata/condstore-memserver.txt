@@ -1,0 +1,19 @@
+S: * OK [CAPABILITY IMAP4rev1 SASL-IR LITERAL- AUTH=PLAIN] IMAP server ready
+C: T1 LOGIN <redacted>
+S: T1 OK [CAPABILITY IMAP4rev1 SASL-IR LITERAL- UNSELECT ENABLE IDLE UTF8=ACCEPT] Logged in
+C: T2 EXAMINE INBOX (CONDSTORE)
+S: T2 BAD [CLIENTBUG] Syntax error: expected CRLF, got "("
+C: T3 EXAMINE INBOX
+S: * 1 EXISTS
+S: * 0 RECENT
+S: * OK [UNSEEN 1] First unseen message
+S: * OK [UIDVALIDITY 1] UIDs valid
+S: * OK [UIDNEXT 2] Predicted next UID
+S: * FLAGS ()
+S: * OK [PERMANENTFLAGS (\*)] Permanent flags
+S: T3 OK [READ-ONLY] EXAMINE completed
+C: T4 UID FETCH 1:* (UID FLAGS) (CHANGEDSINCE 1)
+S: T4 BAD [CLIENTBUG] Syntax error: expected CRLF, got "("
+C: T5 LOGOUT
+S: * BYE Logging out
+S: T5 OK LOGOUT completed
