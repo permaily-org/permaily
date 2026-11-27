@@ -396,6 +396,10 @@ func TestCondStoreClientSide(t *testing.T) {
 // A 24 MiB BODY.PEEK[] literal reaches the caller as a stream: the first
 // bytes are handed over while most of the literal is still unread.
 func TestStreamedLiteral(t *testing.T) {
+	const (
+		consumed     = 64 << 10 // what the caller reads before the check
+		maxReadAhead = 1 << 20  // generous for bufio and earlier responses, 1/24 of the literal
+	)
 	u, addr := memServer(t, imap.CapSet{imap.CapIMAP4rev1: {}})
 	body := bytes.Repeat([]byte("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ+/\r\n"), (24<<20)/66)
 	msg := synthetic("large", body)
@@ -424,12 +428,17 @@ func TestStreamedLiteral(t *testing.T) {
 			t.Errorf("literal size %d, want %d", sec.Literal.Size(), len(msg))
 		}
 		h := sha256.New()
-		if _, err := io.CopyN(h, sec.Literal, 64<<10); err != nil {
+		if _, err := io.CopyN(h, sec.Literal, consumed); err != nil {
 			t.Fatal(err)
 		}
 		readSoFar := rec.BytesRead()
-		streamed = readSoFar < int64(len(msg))/2
-		t.Logf("after 64 KiB of a %d-byte literal the client had read %d bytes from the socket", len(msg), readSoFar)
+		// Streaming means a bounded read-ahead: what the client pulled from
+		// the socket beyond what the caller consumed is a few buffers (the
+		// responses before the literal and bufio's buffer), not the literal.
+		// The exact count depends on socket and bufio buffering.
+		ahead := readSoFar - consumed
+		streamed = ahead <= maxReadAhead
+		t.Logf("after %d bytes of a %d-byte literal the client had read %d bytes from the socket (%d ahead, limit %d)", consumed, len(msg), readSoFar, ahead, maxReadAhead)
 		if _, err := io.Copy(h, sec.Literal); err != nil {
 			t.Fatal(err)
 		}
@@ -441,7 +450,7 @@ func TestStreamedLiteral(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !streamed {
-		t.Error("the literal was buffered before it was handed over")
+		t.Errorf("the client read more than %d bytes ahead of the caller: the literal was buffered before it was handed over", maxReadAhead)
 	}
 	logout(t, c)
 	golden(t, "streamed-literal", rec.Transcript())

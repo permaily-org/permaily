@@ -17,7 +17,8 @@ import (
 )
 
 // Recorder wraps the client's side of a connection and keeps both
-// directions in order.
+// directions in wire order: client bytes are recorded before they are sent,
+// server bytes as soon as they are read.
 type Recorder struct {
 	net.Conn
 	mu     sync.Mutex
@@ -52,12 +53,17 @@ func (r *Recorder) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// Write records p before it reaches the socket. Recording after Conn.Write
+// returned raced the client's reader goroutine: the server's reply could be
+// read and recorded first, putting it ahead of its command in the transcript.
+// Recorded first, a command always precedes whatever the server sends in
+// answer to it, so the transcript is in wire order. (A failed write is
+// recorded in full; the test fails on the error anyway.)
 func (r *Recorder) Write(p []byte) (int, error) {
-	n, err := r.Conn.Write(p)
-	if n > 0 {
-		r.add(true, p[:n])
+	if len(p) > 0 {
+		r.add(true, p)
 	}
-	return n, err
+	return r.Conn.Write(p)
 }
 
 // BytesRead is how many bytes the client has read so far.
