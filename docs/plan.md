@@ -206,27 +206,29 @@ Each step ends deployed and verified, as F2's did. The estimates are rough. Only
 
 | Step | What | Weeks |
 |---|---|---|
-| 1 | Mail through providers: Gmail's API, Microsoft Graph and a closed list of IMAP hosts (the owner's decisions of 2026-11-27; designed in ADR 0042): a spike against the real providers, ten pull requests ending in a dormant release, then a one-day opening release that opens the three together after the owner's legal gate | About 15.25 engineer-weeks; about 7 elapsed with three people to the dormant release (ADR 0042, "Calendar") |
+| 1 | Mail through providers: Gmail's API, Microsoft Graph and a closed list of IMAP hosts (the owner's decisions of 2026-11-27; designed in ADR 0042): a spike against the real providers, ten pull requests ending in a dormant release, then a one-day opening release that opens the three together after the owner's legal gate | About 16.75 engineer-weeks, 17.75 with the spike; about 9.5 elapsed with three people to the dormant release (ADR 0042, "Calendar") |
 | 2 | More languages | not estimated |
 | 3 | Limits and paid plans | not estimated |
 
-Step 1, designed in ADR 0042 (2026-11-27, proposed; revised after its design review the same day, which found 14 P1, 10 P2 and 2 P3, and simplified after its second, which found 15 P1, 8 P2 and 1 P3, with the owner's decisions 13 and 14): a mailbox is forwarding or a provider's, chosen by the person; connecting is an authorization code with PKCE bound to the initiating session, to read-only applications with a fail-closed scope allowlist, or an IMAP app password, sealed in one grant entry under the mailbox's key; a provider mailbox is made by ADR 0026's creation and stored through ADR 0026's claim; no stored state authorises a deletion, so cursors are sealed entries with no strict record or fence, and each deletion is authorised by fresh evidence from the provider about that message; a baseline, a live stream and an add-only backfill of 0, 30 or 90 days under one admission rule; a resync only when the provider loses the position; an egress policy compiled into the image and enforced inside the enclave; every release from the first carrying provider code dormant, and one opening release, after the owner's Limited Use determination and the removal of older releases' keys, that opens the three kinds together with their uses enforced at the mailboxes' access table. Its tests are T1 to T128 (some removed, each saying why), its pull requests and their ownership in ADR 0042, "Implementation pull requests"; thirty-three choices made for the owner are in its "Choices made for the owner (to confirm)", and the owner's legal questions in "The owner's legal gate".
+Step 1, designed in ADR 0042 (2026-11-27, proposed; revised after its design review the same day, which found 14 P1, 10 P2 and 2 P3, simplified after its second, which found 15 P1, 8 P2 and 1 P3, with the owner's decisions 13 and 14, and narrowly fixed after its third, which found 12 P1, 9 P2 and 1 P3, and its fourth, "ready after the fixes" with 6 P1, 9 P2 and 1 P3, under the owner's decision 15): a mailbox is forwarding or a provider's, chosen by the person; connecting is an authorization code with PKCE bound to the initiating session, to read-only applications with a fail-closed scope allowlist, or an IMAP app password, sealed in one grant entry under the mailbox's key; a provider mailbox is made by ADR 0026's creation and stored through ADR 0026's claim; no stored state authorises a deletion, so cursors are sealed entries with no strict record or fence, and each deletion is authorised by fresh evidence from the provider about that message; a baseline, a live stream and an add-only backfill of 0, 30 or 90 days under one admission rule; a resync when the provider loses the position or a local checkpoint is lost; an egress policy compiled into the image and enforced inside the enclave; every release from the first carrying provider code dormant, and one opening release, after the owner's Limited Use determination and the removal of older releases' keys, that opens the three kinds together with their uses enforced at the mailboxes' access table. Its tests are T1 to T169 (some removed, each saying why), its pull requests and their ownership in ADR 0042, "Implementation pull requests"; forty-seven choices made for the owner are in its "Choices made for the owner (to confirm)", and the owner's legal questions in "The owner's legal gate".
 
 - [x] The design reviewed (Codex, 2026-11-27) and revised.
 - [x] The revision re-reviewed (Codex, 2026-11-27) and simplified.
-- [ ] The simplified design re-reviewed, and the owner's answers to its choices.
+- [x] The simplified design re-reviewed (Codex, 2026-11-27, third review) and narrowly fixed.
+- [x] The fixes re-reviewed (Codex, 2026-11-27, fourth review: ready after six P1 fixes) and fixed.
+- [ ] The fourth round's fixes checked, and the owner's answers to its choices.
 - [ ] The owner's registrations, listed in ADR 0042, "The spike, before building": the Google Cloud project for mail (separate from sign-in's) with the Gmail API, its consent screen in testing mode with only synthetic test users, and a Web client; the Microsoft Entra application for any tenant and personal accounts, with `Mail.Read` and `offline_access` delegated, and publisher verification; an IMAP test account with an app password at each listed host.
 - [ ] **0. The contract and the seams.**
 - [ ] The spike against the real providers with synthetic or owner-only accounts (ADR 0042, items 1 to 8), its numbers in ADR 0042, the IMAP list cut to what it confirms.
-- [ ] **1. The floor: the record, storing and the gate** (T1, T2, T5, T6, T40, T61, T64, T70, T82 to T86, T89, T116, T118, T121, T122, T125).
-- [ ] **2. The egress** (T57, T75, T124).
-- [ ] **3. OAuth as a client, and the routes** (T7 to T12, T16, T55, T60, T72, T103, T113 to T115, T117).
-- [ ] **4. Gmail's adapter** (T27 to T29, T80, T91, T94).
-- [ ] **5. Graph's adapter** (T30 to T32, T80, T92, T95, T119).
-- [ ] **6. IMAP's adapter** (T33 to T39, T80, T95, T96, T120).
+- [ ] **1. The floor: the record, storing and the gate** (ADR 0042's table lists its tests).
+- [ ] **2. The egress** (ADR 0042's table lists its tests).
+- [ ] **3. OAuth as a client, and the routes** (ADR 0042's table lists its tests).
+- [ ] **4. Gmail's adapter** (ADR 0042's table lists its tests).
+- [ ] **5. Graph's adapter** (ADR 0042's table lists its tests).
+- [ ] **6. IMAP's adapter** (ADR 0042's table lists its tests).
 - [ ] **7. The sync engine** (ADR 0042's table lists its tests).
-- [ ] **8. Web** (T49 to T52).
-- [ ] **9. Composition, documents and the dormant release**, the staging checks (T45, T46, T53, T54, T62, T68, T71, T81, T106 to T110, T116), deployed; the keys of every release before the floor removed (the owner).
+- [ ] **8. Web** (ADR 0042's table lists its tests).
+- [ ] **9. Composition, documents and the dormant release**, the staging checks (ADR 0042's table lists its tests), deployed; the keys of every release before the floor removed (the owner).
 - [ ] The owner's legal gate (ADR 0042, "The owner's legal gate"): a recorded Limited Use determination before any provider opens to users, the three together (decision 13). TODO LEGAL: owner's review.
-- [ ] **10. The opening release** (T128), only after the gate and ADR 0042's "Launch: one barrier".
+- [ ] **10. The opening release** (T128, T144, T163), only after the gate and ADR 0042's "Launch: one barrier".
 - [ ] Before real users of Gmail: Google's verification of the restricted scope and the CASA assessment (the owner's).
