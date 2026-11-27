@@ -1,0 +1,36 @@
+S: * OK [CAPABILITY IMAP4rev1 SASL-IR LITERAL- AUTH=PLAIN] IMAP server ready
+C: T1 LOGIN <redacted>
+S: T1 OK [CAPABILITY IMAP4rev1 SASL-IR LITERAL- UNSELECT ENABLE IDLE UTF8=ACCEPT] Logged in
+C: T2 EXAMINE "Never-Existed"
+S: T2 NO [NONEXISTENT] No such mailbox
+C: T3 EXAMINE "Scratch"
+S: * 0 EXISTS
+S: * 0 RECENT
+S: * OK [UIDVALIDITY 2] UIDs valid
+S: * OK [UIDNEXT 1] Predicted next UID
+S: * FLAGS ()
+S: * OK [PERMANENTFLAGS (\*)] Permanent flags
+S: T3 OK [READ-ONLY] EXAMINE completed
+C: T4 EXAMINE INBOX
+S: * OK [CLOSED] Previous mailbox is now closed
+S: * 0 EXISTS
+S: * 0 RECENT
+S: * OK [UIDVALIDITY 1] UIDs valid
+S: * OK [UIDNEXT 1] Predicted next UID
+S: * FLAGS ()
+S: * OK [PERMANENTFLAGS (\*)] Permanent flags
+S: T4 OK [READ-ONLY] EXAMINE completed
+C: T5 EXAMINE "Scratch"
+S: * OK [CLOSED] Previous mailbox is now closed
+S: T5 NO [NONEXISTENT] No such mailbox
+C: T6 EXAMINE "Scratch"
+S: * 0 EXISTS
+S: * 0 RECENT
+S: * OK [UIDVALIDITY 3] UIDs valid
+S: * OK [UIDNEXT 1] Predicted next UID
+S: * FLAGS ()
+S: * OK [PERMANENTFLAGS (\*)] Permanent flags
+S: T6 OK [READ-ONLY] EXAMINE completed
+C: T7 LOGOUT
+S: * BYE Logging out
+S: T7 OK LOGOUT completed

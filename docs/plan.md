@@ -219,7 +219,7 @@ Step 1, designed in ADR 0042 (2026-11-27, proposed; revised after its design rev
 - [ ] The fourth round's fixes checked, and the owner's answers to its choices.
 - [ ] The owner's registrations, listed in ADR 0042, "The spike, before building": the Google Cloud project for mail (separate from sign-in's) with the Gmail API, its consent screen in testing mode with only synthetic test users, and a Web client; an IMAP test account with an app password at each listed host. No Microsoft registration now (decision 18).
 - [ ] **0. The contract and the seams.**
-- [ ] The spike against the real providers with synthetic or owner-only accounts (ADR 0042, items 1 to 8; Microsoft's items from the documentation and a simulated server only), its numbers in ADR 0042, the IMAP list cut to what it confirms.
+- [ ] The spike against the real providers with synthetic or owner-only accounts (ADR 0042, items 1 to 8; Microsoft's items from the documentation and a simulated server only), its numbers in ADR 0042, the IMAP list cut to what it confirms. (2026-11-27: the part that needs no account is in `spikes/providers/`: items 4 and 5 as documented against a simulated Graph, item 7 against go-imap v2.0.0-beta.9, six findings marked "ADR change needed" in its notes.md; items 1, 2, 3, 6 and 8 wait on the owner's accounts, with the harness and runbook ready.)
 - [ ] **1. The floor: the record, storing and the gate** (ADR 0042's table lists its tests).
 - [ ] **2. The egress** (ADR 0042's table lists its tests).
 - [ ] **3. OAuth as a client, and the routes** (ADR 0042's table lists its tests).
