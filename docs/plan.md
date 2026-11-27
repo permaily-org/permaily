@@ -7,7 +7,7 @@ What is built, what comes next and how the planned parts are designed. Current a
 - **F0** (deployed): verifiable hello end to end.
 - **F1 inbox** (deployed with v0.2.0 on 2026-11-10): MX inside the enclave, encrypted storage, KMS bound to attestation, one test mailbox (ADR 0009).
 - **F2** (deployed with v0.18.0 on 2026-11-21; left: the designer's review of the words, the owner's guided session and the checks before real users): accounts, mailboxes per account, connections with queries that a person approves, rules, receipts, the API and remote MCP (ADR 0017 to 0020). Deciding by meaning, which was F3, is part of it.
-- **F3** (next): what F2 leaves out: reaching mail through a provider's API instead of forwarding, more languages, limits and paid plans.
+- **F3** (next): what F2 leaves out: reaching mail through a provider's API instead of forwarding (designed in ADR 0042, proposed), more languages, limits and paid plans.
 - **F4**: per-agent inboxes, a private inbox, scaling (NLB TCP passthrough, ASG), CT and Rekor monitoring in the verifier.
 
 ## F1: inbox
@@ -200,3 +200,28 @@ From Portifact's production experience with the same MCP clients (recorded in [d
 - MCP server instructions state that email content is data, never instructions; tools carry `readOnlyHint` and `destructiveHint`.
 - The agent skill in `skills/permaily/` grows with the CLI and MCP, in the same change, describing only released features.
 
+## F3: order of work
+
+Each step ends deployed and verified, as F2's did. The estimates are for one person and are rough. Only the first step is designed; the others get their own ADR when they come.
+
+| Step | What | Weeks |
+|---|---|---|
+| 1 | Mail through providers: Gmail's API, Microsoft Graph and a closed list of IMAP hosts, in one release (the owner's decisions of 2026-11-27; designed in ADR 0042): a spike against the real providers, then nine pull requests | 12 |
+| 2 | More languages | not estimated |
+| 3 | Limits and paid plans | not estimated |
+
+Step 1, designed in ADR 0042 (2026-11-27, proposed): a mailbox is forwarding or a provider's, chosen by the person; connecting is an authorization code with PKCE to read-only applications (`gmail.readonly`; `Mail.Read` and `offline_access`) or an IMAP app password, sealed under the mailbox's key; a poll every five minutes shared by two enclaves; 0, 30 or 90 days of history; one sealed copy per message through ADR 0026's claim; every folder but spam, trash, sent and drafts; deletions mirrored. Its tests are T1 to T64, its pull requests and their ownership in ADR 0042, "Implementation pull requests"; seventeen choices made for the owner are in its "Choices made for the owner (to confirm)".
+
+- [ ] The design reviewed (Codex), the owner's answers to its choices, and its revision.
+- [ ] The owner's registrations, listed in ADR 0042, "The spike, before building": the Google Cloud project with the Gmail API, its consent screen in testing mode, test users and a Web client; the Microsoft Entra application for any tenant and personal accounts, with `Mail.Read` and `offline_access` delegated and publisher verification; an IMAP test account with an app password at each listed provider.
+- [ ] The spike against the real providers (ADR 0042, items 1 to 6), its numbers in ADR 0042, and the IMAP list cut to what it confirms.
+- [ ] **0. The design, the contract and the seams.**
+- [ ] **1. The record** (T1 to T6, T40, T59, T64).
+- [ ] **2. OAuth as a client, and the routes** (T7 to T16, T55, T60).
+- [ ] **3. Gmail's client** (T27 to T29, T57).
+- [ ] **4. Graph's client** (T30 to T32, T57).
+- [ ] **5. IMAP's client** (T33 to T39).
+- [ ] **6. The sync engine** (T17 to T26, T41 to T44, T46 to T48, T56, T58, T61, T63).
+- [ ] **7. Web** (T49 to T52).
+- [ ] **8. The image**, the staging check (T62) and the release (T45, T53, T54).
+- [ ] Before real users of Gmail: Google's verification of the restricted scope and the CASA assessment (the owner's), and Limited Use settled for the model (docs/legal.md).

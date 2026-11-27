@@ -233,6 +233,10 @@ What the queue of notices by mail promises, and what it does not (composed by AD
 - **Logs**: the kind and the outcome of each notice alone; never an account, a key, an address or a word of SES's or the storage's error. A notice that could not be queued is logged by its kind by the service that queued it (`connections`, `receipts`, `accounts`).
 - **What `/status` says**: `mail.notices`, this enclave's counts (`queued`, `sent`, `failed`, `dropped`, `skipped`, `refused`) since it started; nothing of an account, a key or a kind of anyone's event. `permaily-verify` prints them and warns on `dropped` and `refused`, failing on none.
 
+## Mail through providers (F3, ADR 0042; proposed, not built)
+
+A mailbox may read the person's mail from Gmail's API, Microsoft Graph or a closed list of IMAP hosts instead of forwarding. The refresh token or app password is sealed under the mailbox's key and gone with it at disconnect; scopes are read-only and checked on every grant; the new hosts go on the allowlisted proxy (vsock 8000); the host sees which provider and when, not what. The analysis is ADR 0042, "The threat model"; this section is filled in by its pull request 8.
+
 ## Checks that run on their own
 
 - **The drift check** (ADR 0035): a Lambda function plans `deploy/tofu` of `develop` against production every hour and mails the maintainers when they differ. Its role reads and cannot write anything, the state's lock included; it can decrypt the state, and so read what the state holds (the GitHub dispatch token, the Amplify webhook's address), as any operator who plans can. It runs the configuration of `develop` as GitHub serves it, with the providers its lock file pins. It detects changes made outside OpenTofu; it prevents none, and whoever administers the account can disable it, which its alarms on missing runs mail.
